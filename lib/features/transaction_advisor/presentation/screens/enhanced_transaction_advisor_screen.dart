@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cardcompass/features/auth/providers/auth_provider.dart';
 import 'package:cardcompass/core/services/advanced_benefit_calculation_service.dart';
 import 'package:cardcompass/shared/widgets/state_widgets.dart';
+import 'package:cardcompass/features/movie_rule_engine/presentation/movie_analyzer_tab.dart';
 import 'package:intl/intl.dart';
 
 /// Enhanced transaction advisor with advanced benefit calculations
@@ -53,7 +54,7 @@ class _EnhancedTransactionAdvisorScreenState
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: 5, vsync: this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadInitialData();
     });
@@ -196,6 +197,7 @@ class _EnhancedTransactionAdvisorScreenState
           indicatorColor: Colors.white,
           tabs: const [
             Tab(icon: Icon(Icons.calculate), text: 'Calculator'),
+            Tab(icon: Icon(Icons.local_movies), text: 'Movies'),
             Tab(icon: Icon(Icons.trending_up), text: 'Optimize'),
             Tab(icon: Icon(Icons.analytics), text: 'Summary'),
             Tab(icon: Icon(Icons.recommend), text: 'Recommendations'),
@@ -206,6 +208,7 @@ class _EnhancedTransactionAdvisorScreenState
         controller: _tabController,
         children: [
           _buildCalculatorTab(),
+          _buildMovieAnalyzerTab(),
           _buildOptimizationsTab(),
           _buildSummaryTab(),
           _buildRecommendationsTab(),
@@ -912,5 +915,9 @@ class _EnhancedTransactionAdvisorScreenState
         },
       ),
     );
+  }
+
+  Widget _buildMovieAnalyzerTab() {
+    return const MovieAnalyzerTab();
   }
 }
