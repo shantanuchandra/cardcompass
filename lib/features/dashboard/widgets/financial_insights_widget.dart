@@ -335,7 +335,7 @@ class _FinancialInsightsWidgetState extends ConsumerState<FinancialInsightsWidge
               style: Theme.of(context).textTheme.bodyMedium,
             ),
             
-            if (trends.spendingVolatility > 0.3) 
+            if (trends.spendingVolatility > 0.3)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
                 child: Container(
@@ -348,9 +348,13 @@ class _FinancialInsightsWidgetState extends ConsumerState<FinancialInsightsWidge
                     children: [
                       const Icon(Icons.warning, color: Colors.orange, size: 16),
                       const SizedBox(width: 8),
-                      const Expanded(
+                      Expanded(
                         child: Text(
                           'High spending volatility detected. Consider budgeting for consistency.',
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodyMedium
+                              ?.copyWith(color: Colors.grey[800]),
                         ),
                       ),
                     ],

@@ -145,7 +145,10 @@ class _DashboardScreenRefactoredState extends ConsumerState<DashboardScreenRefac
           DashboardQuickActions(
             onSyncPressed: () => _handleSyncData(context),
             onDeletePressed: () => _handleDeleteData(context),
-            onAIBenefitsPressed: () => _handleAIBenefits(context),
+            onAIBenefitsPressed: () {
+              // AI Benefits feature coming soon
+              _showSnackBar(context, 'Coming soon', Colors.blue);
+            },
           ),
           
           const SizedBox(height: 24),
@@ -155,6 +158,9 @@ class _DashboardScreenRefactoredState extends ConsumerState<DashboardScreenRefac
           
           const SizedBox(height: 24),
           
+          // Smart Transaction Analyzer
+          SmartTransactionAnalyzer(userId: authState.user?.id),
+          const SizedBox(height: 24),
           // AI Insights Section
           AiInsightsSection(
             insights: state.aiInsights,
@@ -162,16 +168,9 @@ class _DashboardScreenRefactoredState extends ConsumerState<DashboardScreenRefac
             cardRecommendations: state.aiCardRecommendations,
             isLoading: state.isLoading,
           ),
-          
           const SizedBox(height: 24),
-          
           // Spending Insights Section
           _buildSpendingInsights(context, state, viewModel),
-          
-          const SizedBox(height: 24),
-          
-          // Smart Transaction Analyzer
-          SmartTransactionAnalyzer(userId: authState.user?.id),
           
           const SizedBox(height: 24),
           
@@ -275,39 +274,6 @@ class _DashboardScreenRefactoredState extends ConsumerState<DashboardScreenRefac
     }
   }
 
-  /// Handle AI benefits extraction
-  Future<void> _handleAIBenefits(BuildContext context) async {
-    final authState = ref.read(authStateProvider);
-    if (!authState.isAuthenticated || authState.user == null) {
-      _showSnackBar(context, 'Please log in first', Colors.red);
-      return;
-    }
-
-    try {
-      final results = await DashboardOperationsService.extractBenefitsWithAI(
-        userId: authState.user!.id,
-        context: context,
-      );
-
-      if (mounted) {
-        final success = results['success'] ?? false;
-        DashboardDialogs.showResultsDialog(
-          context,
-          title: 'AI Benefits Extraction',
-          message: success 
-            ? 'Benefits extraction completed successfully!'
-            : 'Benefits extraction completed with some issues.',
-          success: success,
-          actionButtonText: 'View Benefits',
-          onActionPressed: () => Navigator.of(context).pushNamed(AppRoutes.benefits),
-        );
-      }
-    } catch (error) {
-      if (mounted) {
-        _showSnackBar(context, 'AI extraction failed: ${error.toString()}', Colors.red);
-      }
-    }
-  }
 
   /// Helper method to show snackbar
   void _showSnackBar(BuildContext context, String message, Color backgroundColor) {

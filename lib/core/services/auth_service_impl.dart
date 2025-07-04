@@ -183,7 +183,7 @@ class AuthServiceImpl implements AuthService {
     try {
       // Delete user data from our tables
       await _supabase.from('transactions').delete().eq('user_id', userId);
-      await _supabase.from('credit_cards').delete().eq('user_id', userId);
+      await _supabase.from('user_cards').delete().eq('user_id', userId);
       await _supabase.from('users').delete().eq('id', userId);
       
       // Note: Deleting from Supabase auth might require admin privileges

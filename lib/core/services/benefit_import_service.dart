@@ -259,9 +259,9 @@ class BenefitImportService {
         return List<Map<String, dynamic>>.from(catalogResponse);
       }
 
-      // Fallback to credit_cards table (old schema)
+      // Use card_catalog table
       final cardsResponse = await _supabase
-          .from('credit_cards')
+          .from('card_catalog')
           .select('id, card_name, bank_name');
       
       return List<Map<String, dynamic>>.from(cardsResponse);

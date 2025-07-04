@@ -315,13 +315,14 @@ class BenefitsViewModel extends StateNotifier<BenefitsViewState> {
     state = state.copyWith(selectedCardId: cardId);
   }
 
-  /// Set selected period for analytics
+  /// Set selected period for analytics and usage tracking
   void setSelectedPeriod(String period) {
     state = state.copyWith(selectedPeriod: period);
-    // Reload analytics with new period
+    // Reload analytics and tracking data with new period
     final currentUser = Supabase.instance.client.auth.currentUser;
     if (currentUser != null) {
       _loadBenefitAnalytics(currentUser.id);
+      _loadBenefitTracking(currentUser.id);
     }
   }
 

@@ -41,7 +41,7 @@ class SimpleSupabaseSchemaService {
   Future<void> _verifyTablesExist() async {
     final requiredTables = [
       'users',
-      'credit_cards', 
+      'card_catalog', 
       'transactions',
       'statements',
     ];
@@ -78,15 +78,15 @@ CREATE TABLE users (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-2. CREDIT_CARDS TABLE:
-CREATE TABLE credit_cards (
+2. CARD_CATALOG TABLE:
+CREATE TABLE card_catalog (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES users(id),
   card_name TEXT NOT NULL,
   bank_name TEXT NOT NULL,
   network TEXT NOT NULL,
   card_type TEXT NOT NULL,
   annual_fee DECIMAL(10,2),
+  is_active BOOLEAN DEFAULT TRUE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -94,7 +94,7 @@ CREATE TABLE credit_cards (
 CREATE TABLE transactions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES users(id),
-  card_id UUID REFERENCES credit_cards(id),
+  card_id UUID REFERENCES user_cards(id),
   amount DECIMAL(12,2) NOT NULL,
   description TEXT NOT NULL,
   category TEXT NOT NULL,

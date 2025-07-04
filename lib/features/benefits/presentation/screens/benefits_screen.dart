@@ -316,7 +316,74 @@ class _BenefitsScreenState extends ConsumerState<BenefitsScreen>
   /// Build benefits for a specific card
   Widget _buildCardBenefits(CreditCard card) {
     final benefitsViewModel = ref.read(benefitsViewModelProvider.notifier);
-    final mockBenefits = benefitsViewModel.getMockBenefits(card);
+    final realBenefits = benefitsViewModel.getCardBenefits(card.id);
+    
+    if (realBenefits.isEmpty) {
+      return Card(
+        margin: const EdgeInsets.only(bottom: 16),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Card header
+              Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Center(
+                      child: Text(
+                        card.network.name.substring(0, 1).toUpperCase(),
+                        style: TextStyle(
+                          color: Theme.of(context).primaryColor,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          card.cardName,
+                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Text(
+                          card.bankName,
+                          style: TextStyle(
+                            color: Colors.grey.shade600,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              
+              const SizedBox(height: 16),
+              
+              // No benefits message
+              const Center(
+                child: Text(
+                  'No benefits configured for this card',
+                  style: TextStyle(color: Colors.grey),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
@@ -371,8 +438,8 @@ class _BenefitsScreenState extends ConsumerState<BenefitsScreen>
             
             const SizedBox(height: 16),
             
-            // Benefits list
-            ...mockBenefits.map((benefit) => _buildBenefitItem(benefit)),
+            // Real benefits list
+            ...realBenefits.map((benefit) => _buildRealBenefitItem(benefit)),
           ],
         ),
       ),
@@ -455,6 +522,85 @@ class _BenefitsScreenState extends ConsumerState<BenefitsScreen>
       ),
     );
   }
+  /// Build real benefit item from CardBenefit
+  Widget _buildRealBenefitItem(dynamic benefit) {
+    // Handle both CardBenefit objects and Map<String, dynamic>
+    final isActive = benefit is Map ? (benefit['isActive'] ?? true) : true;
+    final category = benefit is Map ? (benefit['category'] ?? 'General') : 'General';
+    final description = benefit is Map ? (benefit['description'] ?? 'No description') : 'No description';
+    final value = benefit is Map ? (benefit['value'] ?? 'N/A') : 'N/A';
+    
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isActive 
+            ? Colors.green.withValues(alpha: 0.1) 
+            : Colors.grey.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: isActive 
+              ? Colors.green.withValues(alpha: 0.2) 
+              : Colors.grey.withValues(alpha: 0.2),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            isActive ? Icons.check_circle : Icons.pause_circle_outline,
+            color: isActive ? Colors.green : Colors.grey,
+            size: 20,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        category,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: isActive ? Colors.green.shade700 : Colors.grey.shade700,
+                        ),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: isActive 
+                            ? Colors.green.withValues(alpha: 0.2) 
+                            : Colors.grey.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        value.toString(),
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: isActive ? Colors.green.shade800 : Colors.grey.shade800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  description,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
   /// Build usage tracking tab
   Widget _buildUsageTab(BenefitsViewState state) {
     return SingleChildScrollView(
@@ -468,6 +614,48 @@ class _BenefitsScreenState extends ConsumerState<BenefitsScreen>
               fontWeight: FontWeight.bold,
             ),
           ),
+          const SizedBox(height: 16),
+          
+          // Month selector
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Select Period',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () {
+                            ref.read(benefitsViewModelProvider.notifier).setSelectedPeriod('current_month');
+                          },
+                          child: const Text('This Month'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () {
+                            ref.read(benefitsViewModelProvider.notifier).setSelectedPeriod('previous_month');
+                          },
+                          child: const Text('Previous Month'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          
           const SizedBox(height: 16),
           _buildUsageMetrics(state),
           const SizedBox(height: 16),

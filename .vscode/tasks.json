@@ -1,0 +1,14 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Build and Run CardCompass with Schema Fix",
+			"type": "shell",
+			"command": "flutter run -d chrome --web-port=8080 lib/main.dart",
+			"group": "build",
+			"problemMatcher": [
+				"$flutter"
+			]
+		}
+	]
+}
