@@ -446,82 +446,6 @@ class _BenefitsScreenState extends ConsumerState<BenefitsScreen>
     );
   }
 
-  /// Build individual benefit item
-  Widget _buildBenefitItem(Map<String, dynamic> benefit) {
-    final isActive = benefit['isActive'] as bool;
-    final category = benefit['category'] as String;
-    final description = benefit['description'] as String;
-    final value = benefit['value'] as String;
-    
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),      decoration: BoxDecoration(
-        color: isActive 
-            ? Colors.green.withValues(alpha: 0.1) 
-            : Colors.grey.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: isActive 
-              ? Colors.green.withValues(alpha: 0.2) 
-              : Colors.grey.withValues(alpha: 0.2),
-        ),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            isActive ? Icons.check_circle : Icons.pause_circle_outline,
-            color: isActive ? Colors.green : Colors.grey,
-            size: 20,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        category,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          color: isActive ? Colors.green.shade700 : Colors.grey.shade700,
-                        ),
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(                        color: isActive 
-                            ? Colors.green.withValues(alpha: 0.2) 
-                            : Colors.grey.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        value,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: isActive ? Colors.green.shade800 : Colors.grey.shade800,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  description,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey.shade600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
   /// Build real benefit item from CardBenefit
   Widget _buildRealBenefitItem(dynamic benefit) {
     // Handle both CardBenefit objects and Map<String, dynamic>
@@ -862,37 +786,10 @@ class _BenefitsScreenState extends ConsumerState<BenefitsScreen>
 
   /// Build comparison rows based on actual user cards
   List<DataRow> _buildComparisonRows(List<CreditCard> userCards) {
-    final features = ['Dining', 'Fuel', 'Online', 'Travel'];
-    final mockData = {
-      'Dining': ['5%', '10%', '2%'],
-      'Fuel': ['2%', '5%', '1%'],
-      'Online': ['3%', '5%', '2%'],
-      'Travel': ['4%', '2%', '3%'],
-    };
-
-    return features.map((feature) {
-      final values = mockData[feature] ?? [];
-      // Only take as many values as we have cards, but ensure at least one value
-      final cardCount = userCards.length.clamp(1, 3);
-      final adjustedValues = values.take(cardCount).toList();
-      
-      // If we have fewer values than cards, pad with default values
-      while (adjustedValues.length < cardCount) {
-        adjustedValues.add('--');
-      }
-      
-      return _buildComparisonRow(feature, adjustedValues);
-    }).toList();
+    // TODO: Implement real comparison logic using userCards and actual benefit data
+    return [];
   }
 
-  /// Build comparison row
-  DataRow _buildComparisonRow(String feature, List<String> values) {
-    return DataRow(
-      cells: [
-        DataCell(Text(feature)),
-        ...values.map((value) => DataCell(Text(value))),
-      ],
-    );  }
 
   /// Helper method to get icon from string
   IconData _getIconFromString(String iconName) {

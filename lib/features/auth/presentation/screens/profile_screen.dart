@@ -65,7 +65,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   @override
   Widget build(BuildContext context) {
     final authState = ref.watch(authStateProvider);
-    final user = authState.user;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Profile'),

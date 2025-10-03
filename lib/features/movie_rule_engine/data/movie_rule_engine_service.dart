@@ -497,8 +497,8 @@ class MovieRuleEngineService {
     List<TransactionStep> steps = [];
     int remainingTickets = request.numberOfTickets;
 
-    // Take top 3 most efficient scenarios
-    final topScenarios = scenarios.take(3).toList();
+    // Take top 5 most efficient scenarios
+    final topScenarios = scenarios.take(5).toList();
 
     for (final scenario in topScenarios) {
       if (remainingTickets <= 0) break;
