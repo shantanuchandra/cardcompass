@@ -11,6 +11,23 @@ class ProfileScreen extends ConsumerStatefulWidget {
 }
 
 class _ProfileScreenState extends ConsumerState<ProfileScreen> {
+  String _getAppVersion() {
+    // Returns version string in format yyyy.MMdd.HH-mm (e.g., 2025.1003.10-01)
+    const buildDate = String.fromEnvironment('BUILD_DATE', defaultValue: '2025-10-03 10:01');
+    // Expecting buildDate in 'yyyy-MM-dd HH:mm' format
+    final regex = RegExp(r'^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})');
+    final match = regex.firstMatch(buildDate);
+    if (match != null) {
+      final year = match.group(1);
+      final month = match.group(2);
+      final day = match.group(3);
+      final hour = match.group(4);
+      final minute = match.group(5);
+      return '$year.$month$day.$hour-$minute';
+    }
+    // Fallback to raw buildDate if parsing fails
+    return buildDate;
+  }
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
@@ -32,14 +49,23 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   }
 
   void _loadUserData() {
-    // Load user data from auth provider or use mock data
-    _nameController.text = 'John Doe';
-    _emailController.text = 'john.doe@example.com';
-    _phoneController.text = '+91 9876543210';
+    final authState = ref.read(authStateProvider);
+    if (authState.isAuthenticated && authState.user != null) {
+      final user = authState.user!;
+      _nameController.text = user.fullName ?? user.name ?? '';
+      _emailController.text = user.email;
+      _phoneController.text = user.phoneNumber ?? '';
+    } else {
+      _nameController.text = '';
+      _emailController.text = '';
+      _phoneController.text = '';
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final authState = ref.watch(authStateProvider);
+    final user = authState.user;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Profile'),
@@ -51,13 +77,20 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            children: [
-              // Profile Picture Section
+      body: authState.isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  children: [
+                    // Profile Picture Section
+                                // (Profile image section hidden as per request)
+                                const SizedBox(height: 32),
+                                // ...existing code...
+                    const SizedBox(height: 32),
+                    // ...existing code...
               Center(
                 child: Stack(
                   children: [
@@ -201,7 +234,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     ListTile(
                       leading: const Icon(Icons.info),
                       title: const Text('App Version'),
-                      trailing: const Text('1.0.0'),
+                      trailing: Text(_getAppVersion()),
                       onTap: () {
                         // TODO: Show app info
                       },

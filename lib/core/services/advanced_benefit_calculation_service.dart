@@ -333,7 +333,7 @@ class AdvancedBenefitCalculationService {
       final availableCardsResponse = await _supabase
           .from('card_catalog')
           .select('*')
-          .eq('is_active', true);
+          .eq('is_discontinued', false);
 
       List<Map<String, dynamic>> recommendations = [];
 

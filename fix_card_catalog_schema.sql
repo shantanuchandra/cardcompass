@@ -72,4 +72,5 @@ USING (TRUE);
 DO $$
 BEGIN
   RAISE NOTICE 'Schema standardization completed: card_catalog table now uses is_discontinued consistently';
+  RAISE NOTICE 'All foreign key constraints updated to reference card_catalog and user_cards tables';
 END $$;

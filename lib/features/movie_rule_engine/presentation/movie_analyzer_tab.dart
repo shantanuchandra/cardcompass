@@ -49,7 +49,7 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
   Widget build(BuildContext context) {
     final optimizationState = ref.watch(movieOptimizationControllerProvider);
     
-    return Padding(
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(16.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -61,6 +61,7 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
           _buildAnalyzeButton(),
           const SizedBox(height: 24),
           _buildResults(optimizationState),
+          const SizedBox(height: 24), // Add bottom padding for better UX
         ],
       ),
     );
@@ -92,6 +93,30 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
           'Get personalized recommendations for maximum savings on movie tickets',
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
             color: Colors.grey[600],
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: Colors.blue[50],
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.blue[200]!, width: 1),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.star, size: 16, color: Colors.blue[600]),
+              const SizedBox(width: 4),
+              Text(
+                'Smart AI-powered optimization',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.blue[700],
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
           ),
         ),
       ],
@@ -211,8 +236,7 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
     final price = double.tryParse(_priceController.text) ?? 0.0;
     final total = tickets * price;
 
-    if (total <= 0) return const SizedBox.shrink();
-
+    // Show the total even if it's 0 to help with debugging
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -229,7 +253,7 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
             ),
           ),
           Text(
-            '₹${total.toStringAsFixed(0)}',
+            total > 0 ? '₹${total.toStringAsFixed(0)}' : '₹0',
             style: Theme.of(context).textTheme.titleLarge?.copyWith(
               fontWeight: FontWeight.bold,
               color: Theme.of(context).primaryColor,
@@ -254,8 +278,14 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
                 height: 20,
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
-            : const Icon(Icons.analytics),
-        label: Text(isLoading ? 'Analyzing...' : 'Find Best Deals'),
+            : const Icon(Icons.search),
+        label: Text(
+          isLoading ? 'Analyzing...' : '🎬 Find Best Deals',
+          style: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
         style: ElevatedButton.styleFrom(
           padding: const EdgeInsets.symmetric(vertical: 16),
           shape: RoundedRectangleBorder(
@@ -325,7 +355,7 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
             children: [
               Text(
                 recommendation.hasRecommendations 
-                    ? 'Optimized Strategy Found!' 
+                    ? '🎉 Optimized Strategy Found!' 
                     : 'No Special Offers Found',
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(
                   fontWeight: FontWeight.bold,
@@ -334,12 +364,21 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
                       : Colors.orange[600],
                 ),
               ),
-              Text(
-                recommendation.explanation,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Colors.grey[600],
+              if (recommendation.hasRecommendations && recommendation.savingsPercentage > 0)
+                Text(
+                  'Save ${recommendation.savingsPercentage.toStringAsFixed(1)}% on your movie tickets!',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Colors.green[600],
+                    fontWeight: FontWeight.w500,
+                  ),
+                )
+              else
+                Text(
+                  recommendation.explanation,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Colors.grey[600],
+                  ),
                 ),
-              ),
             ],
           ),
         ),

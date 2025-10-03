@@ -81,35 +81,85 @@ class MovieBenefitConfig {
     }
   }
 
+  /// Helper method to safely parse date strings
+  static DateTime? _parseDateTime(dynamic value) {
+    if (value == null) return null;
+    
+    try {
+      if (value is String) {
+        return DateTime.parse(value);
+      } else if (value is Map) {
+        // Handle case where date might be a Map with format used by some libraries
+        if (value.containsKey('date') && value['date'] is String) {
+          return DateTime.parse(value['date']);
+        }
+      }
+    } catch (e) {
+      print('WARNING: Failed to parse date: $value, error: $e');
+    }
+    
+    return null;
+  }
+  
+  /// Helper method to safely convert values to double
+  static double? _safeToDouble(dynamic value) {
+    if (value == null) return null;
+    
+    if (value is num) {
+      return value.toDouble();
+    } else if (value is String) {
+      return double.tryParse(value);
+    }
+    
+    return null;
+  }
+
   factory MovieBenefitConfig.fromJson(Map<String, dynamic> json) {
-    return MovieBenefitConfig(
-      offerType: json['offer_type'] ?? '',
-      partnerFilter: json['partner_filter'] != null 
-          ? List<String>.from(json['partner_filter']) 
-          : null,
-      discountPercent: json['discount_percent']?.toDouble(),
-      maxDiscountAmount: json['max_discount_amount']?.toDouble(),
-      freeTicketCount: json['free_ticket_count'],
-      transactionTicketLimit: json['txn_ticket_limit'],
-      monthlyTicketLimit: json['month_ticket_limit'],
-      milestoneCurrency: json['milestone_currency']?.toDouble(),
-      milestoneReward: json['milestone_reward'],
-      validDayOfWeek: json['valid_dow'] != null 
-          ? List<String>.from(json['valid_dow']) 
-          : null,
-      validTime: json['valid_time'],
-      startDate: json['start_date'] != null 
-          ? DateTime.parse(json['start_date']) 
-          : null,
-      endDate: json['end_date'] != null 
-          ? DateTime.parse(json['end_date']) 
-          : null,
+    try {
+      return MovieBenefitConfig(
+        offerType: json['offer_type'] ?? '',
+        partnerFilter: json['partner_filter'] != null 
+            ? (json['partner_filter'] is List 
+                ? List<String>.from(json['partner_filter'])
+                : <String>[json['partner_filter'].toString()])
+            : null,
+        discountPercent: _safeToDouble(json['discount_percent']),
+        maxDiscountAmount: _safeToDouble(json['max_discount_amount']),
+        freeTicketCount: json['free_ticket_count'] is int 
+            ? json['free_ticket_count'] 
+            : (json['free_ticket_count'] != null ? int.tryParse(json['free_ticket_count'].toString()) : null),
+        transactionTicketLimit: json['txn_ticket_limit'] is int 
+            ? json['txn_ticket_limit']
+            : (json['txn_ticket_limit'] != null ? int.tryParse(json['txn_ticket_limit'].toString()) : null),
+        monthlyTicketLimit: json['month_ticket_limit'] is int 
+            ? json['month_ticket_limit']
+            : (json['month_ticket_limit'] != null ? int.tryParse(json['month_ticket_limit'].toString()) : null),
+        milestoneCurrency: _safeToDouble(json['milestone_currency']),
+        milestoneReward: json['milestone_reward'] is int 
+            ? json['milestone_reward']
+            : (json['milestone_reward'] != null ? int.tryParse(json['milestone_reward'].toString()) : null),
+        validDayOfWeek: json['valid_dow'] != null 
+            ? (json['valid_dow'] is List 
+                ? List<String>.from(json['valid_dow'])
+                : <String>[json['valid_dow'].toString()])
+            : null,
+        validTime: json['valid_time']?.toString(),
+        startDate: _parseDateTime(json['start_date']),
+        endDate: _parseDateTime(json['end_date']),
       excludedShowTypes: json['excluded_show_types'] != null 
-          ? List<String>.from(json['excluded_show_types']) 
+          ? (json['excluded_show_types'] is List 
+              ? List<String>.from(json['excluded_show_types'])
+              : <String>[json['excluded_show_types'].toString()])
           : null,
-      minTransactionAmount: json['min_transaction_amount']?.toDouble(),
-      efficiencyThreshold: json['efficiency_threshold']?.toDouble(),
+      minTransactionAmount: _safeToDouble(json['min_transaction_amount']),
+      efficiencyThreshold: _safeToDouble(json['efficiency_threshold']),
     );
+    } catch (e) {
+      print('ERROR in MovieBenefitConfig.fromJson: $e');
+      print('JSON content: $json');
+      // Return a default configuration with empty offer type to avoid null errors
+      return MovieBenefitConfig(offerType: '');
+    }
   }
 
   Map<String, dynamic> toJson() => {
