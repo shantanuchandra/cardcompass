@@ -6,6 +6,7 @@ import 'package:cardcompass/shared/widgets/credit_card_widget.dart';
 import 'package:cardcompass/shared/widgets/state_widgets.dart';
 import 'package:cardcompass/features/cards/providers/cards_provider.dart';
 import 'package:cardcompass/features/transactions/providers/transactions_provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// Screen for displaying detailed information about a specific credit card
 class CardDetailsScreen extends ConsumerStatefulWidget {
@@ -26,6 +27,7 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
   CreditCard? _card;
   List<Transaction> _transactions = [];
   List<Map<String, dynamic>> _benefits = [];
+  Map<String, dynamic>? _latestStatement;
   bool _isLoading = true;
 
   @override
@@ -57,33 +59,11 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
           .where((t) => t.userCardId == widget.cardId)
           .toList();
 
-      // Mock benefits data
-      _benefits = [
-        {
-          'category': 'Dining',
-          'reward_rate': '5%',
-          'description': 'Earn 5% cashback on dining expenses',
-          'icon': Icons.restaurant,
-        },
-        {
-          'category': 'Online Shopping',
-          'reward_rate': '3%',
-          'description': 'Get 3% rewards on online purchases',
-          'icon': Icons.shopping_cart,
-        },
-        {
-          'category': 'Groceries',
-          'reward_rate': '2%',
-          'description': '2% cashback on grocery shopping',
-          'icon': Icons.local_grocery_store,
-        },
-        {
-          'category': 'Fuel',
-          'reward_rate': '1%',
-          'description': 'Earn 1% on fuel purchases',
-          'icon': Icons.local_gas_station,
-        },
-      ];
+      // Load latest statement for this card
+      await _fetchLatestStatement();
+
+      // Load real benefits data from Supabase
+      await _fetchCardBenefits();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -168,8 +148,10 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
             children: [
               Expanded(
                 child: _buildStatCard(
-                  'Current Balance',
-                  '₹25,000', // Mock data - no currentBalance in model
+                  'Outstanding Amount',
+                  _latestStatement != null 
+                      ? '₹${(_latestStatement!['outstanding_amount'] ?? 0).toStringAsFixed(0)}'
+                      : '₹0',
                   Icons.account_balance_wallet,
                   Colors.red,
                 ),
@@ -178,9 +160,38 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
               Expanded(
                 child: _buildStatCard(
                   'Available Limit',
-                  '₹${((_card!.creditLimit ?? 100000) - 25000).toStringAsFixed(0)}',
+                  _latestStatement != null && _card!.creditLimit != null
+                      ? '₹${((_card!.creditLimit! - (_latestStatement!['outstanding_amount'] ?? 0))).toStringAsFixed(0)}'
+                      : '₹${(_card!.creditLimit ?? 100000).toStringAsFixed(0)}',
                   Icons.trending_up,
                   Colors.green,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          Row(
+            children: [
+              Expanded(
+                child: _buildStatCard(
+                  'Due Date',
+                  _latestStatement != null 
+                      ? _formatDate(_latestStatement!['due_date']?.toString() ?? '')
+                      : 'N/A',
+                  Icons.schedule,
+                  Colors.orange,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: _buildStatCard(
+                  'Minimum Due',
+                  _latestStatement != null 
+                      ? '₹${(_latestStatement!['minimum_amount_due'] ?? 0).toStringAsFixed(0)}'
+                      : '₹0',
+                  Icons.payment,
+                  Colors.purple,
                 ),
               ),
             ],
@@ -201,9 +212,11 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
               Expanded(
                 child: _buildStatCard(
                   'Utilization',
-                  '${((25000 / (_card!.creditLimit ?? 100000)) * 100).toStringAsFixed(1)}%',
+                  _latestStatement != null && _card!.creditLimit != null
+                      ? '${(((_latestStatement!['outstanding_amount'] ?? 0) / _card!.creditLimit!) * 100).toStringAsFixed(1)}%'
+                      : '0%',
                   Icons.pie_chart,
-                  Colors.orange,
+                  Colors.teal,
                 ),
               ),
             ],
@@ -226,6 +239,21 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
                   _buildDetailRow('Network', _card!.network.name),
                   _buildDetailRow('Annual Fee', '₹${_card!.annualFee ?? 0}'),
                   _buildDetailRow('Issued Date', _formatDate(_card!.issuedDate.toString())),
+                  if (_latestStatement != null) ...[
+                    const Divider(),
+                    Text(
+                      'Statement Information',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _buildDetailRow('Statement Date', _formatDate(_latestStatement!['statement_date']?.toString() ?? '')),
+                    _buildDetailRow('Due Date', _formatDate(_latestStatement!['due_date']?.toString() ?? '')),
+                    _buildDetailRow('Outstanding Amount', '₹${(_latestStatement!['outstanding_amount'] ?? 0).toStringAsFixed(2)}'),
+                    _buildDetailRow('Minimum Due', '₹${(_latestStatement!['minimum_amount_due'] ?? 0).toStringAsFixed(2)}'),
+                    _buildDetailRow('Previous Balance', '₹${(_latestStatement!['previous_balance'] ?? 0).toStringAsFixed(2)}'),
+                  ],
                 ],
               ),
             ),
@@ -276,6 +304,14 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
   }
 
   Widget _buildBenefitsTab() {
+    if (_benefits.isEmpty) {
+      return const EmptyState(
+        title: 'No Benefits',
+        message: 'No benefits configured for this card',
+        icon: Icons.star_border,
+      );
+    }
+
     return ListView.builder(
       padding: const EdgeInsets.all(16),
       itemCount: _benefits.length,
@@ -608,5 +644,71 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
         );
       },
     );
+  }
+
+  /// Fetch the latest statement for this card
+  Future<void> _fetchLatestStatement() async {
+    try {
+      final response = await Supabase.instance.client
+          .from('statements')
+          .select('*')
+          .eq('user_card_id', widget.cardId)
+          .order('statement_date', ascending: false)
+          .limit(1)
+          .maybeSingle();
+
+      if (response != null) {
+        _latestStatement = response;
+      }
+    } catch (e) {
+      print('Error fetching latest statement: $e');
+    }
+  }
+
+  /// Fetch real card benefits from Supabase
+  Future<void> _fetchCardBenefits() async {
+    try {
+      final response = await Supabase.instance.client
+          .from('card_benefits')
+          .select('*')
+          .eq('card_id', widget.cardId);
+
+      if (response.isNotEmpty) {
+        _benefits = response.map((benefit) => {
+          'category': benefit['category'] ?? 'General',
+          'reward_rate': benefit['value']?.toString() ?? 'N/A',
+          'description': benefit['description'] ?? 'No description',
+          'icon': _getIconFromCategory(benefit['category'] ?? 'General'),
+        }).toList();
+      } else {
+        _benefits = []; // No benefits found
+      }
+    } catch (e) {
+      print('Error fetching card benefits: $e');
+      _benefits = []; // Fallback to empty list
+    }
+  }
+
+  /// Get icon based on category
+  IconData _getIconFromCategory(String category) {
+    switch (category.toLowerCase()) {
+      case 'dining':
+      case 'restaurants':
+        return Icons.restaurant;
+      case 'online shopping':
+      case 'shopping':
+        return Icons.shopping_cart;
+      case 'groceries':
+        return Icons.local_grocery_store;
+      case 'fuel':
+      case 'gas':
+        return Icons.local_gas_station;
+      case 'travel':
+        return Icons.flight;
+      case 'entertainment':
+        return Icons.movie;
+      default:
+        return Icons.star;
+    }
   }
 }

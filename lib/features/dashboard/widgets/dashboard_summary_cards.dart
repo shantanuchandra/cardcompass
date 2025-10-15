@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cardcompass/features/dashboard/viewmodels/dashboard_viewmodel.dart';
+import 'package:intl/intl.dart';
 
 /// Summary cards section widget
 class DashboardSummaryCards extends StatelessWidget {
@@ -30,7 +31,9 @@ class DashboardSummaryCards extends StatelessWidget {
               child: _buildSummaryCard(
                 context,
                 'Spending',
-                '₹${viewModel.totalMonthlySpending.toStringAsFixed(0)}',
+                // Format spending with thousand separators and currency symbol
+                NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 0)
+                    .format(viewModel.totalMonthlySpending),
                 'This month',
                 Icons.account_balance_wallet_outlined,
                 Theme.of(context).primaryColor,
@@ -108,9 +111,20 @@ class DashboardSummaryCards extends StatelessWidget {
             const SizedBox(height: 8),
             Text(
               value,
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                 fontWeight: FontWeight.bold,
-                color: color,
+                color: title == 'Spending' 
+                    ? const Color.fromARGB(255, 72, 247, 124)
+                    : color,
+                height: 1.1, // Tighten line height
+                letterSpacing: -0.5, // Tighten letter spacing
+                shadows: [
+                  Shadow(
+                    color: Colors.black26.withOpacity(0.3),
+                    offset: const Offset(0, 1),
+                    blurRadius: 2,
+                  ),
+                ],
               ),
             ),
             Text(

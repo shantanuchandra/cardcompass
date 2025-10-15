@@ -131,7 +131,7 @@ class _SmartTransactionAnalyzerState extends ConsumerState<SmartTransactionAnaly
         
         // Category dropdown
         DropdownButtonFormField<String>(
-          value: _selectedCategory,
+          initialValue: _selectedCategory,
           decoration: const InputDecoration(
             labelText: 'Category',
             border: OutlineInputBorder(),

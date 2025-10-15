@@ -13,7 +13,7 @@ class DatabaseVerificationService {
       // Check users table
       await _checkUsersTable();
       
-      // Check credit_cards table
+      // Check card_catalog table
       await _checkCreditCardsTable();
       
       // Check transactions table
@@ -55,16 +55,16 @@ class DatabaseVerificationService {
     }
   }
 
-  /// Check credit_cards table
+  /// Check card_catalog table
   Future<void> _checkCreditCardsTable() async {
     try {
       final response = await _supabase
-          .from('credit_cards')
+          .from('card_catalog')
           .select('id, user_id, card_name, bank_name, created_at')
           .limit(10);
       
       final cards = response as List;
-      print('\n💳 CREDIT_CARDS Table:');
+      print('\n💳 CARD_CATALOG Table:');
       print('   Count: ${cards.length} cards found');
       
       if (cards.isNotEmpty) {
@@ -76,7 +76,7 @@ class DatabaseVerificationService {
       }
       
     } catch (error) {
-      print('\n❌ Error checking credit_cards table: $error');
+      print('\n❌ Error checking card_catalog table: $error');
     }
   }
   /// Check transactions table

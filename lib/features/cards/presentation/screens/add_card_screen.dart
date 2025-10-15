@@ -243,7 +243,7 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
               const SizedBox(height: 16),
 
               DropdownButtonFormField<CardNetwork>(
-                value: _selectedNetwork,
+                initialValue: _selectedNetwork,
                 decoration: const InputDecoration(
                   labelText: 'Card Network',
                   border: OutlineInputBorder(),

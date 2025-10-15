@@ -154,4 +154,7 @@ class AppConstants {
   // Debug Settings
   static const bool enableDebugLogs = true;
   static const bool enablePerformanceMonitoring = true;
+
+  // Test User ID for Movie Rule Engine
+  static const String testUserIdMovieRuleEngine = '5dc9b591-40b6-4486-944e-3b4ef58c3d47';
 }

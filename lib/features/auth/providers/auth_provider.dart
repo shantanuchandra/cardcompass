@@ -15,9 +15,14 @@ class AuthService {
   Future<User?> signInWithGoogle() async {
     try {
       // Use Supabase OAuth for Google Sign-In
+      final String? webRedirect = kIsWeb
+          ? Uri.base.origin // preserve scheme+host+port, e.g., http://localhost:54321
+          : null;
+
       final bool success = await _supabase.auth.signInWithOAuth(
         OAuthProvider.google,
-        redirectTo: kIsWeb ? null : 'io.supabase.cardcompass://login-callback/',
+        // For web: explicitly set redirectTo so Supabase returns to the same origin (localhost/dev or prod)
+        redirectTo: webRedirect ?? 'io.supabase.cardcompass://login-callback/',
       );
 
       if (success) {

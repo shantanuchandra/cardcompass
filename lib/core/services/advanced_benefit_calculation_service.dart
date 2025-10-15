@@ -18,19 +18,12 @@ class AdvancedBenefitCalculationService {
   }) async {
     try {
       // Get user's cards
+      // Fetch user cards joined to card_catalog for benefits
       final userCardsResponse = await _supabase
           .from('user_cards')
           .select('''
             *,
-            card:credit_cards!inner(
-              *,
-              card_benefits!inner(
-                *,
-                benefit:benefits!inner(*),
-                benefit_tiers(*),
-                benefit_configurations(*)
-              )
-            )
+            card:card_catalog!inner(*)
           ''')
           .eq('user_id', userId)
           .eq('is_active', true);
@@ -47,8 +40,19 @@ class AdvancedBenefitCalculationService {
 
       for (final userCard in userCardsResponse) {
         final card = userCard['card'];
-        final cardBenefits = card['card_benefits'] as List<dynamic>;
+        
+        // Get card benefits separately to avoid join issues
+        final cardBenefitsResponse = await _supabase
+            .from('card_benefits')
+            .select('''
+              *,
+              benefit:benefits!inner(*),
+              benefit_tiers(*),
+              benefit_configurations(*)
+            ''')
+            .eq('card_id', card['id']);
 
+        final cardBenefits = cardBenefitsResponse;
         double totalReward = 0.0;
         List<Map<String, dynamic>> applicableBenefits = [];
 
@@ -327,17 +331,9 @@ class AdvancedBenefitCalculationService {
       
       // Get all available cards
       final availableCardsResponse = await _supabase
-          .from('credit_cards')
-          .select('''
-            *,
-            card_benefits!inner(
-              *,
-              benefit:benefits!inner(*),
-              benefit_tiers(*),
-              benefit_configurations(*)
-            )
-          ''')
-          .eq('is_active', true);
+          .from('card_catalog')
+          .select('*')
+          .eq('is_discontinued', false);
 
       List<Map<String, dynamic>> recommendations = [];
 
@@ -345,7 +341,18 @@ class AdvancedBenefitCalculationService {
         double projectedMonthlyReward = 0.0;
         List<String> matchingCategories = [];
 
-        final cardBenefits = card['card_benefits'] as List<dynamic>;
+        // Fetch card benefits separately
+        final cardBenefitsResponse = await _supabase
+          .from('card_benefits')
+          .select('''
+            *,
+            benefit:benefits!inner(*),
+            benefit_tiers(*),
+            benefit_configurations(*)
+          ''')
+          .eq('card_id', card['id']);
+        
+        final cardBenefits = cardBenefitsResponse;
 
         for (final entry in spendingPatterns.entries) {
           final category = entry.key;

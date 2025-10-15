@@ -98,7 +98,7 @@ class _TransactionAdvisorScreenState extends ConsumerState<TransactionAdvisorScr
                   
                   // Category Dropdown
                   DropdownButtonFormField<String>(
-                    value: _selectedCategory,
+                    initialValue: _selectedCategory,
                     decoration: const InputDecoration(
                       labelText: 'Transaction Category',
                       prefixIcon: Icon(Icons.category),
