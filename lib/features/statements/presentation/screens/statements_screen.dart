@@ -225,7 +225,7 @@ class StatementsScreen extends ConsumerWidget {
                         const Text('No credit cards found. Please add a card first.')
                       else
                         DropdownButtonFormField<CreditCard>(
-                          value: selectedCard,
+                          initialValue: selectedCard,
                           hint: const Text('Select Card'),
                           isExpanded: true,
                           items: userCards.map((card) {

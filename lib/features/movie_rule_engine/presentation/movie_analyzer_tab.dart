@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cardcompass/features/auth/providers/auth_provider.dart';
 import '../providers/movie_optimization_provider.dart';
@@ -17,6 +18,19 @@ class MovieAnalyzerTab extends ConsumerStatefulWidget {
 class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
   final _ticketCountController = TextEditingController();
   final _priceController = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
+
+  // Theme helpers to keep contrast high on dark/light modes
+  ColorScheme get _scheme => Theme.of(context).colorScheme;
+  bool get _isDark => Theme.of(context).brightness == Brightness.dark;
+  Color get _surfaceCard => _isDark
+    ? _scheme.surfaceVariant.withOpacity(0.35)
+    : Colors.grey[50]!;
+  Color get _outline => _scheme.outline.withOpacity(_isDark ? 0.5 : 0.35);
+  Color get _successContainer =>
+    _isDark ? Colors.green.shade900.withOpacity(0.35) : Colors.green.shade50;
+  Color get _onSuccessContainer =>
+    _isDark ? Colors.green.shade200 : Colors.green.shade700;
   
   String? _selectedPlatform;
   String? _selectedCinema;
@@ -92,7 +106,7 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
         Text(
           'Get personalized recommendations for maximum savings on movie tickets',
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-            color: Colors.grey[600],
+            color: _scheme.onSurface.withOpacity(0.7),
           ),
         ),
         const SizedBox(height: 8),
@@ -128,7 +142,10 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
       elevation: 2,
       child: Padding(
         padding: const EdgeInsets.all(20.0),
-        child: Column(
+        child: Form(
+          key: _formKey,
+          autovalidateMode: AutovalidateMode.onUserInteraction,
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
@@ -144,12 +161,23 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
                   child: TextFormField(
                     controller: _ticketCountController,
                     keyboardType: TextInputType.number,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.digitsOnly,
+                      LengthLimitingTextInputFormatter(2),
+                    ],
                     decoration: const InputDecoration(
                       labelText: 'Number of Tickets',
                       prefixIcon: Icon(Icons.confirmation_number),
                       border: OutlineInputBorder(),
                       hintText: 'e.g., 4',
                     ),
+                    validator: (v) {
+                      final n = int.tryParse(v ?? '');
+                      if (n == null || n <= 0) return 'Enter at least 1 ticket';
+                      if (n > 10) return 'That’s a lot! Try up to 10';
+                      return null;
+                    },
+                    onChanged: (_) => setState(() {}),
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -157,22 +185,35 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
                   child: TextFormField(
                     controller: _priceController,
                     keyboardType: TextInputType.number,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r'[0-9]')),
+                      LengthLimitingTextInputFormatter(5),
+                    ],
                     decoration: const InputDecoration(
                       labelText: 'Price per Ticket (₹)',
                       prefixIcon: Icon(Icons.currency_rupee),
                       border: OutlineInputBorder(),
                       hintText: 'e.g., 280',
                     ),
+                    validator: (v) {
+                      final p = double.tryParse(v ?? '');
+                      if (p == null || p <= 0) return 'Enter a valid price';
+                      if (p > 3000) return 'Price looks too high';
+                      return null;
+                    },
+                    onChanged: (_) => setState(() {}),
                   ),
                 ),
               ],
             ),
+            const SizedBox(height: 12),
+            _buildQuickChips(),
             const SizedBox(height: 16),
             Row(
               children: [
                 Expanded(
                   child: DropdownButtonFormField<String>(
-                    value: _selectedPlatform,
+                    initialValue: _selectedPlatform,
                     decoration: const InputDecoration(
                       labelText: 'Preferred Platform (Optional)',
                       prefixIcon: Icon(Icons.smartphone),
@@ -198,7 +239,7 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
                 const SizedBox(width: 16),
                 Expanded(
                   child: DropdownButtonFormField<String>(
-                    value: _selectedCinema,
+                    initialValue: _selectedCinema,
                     decoration: const InputDecoration(
                       labelText: 'Preferred Cinema (Optional)',
                       prefixIcon: Icon(Icons.theater_comedy),
@@ -225,7 +266,21 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
             ),
             const SizedBox(height: 12),
             _buildTotalAmount(),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Icon(Icons.info_outline, size: 16, color: Colors.grey[600]),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Tip: Try 2 or 4 tickets—many BOGO or 50% offers align with even counts.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
+                  ),
+                ),
+              ],
+            ),
           ],
+          ),
         ),
       ),
     );
@@ -264,14 +319,61 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
     );
   }
 
+  Widget _buildQuickChips() {
+    // Presets commonly used in India; tweak as per usage insights
+    final ticketOptions = [2, 3, 4, 6];
+    final priceOptions = [200, 250, 300, 400];
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              ...ticketOptions.map((n) => ChoiceChip(
+                    label: Text('$n tickets'),
+                    selected: int.tryParse(_ticketCountController.text) == n,
+                    onSelected: (_) {
+                      setState(() => _ticketCountController.text = '$n');
+                    },
+                  )),
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              ...priceOptions.map((p) => ChoiceChip(
+                    label: Text('₹$p'),
+                    selected: double.tryParse(_priceController.text) == p.toDouble(),
+                    onSelected: (_) {
+                      setState(() => _priceController.text = '$p');
+                    },
+                  )),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildAnalyzeButton() {
     final optimizationState = ref.watch(movieOptimizationControllerProvider);
     final isLoading = optimizationState.isLoading;
+    final formValid = _formKey.currentState?.validate() ?? false;
+    final tickets = int.tryParse(_ticketCountController.text) ?? 0;
+    final price = double.tryParse(_priceController.text) ?? 0.0;
+    final total = tickets * price;
 
     return SizedBox(
       width: double.infinity,
       child: ElevatedButton.icon(
-        onPressed: isLoading ? null : _analyzeTickets,
+        onPressed: (!isLoading && formValid) ? _analyzeTickets : null,
         icon: isLoading 
             ? const SizedBox(
                 width: 20,
@@ -280,7 +382,11 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
               )
             : const Icon(Icons.search),
         label: Text(
-          isLoading ? 'Analyzing...' : '🎬 Find Best Deals',
+          isLoading
+              ? 'Analyzing...'
+              : total > 0
+                  ? '🎬 Find Best Deals • ₹${total.toStringAsFixed(0)}'
+                  : '🎬 Find Best Deals',
           style: const TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.w600,
@@ -344,7 +450,7 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
               ? Icons.recommend_rounded 
               : Icons.info_outline,
           color: recommendation.hasRecommendations 
-              ? Colors.green[600] 
+              ? _onSuccessContainer 
               : Colors.orange[600],
           size: 28,
         ),
@@ -360,7 +466,7 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(
                   fontWeight: FontWeight.bold,
                   color: recommendation.hasRecommendations 
-                      ? Colors.green[600] 
+                      ? _onSuccessContainer 
                       : Colors.orange[600],
                 ),
               ),
@@ -368,7 +474,7 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
                 Text(
                   'Save ${recommendation.savingsPercentage.toStringAsFixed(1)}% on your movie tickets!',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Colors.green[600],
+                    color: _onSuccessContainer,
                     fontWeight: FontWeight.w500,
                   ),
                 )
@@ -376,7 +482,7 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
                 Text(
                   recommendation.explanation,
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Colors.grey[600],
+                    color: _scheme.onSurface.withOpacity(0.7),
                   ),
                 ),
             ],
@@ -411,9 +517,9 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        border: Border.all(color: Colors.grey[300]!),
+        border: Border.all(color: _outline),
         borderRadius: BorderRadius.circular(8),
-        color: Colors.grey[50],
+        color: _surfaceCard,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -444,13 +550,13 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: Colors.green[100],
+                  color: _successContainer,
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Text(
                   'Save ₹${step.savings.toStringAsFixed(0)}',
                   style: TextStyle(
-                    color: Colors.green[700],
+                    color: _onSuccessContainer,
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
                   ),
@@ -462,7 +568,7 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
           Text(
             '${step.explanation} on ${step.platform}',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: Colors.grey[600],
+              color: _scheme.onSurface.withOpacity(0.75),
             ),
           ),
           const SizedBox(height: 4),
@@ -481,13 +587,9 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            Colors.green[50]!,
-            Colors.green[100]!,
-          ],
-        ),
+        color: _surfaceCard,
         borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _outline),
       ),
       child: Column(
         children: [
@@ -512,19 +614,19 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
               Text(
                 'Total Savings:',
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  color: Colors.green[700],
+                  color: _onSuccessContainer,
                 ),
               ),
               Text(
                 '₹${recommendation.totalSavings.toStringAsFixed(0)}',
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
                   fontWeight: FontWeight.w600,
-                  color: Colors.green[700],
+                  color: _onSuccessContainer,
                 ),
               ),
             ],
           ),
-          const Divider(),
+          Divider(color: _outline),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -538,7 +640,7 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
                 '₹${recommendation.finalAmount.toStringAsFixed(0)}',
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(
                   fontWeight: FontWeight.bold,
-                  color: Theme.of(context).primaryColor,
+                  color: Theme.of(context).colorScheme.primary,
                 ),
               ),
             ],
@@ -549,7 +651,7 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
               child: Text(
                 'You save ${recommendation.savingsPercentage.toStringAsFixed(1)}%!',
                 style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                  color: Colors.green[700],
+                  color: _onSuccessContainer,
                   fontWeight: FontWeight.w600,
                 ),
               ),
