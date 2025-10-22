@@ -23,7 +23,7 @@ jobs:
       - name: Install Flutter
         uses: subosito/flutter-action@v2
         with:
-            flutter-version: '3.32.5' # or your required version
+            flutter-version: '3.35.1' # or your required version
 
       - name: Build Flutter web
         run: flutter build web
@@ -56,3 +56,4 @@ jobs:
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_THANKFUL_MOSS_0B0214000 }}
           action: "close"
+
