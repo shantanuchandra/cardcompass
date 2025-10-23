@@ -571,36 +571,23 @@ class EnhancedGmailService {
     required String bankName,
   }) async {
     try {
-      final prompt = '''You are an expert at identifying credit card variants from email and statement content.
-
-BANK: $bankName
-
-TASK: Analyze the email subject, email body, and PDF statement content to determine the specific credit card variant/product name.
-
-EMAIL SUBJECT: $emailSubject
-
-EMAIL BODY: $emailBody
-
-STATEMENT CONTENT: (First 2000 characters)
-${pdfText.length > 2000 ? pdfText.substring(0, 2000) : pdfText}
-
-INSTRUCTIONS:
-1. Look for card variant names in the email subject and PDF content
-2. Pay attention to keywords like "Amazon Pay", "ELITE", "Regalia", "SimplyCLICK", etc.
-3. Return ONLY the card variant name, nothing else
-4. If you can't determine the specific variant, return just the bank name
-
-RESPOND WITH ONLY THE CARD VARIANT NAME:''';
-
+      // print('🔍 Calling Gemini API for card variant detection...');
+      // print('   Subject: "$emailSubject"');
+      // print('   Bank: "$bankName"');
+      
       final requestBody = {
         'contents': [{
           'parts': [{
-            'text': prompt
+            'text': '''Extract only the credit card product name from this email subject. Remove bank names, "Credit Card", "Statement", and dates.
+
+Subject: $emailSubject
+
+Card name:'''
           }]
         }],
         'generationConfig': {
-          'temperature': 0.1,
-          'maxOutputTokens': 64
+          'temperature': 0.0,
+          'maxOutputTokens': 1000
         }
       };
       
@@ -610,18 +597,48 @@ RESPOND WITH ONLY THE CARD VARIANT NAME:''';
         body: json.encode(requestBody),
       );
       
+      // print('📡 Gemini API response: Status ${response.statusCode}');
+      // if (response.statusCode != 200) {
+      //   print('   Response body: ${response.body}');
+      // }
+      
       if (response.statusCode == 200) {
         final decoded = json.decode(response.body);
+        // print('🔍 Decoded response keys: ${decoded.keys.toList()}');
+        // if (decoded.containsKey('candidates')) {
+        //   print('   Candidates: ${decoded['candidates']}');
+        //   // Check the structure more deeply
+        //   if (decoded['candidates'] is List && decoded['candidates'].isNotEmpty) {
+        //     final firstCandidate = decoded['candidates'][0];
+        //     print('   First candidate keys: ${firstCandidate.keys.toList()}');
+        //     if (firstCandidate.containsKey('content')) {
+        //       print('   Content structure: ${firstCandidate['content']}');
+        //       if (firstCandidate['content'] is Map && firstCandidate['content'].containsKey('parts')) {
+        //         print('   Parts: ${firstCandidate['content']['parts']}');
+        //       }
+        //     }
+        //   }
+        // }
+        
         final content = decoded['candidates']?[0]?['content']?['parts']?[0]?['text'];
         if (content != null) {
-          return content.trim();
+          final variant = content.trim();
+          print('🎯 Gemini detected card variant: "$variant" (from subject: "$emailSubject")');
+          return variant;
+        } else {
+          print('❌ Content is null! Check response structure.');
         }
+      } else {
+        print('❌ Gemini card variant detection failed with status: ${response.statusCode}');
       }
       
       // Fallback to bank name if Gemini fails
+      print('⚠️ Using fallback: returning bank name "$bankName"');
       return bankName;
     } catch (e) {
       // Fallback to bank name on error
+      print('❌ Exception in _detectCardVariant: $e');
+      print('⚠️ Using fallback: returning bank name "$bankName"');
       return bankName;
     }  }
 
@@ -636,7 +653,7 @@ RESPOND WITH ONLY THE CARD VARIANT NAME:''';
     final effectiveStartDate = startDate ?? DateTime.now().subtract(const Duration(days: 30));
     final effectiveEndDate = endDate ?? DateTime.now();
 
-    print('🔍 Searching emails from ${effectiveStartDate.toString().substring(0, 10)} to ${effectiveEndDate.toString().substring(0, 10)}');
+    // print('🔍 Searching emails from ${effectiveStartDate.toString().substring(0, 10)} to ${effectiveEndDate.toString().substring(0, 10)}');
 
     try {
       // Since we use generic search, process all statements without bank-specific filtering
@@ -756,13 +773,16 @@ RESPOND WITH ONLY THE CARD VARIANT NAME:''';
       final userProfile = await getUserProfileWithFallback(
         userId: userId, 
         verbose: false,
-        // context: context, // TODO: Pass context when available in UI
+        // context: context, 
+        // TODO: Pass context when available in UI
       );
-      if (userProfile.containsKey('birthday')) {
-        print('📅 Using birthday from profile for password generation: ${userProfile['birthday']['raw']}');
-      } else {
-        print('⚠️  No birthday found in user profile - password detection may be limited');
-      }      // Extract PDF text for Gemini analysis
+      // if (userProfile.containsKey('birthday')) {
+      //   print('📅 Using birthday from profile for password generation: ${userProfile['birthday']['raw']}');
+      // } else {
+      //   print('⚠️  No birthday found in user profile - password detection may be limited');
+      // }
+      
+      // Extract PDF text for Gemini analysis
       String pdfText = '';
       try {
         pdfText = await _pdfParsingService.extractTextWithPasswordDetection(
@@ -983,7 +1003,7 @@ RESPOND WITH ONLY THE CARD VARIANT NAME:''';
     queryParts.add('before:${searchEndDate.year}/${searchEndDate.month}/${searchEndDate.day}');
     
     final finalQuery = queryParts.join(' ');
-    print('🔍 Gmail search query for ${bankQuery.bankName}: $finalQuery');
+    // print('🔍 Gmail search query for ${bankQuery.bankName}: $finalQuery');
     
     return finalQuery;
   }
@@ -1109,21 +1129,21 @@ RESPOND WITH ONLY THE CARD VARIANT NAME:''';
           bool foundValidBirthday = false;
           for (int i = 0; i < data['birthdays'].length; i++) {
             final birthdayEntry = data['birthdays'][i];
-            if (verbose) print('📅 Processing birthday entry #${i + 1}: $birthdayEntry');
+            // if (verbose) print('📅 Processing birthday entry #${i + 1}: $birthdayEntry');
             
             final birthdayData = birthdayEntry['date'];
             if (birthdayData != null && birthdayData is Map<String, dynamic>) {
-              if (verbose) {
-                print('📅 Raw birthday data: $birthdayData');
-                print('📅 Year: ${birthdayData['year']}, Month: ${birthdayData['month']}, Day: ${birthdayData['day']}');
-              }
+              // if (verbose) {
+              //   print('📅 Raw birthday data: $birthdayData');
+              //   print('📅 Year: ${birthdayData['year']}, Month: ${birthdayData['month']}, Day: ${birthdayData['day']}');
+              // }
               
               // Format birthday data for password generation
-              final formattedBirthday = _formatBirthdayForPasswordGeneration(birthdayData, verbose: verbose);
+              final formattedBirthday = _formatBirthdayForPasswordGeneration(birthdayData, verbose: false);
               
               if (formattedBirthday.isNotEmpty) {
                 profile['birthday'] = formattedBirthday;
-                if (verbose) print('✅ Found and formatted birthday: ${profile['birthday']['raw']}');
+                // if (verbose) print('✅ Found and formatted birthday: ${profile['birthday']['raw']}');
                 foundValidBirthday = true;
                 break; // Use the first valid birthday found
               } else {
@@ -1157,7 +1177,7 @@ RESPOND WITH ONLY THE CARD VARIANT NAME:''';
           }
         }
         
-        if (verbose) print('📋 Final profile keys available: ${profile.keys.join(', ')}');
+        // if (verbose) print('📋 Final profile keys available: ${profile.keys.join(', ')}');
         return profile;
       } else {
         if (verbose) {

@@ -116,15 +116,40 @@ class MovieBenefitConfig {
 
   factory MovieBenefitConfig.fromJson(Map<String, dynamic> json) {
     try {
+      // Handle legacy database format (rate, unit, category, platform, base_rate)
+      String offerType = json['offer_type'] ?? '';
+      double? discountPercent = _safeToDouble(json['discount_percent']);
+      List<String>? partnerFilter = json['partner_filter'] != null 
+          ? (json['partner_filter'] is List 
+              ? List<String>.from(json['partner_filter'])
+              : <String>[json['partner_filter'].toString()])
+          : null;
+      
+      // Map legacy format to new format
+      if (offerType.isEmpty && json.containsKey('rate')) {
+        // Legacy format detected
+        final unit = json['unit']?.toString() ?? 'percent';
+        final rate = _safeToDouble(json['rate']);
+        final platform = json['platform']?.toString();
+        
+        if (unit == 'percent' && rate != null) {
+          offerType = 'PERCENT_DISCOUNT';
+          discountPercent = rate;
+        } else if (unit == 'fixed') {
+          offerType = 'PERCENT_DISCOUNT';
+          discountPercent = 15.0; // Default to 15%
+        }
+        
+        if (platform != null && platform.isNotEmpty) {
+          partnerFilter = [platform];
+        }
+      }
+      
       return MovieBenefitConfig(
-        offerType: json['offer_type'] ?? '',
-        partnerFilter: json['partner_filter'] != null 
-            ? (json['partner_filter'] is List 
-                ? List<String>.from(json['partner_filter'])
-                : <String>[json['partner_filter'].toString()])
-            : null,
-        discountPercent: _safeToDouble(json['discount_percent']),
-        maxDiscountAmount: _safeToDouble(json['max_discount_amount']),
+        offerType: offerType,
+        partnerFilter: partnerFilter,
+        discountPercent: discountPercent,
+        maxDiscountAmount: _safeToDouble(json['max_discount_amount']) ?? 150.0,
         freeTicketCount: json['free_ticket_count'] is int 
             ? json['free_ticket_count'] 
             : (json['free_ticket_count'] != null ? int.tryParse(json['free_ticket_count'].toString()) : null),
@@ -142,7 +167,11 @@ class MovieBenefitConfig {
             ? (json['valid_dow'] is List 
                 ? List<String>.from(json['valid_dow'])
                 : <String>[json['valid_dow'].toString()])
-            : null,
+            : (json['valid_days'] != null 
+                ? (json['valid_days'] is List 
+                    ? List<String>.from(json['valid_days'])
+                    : <String>[json['valid_days'].toString()])
+                : null),
         validTime: json['valid_time']?.toString(),
         startDate: _parseDateTime(json['start_date']),
         endDate: _parseDateTime(json['end_date']),
@@ -151,14 +180,14 @@ class MovieBenefitConfig {
               ? List<String>.from(json['excluded_show_types'])
               : <String>[json['excluded_show_types'].toString()])
           : null,
-      minTransactionAmount: _safeToDouble(json['min_transaction_amount']),
+      minTransactionAmount: _safeToDouble(json['min_transaction_amount']) ?? 300.0,
       efficiencyThreshold: _safeToDouble(json['efficiency_threshold']),
     );
     } catch (e) {
       print('ERROR in MovieBenefitConfig.fromJson: $e');
       print('JSON content: $json');
       // Return a default configuration with empty offer type to avoid null errors
-      return MovieBenefitConfig(offerType: '');
+      return MovieBenefitConfig(offerType: 'PERCENT_DISCOUNT', discountPercent: 15.0);
     }
   }
 

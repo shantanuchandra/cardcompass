@@ -16,6 +16,7 @@ import '../../../auth/providers/auth_provider.dart';
 import '../../../transactions/presentation/screens/transactions_screen.dart';
 import '../../../analytics/presentation/screens/analytics_screen.dart';
 import '../../../recommendations/presentation/screens/recommendations_screen.dart';
+import '../../../sync/widgets/card_url_input_dialog.dart';
 import 'add_card_screen.dart';
 import 'cards_list_screen.dart';
 
@@ -290,8 +291,36 @@ class HomeTab extends ConsumerWidget {
       
       // Initialize the debug service for data sync
       final debugService = DataPipelineDebugService();
+      print('🔧 Created DataPipelineDebugService instance');
+      
+      // Set up card URL prompt callback
+      debugService.onCardUrlRequired = ({
+        required String bankName,
+        required String cardVariant,
+        required String emailSubject,
+        String? suggestedUrl,
+      }) async {
+        print('🔔 CALLBACK INVOKED in home_screen!');
+        print('   Bank: $bankName, Card: $cardVariant');
+        print('   Context: $context');
+        print('   Context mounted: ${context.mounted}');
+        
+        final result = await showCardUrlInputDialog(
+          context: context,
+          bankName: bankName,
+          cardVariant: cardVariant,
+          emailSubject: emailSubject,
+          suggestedUrl: suggestedUrl,
+        );
+        
+        print('🔔 CALLBACK RETURNING: $result');
+        return result;
+      };
+      print('🔧 Set onCardUrlRequired callback on debugService');
+      print('🔧 Callback is now: ${debugService.onCardUrlRequired == null ? "NULL" : "SET"}');
       
       // Run the sequential user flow
+      print('🔧 About to call debugSequentialUserFlow...');
       await debugService.debugSequentialUserFlow(authState.user!.id);
       
       // Close progress dialog

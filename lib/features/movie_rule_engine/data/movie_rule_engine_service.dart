@@ -16,6 +16,77 @@ class MovieRuleEngineService {
     'BookMyShow', 'PVR', 'INOX', 'Cinepolis', 'Moviemax'
   ];
 
+  /// Get all card-benefit combinations for display (no optimization, just listing)
+  Future<List<Map<String, dynamic>>> getAllMovieCardBenefits({
+    required String userId,
+  }) async {
+    try {
+      print('DEBUG: Fetching all movie card-benefit combinations');
+      
+      // Get all cards with benefits
+      final cardBenefits = await _getUserMovieBenefits(userId);
+      
+      // Return structured data with all details
+      return cardBenefits.map((cb) {
+        final benefit = cb['benefit'] as Map<String, dynamic>;
+        final config = cb['config'] as MovieBenefitConfig?;
+        
+        // Extract platform from value_config
+        String? platform;
+        if (benefit['value_config'] != null) {
+          final valueConfig = benefit['value_config'] is String
+              ? jsonDecode(benefit['value_config'])
+              : benefit['value_config'];
+          platform = valueConfig['platform'];
+        }
+        
+        // Format benefit details
+        String benefitDescription = '';
+        if (config != null) {
+          switch (config.offerType) {
+            case 'PERCENT_DISCOUNT':
+              benefitDescription = '${config.discountPercent?.toStringAsFixed(0)}% off';
+              if (config.maxDiscountAmount != null) {
+                benefitDescription += ' (max ₹${config.maxDiscountAmount?.toStringAsFixed(0)})';
+              }
+              break;
+            case 'BOGO':
+              benefitDescription = 'Buy ${(config.freeTicketCount ?? 1) + 1} Get ${config.freeTicketCount ?? 1} Free';
+              break;
+            case 'CASHBACK':
+              benefitDescription = '${config.discountPercent?.toStringAsFixed(1)}% cashback';
+              break;
+            case 'MILESTONE':
+              benefitDescription = 'Milestone reward';
+              break;
+            default:
+              benefitDescription = benefit['title'] ?? 'Entertainment benefit';
+          }
+        } else {
+          benefitDescription = benefit['title'] ?? 'Entertainment benefit';
+        }
+        
+        return {
+          'card_id': cb['card_id'],
+          'card_name': cb['card_name'],
+          'card_network': cb['card_network'],
+          'bank': cb['bank'],
+          'benefit_title': benefit['title'],
+          'benefit_description': benefitDescription,
+          'platform': platform ?? 'All platforms',
+          'is_owned': cb['is_owned'],
+          'user_card_id': cb['user_card_id'],
+          'priority_score': cb['priority_score'],
+          'config': config,
+        };
+      }).toList();
+    } catch (e, stackTrace) {
+      print('ERROR in getAllMovieCardBenefits: $e');
+      print('Stack trace: $stackTrace');
+      return [];
+    }
+  }
+
   /// Generate optimized movie ticket purchase recommendations
   Future<MovieRecommendation> optimizeMovieTicketPurchase({
     required String userId,
@@ -43,26 +114,28 @@ class MovieRuleEngineService {
       await _updateStatementCycleMilestones(userId);
       print('DEBUG: Statement cycle milestones updated');
 
-      // 3. Evaluate all benefit scenarios
-      print('DEBUG: Evaluating all benefit scenarios');
-      final scenarios = await _evaluateAllScenarios(
+      // 3. Find single best benefit (optimized for single recommendation)
+      print('DEBUG: Finding best benefit using smart ranking');
+      final bestScenario = await _findBestBenefit(
         request: request,
         cardBenefits: cardBenefits,
         userId: userId,
       );
-      print('DEBUG: Found ${scenarios.length} benefit scenarios');
+      
+      if (bestScenario == null) {
+        print('DEBUG: No valid benefit scenarios found');
+        return MovieRecommendation.empty(
+          totalAmount: request.totalAmount,
+          tickets: request.numberOfTickets,
+        );
+      }
+      
+      print('DEBUG: Best card: ${bestScenario['card_name']} on ${bestScenario['platform']} (saves ₹${bestScenario['savings']})');
 
-      // 4. Optimize transaction splitting
-      print('DEBUG: Optimizing transaction splitting, found ${scenarios.length} scenarios');
-      final optimizedSteps = _optimizeTransactionSplitting(
-        scenarios: scenarios,
-        request: request,
-      );
-
-      // 5. Generate final recommendation
-      print('DEBUG: Generating final recommendation with ${optimizedSteps.length} steps');
-      return _generateRecommendation(
-        steps: optimizedSteps,
+      // 4. Generate single-step recommendation
+      print('DEBUG: Generating recommendation with best benefit');
+      return _generateSingleRecommendation(
+        scenario: bestScenario,
         request: request,
       );
 
@@ -76,114 +149,166 @@ class MovieRuleEngineService {
     }
   }
 
-  /// Get user's cards that have movie benefits
+  /// Get ALL cards with movie benefits (not just user-owned cards)
+  /// Returns both owned and non-owned cards with benefits
   Future<List<Map<String, dynamic>>> _getUserMovieBenefits(String userId) async {
     try {
       print('DEBUG: Starting _getUserMovieBenefits for userId: $userId');
-      CardCatalogDebug.logQuery('Fetching user movie benefits', method: '_getUserMovieBenefits');
+      CardCatalogDebug.logQuery('Fetching ALL movie benefits from new schema', method: '_getUserMovieBenefits');
       
-      // Fetch user's active cards
-      print('DEBUG: Querying user_cards for active cards');
-      final response = await _supabase
+      // Step 1: Get user's active cards for ownership checking
+      print('DEBUG: Querying user_cards for ownership info');
+      final userCardsResponse = await _supabase
           .from('user_cards')
-          .select('''
-            id,
-            catalog_card_id,
-            card:card_catalog(
-              id,
-              card_name,
-              network,
-              bank
-            )
-          ''')
+          .select('id, catalog_card_id')
           .eq('user_id', userId)
           .eq('is_active', true);
       
-      print('DEBUG: Found ${response.length} active user cards');
+      final ownedCardIds = userCardsResponse.map((uc) => uc['catalog_card_id'].toString()).toSet();
+      print('DEBUG: User owns ${ownedCardIds.length} cards: $ownedCardIds');
+      
+      // Step 2: Query actual schema - simpler approach to avoid PostgREST join issues
+      // First, get entertainment benefits
+      print('DEBUG: Querying entertainment benefits');
+      final benefitsResponse = await _supabase
+          .from('benefits')
+          .select('benefit_id, title, description, benefit_category, benefit_type, value_config')
+          .eq('benefit_category', 'entertainment')
+          .eq('is_active', true);
+      
+      if (benefitsResponse.isEmpty) {
+        print('DEBUG: No entertainment benefits found');
+        return [];
+      }
+      
+      print('DEBUG: Found ${benefitsResponse.length} entertainment benefits');
+      final benefitIds = benefitsResponse.map((b) => b['benefit_id'].toString()).toList();
+      
+      // Step 3: Get card-benefit mappings for these benefits
+      print('DEBUG: Querying card_benefit_mapping for entertainment benefits');
+      final mappingsResponse = await _supabase
+          .from('card_benefit_mapping')
+          .select('mapping_id, card_id, benefit_id, display_priority, is_primary')
+          .inFilter('benefit_id', benefitIds)
+          .eq('is_primary', true);
+      
+      if (mappingsResponse.isEmpty) {
+        print('DEBUG: No card mappings found for entertainment benefits');
+        return [];
+      }
+      
+      print('DEBUG: Found ${mappingsResponse.length} card-benefit mappings');
+      final cardIds = mappingsResponse.map((m) => m['card_id'].toString()).toSet().toList();
+      
+      // Step 4: Get card details
+      print('DEBUG: Querying card_catalog for mapped cards');
+      final cardsResponse = await _supabase
+          .from('card_catalog')
+          .select('id, card_name, network, bank')
+          .inFilter('id', cardIds);
+      
+      print('DEBUG: Found ${cardsResponse.length} cards with entertainment benefits');
+      
+      
+      // Step 5: Create lookup maps for efficient processing
+      final benefitMap = {for (var b in benefitsResponse) b['benefit_id'].toString(): b};
+      final cardMap = {for (var c in cardsResponse) c['id'].toString(): c};
       
       List<Map<String, dynamic>> cardBenefits = [];
 
-      // For each active card, get movie benefits
-      for (final userCard in response) {
-        print('DEBUG: Processing user card: ${userCard['id']} - ${userCard['card']['card_name']}');
+      // Step 6: Process all mappings and combine data
+      for (final mapping in mappingsResponse) {
+        final benefitId = mapping['benefit_id'].toString();
+        final cardId = mapping['card_id'].toString();
         
-        try {
-          print('DEBUG: Querying card_benefits for catalog_card_id: ${userCard['card']['id']}');
-          final cardBenefitsResponse = await _supabase
-              .from('card_benefits')
-              .select('''
-                *,
-                benefit:benefits!inner(*)
-              ''')
-              .eq('card_id', userCard['card']['id'])
-              .contains('spending_categories', [_benefitCategory]);
+        final benefit = benefitMap[benefitId];
+        final card = cardMap[cardId];
+        
+        if (benefit == null || card == null) {
+          print('DEBUG: Skipping mapping - missing benefit or card data');
+          continue;
+        }
+        
+        print('DEBUG: Processing: ${card['card_name']} -> ${benefit['title']}');
+        
+        // Check if user owns this card
+        final isOwned = ownedCardIds.contains(cardId);
+        print('DEBUG: Card ${card['card_name']} is ${isOwned ? "OWNED" : "NOT OWNED"} by user');
+        
+        // Get user_card_id if owned
+        String? userCardId;
+        if (isOwned) {
+            final uc = userCardsResponse.firstWhere(
+              (uc) => uc['catalog_card_id'].toString() == card['id'].toString(),
+              orElse: () => <String, dynamic>{},
+            );
+            userCardId = uc['id']?.toString();
+          }
           
-          print('DEBUG: Found ${cardBenefitsResponse.length} benefits for this card');
-          
-          for (final benefit in cardBenefitsResponse) {
-            // Parse JSON configuration
-            MovieBenefitConfig? config;
-            if (benefit['json_configuration'] != null) {
-              try {
-                Map<String, dynamic> configJson;
-                
-                // Check if json_configuration is already a Map or a String that needs to be parsed
-                if (benefit['json_configuration'] is String) {
-                  print('DEBUG: Parsing json_configuration string for benefit ID: ${benefit['id']}');
-                  configJson = jsonDecode(benefit['json_configuration']);
-                } else if (benefit['json_configuration'] is Map) {
-                  print('DEBUG: json_configuration is already a Map for benefit ID: ${benefit['id']}');
-                  configJson = Map<String, dynamic>.from(benefit['json_configuration']);
-                } else {
-                  print('DEBUG: Unexpected json_configuration type: ${benefit['json_configuration'].runtimeType}');
-                  continue;
-                }
-                
-                // Validate the configuration schema
-                if (!CardCatalogDebug.validateBenefitConfigSchema(configJson, benefitId: benefit['id']?.toString())) {
-                  print('DEBUG: Invalid benefit config schema for benefit ID: ${benefit['id']}');
-                  continue;
-                }
-                
+          // Parse benefit configuration from value_config
+          MovieBenefitConfig? config;
+          if (benefit['value_config'] != null) {
+            try {
+              Map<String, dynamic> configJson;
+              
+              // Check if value_config is already a Map or a String that needs to be parsed
+              if (benefit['value_config'] is String) {
+                print('DEBUG: Parsing value_config string for benefit ID: ${benefit['benefit_id']}');
+                configJson = jsonDecode(benefit['value_config']);
+              } else if (benefit['value_config'] is Map) {
+                print('DEBUG: value_config is already a Map for benefit ID: ${benefit['benefit_id']}');
+                configJson = Map<String, dynamic>.from(benefit['value_config']);
+              } else {
+                print('DEBUG: Unexpected value_config type: ${benefit['value_config'].runtimeType}');
+                continue;
+              }
+              
+              // Validate the configuration schema  
+              if (!CardCatalogDebug.validateBenefitConfigSchema(configJson, benefitId: benefit['benefit_id']?.toString())) {
+                print('DEBUG: Invalid benefit config schema for benefit ID: ${benefit['benefit_id']} - using defaults');
+                // Create a default config instead of skipping
+                config = null; // Will use default calculation later
+              } else {
                 config = MovieBenefitConfig.fromJson(configJson);
-                print('DEBUG: Successfully parsed benefit config for benefit ID: ${benefit['id']}');
+                print('DEBUG: Successfully parsed benefit config for benefit ID: ${benefit['benefit_id']}');
                 print('DEBUG: Config offerType: ${config.offerType}');
                 print('DEBUG: Config valid days: ${config.validDayOfWeek}');
                 print('DEBUG: Config partners: ${config.partnerFilter}');
-              } catch (e, stackTrace) {
-                print('DEBUG: Error parsing benefit config: $e');
-                print('DEBUG: Error stacktrace: $stackTrace');
-                print('DEBUG: json_configuration type: ${benefit['json_configuration'].runtimeType}');
-                print('DEBUG: json_configuration value: ${benefit['json_configuration']}');
-                continue;
               }
+            } catch (e, stackTrace) {
+              print('DEBUG: Error parsing benefit config: $e');
+              print('DEBUG: Error stacktrace: $stackTrace');
+              print('DEBUG: value_config type: ${benefit['value_config'].runtimeType}');
+              print('DEBUG: value_config value: ${benefit['value_config']}');
+              continue;
             }
-
-            cardBenefits.add({
-              'user_card_id': userCard['id'],
-              'card_id': userCard['card']['id'],
-              'card_name': userCard['card']['card_name'],
-              'card_network': userCard['card']['network'],
-              'bank': userCard['card']['bank'],
-              'priority_score': benefit['priority_score'] ?? 1,
-              'benefit': benefit,
-              'config': config,
-              'efficiency_threshold': benefit['efficiency_threshold'],
-            });
           }
-        } catch (e) {
-          print('DEBUG: Error processing card benefits for card ${userCard['card']['id']}: $e');
-        }
+
+        cardBenefits.add({
+          'user_card_id': userCardId, // null if not owned
+          'card_id': card['id'],
+          'card_name': card['card_name'],
+          'card_network': card['network'],
+          'bank': card['bank'],
+          'priority_score': mapping['display_priority'] ?? 1,
+          'benefit': benefit,
+          'mapping': mapping,
+          'config': config,
+          'efficiency_threshold': 0.0, // Not in current schema
+          'is_owned': isOwned, // NEW: flag to indicate ownership
+        });
       }
 
       print('DEBUG: Completed _getUserMovieBenefits, found ${cardBenefits.length} total benefits');
+      print('DEBUG: Owned cards: ${cardBenefits.where((cb) => cb['is_owned'] == true).length}');
+      print('DEBUG: Non-owned cards: ${cardBenefits.where((cb) => cb['is_owned'] == false).length}');
       return cardBenefits;
     } catch (e, stackTrace) {
       print('ERROR in _getUserMovieBenefits: $e');
       print('ERROR stack trace: $stackTrace');
       CardCatalogDebug.logException(e, 
         method: '_getUserMovieBenefits', 
-        query: 'user_cards join card_catalog'
+        query: 'benefits join card_benefit_mapping join card_catalog'
       );
       return [];
     }
@@ -323,40 +448,35 @@ class MovieRuleEngineService {
     }
   }
 
-  /// Evaluate all possible benefit scenarios
-  Future<List<Map<String, dynamic>>> _evaluateAllScenarios({
+  /// Find the single best benefit using comprehensive ranking
+  /// Returns the top-ranked scenario or null if none found
+  Future<Map<String, dynamic>?> _findBestBenefit({
     required MovieTicketRequest request,
     required List<Map<String, dynamic>> cardBenefits,
     required String userId,
   }) async {
-    List<Map<String, dynamic>> scenarios = [];
+    List<Map<String, dynamic>> rankedScenarios = [];
 
+    // Determine platforms to evaluate
+    final platforms = request.preferredPlatform != null 
+        ? [request.preferredPlatform!]
+        : _supportedPlatforms;
+
+    print('DEBUG: Evaluating ${cardBenefits.length} cards across ${platforms.length} platform(s)');
+
+    // Evaluate each card-platform combination
     for (final cardBenefit in cardBenefits) {
       final config = cardBenefit['config'] as MovieBenefitConfig?;
-      if (config == null || !config.isValid) continue;
-
-      // Check efficiency threshold
-      if (!config.isEfficient(request.pricePerTicket)) {
-        continue;
-      }
-
-      // Check minimum amount
-      if (!config.meetsMinimumAmount(request.totalAmount)) {
-        continue;
-      }
-
-      // Check day of week
-      if (!config.validForDay(DateTime.now())) {
-        continue;
-      }
-
-      // Evaluate for each supported platform (or user preference)
-      final platforms = request.preferredPlatform != null 
-          ? [request.preferredPlatform!]
-          : _supportedPlatforms;
-
+      final isOwned = cardBenefit['is_owned'] as bool;
+      
       for (final platform in platforms) {
-        if (!config.appliesToPlatform(platform)) continue;
+        // Quick filters before expensive calculation
+        if (config != null) {
+          if (!config.isEfficient(request.pricePerTicket)) continue;
+          if (!config.meetsMinimumAmount(request.totalAmount)) continue;
+          if (!config.validForDay(DateTime.now())) continue;
+          if (!config.appliesToPlatform(platform)) continue;
+        }
 
         final scenario = await _calculateBenefitScenario(
           request: request,
@@ -366,32 +486,144 @@ class MovieRuleEngineService {
           userId: userId,
         );
 
-        if (scenario != null) {
-          scenarios.add(scenario);
+        if (scenario != null && scenario['savings'] > 0) {
+          // Calculate comprehensive ranking score
+          final savingsPercent = ((scenario['savings'] as double) / request.totalAmount) * 100;
+          final savingsPerTicket = (scenario['savings'] as double) / (scenario['tickets'] as int);
+          final displayPriority = (cardBenefit['priority_score'] ?? 1) as int;
+          
+          // Bonus factors
+          final ownershipBonus = isOwned ? 30.0 : 0.0;
+          final platformBonus = (request.preferredPlatform == platform) ? 20.0 : 0.0;
+          final priorityScore = (displayPriority / 10.0) * 10.0; // Normalize to 0-10 range
+          
+          // Comprehensive ranking: weighted sum
+          final rankingScore = 
+              (savingsPercent * 0.4) +         // 40% weight on savings percentage
+              ownershipBonus +                  // 30 points if owned
+              platformBonus +                   // 20 points for platform match
+              priorityScore;                    // Up to 10 points from display priority
+          
+          scenario['ranking_score'] = rankingScore;
+          scenario['savings_percent'] = savingsPercent;
+          scenario['savings_per_ticket'] = savingsPerTicket;
+          
+          rankedScenarios.add(scenario);
+          
+          print('DEBUG: ${cardBenefit['card_name']} on $platform: '
+                'saves ${savingsPercent.toStringAsFixed(1)}%, '
+                'rank=${rankingScore.toStringAsFixed(1)}, '
+                'owned=$isOwned');
         }
       }
     }
 
-    // Sort by efficiency (savings per ticket)
-    scenarios.sort((a, b) {
-      final efficiencyA = (a['savings'] as double) / (a['tickets'] as int);
-      final efficiencyB = (b['savings'] as double) / (b['tickets'] as int);
-      return efficiencyB.compareTo(efficiencyA);
-    });
+    if (rankedScenarios.isEmpty) {
+      print('DEBUG: No valid scenarios found');
+      return null;
+    }
 
-    return scenarios;
+    // Sort by ranking score descending
+    rankedScenarios.sort((a, b) => 
+      (b['ranking_score'] as double).compareTo(a['ranking_score'] as double)
+    );
+
+    final winner = rankedScenarios.first;
+    print('DEBUG: Winner: ${winner['card_name']} on ${winner['platform']} '
+          '(rank=${winner['ranking_score']}, saves=₹${winner['savings']})');
+    
+    // Early exit check: if winner is significantly better (2x ranking score)
+    if (rankedScenarios.length > 1) {
+      final runnerUp = rankedScenarios[1];
+      final winnerScore = winner['ranking_score'] as double;
+      final runnerUpScore = runnerUp['ranking_score'] as double;
+      
+      if (winnerScore > runnerUpScore * 1.5) {
+        print('DEBUG: Clear winner found (${winnerScore.toStringAsFixed(1)} vs ${runnerUpScore.toStringAsFixed(1)})');
+      }
+    }
+
+    return winner;
   }
+
+  /// Generate a single-step recommendation from the best scenario
+  MovieRecommendation _generateSingleRecommendation({
+    required Map<String, dynamic> scenario,
+    required MovieTicketRequest request,
+  }) {
+    final step = TransactionStep(
+      platform: scenario['platform'],
+      cardName: scenario['card_name'],
+      cardId: scenario['card_id'].toString(),
+      ticketCount: scenario['tickets'],
+      amount: scenario['amount'],
+      savings: scenario['savings'],
+      benefitType: scenario['benefit_type'],
+      explanation: scenario['explanation'],
+      benefitDetails: {
+        'priority_score': scenario['priority_score'],
+        'efficiency': scenario['savings_per_ticket'],
+        'is_owned': scenario['is_owned'],
+        'user_card_id': scenario['user_card_id'],
+        'card_network': scenario['card_network'],
+        'bank': scenario['bank'],
+        'ranking_score': scenario['ranking_score'],
+        'savings_percent': scenario['savings_percent'],
+      },
+    );
+
+    final totalSavings = scenario['savings'] as double;
+    final totalAmount = request.totalAmount;
+    final finalAmount = totalAmount - totalSavings;
+    final savingsPercent = (totalSavings / totalAmount * 100).toStringAsFixed(1);
+
+    return MovieRecommendation(
+      steps: [step],
+      totalAmount: totalAmount,
+      totalSavings: totalSavings,
+      finalAmount: finalAmount,
+      explanation: 'Optimized strategy saves ₹${totalSavings.toStringAsFixed(0)} '
+          '($savingsPercent%) using your best card',
+      calculatedAt: DateTime.now(),
+      metadata: {
+        'ranking_score': scenario['ranking_score'],
+        'savings_percent': scenario['savings_percent'],
+        'is_owned': scenario['is_owned'],
+      },
+    );
+  }
+
+
 
   /// Calculate benefit for a specific scenario
   Future<Map<String, dynamic>?> _calculateBenefitScenario({
     required MovieTicketRequest request,
     required Map<String, dynamic> cardBenefit,
-    required MovieBenefitConfig config,
+    required MovieBenefitConfig? config, // Made nullable
     required String platform,
     required String userId,
   }) async {
     try {
       print('DEBUG: Calculating benefit scenario for card: ${cardBenefit['card_name']}, platform: $platform');
+      
+      // If no config, create a basic scenario with 0 savings
+      if (config == null) {
+        print('DEBUG: No config available, creating basic scenario');
+        return {
+          'card_id': cardBenefit['card_id'],
+          'user_card_id': cardBenefit['user_card_id'],
+          'card_name': cardBenefit['card_name'],
+          'card_network': cardBenefit['card_network'],
+          'bank': cardBenefit['bank'],
+          'savings': 0.0,
+          'tickets': request.numberOfTickets,
+          'platform': platform,
+          'explanation': 'Entertainment benefit available - specific terms not configured',
+          'benefit_type': 'UNKNOWN',
+          'is_owned': cardBenefit['is_owned'] ?? false,
+        };
+      }
+      
       final offerType = config.offerType;
     double savings = 0.0;
     int applicableTickets = request.numberOfTickets;
@@ -469,6 +701,8 @@ class MovieRuleEngineService {
     return {
       'card_id': cardBenefit['card_id'],
       'card_name': cardBenefit['card_name'],
+      'card_network': cardBenefit['card_network'],
+      'bank': cardBenefit['bank'],
       'platform': platform,
       'tickets': applicableTickets,
       'amount': applicableTickets * request.pricePerTicket,
@@ -477,6 +711,8 @@ class MovieRuleEngineService {
       'explanation': explanation,
       'priority_score': cardBenefit['priority_score'],
       'config': config,
+      'is_owned': cardBenefit['is_owned'], // NEW: pass ownership info
+      'user_card_id': cardBenefit['user_card_id'], // NEW: pass user_card_id if owned
     };
     } catch (e) {
       print('ERROR in _calculateBenefitScenario: $e');
@@ -489,76 +725,7 @@ class MovieRuleEngineService {
     }
   }
 
-  /// Optimize transaction splitting to maximize savings
-  List<TransactionStep> _optimizeTransactionSplitting({
-    required List<Map<String, dynamic>> scenarios,
-    required MovieTicketRequest request,
-  }) {
-    List<TransactionStep> steps = [];
-    int remainingTickets = request.numberOfTickets;
 
-    // Take top 5 most efficient scenarios
-    final topScenarios = scenarios.take(5).toList();
-
-    for (final scenario in topScenarios) {
-      if (remainingTickets <= 0) break;
-
-      final ticketsForThisStep = (scenario['tickets'] as int).clamp(0, remainingTickets);
-      if (ticketsForThisStep <= 0) continue;
-
-      final step = TransactionStep(
-        platform: scenario['platform'],
-        cardName: scenario['card_name'],
-        cardId: scenario['card_id'].toString(),
-        ticketCount: ticketsForThisStep,
-        amount: ticketsForThisStep * request.pricePerTicket,
-        savings: (scenario['savings'] as double) * (ticketsForThisStep / scenario['tickets']),
-        benefitType: scenario['benefit_type'],
-        explanation: scenario['explanation'],
-        benefitDetails: {
-          'priority_score': scenario['priority_score'],
-          'efficiency': (scenario['savings'] as double) / (scenario['tickets'] as int),
-        },
-      );
-
-      steps.add(step);
-      remainingTickets -= ticketsForThisStep;
-    }
-
-    return steps;
-  }
-
-  /// Generate final recommendation
-  MovieRecommendation _generateRecommendation({
-    required List<TransactionStep> steps,
-    required MovieTicketRequest request,
-  }) {
-    final totalSavings = steps.fold(0.0, (sum, step) => sum + step.savings);
-    final totalAmount = request.totalAmount;
-    final finalAmount = totalAmount - totalSavings;
-
-    String explanation;
-    if (steps.isEmpty) {
-      explanation = 'No suitable movie benefits found. Consider using a general cashback card.';
-    } else {
-      final savingsPercent = (totalSavings / totalAmount * 100).toStringAsFixed(1);
-      explanation = 'Optimized strategy saves ₹${totalSavings.toStringAsFixed(0)} '
-          '($savingsPercent%) across ${steps.length} transaction(s)';
-    }
-
-    return MovieRecommendation(
-      steps: steps,
-      totalAmount: totalAmount,
-      totalSavings: totalSavings,
-      finalAmount: finalAmount,
-      explanation: explanation,
-      calculatedAt: DateTime.now(),
-      metadata: {
-        'request': request.toJson(),
-        'optimization_version': '1.0',
-      },
-    );
-  }
 
   /// Get statement cycle usage for a card
   Future<int> _getMonthlyUsage({

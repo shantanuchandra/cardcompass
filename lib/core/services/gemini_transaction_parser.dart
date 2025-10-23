@@ -69,14 +69,10 @@ ANALYZE THE STATEMENT:''';
         }
       };
       
-      // Call Gemini API
-      final response = await http.post(
-        Uri.parse(AIConfig.geminiGenerateUrl),
-        headers: AIConfig.geminiHeaders,
-        body: json.encode(requestBody),
-      );
+      // Call Gemini API with automatic fallback
+      final response = await _callGeminiWithFallback(requestBody, maxRetries: 3);
       
-      if (response.statusCode == 200) {
+      if (response != null && response.statusCode == 200) {
         final decoded = json.decode(response.body);
         final content = decoded['candidates']?[0]?['content']?['parts']?[0]?['text'];
         
@@ -114,9 +110,11 @@ ANALYZE THE STATEMENT:''';
             print('Raw content: $content');
           }
         }
-      } else {
+      } else if (response != null) {
         print('❌ GEMINI PARSING: Non-200 response, status ${response.statusCode}');
         print('Response body: ${response.body}');
+      } else {
+        print('❌ GEMINI PARSING: All API attempts failed');
       }
       
       // Fallback to basic extraction if API fails
@@ -228,14 +226,10 @@ ANALYZE THIS STATEMENT:''';
         }
       };
       
-      // Call Gemini API
-      final response = await http.post(
-        Uri.parse(AIConfig.geminiGenerateUrl),
-        headers: AIConfig.geminiHeaders,
-        body: json.encode(requestBody),
-      );
+      // Call Gemini API with automatic fallback
+      final response = await _callGeminiWithFallback(requestBody, maxRetries: 3);
       
-      if (response.statusCode == 200) {
+      if (response != null && response.statusCode == 200) {
         final decoded = json.decode(response.body);
         final content = decoded['candidates']?[0]?['content']?['parts']?[0]?['text'];
         
@@ -270,9 +264,11 @@ ANALYZE THIS STATEMENT:''';
             print('Raw content: $content');
           }
         }
-      } else {
+      } else if (response != null) {
         print('❌ GEMINI PARSING: Non-200 response, status ${response.statusCode}');
         print('Response body: ${response.body}');
+      } else {
+        print('❌ GEMINI PARSING: All API attempts failed');
       }
       return [];
     } catch (e) {
@@ -383,13 +379,10 @@ GENERAL INDIAN BANK INSTRUCTIONS:
         }
       };
 
-      final response = await http.post(
-        Uri.parse(AIConfig.geminiGenerateUrl),
-        headers: AIConfig.geminiHeaders,
-        body: json.encode(requestBody),
-      );
+      // Call Gemini API with automatic fallback
+      final response = await _callGeminiWithFallback(requestBody, maxRetries: 3);
 
-      if (response.statusCode == 200) {
+      if (response != null && response.statusCode == 200) {
         final jsonResponse = json.decode(response.body);
         
         if (jsonResponse['candidates'] != null && 
@@ -410,12 +403,21 @@ GENERAL INDIAN BANK INSTRUCTIONS:
         }
       }
       
-      print('❌ GEMINI BENEFIT EXTRACTION: Non-200 response, status ${response.statusCode}');
-      return {
-        'success': false,
-        'error': 'API request failed with status ${response.statusCode}',
-        'data': null,
-      };
+      if (response != null) {
+        print('❌ GEMINI BENEFIT EXTRACTION: Non-200 response, status ${response.statusCode}');
+        return {
+          'success': false,
+          'error': 'API request failed with status ${response.statusCode}',
+          'data': null,
+        };
+      } else {
+        print('❌ GEMINI BENEFIT EXTRACTION: All API attempts failed');
+        return {
+          'success': false,
+          'error': 'All API attempts exhausted',
+          'data': null,
+        };
+      }
       
     } catch (e) {
       print('❌ GEMINI BENEFIT EXTRACTION: Error extracting benefits: $e');
@@ -585,5 +587,67 @@ CONTENT TO ANALYZE:
     }
     
     return confidence.clamp(0.0, 1.0);
+  }
+  
+  /// Call Gemini API with automatic fallback to alternate models on rate limit
+  /// Returns the response if successful, null if all attempts failed
+  static Future<http.Response?> _callGeminiWithFallback(
+    Map<String, dynamic> requestBody, {
+    int maxRetries = 3,
+  }) async {
+    int attempt = 0;
+    
+    while (attempt < maxRetries) {
+      attempt++;
+      
+      try {
+        print('🔄 Gemini API call attempt $attempt/$maxRetries using model: ${AIConfig.geminiModel}');
+        
+        final response = await http.post(
+          Uri.parse(AIConfig.geminiGenerateUrl),
+          headers: AIConfig.geminiHeaders,
+          body: json.encode(requestBody),
+        );
+        
+        // Check if rate limit error occurred
+        if (AIConfig.isRateLimitError(response.statusCode, response.body)) {
+          print('⚠️  Rate limit detected (Status: ${response.statusCode})');
+          
+          // Try to switch to fallback model
+          final switched = AIConfig.switchToFallbackModel();
+          
+          if (!switched) {
+            print('❌ No more fallback models available');
+            return response; // Return the error response
+          }
+          
+          // Wait a bit before retrying with new model
+          print('⏳ Waiting 2 seconds before retry with new model...');
+          await Future.delayed(Duration(seconds: 2));
+          continue; // Retry with new model
+        }
+        
+        // Success or non-rate-limit error - return the response
+        if (response.statusCode == 200) {
+          print('✅ Gemini API call successful with model: ${AIConfig.geminiModel}');
+        }
+        return response;
+        
+      } catch (e) {
+        print('❌ Gemini API call error on attempt $attempt: $e');
+        
+        // If not last attempt, wait and try fallback
+        if (attempt < maxRetries) {
+          print('⏳ Waiting 3 seconds before retry...');
+          await Future.delayed(Duration(seconds: 3));
+          
+          // Try switching model on network errors too
+          AIConfig.switchToFallbackModel();
+        }
+      }
+    }
+    
+    print('❌ All Gemini API attempts exhausted after $maxRetries tries');
+    return null;
   }
 }

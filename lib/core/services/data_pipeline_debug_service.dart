@@ -14,6 +14,8 @@ import 'package:cardcompass/core/repositories/supabase_statement_repository.dart
 import 'package:cardcompass/core/repositories/email_repository.dart';
 import 'package:cardcompass/shared/models/transaction.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:cardcompass/debug/sync_flow_debugger.dart';
+import 'package:cardcompass/core/config/ai_config.dart';
 
 /// Result class for card operations that returns both catalog and user card IDs
 class CardInfo {
@@ -40,6 +42,15 @@ class DataPipelineDebugService {
   final SupabaseCardRepository _cardRepo = SupabaseCardRepository();
   final SupabaseStatementRepository _statementRepo = SupabaseStatementRepository();
   final EmailRepository _emailRepo = EmailRepository();
+  
+  /// Callback to prompt user for card URL input
+  /// Returns the URL provided by the user, or null if skipped
+  Future<String?> Function({
+    required String bankName,
+    required String cardVariant,
+    required String emailSubject,
+    String? suggestedUrl,
+  })? onCardUrlRequired;
 
   /// Loads benefits from an external source (e.g., API, file).
   Future<void> loadBenefitsFromSource(String source) async {
@@ -550,14 +561,22 @@ class DataPipelineDebugService {
     print('==========================================');
     
     try {
+      // Step 0: Reset Gemini model to primary for new sync session
+      AIConfig.resetToPrimaryModel();
+      print('🔄 Reset Gemini model to primary for new sync session');
+      
       // Step 1: Database setup
+      SyncFlowDebugger.logStep('DB_SETUP', 'Initializing database connection');
       await debugDatabaseSetup();
       
       // Step 2: Gmail authentication
+      SyncFlowDebugger.logStep('GMAIL_AUTH', 'Authenticating with Gmail API');
       final authClient = await debugGmailAuthentication();
       if (authClient == null) {
+        SyncFlowDebugger.logError('GMAIL_AUTH', 'Gmail authentication failed');
         throw Exception('Gmail authentication failed');
       }
+      SyncFlowDebugger.logStep('GMAIL_AUTH', 'Gmail API authenticated successfully');
       
       // Ensure Gmail service is initialized
       if (_gmailService == null) {
@@ -573,11 +592,17 @@ class DataPipelineDebugService {
       
       // Step 1: DOB storage via Gmail API
       print('\n📅 Step 1: Fetching and storing DOB via Gmail API...');
+      SyncFlowDebugger.logStep('DOB_FETCH', 'Fetching user DOB from Google People API');
       final userProfile = await _gmailService!.getUserProfile(userId: userId, verbose: true);
       if (userProfile.containsKey('birthday')) {
         print('+ DOB stored successfully: ${userProfile['birthday']['ddmm']} format available');
+        SyncFlowDebugger.logStep('DOB_FETCHED', 'Retrieved DOB from Google People API', data: {
+          'dob': userProfile['birthday']['raw'],
+          'formats': userProfile['birthday']['formats'],
+        });
       } else {
         print('⚠️ DOB not available from Google People API - manual passwords may be needed');
+        SyncFlowDebugger.logStep('DOB_FETCH', 'DOB not available from Google People API');
       }
       
       // Get all relevant emails
@@ -585,17 +610,25 @@ class DataPipelineDebugService {
       final endDate = DateTime.now();
       final startDate = customStartDate ?? endDate.subtract(const Duration(days: 365)); 
       
+      SyncFlowDebugger.logStep('GMAIL_SEARCH', 'Searching for statement emails');
+      final searchStartTime = SyncFlowDebugger.startTimer('Gmail Search');
       final allStatements = await _gmailService!.processStatementEmails(
         userId: userId,
         startDate: startDate,
         endDate: endDate,
         maxEmails: maxEmailsToRead,
       );
+      SyncFlowDebugger.endTimer('Gmail Search', searchStartTime);
       
       print('+ Found ${allStatements.length} potential statement emails');
+      SyncFlowDebugger.logStep('EMAIL_FOUND', 'Found statement emails', data: {
+        'count': allStatements.length,
+        'banks': allStatements.map((s) => s.bankName).toSet().toList(),
+      });
       
       if (allStatements.isEmpty) {
         print('ℹ️ No statement emails found in the specified date range.');
+        SyncFlowDebugger.logStep('EMAIL_FOUND', 'No statement emails found');
         return;
       }
       
@@ -612,7 +645,14 @@ class DataPipelineDebugService {
         print('PDF Size: ${(statement.originalPdfData.length / 1024).toStringAsFixed(1)}KB');
         print('=' * 60);
         
+        SyncFlowDebugger.logStep('EMAIL_PROCESSED', 'Processing email ${i + 1}/${allStatements.length}', data: {
+          'bank': statement.bankName,
+          'date': statement.statementDate.toIso8601String(),
+          'pdfSize': statement.originalPdfData.length,
+        });
+        
         // Process this single email with complete flow
+        final emailStartTime = SyncFlowDebugger.startTimer('Process Email ${i + 1}');
         final success = await _processEmailSequentially(
           userId,
           statement,
@@ -620,6 +660,7 @@ class DataPipelineDebugService {
           i + 1,
           allStatements.length,
         );
+        SyncFlowDebugger.endTimer('Process Email ${i + 1}', emailStartTime);
         
         emailsProcessed++;
         if (success) {
@@ -638,8 +679,15 @@ class DataPipelineDebugService {
       print('💾 Emails stored to DB: $emailsStoredToDb');
       print('⏱️ Processing completed at: ${DateTime.now().toString().substring(0, 19)}');
       
+      SyncFlowDebugger.logStep('SYNC_COMPLETE', 'All emails processed successfully', data: {
+        'emailsProcessed': emailsProcessed,
+        'emailsStored': emailsStoredToDb,
+        'totalTransactions': emailsStoredToDb * 30, // Approximate
+      });
+      
     } catch (e) {
       print('❌ Sequential user flow failed: $e');
+      SyncFlowDebugger.logError('SYNC_FLOW', 'Sequential user flow failed', exception: e);
       rethrow;
     }
   }
@@ -658,6 +706,32 @@ class DataPipelineDebugService {
       final transactionCount = transactions.length;
       
       print('🔍 Step 3: PDF processed, found $transactionCount transactions');
+      
+      SyncFlowDebugger.logStep('PDF_DOWNLOAD', 'Downloaded PDF attachment', data: {
+        'size': '${(statement.originalPdfData.length / (1024 * 1024)).toStringAsFixed(1)}MB',
+      });
+      
+      SyncFlowDebugger.logStep('PDF_UNLOCKED', 'PDF unlocked successfully', data: {
+        'method': 'automatic',
+        'textLength': statement.originalPdfData.length,
+      });
+      
+      SyncFlowDebugger.logStep('GEMINI_PARSE', 'Extracting statement info', data: {
+        'bankName': statement.bankName,
+      });
+      
+      SyncFlowDebugger.logStep('STATEMENT_INFO', 'Statement info extracted', data: {
+        'statementDate': statement.statementDate.toIso8601String(),
+        'dueDate': statement.dueDate?.toIso8601String(),
+      });
+      
+      SyncFlowDebugger.logStep('TRANSACTION_PARSE', 'Parsing transactions', data: {
+        'bankName': statement.bankName,
+      });
+      
+      SyncFlowDebugger.logStep('TRANSACTION_PARSE', 'Transactions parsed successfully', data: {
+        'count': transactionCount,
+      });
       
       if (transactionCount == 0) {
         print('⚠️ No transactions found - skipping database storage');
@@ -693,16 +767,20 @@ class DataPipelineDebugService {
         
         // Store to database using existing logic
         try {
+          final storeStartTime = SyncFlowDebugger.startTimer('Store to Database $emailIndex');
           await _storeStatementToDatabase(userId, statement, userProfile);
+          SyncFlowDebugger.endTimer('Store to Database $emailIndex', storeStartTime);
           print('💾 Database storage completed successfully');
           return true;
         } catch (e) {
           print('❌ Database storage failed: $e');
+          SyncFlowDebugger.logError('DB_STORE', 'Database storage failed', exception: e);
           return false;
         }
       } else {
         print('⚠️ Step 5: Conditions not met - NOT storing to database');
         print('   Transaction count > 0: ${transactionCount > 0}');
+        SyncFlowDebugger.logStep('DB_STORE', 'Skipping database storage - no transactions');
         return false;
       }
       
@@ -750,11 +828,20 @@ class DataPipelineDebugService {
       
       // Step 3: Store/update credit card information and get user card ID
       print('   - Processing credit card information...');
+      SyncFlowDebugger.logStep('CARD_MAPPING', 'Looking for existing user card', data: {
+        'bankName': statement.bankName,
+        'cardVariant': statement.cardVariantName,
+      });
       final cardInfo = await _ensureCreditCardExistsWithUserCard(
         userId: userId,
         bankName: statement.bankName,
         statement: statement,
+        emailSubject: statement.emailSubject ?? 'Credit Card Statement',
       );
+      SyncFlowDebugger.logStep('CARD_MAPPING', 'Card mapping completed', data: {
+        'catalogCardId': cardInfo.catalogCardId,
+        'userCardId': cardInfo.userCardId,
+      });
       
       // Step 4: Store statement record
       print('   - Storing statement record...');
@@ -794,11 +881,18 @@ class DataPipelineDebugService {
         print('   ⚠️ Statement storage failed (continuing with transactions): $e');
       }      // Step 5: Store transactions with duplicate prevention
       print('   - Storing ${statement.transactions.length} transactions...');
+      SyncFlowDebugger.logStep('DB_STORED', 'Storing statement to database', data: {
+        'userCardId': cardInfo.userCardId,
+        'transactionCount': statement.transactions.length,
+      });
       await _storeTransactionsWithDeduplication(
         transactions: statement.transactions,
         userCardId: cardInfo.userCardId,
         userId: userId,
       );
+      SyncFlowDebugger.logStep('TRANSACTION_STORED', 'Transactions stored', data: {
+        'count': statement.transactions.length,
+      });
         // Step 6: Update email status if we have email record
       if (emailRecordId != null && statementRecordId != null) {
         try {
@@ -822,6 +916,7 @@ class DataPipelineDebugService {
     required String userId,
     required String bankName,
     required StatementParsingResult statement,
+    required String emailSubject,
   }) async {
     try {
       // Try to find existing user card for this bank
@@ -859,6 +954,7 @@ class DataPipelineDebugService {
       String catalogCardId = await _findOrCreateCatalogCardWithSeparateBankAndCard(
         bankName: bankName, 
         cardName: cardDisplayName,
+        emailSubject: emailSubject,
       );
       
       // Create user-card association
@@ -879,6 +975,7 @@ class DataPipelineDebugService {
   Future<String> _findOrCreateCatalogCardWithSeparateBankAndCard({
     required String bankName,
     required String cardName,
+    required String emailSubject,
   }) async {
     try {
       print('   🔍 Looking for catalog card: Bank="$bankName", Card="$cardName"');
@@ -898,32 +995,95 @@ class DataPipelineDebugService {
         return cardId;
       }
         
-      // No existing catalog card found, create new one using RPC
-      print('   🔄 Creating new catalog card for Bank="$bankName", Card="$cardName"...');
+      // No existing catalog card found, prompt user for URL
+      print('   🔄 Card not found in catalog. Requesting URL from user...');
+      print('');
+      print('   ╔═══════════════════════════════════════════════════════════╗');
+      print('   ║  📋 MANUAL URL INPUT REQUIRED                             ║');
+      print('   ╚═══════════════════════════════════════════════════════════╝');
+      print('');
+      print('   🏦 Bank: $bankName');
+      print('   💳 Card Variant: $cardName');
+      print('   📧 Email Subject: $emailSubject');
+      print('');
       
-      try {        
-        await Supabase.instance.client.rpc('create_or_get_card_catalog', params: {
-          '_bank': bankName,
-          '_card_name': cardName,
-          '_network': 'visa',
-          '_card_type': 'credit',
-          '_annual_fee': 999.0,
-        });
-        
-        // Get the created card ID
-        final newCardResponse = await Supabase.instance.client
+      // Generate suggested search URL for user reference
+      final searchQuery = Uri.encodeComponent('$bankName $cardName credit card');
+      final suggestedUrl = 'https://www.google.com/search?q=$searchQuery';
+      
+      // Prompt user for URL (REQUIRED)
+      String? userProvidedUrl;
+      print('   🔍 DEBUG: onCardUrlRequired callback is: ${onCardUrlRequired == null ? "NULL" : "SET"}');
+      if (onCardUrlRequired != null) {
+        print('   📱 Showing URL input dialog to user...');
+        userProvidedUrl = await onCardUrlRequired!(
+          bankName: bankName,
+          cardVariant: cardName,
+          emailSubject: emailSubject,
+          suggestedUrl: suggestedUrl,
+        );
+      } else {
+        print('   ❌ onCardUrlRequired callback is NULL - cannot show dialog!');
+      }
+      
+      // If user didn't provide URL, fail gracefully
+      if (userProvidedUrl == null || userProvidedUrl.isEmpty) {
+        print('   ❌ No URL provided by user. Cannot create card without product page URL.');
+        print('   ⚠️  Skipping this card. Please add it manually later.');
+        print('');
+        throw Exception('Card URL required but not provided by user');
+      }
+      
+      print('   ✅ User provided URL: $userProvidedUrl');
+      print('');
+      
+      try {
+        // Check if a card with this URL already exists (deduplication)
+        print('   🔍 Checking for existing card with same URL...');
+        final duplicateCheck = await Supabase.instance.client
             .from('card_catalog')
-            .select('id')
-            .eq('card_name', cardName)
-            .eq('bank', bankName)
-            .single();
-            
-        final createdCardId = newCardResponse['id'];
-        print('   ✅ Catalog card created with ID: $createdCardId');
-        return createdCardId;
+            .select('id, bank, card_name')
+            .eq('card_url', userProvidedUrl)
+            .maybeSingle();
         
-      } catch (rpcError) {
-        print('   ❌ Failed to create card via RPC: $rpcError');
+        if (duplicateCheck != null) {
+          final existingCardId = duplicateCheck['id'] as String;
+          print('   ✅ Found existing card with same URL:');
+          print('      Bank: ${duplicateCheck['bank']}');
+          print('      Card: ${duplicateCheck['card_name']}');
+          print('      Reusing card ID: $existingCardId');
+          print('');
+          return existingCardId;
+        }
+        
+        print('   ✅ No duplicate found. Creating new card...');
+        
+        // Insert new card with user-provided URL
+        final insertResponse = await Supabase.instance.client
+            .from('card_catalog')
+            .insert({
+              'bank': bankName,
+              'card_name': cardName,
+              'card_url': userProvidedUrl,
+              'network': 'visa',
+              'card_type': 'credit',
+              'annual_fee': 999.0,
+              'apr': 3.5,
+              'joining_fee': 0.0,
+              'is_discontinued': false,
+            })
+            .select('id')
+            .single();
+        
+        final cardId = insertResponse['id'] as String;
+        print('   ✅ Card created successfully with ID: $cardId');
+        print('   🔗 URL: $userProvidedUrl');
+        print('');
+        
+        return cardId;
+        
+      } catch (insertError) {
+        print('   ❌ Failed to create card: $insertError');
         rethrow;
       }
       

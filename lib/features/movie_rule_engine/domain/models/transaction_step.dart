@@ -24,6 +24,14 @@ class TransactionStep {
 
   double get effectiveAmount => amount - savings;
   double get savingsPercentage => amount > 0 ? (savings / amount) * 100 : 0;
+  
+  // NEW: Check if user owns this card based on benefitDetails
+  bool get isOwned => benefitDetails?['is_owned'] == true;
+  
+  // NEW: Get card network and bank for display
+  String? get cardNetwork => benefitDetails?['card_network'];
+  String? get bank => benefitDetails?['bank'];
+  String? get userCardId => benefitDetails?['user_card_id'];
 
   Map<String, dynamic> toJson() => {
     'platform': platform,
@@ -57,5 +65,6 @@ class TransactionStep {
   String toString() => 'TransactionStep('
       '$ticketCount tickets via $cardName on $platform: '
       '₹$amount - ₹$savings = ₹$effectiveAmount'
+      ' [${isOwned ? "OWNED" : "NOT OWNED"}]'
       ')';
 }
