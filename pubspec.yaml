@@ -20,7 +20,7 @@ version: 1.0.0+1
 
 environment:
   sdk: '>=3.2.0 <4.0.0'
-  flutter: '>=3.2.0'
+  flutter: '>=3.35.1'
 
 # Dependencies specify other packages that your package needs in order to work.
 # To automatically upgrade your package dependencies to the latest versions
@@ -55,14 +55,14 @@ dependencies:
 
   # PDF Processing
   pdf: ^3.11.1
-  syncfusion_flutter_pdf: ^31.1.23
+  syncfusion_flutter_pdf: ^31.2.3
   pdfx: ^2.6.0
 
   # File Operations
   path_provider: ^2.1.5
 
   # Charts & Visualization
-  fl_chart: ^1.1.1
+  fl_chart: ^0.69.0
   syncfusion_flutter_charts: ^31.1.23
   # Image & Media
   image_picker: ^1.2.0

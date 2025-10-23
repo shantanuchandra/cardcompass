@@ -35,6 +35,12 @@ final movieOptimizationControllerProvider = StateNotifierProvider<MovieOptimizat
   return MovieOptimizationController(ref);
 });
 
+/// Provider for all card-benefit combinations
+final allMovieCardBenefitsProvider = FutureProvider.family<List<Map<String, dynamic>>, String>((ref, userId) async {
+  final service = ref.read(movieRuleEngineServiceProvider);
+  return await service.getAllMovieCardBenefits(userId: userId);
+});
+
 /// Controller for managing movie optimization state
 class MovieOptimizationController extends StateNotifier<AsyncValue<MovieRecommendation?>> {
   final Ref _ref;

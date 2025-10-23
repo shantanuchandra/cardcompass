@@ -24,7 +24,7 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
   ColorScheme get _scheme => Theme.of(context).colorScheme;
   bool get _isDark => Theme.of(context).brightness == Brightness.dark;
   Color get _surfaceCard => _isDark
-    ? _scheme.surfaceVariant.withOpacity(0.35)
+    ? _scheme.surfaceContainerHighest.withOpacity(0.35)
     : Colors.grey[50]!;
   Color get _outline => _scheme.outline.withOpacity(_isDark ? 0.5 : 0.35);
   Color get _successContainer =>
@@ -62,6 +62,7 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
   @override
   Widget build(BuildContext context) {
     final optimizationState = ref.watch(movieOptimizationControllerProvider);
+    final authState = ref.watch(authStateProvider);
     
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16.0),
@@ -75,6 +76,10 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
           _buildAnalyzeButton(),
           const SizedBox(height: 24),
           _buildResults(optimizationState),
+          const SizedBox(height: 32),
+          // NEW: Show all available card-benefit combinations
+          if (authState.user != null)
+            _buildAllCardBenefitsSection(authState.user!.id),
           const SizedBox(height: 24), // Add bottom padding for better UX
         ],
       ),
@@ -513,11 +518,16 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
   }
 
   Widget _buildStepCard(TransactionStep step, int stepNumber) {
+    final isOwned = step.isOwned;
+    
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        border: Border.all(color: _outline),
+        border: Border.all(
+          color: isOwned ? _outline : Colors.orange.withOpacity(0.5),
+          width: isOwned ? 1 : 2,
+        ),
         borderRadius: BorderRadius.circular(8),
         color: _surfaceCard,
       ),
@@ -540,11 +550,24 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: Text(
-                  '${step.ticketCount} tickets via ${step.cardName}',
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${step.ticketCount} tickets via ${step.cardName}',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    if (step.bank != null)
+                      Text(
+                        '${step.bank} • ${step.cardNetwork ?? ""}',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: _scheme.onSurface.withOpacity(0.6),
+                          fontSize: 11,
+                        ),
+                      ),
+                  ],
                 ),
               ),
               Container(
@@ -565,6 +588,47 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
             ],
           ),
           const SizedBox(height: 8),
+          
+          // Ownership status badge
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: isOwned 
+                      ? Colors.green.withOpacity(0.1) 
+                      : Colors.orange.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: isOwned 
+                        ? Colors.green.withOpacity(0.3) 
+                        : Colors.orange.withOpacity(0.3),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      isOwned ? Icons.check_circle : Icons.shopping_bag_outlined,
+                      size: 14,
+                      color: isOwned ? Colors.green[700] : Colors.orange[700],
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      isOwned ? 'You own this card' : 'Card not owned',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                        color: isOwned ? Colors.green[700] : Colors.orange[700],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          
+          const SizedBox(height: 8),
           Text(
             '${step.explanation} on ${step.platform}',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -578,7 +642,262 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
               fontWeight: FontWeight.w500,
             ),
           ),
+          
+          // Action button
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: () => _handleCardAction(step),
+              icon: Icon(isOwned ? Icons.credit_card : Icons.add_card),
+              label: Text(isOwned ? 'Use This Card' : 'Get This Card'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: isOwned 
+                    ? Theme.of(context).primaryColor 
+                    : Colors.orange[600],
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+            ),
+          ),
         ],
+      ),
+    );
+  }
+  
+  void _handleCardAction(TransactionStep step) {
+    if (step.isOwned) {
+      // User owns the card - show confirmation or navigate to transaction entry
+      _showCardUsageDialog(step);
+    } else {
+      // User doesn't own the card - show card details and application info
+      _showCardAcquisitionDialog(step);
+    }
+  }
+  
+  void _showCardUsageDialog(TransactionStep step) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.credit_card, color: Theme.of(context).primaryColor),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text('Use ${step.cardName}'),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Ready to book ${step.ticketCount} tickets on ${step.platform}?'),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.green[50],
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Your Savings:',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: Colors.green[700],
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '₹${step.amount.toStringAsFixed(0)} → ₹${step.effectiveAmount.toStringAsFixed(0)}',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.green[700],
+                    ),
+                  ),
+                  Text(
+                    'Save ₹${step.savings.toStringAsFixed(0)} (${step.savingsPercentage.toStringAsFixed(1)}%)',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.green[600],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Tip: Make sure to use the recommended platform and follow the offer terms.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Colors.grey[600],
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              _showSnackbar('Great! Don\'t forget to use ${step.cardName} on ${step.platform}', isSuccess: true);
+            },
+            child: const Text('Got It!'),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  void _showCardAcquisitionDialog(TransactionStep step) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.add_card, color: Colors.orange[600]),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text('Get ${step.cardName}'),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.orange[50],
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Potential Savings:',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: Colors.orange[700],
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '₹${step.savings.toStringAsFixed(0)} on this transaction',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.orange[700],
+                      ),
+                    ),
+                    Text(
+                      step.explanation,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.orange[600],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Card Details:',
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 8),
+              _buildCardDetailRow('Bank', step.bank ?? 'N/A'),
+              _buildCardDetailRow('Network', step.cardNetwork ?? 'N/A'),
+              _buildCardDetailRow('Best For', 'Movie Tickets (${step.benefitType})'),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.blue[50],
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, size: 16, color: Colors.blue[700]),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'This card offers great benefits for movie tickets. Consider applying if you frequently watch movies!',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.blue[700],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Maybe Later'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.of(context).pop();
+              _showSnackbar('Feature coming soon: Apply for ${step.cardName}', isSuccess: true);
+              // TODO: Navigate to card application or details page
+            },
+            icon: const Icon(Icons.open_in_new),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange[600],
+              foregroundColor: Colors.white,
+            ),
+            label: const Text('Learn More'),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Widget _buildCardDetailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            '$label:',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Colors.grey[600],
+            ),
+          ),
+          Text(
+            value,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  void _showSnackbar(String message, {bool isSuccess = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isSuccess ? Colors.green[600] : null,
+        behavior: SnackBarBehavior.floating,
       ),
     );
   }
@@ -770,6 +1089,349 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
 
     await ref.read(movieOptimizationControllerProvider.notifier)
         .optimizeTickets(userId: user.id, request: request);
+  }
+
+  Widget _buildAllCardBenefitsSection(String userId) {
+    final cardBenefitsAsync = ref.watch(allMovieCardBenefitsProvider(userId));
+    
+    return Card(
+      elevation: 4,
+      child: Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.credit_card_rounded,
+                  size: 24,
+                  color: Theme.of(context).primaryColor,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'All Movie Benefits Available',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Browse all card benefits for movie tickets',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: _scheme.onSurface.withOpacity(0.7),
+              ),
+            ),
+            const SizedBox(height: 20),
+            cardBenefitsAsync.when(
+              data: (benefits) {
+                if (benefits.isEmpty) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(32.0),
+                      child: Column(
+                        children: [
+                          Icon(
+                            Icons.info_outline,
+                            size: 64,
+                            color: Colors.grey[400],
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'No movie benefits found',
+                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }
+                
+                return Column(
+                  children: [
+                    _buildBenefitsSummary(benefits),
+                    const SizedBox(height: 16),
+                    ...benefits.map((benefit) => _buildCardBenefitTile(benefit)),
+                  ],
+                );
+              },
+              loading: () => const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(32.0),
+                  child: CircularProgressIndicator(),
+                ),
+              ),
+              error: (error, stack) => Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(32.0),
+                  child: Column(
+                    children: [
+                      Icon(
+                        Icons.error_outline,
+                        size: 64,
+                        color: Colors.red[400],
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Error loading benefits',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        error.toString(),
+                        style: Theme.of(context).textTheme.bodySmall,
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildBenefitsSummary(List<Map<String, dynamic>> benefits) {
+    final ownedCount = benefits.where((b) => b['is_owned'] == true).length;
+    final totalCount = benefits.length;
+    
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: _successContainer,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _onSuccessContainer.withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _buildSummaryItem(
+              icon: Icons.credit_card,
+              label: 'Total Cards',
+              value: totalCount.toString(),
+            ),
+          ),
+          Container(
+            width: 1,
+            height: 40,
+            color: _outline,
+          ),
+          Expanded(
+            child: _buildSummaryItem(
+              icon: Icons.check_circle,
+              label: 'You Own',
+              value: ownedCount.toString(),
+              color: Colors.green[700],
+            ),
+          ),
+          Container(
+            width: 1,
+            height: 40,
+            color: _outline,
+          ),
+          Expanded(
+            child: _buildSummaryItem(
+              icon: Icons.shopping_bag_outlined,
+              label: 'Available',
+              value: (totalCount - ownedCount).toString(),
+              color: Colors.orange[700],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Widget _buildSummaryItem({
+    required IconData icon,
+    required String label,
+    required String value,
+    Color? color,
+  }) {
+    return Column(
+      children: [
+        Icon(icon, size: 24, color: color ?? _onSuccessContainer),
+        const SizedBox(height: 8),
+        Text(
+          value,
+          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.bold,
+            color: color ?? _onSuccessContainer,
+          ),
+        ),
+        Text(
+          label,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: (color ?? _onSuccessContainer).withOpacity(0.8),
+          ),
+        ),
+      ],
+    );
+  }
+  
+  Widget _buildCardBenefitTile(Map<String, dynamic> benefit) {
+    final isOwned = benefit['is_owned'] as bool;
+    final cardName = benefit['card_name'] as String;
+    final bank = benefit['bank'] as String?;
+    final network = benefit['card_network'] as String?;
+    final benefitTitle = benefit['benefit_title'] as String;
+    final benefitDesc = benefit['benefit_description'] as String;
+    final platform = benefit['platform'] as String;
+    
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        border: Border.all(
+          color: isOwned ? Colors.green.withOpacity(0.5) : _outline,
+          width: isOwned ? 2 : 1,
+        ),
+        borderRadius: BorderRadius.circular(12),
+        color: _surfaceCard,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            cardName,
+                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        if (isOwned)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.green.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: Colors.green.withOpacity(0.3),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.check_circle,
+                                  size: 14,
+                                  color: Colors.green[700],
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  'Owned',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.green[700],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                    if (bank != null || network != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          '${bank ?? ''} ${bank != null && network != null ? '•' : ''} ${network ?? ''}',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: _scheme.onSurface.withOpacity(0.6),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Theme.of(context).primaryColor.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.confirmation_number_outlined,
+                      size: 16,
+                      color: Theme.of(context).primaryColor,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        benefitTitle,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: Theme.of(context).primaryColor,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.local_offer_outlined,
+                      size: 14,
+                      color: _scheme.onSurface.withOpacity(0.6),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      benefitDesc,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.location_on_outlined,
+                      size: 14,
+                      color: _scheme.onSurface.withOpacity(0.6),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      platform,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: _scheme.onSurface.withOpacity(0.7),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showError(String message) {

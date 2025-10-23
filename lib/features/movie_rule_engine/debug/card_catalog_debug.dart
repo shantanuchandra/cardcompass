@@ -73,10 +73,16 @@ class CardCatalogDebug {
         return false;
       }
       
-      // Check required fields
-      if (!config.containsKey('offer_type') || config['offer_type'] == null) {
-        print('ERROR: Missing required field "offer_type"');
+      // Check for either new format (offer_type) or legacy format (rate + unit)
+      bool hasNewFormat = config.containsKey('offer_type') && config['offer_type'] != null;
+      bool hasLegacyFormat = config.containsKey('rate') && config.containsKey('unit');
+      
+      if (!hasNewFormat && !hasLegacyFormat) {
+        print('ERROR: Missing required fields - needs either "offer_type" or "rate"+"unit"');
         isValid = false;
+      } else if (hasLegacyFormat) {
+        print('INFO: Legacy format detected (rate/unit) - will be auto-converted');
+        isValid = true; // Accept legacy format
       }
       
       // Check types for common fields
