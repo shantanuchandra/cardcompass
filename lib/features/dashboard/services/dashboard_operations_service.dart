@@ -5,6 +5,8 @@ import 'package:cardcompass/core/services/robust_benefit_extraction_service.dart
 import 'package:cardcompass/core/services/password_input_service.dart';
 import 'package:cardcompass/core/services/global_password_service.dart';
 import 'package:cardcompass/shared/widgets/sync_progress_dialog.dart';
+import 'package:cardcompass/debug/sync_flow_debugger.dart';
+import 'package:cardcompass/features/sync/widgets/card_url_input_dialog.dart';
 
 /// Service to handle dashboard operations like sync, delete, and AI benefits
 class DashboardOperationsService {
@@ -19,6 +21,17 @@ class DashboardOperationsService {
     BuildContext? dialogContext;
 
     try {
+      // 🐛 DEBUG: Start sync flow debugging
+      SyncFlowDebugger.start(userId);
+      SyncFlowDebugger.logStep(
+        'SYNC_STARTED',
+        'User clicked sync button',
+        data: {
+          'numberOfEmails': numberOfEmails,
+          'startDate': startDate?.toIso8601String(),
+        },
+      );
+
       // Show progress dialog
       showDialog(
         context: context,
@@ -57,8 +70,35 @@ class DashboardOperationsService {
       });
       
       // Run the sync operation
+      final syncStartTime = SyncFlowDebugger.startTimer('Complete Sync Operation');
       final debugService = DataPipelineDebugService();
+      
+      // Set up card URL prompt callback
+      debugService.onCardUrlRequired = ({
+        required String bankName,
+        required String cardVariant,
+        required String emailSubject,
+        String? suggestedUrl,
+      }) async {
+        // Import the dialog at the top of the file
+        return await showCardUrlInputDialog(
+          context: context,
+          bankName: bankName,
+          cardVariant: cardVariant,
+          emailSubject: emailSubject,
+          suggestedUrl: suggestedUrl,
+        );
+      };
+      
       await debugService.debugSequentialUserFlow(userId, numberOfEmails, startDate);
+      SyncFlowDebugger.endTimer('Complete Sync Operation', syncStartTime);
+      
+      // 🐛 DEBUG: Sync completed successfully
+      SyncFlowDebugger.logStep('SYNC_COMPLETE', 'All operations completed successfully');
+      
+      // Generate and print debug report
+      final report = SyncFlowDebugger.generateReport();
+      debugPrint(report);
       
       // Close progress dialog
       if (dialogContext != null && dialogContext!.mounted) {
@@ -67,6 +107,13 @@ class DashboardOperationsService {
       
       return true;
     } catch (error) {
+      // 🐛 DEBUG: Log sync error
+      SyncFlowDebugger.logError('SYNC_ERROR', 'Sync operation failed', exception: error);
+      
+      // Generate error report
+      final report = SyncFlowDebugger.generateReport();
+      debugPrint(report);
+      
       // Close progress dialog on error
       if (dialogContext != null && dialogContext!.mounted) {
         Navigator.of(dialogContext!).pop();

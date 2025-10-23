@@ -587,7 +587,7 @@ Card name:'''
         }],
         'generationConfig': {
           'temperature': 0.0,
-          'maxOutputTokens': 100
+          'maxOutputTokens': 1000
         }
       };
       
