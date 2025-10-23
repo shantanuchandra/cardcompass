@@ -1112,7 +1112,7 @@ Card name:'''
         // Extract display name
         if (data['names'] != null && data['names'].isNotEmpty) {
           profile['displayName'] = data['names'][0]['displayName'] ?? 'User';
-          if (verbose) print('✅ Found display name: ${profile['displayName']}');
+          // if (verbose) print('✅ Found display name: ${profile['displayName']}');
         } else {
           profile['displayName'] = 'User';
           if (verbose) print('⚠️  No display name found, using default');
@@ -1120,10 +1120,10 @@ Card name:'''
         
         // Extract birthday with comprehensive debugging
         if (data['birthdays'] != null && data['birthdays'].isNotEmpty) {
-          if (verbose) {
-            print('📅 Processing birthday data...');
-            print('📅 Total birthday entries found: ${data['birthdays'].length}');
-          }
+          // if (verbose) {
+          //   print('📅 Processing birthday data...');
+          //   print('📅 Total birthday entries found: ${data['birthdays'].length}');
+          // }
           
           // Try different birthday entries (Google can have multiple)
           bool foundValidBirthday = false;
