@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cardcompass/shared/models/notification.dart';
 import 'package:cardcompass/features/notifications/viewmodels/notifications_viewmodel.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:cardcompass/features/auth/providers/auth_provider.dart';
 
 class NotificationsScreen extends ConsumerStatefulWidget {
   const NotificationsScreen({super.key});
@@ -29,7 +29,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen>
   }
 
   void _loadNotifications() {
-    final userId = Supabase.instance.client.auth.currentUser?.id;
+    final userId = ref.read(authStateProvider).user?.id;
     if (userId != null) {
       ref.read(notificationsViewModelProvider.notifier).loadNotifications(userId);
     }
@@ -309,7 +309,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen>
   }
 
   void _handleNotificationAction(AppNotification notification) {
-    final userId = Supabase.instance.client.auth.currentUser?.id;
+    final userId = ref.read(authStateProvider).user?.id;
     if (userId == null) return;
 
     ref.read(notificationsViewModelProvider.notifier)
@@ -330,7 +330,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen>
   }
 
   void _markAsRead(AppNotification notification) {
-    final userId = Supabase.instance.client.auth.currentUser?.id;
+    final userId = ref.read(authStateProvider).user?.id;
     if (userId == null) return;
 
     ref.read(notificationsViewModelProvider.notifier)
@@ -338,7 +338,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen>
   }
 
   void _markAllAsRead() {
-    final userId = Supabase.instance.client.auth.currentUser?.id;
+    final userId = ref.read(authStateProvider).user?.id;
     if (userId == null) return;
 
     ref.read(notificationsViewModelProvider.notifier)
@@ -409,7 +409,7 @@ class NotificationSettingsSheet extends ConsumerWidget {
   }
 
   void _updatePreference(WidgetRef ref, String key, bool value) {
-    final userId = Supabase.instance.client.auth.currentUser?.id;
+    final userId = ref.read(authStateProvider).user?.id;
     if (userId == null) return;
 
     ref.read(notificationsViewModelProvider.notifier)

@@ -1,9 +1,9 @@
-import 'package:cardcompass/core/providers/service_providers.dart';
 import 'package:cardcompass/shared/models/statement.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cardcompass/shared/widgets/state_widgets.dart';
 import 'package:cardcompass/features/statements/viewmodels/statements_viewmodel.dart';
+import 'package:cardcompass/features/auth/providers/auth_provider.dart';
 import 'package:cardcompass/shared/models/credit_card.dart';
 import 'package:file_picker/file_picker.dart';
 
@@ -14,8 +14,8 @@ class StatementsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final statementsState = ref.watch(statementsViewModelProvider);
     final statementsViewModel = ref.read(statementsViewModelProvider.notifier);
-    final authService = ref.watch(authServiceProvider);    // Get the current user ID, or handle the case where the user is not logged in
-    final userId = authService.currentUser?.id ?? '';
+    // Get the current user ID, or handle the case where the user is not logged in
+    final userId = ref.watch(authStateProvider).user?.id ?? '';
     
     print('🔍 StatementsScreen: User ID: $userId');
     print('🔍 StatementsScreen: Statements count: ${statementsState.statements.length}');
@@ -153,7 +153,7 @@ class StatementsScreen extends ConsumerWidget {
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: () {},
+                    onPressed: () => _showStatementDetail(context, statement),
                     icon: const Icon(Icons.visibility),
                     label: const Text('View'),
                   ),
@@ -192,9 +192,31 @@ class StatementsScreen extends ConsumerWidget {
     return '${date.day}/${date.month}/${date.year}';
   }
 
+  void _showStatementDetail(BuildContext context, Statement statement) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(statement.statementPeriod),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Total due: ₹${statement.totalAmount.toStringAsFixed(0)}'),
+            Text('Minimum payment: ₹${statement.minimumPayment.toStringAsFixed(0)}'),
+            Text('Due date: ${_formatDate(statement.dueDate)}'),
+            Text('Rewards earned: ${statement.rewardsEarned.toStringAsFixed(0)}'),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
+        ],
+      ),
+    );
+  }
+
   void _showUploadDialog(BuildContext context, WidgetRef ref) {
     final viewModel = ref.read(statementsViewModelProvider.notifier);
-    final userId = ref.read(authServiceProvider).currentUser?.id;
+    final userId = ref.read(authStateProvider).user?.id;
 
     if (userId == null) {
       ScaffoldMessenger.of(context).showSnackBar(

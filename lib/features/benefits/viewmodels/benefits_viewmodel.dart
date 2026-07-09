@@ -1,11 +1,12 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cardcompass/shared/models/credit_card.dart';
 import 'package:cardcompass/features/cards/providers/cards_provider.dart';
+import 'package:cardcompass/features/auth/providers/auth_provider.dart';
 import 'package:cardcompass/shared/models/benefit.dart';
 import 'package:cardcompass/shared/models/benefit_tracking.dart';
 import 'package:cardcompass/core/repositories/supabase_benefits_repository.dart';
 import 'package:cardcompass/core/repositories/supabase_benefit_tracking_repository.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:cardcompass/core/mock/mock_data.dart';
 
 /// Repository providers
 final supabaseBenefitsRepositoryProvider = Provider<SupabaseBenefitsRepository>((ref) {
@@ -251,63 +252,7 @@ class BenefitsViewModel extends StateNotifier<BenefitsViewState> {
 
   // Provide mock cards if real load fails or is empty
   List<CreditCard> _getMockCards(String userId) {
-    final now = DateTime.now();
-    final mockBenefits1 = [
-      Benefit(
-        id: 'b1',
-        categoryCode: 'dining',
-        name: '5% Dining Cashback',
-        description: 'On all Zomato and Swiggy orders.',
-        calculationMethod: 'percentage',
-        defaultValue: 5,
-        isActive: true,
-        createdAt: now,
-        updatedAt: now,
-      ),
-    ];
-    final mockBenefits2 = [
-      Benefit(
-        id: 'b2',
-        categoryCode: 'travel',
-        name: 'Airport Lounge Access',
-        description: '4 complimentary visits per year.',
-        calculationMethod: 'boolean',
-        defaultValue: 1,
-        isActive: true,
-        createdAt: now,
-        updatedAt: now,
-      ),
-    ];
-    return [
-      CreditCard(
-        id: 'mock1',
-        userId: userId,
-        cardName: 'Mock Platinum Card',
-        bankName: 'Mock Bank',
-        cardNumber: '1234',
-        network: CardNetwork.visa,
-        type: CardType.credit,
-        issuedDate: now.subtract(const Duration(days: 365)),
-        expiryDate: now.add(const Duration(days: 365 * 4)),
-        createdAt: now,
-        updatedAt: now,
-        benefits: mockBenefits1,
-      ),
-      CreditCard(
-        id: 'mock2',
-        userId: userId,
-        cardName: 'Mock Gold Card',
-        bankName: 'Mock Bank',
-        cardNumber: '5678',
-        network: CardNetwork.mastercard,
-        type: CardType.credit,
-        issuedDate: now.subtract(const Duration(days: 730)),
-        expiryDate: now.add(const Duration(days: 365 * 3)),
-        createdAt: now,
-        updatedAt: now,
-        benefits: mockBenefits2,
-      ),
-    ];
+    return MockData.creditCards();
   }
 
   /// Set selected card
@@ -319,10 +264,10 @@ class BenefitsViewModel extends StateNotifier<BenefitsViewState> {
   void setSelectedPeriod(String period) {
     state = state.copyWith(selectedPeriod: period);
     // Reload analytics and tracking data with new period
-    final currentUser = Supabase.instance.client.auth.currentUser;
-    if (currentUser != null) {
-      _loadBenefitAnalytics(currentUser.id);
-      _loadBenefitTracking(currentUser.id);
+    final user = _ref.read(authStateProvider).user;
+    if (user != null) {
+      _loadBenefitAnalytics(user.id);
+      _loadBenefitTracking(user.id);
     }
   }
 
@@ -405,31 +350,34 @@ class BenefitsViewModel extends StateNotifier<BenefitsViewState> {
     ];
   }
 
-  /// Generate mock usage data
+  /// Generate mock usage data, spread across the available cards so
+  /// benefit usage doesn't all pile onto a single card.
   List<BenefitUsage> _generateMockUsageData(List<CreditCard> cards) {
     if (cards.isEmpty) return [];
-    
+
+    final cardForIndex = (int i) => cards[i % cards.length].id;
+
     return [
       BenefitUsage(
         benefitName: 'Dining Cashback',
         description: 'Zomato order',
         amountSaved: 150.0,
         usageDate: DateTime.now().subtract(const Duration(days: 1)),
-        cardId: cards.first.id,
+        cardId: cardForIndex(0),
       ),
       BenefitUsage(
         benefitName: 'Fuel Rewards',
         description: 'Shell petrol station',
         amountSaved: 75.0,
         usageDate: DateTime.now().subtract(const Duration(days: 2)),
-        cardId: cards.first.id,
+        cardId: cardForIndex(1),
       ),
       BenefitUsage(
         benefitName: 'Online Shopping',
         description: 'Amazon purchase',
         amountSaved: 200.0,
         usageDate: DateTime.now().subtract(const Duration(days: 3)),
-        cardId: cards.first.id,
+        cardId: cardForIndex(2),
       ),
     ];
   }
