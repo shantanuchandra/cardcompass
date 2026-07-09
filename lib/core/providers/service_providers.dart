@@ -30,7 +30,7 @@ import 'package:cardcompass/core/repositories/supabase_statement_repository.dart
 import 'package:cardcompass/core/repositories/mock_statement_repository.dart';
 
 // Auth (for the guest/live switch)
-import 'package:cardcompass/features/auth/providers/auth_provider.dart';
+import 'package:cardcompass/features/auth/providers/auth_provider.dart' hide AuthService;
 
 /// Provider for SharedPreferences
 final sharedPreferencesProvider = Provider<SharedPreferences>((ref) {

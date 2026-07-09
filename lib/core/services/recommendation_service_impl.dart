@@ -236,8 +236,8 @@ class RecommendationServiceImpl implements RecommendationService {
       endDate: endDate,
     );
     final debits = transactions.where((t) => t.type == TransactionType.debit);
-    final totalSpending = debits.fold(0.0, (sum, t) => sum + t.amount);
-    final totalRewards = transactions.fold(0.0, (sum, t) => sum + (t.rewardEarned ?? 0));
+    final totalSpending = debits.fold<double>(0.0, (sum, t) => sum + t.amount);
+    final totalRewards = transactions.fold<double>(0.0, (sum, t) => sum + (t.rewardEarned ?? 0));
     final categoryBreakdown = <String, double>{};
     for (final t in debits) {
       categoryBreakdown[t.categoryString] = (categoryBreakdown[t.categoryString] ?? 0) + t.amount;

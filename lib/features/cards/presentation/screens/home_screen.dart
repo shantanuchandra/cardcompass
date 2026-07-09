@@ -92,13 +92,23 @@ class _HomeTabState extends ConsumerState<HomeTab> {
 
   void _loadData() {
     final authState = ref.read(authStateProvider);
-    if (authState.user == null) return;
-    ref.read(cardsProvider.notifier).loadUserCards(authState.user!.id);
-    ref.read(transactionsProvider.notifier).loadUserTransactions(authState.user!.id);
+    final userId = authState.user?.id;
+    if (userId == null) return;
+    ref.read(cardsProvider.notifier).loadUserCards(userId);
+    ref.read(transactionsProvider.notifier).loadUserTransactions(userId);
   }
 
   @override
   Widget build(BuildContext context) {
+    // Reload cards/transactions whenever the authenticated user changes
+    // (e.g. logout → different login while this tab stays in the navigator stack).
+    ref.listen<AuthState>(authStateProvider, (previous, next) {
+      final prevId = previous?.user?.id;
+      final nextId = next.user?.id;
+      if (prevId == nextId) return;
+      _loadData();
+    });
+
     return Scaffold(
       appBar: AppBar(
         title: Column(

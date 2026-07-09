@@ -86,7 +86,7 @@ class MockTransactionRepository implements TransactionRepository {
               t.type == TransactionType.debit &&
               !t.transactionDate.isBefore(monthDate) &&
               t.transactionDate.isBefore(nextMonth))
-          .fold(0.0, (sum, t) => sum + t.amount);
+          .fold<double>(0.0, (sum, t) => sum + t.amount);
       result.add({'month': '${monthDate.year}-${monthDate.month.toString().padLeft(2, '0')}', 'total': spend});
     }
     return result;
@@ -100,7 +100,7 @@ class MockTransactionRepository implements TransactionRepository {
     String? userCardId,
   }) async {
     final txns = await getUserTransactions(userId, startDate: startDate, endDate: endDate, userCardId: userCardId);
-    return txns.where((t) => t.type == TransactionType.debit).fold(0.0, (sum, t) => sum + t.amount);
+    return txns.where((t) => t.type == TransactionType.debit).fold<double>(0.0, (sum, t) => sum + t.amount);
   }
 
   @override
@@ -111,7 +111,7 @@ class MockTransactionRepository implements TransactionRepository {
     String? userCardId,
   }) async {
     final txns = await getUserTransactions(userId, startDate: startDate, endDate: endDate, userCardId: userCardId);
-    return txns.fold(0.0, (sum, t) => sum + (t.rewardEarned ?? 0));
+    return txns.fold<double>(0.0, (sum, t) => sum + (t.rewardEarned ?? 0));
   }
 
   @override
