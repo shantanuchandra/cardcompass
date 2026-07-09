@@ -81,6 +81,8 @@ final recommendationServiceProvider = Provider<RecommendationService>((ref) {
   return RecommendationServiceImpl(
     merchantRateService: MerchantRateService(),
     milestoneTracker: MilestoneTracker(),
+    cardRepository: ref.watch(cardRepositoryProvider),
+    transactionRepository: ref.watch(transactionRepositoryProvider),
   );
 });
 
