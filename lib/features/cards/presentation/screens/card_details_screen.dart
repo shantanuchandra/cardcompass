@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:cardcompass/core/theme.dart';
+import 'package:cardcompass/core/mock/mock_data.dart';
+import 'package:cardcompass/core/providers/service_providers.dart';
 import 'package:cardcompass/shared/models/credit_card.dart';
 import 'package:cardcompass/shared/models/transaction.dart';
 import 'package:cardcompass/shared/widgets/credit_card_widget.dart';
 import 'package:cardcompass/shared/widgets/state_widgets.dart';
+import 'package:cardcompass/features/auth/providers/auth_provider.dart';
 import 'package:cardcompass/features/cards/providers/cards_provider.dart';
 import 'package:cardcompass/features/transactions/providers/transactions_provider.dart';
+import 'package:cardcompass/features/cards/presentation/screens/add_card_screen.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// Screen for displaying detailed information about a specific credit card
@@ -48,21 +53,34 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
     });
 
     try {
-      // Load card details
-      final cards = ref.read(cardsProvider);
-      _card = cards.firstWhere(
-        (card) => card.id == widget.cardId,
-        orElse: () => cards.first, // Fallback to first card if not found
-      );      // Load transactions for this card
+      var cards = ref.read(cardsProvider);
+      if (cards.isEmpty) {
+        final authState = ref.read(authStateProvider);
+        if (authState.user != null) {
+          await ref.read(cardsProvider.notifier).loadUserCards(authState.user!.id);
+          await ref.read(transactionsProvider.notifier).loadUserTransactions(authState.user!.id);
+        }
+        cards = ref.read(cardsProvider);
+      }
+
+      if (cards.isEmpty) {
+        _card = null;
+        _transactions = [];
+        return;
+      }
+
+      final matches = cards.where((card) => card.id == widget.cardId);
+      _card = matches.isEmpty ? cards.first : matches.first;
+
       final transactions = ref.read(transactionsProvider);
       _transactions = transactions
-          .where((t) => t.userCardId == widget.cardId)
+          .where((t) => t.userCardId == _card!.id)
           .toList();
 
       // Load latest statement for this card
       await _fetchLatestStatement();
 
-      // Load real benefits data from Supabase
+      // Load benefits data (mock in guest mode, Supabase otherwise)
       await _fetchCardBenefits();
     } catch (e) {
       if (mounted) {
@@ -71,20 +89,31 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
         );
       }
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading || _card == null) {
+    if (_isLoading) {
       return Scaffold(
-        appBar: AppBar(
-          title: const Text('Card Details'),
-        ),
+        appBar: AppBar(title: const Text('Card Details')),
         body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_card == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Card Details')),
+        body: Center(
+          child: Text(
+            'This card could not be found.',
+            style: AppTextStyles.body1,
+          ),
+        ),
       );
     }
 
@@ -95,12 +124,9 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
         actions: [
           IconButton(
             icon: const Icon(Icons.edit),
-            onPressed: () {
-              // TODO: Navigate to edit card screen
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Edit card coming soon')),
-              );
-            },
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (context) => const AddCardScreen()),
+            ),
           ),
           IconButton(
             icon: const Icon(Icons.more_vert),
@@ -584,9 +610,8 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
                 title: const Text('Edit Card'),
                 onTap: () {
                   Navigator.pop(context);
-                  // TODO: Navigate to edit card
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Edit card coming soon')),
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (context) => const AddCardScreen()),
                   );
                 },
               ),
@@ -646,8 +671,26 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
     );
   }
 
-  /// Fetch the latest statement for this card
+  /// Fetch the latest statement for this card — mock data in guest mode,
+  /// Supabase otherwise.
   Future<void> _fetchLatestStatement() async {
+    final isGuest = ref.read(isGuestModeProvider);
+    if (isGuest) {
+      final statements = MockData.statements().where((s) => s.userCardId == _card!.id).toList()
+        ..sort((a, b) => b.statementDate.compareTo(a.statementDate));
+      if (statements.isNotEmpty) {
+        final latest = statements.first;
+        _latestStatement = {
+          'outstanding_amount': latest.totalAmount,
+          'due_date': latest.dueDate.toIso8601String(),
+          'minimum_amount_due': latest.minimumPayment,
+          'statement_date': latest.statementDate.toIso8601String(),
+          'previous_balance': latest.closingBalance,
+        };
+      }
+      return;
+    }
+
     try {
       final response = await Supabase.instance.client
           .from('statements')
@@ -665,8 +708,20 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
     }
   }
 
-  /// Fetch real card benefits from Supabase
+  /// Fetch card benefits — mock data in guest mode, Supabase otherwise.
   Future<void> _fetchCardBenefits() async {
+    final isGuest = ref.read(isGuestModeProvider);
+    if (isGuest) {
+      final mockBenefits = MockData.cardBenefits(_card!.id);
+      _benefits = mockBenefits.map((benefit) => {
+        'category': benefit['category'] ?? 'General',
+        'reward_rate': benefit['name']?.toString() ?? 'N/A',
+        'description': benefit['description'] ?? 'No description',
+        'icon': _getIconFromCategory(benefit['category'] ?? 'General'),
+      }).toList();
+      return;
+    }
+
     try {
       final response = await Supabase.instance.client
           .from('card_benefits')
