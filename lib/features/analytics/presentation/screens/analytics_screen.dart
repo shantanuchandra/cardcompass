@@ -66,7 +66,16 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
         actions: [
           IconButton(
             onPressed: () {
-              // TODO: Export analytics
+              showDialog(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('Export Analytics'),
+                  content: const Text('CSV/PDF export isn\'t available yet in this build.'),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK')),
+                  ],
+                ),
+              );
             },
             icon: const Icon(Icons.file_download),
           ),

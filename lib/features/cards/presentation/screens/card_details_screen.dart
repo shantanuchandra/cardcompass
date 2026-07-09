@@ -655,12 +655,21 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
               child: const Text('Cancel'),
             ),
             ElevatedButton(
-              onPressed: () {
+              onPressed: () async {
                 Navigator.pop(context);
-                Navigator.pop(context); // Go back to cards list
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Card removal coming soon')),
-                );
+                final authState = ref.read(authStateProvider);
+                if (authState.user != null && _card != null) {
+                  await ref.read(cardsProvider.notifier).removeUserCard(
+                    userId: authState.user!.id,
+                    cardId: _card!.id,
+                  );
+                }
+                if (mounted) {
+                  Navigator.pop(context); // Go back to cards list
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Card removed')),
+                  );
+                }
               },
               style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
               child: const Text('Remove'),
