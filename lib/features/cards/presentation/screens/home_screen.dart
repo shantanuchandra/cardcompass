@@ -11,12 +11,13 @@ import '../../../../core/services/global_password_service.dart';
 import '../../../../core/services/global_message_service.dart';
 import '../../../../shared/widgets/credit_card_widget.dart';
 import '../../../../shared/widgets/sync_progress_dialog.dart';
-import '../../../../core/providers/service_providers.dart';
 import '../../../auth/providers/auth_provider.dart';
 import '../../../transactions/presentation/screens/transactions_screen.dart';
 import '../../../analytics/presentation/screens/analytics_screen.dart';
 import '../../../recommendations/presentation/screens/recommendations_screen.dart';
 import '../../../sync/widgets/card_url_input_dialog.dart';
+import '../../providers/cards_provider.dart';
+import '../../../transactions/providers/transactions_provider.dart';
 import 'add_card_screen.dart';
 import 'cards_list_screen.dart';
 
@@ -75,18 +76,37 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 }
 
-class HomeTab extends ConsumerWidget {
+class HomeTab extends ConsumerStatefulWidget {
   const HomeTab({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<HomeTab> createState() => _HomeTabState();
+}
+
+class _HomeTabState extends ConsumerState<HomeTab> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadData());
+  }
+
+  void _loadData() {
+    final authState = ref.read(authStateProvider);
+    if (authState.user == null) return;
+    ref.read(cardsProvider.notifier).loadUserCards(authState.user!.id);
+    ref.read(transactionsProvider.notifier).loadUserTransactions(authState.user!.id);
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Good Morning!',              style: AppTextStyles.caption.copyWith(
+              'Good Morning!',
+              style: AppTextStyles.caption.copyWith(
                 color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
               ),
             ),
@@ -116,9 +136,7 @@ class HomeTab extends ConsumerWidget {
             color: Colors.red,
           ),
           IconButton(
-            onPressed: () {
-              // TODO: Show user profile
-            },
+            onPressed: () => Navigator.of(context).pushNamed('/profile'),
             icon: const CircleAvatar(
               radius: 16,
               child: Icon(Icons.person, size: 20),
@@ -155,22 +173,22 @@ class HomeTab extends ConsumerWidget {
                 children: [
                   // Quick Stats Section
                   _buildQuickStatsSection(context, ref),
-                  
+
                   const SizedBox(height: 24),
-                  
+
                   // My Cards Section
                   _buildMyCardsSection(context, ref),
-                  
+
                   const SizedBox(height: 24),
-                  
+
                   // Recent Transactions Section
                   _buildRecentTransactionsSection(context, ref),
-                  
+
                   const SizedBox(height: 24),
-                  
+
                   // Recommendations Section
                   _buildRecommendationsSection(context),
-                  
+
                   const SizedBox(height: 100), // Space for FAB
                 ],
               ),
@@ -241,6 +259,11 @@ class HomeTab extends ConsumerWidget {
       return;
     }
 
+    if (authState.user!.id == 'guest') {
+      GlobalMessageService.showError('Gmail sync isn\'t available in guest mode. Sign in with Google to sync.');
+      return;
+    }
+
     // Store context reference for progress dialogs
     BuildContext? dialogContext;
 
@@ -258,20 +281,20 @@ class HomeTab extends ConsumerWidget {
       // Set up password input callback for manual password entry
       PasswordInputService.setGlobalPasswordCallback((String bankName, String? hint) async {
         print('🔐 Manual password callback triggered for $bankName');
-        
+
         // Close progress dialog temporarily for password input
         if (dialogContext != null && dialogContext!.mounted) {
           Navigator.of(dialogContext!).pop();
           print('📱 Progress dialog closed, showing password input');
-          
+
           // Add a small delay to ensure dialog is closed
           await Future.delayed(const Duration(milliseconds: 200));
         }
-        
+
         // Request password using the global service
         final password = await GlobalPasswordService.requestPassword(bankName, hint: hint);
         print('🔑 Password result: ${password != null ? 'provided' : 'cancelled'}');
-        
+
         // Show progress dialog again after password input
         if (context.mounted) {
           await Future.delayed(const Duration(milliseconds: 200));
@@ -285,14 +308,14 @@ class HomeTab extends ConsumerWidget {
           );
           print('📱 Progress dialog restored');
         }
-        
+
         return password;
       });
-      
+
       // Initialize the debug service for data sync
       final debugService = DataPipelineDebugService();
       print('🔧 Created DataPipelineDebugService instance');
-      
+
       // Set up card URL prompt callback
       debugService.onCardUrlRequired = ({
         required String bankName,
@@ -304,7 +327,7 @@ class HomeTab extends ConsumerWidget {
         print('   Bank: $bankName, Card: $cardVariant');
         print('   Context: $context');
         print('   Context mounted: ${context.mounted}');
-        
+
         final result = await showCardUrlInputDialog(
           context: context,
           bankName: bankName,
@@ -312,34 +335,33 @@ class HomeTab extends ConsumerWidget {
           emailSubject: emailSubject,
           suggestedUrl: suggestedUrl,
         );
-        
+
         print('🔔 CALLBACK RETURNING: $result');
         return result;
       };
       print('🔧 Set onCardUrlRequired callback on debugService');
       print('🔧 Callback is now: ${debugService.onCardUrlRequired == null ? "NULL" : "SET"}');
-      
+
       // Run the sequential user flow
       print('🔧 About to call debugSequentialUserFlow...');
       await debugService.debugSequentialUserFlow(authState.user!.id);
-      
+
       // Close progress dialog
       if (dialogContext != null && dialogContext!.mounted) {
         Navigator.of(dialogContext!).pop();
-        
+
         // Show success message using global service
         GlobalMessageService.showSuccess('Data sync completed! Check your cards and transactions.');
-        
-        // Refresh the UI by invalidating providers
-        ref.invalidate(activeCardsProvider);
-        ref.invalidate(recentTransactionsProvider);
+
+        // Refresh the UI by reloading the underlying data
+        _loadData();
       }
-      
+
     } catch (error) {
       // Close progress dialog
       if (dialogContext != null && dialogContext!.mounted) {
         Navigator.of(dialogContext!).pop();
-        
+
         // Show error message using global service
         GlobalMessageService.showError('Sync failed: ${error.toString()}');
       }
@@ -351,6 +373,11 @@ class HomeTab extends ConsumerWidget {
     final authState = ref.read(authStateProvider);
     if (!authState.isAuthenticated || authState.user == null) {
       GlobalMessageService.showError('Please log in first');
+      return;
+    }
+
+    if (authState.user!.id == 'guest') {
+      GlobalMessageService.showError('Guest data lives only in this session — sign out to clear it, or sign in to manage a real account.');
       return;
     }
 
@@ -376,11 +403,11 @@ class HomeTab extends ConsumerWidget {
     try {
       // Get data counts
       final counts = await UserDataDeletionService.getUserDataCounts(userId);
-      
+
       // Close loading dialog
       if (context.mounted) {
         Navigator.of(context).pop();
-        
+
         // Show confirmation dialog with counts
         _showDeleteConfirmationDialog(context, ref, counts);
       }
@@ -388,7 +415,7 @@ class HomeTab extends ConsumerWidget {
       // Close loading dialog
       if (context.mounted) {
         Navigator.of(context).pop();
-        
+
         // Show error message
         GlobalMessageService.showError('Failed to load data counts: ${error.toString()}');
       }
@@ -417,7 +444,7 @@ class HomeTab extends ConsumerWidget {
               ),
               const SizedBox(height: 12),
               if (counts.isNotEmpty) ...[
-                Text('📊 Current data to be deleted:', 
+                Text('📊 Current data to be deleted:',
                      style: TextStyle(fontSize: 12, color: Colors.grey[600])),
                 const SizedBox(height: 8),
                 ...counts.entries.map((entry) => Padding(
@@ -500,26 +527,23 @@ class HomeTab extends ConsumerWidget {
 
     try {
       print('🔄 Starting user data deletion process...');
-      
+
       // Delete all user data
       final success = await UserDataDeletionService.deleteAllUserData(userId);
-      
+
       print('✅ Deletion process completed with success: $success');
-      
+
       // Close loading dialog - ensure context is still mounted
       if (context.mounted) {
         Navigator.of(context).pop();
         print('🔄 Loading dialog dismissed');
-        
+
         if (success) {
           // Show success message
           GlobalMessageService.showSuccess('All data deleted successfully! (User profile preserved)');
-          
-          // Refresh the UI by invalidating all data providers
-          ref.invalidate(activeCardsProvider);
-          ref.invalidate(recentTransactionsProvider);
-          ref.invalidate(totalCreditLimitProvider);
-          ref.invalidate(monthlyRewardsProvider);
+
+          // Refresh the UI by reloading the underlying data
+          _loadData();
           print('🔄 All UI providers refreshed');
         } else {
           // Show error message
@@ -528,15 +552,15 @@ class HomeTab extends ConsumerWidget {
       } else {
         print('⚠️ Context no longer mounted, cannot dismiss dialog');
       }
-      
+
     } catch (error) {
       print('❌ Error during deletion: $error');
-      
+
       // Close loading dialog - ensure context is still mounted
       if (context.mounted) {
         Navigator.of(context).pop();
         print('🔄 Loading dialog dismissed after error');
-        
+
         // Show error message
         GlobalMessageService.showError('Delete failed: ${error.toString()}');
       } else {
@@ -560,28 +584,12 @@ class HomeTab extends ConsumerWidget {
               child: Consumer(
                 builder: (context, ref, child) {
                   final totalCreditLimit = ref.watch(totalCreditLimitProvider);
-                  return totalCreditLimit.when(
-                    data: (value) => _buildStatCard(
-                      context,
-                      'Total Credit',
-                      '₹${(value / 1000).toStringAsFixed(0)}K',
-                      Icons.credit_card,
-                      Theme.of(context).primaryColor,
-                    ),
-                    loading: () => _buildStatCard(
-                      context,
-                      'Total Credit',
-                      '₹100K',
-                      Icons.credit_card,
-                      Theme.of(context).primaryColor,
-                    ),
-                    error: (_, __) => _buildStatCard(
-                      context,
-                      'Total Credit',
-                      '₹100K',
-                      Icons.credit_card,
-                      Theme.of(context).primaryColor,
-                    ),
+                  return _buildStatCard(
+                    context,
+                    'Total Credit',
+                    '₹${(totalCreditLimit / 1000).toStringAsFixed(0)}K',
+                    Icons.credit_card,
+                    Theme.of(context).primaryColor,
                   );
                 },
               ),
@@ -591,28 +599,12 @@ class HomeTab extends ConsumerWidget {
               child: Consumer(
                 builder: (context, ref, child) {
                   final monthlyRewards = ref.watch(monthlyRewardsProvider);
-                  return monthlyRewards.when(
-                    data: (value) => _buildStatCard(
-                      context,
-                      'This Month Rewards',
-                      '₹${value.toStringAsFixed(0)}',
-                      Icons.star,
-                      Colors.amber,
-                    ),
-                    loading: () => _buildStatCard(
-                      context,
-                      'This Month Rewards',
-                      '₹412',
-                      Icons.star,
-                      Colors.amber,
-                    ),
-                    error: (_, __) => _buildStatCard(
-                      context,
-                      'This Month Rewards',
-                      '₹412',
-                      Icons.star,
-                      Colors.amber,
-                    ),
+                  return _buildStatCard(
+                    context,
+                    'This Month Rewards',
+                    '₹${monthlyRewards.toStringAsFixed(0)}',
+                    Icons.star,
+                    Colors.amber,
                   );
                 },
               ),
@@ -676,23 +668,19 @@ class HomeTab extends ConsumerWidget {
             ),
             Consumer(
               builder: (context, ref, child) {
-                final cardsAsync = ref.watch(activeCardsProvider);
-                return cardsAsync.when(
-                  data: (cards) => cards.isNotEmpty
-                      ? TextButton(
-                          onPressed: () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (context) => const CardsListScreen(),
-                              ),
-                            );
-                          },
-                          child: const Text('View All'),
-                        )
-                      : const SizedBox.shrink(),
-                  loading: () => const SizedBox.shrink(),
-                  error: (_, __) => const SizedBox.shrink(),
-                );
+                final cards = ref.watch(activeCardsProvider);
+                return cards.isNotEmpty
+                    ? TextButton(
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (context) => const CardsListScreen(),
+                            ),
+                          );
+                        },
+                        child: const Text('View All'),
+                      )
+                    : const SizedBox.shrink();
               },
             ),
           ],
@@ -700,20 +688,11 @@ class HomeTab extends ConsumerWidget {
         const SizedBox(height: 16),
         Consumer(
           builder: (context, ref, child) {
-            final cardsAsync = ref.watch(activeCardsProvider);
-            return cardsAsync.when(
-              data: (cards) {
-                if (cards.isEmpty) {
-                  return _buildEmptyCardsWidget(context);
-                }
-                return _buildCardsGrid(context, cards);
-              },
-              loading: () => _buildCardsLoadingWidget(),
-              error: (error, _) {
-                print('Error loading cards: $error');
-                return _buildEmptyCardsWidget(context);
-              },
-            );
+            final cards = ref.watch(activeCardsProvider);
+            if (cards.isEmpty) {
+              return _buildEmptyCardsWidget(context);
+            }
+            return _buildCardsGrid(context, cards);
           },
         ),
       ],
@@ -759,20 +738,6 @@ class HomeTab extends ConsumerWidget {
     );
   }
 
-  Widget _buildCardsLoadingWidget() {
-    return Container(
-      height: 200,
-      width: double.infinity,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        color: Colors.grey[100],
-      ),
-      child: const Center(
-        child: CircularProgressIndicator(),
-      ),
-    );
-  }
-
   Widget _buildCardsGrid(BuildContext context, List<dynamic> cards) {
     return SizedBox(
       height: 200,
@@ -786,15 +751,22 @@ class HomeTab extends ConsumerWidget {
               right: index < cards.length - 1 ? 16 : 0,
             ),
             child: SizedBox(
-              width: 320,              child: CreditCardWidget(
-                cardName: card.cardName ?? 'Unknown Card',
-                bankName: card.bankName ?? 'Unknown Bank',
-                lastFourDigits: card.cardNumberLast4 ?? '****',
-                expiryDate: card.expiryDate != null 
-                  ? '${card.expiryDate!.month.toString().padLeft(2, '0')}/${card.expiryDate!.year.toString().substring(2)}'
-                  : 'MM/YY',
-                cardType: card.cardType ?? 'credit',
-                gradientColors: _getCardGradientColors(card.network?.toString().split('.').last ?? 'visa'),
+              width: 320,
+              child: GestureDetector(
+                onTap: () => Navigator.of(context).pushNamed(
+                  '/card-details',
+                  arguments: card.id,
+                ),
+                child: CreditCardWidget(
+                  cardName: card.cardName ?? 'Unknown Card',
+                  bankName: card.bankName ?? 'Unknown Bank',
+                  lastFourDigits: card.cardNumberLast4 ?? '****',
+                  expiryDate: card.expiryDate != null
+                    ? '${card.expiryDate!.month.toString().padLeft(2, '0')}/${card.expiryDate!.year.toString().substring(2)}'
+                    : 'MM/YY',
+                  cardType: card.cardType ?? 'credit',
+                  gradientColors: _getCardGradientColors(card.network?.toString().split('.').last ?? 'visa'),
+                ),
               ),
             ),
           );
@@ -816,19 +788,19 @@ class HomeTab extends ConsumerWidget {
             ),
             Consumer(
               builder: (context, ref, child) {
-                final transactionsAsync = ref.watch(recentTransactionsProvider);
-                return transactionsAsync.when(
-                  data: (transactions) => transactions.isNotEmpty
-                      ? TextButton(
-                          onPressed: () {
-                            // TODO: Show all transactions
-                          },
-                          child: const Text('View All'),
-                        )
-                      : const SizedBox.shrink(),
-                  loading: () => const SizedBox.shrink(),
-                  error: (_, __) => const SizedBox.shrink(),
-                );
+                final transactions = ref.watch(recentTransactionsProvider);
+                return transactions.isNotEmpty
+                    ? TextButton(
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (context) => const TransactionsScreen(),
+                            ),
+                          );
+                        },
+                        child: const Text('View All'),
+                      )
+                    : const SizedBox.shrink();
               },
             ),
           ],
@@ -836,20 +808,11 @@ class HomeTab extends ConsumerWidget {
         const SizedBox(height: 16),
         Consumer(
           builder: (context, ref, child) {
-            final transactionsAsync = ref.watch(recentTransactionsProvider);
-            return transactionsAsync.when(
-              data: (transactions) {
-                if (transactions.isEmpty) {
-                  return _buildEmptyTransactionsWidget(context);
-                }
-                return _buildTransactionsList(context, transactions);
-              },
-              loading: () => _buildTransactionsLoadingWidget(),
-              error: (error, _) {
-                print('Error loading transactions: $error');
-                return _buildEmptyTransactionsWidget(context);
-              },
-            );
+            final transactions = ref.watch(recentTransactionsProvider);
+            if (transactions.isEmpty) {
+              return _buildEmptyTransactionsWidget(context);
+            }
+            return _buildTransactionsList(context, transactions);
           },
         ),
       ],
@@ -889,20 +852,6 @@ class HomeTab extends ConsumerWidget {
             textAlign: TextAlign.center,
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildTransactionsLoadingWidget() {
-    return Container(
-      height: 200,
-      width: double.infinity,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        color: Colors.grey[100],
-      ),
-      child: const Center(
-        child: CircularProgressIndicator(),
       ),
     );
   }
@@ -963,7 +912,7 @@ class HomeTab extends ConsumerWidget {
                     '₹${transaction.amount.toStringAsFixed(2)}',
                     style: AppTextStyles.body1.copyWith(
                       fontWeight: FontWeight.w600,
-                      color: transaction.type == 'debit' 
+                      color: transaction.typeString == 'debit'
                           ? Theme.of(context).colorScheme.error
                           : Theme.of(context).colorScheme.primary,
                     ),
@@ -1028,10 +977,15 @@ class HomeTab extends ConsumerWidget {
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: Text(
-                      'Use HDFC Card for Grocery',
-                      style: AppTextStyles.body1.copyWith(
-                        fontWeight: FontWeight.w600,
+                    child: GestureDetector(
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(builder: (context) => const RecommendationsScreen()),
+                      ),
+                      child: Text(
+                        'See personalized recommendations',
+                        style: AppTextStyles.body1.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ),
@@ -1039,7 +993,7 @@ class HomeTab extends ConsumerWidget {
               ),
               const SizedBox(height: 8),
               Text(
-                'Get 5% cashback on grocery purchases with your HDFC card this month. Potential savings: ₹500',
+                'Tap Recommendations in the bottom bar to see which card earns you the most on your recent spending.',
                 style: AppTextStyles.body2.copyWith(
                   color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
                 ),
@@ -1064,6 +1018,7 @@ class HomeTab extends ConsumerWidget {
       case 'travel':
         return Colors.green;
       case 'groceries':
+      case 'grocery':
         return Colors.teal;
       default:
         return Colors.grey;
@@ -1083,6 +1038,7 @@ class HomeTab extends ConsumerWidget {
       case 'travel':
         return Icons.flight;
       case 'groceries':
+      case 'grocery':
         return Icons.local_grocery_store;
       default:
         return Icons.payment;
@@ -1092,7 +1048,7 @@ class HomeTab extends ConsumerWidget {
   String _formatDate(DateTime date) {
     final now = DateTime.now();
     final difference = now.difference(date).inDays;
-    
+
     if (difference == 0) {
       return 'Today';
     } else if (difference == 1) {
@@ -1119,69 +1075,3 @@ class HomeTab extends ConsumerWidget {
     }
   }
 }
-
-// Real providers that use Supabase instead of mock data
-final activeCardsProvider = FutureProvider<List<dynamic>>((ref) async {
-  final cardRepo = ref.read(cardRepositoryProvider);
-  final authState = ref.read(authStateProvider);
-  
-  if (authState.user == null) {
-    return [];
-  }
-  
-  try {
-    return await cardRepo.getUserCards(authState.user!.id);
-  } catch (e) {
-    print('Error loading user cards: $e');
-    return [];
-  }
-});
-
-final recentTransactionsProvider = FutureProvider<List<dynamic>>((ref) async {
-  final transactionRepo = ref.read(transactionRepositoryProvider);
-  final authState = ref.read(authStateProvider);
-  
-  if (authState.user == null) {
-    return [];
-  }
-  
-  try {
-    return await transactionRepo.getUserTransactions(authState.user!.id, limit: 5);
-  } catch (e) {
-    print('Error loading recent transactions: $e');
-    return [];
-  }
-});
-
-final totalCreditLimitProvider = FutureProvider<double>((ref) async {
-  final cards = await ref.watch(activeCardsProvider.future);
-  
-  double total = 0.0;
-  for (var card in cards) {
-    if (card.creditLimit != null) {
-      total += card.creditLimit;
-    }
-  }
-  
-  // If no real data, show placeholder
-  return total > 0 ? total : 100000.0;
-});
-
-final monthlyRewardsProvider = FutureProvider<double>((ref) async {
-  final transactions = await ref.watch(recentTransactionsProvider.future);
-  
-  double totalRewards = 0.0;
-  final now = DateTime.now();
-  
-  for (var transaction in transactions) {
-    // Only count current month rewards
-    if (transaction.transactionDate.month == now.month && 
-        transaction.transactionDate.year == now.year &&
-        transaction.rewardEarned != null) {
-      totalRewards += transaction.rewardEarned;
-    }
-  }
-  
-  // If no real data, show placeholder
-  return totalRewards > 0 ? totalRewards : 412.0;
-});
