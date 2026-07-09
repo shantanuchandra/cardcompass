@@ -1,14 +1,14 @@
 import 'package:cardcompass/shared/models/credit_card.dart';
 import 'package:cardcompass/core/services/merchant_rate_service.dart';
 import 'package:cardcompass/core/services/milestone_tracker.dart';
-import 'package:cardcompass/core/repositories/supabase_card_repository.dart';
+import 'package:cardcompass/core/repositories/card_repository.dart';
 
 /// Service for calculating and comparing credit card rewards
 class RewardCalculator {
   // Services
   final MerchantRateService merchantRateService;
   final MilestoneTracker milestoneTracker;
-  final SupabaseCardRepository cardRepository;
+  final CardRepository cardRepository;
 
   RewardCalculator({
     required this.merchantRateService,

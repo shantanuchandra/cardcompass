@@ -140,7 +140,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         ? null 
                         : () => ref.read(authStateProvider.notifier).signInAsGuest(),
                       icon: const Icon(Icons.person_outline),
-                      label: const Text(
+                      label: Text(
                         'Continue as Guest',
                         style: AppTextStyles.button,
                       ),

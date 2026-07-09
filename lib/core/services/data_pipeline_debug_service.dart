@@ -591,19 +591,19 @@ class DataPipelineDebugService {
       }
       
       // Step 1: DOB storage via Gmail API
-      print('\n📅 Step 1: Fetching and storing DOB via Gmail API...');
-      SyncFlowDebugger.logStep('DOB_FETCH', 'Fetching user DOB from Google People API');
-      final userProfile = await _gmailService!.getUserProfile(userId: userId, verbose: true);
-      if (userProfile.containsKey('birthday')) {
-        print('+ DOB stored successfully: ${userProfile['birthday']['ddmm']} format available');
-        SyncFlowDebugger.logStep('DOB_FETCHED', 'Retrieved DOB from Google People API', data: {
-          'dob': userProfile['birthday']['raw'],
-          'formats': userProfile['birthday']['formats'],
-        });
-      } else {
-        print('⚠️ DOB not available from Google People API - manual passwords may be needed');
-        SyncFlowDebugger.logStep('DOB_FETCH', 'DOB not available from Google People API');
-      }
+      // print('\n📅 Step 1: Fetching and storing DOB via Gmail API...');
+      // SyncFlowDebugger.logStep('DOB_FETCH', 'Fetching user DOB from Google People API');
+      final userProfile = await _gmailService!.getUserProfile(userId: userId, verbose: false);
+      // if (userProfile.containsKey('birthday')) {
+      //   print('+ DOB stored successfully: ${userProfile['birthday']['ddmm']} format available');
+      //   SyncFlowDebugger.logStep('DOB_FETCHED', 'Retrieved DOB from Google People API', data: {
+      //     'dob': userProfile['birthday']['raw'],
+      //     'formats': userProfile['birthday']['formats'],
+      //   });
+      // } else {
+      //   print('⚠️ DOB not available from Google People API - manual passwords may be needed');
+      //   SyncFlowDebugger.logStep('DOB_FETCH', 'DOB not available from Google People API');
+      // }
       
       // Get all relevant emails
       print('\n📧 Step 2: Finding relevant statement emails...');

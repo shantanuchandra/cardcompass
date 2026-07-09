@@ -5,12 +5,12 @@ import 'package:cardcompass/features/auth/presentation/screens/profile_screen.da
 import 'package:cardcompass/features/cards/presentation/screens/cards_list_screen.dart';
 import 'package:cardcompass/features/cards/presentation/screens/add_card_screen.dart';
 import 'package:cardcompass/features/cards/presentation/screens/card_details_screen.dart';
+import 'package:cardcompass/features/cards/presentation/screens/home_screen.dart';
 import 'package:cardcompass/features/transactions/presentation/screens/transactions_screen.dart';
 import 'package:cardcompass/features/transactions/presentation/screens/transaction_advisor_screen.dart';
 import 'package:cardcompass/features/transaction_advisor/presentation/screens/enhanced_transaction_advisor_screen.dart';
 import 'package:cardcompass/features/analytics/presentation/screens/analytics_screen.dart';
 import 'package:cardcompass/features/recommendations/presentation/screens/recommendations_screen.dart';
-import 'package:cardcompass/features/dashboard/presentation/screens/dashboard_screen_refactored.dart';
 import 'package:cardcompass/features/statements/presentation/screens/statements_screen.dart';
 import 'package:cardcompass/features/settings/presentation/screens/settings_screen.dart';
 import 'package:cardcompass/features/benefits/presentation/screens/benefits_screen.dart';
@@ -51,7 +51,7 @@ class AppRoutes {
         );      case home:
       case dashboard:
         return MaterialPageRoute(
-          builder: (_) => const DashboardScreenRefactored(),
+          builder: (_) => const HomeScreen(),
           settings: settings,
         );      case cards:
         return MaterialPageRoute(

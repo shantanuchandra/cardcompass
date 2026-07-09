@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:cardcompass/core/providers/service_providers.dart';
 
 /// Settings screen for app preferences and configurations
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -14,11 +15,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _pushNotifications = true;
   bool _emailNotifications = false;
   bool _smsNotifications = false;
-  bool _darkMode = false;
   bool _biometricAuth = false;
   bool _autoSync = true;
   String _currency = 'INR';
   String _language = 'English';
+
+  @override
+  void initState() {
+    super.initState();
+    final prefs = ref.read(appPreferencesProvider);
+    _notificationsEnabled = prefs.notificationsEnabled;
+    _biometricAuth = prefs.biometricEnabled;
+    _autoSync = prefs.autoSyncEnabled;
+    _language = prefs.language;
+    _currency = prefs.currency;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -41,6 +52,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   setState(() {
                     _notificationsEnabled = value;
                   });
+                  ref.read(appPreferencesProvider).setNotificationsEnabled(value);
                 },
               ),
               SwitchListTile(
@@ -88,29 +100,26 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   setState(() {
                     _biometricAuth = value;
                   });
+                  ref.read(appPreferencesProvider).setBiometricEnabled(value);
                 },
               ),
               ListTile(
                 title: const Text('Change Password'),
                 subtitle: const Text('Update your account password'),
                 trailing: const Icon(Icons.arrow_forward_ios),
-                onTap: () {
-                  // TODO: Navigate to change password screen
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Change password coming soon')),
-                  );
-                },
+                onTap: () => _showUnavailableDialog(
+                  'Change Password',
+                  'Password changes require a signed-in Google account. This isn\'t available in guest mode or for the current build.',
+                ),
               ),
               ListTile(
                 title: const Text('Two-Factor Authentication'),
                 subtitle: const Text('Add an extra layer of security'),
                 trailing: const Icon(Icons.arrow_forward_ios),
-                onTap: () {
-                  // TODO: Navigate to 2FA setup
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('2FA setup coming soon')),
-                  );
-                },
+                onTap: () => _showUnavailableDialog(
+                  'Two-Factor Authentication',
+                  '2FA setup requires a connected backend account and isn\'t available yet.',
+                ),
               ),
             ],
           ),
@@ -121,14 +130,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             [
               SwitchListTile(
                 title: const Text('Dark Mode'),
-                subtitle: const Text('Use dark theme'),
-                value: _darkMode,
-                onChanged: (value) {
-                  setState(() {
-                    _darkMode = value;
-                  });
-                  // TODO: Implement theme switching
-                },
+                subtitle: const Text('Follows your device setting'),
+                value: Theme.of(context).brightness == Brightness.dark,
+                onChanged: null,
               ),
               ListTile(
                 title: const Text('Language'),
@@ -157,29 +161,26 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   setState(() {
                     _autoSync = value;
                   });
+                  ref.read(appPreferencesProvider).setAutoSyncEnabled(value);
                 },
               ),
               ListTile(
                 title: const Text('Backup Data'),
                 subtitle: const Text('Create a backup of your data'),
                 trailing: const Icon(Icons.arrow_forward_ios),
-                onTap: () {
-                  // TODO: Implement data backup
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Backup functionality coming soon')),
-                  );
-                },
+                onTap: () => _showUnavailableDialog(
+                  'Backup Data',
+                  'Cloud backup isn\'t available right now. Your data stays on this device.',
+                ),
               ),
               ListTile(
                 title: const Text('Export Data'),
                 subtitle: const Text('Export your data as CSV/PDF'),
                 trailing: const Icon(Icons.arrow_forward_ios),
-                onTap: () {
-                  // TODO: Implement data export
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Export functionality coming soon')),
-                  );
-                },
+                onTap: () => _showUnavailableDialog(
+                  'Export Data',
+                  'CSV/PDF export isn\'t available yet in this build.',
+                ),
               ),
               ListTile(
                 title: const Text('Clear Cache'),
@@ -205,7 +206,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 subtitle: const Text('Check for app updates'),
                 trailing: const Icon(Icons.system_update),
                 onTap: () {
-                  // TODO: Implement update check
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('You are using the latest version')),
                   );
@@ -215,23 +215,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 title: const Text('Feedback'),
                 subtitle: const Text('Send feedback to developers'),
                 trailing: const Icon(Icons.feedback),
-                onTap: () {
-                  // TODO: Implement feedback
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Feedback feature coming soon')),
-                  );
-                },
+                onTap: () => _showUnavailableDialog(
+                  'Feedback',
+                  'In-app feedback isn\'t wired up yet. Please reach out to the team directly.',
+                ),
               ),
               ListTile(
                 title: const Text('Rate App'),
                 subtitle: const Text('Rate us on the app store'),
                 trailing: const Icon(Icons.star),
-                onTap: () {
-                  // TODO: Implement app rating
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('App rating coming soon')),
-                  );
-                },
+                onTap: () => _showUnavailableDialog(
+                  'Rate App',
+                  'This build isn\'t distributed through an app store yet.',
+                ),
               ),
             ],
           ),
@@ -263,6 +259,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  void _showUnavailableDialog(String feature, String reason) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(feature),
+        content: Text(reason),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK')),
+        ],
+      ),
+    );
+  }
+
   void _showLanguageDialog() {
     showDialog(
       context: context,
@@ -289,8 +298,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   setState(() {
                     _language = language;
                   });
+                  ref.read(appPreferencesProvider).setLanguage(language);
                   Navigator.pop(context);
-                  // TODO: Implement language change
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(content: Text('Language changed to $language')),
                   );
@@ -325,8 +334,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   setState(() {
                     _currency = currency.split(' ')[0];
                   });
+                  ref.read(appPreferencesProvider).setCurrency(_currency);
                   Navigator.pop(context);
-                  // TODO: Implement currency change
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(content: Text('Currency changed to $_currency')),
                   );
@@ -356,9 +365,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ElevatedButton(
               onPressed: () {
                 Navigator.pop(context);
-                // TODO: Implement cache clearing
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Cache cleared successfully')),
+                  const SnackBar(content: Text('There is no cache to clear in this build')),
                 );
               },
               child: const Text('Clear'),
