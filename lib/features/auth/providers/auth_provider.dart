@@ -115,6 +115,11 @@ class AuthNotifier extends StateNotifier<AuthState> {
     state = AuthState.authenticated(guestUser);
   }
   Future<void> signOut() async {
+    final isGuest = state.user?.id == 'guest';
+    if (isGuest) {
+      state = const AuthState.unauthenticated();
+      return;
+    }
     try {
       await _authService.signOut();
       state = const AuthState.unauthenticated();
