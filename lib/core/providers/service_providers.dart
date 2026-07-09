@@ -20,14 +20,25 @@ import 'package:cardcompass/core/services/user_profile_service_impl.dart';
 // Repositories
 import 'package:cardcompass/core/repositories/card_repository.dart';
 import 'package:cardcompass/core/repositories/supabase_card_repository.dart';
+import 'package:cardcompass/core/repositories/mock_card_repository.dart';
 import 'package:cardcompass/core/repositories/transaction_repository.dart';
 import 'package:cardcompass/core/repositories/supabase_transaction_repository.dart';
+import 'package:cardcompass/core/repositories/mock_transaction_repository.dart';
 import 'package:cardcompass/core/repositories/statement_repository.dart';
 import 'package:cardcompass/core/repositories/supabase_statement_repository.dart';
+import 'package:cardcompass/core/repositories/mock_statement_repository.dart';
+
+// Auth (for the guest/live switch)
+import 'package:cardcompass/features/auth/providers/auth_provider.dart';
 
 /// Provider for SharedPreferences
 final sharedPreferencesProvider = Provider<SharedPreferences>((ref) {
   throw UnimplementedError('SharedPreferences must be initialized in main()');
+});
+
+/// True when the signed-in user is the local guest user (no Supabase session).
+final isGuestModeProvider = Provider<bool>((ref) {
+  return ref.watch(authStateProvider).user?.id == 'guest';
 });
 
 /// Provider for AuthService
@@ -50,19 +61,19 @@ final gmailServiceProvider = Provider<EnhancedGmailService>((ref) {
   throw UnimplementedError('EnhancedGmailService must be initialized with Gmail API');
 });
 
-/// Provider for CardRepository
+/// Provider for CardRepository — mock in guest mode, Supabase otherwise.
 final cardRepositoryProvider = Provider<CardRepository>((ref) {
-  return SupabaseCardRepository();
+  return ref.watch(isGuestModeProvider) ? MockCardRepository() : SupabaseCardRepository();
 });
 
-/// Provider for TransactionRepository
+/// Provider for TransactionRepository — mock in guest mode, Supabase otherwise.
 final transactionRepositoryProvider = Provider<TransactionRepository>((ref) {
-  return SupabaseTransactionRepository();
+  return ref.watch(isGuestModeProvider) ? MockTransactionRepository() : SupabaseTransactionRepository();
 });
 
-/// Provider for StatementRepository
+/// Provider for StatementRepository — mock in guest mode, Supabase otherwise.
 final statementRepositoryProvider = Provider<StatementRepository>((ref) {
-  return SupabaseStatementRepository();
+  return ref.watch(isGuestModeProvider) ? MockStatementRepository() : SupabaseStatementRepository();
 });
 
 /// Provider for RecommendationService
