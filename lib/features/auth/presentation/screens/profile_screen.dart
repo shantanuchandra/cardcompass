@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:cardcompass/features/auth/providers/auth_provider.dart';
+import 'package:cardcompass/core/providers/service_providers.dart';
 
 /// Profile screen for user information and settings
 class ProfileScreen extends ConsumerStatefulWidget {
@@ -33,6 +35,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   final _emailController = TextEditingController();
   final _phoneController = TextEditingController();
   bool _isEditing = false;
+  bool _notificationsEnabled = true;
+  bool _biometricEnabled = false;
 
   @override
   void initState() {
@@ -60,6 +64,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       _emailController.text = '';
       _phoneController.text = '';
     }
+    final prefs = ref.read(appPreferencesProvider);
+    _notificationsEnabled = prefs.notificationsEnabled;
+    _biometricEnabled = prefs.biometricEnabled;
   }
 
   @override
@@ -84,12 +91,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 key: _formKey,
                 child: Column(
                   children: [
-                    // Profile Picture Section
-                                // (Profile image section hidden as per request)
-                                const SizedBox(height: 32),
-                                // ...existing code...
-                    const SizedBox(height: 32),
-                    // ...existing code...
               Center(
                 child: Stack(
                   children: [
@@ -195,9 +196,10 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       leading: const Icon(Icons.notifications),
                       title: const Text('Notifications'),
                       trailing: Switch(
-                        value: true,
+                        value: _notificationsEnabled,
                         onChanged: _isEditing ? (value) {
-                          // TODO: Implement notification settings
+                          setState(() => _notificationsEnabled = value);
+                          ref.read(appPreferencesProvider).setNotificationsEnabled(value);
                         } : null,
                       ),
                     ),
@@ -205,20 +207,20 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       leading: const Icon(Icons.fingerprint),
                       title: const Text('Biometric Authentication'),
                       trailing: Switch(
-                        value: false,
+                        value: _biometricEnabled,
                         onChanged: _isEditing ? (value) {
-                          // TODO: Implement biometric settings
+                          setState(() => _biometricEnabled = value);
+                          ref.read(appPreferencesProvider).setBiometricEnabled(value);
                         } : null,
                       ),
                     ),
                     ListTile(
                       leading: const Icon(Icons.dark_mode),
                       title: const Text('Dark Mode'),
+                      subtitle: const Text('Follows your device setting'),
                       trailing: Switch(
-                        value: false,
-                        onChanged: _isEditing ? (value) {
-                          // TODO: Implement theme settings
-                        } : null,
+                        value: Theme.of(context).brightness == Brightness.dark,
+                        onChanged: null,
                       ),
                     ),
                   ],
@@ -235,41 +237,52 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       title: const Text('App Version'),
                       trailing: Text(_getAppVersion()),
                       onTap: () {
-                        // TODO: Show app info
+                        showDialog(
+                          context: context,
+                          builder: (context) => AlertDialog(
+                            title: const Text('CardCompass'),
+                            content: Text('Version ${_getAppVersion()}'),
+                            actions: [
+                              TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK')),
+                            ],
+                          ),
+                        );
                       },
                     ),
                     ListTile(
                       leading: const Icon(Icons.privacy_tip),
                       title: const Text('Privacy Policy'),
                       trailing: const Icon(Icons.arrow_forward_ios),
-                      onTap: () {
-                        // TODO: Show privacy policy
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Privacy policy coming soon')),
-                        );
-                      },
+                      onTap: () => _showInfoDialog(
+                        'Privacy Policy',
+                        'CardCompass stores your card and transaction data locally on your '
+                        'device. We do not sell your data to third parties. Data you enter '
+                        'while signed in with Google syncs to your account; guest-mode data '
+                        'stays on this device only and is cleared when you sign out.',
+                      ),
                     ),
                     ListTile(
                       leading: const Icon(Icons.description),
                       title: const Text('Terms of Service'),
                       trailing: const Icon(Icons.arrow_forward_ios),
-                      onTap: () {
-                        // TODO: Show terms of service
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Terms of service coming soon')),
-                        );
-                      },
+                      onTap: () => _showInfoDialog(
+                        'Terms of Service',
+                        'CardCompass is provided as-is to help you track credit card '
+                        'benefits and spending. It does not provide financial advice. '
+                        'Reward and benefit figures are estimates and may not match your '
+                        'card issuer\'s exact terms.',
+                      ),
                     ),
                     ListTile(
                       leading: const Icon(Icons.help),
                       title: const Text('Help & Support'),
                       trailing: const Icon(Icons.arrow_forward_ios),
-                      onTap: () {
-                        // TODO: Show help and support
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Help & support coming soon')),
-                        );
-                      },
+                      onTap: () => _showInfoDialog(
+                        'Help & Support',
+                        'For help using CardCompass, check that your cards and transactions '
+                        'are up to date via the sync button on the home screen. If something '
+                        'looks wrong, try signing out and back in.',
+                      ),
                     ),
                   ],
                 ),
@@ -314,17 +327,42 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     });
   }
 
-  void _saveProfile() {
+  void _saveProfile() async {
     if (_formKey.currentState!.validate()) {
+      final user = ref.read(authStateProvider).user;
+      if (user != null) {
+        final service = ref.read(userProfileServiceProvider);
+        final profile = await service.getUserProfile(user.id);
+        await service.updateUserProfile(
+          user.id,
+          profile.copyWith(
+            name: _nameController.text,
+            email: _emailController.text,
+            phoneNumber: _phoneController.text,
+          ),
+        );
+      }
+      if (!mounted) return;
       setState(() {
         _isEditing = false;
       });
-      
-      // TODO: Save profile data
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Profile updated successfully')),
       );
     }
+  }
+
+  void _showInfoDialog(String title, String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK')),
+        ],
+      ),
+    );
   }
 
   void _changeProfilePicture() {
@@ -338,23 +376,29 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               ListTile(
                 leading: const Icon(Icons.camera_alt),
                 title: const Text('Camera'),
-                onTap: () {
+                onTap: () async {
                   Navigator.pop(context);
-                  // TODO: Implement camera capture
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Camera functionality coming soon')),
-                  );
+                  final picker = ImagePicker();
+                  final image = await picker.pickImage(source: ImageSource.camera);
+                  if (image != null && mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Photo captured (not yet saved to profile)')),
+                    );
+                  }
                 },
               ),
               ListTile(
                 leading: const Icon(Icons.photo_library),
                 title: const Text('Gallery'),
-                onTap: () {
+                onTap: () async {
                   Navigator.pop(context);
-                  // TODO: Implement gallery selection
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Gallery functionality coming soon')),
-                  );
+                  final picker = ImagePicker();
+                  final image = await picker.pickImage(source: ImageSource.gallery);
+                  if (image != null && mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Photo selected (not yet saved to profile)')),
+                    );
+                  }
                 },
               ),
               ListTile(
@@ -362,10 +406,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 title: const Text('Remove Photo'),
                 onTap: () {
                   Navigator.pop(context);
-                  // TODO: Implement photo removal
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Photo removed')),
-                  );
                 },
               ),
             ],
@@ -376,6 +416,23 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   }
 
   void _showDeleteAccountDialog() {
+    final isGuest = ref.read(authStateProvider).user?.id == 'guest';
+    if (isGuest) {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Not available in guest mode'),
+          content: const Text(
+            'Guest sessions don\'t have an account to delete. Sign in with '
+            'Google to manage account deletion.',
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK')),
+          ],
+        ),
+      );
+      return;
+    }
     showDialog(
       context: context,
       builder: (context) {
@@ -392,7 +449,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             ElevatedButton(
               onPressed: () {
                 Navigator.pop(context);
-                // TODO: Implement account deletion
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('Account deletion coming soon')),
                 );

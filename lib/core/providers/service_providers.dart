@@ -16,6 +16,7 @@ import 'package:cardcompass/core/services/recommendation_service.dart';
 import 'package:cardcompass/core/services/recommendation_service_impl.dart';
 import 'package:cardcompass/core/services/user_profile_service.dart';
 import 'package:cardcompass/core/services/user_profile_service_impl.dart';
+import 'package:cardcompass/core/services/app_preferences.dart';
 
 // Repositories
 import 'package:cardcompass/core/repositories/card_repository.dart';
@@ -94,4 +95,9 @@ final userProfileServiceProvider = Provider<UserProfileService>((ref) {
 /// Provider for CardIdentificationService
 final cardIdentificationServiceProvider = Provider<CardIdentificationService>((ref) {
   return CardIdentificationService();
+});
+
+/// Provider for AppPreferences (local settings persistence)
+final appPreferencesProvider = Provider<AppPreferences>((ref) {
+  return AppPreferences(ref.watch(sharedPreferencesProvider));
 });
