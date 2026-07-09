@@ -599,7 +599,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                     'Total Credit',
                     '₹${(totalCreditLimit / 1000).toStringAsFixed(0)}K',
                     Icons.credit_card,
-                    Theme.of(context).primaryColor,
+                    Theme.of(context).colorScheme.primary,
                   );
                 },
               ),
