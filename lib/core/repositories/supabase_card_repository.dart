@@ -248,7 +248,7 @@ class SupabaseCardRepository implements CardRepository {
             monthly_cap,
             annual_cap
           ''')
-          .eq('catalog_card_id', cardId)  // Updated to use catalog_card_id
+          .eq('card_id', cardId)
           .eq('is_active', true);
 
       if (response.isEmpty) {

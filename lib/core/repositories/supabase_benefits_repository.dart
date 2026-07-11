@@ -66,7 +66,7 @@ class SupabaseBenefitsRepository {
             *,
             benefits!inner(*)
           ''')
-          .eq('catalog_card_id', cardId)
+          .eq('card_id', cardId)
           .eq('is_active', true);
 
       return asList(response)
