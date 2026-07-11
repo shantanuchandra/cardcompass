@@ -78,17 +78,10 @@ ANALYZE THE STATEMENT:''';
         
         if (content != null) {
           try {
-            // Clean up the response - remove markdown code blocks if present
+            // Strip markdown code fences robustly (Gemini wraps in ```json\n...\n```)
             String cleanContent = content.trim();
-            if (cleanContent.startsWith('```json')) {
-              cleanContent = cleanContent.substring(7); // Remove ```json
-            }
-            if (cleanContent.startsWith('```')) {
-              cleanContent = cleanContent.substring(3); // Remove ```
-            }
-            if (cleanContent.endsWith('```')) {
-              cleanContent = cleanContent.substring(0, cleanContent.length - 3); // Remove ending ```
-            }
+            cleanContent = cleanContent.replaceAll(RegExp(r'^```(?:json)?\s*', multiLine: false), '');
+            cleanContent = cleanContent.replaceAll(RegExp(r'\s*```$', multiLine: false), '');
             cleanContent = cleanContent.trim();
             
             // Try to parse the JSON response
@@ -223,7 +216,7 @@ ANALYZE THIS STATEMENT:''';
         }],
         'generationConfig': {
           'temperature': 0.1,
-          'maxOutputTokens': 4096
+          'maxOutputTokens': 8192,  // SBI 39K-char statements need more room
         }
       };
       
@@ -236,19 +229,12 @@ ANALYZE THIS STATEMENT:''';
         
         if (content != null) {
           try {
-            // Clean up the response - remove markdown code blocks if present
+            // Strip markdown code fences robustly (Gemini wraps in ```json\n...\n```)
             String cleanContent = content.trim();
-            if (cleanContent.startsWith('```json')) {
-              cleanContent = cleanContent.substring(7); // Remove ```json
-            }
-            if (cleanContent.startsWith('```')) {
-              cleanContent = cleanContent.substring(3); // Remove ```
-            }
-            if (cleanContent.endsWith('```')) {
-              cleanContent = cleanContent.substring(0, cleanContent.length - 3); // Remove ending ```
-            }
+            cleanContent = cleanContent.replaceAll(RegExp(r'^```(?:json)?\s*', multiLine: false), '');
+            cleanContent = cleanContent.replaceAll(RegExp(r'\s*```$', multiLine: false), '');
             cleanContent = cleanContent.trim();
-            
+
             final List<dynamic> list = json.decode(cleanContent);
             // Assign UUIDs to each transaction if missing
             final uuid = Uuid();
@@ -630,7 +616,7 @@ CONTENT TO ANALYZE:
               // Free-tier resets every 60s — wait for the window to pass
               print('⏳ Waiting 60s for Gemini rate limit reset...');
               await Future.delayed(const Duration(seconds: 60));
-              AIConfig.resetToDefaultModel();
+              AIConfig.resetToPrimaryModel();
               continue;
             }
             return response;
