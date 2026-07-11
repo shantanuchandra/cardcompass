@@ -789,9 +789,23 @@ Card name:'''
           ),
         );
       } catch (e) {
-        print('Error extracting PDF text: $e');
+        print('❌ Error extracting PDF text: $e');
         pdfText = '';
       }
+
+      // ── DIAGNOSTIC: Log PDF text state ──────────────────────────────
+      print('📄 PDF TEXT STATUS:');
+      print('   Bank: $bankFromSender');
+      print('   PDF size: ${(pdfData.length / 1024).toStringAsFixed(1)}KB');
+      print('   Text length: ${pdfText.length} chars');
+      if (pdfText.isEmpty) {
+        print('   ⚠️ PDF TEXT IS EMPTY — likely password-protected with no matching password');
+        print('   Subject: $emailSubject');
+      } else {
+        // Print first 300 chars to confirm content
+        print('   ✅ Text preview: ${pdfText.substring(0, pdfText.length.clamp(0, 300))}');
+      }
+      // ──────────────────────────────────────────────────────────────────
       
       // Use Gemini to detect the exact card variant
       final cardVariant = await _detectCardVariant(
@@ -814,6 +828,19 @@ Card name:'''
         bankName: cardVariant,
       );
       
+      // ── DIAGNOSTIC: Gemini results ───────────────────────────────────
+      print('🤖 GEMINI RESULTS:');
+      print('   Card variant used: $cardVariant');
+      print('   PDF text length sent to Gemini: ${pdfText.length} chars');
+      print('   Transactions found: ${geminiTxs.length}');
+      if (geminiTxs.isEmpty && pdfText.isNotEmpty) {
+        print('   ⚠️ Gemini returned 0 transactions despite non-empty PDF text');
+        print('   This may indicate the PDF format is not being parsed correctly');
+      } else if (geminiTxs.isEmpty && pdfText.isEmpty) {
+        print('   ⚠️ Gemini got empty PDF text → 0 transactions (PDF password issue)');
+      }
+      // ──────────────────────────────────────────────────────────────────
+      
       // Convert Gemini transactions to Transaction objects with explicit type casting
       final transactions = <Transaction>[];
       for (final geminiTx in geminiTxs) {
@@ -829,6 +856,7 @@ Card name:'''
       final sizeKB = (pdfData.length / 1024).toStringAsFixed(1);
       print('METRICS: Lines: $lines | Text: ${pdfText.length} chars | Size: ${sizeKB}KB');
       print('TRANSACTIONS: ${transactions.length}');
+
       
       // Add pause
       await Future.delayed(const Duration(seconds: 2));
