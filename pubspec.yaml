@@ -44,8 +44,7 @@ dependencies:
   supabase_flutter: ^2.10.3
   hive: ^2.2.3
   hive_flutter: ^1.1.0
-  # Authentication & APIs
-  google_sign_in: ^6.3.0
+  google_sign_in: ^7.2.0
   googleapis: ^16.0.0
   googleapis_auth: ^2.0.0
   google_generative_ai: ^0.4.3
