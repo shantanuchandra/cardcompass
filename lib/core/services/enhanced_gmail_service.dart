@@ -11,6 +11,7 @@ import '../services/gemini_transaction_parser.dart';
 import '../services/error_handling_service.dart';
 import '../services/simple_birthday_input_service.dart';
 import '../services/user_profile_database_service.dart';
+import '../repositories/email_repository.dart';
 
 class GmailEmail {
   final String id;
@@ -700,18 +701,27 @@ Product name:'''
     DateTime? endDate,
     int? maxEmails,
   }) async {
-    final results = <StatementParsingResult>[];    try {
+    final results = <StatementParsingResult>[];
+    try {
       final query = _buildGmailSearchQuery(bankQuery, startDate, endDate);
       final searchResponse = await _gmailApi!.users.messages.list('me', q: query, maxResults: maxEmails);
 
       if (searchResponse.messages == null || searchResponse.messages!.isEmpty) {
         return results;
-      }      
+      }
       
+      final emailRepo = EmailRepository();
       for (final message in searchResponse.messages!) {
         if (message.id == null) continue;
 
         try {
+          // Check if the email was already successfully processed to avoid parsing and LLM call
+          final isProcessed = await emailRepo.isEmailProcessed(message.id!);
+          if (isProcessed) {
+            print('⏭️  Skipping already processed email (ID: ${message.id}) to save API quota and time');
+            continue;
+          }
+
           final statementResult = await _processStatementEmail(
             userId: userId,
             messageId: message.id!,

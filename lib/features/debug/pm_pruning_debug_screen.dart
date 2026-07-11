@@ -161,7 +161,7 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
     }
 
     return Scaffold(
-      backgroundColor: const Color(0xFF050508),
+      backgroundColor: const Color(0xFF050B18),
       endDrawer: _buildFeedbackDrawer(context),
       appBar: AppBar(
         backgroundColor: const Color(0xFF0C152B),
@@ -840,7 +840,7 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
 
   Widget _buildFeedbackDrawer(BuildContext context) {
     return Drawer(
-      backgroundColor: const Color(0xFF070E1A),
+      backgroundColor: const Color(0xFF0C152B),
       surfaceTintColor: Colors.transparent,
       child: SafeArea(
         child: Padding(
@@ -885,14 +885,14 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
                 decoration: InputDecoration(
                   hintText: 'TYPE SYSTEM RULES OR PARSING FEEDBACK...',
                   hintStyle: GoogleFonts.shareTechMono(color: Colors.white24, fontSize: 11),
-                  fillColor: const Color(0xFF0B1426),
+                  fillColor: const Color(0xFF0F172A),
                   filled: true,
                   border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(4),
+                    borderRadius: BorderRadius.circular(AppBorderRadius.sm),
                     borderSide: const BorderSide(color: Color(0xFF1E293B)),
                   ),
                   focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(4),
+                    borderRadius: BorderRadius.circular(AppBorderRadius.sm),
                     borderSide: const BorderSide(color: Color(0xFF00F5FF)),
                   ),
                   contentPadding: const EdgeInsets.all(10),
@@ -920,7 +920,7 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF00F5FF),
                   padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppBorderRadius.sm)),
                 ),
                 child: Text(
                   'COMMIT TO WORKSPACE',
@@ -963,8 +963,8 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
                             margin: const EdgeInsets.only(bottom: 10),
                             padding: const EdgeInsets.all(10),
                             decoration: BoxDecoration(
-                              color: const Color(0xFF0B1426),
-                              borderRadius: BorderRadius.circular(4),
+                              color: const Color(0xFF0F172A),
+                              borderRadius: BorderRadius.circular(AppBorderRadius.sm),
                               border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
                             ),
                             child: Column(

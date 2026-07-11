@@ -94,6 +94,22 @@ class EmailRepository {
     }
   }
 
+  /// Check if email has been successfully processed
+  Future<bool> isEmailProcessed(String emailId) async {
+    try {
+      final response = await _supabase
+          .from('emails')
+          .select('processed')
+          .eq('email_id', emailId)
+          .maybeSingle();
+
+      if (response == null) return false;
+      return response['processed'] == true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   /// Get unprocessed emails
   Future<List<Map<String, dynamic>>> getUnprocessedEmails(String userId) async {
     try {

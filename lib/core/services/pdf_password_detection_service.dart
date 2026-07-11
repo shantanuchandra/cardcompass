@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:cardcompass/core/services/password_input_service.dart';
 import 'package:cardcompass/core/services/password_learning_service.dart';
+import 'parsing_logger.dart';
 
 /// Service for detecting and trying common PDF passwords used by banks
 class PdfPasswordDetectionService {
@@ -227,7 +228,8 @@ class PdfPasswordDetectionService {
       
       try {
         final document = PdfDocument(inputBytes: pdfBytes, password: password);
-        // If we get here, the password worked        print('PASSWORD: "$password"');
+        // If we get here, the password worked
+        ParsingLogger.summary('Password: PDF decrypted successfully using candidate ${i + 1}/${passwords.length}');
         
         // Store the successful password for learning
         if (bankName != null && userEmail != null) {
@@ -250,7 +252,7 @@ class PdfPasswordDetectionService {
       }
     }
     
-    print('⚠️ No password worked out of ${passwords.length} attempts');
+    ParsingLogger.warning('Password: None of the ${passwords.length} automatic candidates decrypted the PDF.');
     return null;  }
 
   /// Try to open PDF with a manually provided password
@@ -268,7 +270,7 @@ class PdfPasswordDetectionService {
       final document = PdfDocument(inputBytes: pdfBytes, password: password);
       final textExtractor = PdfTextExtractor(document);
       final text = textExtractor.extractText();      document.dispose();
-      print('PASSWORD: "$password"');
+      ParsingLogger.summary('Password: PDF decrypted successfully using manual password input');
       
       // Store the successful manual password for learning
       if (bankName != null && userEmail != null) {
@@ -308,7 +310,7 @@ class PdfPasswordDetectionService {
         final textExtractor = PdfTextExtractor(document);
         final text = textExtractor.extractText();
         document.dispose();
-        print('PDF opened without password');
+        ParsingLogger.summary('Password: PDF opened without password');
         return text;
       } catch (e) {
         // PDF is encrypted, continue with password detection
@@ -356,22 +358,22 @@ class PdfPasswordDetectionService {
           document.dispose();
           return text;
         } catch (textError) {
-          print('❌ Text extraction failed: $textError');
+          ParsingLogger.error('PDF text extraction failed', textError);
           document.dispose();
           return null;
         }
       }      // Try to get manual password from user if callback is provided
       if (onManualPasswordRequired != null) {
-        print('🔐 Automatic passwords failed, requesting manual input...');
+        ParsingLogger.summary('Password: Automatic decryption failed. Requesting manual password input...');
         
         // Allow up to 2 manual password attempts as specified
         for (int attempt = 1; attempt <= 2; attempt++) {
           try {
-            print('📝 Manual password attempt $attempt/2 for $bankName');
+            ParsingLogger.summary('Password: Manual input attempt $attempt/2 for $bankName');
             final manualPassword = await onManualPasswordRequired();
             
             if (manualPassword != null && manualPassword.isNotEmpty) {
-              print('🔑 Manual password received, testing...');
+              ParsingLogger.summary('Password: Manual password received, testing decryption...');
               final result = await tryManualPassword(
                 pdfBytes: pdfBytes,
                 password: manualPassword,
@@ -381,30 +383,30 @@ class PdfPasswordDetectionService {
                 userProfile: userProfile,
               );
               if (result != null) {
-                print('✅ Manual password worked!');
+                ParsingLogger.summary('Password: Manual password verification succeeded.');
                 return result;
               } else {
-                print('❌ Manual password attempt $attempt failed');
+                ParsingLogger.warning('Password: Manual password attempt $attempt failed');
               }
             } else {
-              print('❌ No manual password provided, user cancelled');
+              ParsingLogger.warning('Password: No manual password provided, user cancelled');
               break; // User cancelled
             }
           } catch (e) {
-            print('❌ Error during manual password attempt: $e');
+            ParsingLogger.error('Password: Error during manual decryption attempt', e);
             break; // Error occurred
           }
         }
         
-        print('⚠️ All manual password attempts exhausted');
+        ParsingLogger.warning('Password: All manual password attempts exhausted');
       } else {
-        print('⚠️ No manual password callback available');
+        ParsingLogger.warning('Password: No manual password callback available');
       }
       
       return null;
       
     } catch (error) {
-      print('Error in password detection: $error');
+      ParsingLogger.error('Password detection error', error);
       return null;
     }
   }
@@ -593,7 +595,7 @@ class PdfPasswordDetectionService {
       final fullCardNumber = sbiMatch.group(1)!;
       final last4 = fullCardNumber.substring(fullCardNumber.length - 4);
       cardNumbers.add(last4);
-      print(' $fileName: SBI pattern found: Full number=$fullCardNumber, Last4=$last4');
+      ParsingLogger.debug('$fileName: SBI pattern found: Full number=$fullCardNumber, Last4=$last4');
     }
     
     // PRIORITY 2: Other common patterns in credit card statement filenames

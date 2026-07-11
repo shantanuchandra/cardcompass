@@ -12,7 +12,7 @@ void main() {
   });
 
   test('Test HDFC DCB transaction extraction only', () async {
-    final file = File('d:/CC/CC_all/cardcompass/assets/3610XXXXXXXX81_15-06-2025_HDFC_DCB.PDF');
+    final file = File('assets/3610XXXXXXXX81_15-06-2025_HDFC_DCB.PDF');
     final Uint8List pdfBytes = await file.readAsBytes();
     final parsingService = PdfParsingServiceImpl();
 

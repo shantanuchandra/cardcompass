@@ -6,6 +6,7 @@ import 'package:cardcompass/core/services/pdf_parsing_service.dart';
 import 'package:cardcompass/core/services/pdf_password_detection_service.dart';
 import 'package:cardcompass/core/services/transaction_parsing_service.dart';
 import 'package:cardcompass/shared/models/transaction.dart';
+import 'parsing_logger.dart';
 
 /// Enhanced service for parsing credit card statements from PDF files
 class PdfParsingServiceImpl implements PdfParsingService {
@@ -27,7 +28,7 @@ class PdfParsingServiceImpl implements PdfParsingService {
           error.toString().contains('encrypted') ||
           error.toString().contains('Cannot open an encrypted document')) {
         
-        print('PDF is encrypted - password detection not available in this context');
+        ParsingLogger.summary('PDF is encrypted (automatic password detection not available in this context)');
         ErrorHandlingService.logError(
           'PDF Text Extraction - Encrypted Document',
           'PDF is password-protected. Use extractTextWithPasswordDetection for encrypted PDFs.',
@@ -84,7 +85,7 @@ class PdfParsingServiceImpl implements PdfParsingService {
         final scheduleIndex = extractedText.toLowerCase().indexOf('schedule of charges');
         if (scheduleIndex != -1) {
           final filteredText = extractedText.substring(0, scheduleIndex);
-          print('🔪 SBI PDF: Filtered out content after "Schedule of Charges" (removed ${extractedText.length - filteredText.length} characters)');
+          ParsingLogger.summary('SBI PDF: Filtered out content after "Schedule of Charges" (removed ${extractedText.length - filteredText.length} characters)');
           return filteredText;
         }
       }
@@ -98,11 +99,11 @@ class PdfParsingServiceImpl implements PdfParsingService {
         if (importantInfoIndex != -1 && domesticTransIndex != -1 && importantInfoIndex > domesticTransIndex) {
           // Only filter if "Important Information" comes after "Domestic Transactions"
           final filteredText = extractedText.substring(0, importantInfoIndex);
-          print('🔪 HDFC PDF: Filtered out content after "Important Information" (removed ${extractedText.length - filteredText.length} characters)');
+          ParsingLogger.summary('HDFC PDF: Filtered out content after "Important Information" (removed ${extractedText.length - filteredText.length} characters)');
           return filteredText;
         } else if (importantInfoIndex != -1 && domesticTransIndex == -1) {
           // If no "Domestic Transactions" found but "Important Information" is there, might be cutting off too early
-          print('⚠️ HDFC PDF: "Important Information" found but no "Domestic Transactions" section detected. Keeping full text.');
+          ParsingLogger.warning('HDFC PDF: "Important Information" found but no "Domestic Transactions" section detected. Keeping full text.');
         }
       }
       
@@ -153,7 +154,7 @@ class PdfParsingServiceImpl implements PdfParsingService {
       
       // If password detection didn't work or wasn't available, try regular extraction
       if (text.isEmpty) {
-        print('Password detection failed or not available, trying regular PDF extraction...');
+        ParsingLogger.summary('Password: Candidate search failed, attempting regular PDF extraction...');
         text = await extractTextFromPdfBytes(pdfBytes);
       }
 

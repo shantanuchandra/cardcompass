@@ -4,6 +4,7 @@ import '../config/ai_config.dart';
 import 'package:uuid/uuid.dart';
 import 'card_normalizer_service.dart';
 import 'pruning_audit_service.dart';
+import 'parsing_logger.dart';
 
 /// Gemini AI Transaction Parser service
 class GeminiTransactionParser {
@@ -96,25 +97,25 @@ ANALYZE THE STATEMENT:''';
               result['card_name'] = normalizeCardName('$normBank Credit Card', normBank);
             }
             
-            print('✅ GEMINI PARSING: Successfully parsed statement info');
+            ParsingLogger.summary('Gemini Parser: Successfully parsed statement info');
             return result;
           } catch (e) {
-            print('❌ GEMINI PARSING: Failed to parse JSON response: $e');
-            print('Raw content: $content');
+            ParsingLogger.error('Gemini Parser: Failed to parse JSON response', e);
+            ParsingLogger.debug('Raw content: $content');
           }
         }
       } else if (response != null) {
-        print('❌ GEMINI PARSING: Non-200 response, status ${response.statusCode}');
-        print('Response body: ${response.body}');
+        ParsingLogger.error('Gemini Parser: Non-200 response, status ${response.statusCode}');
+        ParsingLogger.debug('Response body: ${response.body}');
       } else {
-        print('❌ GEMINI PARSING: All API attempts failed');
+        ParsingLogger.error('Gemini Parser: All API attempts failed');
       }
       
       // Fallback to basic extraction if API fails
       return _fallbackStatementParsing(pdfText, bankName);
       
     } catch (e) {
-      print('❌ GEMINI PARSER: Error parsing statement info: $e');
+      ParsingLogger.error('Gemini Parser: Error parsing statement info', e);
       return _fallbackStatementParsing(pdfText, bankName);
     }
   }
@@ -163,7 +164,7 @@ ANALYZE THE STATEMENT:''';
         return DateTime(year, month, day).toIso8601String();
       }
     } catch (e) {
-      print('Error parsing date: $dateStr');
+      ParsingLogger.warning('Gemini Parser: Error parsing date $dateStr');
     }
     
     return DateTime.now().toIso8601String();
@@ -243,22 +244,22 @@ ANALYZE THIS STATEMENT:''';
               return m;
             }).toList();
             
-            print('✅ GEMINI PARSING: Successfully parsed ${transactions.length} transactions');
+            ParsingLogger.summary('Gemini Parser: Successfully parsed ${transactions.length} transactions');
             return transactions;
           } catch (e) {
-            print('❌ GEMINI PARSING: Failed to parse JSON response: $e');
-            print('Raw content: $content');
+            ParsingLogger.error('Gemini Parser: Failed to parse JSON response', e);
+            ParsingLogger.debug('Raw content: $content');
           }
         }
       } else if (response != null) {
-        print('❌ GEMINI PARSING: Non-200 response, status ${response.statusCode}');
-        print('Response body: ${response.body}');
+        ParsingLogger.error('Gemini Parser: Non-200 response, status ${response.statusCode}');
+        ParsingLogger.debug('Response body: ${response.body}');
       } else {
-        print('❌ GEMINI PARSING: All API attempts failed');
+        ParsingLogger.error('Gemini Parser: All API attempts failed');
       }
       return [];
     } catch (e) {
-      print('❌ GEMINI PARSER: Error parsing transactions: $e');
+      ParsingLogger.error('Gemini Parser: Error parsing transactions', e);
       return [];
     }
   }
@@ -349,7 +350,7 @@ GENERAL INDIAN BANK INSTRUCTIONS:
     String? pdfContent,
   }) async {
     try {
-      print('🤖 EXTRACTING BENEFITS: $bankName $cardName');
+      ParsingLogger.summary('Benefits Extraction: Starting extraction for $bankName $cardName using Gemini AI');
       
       final prompt = _buildBenefitExtractionPrompt(cardName, bankName);
       final content = htmlContent + (pdfContent != null ? '\n\nPDF CONTENT:\n$pdfContent' : '');
@@ -375,7 +376,7 @@ GENERAL INDIAN BANK INSTRUCTIONS:
             jsonResponse['candidates'].isNotEmpty) {
           
           final text = jsonResponse['candidates'][0]['content']['parts'][0]['text'];
-          print('✅ GEMINI BENEFIT EXTRACTION: Received response');
+          ParsingLogger.summary('Benefits Extraction: Received response from Gemini AI');
           
           // Parse the JSON response from Gemini
           final benefitData = _parseBenefitResponse(text, cardName, bankName);
@@ -390,14 +391,14 @@ GENERAL INDIAN BANK INSTRUCTIONS:
       }
       
       if (response != null) {
-        print('❌ GEMINI BENEFIT EXTRACTION: Non-200 response, status ${response.statusCode}');
+        ParsingLogger.error('Benefits Extraction: Non-200 response, status ${response.statusCode}');
         return {
           'success': false,
           'error': 'API request failed with status ${response.statusCode}',
           'data': null,
         };
       } else {
-        print('❌ GEMINI BENEFIT EXTRACTION: All API attempts failed');
+        ParsingLogger.error('Benefits Extraction: All API attempts failed');
         return {
           'success': false,
           'error': 'All API attempts exhausted',
@@ -406,7 +407,7 @@ GENERAL INDIAN BANK INSTRUCTIONS:
       }
       
     } catch (e) {
-      print('❌ GEMINI BENEFIT EXTRACTION: Error extracting benefits: $e');
+      ParsingLogger.error('Benefits Extraction: Error extracting benefits', e);
       return {
         'success': false,
         'error': e.toString(),
@@ -533,7 +534,7 @@ CONTENT TO ANALYZE:
         
         return benefitData;
       } else {
-        print('⚠️ No JSON found in Gemini response, returning raw text');
+        ParsingLogger.warning('Benefits Extraction: No JSON found in Gemini response, returning raw text');
         return {
           'success': false,
           'error': 'Could not parse JSON from response',
@@ -542,7 +543,7 @@ CONTENT TO ANALYZE:
         };
       }
     } catch (e) {
-      print('❌ Error parsing benefit response: $e');
+      ParsingLogger.error('Benefits Extraction: Error parsing benefit response', e);
       return {
         'success': false,
         'error': 'JSON parsing failed: $e',
@@ -621,7 +622,7 @@ CONTENT TO ANALYZE:
       for (int i = 0; i < modelQueue.length; i++) {
         final currentModel = modelQueue[i];
         try {
-          print('🤖 Groq Parser: Attempting request using model: $currentModel');
+          ParsingLogger.summary('Groq Parser: Attempting request using model: $currentModel');
 
           final groqReq = {
             'model': currentModel,
@@ -667,7 +668,7 @@ CONTENT TO ANALYZE:
               headers: response.headers,
             );
           } else {
-            print('⚠️ Groq model $currentModel returned error: ${response.statusCode} - ${response.body}');
+            ParsingLogger.warning('Groq Parser: Model $currentModel returned error ${response.statusCode}');
             // If it is a rate limit or prompt size error, try next model immediately
             if (response.statusCode == 429 || response.statusCode == 413 || response.statusCode == 400) {
               continue;
@@ -675,21 +676,19 @@ CONTENT TO ANALYZE:
             return response;
           }
         } catch (e) {
-          print('⚠️ Groq call failed on model $currentModel: $e');
+          ParsingLogger.error('Groq Parser: Call failed on model $currentModel', e);
         }
       }
 
       // If all Groq models failed, check if Ollama is available locally as a backup
       if (await _isOllamaAvailable()) {
-        print('🔄 [HYBRID BACKUP] All Groq API models failed/rate-limited. Automatically switching to local Ollama fallback...');
+        ParsingLogger.warning('Groq Parser: All Groq API models failed/rate-limited. Automatically switching to local Ollama fallback...');
         final backupResponse = await _executeOllamaRequest(prompt);
         if (backupResponse != null) return backupResponse;
       }
 
       return lastResponse;
     }
-
-
 
     // ── GEMINI PROVIDER ROAD ──
     int attempt = 0;
@@ -698,7 +697,7 @@ CONTENT TO ANALYZE:
       attempt++;
       
       try {
-        print('🔄 Gemini API call attempt $attempt/$maxRetries using model: ${AIConfig.geminiModel}');
+        ParsingLogger.summary('Gemini Parser: API call attempt $attempt/$maxRetries using model: ${AIConfig.geminiModel}');
         
         final response = await http.post(
           Uri.parse(AIConfig.geminiGenerateUrl),
@@ -708,16 +707,16 @@ CONTENT TO ANALYZE:
         
         // Check if rate limit error occurred (429)
         if (AIConfig.isRateLimitError(response.statusCode, response.body)) {
-          print('⚠️  Rate limit detected (Status: ${response.statusCode})');
+          ParsingLogger.warning('Gemini Parser: Rate limit detected (Status: ${response.statusCode})');
 
           // Try to switch to fallback model
           final switched = AIConfig.switchToFallbackModel();
 
           if (!switched) {
-            print('❌ No more fallback models available');
+            ParsingLogger.error('Gemini Parser: No more fallback models available');
             if (attempt < maxRetries) {
               // Free-tier resets every 60s — wait for the window to pass
-              print('⏳ Waiting 60s for Gemini rate limit reset...');
+              ParsingLogger.summary('Gemini Parser: Waiting 60s for rate limit reset...');
               await Future.delayed(const Duration(seconds: 60));
               AIConfig.resetToPrimaryModel();
               continue;
@@ -727,39 +726,38 @@ CONTENT TO ANALYZE:
 
           // Stepped backoff when switching models: 15s → 30s → 45s
           final waitSeconds = attempt * 15;
-          print('⏳ Waiting ${waitSeconds}s before retry with fallback model...');
+          ParsingLogger.summary('Gemini Parser: Waiting ${waitSeconds}s before retry with fallback model...');
           await Future.delayed(Duration(seconds: waitSeconds));
           continue;
         }
 
         // Success or non-rate-limit error — return the response
         if (response.statusCode == 200) {
-          print('✅ Gemini API call successful with model: ${AIConfig.geminiModel}');
+          ParsingLogger.summary('Gemini Parser: API call successful with model: ${AIConfig.geminiModel}');
         }
         return response;
 
       } catch (e) {
-        print('❌ Gemini API call error on attempt $attempt: $e');
+        ParsingLogger.error('Gemini Parser: API call error on attempt $attempt', e);
 
         if (attempt < maxRetries) {
-          print('⏳ Waiting 10 seconds before retry...');
+          ParsingLogger.summary('Gemini Parser: Waiting 10 seconds before retry...');
           await Future.delayed(const Duration(seconds: 10));
           AIConfig.switchToFallbackModel();
         }
       }
     }
     
-    print('❌ All Gemini API attempts exhausted after $maxRetries tries');
+    ParsingLogger.error('Gemini Parser: All API attempts exhausted');
 
     if (await _isOllamaAvailable()) {
-      print('🔄 [HYBRID BACKUP] Gemini API failed/rate-limited. Automatically switching to local Ollama fallback...');
+      ParsingLogger.warning('Gemini Parser: Gemini API failed/rate-limited. Automatically switching to local Ollama fallback...');
       final backupResponse = await _executeOllamaRequest(prompt);
       if (backupResponse != null) return backupResponse;
     }
 
     return null;
   }
-
 
   static String _pruneAndCleanText(String text, [String? bankName]) {
     if (text.isEmpty) return text;
@@ -797,7 +795,7 @@ CONTENT TO ANALYZE:
     
     // Truncate only if we keep at least 3500 chars (safe threshold for transactions)
     if (bestCutIndex > 3500) {
-      print('✂️ Pruning PDF statement text: reduced from ${cleaned.length} to $bestCutIndex characters');
+      ParsingLogger.summary('Text Pruning: PDF statement text reduced from ${cleaned.length} to $bestCutIndex characters');
       final original = cleaned;
       cleaned = cleaned.substring(0, bestCutIndex);
       
@@ -836,7 +834,7 @@ CONTENT TO ANALYZE:
       };
 
       final targetUrl = '${AIConfig.ollamaUrl}/api/generate';
-      print('🤖 Ollama Parser: Sending automatic fallback request to $targetUrl with model: ${AIConfig.ollamaModel}');
+      ParsingLogger.summary('Ollama Parser: Sending fallback request using model: ${AIConfig.ollamaModel}');
 
       final response = await http.post(
         Uri.parse(targetUrl),
@@ -870,7 +868,7 @@ CONTENT TO ANALYZE:
         );
       }
     } catch (e) {
-      print('❌ Ollama fallback call failed: $e');
+      ParsingLogger.error('Ollama Parser: Fallback call failed', e);
     }
     return null;
   }
@@ -917,7 +915,7 @@ CONTENT TO ANALYZE:
           text = text.substring(0, text.length - 1).trim();
         }
         text += ']';
-        print('🩹 Healed JSON array: recovered up to last complete object and appended "]"');
+        ParsingLogger.summary('JSON Healing: Recovered incomplete JSON array and appended "]"');
       }
     } else if (text.startsWith('{')) {
       if (!text.endsWith('}')) {
@@ -931,7 +929,7 @@ CONTENT TO ANALYZE:
         if (openBraces > closeBraces) {
           text += '}' * (openBraces - closeBraces);
         }
-        print('🩹 Healed JSON object: closed open braces');
+        ParsingLogger.summary('JSON Healing: Recovered incomplete JSON object by closing open braces');
       }
     }
     return text;
