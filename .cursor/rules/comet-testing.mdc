@@ -1,0 +1,17 @@
+---
+description: Test CardCompass in Comet on port 54321
+alwaysApply: true
+---
+
+# Browser Testing
+
+- Always test this app in **Comet**, not Chrome, because the user's Google sign-in works reliably only in Comet.
+- Always serve the Flutter web app on port `54321`.
+- Preferred command:
+
+```bash
+flutter run -d web-server --web-port=54321 --dart-define-from-file=dart_defines.json
+```
+
+- Open `http://localhost:54321` in Comet for manual verification.
+- Do not switch to a different port unless the user explicitly asks.
