@@ -20,15 +20,19 @@ class AuthNotifier extends _$AuthNotifier {
   }
 
   Future<void> _checkAuthState() async {
+    print('🔑 AuthNotifier: _checkAuthState started');
     state = const AuthState.loading();
     try {
+      print('🔑 AuthNotifier: Fetching current user...');
       final user = await _authService.getCurrentUser();
+      print('🔑 AuthNotifier: Current user: $user');
       if (user != null) {
         state = AuthState.authenticated(user);
       } else {
         state = const AuthState.unauthenticated();
       }
-    } catch (e) {
+    } catch (e, stack) {
+      print('🔑 AuthNotifier: Error in _checkAuthState: $e\n$stack');
       state = AuthState.error(e.toString());
     }
   }
@@ -125,18 +129,25 @@ class AuthService {
   }
 
   Future<User?> getCurrentUser() async {
-    final session = _supabase.auth.currentSession;
-    if (session?.user != null) {
-      return User(
-        id: session!.user.id,
-        email: session.user.email!,
-        name: session.user.userMetadata?['full_name'],
-        profileImage: session.user.userMetadata?['avatar_url'],
-        createdAt: DateTime.parse(session.user.createdAt),
-        lastLoginAt: DateTime.now(),
-      );
+    print('🔑 AuthService: getCurrentUser started');
+    try {
+      final session = _supabase.auth.currentSession;
+      print('🔑 AuthService: session: $session');
+      if (session?.user != null) {
+        return User(
+          id: session!.user.id,
+          email: session.user.email!,
+          name: session.user.userMetadata?['full_name'],
+          profileImage: session.user.userMetadata?['avatar_url'],
+          createdAt: DateTime.parse(session.user.createdAt),
+          lastLoginAt: DateTime.now(),
+        );
+      }
+      return null;
+    } catch (e) {
+      print('🔑 AuthService: error getting current user: $e');
+      rethrow;
     }
-    return null;
   }
 }
 

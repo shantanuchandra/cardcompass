@@ -730,7 +730,8 @@ class _FinancialInsightsWidgetState extends ConsumerState<FinancialInsightsWidge
         ],
       ),
     );
-  
+  }
+
   Widget _buildSavingsOpportunitiesCard() {
     final opportunities = _insights!.savingsOpportunities;
     
