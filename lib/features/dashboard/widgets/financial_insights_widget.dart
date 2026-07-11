@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cardcompass/core/theme.dart';
+import 'package:fl_chart/fl_chart.dart';
 import 'package:cardcompass/core/services/enhanced_analytics_service.dart';
 import 'package:cardcompass/shared/models/credit_card.dart';
 import 'package:cardcompass/shared/models/transaction.dart';
@@ -28,6 +29,7 @@ class _FinancialInsightsWidgetState extends ConsumerState<FinancialInsightsWidge
   FinancialInsights? _insights;
   bool _isLoading = true;
   String? _error;
+  int _touchedIndex = -1;
   
   @override
   void initState() {
@@ -452,108 +454,282 @@ class _FinancialInsightsWidgetState extends ConsumerState<FinancialInsightsWidge
     );
   }
   
+  Color _getCategoryNeonColor(TransactionCategory category) {
+    switch (category) {
+      case TransactionCategory.food:
+        return AppTheme.primaryColor;
+      case TransactionCategory.fuel:
+        return AppTheme.warningColor;
+      case TransactionCategory.grocery:
+        return AppTheme.successColor;
+      case TransactionCategory.entertainment:
+        return AppTheme.accentColor;
+      case TransactionCategory.travel:
+        return AppTheme.secondaryColor;
+      case TransactionCategory.shopping:
+        return const Color(0xFFF472B6);
+      case TransactionCategory.utilities:
+        return const Color(0xFFFBBF24);
+      case TransactionCategory.insurance:
+        return const Color(0xFF60A5FA);
+      case TransactionCategory.medical:
+        return const Color(0xFFF87171);
+      case TransactionCategory.education:
+        return const Color(0xFF34D399);
+      case TransactionCategory.investment:
+        return AppTheme.rewardGold;
+      case TransactionCategory.transport:
+        return const Color(0xFFA78BFA);
+      case TransactionCategory.rental:
+        return const Color(0xFFFB923C);
+      case TransactionCategory.subscription:
+        return const Color(0xFF2DD4BF);
+      case TransactionCategory.gift:
+        return const Color(0xFFE879F9);
+      case TransactionCategory.other:
+      default:
+        return Colors.grey;
+    }
+  }
+
   Widget _buildCategoryInsightsCard() {
     final categoryInsights = _insights!.categoryInsights;
     final topInsights = categoryInsights.insights.take(5).toList();
     
-    return Card(
-      elevation: 4,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Category Insights',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.bold,
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0C152B),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: AppTheme.primaryColor.withValues(alpha: 0.25),
+          width: 1.5,
+        ),
+        boxShadow: AppTheme.neonGlow(color: AppTheme.primaryColor, opacity: 0.12, blurRadius: 12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.pie_chart_outline,
+                color: AppTheme.primaryColor,
+                size: 20,
               ),
-            ),
-            const SizedBox(height: 16),
-            
-            ...topInsights.map((insight) => _buildCategoryInsightItem(insight)),
-            
-            if (categoryInsights.unusualSpendingCategories.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              const Divider(),              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.red[50],
-                  border: Border.all(color: Colors.red[300]!),
-                  borderRadius: BorderRadius.circular(8),
+              const SizedBox(width: 8),
+              Text(
+                'CATEGORY BREAKDOWN',
+                style: GoogleFonts.spaceGrotesk(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                  letterSpacing: 1.0,
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Row(
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          
+          if (topInsights.isEmpty)
+            Center(
+              child: Text(
+                'No category data available',
+                style: GoogleFonts.spaceGrotesk(color: Colors.white60),
+              ),
+            )
+          else
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                // Pie Chart
+                SizedBox(
+                  height: 160,
+                  width: 160,
+                  child: PieChart(
+                    PieChartData(
+                      pieTouchData: PieTouchData(
+                        touchCallback: (FlTouchEvent event, pieTouchResponse) {
+                          setState(() {
+                            if (!event.isInterestedForInteractions ||
+                                pieTouchResponse == null ||
+                                pieTouchResponse.touchedSection == null) {
+                              _touchedIndex = -1;
+                              return;
+                            }
+                            _touchedIndex = pieTouchResponse.touchedSection!.touchedSectionIndex;
+                          });
+                        },
+                      ),
+                      borderData: FlBorderData(show: false),
+                      sectionsSpace: 3,
+                      centerSpaceRadius: 35,
+                      sections: topInsights.asMap().entries.map((entry) {
+                        final index = entry.key;
+                        final insight = entry.value;
+                        final isTouched = index == _touchedIndex;
+                        final color = _getCategoryNeonColor(insight.category);
+                        final radius = isTouched ? 55.0 : 45.0;
+                        
+                        return PieChartSectionData(
+                          color: color,
+                          value: insight.totalSpent,
+                          title: '${insight.percentage.toStringAsFixed(0)}%',
+                          radius: radius,
+                          titleStyle: GoogleFonts.spaceGrotesk(
+                            fontSize: isTouched ? 14 : 11,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                          badgeWidget: isTouched
+                              ? Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF0C152B),
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(color: color, width: 1),
+                                  ),
+                                  child: Text(
+                                    insight.category.name.toUpperCase(),
+                                    style: GoogleFonts.spaceGrotesk(
+                                      color: color,
+                                      fontSize: 8,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                )
+                              : null,
+                          badgePositionPercentageOffset: 1.1,
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 20),
+                // Legend list
+                Expanded(
+                  child: Column(
+                    children: topInsights.asMap().entries.map((entry) {
+                      final index = entry.key;
+                      final insight = entry.value;
+                      final isTouched = index == _touchedIndex;
+                      final color = _getCategoryNeonColor(insight.category);
+                      
+                      return MouseRegion(
+                        onEnter: (_) => setState(() => _touchedIndex = index),
+                        onExit: (_) => setState(() => _touchedIndex = -1),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          margin: const EdgeInsets.symmetric(vertical: 4),
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: isTouched
+                                ? color.withValues(alpha: 0.1)
+                                : Colors.transparent,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: isTouched
+                                  ? color.withValues(alpha: 0.3)
+                                  : Colors.transparent,
+                              width: 1,
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 10,
+                                height: 10,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: color,
+                                  boxShadow: AppTheme.neonGlow(color: color, opacity: 0.4, blurRadius: 4),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  insight.category.name.toUpperCase(),
+                                  style: GoogleFonts.spaceGrotesk(
+                                    color: isTouched ? Colors.white : Colors.white70,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(
+                                    '₹${insight.totalSpent.toStringAsFixed(0)}',
+                                    style: GoogleFonts.spaceGrotesk(
+                                      color: Colors.white,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  Text(
+                                    '${insight.percentage.toStringAsFixed(1)}%',
+                                    style: GoogleFonts.spaceGrotesk(
+                                      color: Colors.white38,
+                                      fontSize: 9,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ],
+            ),
+          
+          if (categoryInsights.unusualSpendingCategories.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.red.withValues(alpha: 0.1),
+                border: Border.all(color: Colors.red.withValues(alpha: 0.3), width: 1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Icon(Icons.warning, color: Colors.red, size: 16),
-                        SizedBox(width: 8),
                         Text(
-                          'Unusual Spending Detected',
-                          style: TextStyle(
+                          'UNUSUAL SPENDING DETECTED',
+                          style: GoogleFonts.spaceGrotesk(
                             fontWeight: FontWeight.bold,
                             color: Colors.red,
+                            fontSize: 11,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'High spending patterns in: ${categoryInsights.unusualSpendingCategories.map((c) => c.name.toUpperCase()).join(", ")}',
+                          style: GoogleFonts.spaceGrotesk(
+                            color: Colors.white70,
+                            fontSize: 10,
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'High spending in: ${categoryInsights.unusualSpendingCategories.map((c) => c.name).join(", ")}',
-                      style: TextStyle(color: Colors.red[800]),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ],
-        ),
-      ),
-    );
-  }
-  
-  Widget _buildCategoryInsightItem(CategoryInsight insight) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          Expanded(
-            flex: 2,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  insight.category.name.toUpperCase(),
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                Text(
-                  '${insight.transactionCount} transactions',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            flex: 2,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  '₹${insight.totalSpent.toStringAsFixed(0)}',
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                Text(
-                  '${insight.percentage.toStringAsFixed(1)}%',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
-            ),
-          ),
         ],
       ),
     );
-  }
   
   Widget _buildSavingsOpportunitiesCard() {
     final opportunities = _insights!.savingsOpportunities;
