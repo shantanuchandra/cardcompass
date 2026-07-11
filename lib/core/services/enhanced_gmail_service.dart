@@ -842,6 +842,17 @@ Product name:'''
       // Bank account / savings statements occasionally match our broad query.
       // Detect them early so we don't waste Gemini calls on them.
       final subjectLower = emailSubject.toLowerCase();
+      
+      // Unconditional exclusion of combined statements, demat, or relationship/savings account statements
+      if (subjectLower.contains('combined email statement') ||
+          subjectLower.contains('combined statement') ||
+          subjectLower.contains('demat statement') ||
+          subjectLower.contains('relationship statement') ||
+          subjectLower.contains('savings account statement')) {
+        print('⏭️  Skipping non-credit-card combined/savings statement: "$emailSubject"');
+        return null;
+      }
+
       final isCreditCardEmail =
           subjectLower.contains('credit card') ||
           subjectLower.contains('card statement') ||
