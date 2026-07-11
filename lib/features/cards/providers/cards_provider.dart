@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import 'package:cardcompass/core/repositories/card_repository.dart';
 import 'package:cardcompass/core/providers/service_providers.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -141,11 +142,12 @@ final availableCreditProvider = FutureProvider<double>((ref) async {
         .eq('user_id', userId)
         .order('statement_date', ascending: false);
 
-    if (response == null || (response as List).isEmpty) return 0.0;
+    final rows = response as List;
+    if (rows.isEmpty) return 0.0;
 
     // Keep only the most recent statement per card_id
     final Map<String, double> latestAvailablePerCard = {};
-    for (final row in response) {
+    for (final row in rows) {
       final cardId = row['card_id'] as String?;
       final available = (row['available_credit'] as num?)?.toDouble() ?? 0.0;
       if (cardId != null && !latestAvailablePerCard.containsKey(cardId)) {
@@ -179,9 +181,10 @@ final statementRewardsTotalProvider = FutureProvider<double>((ref) async {
         .eq('user_id', userId)
         .gte('statement_date', firstDayOfMonth.toIso8601String());
 
-    if (response == null || (response as List).isEmpty) return 0.0;
+    final rows = response as List;
+    if (rows.isEmpty) return 0.0;
 
-    return response.fold<double>(
+    return rows.fold<double>(
       0.0,
       (sum, row) => sum + ((row['rewards_earned'] as num?)?.toDouble() ?? 0.0),
     );

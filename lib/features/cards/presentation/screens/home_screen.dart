@@ -612,17 +612,26 @@ class _HomeTabState extends ConsumerState<HomeTab> {
 
       // Run the sequential user flow
       print('🔧 About to call debugSequentialUserFlow...');
-      await debugService.debugSequentialUserFlow(authState.user!.id);
+      final syncResult = await debugService.debugSequentialUserFlow(authState.user!.id);
 
       // Close progress dialog
       if (dialogContext != null && dialogContext!.mounted) {
         Navigator.of(dialogContext!).pop();
 
-        // Show success message using global service
-        GlobalMessageService.showSuccess('Data sync completed! Check your cards and transactions.');
+        final txCount = syncResult['transactionsStored'] ?? 0;
+        final emailCount = syncResult['emailsProcessed'] ?? 0;
+        final successMsg = txCount > 0
+            ? 'Sync complete! Imported $txCount transactions from $emailCount statement(s).'
+            : 'Sync complete! ${emailCount > 0 ? "$emailCount email(s) processed." : "No new statements found."}';
+
+        GlobalMessageService.showSuccess(successMsg);
 
         // Refresh the UI by reloading the underlying data
         _loadData();
+
+        // Invalidate async providers so they re-fetch from DB
+        ref.invalidate(availableCreditProvider);
+        ref.invalidate(statementRewardsTotalProvider);
       }
 
     } catch (error) {

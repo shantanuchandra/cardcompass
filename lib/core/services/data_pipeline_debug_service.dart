@@ -697,8 +697,8 @@ class DataPipelineDebugService {
   }
 
 
-  /// Process a single email with the complete sequential flow
-  Future<bool> _processEmailSequentially(
+  /// Process a single email with the complete sequential flow. Returns the count of transactions stored (0 = failure).
+  Future<int> _processEmailSequentially(
     String userId,
     StatementParsingResult statement,
     Map<String, dynamic> userProfile,
