@@ -575,8 +575,9 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                           ),
                           const SizedBox(width: 12),
                           Column(
-                            crossAxisAlignment: CrossAxisAlignment.crossAxisAlignment,
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: const [
+
                               Text(
                                 'Sync from Gmail',
                                 style: TextStyle(
