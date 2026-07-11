@@ -1191,7 +1191,6 @@ class _HomeTabState extends ConsumerState<HomeTab> {
   }
 
   void _deleteAllUserData(BuildContext context, WidgetRef ref) async {
-    // Get current user
     final authState = ref.read(authStateProvider);
     if (!authState.isAuthenticated || authState.user == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1205,11 +1204,16 @@ class _HomeTabState extends ConsumerState<HomeTab> {
 
     final userId = authState.user!.id;
 
+    // Capture navigator BEFORE the async gap so we can always dismiss
+    // the dialog even if the widget rebuilds or unmounts during deletion.
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+
     // Show loading dialog
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (BuildContext context) {
+      builder: (BuildContext dialogCtx) {
         return const AlertDialog(
           content: Row(
             children: [
@@ -1224,47 +1228,27 @@ class _HomeTabState extends ConsumerState<HomeTab> {
 
     try {
       print('🔄 Starting user data deletion process...');
-
-      // Delete all user data
       final success = await UserDataDeletionService.deleteAllUserData(userId);
-
       print('✅ Deletion process completed with success: $success');
 
-      // Close loading dialog - ensure context is still mounted
-      if (context.mounted) {
-        Navigator.of(context).pop();
-        print('🔄 Loading dialog dismissed');
+      // Always dismiss — we captured the navigator before the await
+      if (navigator.canPop()) navigator.pop();
 
-        if (success) {
-          // Show success message
-          GlobalMessageService.showSuccess('All data deleted successfully! (User profile preserved)');
-
-          // Refresh the UI by reloading the underlying data
-          _loadData();
-          print('🔄 All UI providers refreshed');
-        } else {
-          // Show error message
-          GlobalMessageService.showError('Failed to delete some data. Please try again.');
-        }
+      if (success) {
+        GlobalMessageService.showSuccess('All data deleted successfully! (User profile preserved)');
+        _loadData();
       } else {
-        print('⚠️ Context no longer mounted, cannot dismiss dialog');
+        GlobalMessageService.showError('Failed to delete some data. Please try again.');
       }
 
     } catch (error) {
       print('❌ Error during deletion: $error');
-
-      // Close loading dialog - ensure context is still mounted
-      if (context.mounted) {
-        Navigator.of(context).pop();
-        print('🔄 Loading dialog dismissed after error');
-
-        // Show error message
-        GlobalMessageService.showError('Delete failed: ${error.toString()}');
-      } else {
-        print('⚠️ Context no longer mounted after error, cannot dismiss dialog');
-      }
+      if (navigator.canPop()) navigator.pop();
+      GlobalMessageService.showError('Delete failed: ${error.toString()}');
     }
   }
+
+
 
   /// "This Month" summary — 4 stat mini-cards: Spending, Rewards, Active Cards, Savings Rate
   Widget _buildThisMonthSection(BuildContext context, WidgetRef ref) {

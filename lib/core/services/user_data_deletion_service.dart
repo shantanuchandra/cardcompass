@@ -8,72 +8,84 @@ class UserDataDeletionService {
   static Future<bool> deleteAllUserData(String userId) async {
     try {
       print('🗑️ Starting deletion of all user data for user: $userId');
-      
-      // Delete in reverse dependency order to avoid foreign key constraints
-      
-      // 1. Delete transactions first (they reference user_cards)
-      final transactionResult = await _supabase.from('transactions').delete().eq('user_id', userId);
-      print('✅ Deleted transactions: ${transactionResult}');
-      
-      // 2. Delete emails (they reference statements via statement_id)
-      final emailResult = await _supabase.from('emails').delete().eq('user_id', userId);
-      print('✅ Deleted emails: ${emailResult}');
-      
-      // 3. Delete statements (they reference user_cards)
-      final statementResult = await _supabase.from('statements').delete().eq('user_id', userId);
-      print('✅ Deleted statements: ${statementResult}');
-      
-      // 4. Delete user_cards relationship table (links user to card catalog)
-      final userCardResult = await _supabase.from('user_cards').delete().eq('user_id', userId);
-      print('✅ Deleted user_cards relationships: ${userCardResult}');
-      
-      // Note: We do NOT delete from card_catalog as those are shared reference cards
-      // Note: User profile is NOT deleted as per requirements
-      
+
+      // Delete in reverse dependency order to avoid foreign key constraints.
+      // Chain .select() so Supabase returns the deleted rows (needed to count them).
+
+      // 1. Transactions (reference user_cards and statements)
+      final txDeleted = await _supabase
+          .from('transactions')
+          .delete()
+          .eq('user_id', userId)
+          .select('id');
+      print('✅ Deleted transactions: ${(txDeleted as List).length} rows');
+
+      // 2. Emails
+      final emailDeleted = await _supabase
+          .from('emails')
+          .delete()
+          .eq('user_id', userId)
+          .select('id');
+      print('✅ Deleted emails: ${(emailDeleted as List).length} rows');
+
+      // 3. Statements
+      final stmtDeleted = await _supabase
+          .from('statements')
+          .delete()
+          .eq('user_id', userId)
+          .select('id');
+      print('✅ Deleted statements: ${(stmtDeleted as List).length} rows');
+
+      // 4. User-card associations
+      final ucDeleted = await _supabase
+          .from('user_cards')
+          .delete()
+          .eq('user_id', userId)
+          .select('id');
+      print('✅ Deleted user_cards: ${(ucDeleted as List).length} rows');
+
+      // card_catalog and user profile are intentionally preserved.
       print('🎉 Successfully deleted all user data (user profile preserved)');
       return true;
-      
+
     } catch (error) {
       print('❌ Error deleting user data: $error');
-      print('❌ Stack trace: ${StackTrace.current}');
       return false;
     }
   }
+
   /// Get count of user data for confirmation dialog
   static Future<Map<String, int>> getUserDataCounts(String userId) async {
     try {
       final counts = <String, int>{};
-      
-      // Count transactions
-      final transactionsResponse = await _supabase
+
+      // Use count() aggregate so we get an integer, not a list of rows.
+      final txResp = await _supabase
           .from('transactions')
           .select('id')
           .eq('user_id', userId);
-      counts['transactions'] = (transactionsResponse as List).length;
-      
-      // Count statements
-      final statementsResponse = await _supabase
+      counts['transactions'] = (txResp as List).length;
+
+      final stmtResp = await _supabase
           .from('statements')
           .select('id')
           .eq('user_id', userId);
-      counts['statements'] = (statementsResponse as List).length;
-      
-      // Count emails
-      final emailsResponse = await _supabase
+      counts['statements'] = (stmtResp as List).length;
+
+      final emailResp = await _supabase
           .from('emails')
           .select('id')
           .eq('user_id', userId);
-      counts['emails'] = (emailsResponse as List).length;
-      
-      // Count user cards (user's card associations)
-      final userCardsResponse = await _supabase
+      counts['emails'] = (emailResp as List).length;
+
+      final ucResp = await _supabase
           .from('user_cards')
           .select('id')
           .eq('user_id', userId);
-      counts['user cards'] = (userCardsResponse as List).length;
-      
+      counts['user cards'] = (ucResp as List).length;
+
       return counts;
-      
+
     } catch (error) {
       print('Error getting user data counts: $error');
       return {};
