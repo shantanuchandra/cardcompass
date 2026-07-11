@@ -204,12 +204,27 @@ class SupabaseStatementRepository implements StatementRepository {
     required Map<String, dynamic> statementData,
     String? filePath,
     String? emailId,
-  }) async {    try {
-      final now = DateTime.now();      // Try using user_card_id first, fallback to card_id for legacy schema compatibility
+  }) async {
+    try {
+      final now = DateTime.now();
+      
+      // Resolve card_id (catalog_card_id) from user_cards table
+      String catalogCardId = userCardId;
+      try {
+        final cardResponse = await _supabase
+            .from('user_cards')
+            .select('card_id')
+            .eq('id', userCardId)
+            .single();
+        catalogCardId = cardResponse['card_id'] as String;
+      } catch (e) {
+        print('⚠️ Could not resolve catalog card_id for userCardId $userCardId: $e');
+      }
+
       final statementMap = {
-        // Let Supabase auto-generate UUID for 'id' field
         'user_id': userId,
-        'card_id': userCardId, // Use card_id to match current database schema
+        'card_id': catalogCardId, // References card_catalog(id)
+        'user_card_id': userCardId, // References user_cards(id)
         'statement_date': statementData['statement_date'] ?? now.toIso8601String(),
         'due_date': statementData['due_date'] ?? DateTime.now().add(const Duration(days: 30)).toIso8601String(),
         'total_amount': statementData['total_amount'] ?? 0.0,
@@ -226,16 +241,19 @@ class SupabaseStatementRepository implements StatementRepository {
         'transaction_count': (statementData['transactions'] as List?)?.length ?? 0,
         'created_at': now.toIso8601String(),
         'updated_at': now.toIso8601String(),
-      };      // Upsert on (user_id, card_id, statement_date) so re-syncing the same
+      };
+
+      // Upsert on (card_id, statement_date) so re-syncing the same
       // statement period is idempotent and returns the existing row instead of 409.
       final result = await _supabase
           .from('statements')
-          .upsert(statementMap, onConflict: 'user_id,card_id,statement_date')
+          .upsert(statementMap, onConflict: 'card_id,statement_date')
           .select()
           .single();
 
       return Statement.fromJson(result);
     } catch (e) {
       throw Exception('Failed to create statement: $e');
-    }  }
+    }
+  }
 }

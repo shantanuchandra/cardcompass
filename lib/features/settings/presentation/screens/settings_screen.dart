@@ -21,6 +21,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _autoSync = true;
   String _currency = 'INR';
   String _language = 'English';
+  int _devTapCount = 0;
 
   @override
   void initState() {
@@ -233,7 +234,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     title: Text('CARDCOMPASS CORE', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
                     subtitle: Text('Version 1.0.0 (Build 1)', style: GoogleFonts.plusJakartaSans(color: Colors.white30, fontSize: 10)),
                     trailing: const Icon(Icons.info_outline, size: 16, color: AppTheme.primaryColor),
-                    onTap: () => _showAppInfoDialog(),
+                    onTap: () {
+                      _showAppInfoDialog();
+                      setState(() {
+                        _devTapCount++;
+                      });
+                      if (_devTapCount >= 5) {
+                        _devTapCount = 0;
+                        Navigator.pushNamed(context, '/admin/pm');
+                      }
+                    },
                   ),
                   const Divider(color: Color(0xFF1E293B), height: 1),
                   ListTile(

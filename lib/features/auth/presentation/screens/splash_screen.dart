@@ -308,6 +308,13 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
   }
 
   Future<void> _initializeApp() async {
+    // Check if the app was launched with an admin route deep link
+    final initialRoute = WidgetsBinding.instance.platformDispatcher.defaultRouteName.toLowerCase();
+    if (initialRoute.contains('/admin/')) {
+      print('🚪 SplashScreen: Admin initial route detected ($initialRoute). Skipping home redirect.');
+      return;
+    }
+
     await _updateStatus('STARTING HYPERDRIVE...');
     await Future.delayed(const Duration(milliseconds: 800));
     

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cardcompass/core/theme.dart';
 import 'package:cardcompass/config/routes.dart';
-import 'package:cardcompass/features/auth/presentation/screens/splash_screen.dart';
 
 /// Global navigator key for accessing context from anywhere in the app
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -25,7 +24,7 @@ class CardCompassApp extends ConsumerWidget {
       themeMode: ThemeMode.system,
       
       // Initial Route
-      home: const SplashScreen(),
+      initialRoute: AppRoutes.splash,
       
       // Global Route Configuration
       onGenerateRoute: AppRoutes.generateRoute,
