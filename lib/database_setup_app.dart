@@ -37,7 +37,7 @@ class _DatabaseSetupScreenState extends State<DatabaseSetupScreen> {
     try {
       await Supabase.initialize(
         url: AppConfig.supabaseUrl,
-        anonKey: AppConfig.supabaseAnonKey,
+        publishableKey: AppConfig.supabaseAnonKey,
       );
       setState(() {
         _status = 'Supabase initialized. Ready to create tables.';

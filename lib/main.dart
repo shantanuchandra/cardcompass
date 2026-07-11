@@ -29,7 +29,7 @@ void main() async {
   // Hive.registerAdapter(BenefitTypeAdapter());  // Initialize Supabase
   await Supabase.initialize(
     url: AppConfig.supabaseUrl,
-    anonKey: AppConfig.supabaseAnonKey,
+    publishableKey: AppConfig.supabaseAnonKey,
   );
   
   runApp(
