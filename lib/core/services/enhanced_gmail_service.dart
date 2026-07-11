@@ -551,23 +551,78 @@ class EnhancedGmailService {
   }
 
   /// Use Gemini to determine credit card variant (Implementation 2)
+  /// Detect credit card variant name from email subject using regex-first approach.
+  /// Falls back to Gemini only if regex finds nothing.
+  /// Eliminates one full Gemini API call per email for most cases.
   Future<String> _detectCardVariant({
     required String emailSubject,
     required String emailBody,
     required String pdfText,
     required String bankName,
   }) async {
+    // ── Regex-first: extract known variant patterns from subject ────────
+    // Order matters: longer/more specific patterns first.
+    final subjectUpper = emailSubject.toUpperCase();
+
+    // Known Indian credit card variant names grouped by bank
+    final knownVariants = <String>[
+      // HDFC
+      'TATA NEU INFINITY', 'TATA NEU PLUS', 'INFINIA', 'REGALIA GOLD',
+      'REGALIA FIRST', 'REGALIA', 'MILLENNIA', 'DINERS CLUB BLACK',
+      'DINERS CLUB PRIVILEGE', 'DINERS CLUB REWARDZ', 'DINERS CLUB',
+      'MONEYBACK PLUS', 'MONEYBACK', 'SOLITAIRE', 'DOCTOR SOLITAIRE',
+      'BUSINESS REGALIA',
+      // ICICI
+      'AMAZON PAY', 'EMERALD', 'SAPPHIRO', 'RUBYX', 'CORAL', 'PLATINUM',
+      'FERRARI', 'MMT PLATINUM', 'MMT SIGNATURE',
+      'HPCL SUPER SAVER', 'HPCL',
+      'MANCHESTER UNITED SIGNATURE', 'MANCHESTER UNITED PLATINUM',
+      'ADANI ONE SIGNATURE', 'ADANI ONE PLATINUM',
+      'GEMSTONE CORAL', 'GEMSTONE RUBYX', 'GEMSTONE SAPPHIRO',
+      // SBI
+      'BPCL OCTANE', 'BPCL',
+      'CASHBACK SBI', 'CASHBACK',
+      'ELITE', 'PRIME', 'AURUM',
+      'SIMPLY SAVE', 'SIMPLY CLICK',
+      'ETIHAD GUEST SIGNATURE', 'ETIHAD GUEST SELECT', 'ETIHAD GUEST',
+      'CLUB VISTARA PRIME', 'CLUB VISTARA',
+      'TATA PLATINUM', 'TATA TITANIUM',
+      // Axis
+      'SAMSUNG AXIS', 'FLIPKART AXIS',
+      'PRIVILEGE', 'RESERVE', 'MAGNUS', 'SELECT', 'SIGNATURE', 'MYZONE',
+      'INDIAN OIL', 'INDIA OIL',
+      'NEO CREDIT', 'NEO',
+      'ACE CREDIT', 'ACE',
+      // Kotak
+      'ROYALE', 'PRIVY LEAGUE', '811 DREAM DIFFERENT', '811',
+      'LEAGUE PLATINUM', 'LEAGUE',
+      // IndusInd
+      'PIONEER HERITAGE', 'PIONEER',
+      'LEGEND', 'AVIOS', 'PINNACLE',
+      // Others
+      'INFINIA METAL', 'DINERS BLACK',
+    ];
+
+    for (final variant in knownVariants) {
+      if (subjectUpper.contains(variant)) {
+        // Return title-cased version
+        final titleCase = variant
+            .split(' ')
+            .map((w) => w.isEmpty ? '' : w[0] + w.substring(1).toLowerCase())
+            .join(' ');
+        print('🎯 Regex detected card variant: "$titleCase" (from subject: "$emailSubject")');
+        return titleCase;
+      }
+    }
+
+    // ── Fallback: call Gemini (only if regex found nothing) ────────────
     try {
-      // print('🔍 Calling Gemini API for card variant detection...');
-      // print('   Subject: "$emailSubject"');
-      // print('   Bank: "$bankName"');
-      
       final requestBody = {
         'contents': [{
           'parts': [{
             'text': '''You extract credit card product names from email subjects.
 Rules:
-- Return ONLY the product/variant name (1-3 words max), e.g. "BPCL", "Platinum", "Signature", "Regalia", "Amazon Pay"
+- Return ONLY the product/variant name (1-5 words max), e.g. "BPCL", "Tata Neu Infinity", "Regalia Gold", "Amazon Pay"
 - Remove: bank names, "Credit Card", "Statement", "Monthly", dates, card numbers
 - If the subject has no specific product name (just a generic card statement), return "NONE"
 - Never return explanations or sentences, only the product name or NONE
@@ -591,27 +646,20 @@ Product name:'''
         final content = decoded['candidates']?[0]?['content']?['parts']?[0]?['text'];
         if (content != null) {
           final variant = content.trim();
-          // If Gemini says NONE or returns a sentence (>30 chars), fall back to bank name
-          if (variant.toUpperCase() == 'NONE' || variant.length > 30) {
-            print('ℹ️ No specific card variant — using bank name "$bankName"');
-            return bankName;
+          if (variant.toUpperCase() != 'NONE' && variant.length <= 40) {
+            print('🎯 Gemini detected card variant: "$variant" (from subject: "$emailSubject")');
+            return variant;
           }
-          print('🎯 Gemini detected card variant: "$variant" (from subject: "$emailSubject")');
-          return variant;
         }
-      } else {
-        print('❌ Gemini card variant detection failed with status: ${response?.statusCode}');
       }
-
-      // Fallback to bank name if Gemini fails
-      print('⚠️ Using fallback: returning bank name "$bankName"');
-      return bankName;
     } catch (e) {
-      print('❌ Exception in _detectCardVariant: $e');
-      print('⚠️ Using fallback: returning bank name "$bankName"');
-      return bankName;
+      print('❌ Exception in _detectCardVariant Gemini fallback: $e');
     }
+
+    print('ℹ️ No specific card variant — using bank name "$bankName"');
+    return bankName;
   }
+
 
   /// Process statement emails and extract transactions
   Future<List<StatementParsingResult>> processStatementEmails({
@@ -790,6 +838,31 @@ Product name:'''
       }
       // ──────────────────────────────────────────────────────────────────
       
+      // ── SKIP non-credit-card account statements ─────────────────────────
+      // Bank account / savings statements occasionally match our broad query.
+      // Detect them early so we don't waste Gemini calls on them.
+      final subjectLower = emailSubject.toLowerCase();
+      final isCreditCardEmail =
+          subjectLower.contains('credit card') ||
+          subjectLower.contains('card statement') ||
+          subjectLower.contains('credit card statement') ||
+          subjectLower.contains('e-statement') ||     // SBI / IndusInd
+          subjectLower.contains('monthly statement');  // SBI
+      final isSavingsStatement =
+          (subjectLower.contains('account statement') ||
+           subjectLower.contains('bank statement') ||
+           subjectLower.contains('relationship') ||
+           subjectLower.contains('summary of your') ||
+           (subjectLower.contains('statement') &&
+            (subjectLower.contains('savings') ||
+             subjectLower.contains('current') ||
+             subjectLower.contains('salary account')))) &&
+          !isCreditCardEmail;
+      if (isSavingsStatement) {
+        print('⏭️  Skipping savings/account statement (not a credit card): "$emailSubject"');
+        continue;
+      }
+
       // Use Gemini to detect the exact card variant
       final cardVariant = await _detectCardVariant(
         emailSubject: emailSubject,
@@ -994,6 +1067,7 @@ Product name:'''
       // HDFC Bank — multiple known domains / ESPs
       'hdfcbank.com', 'netbanking.hdfc.com', 'alerts.hdfcbank.com',
       'hdfcbankinfoline.com', 'hdfcbankcard.com', 'credit.hdfcbank.com',
+      'hdfcbank.bank.in',        // Live: Emailstatements.cards@hdfcbank.bank.in
       // ICICI Bank
       'icicibank.com', 'icici.com', 'icard.com', 'alerts.icicibank.com',
       'icicibank.net', 'icici.bank.in',
@@ -1013,6 +1087,7 @@ Product name:'''
       'citi.com', 'citibank.co.in', 'citibankonline.com',
       // IDFC First Bank
       'idfc.com', 'idfcfirstbank.com', 'idfcbank.com',
+      'idfcfirst.bank.in',       // Live: statement@idfcfirst.bank.in
       // Amex
       'amexnetwork.com', 'americanexpress.com', 'aexp.com',
       // Standard Chartered
