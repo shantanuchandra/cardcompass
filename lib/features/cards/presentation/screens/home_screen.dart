@@ -44,43 +44,202 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF050B18),
-      body: Stack(
-        children: [
-          _screens[_currentIndex],
-          
-          // Floating Translucent Bottom Navigation Dock
-          Positioned(
-            left: 16,
-            right: 16,
-            bottom: 16,
-            child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
-              decoration: BoxDecoration(
-                color: const Color(0xFF0C152B).withValues(alpha: 0.85),
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final isWide = constraints.maxWidth > 900;
+          if (isWide) {
+            return Row(
+              children: [
+                _buildWebSidebar(context),
+                VerticalDivider(
+                  width: 1,
                   color: Colors.white.withValues(alpha: 0.08),
-                  width: 1.5,
                 ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.4),
-                    blurRadius: 20,
-                    offset: const Offset(0, 10),
-                  ),
-                ],
+                Expanded(
+                  child: _screens[_currentIndex],
+                ),
+              ],
+            );
+          }
+          
+          return Stack(
+            children: [
+              _screens[_currentIndex],
+              
+              // Floating Translucent Bottom Navigation Dock for Mobile
+              Positioned(
+                left: 16,
+                right: 16,
+                bottom: 16,
+                child: _buildMobileBottomNav(context),
               ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildWebSidebar(BuildContext context) {
+    return Container(
+      width: 250,
+      color: const Color(0xFF0C152B),
+      padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // App Logo / Title
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [AppTheme.primaryColor, AppTheme.secondaryColor],
+                  ),
+                  borderRadius: BorderRadius.circular(10),
+                  boxShadow: AppTheme.neonGlow(color: AppTheme.primaryColor, opacity: 0.25, blurRadius: 8),
+                ),
+                child: const Icon(
+                  Icons.credit_card,
+                  size: 20,
+                  color: Color(0xFF050B18),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                'CARDCOMPASS',
+                style: GoogleFonts.spaceGrotesk(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1.0,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 40),
+          
+          // Navigation Items
+          Expanded(
+            child: Column(
+              children: [
+                _buildSidebarNavItem(0, Icons.home_outlined, Icons.home, 'Home Dashboard'),
+                const SizedBox(height: 8),
+                _buildSidebarNavItem(1, Icons.receipt_long_outlined, Icons.receipt_long, 'Ledger Txns'),
+                const SizedBox(height: 8),
+                _buildSidebarNavItem(2, Icons.analytics_outlined, Icons.analytics, 'Analytics Hub'),
+                const SizedBox(height: 8),
+                _buildSidebarNavItem(3, Icons.recommend_outlined, Icons.recommend, 'Smart Advisor'),
+              ],
+            ),
+          ),
+          
+          // Extra bottom link/metadata or user profile shortcut
+          const SizedBox(height: 20),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF050B18),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.05),
+              ),
+            ),
+            child: InkWell(
+              onTap: () => Navigator.of(context).pushNamed('/profile'),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
-                  _buildNavItem(0, Icons.home_outlined, Icons.home, 'Home'),
-                  _buildNavItem(1, Icons.receipt_long_outlined, Icons.receipt_long, 'Txns'),
-                  _buildNavItem(2, Icons.analytics_outlined, Icons.analytics, 'Analytics'),
-                  _buildNavItem(3, Icons.recommend_outlined, Icons.recommend, 'Advice'),
+                  const CircleAvatar(
+                    radius: 14,
+                    child: Icon(Icons.person, size: 16),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'USER PROFILE',
+                      style: GoogleFonts.spaceGrotesk(
+                        color: Colors.white70,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                  const Icon(Icons.settings, size: 14, color: Colors.white30),
                 ],
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSidebarNavItem(int index, IconData outlineIcon, IconData filledIcon, String label) {
+    final isSelected = _currentIndex == index;
+    return InkWell(
+      onTap: () => setState(() => _currentIndex = index),
+      borderRadius: BorderRadius.circular(12),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? AppTheme.primaryColor.withValues(alpha: 0.08) : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected ? AppTheme.primaryColor.withValues(alpha: 0.15) : Colors.transparent,
+            width: 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              isSelected ? filledIcon : outlineIcon,
+              color: isSelected ? AppTheme.primaryColor : Colors.white60,
+              size: 20,
+            ),
+            const SizedBox(width: 14),
+            Text(
+              label,
+              style: GoogleFonts.spaceGrotesk(
+                color: isSelected ? AppTheme.primaryColor : Colors.white70,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                fontSize: 12,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMobileBottomNav(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0C152B).withValues(alpha: 0.85),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.08),
+          width: 1.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.4),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          _buildNavItem(0, Icons.home_outlined, Icons.home, 'Home'),
+          _buildNavItem(1, Icons.receipt_long_outlined, Icons.receipt_long, 'Txns'),
+          _buildNavItem(2, Icons.analytics_outlined, Icons.analytics, 'Analytics'),
+          _buildNavItem(3, Icons.recommend_outlined, Icons.recommend, 'Advice'),
         ],
       ),
     );
