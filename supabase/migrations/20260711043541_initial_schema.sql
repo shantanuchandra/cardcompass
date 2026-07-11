@@ -70,9 +70,9 @@ CREATE TABLE IF NOT EXISTS benefits (
   benefit_category TEXT NOT NULL, -- 'entertainment', 'dining', 'fuel', etc.
   benefit_type TEXT, -- Additional categorization
   value_config JSONB, -- Flexible configuration for different benefit types
-  partners JSONB DEFAULT '[]', -- Partner names where benefit is applicable (JSONB, not TEXT[] - matches production data shape)
-  exclusions JSONB DEFAULT '{}', -- Exclusion conditions, e.g. {"mcc_codes": [...], "merchants": [...], "additional": {...}} (JSONB, not TEXT[] - matches production data shape)
-  regions JSONB DEFAULT '[]', -- Geographic regions where benefit is valid (JSONB, not TEXT[] - matches production data shape)
+  partners TEXT[], -- Array of partner names where benefit is applicable
+  exclusions TEXT[], -- Array of exclusion conditions
+  regions TEXT[], -- Geographic regions where benefit is valid
   source_url TEXT, -- URL to official benefit documentation
   valid_from DATE, -- Benefit validity start date
   valid_until DATE, -- Benefit validity end date
@@ -84,10 +84,7 @@ CREATE TABLE IF NOT EXISTS benefits (
 -- Card Benefits Table (Detailed card-specific benefit configuration)
 CREATE TABLE IF NOT EXISTS card_benefits (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  -- Nullable, not NOT NULL: in production every card_benefits row has card_id = NULL.
-  -- Actual card<->benefit linkage happens via card_benefit_mapping instead; this table
-  -- appears to hold benefit-value configs that aren't directly tied to one card row.
-  card_id UUID REFERENCES card_catalog(id) ON DELETE CASCADE,
+  card_id UUID NOT NULL REFERENCES card_catalog(id) ON DELETE CASCADE,
   benefit_id UUID REFERENCES benefits(benefit_id) ON DELETE SET NULL,
   value DECIMAL(12,2),
   configuration JSONB,
