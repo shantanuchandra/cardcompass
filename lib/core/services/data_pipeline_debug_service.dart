@@ -942,8 +942,10 @@ class DataPipelineDebugService {
                             expectedCardName.toLowerCase().contains(creditCard.cardName.toLowerCase());
         if (bankMatches && cardMatches) {
           print('   ✅ Pass-1 match: ${creditCard.cardName} (${creditCard.bankName})');
-          final userCardId = await _getUserCardId(userId, creditCard.id);
-          return CardInfo(catalogCardId: creditCard.id, userCardId: userCardId);
+          return CardInfo(
+            catalogCardId: creditCard.catalogCardId ?? '',
+            userCardId: creditCard.id,
+          );
         }
       }
 
@@ -957,8 +959,10 @@ class DataPipelineDebugService {
                             bankName.toLowerCase().contains(creditCard.bankName.toLowerCase());
         if (bankMatches) {
           print('   ✅ Pass-2 bank-only match: ${creditCard.cardName} (${creditCard.bankName})');
-          final userCardId = await _getUserCardId(userId, creditCard.id);
-          return CardInfo(catalogCardId: creditCard.id, userCardId: userCardId);
+          return CardInfo(
+            catalogCardId: creditCard.catalogCardId ?? '',
+            userCardId: creditCard.id,
+          );
         }
       }
 

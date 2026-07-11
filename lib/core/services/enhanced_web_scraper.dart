@@ -1,4 +1,6 @@
 import 'package:http/http.dart' as http;
+import 'parsing_logger.dart';
+import 'ai_search_service.dart';
 
 /// Enhanced web scraping service for real bank card pages
 class EnhancedWebScraper {
@@ -17,31 +19,75 @@ class EnhancedWebScraper {
     required String cardName,
   }) async {
     try {
-      // For the robust pipeline, we'll receive the actual URL to scrape
-      // This is a placeholder that would be called with specific URLs
-      throw Exception('Use scrapeUrl method for robust pipeline');
+      ParsingLogger.summary('🔍 Searching credit card page for $bankName $cardName...');
+      final results = await AiSearchService.searchCardPage(bankName, cardName);
+      if (results.isEmpty) {
+        throw Exception('No credit card pages found in search results');
+      }
+      
+      final bestUrl = results.first.url;
+      ParsingLogger.summary('🌐 Found credit card URL: $bestUrl');
+      return await scrapeUrl(bestUrl);
     } catch (e) {
+      ParsingLogger.warning('scrapeCardPage search failed, trying fallback URL generation: $e');
+      // Try generating potential URL patterns as a fallback
+      final patterns = _generateUrlPatterns(bankName, cardName);
+      for (final url in patterns) {
+        try {
+          ParsingLogger.summary('🌐 Trying fallback URL pattern: $url');
+          final content = await scrapeUrl(url);
+          if (content.isSuccess && content.html.length > 500) {
+            return content;
+          }
+        } catch (_) {
+          continue;
+        }
+      }
       throw Exception('Failed to scrape $bankName $cardName: $e');
     }
+  }
+
+  /// Generate potential URL patterns based on bank and card name
+  static List<String> _generateUrlPatterns(String bankName, String cardName) {
+    final patterns = <String>[];
+    final bank = bankName.toLowerCase();
+    final card = cardName.toLowerCase().replaceAll(RegExp(r'[^\w\s-]'), '').replaceAll(RegExp(r'\s+'), '-');
+    
+    if (bank.contains('hdfc')) {
+      patterns.add('https://www.hdfcbank.com/personal/pay/cards/credit-cards/$card');
+    } else if (bank.contains('icici')) {
+      patterns.add('https://www.icicibank.com/personal-banking/cards/credit-card/$card');
+      patterns.add('https://www.icicibank.com/credit-card/$card');
+    } else if (bank.contains('sbi')) {
+      patterns.add('https://www.sbicard.com/en/personal/credit-cards/$card.page');
+      patterns.add('https://www.sbicard.com/personal/credit-cards/$card');
+    } else if (bank.contains('axis')) {
+      patterns.add('https://www.axisbank.com/personal/cards/credit-cards/$card');
+    } else if (bank.contains('kotak')) {
+      patterns.add('https://www.kotak.com/en/personal-banking/cards/credit-cards/$card.html');
+    } else if (bank.contains('idfc')) {
+      patterns.add('https://www.idfcfirstbank.com/credit-card/$card');
+    }
+    return patterns;
   }
 
   /// Scrape a specific URL
   static Future<ScrapedContent> scrapeUrl(String url) async {
     try {
-      print('🌐 Attempting to scrape: $url');
+      ParsingLogger.summary('🌐 Attempting to scrape: $url');
       
       // Try multiple scraping strategies
       ScrapedContent? content = await _scrapeWithSimpleHttp(url);
       content ??= await _scrapeWithMobileUserAgent(url);
       
       if (content != null && content.html.length > 1000) {
-        print('✅ Successfully scraped ${content.html.length} chars from $url');
+        ParsingLogger.summary('✅ Successfully scraped ${content.html.length} chars from $url');
         return content;
       }
       
       throw Exception('Failed to get valid content from $url');
     } catch (e) {
-      print('⚠️  Failed to scrape $url: $e');
+      ParsingLogger.warning('Failed to scrape $url: $e');
       rethrow;
     }
   }
@@ -62,7 +108,7 @@ class EnhancedWebScraper {
         );
       }
     } catch (e) {
-      print('HTTP scraping failed for $url: $e');
+      ParsingLogger.warning('HTTP scraping failed for $url: $e');
     }
     return null;
   }
@@ -88,7 +134,7 @@ class EnhancedWebScraper {
         );
       }
     } catch (e) {
-      print('Mobile scraping failed for $url: $e');
+      ParsingLogger.warning('Mobile scraping failed for $url: $e');
     }
     return null;
   }

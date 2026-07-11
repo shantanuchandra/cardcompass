@@ -3,6 +3,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:cardcompass/core/theme.dart';
 import 'package:cardcompass/core/services/pruning_audit_service.dart';
 import 'package:cardcompass/core/services/pm_feedback_service.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:cardcompass/core/services/advanced_benefit_calculation_service.dart';
+import 'package:cardcompass/core/services/parsing_logger.dart';
 
 /// PM Pruning Verification Ground screen in high-fidelity cyber terminal theme
 class PmPruningDebugScreen extends StatefulWidget {
@@ -25,18 +28,71 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
   List<Map<String, dynamic>> _feedbacks = [];
   bool _disposed = false;
 
+  // New tab state variables
+  int _activeTab = 0; // 0 = Pruning Audit, 1 = Card Benefits Refresh
+  final SupabaseClient _supabase = Supabase.instance.client;
+  List<Map<String, dynamic>> _catalogCards = [];
+  bool _isCatalogLoading = false;
+  String _catalogSearchQuery = '';
+  List<String> _extractionLogs = [];
+  final ScrollController _logScrollController = ScrollController();
+  final TextEditingController _customBankController = TextEditingController();
+  final TextEditingController _customCardController = TextEditingController();
+  final TextEditingController _customUrlController = TextEditingController();
+  bool _isExtracting = false;
+
   @override
   void initState() {
     super.initState();
     _loadLogs();
     _loadFeedbacks();
+    _loadCatalogCards();
+    ParsingLogger.addListener(_onLogReceived);
   }
 
   @override
   void dispose() {
     _disposed = true;
     _commentController.dispose();
+    _logScrollController.dispose();
+    _customBankController.dispose();
+    _customCardController.dispose();
+    _customUrlController.dispose();
+    ParsingLogger.removeListener(_onLogReceived);
     super.dispose();
+  }
+
+  void _onLogReceived(String log) {
+    _safeSetState(() {
+      _extractionLogs.add(log);
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_logScrollController.hasClients) {
+        _logScrollController.animateTo(
+          _logScrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  Future<void> _loadCatalogCards() async {
+    _safeSetState(() => _isCatalogLoading = true);
+    try {
+      final response = await _supabase
+          .from('card_catalog')
+          .select('*')
+          .order('bank', ascending: true);
+      
+      _safeSetState(() {
+        _catalogCards = List<Map<String, dynamic>>.from(response);
+      });
+    } catch (e) {
+      _onLogReceived('❌ Error loading catalog: $e');
+    } finally {
+      _safeSetState(() => _isCatalogLoading = false);
+    }
   }
 
   void _safeSetState(VoidCallback fn) {
@@ -167,7 +223,7 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
         backgroundColor: const Color(0xFF0C152B),
         elevation: 1,
         title: Text(
-          'PRUNING_AUDIT_TRAINING_GROUND.bin',
+          'CARDCOMPASS_AGENT_COMMAND_CENTER.bin',
           style: GoogleFonts.shareTechMono(
             color: const Color(0xFF00F5FF),
             fontSize: 15,
@@ -184,74 +240,842 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
             ),
           ),
           const SizedBox(width: 8),
-          TextButton.icon(
-            icon: const Icon(Icons.refresh, color: Color(0xFF00F5FF), size: 14),
-            label: Text('RELOAD', style: GoogleFonts.shareTechMono(color: const Color(0xFF00F5FF), fontSize: 11)),
-            onPressed: _loadLogs,
-          ),
-          const SizedBox(width: 8),
-          TextButton.icon(
-            icon: const Icon(Icons.bolt_outlined, color: Color(0xFF10B981), size: 14),
-            label: Text('SEED MOCK', style: GoogleFonts.shareTechMono(color: const Color(0xFF10B981), fontSize: 11)),
-            onPressed: _seedMock,
-          ),
-          const SizedBox(width: 8),
-          IconButton(
-            icon: const Icon(Icons.delete_sweep_outlined, color: AppTheme.errorColor, size: 18),
-            onPressed: _clearAll,
-            tooltip: 'Clear All Audits',
-          ),
+          if (_activeTab == 0) ...[
+            TextButton.icon(
+              icon: const Icon(Icons.refresh, color: Color(0xFF00F5FF), size: 14),
+              label: Text('RELOAD', style: GoogleFonts.shareTechMono(color: const Color(0xFF00F5FF), fontSize: 11)),
+              onPressed: _loadLogs,
+            ),
+            const SizedBox(width: 8),
+            TextButton.icon(
+              icon: const Icon(Icons.bolt_outlined, color: Color(0xFF10B981), size: 14),
+              label: Text('SEED MOCK', style: GoogleFonts.shareTechMono(color: const Color(0xFF10B981), fontSize: 11)),
+              onPressed: _seedMock,
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              icon: const Icon(Icons.delete_sweep_outlined, color: AppTheme.errorColor, size: 18),
+              onPressed: _clearAll,
+              tooltip: 'Clear All Audits',
+            ),
+          ] else ...[
+            TextButton.icon(
+              icon: const Icon(Icons.refresh, color: Color(0xFF00F5FF), size: 14),
+              label: Text('RELOAD CATALOG', style: GoogleFonts.shareTechMono(color: const Color(0xFF00F5FF), fontSize: 11)),
+              onPressed: _loadCatalogCards,
+            ),
+          ],
           const SizedBox(width: 10),
         ],
         iconTheme: const IconThemeData(color: Color(0xFF00F5FF)),
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: Color(0xFF00F5FF)))
-          : LayoutBuilder(
-              builder: (context, constraints) {
-                final isWide = constraints.maxWidth > 900;
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // Metrics Strip
-                    _buildMetricsStrip(totalProcessed, flaggedCount, confirmedCount, avgReduction),
-                    
-                    // Main layout
-                    Expanded(
-                      child: isWide 
-                          ? Row(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildTabBar(),
+          Expanded(
+            child: _activeTab == 0
+                ? (_isLoading
+                    ? const Center(child: CircularProgressIndicator(color: Color(0xFF00F5FF)))
+                    : LayoutBuilder(
+                        builder: (context, constraints) {
+                          final isWide = constraints.maxWidth > 900;
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              // Metrics Strip
+                              _buildMetricsStrip(totalProcessed, flaggedCount, confirmedCount, avgReduction),
+                              
+                              // Main layout
+                              Expanded(
+                                child: isWide 
+                                    ? Row(
+                                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                                        children: [
+                                          // Left sidebar: List
+                                          SizedBox(
+                                            width: 320,
+                                            child: _buildSidebarPanel(filteredLogs),
+                                          ),
+                                          // Right pane: Diff comparison and PM details
+                                          Expanded(
+                                            child: _buildDetailsPanel(),
+                                          ),
+                                        ],
+                                      )
+                                    : Column(
+                                        children: [
+                                          // Top half: List (collapsible)
+                                          SizedBox(
+                                            height: 220,
+                                            child: _buildSidebarPanel(filteredLogs),
+                                          ),
+                                          // Bottom half: Diff
+                                          Expanded(
+                                            child: _buildDetailsPanel(),
+                                          ),
+                                        ],
+                                      ),
+                              ),
+                            ],
+                          );
+                        },
+                      ))
+                : _buildBenefitsRefreshView(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTabBar() {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFF0C152B),
+        border: Border(bottom: BorderSide(color: Color(0xFF1E293B), width: 1)),
+      ),
+      child: Row(
+        children: [
+          _buildTabButton(0, 'STATEMENT PRUNING AUDIT'),
+          _buildTabButton(1, 'CARD BENEFITS REFRESH'),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTabButton(int index, String label) {
+    final isSelected = _activeTab == index;
+    return InkWell(
+      onTap: () {
+        setState(() {
+          _activeTab = index;
+        });
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(
+              color: isSelected ? const Color(0xFF00F5FF) : Colors.transparent,
+              width: 2,
+            ),
+          ),
+        ),
+        child: Text(
+          label,
+          style: GoogleFonts.shareTechMono(
+            color: isSelected ? const Color(0xFF00F5FF) : Colors.white30,
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1.0,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBenefitsRefreshView() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isWide = constraints.maxWidth > 900;
+        return isWide
+            ? Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  SizedBox(
+                    width: 380,
+                    child: _buildCatalogPanel(),
+                  ),
+                  Expanded(
+                    child: _buildConsolePanel(),
+                  ),
+                ],
+              )
+            : Column(
+                children: [
+                  SizedBox(
+                    height: 350,
+                    child: _buildCatalogPanel(),
+                  ),
+                  Expanded(
+                    child: _buildConsolePanel(),
+                  ),
+                ],
+              );
+      },
+    );
+  }
+
+  Widget _buildCatalogPanel() {
+    final filteredCards = _catalogCards.where((card) {
+      final query = _catalogSearchQuery.toLowerCase();
+      final name = (card['card_name'] ?? '').toString().toLowerCase();
+      final bank = (card['bank'] ?? '').toString().toLowerCase();
+      return name.contains(query) || bank.contains(query);
+    }).toList();
+
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFF070E1A),
+        border: Border(right: BorderSide(color: Color(0xFF1E293B), width: 1)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Search box
+          Padding(
+            padding: const EdgeInsets.all(12.0),
+            child: TextField(
+              style: GoogleFonts.shareTechMono(color: Colors.white, fontSize: 12),
+              decoration: InputDecoration(
+                hintText: 'SEARCH CATALOG CARD...',
+                hintStyle: GoogleFonts.shareTechMono(color: Colors.white24, fontSize: 11),
+                prefixIcon: const Icon(Icons.search, color: Colors.white24, size: 16),
+                fillColor: const Color(0xFF0B1426),
+                filled: true,
+                contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(4), borderSide: const BorderSide(color: Color(0xFF1E293B))),
+                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(4), borderSide: const BorderSide(color: Color(0xFF00F5FF))),
+              ),
+              onChanged: (val) {
+                setState(() {
+                  _catalogSearchQuery = val;
+                });
+              },
+            ),
+          ),
+          
+          const Divider(color: Color(0xFF1E293B), height: 1),
+          
+          Expanded(
+            child: _isCatalogLoading
+                ? const Center(child: CircularProgressIndicator(color: Color(0xFF00F5FF)))
+                : filteredCards.isEmpty
+                    ? Center(
+                        child: Text(
+                          'NO CARDS FOUND IN CATALOG.',
+                          style: GoogleFonts.shareTechMono(color: Colors.white24, fontSize: 11),
+                        ),
+                      )
+                    : ListView.builder(
+                        itemCount: filteredCards.length,
+                        itemBuilder: (context, index) {
+                          final card = filteredCards[index];
+                          final cardId = card['id'] as String;
+                          final cardName = card['card_name'] as String;
+                          final bankName = (card['bank'] ?? 'Unknown Bank') as String;
+                          
+                          // Look for card benefit metadata if joined
+                          dynamic lastScraped;
+                          dynamic confidence;
+                          if (card['card_benefits'] is List && (card['card_benefits'] as List).isNotEmpty) {
+                            final benefitMeta = (card['card_benefits'] as List).first;
+                            lastScraped = benefitMeta['last_scraped_at'];
+                            confidence = benefitMeta['extraction_confidence'];
+                          }
+                          
+                          String scrapedStr = 'Never Scraped';
+                          if (lastScraped != null) {
+                            final date = DateTime.tryParse(lastScraped.toString());
+                            if (date != null) {
+                              scrapedStr = '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+                            }
+                          }
+                          
+                          String confidenceStr = confidence != null ? '${((confidence as num) * 100).toStringAsFixed(0)}%' : 'N/A';
+
+                          return Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            decoration: const BoxDecoration(
+                              border: Border(bottom: BorderSide(color: Color(0xFF1E293B), width: 1)),
+                            ),
+                            child: Row(
                               children: [
-                                // Left sidebar: List
-                                SizedBox(
-                                  width: 320,
-                                  child: _buildSidebarPanel(filteredLogs),
-                                ),
-                                // Right pane: Diff comparison and PM details
                                 Expanded(
-                                  child: _buildDetailsPanel(),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        '${bankName.toUpperCase()} - ${cardName.toUpperCase()}',
+                                        style: GoogleFonts.shareTechMono(
+                                          color: Colors.white.withValues(alpha: 0.87),
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'SCRAPE: $scrapedStr | CONF: $confidenceStr',
+                                        style: GoogleFonts.shareTechMono(color: Colors.white30, fontSize: 9),
+                                      ),
+                                    ],
+                                  ),
                                 ),
-                              ],
-                            )
-                          : Column(
-                              children: [
-                                // Top half: List (collapsible)
-                                SizedBox(
-                                  height: 220,
-                                  child: _buildSidebarPanel(filteredLogs),
-                                ),
-                                // Bottom half: Diff
-                                Expanded(
-                                  child: _buildDetailsPanel(),
+                                const SizedBox(width: 8),
+                                ElevatedButton(
+                                  onPressed: _isExtracting
+                                      ? null
+                                      : () => _triggerExtraction(cardId, cardName, bankName, customUrl: card['card_url'] as String?),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF0F172A),
+                                    foregroundColor: const Color(0xFF00F5FF),
+                                    side: const BorderSide(color: Color(0xFF00F5FF), width: 1),
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                    minimumSize: const Size(60, 30),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                                  ),
+                                  child: Text(
+                                    'REFRESH',
+                                    style: GoogleFonts.shareTechMono(fontSize: 9, fontWeight: FontWeight.bold),
+                                  ),
                                 ),
                               ],
                             ),
+                          );
+                        },
+                      ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildConsolePanel() {
+    return Container(
+      color: const Color(0xFF050508),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Section title
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: const BoxDecoration(
+              color: Color(0xFF0C1426),
+              border: Border(bottom: BorderSide(color: Color(0xFF1E293B), width: 1)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'AI_BENEFITS_EXTRACTION_ENGINE_CONSOLE.bin',
+                  style: GoogleFonts.shareTechMono(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                ),
+                TextButton.icon(
+                  icon: const Icon(Icons.delete_outline, color: Color(0xFF00F5FF), size: 14),
+                  label: Text('CLEAR LOGS', style: GoogleFonts.shareTechMono(color: const Color(0xFF00F5FF), fontSize: 11)),
+                  onPressed: () {
+                    setState(() {
+                      _extractionLogs.clear();
+                    });
+                  },
+                ),
+              ],
+            ),
+          ),
+          
+          // Custom Form
+          _buildCustomExtractionForm(),
+          
+          // Terminal logs
+          Expanded(
+            child: Container(
+              color: const Color(0xFF030305),
+              padding: const EdgeInsets.all(16),
+              child: _extractionLogs.isEmpty
+                  ? Center(
+                      child: Text(
+                        'TERMINAL IDLE. TRIGGER A REFRESH RUN TO STREAM RAW LOGS.',
+                        style: GoogleFonts.shareTechMono(color: Colors.white24, fontSize: 11),
+                      ),
+                    )
+                  : ListView.builder(
+                      controller: _logScrollController,
+                      itemCount: _extractionLogs.length,
+                      itemBuilder: (context, index) {
+                        final log = _extractionLogs[index];
+                        Color logColor = Colors.white70;
+                        if (log.contains('❌') || log.contains('ERROR') || log.contains('FAILED') || log.contains('Exception')) {
+                          logColor = AppTheme.errorColor;
+                        } else if (log.contains('✅') || log.contains('SUCCESS') || log.contains('Successfully')) {
+                          logColor = const Color(0xFF10B981);
+                        } else if (log.contains('🌐') || log.contains('FETCHING') || log.contains('Attempting')) {
+                          logColor = const Color(0xFF00F5FF);
+                        } else if (log.contains('⚠️') || log.contains('WARNING')) {
+                          logColor = AppTheme.warningColor;
+                        } else if (log.contains('🤖') || log.contains('AI')) {
+                          logColor = const Color(0xFF8B5CF6);
+                        }
+                        
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 4.0),
+                          child: SelectableText(
+                            log,
+                            style: GoogleFonts.shareTechMono(
+                              color: logColor,
+                              fontSize: 11,
+                              height: 1.3,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCustomExtractionForm() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: const BoxDecoration(
+        color: Color(0xFF070E1A),
+        border: Border(bottom: BorderSide(color: Color(0xFF1E293B), width: 1)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'TRIGGER CUSTOM BENEFIT EXTRACTION',
+            style: GoogleFonts.shareTechMono(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _customBankController,
+                  style: GoogleFonts.shareTechMono(color: Colors.white, fontSize: 12),
+                  decoration: InputDecoration(
+                    labelText: 'BANK NAME',
+                    labelStyle: GoogleFonts.shareTechMono(color: Colors.white30, fontSize: 11),
+                    hintText: 'e.g., HDFC Bank',
+                    hintStyle: GoogleFonts.shareTechMono(color: Colors.white12, fontSize: 11),
+                    fillColor: const Color(0xFF050B18),
+                    filled: true,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(4), borderSide: const BorderSide(color: Color(0xFF1E293B))),
+                    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(4), borderSide: const BorderSide(color: Color(0xFF00F5FF))),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextField(
+                  controller: _customCardController,
+                  style: GoogleFonts.shareTechMono(color: Colors.white, fontSize: 12),
+                  decoration: InputDecoration(
+                    labelText: 'CARD NAME',
+                    labelStyle: GoogleFonts.shareTechMono(color: Colors.white30, fontSize: 11),
+                    hintText: 'e.g., Regalia Gold',
+                    hintStyle: GoogleFonts.shareTechMono(color: Colors.white12, fontSize: 11),
+                    fillColor: const Color(0xFF050B18),
+                    filled: true,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(4), borderSide: const BorderSide(color: Color(0xFF1E293B))),
+                    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(4), borderSide: const BorderSide(color: Color(0xFF00F5FF))),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _customUrlController,
+                  style: GoogleFonts.shareTechMono(color: Colors.white, fontSize: 12),
+                  decoration: InputDecoration(
+                    labelText: 'WEBSITE URL (OPTIONAL)',
+                    labelStyle: GoogleFonts.shareTechMono(color: Colors.white30, fontSize: 11),
+                    hintText: 'e.g., https://www.hdfcbank.com/...',
+                    hintStyle: GoogleFonts.shareTechMono(color: Colors.white12, fontSize: 11),
+                    fillColor: const Color(0xFF050B18),
+                    filled: true,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(4), borderSide: const BorderSide(color: Color(0xFF1E293B))),
+                    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(4), borderSide: const BorderSide(color: Color(0xFF00F5FF))),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              ElevatedButton.icon(
+                onPressed: _isExtracting
+                    ? null
+                    : () {
+                        final bank = _customBankController.text.trim();
+                        final card = _customCardController.text.trim();
+                        final customUrl = _customUrlController.text.trim();
+                        if (bank.isEmpty || card.isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('BANK AND CARD NAMES ARE REQUIRED', style: GoogleFonts.shareTechMono(color: Colors.white)),
+                              backgroundColor: AppTheme.errorColor,
+                            ),
+                          );
+                          return;
+                        }
+                        _triggerExtraction(
+                          'custom-run-${DateTime.now().millisecondsSinceEpoch}',
+                          card,
+                          bank,
+                          customUrl: customUrl.isNotEmpty ? customUrl : null,
+                        );
+                      },
+                icon: _isExtracting
+                    ? const SizedBox(
+                        width: 12,
+                        height: 12,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black),
+                      )
+                    : const Icon(Icons.bolt, size: 14),
+                label: Text(
+                  _isExtracting ? 'RUNNING...' : 'EXTRACT',
+                  style: GoogleFonts.shareTechMono(fontWeight: FontWeight.bold, fontSize: 12),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF00F5FF),
+                  foregroundColor: const Color(0xFF050508),
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _triggerExtraction(String cardId, String cardName, String bankName, {String? customUrl}) async {
+    _safeSetState(() {
+      _isExtracting = true;
+    });
+    
+    _onLogReceived('⚡ Starting extraction run for $bankName $cardName...');
+    
+    try {
+      String finalCardId = cardId;
+      if (cardId.startsWith('custom-run-')) {
+        _onLogReceived('🔍 Checking catalog database for $bankName $cardName...');
+        final existing = await _supabase
+            .from('card_catalog')
+            .select('id')
+            .eq('bank', bankName)
+            .eq('card_name', cardName)
+            .maybeSingle();
+            
+        if (existing != null) {
+          finalCardId = existing['id'] as String;
+          _onLogReceived('✅ Match found in catalog with ID: $finalCardId');
+        } else {
+          _onLogReceived('🆕 Card not in catalog. Creating new entry...');
+          final newCard = await _supabase.from('card_catalog').insert({
+            'card_name': cardName,
+            'bank': bankName,
+            'card_url': customUrl,
+            'card_type': 'credit',
+            'network': 'visa',
+            'annual_fee': 0.0,
+            'joining_fee': 0.0,
+            'is_discontinued': false,
+          }).select('id').single();
+          finalCardId = newCard['id'] as String;
+          _onLogReceived('✅ Created catalog card with ID: $finalCardId');
+        }
+      }
+      
+      final benefitService = AdvancedBenefitCalculationService();
+      final result = await benefitService.extractAndUpdateBenefits(
+        cardId: finalCardId,
+        cardName: cardName,
+        bankName: bankName,
+        customUrl: customUrl,
+      );
+      
+      if (result['success'] == true) {
+        if (result['direct_applied'] == true) {
+          _onLogReceived('✅ SUCCESS: Extracted ${result['benefits_extracted']} benefits (Direct Commit Fallback).');
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('REFRESH COMPLETE: DIRECTLY APPLIED', style: GoogleFonts.shareTechMono(color: Colors.black, fontWeight: FontWeight.bold)),
+              backgroundColor: const Color(0xFF10B981),
+            ),
+          );
+          _loadCatalogCards();
+        } else {
+          final stagingId = result['staging_id'] as String;
+          final extractedData = result['extracted_data'] as Map<String, dynamic>;
+          _onLogReceived('📋 STAGING: Benefits extracted and saved to staging (Staging ID: $stagingId). Opening review dialog...');
+          
+          _showReviewDialog(stagingId, cardName, bankName, extractedData);
+        }
+      } else {
+        _onLogReceived('❌ FAILED: ${result['error']}');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('REFRESH FAILED: ${result['error']}', style: GoogleFonts.shareTechMono(color: Colors.white, fontWeight: FontWeight.bold)),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
+    } catch (e) {
+      _onLogReceived('❌ EXCEPTION: $e');
+    } finally {
+      _safeSetState(() {
+        _isExtracting = false;
+      });
+    }
+  }
+
+  Future<void> _showReviewDialog(
+    String stagingId,
+    String cardName,
+    String bankName,
+    Map<String, dynamic> candidateData,
+  ) async {
+    List<dynamic> activeBenefits = [];
+    Map<String, dynamic>? activeFees;
+    
+    try {
+      final cardCatalog = await _supabase
+          .from('card_catalog')
+          .select('annual_fee, joining_fee, rewards_summary')
+          .eq('card_name', cardName)
+          .eq('bank', bankName)
+          .maybeSingle();
+      if (cardCatalog != null) {
+        activeFees = cardCatalog;
+      }
+      
+      final catalogCard = _catalogCards.firstWhere(
+        (c) => c['card_name'] == cardName && c['bank'] == bankName,
+        orElse: () => <String, dynamic>{},
+      );
+      
+      if (catalogCard.isNotEmpty) {
+        final benefitsRes = await _supabase
+            .from('card_benefits')
+            .select('*, benefits(category_code, name, description)')
+            .eq('card_id', catalogCard['id']);
+        activeBenefits = benefitsRes as List;
+      }
+    } catch (e) {
+      _onLogReceived('⚠️ Could not load active benefits for diff: $e');
+    }
+    
+    if (!mounted) return;
+    
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return Dialog(
+          backgroundColor: const Color(0xFF0C152B),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8), side: const BorderSide(color: Color(0xFF00F5FF), width: 1)),
+          child: Container(
+            width: 950,
+            height: 650,
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'AI_BENEFITS_REVIEW_DIFF_FLOW // ${bankName.toUpperCase()} ${cardName.toUpperCase()}',
+                      style: GoogleFonts.shareTechMono(color: const Color(0xFF00F5FF), fontSize: 14, fontWeight: FontWeight.bold),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white30, size: 18),
+                      onPressed: () => Navigator.of(context).pop(),
                     ),
                   ],
-                );
-              },
+                ),
+                const Divider(color: Color(0xFF1E293B), height: 16),
+                
+                Expanded(
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: _buildReviewColumn(
+                          title: 'ACTIVE BENEFITS (CURRENT DATABASE)',
+                          headerColor: Colors.white54,
+                          fees: activeFees,
+                          benefits: activeBenefits.map((b) {
+                            final bName = b['benefits'] != null ? b['benefits']['name'] ?? '' : 'Benefit';
+                            final bCat = b['benefits'] != null ? b['benefits']['category_code'] ?? 'GENERAL' : 'GENERAL';
+                            final bVal = b['value'] != null ? '${b['value']}%' : 'Active';
+                            return '$bCat: $bName ($bVal)';
+                          }).toList(),
+                          isCandidate: false,
+                        ),
+                      ),
+                      
+                      const VerticalDivider(color: Color(0xFF1E293B), width: 24),
+                      
+                      Expanded(
+                        child: _buildReviewColumn(
+                          title: 'CANDIDATE BENEFITS (SCRAPED / AI PARSED)',
+                          headerColor: const Color(0xFF00F5FF),
+                          fees: candidateData['annual_fee'],
+                          benefits: _getCandidateBenefitSummaryList(candidateData),
+                          isCandidate: true,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                
+                const Divider(color: Color(0xFF1E293B), height: 24),
+                
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                        _onLogReceived('❌ REJECTED: Candidate benefits discarded.');
+                      },
+                      child: Text('DISCARD CHANGES', style: GoogleFonts.shareTechMono(color: AppTheme.errorColor, fontWeight: FontWeight.bold)),
+                    ),
+                    const SizedBox(width: 16),
+                    ElevatedButton.icon(
+                      icon: const Icon(Icons.check, size: 14),
+                      label: Text('APPROVE & APPLY', style: GoogleFonts.shareTechMono(fontWeight: FontWeight.bold)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF10B981),
+                        foregroundColor: Colors.black,
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                      ),
+                      onPressed: () async {
+                        Navigator.of(context).pop();
+                        _onLogReceived('⚡ Applying approved benefits from staging...');
+                        final applyRes = await AdvancedBenefitCalculationService().applyApprovedBenefits(stagingId);
+                        if (applyRes['success'] == true) {
+                          _onLogReceived('✅ SUCCESS: Benefits applied successfully!');
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('BENEFITS SYNCED AND APPLIED SUCCESSFULLY', style: GoogleFonts.shareTechMono(color: Colors.black, fontWeight: FontWeight.bold)),
+                              backgroundColor: const Color(0xFF10B981),
+                            ),
+                          );
+                          _loadCatalogCards();
+                        } else {
+                          _onLogReceived('❌ FAILED: ${applyRes['error']}');
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              ],
             ),
+          ),
+        );
+      },
     );
+  }
+
+  Widget _buildReviewColumn({
+    required String title,
+    required Color headerColor,
+    dynamic fees,
+    required List<String> benefits,
+    required bool isCandidate,
+  }) {
+    String annualFeeStr = 'N/A';
+    String joiningFeeStr = 'N/A';
+    String waiverStr = 'None';
+    
+    if (fees != null) {
+      if (isCandidate) {
+        annualFeeStr = fees['renewal']?.toString() ?? fees['first_year']?.toString() ?? 'Free';
+        joiningFeeStr = fees['first_year']?.toString() ?? 'Free';
+        waiverStr = fees['waiver_conditions']?.toString() ?? 'None';
+      } else {
+        annualFeeStr = fees['annual_fee']?.toString() ?? 'Free';
+        joiningFeeStr = fees['joining_fee']?.toString() ?? 'Free';
+        waiverStr = fees['rewards_summary']?.toString() ?? 'None';
+      }
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          title,
+          style: GoogleFonts.shareTechMono(color: headerColor, fontSize: 11, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(color: const Color(0xFF050B18), borderRadius: BorderRadius.circular(4), border: Border.all(color: const Color(0xFF1E293B))),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('FEES & CONDITIONS:', style: GoogleFonts.shareTechMono(color: Colors.white30, fontSize: 9, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 6),
+              Text('Annual Fee: ₹$annualFeeStr', style: GoogleFonts.shareTechMono(color: Colors.white70, fontSize: 11)),
+              Text('Joining Fee: ₹$joiningFeeStr', style: GoogleFonts.shareTechMono(color: Colors.white70, fontSize: 11)),
+              const SizedBox(height: 4),
+              Text('Waiver: $waiverStr', style: GoogleFonts.shareTechMono(color: Colors.white30, fontSize: 9), maxLines: 2, overflow: TextOverflow.ellipsis),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        Expanded(
+          child: Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(color: const Color(0xFF030305), borderRadius: BorderRadius.circular(4), border: Border.all(color: const Color(0xFF1E293B))),
+            child: benefits.isEmpty
+                ? Center(child: Text('NO RECORDED BENEFITS', style: GoogleFonts.shareTechMono(color: Colors.white12, fontSize: 10)))
+                : ListView.builder(
+                    itemCount: benefits.length,
+                    itemBuilder: (context, index) {
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 6.0),
+                        child: Text(
+                          benefits[index],
+                          style: GoogleFonts.shareTechMono(color: Colors.white70, fontSize: 10, height: 1.2),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  List<String> _getCandidateBenefitSummaryList(Map<String, dynamic> data) {
+    final list = <String>[];
+    if (data['cashback_benefits'] is List) {
+      for (final b in data['cashback_benefits']) {
+        final cat = b['category'] ?? 'GENERAL';
+        final desc = b['description'] ?? 'Cashback';
+        final rate = b['rate'] != null ? '${b['rate']}%' : 'Yes';
+        list.add('$cat: $desc ($rate)');
+      }
+    }
+    if (data['reward_points'] is Map) {
+      final base = data['reward_points']['base_rate'];
+      if (base != null) {
+        list.add('POINTS: Base rate of $base pts per ₹100');
+      }
+    }
+    if (data['special_benefits'] is List) {
+      for (final b in data['special_benefits']) {
+        final type = b['type'] ?? 'OTHER';
+        final desc = b['description'] ?? '';
+        list.add('$type: $desc');
+      }
+    }
+    return list;
   }
 
   Widget _buildMetricsStrip(int total, int flagged, int confirmed, double avgReduction) {

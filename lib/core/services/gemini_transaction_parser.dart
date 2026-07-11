@@ -485,6 +485,11 @@ JSON OUTPUT FORMAT:
       "conditions": "any conditions",
       "monthly_cap": amount_or_null,
       "annual_cap": amount_or_null,
+      "min_spend_threshold": amount_or_null,
+      "max_cap_limit": amount_or_null,
+      "excluded_categories": ["category names excluded from earning rewards"],
+      "excluded_merchants": ["merchant names excluded from earning rewards"],
+      "is_accelerated": true_or_false,
       "merchants": ["specific merchant names if any"]
     }
   ],
