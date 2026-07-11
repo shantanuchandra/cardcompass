@@ -19,8 +19,14 @@ class DashboardDialogs {
     final groqApiKeyController = TextEditingController(text: AIConfig.groqApiKey);
     final groqModelController = TextEditingController(text: AIConfig.groqModel);
 
+    // Instantly cache in memory as they type
+    ollamaUrlController.addListener(() => AIConfig.ollamaUrl = ollamaUrlController.text.trim());
+    ollamaModelController.addListener(() => AIConfig.ollamaModel = ollamaModelController.text.trim());
+    groqApiKeyController.addListener(() => AIConfig.groqApiKey = groqApiKeyController.text.trim());
+    groqModelController.addListener(() => AIConfig.groqModel = groqModelController.text.trim());
 
     return showDialog<Map<String, dynamic>>(
+
       context: context,
       builder: (BuildContext context) {
         return StatefulBuilder(

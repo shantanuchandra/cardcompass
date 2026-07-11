@@ -512,7 +512,14 @@ class _HomeTabState extends ConsumerState<HomeTab> {
         final groqApiKeyController = TextEditingController(text: AIConfig.groqApiKey);
         final groqModelController = TextEditingController(text: AIConfig.groqModel);
 
+        // Instantly cache in memory as they type
+        ollamaUrlController.addListener(() => AIConfig.ollamaUrl = ollamaUrlController.text.trim());
+        ollamaModelController.addListener(() => AIConfig.ollamaModel = ollamaModelController.text.trim());
+        groqApiKeyController.addListener(() => AIConfig.groqApiKey = groqApiKeyController.text.trim());
+        groqModelController.addListener(() => AIConfig.groqModel = groqModelController.text.trim());
+
         return StatefulBuilder(
+
           builder: (context, setState) {
             // Snap labels for "Look back" slider
             const List<int> daySnaps = [7, 14, 30, 60, 90, 180, 365];
