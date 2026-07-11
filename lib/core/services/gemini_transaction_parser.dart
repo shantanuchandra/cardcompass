@@ -57,10 +57,11 @@ JSON OUTPUT (return ONLY this object, no markdown or code blocks):
 
 ANALYZE THE STATEMENT:''';
       
+      final cleanedText = _pruneAndCleanText(pdfText);
       final requestBody = {
         'contents': [{
           'parts': [{
-            'text': prompt + '\n\n' + pdfText
+            'text': prompt + '\n\n' + cleanedText
           }]
         }],
         'generationConfig': {
@@ -68,6 +69,7 @@ ANALYZE THE STATEMENT:''';
           'maxOutputTokens': 512
         }
       };
+
       
       // Call Gemini API with automatic fallback
       final response = await _callGeminiWithFallback(requestBody, maxRetries: 3);
@@ -208,10 +210,11 @@ JSON OUTPUT (return ONLY this array, no markdown blocks):
 
 ANALYZE THIS STATEMENT:''';
       
+      final cleanedText = _pruneAndCleanText(pdfText);
       final requestBody = {
         'contents': [{
           'parts': [{
-            'text': prompt + '\n\n' + pdfText
+            'text': prompt + '\n\n' + cleanedText
           }]
         }],
         'generationConfig': {
@@ -219,6 +222,7 @@ ANALYZE THIS STATEMENT:''';
           'maxOutputTokens': 8192,  // SBI 39K-char statements need more room
         }
       };
+
       
       // Call Gemini API with automatic fallback
       final response = await _callGeminiWithFallback(requestBody, maxRetries: 3);
@@ -779,4 +783,48 @@ CONTENT TO ANALYZE:
     print('❌ All Gemini API attempts exhausted after $maxRetries tries');
     return null;
   }
+
+  static String _pruneAndCleanText(String text) {
+    if (text.isEmpty) return text;
+    
+    // 1. Clean whitespace
+    String cleaned = text.replaceAll(RegExp(r'\n+'), '\n');
+    cleaned = cleaned.replaceAll(RegExp(r' {2,}'), ' ');
+    cleaned = cleaned.trim();
+    
+    // 2. Prune boilerplate (T&C, grievance redressal, branches list) at the end
+    final lowerText = cleaned.toLowerCase();
+    final markers = [
+      'most important terms & conditions',
+      'most important terms and conditions',
+      'mitc',
+      'important information for cardholders',
+      'important information',
+      'rights of cardholder',
+      'cardholder agreement',
+      'dispute redressal',
+      'grievance redressal',
+      'branch addresses',
+      'list of branches',
+    ];
+    
+    int bestCutIndex = -1;
+    for (final marker in markers) {
+      final idx = lowerText.indexOf(marker);
+      if (idx != -1) {
+        if (bestCutIndex == -1 || idx < bestCutIndex) {
+          bestCutIndex = idx;
+        }
+      }
+    }
+    
+    // Truncate only if we keep at least 3500 chars (safe threshold for transactions)
+    if (bestCutIndex > 3500) {
+      print('✂️ Pruning PDF statement text: reduced from ${cleaned.length} to $bestCutIndex characters');
+      cleaned = cleaned.substring(0, bestCutIndex);
+    }
+    
+    return cleaned;
+  }
 }
+
