@@ -69,15 +69,14 @@ dependencies:
   image_picker: ^1.2.0
   cached_network_image: ^3.4.1
     # Utilities
-  intl: ^0.19.0
+  intl: ^0.20.2
   shared_preferences: ^2.4.0
   uuid: ^4.5.1
-  encrypt: ^5.0.3
   crypto: ^3.0.6
   csv: ^6.0.0
 
   # Email Integration
-  enough_mail: ^2.1.6
+  enough_mail: ^2.1.7
 
   # URL Launcher
   url_launcher: ^6.3.2

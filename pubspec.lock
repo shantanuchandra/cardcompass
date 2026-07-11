@@ -17,14 +17,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "85.0.0"
-  adaptive_number:
-    dependency: transitive
-    description:
-      name: adaptive_number
-      sha256: "3a567544e9b5c9c803006f51140ad544aedc79604fd4f3f2c1380003f97c1d77"
-      url: "https://pub.dev"
-    source: hosted
-    version: "1.0.0"
   analyzer:
     dependency: transitive
     description:
@@ -117,10 +109,10 @@ packages:
     dependency: transitive
     description:
       name: basic_utils
-      sha256: "2064b21d3c41ed7654bc82cc476fd65542e04d60059b74d5eed490a4da08fc6c"
+      sha256: "548047bef0b3b697be19fa62f46de54d99c9019a69fb7db92c69e19d87f633c7"
       url: "https://pub.dev"
     source: hosted
-    version: "5.7.0"
+    version: "5.8.2"
   bidi:
     dependency: transitive
     description:
@@ -341,10 +333,10 @@ packages:
     dependency: transitive
     description:
       name: dart_jsonwebtoken
-      sha256: b268ff9bb87a16360a397f1accb50e7c781384e1119010b34f6d7c25820c44d8
+      sha256: ad84e60181696513d04d5f2078e0bbc20365b911f46f647797317414bdc88fbe
       url: "https://pub.dev"
     source: hosted
-    version: "3.1.1"
+    version: "3.4.1"
   dart_style:
     dependency: transitive
     description:
@@ -377,22 +369,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.2.0"
-  ed25519_edwards:
+  encrypter_plus:
     dependency: transitive
     description:
-      name: ed25519_edwards
-      sha256: "6ce0112d131327ec6d42beede1e5dfd526069b18ad45dcf654f15074ad9276cd"
+      name: encrypter_plus
+      sha256: "6f6f3c73e26058af4fd138369a928ccae667e45d254cf6ded6301a2d99551a67"
       url: "https://pub.dev"
     source: hosted
-    version: "0.3.1"
-  encrypt:
-    dependency: "direct main"
-    description:
-      name: encrypt
-      sha256: "62d9aa4670cc2a8798bab89b39fc71b6dfbacf615de6cf5001fb39f7e4a996a2"
-      url: "https://pub.dev"
-    source: hosted
-    version: "5.0.3"
+    version: "5.1.0"
   enough_convert:
     dependency: transitive
     description:
@@ -405,10 +389,10 @@ packages:
     dependency: "direct main"
     description:
       name: enough_mail
-      sha256: a88d8c56907caeffdebc4cf34f3a5665c09a8d7496ef5e09b3166f41cf409f81
+      sha256: b8b3d4da3f3d727013c5ffc562046ed1d2553a7ffdcc7e7a0e7e1bb96ed445ae
       url: "https://pub.dev"
     source: hosted
-    version: "2.1.6"
+    version: "2.1.7"
   equatable:
     dependency: transitive
     description:
@@ -860,10 +844,10 @@ packages:
     dependency: "direct main"
     description:
       name: intl
-      sha256: d6f56758b7d3014a48af9701c085700aac781a92a87a62b1333b46d8879661cf
+      sha256: "1ca20c894b1717686a2319b8548763d812bc0aabdac580420a44c5178c57a867"
       url: "https://pub.dev"
     source: hosted
-    version: "0.19.0"
+    version: "0.20.3"
   io:
     dependency: transitive
     description:
@@ -1204,10 +1188,10 @@ packages:
     dependency: transitive
     description:
       name: pointycastle
-      sha256: "4be0097fcf3fd3e8449e53730c631200ebc7b88016acecab2b0da2f0149222fe"
+      sha256: "92aa3841d083cc4b0f4709b5c74fd6409a3e6ba833ffc7dc6a8fee096366acf5"
       url: "https://pub.dev"
     source: hosted
-    version: "3.9.1"
+    version: "4.0.0"
   pool:
     dependency: transitive
     description:
