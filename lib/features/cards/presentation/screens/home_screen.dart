@@ -8,6 +8,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:googleapis/gmail/v1.dart' as gmail;
 import 'package:googleapis_auth/auth_io.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' as supabase_lib;
 
 import '../../../../core/theme.dart';
@@ -638,20 +639,30 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     String? accessToken;
 
     if (kIsWeb) {
-      // Web: provider token is stored in the Supabase session after Google sign-in.
-      // It will have Gmail scopes IF the user signed in after we added them to the OAuth call.
+      // Web: Supabase stores the Google provider token in the session right after
+      // OAuth redirect. On subsequent page loads it may be null, so we also check
+      // SharedPreferences where auth_provider.dart caches it.
       final session = supabase_lib.Supabase.instance.client.auth.currentSession;
       accessToken = session?.providerToken;
 
       if (accessToken == null || accessToken.isEmpty) {
-        // Provider token missing — user needs to re-login with updated scopes.
+        // Fallback: read from SharedPreferences (cached on first login)
+        final prefs = await SharedPreferences.getInstance();
+        accessToken = prefs.getString('google_provider_token');
+        if (accessToken != null && accessToken.isNotEmpty) {
+          print('✅ Using cached Google provider token from SharedPreferences (web mode)');
+        }
+      } else {
+        print('✅ Using live Supabase provider token for Gmail (web mode)');
+      }
+
+      if (accessToken == null || accessToken.isEmpty) {
+        // No token available — user needs to re-login with updated Gmail scopes.
         GlobalMessageService.showError(
           'Gmail access not available. Please sign out and sign in again to grant Gmail permissions.',
         );
         return;
       }
-      print('✅ Using Supabase provider token for Gmail (web mode)');
-    } else {
       // Native: use GoogleSignIn SDK directly.
       try {
         GoogleSignInAccount? googleAccount =

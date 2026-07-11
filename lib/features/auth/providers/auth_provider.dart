@@ -1,9 +1,15 @@
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' hide User;
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../../shared/models/user.dart';
 
 part 'auth_provider.g.dart';
+
+/// SharedPreferences key used to persist the Google OAuth provider token on web.
+/// The token is only available from the Supabase session immediately after the
+/// OAuth redirect, so we cache it for use by the Gmail sync flow.
+const String _kGoogleProviderTokenKey = 'google_provider_token';
 
 @riverpod
 AuthService authService(Ref ref) => AuthService();
@@ -140,6 +146,11 @@ class AuthService {
 
   Future<void> signOut() async {
     await _supabase.auth.signOut();
+    // Clear cached provider token so a new login gets fresh scopes
+    if (kIsWeb) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_kGoogleProviderTokenKey);
+    }
   }
 
   Future<User?> getCurrentUser() async {
@@ -148,6 +159,14 @@ class AuthService {
       final session = _supabase.auth.currentSession;
       print('🔑 AuthService: session: $session');
       if (session?.user != null) {
+        // Persist the Google provider token whenever it's available.
+        // On web, providerToken is only set right after the OAuth redirect;
+        // caching it lets the Gmail sync flow use it on subsequent page loads.
+        if (kIsWeb && session?.providerToken != null) {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString(_kGoogleProviderTokenKey, session!.providerToken!);
+          print('🔑 AuthService: Cached Google provider token to SharedPreferences');
+        }
         return User(
           id: session!.user.id,
           email: session.user.email!,
