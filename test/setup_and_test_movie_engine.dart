@@ -3,6 +3,9 @@ import 'package:cardcompass/config/constants.dart';
 import 'package:cardcompass/features/movie_rule_engine/data/movie_rule_engine_service.dart';
 import 'package:cardcompass/features/movie_rule_engine/domain/models/movie_ticket_request.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'package:cardcompass/core/app_config.dart';
 
 /// This script:
 /// 1. Sets up test data using existing benefits and cards
@@ -16,9 +19,10 @@ void main() {
   late MovieRuleEngineService movieService;
 
   setUpAll(() async {
+    SharedPreferences.setMockInitialValues({});
     await Supabase.initialize(
-      url: AppConstants.supabaseUrl,
-      publishableKey: AppConstants.supabaseAnonKey,
+      url: AppConfig.supabaseUrl,
+      publishableKey: AppConfig.supabaseAnonKey,
     );
     supabase = Supabase.instance.client;
     movieService = MovieRuleEngineService();

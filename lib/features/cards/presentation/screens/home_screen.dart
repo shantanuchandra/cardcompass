@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
+import 'package:flutter_animate/flutter_animate.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../core/app_config.dart';
 import '../../../../core/theme.dart';
@@ -41,36 +43,83 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: _screens[_currentIndex],
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentIndex,
-        onDestinationSelected: (index) {
-          setState(() {
-            _currentIndex = index;
-          });
-        },
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home),
-            label: 'Home',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.receipt_long_outlined),
-            selectedIcon: Icon(Icons.receipt_long),
-            label: 'Transactions',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.analytics_outlined),
-            selectedIcon: Icon(Icons.analytics),
-            label: 'Analytics',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.recommend_outlined),
-            selectedIcon: Icon(Icons.recommend),
-            label: 'Recommendations',
+      backgroundColor: const Color(0xFF050B18),
+      body: Stack(
+        children: [
+          _screens[_currentIndex],
+          
+          // Floating Translucent Bottom Navigation Dock
+          Positioned(
+            left: 16,
+            right: 16,
+            bottom: 16,
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0C152B).withValues(alpha: 0.85),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.08),
+                  width: 1.5,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.4),
+                    blurRadius: 20,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  _buildNavItem(0, Icons.home_outlined, Icons.home, 'Home'),
+                  _buildNavItem(1, Icons.receipt_long_outlined, Icons.receipt_long, 'Txns'),
+                  _buildNavItem(2, Icons.analytics_outlined, Icons.analytics, 'Analytics'),
+                  _buildNavItem(3, Icons.recommend_outlined, Icons.recommend, 'Advice'),
+                ],
+              ),
+            ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildNavItem(int index, IconData outlineIcon, IconData filledIcon, String label) {
+    final isSelected = _currentIndex == index;
+    return InkWell(
+      onTap: () => setState(() => _currentIndex = index),
+      borderRadius: BorderRadius.circular(16),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? AppTheme.primaryColor.withValues(alpha: 0.1) : Colors.transparent,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              isSelected ? filledIcon : outlineIcon,
+              color: isSelected ? AppTheme.primaryColor : Colors.white60,
+              size: 20,
+            ).animate(target: isSelected ? 1 : 0).scale(begin: const Offset(1, 1), end: const Offset(1.15, 1.15), duration: 200.ms),
+            if (isSelected) ...[
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: GoogleFonts.spaceGrotesk(
+                  color: AppTheme.primaryColor,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 11,
+                  letterSpacing: 0.5,
+                ),
+              ).animate().fadeIn(duration: 200.ms).slideX(begin: -0.2, end: 0),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -633,32 +682,45 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     Color color,
   ) {
     return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(12),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0C152B),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: color.withValues(alpha: 0.2),
+          color: color.withValues(alpha: 0.25),
+          width: 1.5,
         ),
+        boxShadow: AppTheme.neonGlow(color: color, opacity: 0.12, blurRadius: 12),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(icon, color: color, size: 20),
+              Icon(icon, color: color, size: 18),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  title,
-                  style: AppTextStyles.caption.copyWith(color: color),
+                  title.toUpperCase(),
+                  style: GoogleFonts.spaceGrotesk(
+                    color: Colors.white70,
+                    fontSize: 9,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1.0,
+                  ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
           Text(
             value,
-            style: AppTextStyles.heading3.copyWith(color: color),
+            style: GoogleFonts.spaceGrotesk(
+              color: Colors.white,
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 0.5,
+            ),
           ),
         ],
       ),
@@ -831,33 +893,37 @@ class _HomeTabState extends ConsumerState<HomeTab> {
 
   Widget _buildEmptyTransactionsWidget(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(28),
       width: double.infinity,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
+        color: const Color(0xFF0C152B),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.3),
+          color: Colors.white.withValues(alpha: 0.06),
         ),
       ),
       child: Column(
         children: [
-          Icon(
+          const Icon(
             Icons.receipt_long_outlined,
-            size: 48,
-            color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.5),
+            size: 44,
+            color: Colors.white24,
           ),
           const SizedBox(height: 16),
           Text(
             'No transactions yet',
-            style: AppTextStyles.body1.copyWith(
-              color: Theme.of(context).colorScheme.outline,
+            style: GoogleFonts.spaceGrotesk(
+              color: Colors.white70,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
             ),
           ),
           const SizedBox(height: 8),
           Text(
             'Your recent transactions will appear here',
-            style: AppTextStyles.caption.copyWith(
-              color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.7),
+            style: GoogleFonts.plusJakartaSans(
+              color: Colors.white38,
+              fontSize: 11,
             ),
             textAlign: TextAlign.center,
           ),
@@ -869,47 +935,58 @@ class _HomeTabState extends ConsumerState<HomeTab> {
   Widget _buildTransactionsList(BuildContext context, List<dynamic> transactions) {
     return Column(
       children: transactions.take(5).map((transaction) {
+        final categoryColor = _getCategoryColor(transaction.categoryString);
         return Container(
           margin: const EdgeInsets.only(bottom: 12),
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surface,
-            borderRadius: BorderRadius.circular(12),
+            color: const Color(0xFF0C152B),
+            borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.1),
+              color: Colors.white.withValues(alpha: 0.06),
+              width: 1,
             ),
           ),
           child: Row(
             children: [
+              // Category icon inside a glowing ring
               Container(
-                width: 40,
-                height: 40,
+                width: 42,
+                height: 42,
                 decoration: BoxDecoration(
-                  color: _getCategoryColor(transaction.categoryString).withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
+                  color: categoryColor.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: categoryColor.withValues(alpha: 0.3),
+                    width: 1,
+                  ),
                 ),
                 child: Icon(
                   _getCategoryIcon(transaction.categoryString),
-                  color: _getCategoryColor(transaction.categoryString),
-                  size: 20,
+                  color: categoryColor,
+                  size: 18,
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 14),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       transaction.merchantName ?? transaction.description ?? 'Unknown Transaction',
-                      style: AppTextStyles.body1.copyWith(
-                        fontWeight: FontWeight.w500,
+                      style: GoogleFonts.plusJakartaSans(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
                       ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 4),
                     Text(
                       _formatDate(transaction.transactionDate),
-                      style: AppTextStyles.caption.copyWith(
-                        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+                      style: GoogleFonts.plusJakartaSans(
+                        color: Colors.white38,
+                        fontSize: 11,
                       ),
                     ),
                   ],
@@ -920,19 +997,22 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                 children: [
                   Text(
                     '₹${transaction.amount.toStringAsFixed(2)}',
-                    style: AppTextStyles.body1.copyWith(
-                      fontWeight: FontWeight.w600,
+                    style: GoogleFonts.spaceGrotesk(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
                       color: transaction.typeString == 'debit'
-                          ? Theme.of(context).colorScheme.error
-                          : Theme.of(context).colorScheme.primary,
+                          ? AppTheme.errorColor
+                          : AppTheme.primaryColor,
                     ),
                   ),
                   if (transaction.rewardEarned != null && transaction.rewardEarned > 0) ...[
                     const SizedBox(height: 2),
                     Text(
-                      '+₹${transaction.rewardEarned.toStringAsFixed(0)} rewards',
-                      style: AppTextStyles.caption.copyWith(
-                        color: Colors.green,
+                      '+₹${transaction.rewardEarned.toStringAsFixed(0)}',
+                      style: GoogleFonts.spaceGrotesk(
+                        color: AppTheme.successColor,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 11,
                       ),
                     ),
                   ],

@@ -269,7 +269,7 @@ class StatementsScreen extends ConsumerWidget {
                       const SizedBox(height: 16),
                       OutlinedButton.icon(
                         onPressed: () async {
-                          final result = await FilePicker.platform.pickFiles(
+                          final result = await FilePicker.pickFiles(
                             type: FileType.custom,
                             allowedExtensions: ['pdf'],
                           );

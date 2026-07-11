@@ -46,7 +46,7 @@ class BenefitImportService {
           print('❌ CSV file not found in project root either');
           throw Exception('enhanced_credit_cards.csv not found in assets or project root');
         }
-      }      List<List<dynamic>> rows = const CsvToListConverter().convert(csvData);
+      }      List<List<dynamic>> rows = Csv().asCodec().decode(csvData);
       
       print('📊 CSV parsed: ${rows.length} total rows');
       
