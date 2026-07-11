@@ -1,12 +1,14 @@
+import 'env.dart';
+
 class AppConfig {
   static const String appName = 'CardCompass';
   static const String appVersion = '1.0.0';
-  // Supabase Configuration
-  static const String supabaseUrl = 'https://hpvxlazlgyykqwpmstmw.supabase.co';
-  static const String supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhwdnhsYXpsZ3l5a3F3cG1zdG13Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk5MDIyODAsImV4cCI6MjA2NTQ3ODI4MH0.tyTQ-6scFQp5e4EVtufTpLtyr0s6-N1DWiXOEujwaFA';
-  
-  // Google Sign-In Configuration
-  static const String googleClientId = '634383830161-cg9q9acc830kdi97shi1fkhifnalvpj4.apps.googleusercontent.com';
+  // Supabase Configuration - injected via --dart-define-from-file, see lib/core/env.dart
+  static const String supabaseUrl = Env.supabaseUrl;
+  static const String supabaseAnonKey = Env.supabaseAnonKey;
+
+  // Google Sign-In Configuration - injected via --dart-define-from-file, see lib/core/env.dart
+  static const String googleClientId = Env.googleClientId;
   
   // API Endpoints
   static const String baseApiUrl = 'https://api.cardcompass.com';

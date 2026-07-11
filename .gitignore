@@ -51,6 +51,7 @@ app.*.map.json
 *.pem
 *.key
 supabase/.temp/
+dart_defines.json
 
 # Database backups/dumps - contain real user data, never commit
 *.backup

@@ -16,6 +16,7 @@ import 'package:cardcompass/shared/models/transaction.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cardcompass/debug/sync_flow_debugger.dart';
 import 'package:cardcompass/core/config/ai_config.dart';
+import 'package:cardcompass/core/app_config.dart';
 
 /// Result class for card operations that returns both catalog and user card IDs
 class CardInfo {
@@ -214,7 +215,7 @@ class DataPipelineDebugService {
     
     try {      // Configure Google Sign-In for Gmail access with web-specific configuration
       final googleSignIn = GoogleSignIn(
-        clientId: '634383830161-cg9q9acc830kdi97shi1fkhifnalvpj4.apps.googleusercontent.com',
+        clientId: AppConfig.googleClientId,
         scopes: [
           'https://www.googleapis.com/auth/gmail.readonly',
           'https://www.googleapis.com/auth/gmail.modify',

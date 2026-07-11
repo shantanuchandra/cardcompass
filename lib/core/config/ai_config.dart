@@ -1,8 +1,9 @@
+import '../env.dart';
+
 /// Configuration for AI services with automatic fallback mechanism
 class AIConfig {
-  // Gemini AI API Configuration
-  static const String _geminiApiKey = 'AIzaSyD4XddoqY3zquAPiEyuhi_wdH4uaY4LvjE';
-  // 'AIzaSyBzvpqB_TnB4HYcmjH3Je_mofieVQU5bWc';
+  // Gemini AI API Configuration - injected via --dart-define-from-file, see lib/core/env.dart
+  static const String _geminiApiKey = Env.geminiApiKey;
   
   /// List of Gemini models to try in order (fallback chain)
   /// First model is primary, subsequent models are fallbacks when rate limits hit
