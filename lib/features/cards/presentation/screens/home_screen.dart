@@ -488,138 +488,398 @@ class _HomeTabState extends ConsumerState<HomeTab> {
   }
 
   void _showSyncDataDialog(BuildContext context, WidgetRef ref) {
-    // Mutable state for the dialog controls
-    int _selectedDays = 90;
+    int _selectedDays = 30;
     int _maxEmails = 10;
+
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final cardBg = isDark ? const Color(0xFF1E1E2E) : Colors.white;
+    final surfaceBg = isDark ? const Color(0xFF2A2A3E) : const Color(0xFFF8F9FF);
+    final accentColor = const Color(0xFF6C63FF);
+    final textPrimary = isDark ? Colors.white : const Color(0xFF1A1A2E);
+    final textSecondary = isDark ? Colors.white60 : Colors.black45;
 
     showDialog(
       context: context,
-      builder: (BuildContext context) {
+      barrierColor: Colors.black54,
+      builder: (BuildContext dialogContext) {
         return StatefulBuilder(
           builder: (context, setState) {
-            return AlertDialog(
-              title: const Row(
-                children: [
-                  Icon(Icons.sync, color: Colors.blue),
-                  SizedBox(width: 8),
-                  Text('Sync Data from Gmail'),
-                ],
-              ),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Fetch credit card statements from Gmail and import transactions automatically.',
-                    style: TextStyle(fontSize: 14),
-                  ),
-                  const SizedBox(height: 20),
+            // Snap labels for "Look back" slider
+            const List<int> daySnaps = [7, 14, 30, 60, 90, 180, 365];
+            final daysLabel = _selectedDays == 365
+                ? '1 year'
+                : '$_selectedDays days';
 
-                  // Days to look back
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('Look back:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
-                      Text(
-                        _selectedDays == 365 ? '1 year' : '$_selectedDays days',
-                        style: const TextStyle(fontSize: 13, color: Colors.blue, fontWeight: FontWeight.bold),
-                      ),
-                    ],
-                  ),
-                  Slider(
-                    value: _selectedDays.toDouble(),
-                    min: 7,
-                    max: 365,
-                    divisions: 8,
-                    label: _selectedDays == 365 ? '1 year' : '$_selectedDays days',
-                    onChanged: (value) => setState(() => _selectedDays = value.round()),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: const [
-                        Text('7d', style: TextStyle(fontSize: 10, color: Colors.grey)),
-                        Text('30d', style: TextStyle(fontSize: 10, color: Colors.grey)),
-                        Text('90d', style: TextStyle(fontSize: 10, color: Colors.grey)),
-                        Text('180d', style: TextStyle(fontSize: 10, color: Colors.grey)),
-                        Text('1yr', style: TextStyle(fontSize: 10, color: Colors.grey)),
-                      ],
-                    ),
-                  ),
+            // Snap labels for Max Emails slider
+            const List<int> emailSnaps = [5, 10, 20, 30, 50];
+            final emailsLabel = '$_maxEmails emails';
 
-                  const SizedBox(height: 16),
-
-                  // Max emails
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('Max emails:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
-                      Text(
-                        '$_maxEmails',
-                        style: const TextStyle(fontSize: 13, color: Colors.blue, fontWeight: FontWeight.bold),
-                      ),
-                    ],
-                  ),
-                  Slider(
-                    value: _maxEmails.toDouble(),
-                    min: 1,
-                    max: 50,
-                    divisions: 9,
-                    label: '$_maxEmails',
-                    onChanged: (value) => setState(() => _maxEmails = value.round()),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: const [
-                        Text('1', style: TextStyle(fontSize: 10, color: Colors.grey)),
-                        Text('10', style: TextStyle(fontSize: 10, color: Colors.grey)),
-                        Text('25', style: TextStyle(fontSize: 10, color: Colors.grey)),
-                        Text('50', style: TextStyle(fontSize: 10, color: Colors.grey)),
-                      ],
+            return Dialog(
+              backgroundColor: Colors.transparent,
+              insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: cardBg,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: [
+                    BoxShadow(
+                      color: accentColor.withOpacity(0.18),
+                      blurRadius: 40,
+                      spreadRadius: 0,
+                      offset: const Offset(0, 8),
                     ),
-                  ),
-
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.blue.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(8),
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.3),
+                      blurRadius: 20,
+                      offset: const Offset(0, 4),
                     ),
-                    child: const Text(
-                      '• Searches Gmail for PDF bank statements\n'
-                      '• PDFs are parsed via AI (password prompt if needed)\n'
-                      '• Transactions stored to your account',
-                      style: TextStyle(fontSize: 11, color: Colors.grey),
-                    ),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
+                  ],
                 ),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.sync, size: 16),
-                  onPressed: () {
-                    final days = _selectedDays;
-                    final maxEmails = _maxEmails;
-                    Navigator.of(context).pop();
-                    _syncDataFromGmail(context, ref, lookbackDays: days, maxEmails: maxEmails);
-                  },
-                  label: const Text('Start Sync'),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // ── Header ──
+                    Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            accentColor.withOpacity(0.9),
+                            const Color(0xFF8B5CF6).withOpacity(0.9),
+                          ],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+                      ),
+                      padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: const Icon(Icons.sync_rounded, color: Colors.white, size: 20),
+                          ),
+                          const SizedBox(width: 12),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: const [
+                              Text(
+                                'Sync from Gmail',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0.2,
+                                ),
+                              ),
+                              Text(
+                                'Import credit card statements',
+                                style: TextStyle(color: Colors.white70, fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // ── Body ──
+                    Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // ─ Look-back slider ─
+                          _buildSliderSection(
+                            context: context,
+                            label: 'Look back',
+                            icon: Icons.calendar_month_rounded,
+                            valueLabel: daysLabel,
+                            accentColor: accentColor,
+                            surfaceBg: surfaceBg,
+                            textPrimary: textPrimary,
+                            textSecondary: textSecondary,
+                            isDark: isDark,
+                            sliderWidget: SliderTheme(
+                              data: _premiumSliderTheme(context, accentColor),
+                              child: Slider(
+                                value: _selectedDays.toDouble(),
+                                min: 7,
+                                max: 365,
+                                divisions: 52,
+                                label: daysLabel,
+                                onChanged: (v) => setState(() {
+                                  // Snap to nearest nice value
+                                  final raw = v.round();
+                                  final snapped = daySnaps.reduce((a, b) =>
+                                      (a - raw).abs() < (b - raw).abs() ? a : b);
+                                  _selectedDays = (raw - snapped).abs() < 5 ? snapped : raw;
+                                }),
+                              ),
+                            ),
+                            ticks: const ['7d', '14d', '30d', '60d', '90d', '180d', '1yr'],
+                          ),
+
+                          const SizedBox(height: 20),
+
+                          // ─ Max emails slider ─
+                          _buildSliderSection(
+                            context: context,
+                            label: 'Max emails',
+                            icon: Icons.email_rounded,
+                            valueLabel: emailsLabel,
+                            accentColor: const Color(0xFF10B981),
+                            surfaceBg: surfaceBg,
+                            textPrimary: textPrimary,
+                            textSecondary: textSecondary,
+                            isDark: isDark,
+                            sliderWidget: SliderTheme(
+                              data: _premiumSliderTheme(context, const Color(0xFF10B981)),
+                              child: Slider(
+                                value: _maxEmails.toDouble(),
+                                min: 5,
+                                max: 50,
+                                divisions: 9,
+                                label: emailsLabel,
+                                onChanged: (v) => setState(() {
+                                  final raw = v.round();
+                                  final snapped = emailSnaps.reduce((a, b) =>
+                                      (a - raw).abs() < (b - raw).abs() ? a : b);
+                                  _maxEmails = (raw - snapped).abs() < 3 ? snapped : raw;
+                                }),
+                              ),
+                            ),
+                            ticks: const ['5', '10', '20', '30', '50'],
+                          ),
+
+                          const SizedBox(height: 20),
+
+                          // ─ Info card ─
+                          Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: accentColor.withOpacity(isDark ? 0.12 : 0.06),
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: accentColor.withOpacity(0.2),
+                                width: 1,
+                              ),
+                            ),
+                            child: Column(
+                              children: [
+                                _infoRow(Icons.picture_as_pdf_rounded, 'Scans Gmail for PDF bank statements', textSecondary),
+                                const SizedBox(height: 6),
+                                _infoRow(Icons.auto_awesome_rounded, 'AI extracts transactions automatically', textSecondary),
+                                const SizedBox(height: 6),
+                                _infoRow(Icons.lock_rounded, 'Encrypted PDFs handled with saved passwords', textSecondary),
+                              ],
+                            ),
+                          ),
+
+                          const SizedBox(height: 20),
+
+                          // ─ Action buttons ─
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextButton(
+                                  onPressed: () => Navigator.of(dialogContext).pop(),
+                                  style: TextButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(vertical: 14),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                      side: BorderSide(
+                                        color: textSecondary.withOpacity(0.3),
+                                      ),
+                                    ),
+                                  ),
+                                  child: Text(
+                                    'Cancel',
+                                    style: TextStyle(color: textSecondary, fontWeight: FontWeight.w600),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                flex: 2,
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      colors: [accentColor, const Color(0xFF8B5CF6)],
+                                    ),
+                                    borderRadius: BorderRadius.circular(14),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: accentColor.withOpacity(0.4),
+                                        blurRadius: 12,
+                                        offset: const Offset(0, 4),
+                                      ),
+                                    ],
+                                  ),
+                                  child: ElevatedButton.icon(
+                                    icon: const Icon(Icons.sync_rounded, size: 18, color: Colors.white),
+                                    label: const Text(
+                                      'Start Sync',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 15,
+                                      ),
+                                    ),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.transparent,
+                                      shadowColor: Colors.transparent,
+                                      padding: const EdgeInsets.symmetric(vertical: 14),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(14),
+                                      ),
+                                    ),
+                                    onPressed: () {
+                                      final days = _selectedDays;
+                                      final maxEmails = _maxEmails;
+                                      Navigator.of(dialogContext).pop();
+                                      _syncDataFromGmail(context, ref,
+                                          lookbackDays: days, maxEmails: maxEmails);
+                                    },
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             );
           },
         );
       },
     );
   }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Helper: premium SliderThemeData with gradient thumb + active track
+  // ─────────────────────────────────────────────────────────────────────
+  SliderThemeData _premiumSliderTheme(BuildContext context, Color accent) {
+    return SliderTheme.of(context).copyWith(
+      trackHeight: 5,
+      activeTrackColor: accent,
+      inactiveTrackColor: accent.withOpacity(0.18),
+      thumbColor: Colors.white,
+      thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 9),
+      overlayColor: accent.withOpacity(0.18),
+      overlayShape: const RoundSliderOverlayShape(overlayRadius: 20),
+      valueIndicatorShape: const PaddleSliderValueIndicatorShape(),
+      valueIndicatorColor: accent,
+      valueIndicatorTextStyle: const TextStyle(
+        color: Colors.white,
+        fontWeight: FontWeight.w700,
+        fontSize: 12,
+      ),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Helper: slider section with label, value chip, slider, and tick marks
+  // ─────────────────────────────────────────────────────────────────────
+  Widget _buildSliderSection({
+    required BuildContext context,
+    required String label,
+    required IconData icon,
+    required String valueLabel,
+    required Color accentColor,
+    required Color surfaceBg,
+    required Color textPrimary,
+    required Color textSecondary,
+    required bool isDark,
+    required Widget sliderWidget,
+    required List<String> ticks,
+  }) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+      decoration: BoxDecoration(
+        color: surfaceBg,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: accentColor.withOpacity(0.12)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Icon(icon, size: 16, color: accentColor),
+                  const SizedBox(width: 6),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: textPrimary,
+                    ),
+                  ),
+                ],
+              ),
+              // Animated value chip
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: accentColor.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: accentColor.withOpacity(0.4), width: 1),
+                ),
+                child: Text(
+                  valueLabel,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: accentColor,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          // Slider
+          sliderWidget,
+          // Tick labels
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: ticks
+                  .map((t) => Text(
+                        t,
+                        style: TextStyle(fontSize: 9, color: textSecondary),
+                      ))
+                  .toList(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Helper: info row in the info card
+  Widget _infoRow(IconData icon, String text, Color textColor) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 13, color: textColor),
+        const SizedBox(width: 7),
+        Expanded(
+          child: Text(text, style: TextStyle(fontSize: 11, color: textColor, height: 1.4)),
+        ),
+      ],
+    );
+  }
+
 
   void _syncDataFromGmail(BuildContext context, WidgetRef ref, {int lookbackDays = 90, int maxEmails = 10}) async {
     final authState = ref.read(authStateProvider);

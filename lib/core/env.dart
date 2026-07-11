@@ -18,6 +18,7 @@ class Env {
     'GOOGLE_CLIENT_ID',
   );
   static const String geminiApiKey = String.fromEnvironment('GEMINI_API_KEY');
+  static const String geminiApiKey2 = String.fromEnvironment('GEMINI_API_KEY_2');
 
   /// Call once, early in `main()`, so a missing dart-defines file fails at
   /// startup with a clear message instead of much later with a confusing
@@ -28,6 +29,7 @@ class Env {
       if (supabaseAnonKey.isEmpty) 'SUPABASE_ANON_KEY',
       if (googleClientId.isEmpty) 'GOOGLE_CLIENT_ID',
       if (geminiApiKey.isEmpty) 'GEMINI_API_KEY',
+      // GEMINI_API_KEY_2 is optional (second key for higher quota via rotation)
     ];
     if (missing.isNotEmpty) {
       throw StateError(
