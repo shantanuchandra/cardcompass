@@ -234,7 +234,11 @@ ALTER FUNCTION public.get_user_cards(_user_id uuid) OWNER TO postgres;
 -- Name: get_user_transactions(uuid, integer); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
-CREATE FUNCTION public.get_user_transactions(_user_id uuid, _limit integer DEFAULT 50) RETURNS TABLE(id uuid, user_id uuid, user_card_id uuid, amount numeric, currency text, description text, merchant_name text, category text, transaction_type text, transaction_date timestamp with time zone, location text, reward_earned numeric, reward_type text, statement_id uuid, metadata jsonb, created_at timestamp with time zone, updated_at timestamp with time zone, bank text, card_name text, last_four_digits text, network text, card_type text)
+-- NOTE: statement_id is TEXT here (not UUID) to match the real transactions.statement_id
+-- column type (see initial_schema.sql). The original dump declared this column uuid in the
+-- function signature while the table itself is text - a real bug that only surfaces at query
+-- time ("structure of query does not match function result type... column 14").
+CREATE FUNCTION public.get_user_transactions(_user_id uuid, _limit integer DEFAULT 50) RETURNS TABLE(id uuid, user_id uuid, user_card_id uuid, amount numeric, currency text, description text, merchant_name text, category text, transaction_type text, transaction_date timestamp with time zone, location text, reward_earned numeric, reward_type text, statement_id text, metadata jsonb, created_at timestamp with time zone, updated_at timestamp with time zone, bank text, card_name text, last_four_digits text, network text, card_type text)
     LANGUAGE plpgsql SECURITY DEFINER
     AS $$
 BEGIN
