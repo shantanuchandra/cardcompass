@@ -24,7 +24,11 @@ class AuthNotifier extends _$AuthNotifier {
     state = const AuthState.loading();
     try {
       print('🔑 AuthNotifier: Fetching current user...');
-      final user = await _authService.getCurrentUser();
+      final user = await _authService.getCurrentUser()
+          .timeout(const Duration(seconds: 6), onTimeout: () {
+        print('🔑 AuthNotifier: getCurrentUser timed out, treating as unauthenticated');
+        return null;
+      });
       print('🔑 AuthNotifier: Current user: $user');
       if (user != null) {
         state = AuthState.authenticated(user);
@@ -33,7 +37,8 @@ class AuthNotifier extends _$AuthNotifier {
       }
     } catch (e, stack) {
       print('🔑 AuthNotifier: Error in _checkAuthState: $e\n$stack');
-      state = AuthState.error(e.toString());
+      // Treat errors as unauthenticated so the user can still reach the login screen
+      state = const AuthState.unauthenticated();
     }
   }
 

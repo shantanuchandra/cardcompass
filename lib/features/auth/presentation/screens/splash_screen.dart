@@ -316,9 +316,18 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
     
     if (mounted) {
       await _updateStatus('AUTHENTICATING IDENTITY...');
-      await ref.read(authStateProvider.notifier).refreshAuthState();
+
+      // Wait for auth check with a hard 8-second safety timeout
+      try {
+        await ref.read(authStateProvider.notifier).refreshAuthState()
+            .timeout(const Duration(seconds: 8), onTimeout: () {
+          print('⚠️ SplashScreen: Auth check timed out after 8s, proceeding to login');
+        });
+      } catch (e) {
+        print('⚠️ SplashScreen: Auth error: $e, proceeding to login');
+      }
       
-      await Future.delayed(const Duration(milliseconds: 500));
+      await Future.delayed(const Duration(milliseconds: 400));
       
       if (mounted) {
         final authState = ref.read(authStateProvider);
@@ -337,6 +346,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
             ),
           );
         } else {
+          // Any non-authenticated state (unauthenticated, error, loading) → go to login
           await _updateStatus('SIGN IN REQUIRED');
           await Future.delayed(const Duration(milliseconds: 300));
           
