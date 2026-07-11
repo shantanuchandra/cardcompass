@@ -141,25 +141,8 @@ class DashboardDialogs {
                           border: OutlineInputBorder(),
                         ),
                       ),
-                      const SizedBox(height: 12),
-                      DropdownButtonFormField<String>(
-                        value: groqModelController.text,
-                        decoration: const InputDecoration(
-                          labelText: 'Groq Model Name',
-                          border: OutlineInputBorder(),
-                        ),
-                        items: groqModels.map((m) => DropdownMenuItem(
-                          value: m,
-                          child: Text(m),
-                        )).toList(),
-                        onChanged: (val) {
-                          if (val != null) {
-                            groqModelController.text = val;
-                            setState(() {});
-                          }
-                        },
-                      ),
                     ],
+
 
                     if (localProvider == AIProvider.ollama) ...[
                       const SizedBox(height: 12),
@@ -171,26 +154,8 @@ class DashboardDialogs {
                           border: OutlineInputBorder(),
                         ),
                       ),
-                      const SizedBox(height: 12),
-                      DropdownButtonFormField<String>(
-                        value: ollamaModelController.text,
-                        decoration: const InputDecoration(
-                          labelText: 'Ollama Model Name',
-                          border: OutlineInputBorder(),
-                        ),
-                        items: ollamaModels.map((m) => DropdownMenuItem(
-                          value: m,
-                          child: Text(m),
-                        )).toList(),
-                        onChanged: (val) {
-                          if (val != null) {
-                            ollamaModelController.text = val;
-                            setState(() {});
-                          }
-                        },
-                      ),
-
-                      const SizedBox(height: 8),
+                    ],
+   const SizedBox(height: 8),
                       Container(
                         padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(

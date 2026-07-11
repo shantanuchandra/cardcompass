@@ -755,32 +755,8 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                                   ),
                                 ),
                               ),
-                              const SizedBox(height: 12),
-                              DropdownButtonFormField<String>(
-                                value: groqModelController.text,
-                                dropdownColor: surfaceBg,
-                                style: TextStyle(color: textPrimary, fontSize: 14),
-                                decoration: InputDecoration(
-                                  labelText: 'Groq Model Name',
-                                  labelStyle: TextStyle(color: textSecondary, fontSize: 12),
-                                  filled: true,
-                                  fillColor: surfaceBg,
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                ),
-                                items: groqModels.map((m) => DropdownMenuItem(
-                                  value: m,
-                                  child: Text(m, style: TextStyle(color: textPrimary)),
-                                )).toList(),
-                                onChanged: (val) {
-                                  if (val != null) {
-                                    groqModelController.text = val;
-                                    setState(() {});
-                                  }
-                                },
-                              ),
                             ],
+
 
 
                             if (localProvider == AIProvider.ollama) ...[
@@ -798,32 +774,6 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                                   ),
                                 ),
                               ),
-                              const SizedBox(height: 12),
-                              DropdownButtonFormField<String>(
-                                value: ollamaModelController.text,
-                                dropdownColor: surfaceBg,
-                                style: TextStyle(color: textPrimary, fontSize: 14),
-                                decoration: InputDecoration(
-                                  labelText: 'Ollama Model Name',
-                                  labelStyle: TextStyle(color: textSecondary, fontSize: 12),
-                                  filled: true,
-                                  fillColor: surfaceBg,
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                ),
-                                items: ollamaModels.map((m) => DropdownMenuItem(
-                                  value: m,
-                                  child: Text(m, style: TextStyle(color: textPrimary)),
-                                )).toList(),
-                                onChanged: (val) {
-                                  if (val != null) {
-                                    ollamaModelController.text = val;
-                                    setState(() {});
-                                  }
-                                },
-                              ),
-
                               const SizedBox(height: 8),
                               Container(
                                 padding: const EdgeInsets.all(10),
