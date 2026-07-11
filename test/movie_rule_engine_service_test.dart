@@ -4,16 +4,32 @@ import 'package:cardcompass/features/movie_rule_engine/domain/models/movie_ticke
 import 'package:cardcompass/features/movie_rule_engine/domain/models/movie_recommendation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cardcompass/config/constants.dart';
+import 'package:cardcompass/core/app_config.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   setUpAll(() async {
     SharedPreferences.setMockInitialValues({});
-    await Supabase.initialize(
-      url: AppConstants.supabaseUrl,
-      publishableKey: AppConstants.supabaseAnonKey,
-    );
+    try {
+      Supabase.instance.client;
+    } catch (_) {
+      await Supabase.initialize(
+        url: AppConfig.supabaseUrl,
+        publishableKey: AppConfig.supabaseAnonKey,
+      );
+    }
+    
+    // Seed test data
+    final supabase = Supabase.instance.client;
+    await _cleanupTestData(supabase);
+    await _seedTestData(supabase);
   });
+
+  tearDownAll(() async {
+    final supabase = Supabase.instance.client;
+    await _cleanupTestData(supabase);
+  });
+
   group('MovieRuleEngineService', () {
     late MovieRuleEngineService service;
 
@@ -103,6 +119,7 @@ void main() {
       final request = MovieTicketRequest(
         numberOfTickets: 3, // Should get 1 free if BOGO (2+1)
         pricePerTicket: 200,
+        preferredPlatform: 'BookMyShow',
       );
       // Act
       final result = await service.optimizeMovieTicketPurchase(userId: userId, request: request);
@@ -117,6 +134,7 @@ void main() {
       final request = MovieTicketRequest(
         numberOfTickets: 2,
         pricePerTicket: 400,
+        preferredPlatform: 'PVR',
       );
       // Act
       final result = await service.optimizeMovieTicketPurchase(userId: userId, request: request);
@@ -131,6 +149,7 @@ void main() {
       final request = MovieTicketRequest(
         numberOfTickets: 2,
         pricePerTicket: 500,
+        preferredPlatform: 'Cinepolis',
       );
       // Act
       final result = await service.optimizeMovieTicketPurchase(userId: userId, request: request);
@@ -145,6 +164,7 @@ void main() {
       final request = MovieTicketRequest(
         numberOfTickets: 5,
         pricePerTicket: 300,
+        preferredPlatform: 'INOX',
       );
       // Act
       final result = await service.optimizeMovieTicketPurchase(userId: userId, request: request);
@@ -200,4 +220,224 @@ void main() {
 
     // Add more tests for real DB/test data as needed
   });
+}
+
+Future<void> _seedTestData(SupabaseClient supabase) async {
+  final testUserId = '5dc9b591-40b6-4486-944e-3b4ef58c3d47';
+  
+  // Fetch 5 active cards from catalog
+  final cards = await supabase
+      .from('card_catalog')
+      .select('id')
+      .eq('card_type', 'credit')
+      .limit(5);
+
+  if (cards.length < 5) {
+    throw StateError('Need at least 5 active cards in card_catalog');
+  }
+
+  // Insert benefits
+  final nowStr = DateTime.now().toIso8601String();
+  final benefits = [
+    {
+      'benefit_id': '00000000-0000-0000-0000-000000000001',
+      'title': 'Test BOGO Benefit',
+      'description': 'Buy one get one free',
+      'benefit_category': 'entertainment',
+      'benefit_type': 'discount',
+      'is_active': true,
+      'created_at': nowStr,
+      'updated_at': nowStr,
+      'value_config': {
+        'offer_type': 'BOGO',
+        'partner_filter': ['BookMyShow'],
+        'free_ticket_count': 1,
+        'max_discount_amount': 300.0,
+        'txn_ticket_limit': 4,
+        'month_ticket_limit': 8,
+        'efficiency_threshold': 200.0,
+        'min_transaction_amount': 150.0
+      }
+    },
+    {
+      'benefit_id': '00000000-0000-0000-0000-000000000002',
+      'title': 'Test Percent Discount Benefit',
+      'description': '25% off on movies',
+      'benefit_category': 'entertainment',
+      'benefit_type': 'discount',
+      'is_active': true,
+      'created_at': nowStr,
+      'updated_at': nowStr,
+      'value_config': {
+        'offer_type': 'PERCENT_DISCOUNT',
+        'partner_filter': ['PVR'],
+        'discount_percent': 25.0,
+        'max_discount_amount': 250.0,
+        'month_ticket_limit': 12
+      }
+    },
+    {
+      'benefit_id': '00000000-0000-0000-0000-000000000003',
+      'title': 'Test Cashback Benefit',
+      'description': '25% cashback on movies',
+      'benefit_category': 'entertainment',
+      'benefit_type': 'cashback',
+      'is_active': true,
+      'created_at': nowStr,
+      'updated_at': nowStr,
+      'value_config': {
+        'offer_type': 'CASHBACK',
+        'partner_filter': ['Cinepolis'],
+        'discount_percent': 25.0,
+        'max_discount_amount': 250.0,
+        'month_ticket_limit': 12
+      }
+    },
+    {
+      'benefit_id': '00000000-0000-0000-0000-000000000004',
+      'title': 'Test Milestone Benefit',
+      'description': 'Milestone movie reward',
+      'benefit_category': 'entertainment',
+      'benefit_type': 'milestone',
+      'is_active': true,
+      'created_at': nowStr,
+      'updated_at': nowStr,
+      'value_config': {
+        'offer_type': 'MILESTONE',
+        'partner_filter': ['INOX'],
+        'milestone_reward': 2,
+        'max_discount_amount': 500.0,
+        'month_ticket_limit': 2
+      }
+    },
+    {
+      'benefit_id': '00000000-0000-0000-0000-000000000005',
+      'title': 'Test BOGO 2 Benefit',
+      'description': 'Get one free on Moviemax',
+      'benefit_category': 'entertainment',
+      'benefit_type': 'discount',
+      'is_active': true,
+      'created_at': nowStr,
+      'updated_at': nowStr,
+      'value_config': {
+        'offer_type': 'BOGO',
+        'partner_filter': ['Moviemax'],
+        'free_ticket_count': 1,
+        'max_discount_amount': 500.0,
+        'txn_ticket_limit': 6,
+        'month_ticket_limit': 10,
+        'efficiency_threshold': 250.0,
+        'min_transaction_amount': 200.0
+      }
+    }
+  ];
+
+  await supabase.from('benefits').insert(benefits);
+
+  // Map benefits to catalog cards
+  final mappings = [
+    {
+      'mapping_id': '00000000-0000-0000-0000-000000000011',
+      'card_id': cards[0]['id'],
+      'benefit_id': '00000000-0000-0000-0000-000000000001',
+      'display_priority': 5,
+      'is_primary': true
+    },
+    {
+      'mapping_id': '00000000-0000-0000-0000-000000000012',
+      'card_id': cards[1]['id'],
+      'benefit_id': '00000000-0000-0000-0000-000000000002',
+      'display_priority': 8,
+      'is_primary': true
+    },
+    {
+      'mapping_id': '00000000-0000-0000-0000-000000000013',
+      'card_id': cards[2]['id'],
+      'benefit_id': '00000000-0000-0000-0000-000000000003',
+      'display_priority': 6,
+      'is_primary': true
+    },
+    {
+      'mapping_id': '00000000-0000-0000-0000-000000000014',
+      'card_id': cards[3]['id'],
+      'benefit_id': '00000000-0000-0000-0000-000000000004',
+      'display_priority': 10,
+      'is_primary': true
+    },
+    {
+      'mapping_id': '00000000-0000-0000-0000-000000000015',
+      'card_id': cards[4]['id'],
+      'benefit_id': '00000000-0000-0000-0000-000000000005',
+      'display_priority': 7,
+      'is_primary': true
+    }
+  ];
+
+  await supabase.from('card_benefit_mapping').insert(mappings);
+
+  // Link cards to user (only if not already linked to avoid UNIQUE constraint violations)
+  final existingUserCards = await supabase
+      .from('user_cards')
+      .select('catalog_card_id')
+      .eq('user_id', testUserId);
+  
+  final existingCardIds = (existingUserCards as List)
+      .map((uc) => uc['catalog_card_id'].toString())
+      .toSet();
+  
+  final userCardsToInsert = <Map<String, dynamic>>[];
+  for (int i = 0; i < cards.length; i++) {
+    final cardId = cards[i]['id'].toString();
+    if (!existingCardIds.contains(cardId)) {
+      userCardsToInsert.add({
+        'id': '00000000-0000-0000-0000-00000000002${i + 1}',
+        'user_id': testUserId,
+        'catalog_card_id': cardId,
+        'is_active': true,
+        'last_four_digits': '100${i + 1}'
+      });
+    }
+  }
+
+  if (userCardsToInsert.isNotEmpty) {
+    await supabase.from('user_cards').insert(userCardsToInsert);
+  }
+}
+
+Future<void> _cleanupTestData(SupabaseClient supabase) async {
+  await supabase.from('card_benefit_mapping').delete().inFilter('mapping_id', [
+    '00000000-0000-0000-0000-000000000011',
+    '00000000-0000-0000-0000-000000000012',
+    '00000000-0000-0000-0000-000000000013',
+    '00000000-0000-0000-0000-000000000014',
+    '00000000-0000-0000-0000-000000000015',
+    '00000000-0000-0000-0000-0000000000a1',
+    '00000000-0000-0000-0000-0000000000a2',
+    '00000000-0000-0000-0000-0000000000a3',
+    '00000000-0000-0000-0000-0000000000a4',
+    '00000000-0000-0000-0000-0000000000a5'
+  ]);
+  
+  await supabase.from('benefits').delete().inFilter('benefit_id', [
+    '00000000-0000-0000-0000-000000000001',
+    '00000000-0000-0000-0000-000000000002',
+    '00000000-0000-0000-0000-000000000003',
+    '00000000-0000-0000-0000-000000000004',
+    '00000000-0000-0000-0000-000000000005',
+    '00000000-0000-0000-0000-000000000091',
+    '00000000-0000-0000-0000-000000000092',
+    '00000000-0000-0000-0000-000000000093',
+    '00000000-0000-0000-0000-000000000094',
+    '00000000-0000-0000-0000-000000000095'
+  ]);
+
+  await supabase.from('user_cards').delete().inFilter('id', [
+    '00000000-0000-0000-0000-000000000021',
+    '00000000-0000-0000-0000-000000000022',
+    '00000000-0000-0000-0000-000000000023',
+    '00000000-0000-0000-0000-000000000024',
+    '00000000-0000-0000-0000-000000000025',
+    '00000000-0000-0000-0000-0000000000b1',
+    '00000000-0000-0000-0000-0000000000b2'
+  ]);
 }
