@@ -930,59 +930,54 @@ class DataPipelineDebugService {
     required String emailSubject,
   }) async {
     try {
-      // Try to find existing user card for this bank
-      final existingUserCards = await _cardRepo.getUserCards(userId);      // Look for a user card from this bank with matching card variant
+      final existingUserCards = await _cardRepo.getUserCards(userId);
       final expectedCardName = statement.cardVariantName ?? bankName;
       print('   🔍 Looking for existing user card: Bank="$bankName", Card="$expectedCardName"');
-      
+
+      // ── Pass 1: exact bank + card match ──────────────────────────────
       for (final creditCard in existingUserCards) {
-        // The creditCard.id contains the catalog card ID from the RPC mapping
         final bankMatches = creditCard.bankName.toLowerCase().contains(bankName.toLowerCase()) ||
-                           bankName.toLowerCase().contains(creditCard.bankName.toLowerCase());
-        
-        // Check if card variant also matches (more specific matching)
+                            bankName.toLowerCase().contains(creditCard.bankName.toLowerCase());
         final cardMatches = creditCard.cardName.toLowerCase().contains(expectedCardName.toLowerCase()) ||
-                          expectedCardName.toLowerCase().contains(creditCard.cardName.toLowerCase());
-        
+                            expectedCardName.toLowerCase().contains(creditCard.cardName.toLowerCase());
         if (bankMatches && cardMatches) {
-          print('   ✅ Found existing user card: ${creditCard.cardName} (${creditCard.bankName})');
-          
-          // We need to get the actual user card ID by querying the user_cards table
+          print('   ✅ Pass-1 match: ${creditCard.cardName} (${creditCard.bankName})');
           final userCardId = await _getUserCardId(userId, creditCard.id);
-          
-          return CardInfo(
-            catalogCardId: creditCard.id,  // This is the catalog card ID
-            userCardId: userCardId,        // This is the user card ID
-          );
+          return CardInfo(catalogCardId: creditCard.id, userCardId: userCardId);
         }
-      }      // No existing user card found, create new card-user association
-      print('   📝 No existing user card found for $bankName, creating new association...');
-      
-      // Use the clean card variant name if available, otherwise use bank name
-      final cardDisplayName = expectedCardName;
-      
-      // First, find or create a catalog card with proper bank and card names
-      String catalogCardId = await _findOrCreateCatalogCardWithSeparateBankAndCard(
-        bankName: bankName, 
-        cardName: cardDisplayName,
+      }
+
+      // ── Pass 2: bank-only match against existing user_cards ──────────
+      // The variant returned by Gemini may just be the bank name ("SBI Card")
+      // but the user already owns a card from that bank (e.g. SBI BPCL).
+      // In that case, attach the statement to whichever card from that bank
+      // the user has — avoids demanding a URL when we already know the bank.
+      for (final creditCard in existingUserCards) {
+        final bankMatches = creditCard.bankName.toLowerCase().contains(bankName.toLowerCase()) ||
+                            bankName.toLowerCase().contains(creditCard.bankName.toLowerCase());
+        if (bankMatches) {
+          print('   ✅ Pass-2 bank-only match: ${creditCard.cardName} (${creditCard.bankName})');
+          final userCardId = await _getUserCardId(userId, creditCard.id);
+          return CardInfo(catalogCardId: creditCard.id, userCardId: userCardId);
+        }
+      }
+
+      // ── Pass 3: catalog lookup — exact bank + card ───────────────────
+      print('   📝 No existing user card for $bankName — searching catalog...');
+      final catalogCardId = await _findOrCreateCatalogCardWithSeparateBankAndCard(
+        bankName: bankName,
+        cardName: expectedCardName,
         emailSubject: emailSubject,
       );
-      
-      // Create user-card association
-      String userCardId = await _createUserCardAssociation(userId, catalogCardId);
-      
-      return CardInfo(
-        catalogCardId: catalogCardId,
-        userCardId: userCardId,
-      );
-      
+      final userCardId = await _createUserCardAssociation(userId, catalogCardId);
+      return CardInfo(catalogCardId: catalogCardId, userCardId: userCardId);
+
     } catch (error) {
       print('   ❌ Error ensuring credit card exists: $error');
       rethrow;
     }
   }
 
-  /// Find or create a catalog card with separate bank and card names
   Future<String> _findOrCreateCatalogCardWithSeparateBankAndCard({
     required String bankName,
     required String cardName,
@@ -990,24 +985,35 @@ class DataPipelineDebugService {
   }) async {
     try {
       print('   🔍 Looking for catalog card: Bank="$bankName", Card="$cardName"');
-      
-      // Try to find existing catalog card for this bank and card combination
-      final response = await Supabase.instance.client
+
+      // ── Exact match: bank + card_name ────────────────────────────────
+      final exact = await Supabase.instance.client
           .from('card_catalog')
           .select('*')
           .eq('bank', bankName)
           .eq('card_name', cardName)
           .limit(1);
-          
-      if (response.isNotEmpty) {
-        final existingCard = response.first;
-        final cardId = existingCard['id'];
-        print('   ✅ Found existing catalog card: ${existingCard['card_name']} (${existingCard['bank']})');
-        return cardId;
+      if (exact.isNotEmpty) {
+        print('   ✅ Catalog exact match: ${exact.first['card_name']} (${exact.first['bank']})');
+        return exact.first['id'] as String;
       }
-        
-      // No existing catalog card found, prompt user for URL
+
+      // ── Fuzzy match: bank only ────────────────────────────────────────
+      // When Gemini returns just the bank name as the variant, find any card
+      // in the catalog that belongs to this bank and use the first one.
+      final byBank = await Supabase.instance.client
+          .from('card_catalog')
+          .select('id, bank, card_name')
+          .ilike('bank', '%${bankName.replaceAll(' Card', '').trim()}%')
+          .limit(1);
+      if (byBank.isNotEmpty) {
+        print('   ✅ Catalog bank-fuzzy match: ${byBank.first['card_name']} (${byBank.first['bank']})');
+        return byBank.first['id'] as String;
+      }
+
+      // ── No catalog match → ask user for URL ──────────────────────────
       print('   🔄 Card not found in catalog. Requesting URL from user...');
+
       print('');
       print('   ╔═══════════════════════════════════════════════════════════╗');
       print('   ║  📋 MANUAL URL INPUT REQUIRED                             ║');
