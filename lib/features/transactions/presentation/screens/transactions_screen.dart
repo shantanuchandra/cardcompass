@@ -56,129 +56,134 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
           ),
         ],
       ),
-      body: allTransactions.isEmpty
-          ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(32),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.receipt_long_outlined, size: 64, color: Colors.white24),
-                    const SizedBox(height: 16),
-                    Text(
-                      'No transactions yet',
-                      style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Transactions from your statements will show up here.',
-                      textAlign: TextAlign.center,
-                      style: GoogleFonts.plusJakartaSans(
-                        color: Colors.white38,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            )
-          : RefreshIndicator(
-              onRefresh: () async => _load(),
-              color: AppTheme.primaryColor,
-              backgroundColor: const Color(0xFF0C152B),
-              child: ListView.builder(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 80),
-                itemCount: transactions.length,
-                itemBuilder: (context, index) {
-                  final t = transactions[index];
-                  final isCredit = t.type == TransactionType.credit || t.type == TransactionType.refund;
-                  final categoryColor = _getCategoryColor(t.categoryString);
-                  
-                  return Container(
-                    margin: const EdgeInsets.only(bottom: 12),
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF0C152B),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: Colors.white.withValues(alpha: 0.06),
-                        width: 1,
-                      ),
-                    ),
-                    child: Row(
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 800),
+          child: allTransactions.isEmpty
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(32),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        // category icon in neon ring
-                        Container(
-                          width: 40,
-                          height: 40,
-                          decoration: BoxDecoration(
-                            color: categoryColor.withValues(alpha: 0.12),
-                            shape: BoxShape.circle,
-                            border: Border.all(color: categoryColor.withValues(alpha: 0.3), width: 1),
-                          ),
-                          child: Icon(
-                            _categoryIcon(t.category),
-                            color: categoryColor,
-                            size: 16,
-                          ),
+                        const Icon(Icons.receipt_long_outlined, size: 64, color: Colors.white24),
+                        const SizedBox(height: 16),
+                        Text(
+                          'No transactions yet',
+                          style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
                         ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                t.merchantName ?? t.description,
-                                style: GoogleFonts.plusJakartaSans(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 14,
-                                ),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                '${_formatDate(t.transactionDate)} · ${t.categoryString.toUpperCase()}',
-                                style: GoogleFonts.spaceGrotesk(
-                                  color: Colors.white38,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w500,
-                                  letterSpacing: 0.5,
-                                ),
-                              ),
-                            ],
+                        const SizedBox(height: 8),
+                        Text(
+                          'Transactions from your statements will show up here.',
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.plusJakartaSans(
+                            color: Colors.white38,
+                            fontSize: 13,
                           ),
-                        ),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text(
-                              '${isCredit ? '+' : '-'}₹${t.amount.toStringAsFixed(0)}',
-                              style: GoogleFonts.spaceGrotesk(
-                                color: isCredit ? AppTheme.successColor : Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 15,
-                              ),
-                            ),
-                            if (t.rewardEarned != null && t.rewardEarned! > 0) ...[
-                              const SizedBox(height: 2),
-                              Text(
-                                '+₹${t.rewardEarned!.toStringAsFixed(0)}',
-                                style: GoogleFonts.spaceGrotesk(
-                                  color: AppTheme.rewardGold,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ],
-                          ],
                         ),
                       ],
                     ),
-                  );
-                },
-              ),
-            ),
+                  ),
+                )
+              : RefreshIndicator(
+                  onRefresh: () async => _load(),
+                  color: AppTheme.primaryColor,
+                  backgroundColor: const Color(0xFF0C152B),
+                  child: ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 80),
+                    itemCount: transactions.length,
+                    itemBuilder: (context, index) {
+                      final t = transactions[index];
+                      final isCredit = t.type == TransactionType.credit || t.type == TransactionType.refund;
+                      final categoryColor = _getCategoryColor(t.categoryString);
+                      
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF0C152B),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.06),
+                            width: 1,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            // category icon in neon ring
+                            Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                color: categoryColor.withValues(alpha: 0.12),
+                                shape: BoxShape.circle,
+                                border: Border.all(color: categoryColor.withValues(alpha: 0.3), width: 1),
+                              ),
+                              child: Icon(
+                                _categoryIcon(t.category),
+                                color: categoryColor,
+                                size: 16,
+                              ),
+                            ),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    t.merchantName ?? t.description,
+                                    style: GoogleFonts.plusJakartaSans(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 14,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    '${_formatDate(t.transactionDate)} · ${t.categoryString.toUpperCase()}',
+                                    style: GoogleFonts.spaceGrotesk(
+                                      color: Colors.white38,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w500,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Text(
+                                  '${isCredit ? '+' : '-'}₹${t.amount.toStringAsFixed(0)}',
+                                  style: GoogleFonts.spaceGrotesk(
+                                    color: isCredit ? AppTheme.successColor : Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 15,
+                                  ),
+                                ),
+                                if (t.rewardEarned != null && t.rewardEarned! > 0) ...[
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '+₹${t.rewardEarned!.toStringAsFixed(0)}',
+                                    style: GoogleFonts.spaceGrotesk(
+                                      color: AppTheme.rewardGold,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+        ),
+      ),
     );
   }
 
