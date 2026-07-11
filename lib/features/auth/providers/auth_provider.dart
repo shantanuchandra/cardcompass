@@ -1,14 +1,85 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_riverpod/legacy.dart';
+import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' hide User;
 import 'package:flutter/foundation.dart';
 import '../../../shared/models/user.dart';
 
-final authServiceProvider = Provider<AuthService>((ref) => AuthService());
+part 'auth_provider.g.dart';
 
-final authStateProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
-  return AuthNotifier(ref.read(authServiceProvider));
-});
+@riverpod
+AuthService authService(Ref ref) => AuthService();
+
+@riverpod
+class AuthNotifier extends _$AuthNotifier {
+  late final AuthService _authService;
+
+  @override
+  AuthState build() {
+    _authService = ref.watch(authServiceProvider);
+    Future.microtask(() => _checkAuthState());
+    return const AuthState.initial();
+  }
+
+  Future<void> _checkAuthState() async {
+    state = const AuthState.loading();
+    try {
+      final user = await _authService.getCurrentUser();
+      if (user != null) {
+        state = AuthState.authenticated(user);
+      } else {
+        state = const AuthState.unauthenticated();
+      }
+    } catch (e) {
+      state = AuthState.error(e.toString());
+    }
+  }
+
+  Future<void> signInWithGoogle() async {
+    state = const AuthState.loading();
+    try {
+      final user = await _authService.signInWithGoogle();
+      if (user != null) {
+        state = AuthState.authenticated(user);
+      } else {
+        state = const AuthState.unauthenticated();
+      }
+    } catch (e) {
+      state = AuthState.error(e.toString());
+    }
+  }
+
+  Future<void> signInAsGuest() async {
+    // For demo purposes, create a guest user
+    final guestUser = User(
+      id: 'guest',
+      email: 'guest@cardcompass.com',
+      name: 'Guest User',
+      createdAt: DateTime.now(),
+      lastLoginAt: DateTime.now(),
+    );
+    state = AuthState.authenticated(guestUser);
+  }
+
+  Future<void> signOut() async {
+    final isGuest = state.user?.id == 'guest';
+    if (isGuest) {
+      state = const AuthState.unauthenticated();
+      return;
+    }
+    try {
+      await _authService.signOut();
+      state = const AuthState.unauthenticated();
+    } catch (e) {
+      state = AuthState.error(e.toString());
+    }
+  }
+
+  Future<void> refreshAuthState() async {
+    await _checkAuthState();
+  }
+}
+
+// Alias to maintain compatibility with legacy code
+final authStateProvider = authProvider;
 
 class AuthService {
   final SupabaseClient _supabase = Supabase.instance.client;
@@ -66,71 +137,6 @@ class AuthService {
       );
     }
     return null;
-  }
-}
-
-class AuthNotifier extends StateNotifier<AuthState> {
-  final AuthService _authService;
-
-  AuthNotifier(this._authService) : super(const AuthState.initial()) {
-    _checkAuthState();
-  }
-
-  Future<void> _checkAuthState() async {
-    state = const AuthState.loading();
-    try {
-      final user = await _authService.getCurrentUser();
-      if (user != null) {
-        state = AuthState.authenticated(user);
-      } else {
-        state = const AuthState.unauthenticated();
-      }
-    } catch (e) {
-      state = AuthState.error(e.toString());
-    }
-  }
-
-  Future<void> signInWithGoogle() async {
-    state = const AuthState.loading();
-    try {
-      final user = await _authService.signInWithGoogle();
-      if (user != null) {
-        state = AuthState.authenticated(user);
-      } else {
-        state = const AuthState.unauthenticated();
-      }
-    } catch (e) {
-      state = AuthState.error(e.toString());
-    }
-  }
-
-  Future<void> signInAsGuest() async {
-    // For demo purposes, create a guest user
-    final guestUser = User(
-      id: 'guest',
-      email: 'guest@cardcompass.com',
-      name: 'Guest User',
-      createdAt: DateTime.now(),
-      lastLoginAt: DateTime.now(),
-    );
-    state = AuthState.authenticated(guestUser);
-  }
-  Future<void> signOut() async {
-    final isGuest = state.user?.id == 'guest';
-    if (isGuest) {
-      state = const AuthState.unauthenticated();
-      return;
-    }
-    try {
-      await _authService.signOut();
-      state = const AuthState.unauthenticated();
-    } catch (e) {
-      state = AuthState.error(e.toString());
-    }
-  }
-
-  Future<void> refreshAuthState() async {
-    await _checkAuthState();
   }
 }
 

@@ -4,7 +4,6 @@ import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import '../../../../core/app_config.dart';
 import '../../../../core/theme.dart';
 import '../../../../core/services/data_pipeline_debug_service.dart';
 import '../../../../core/services/user_data_deletion_service.dart';
@@ -18,6 +17,7 @@ import '../../../transactions/presentation/screens/transactions_screen.dart';
 import '../../../analytics/presentation/screens/analytics_screen.dart';
 import '../../../recommendations/presentation/screens/recommendations_screen.dart';
 import '../../../sync/widgets/card_url_input_dialog.dart';
+import '../../../dashboard/widgets/smart_transaction_analyzer.dart';
 import '../../providers/cards_provider.dart';
 import '../../../transactions/providers/transactions_provider.dart';
 import 'add_card_screen.dart';
@@ -317,19 +317,21 @@ class _HomeTabState extends ConsumerState<HomeTab> {
       _loadData();
     });
 
+    // Build welcome greeting with actual user name
+    final authState = ref.watch(authStateProvider);
+    final userName = authState.user?.name ?? authState.user?.email?.split('@').first ?? 'there';
+    // Capitalize first letter of name
+    final displayName = userName.isNotEmpty
+        ? userName[0].toUpperCase() + userName.substring(1)
+        : 'there';
+
     return Scaffold(
       appBar: AppBar(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Good Morning!',
-              style: AppTextStyles.caption.copyWith(
-                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
-              ),
-            ),
-            Text(
-              'Welcome to ${AppConfig.appName}',
+              'Welcome back, $displayName!',
               style: AppTextStyles.heading3,
             ),
           ],
@@ -345,7 +347,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
           IconButton(
             onPressed: () => _showSyncDataDialog(context, ref),
             icon: const Icon(Icons.sync),
-            tooltip: 'Sync Data from Gmail',
+            tooltip: 'Sync Gmail Statements',
           ),
           IconButton(
             onPressed: () => _showDeleteAllDataDialog(context, ref),
@@ -382,6 +384,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
               builder: (context, constraints) {
                 final isWide = constraints.maxWidth > 900;
                 if (isWide) {
+                  // Wide / Web layout: 3-col left | 2-col right
                   return SingleChildScrollView(
                     padding: const EdgeInsets.all(24),
                     child: Row(
@@ -395,6 +398,10 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                               _buildQuickStatsSection(context, ref),
                               const SizedBox(height: 28),
                               _buildQuickActionsSection(context, ref),
+                              const SizedBox(height: 28),
+                              _buildThisMonthSection(context, ref),
+                              const SizedBox(height: 28),
+                              _buildSmartAnalyzerSection(context, ref),
                               const SizedBox(height: 28),
                               _buildMyCardsSection(context, ref),
                             ],
@@ -416,6 +423,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                     ),
                   );
                 }
+                // Mobile layout: single column
                 return SingleChildScrollView(
                   padding: const EdgeInsets.all(16),
                   child: AnimationLimiter(
@@ -432,27 +440,30 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                         children: [
                           // Quick Stats Section
                           _buildQuickStatsSection(context, ref),
-
                           const SizedBox(height: 24),
 
                           // Quick Actions Section
                           _buildQuickActionsSection(context, ref),
+                          const SizedBox(height: 24),
 
+                          // This Month Summary
+                          _buildThisMonthSection(context, ref),
+                          const SizedBox(height: 24),
+
+                          // Smart Transaction Analyzer
+                          _buildSmartAnalyzerSection(context, ref),
                           const SizedBox(height: 24),
 
                           // My Cards Section
                           _buildMyCardsSection(context, ref),
-
                           const SizedBox(height: 24),
 
                           // Recent Transactions Section
                           _buildRecentTransactionsSection(context, ref),
-
                           const SizedBox(height: 24),
 
                           // Recommendations Section
                           _buildRecommendationsSection(context),
-
                           const SizedBox(height: 100), // Space for FAB
                         ],
                       ),
@@ -846,7 +857,154 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     }
   }
 
+  /// "This Month" summary — 4 stat mini-cards: Spending, Rewards, Active Cards, Savings Rate
+  Widget _buildThisMonthSection(BuildContext context, WidgetRef ref) {
+    final monthlySpending = ref.watch(monthlySpendingProvider);
+    final txRewards = ref.watch(monthlyRewardsProvider);
+    final statementRewardsAsync = ref.watch(statementRewardsTotalProvider);
+    final statementRewards = statementRewardsAsync.whenOrNull(data: (v) => v) ?? 0.0;
+    final monthlyRewards = txRewards + statementRewards;
+    final activeCards = ref.watch(activeCardsProvider);
+    final savingsRate = monthlySpending > 0
+        ? (monthlyRewards / monthlySpending * 100)
+        : 0.0;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('This Month', style: AppTextStyles.heading3),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Expanded(
+              child: _buildThisMonthCard(
+                context,
+                'Spending',
+                monthlySpending > 0
+                    ? '₹${_formatAmount(monthlySpending)}'
+                    : '₹0',
+                'This month',
+                Icons.account_balance_wallet_outlined,
+                const Color(0xFF6C63FF),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildThisMonthCard(
+                context,
+                'Rewards',
+                monthlyRewards > 0
+                    ? '₹${monthlyRewards.toStringAsFixed(0)}'
+                    : '₹0',
+                'Earned',
+                Icons.stars_outlined,
+                const Color(0xFF00D4AA),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: _buildThisMonthCard(
+                context,
+                'Cards',
+                '${activeCards.length}',
+                'Active',
+                Icons.credit_card_outlined,
+                const Color(0xFF4DB6FF),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildThisMonthCard(
+                context,
+                'Savings',
+                '${savingsRate.toStringAsFixed(1)}%',
+                'Rate',
+                Icons.trending_up,
+                const Color(0xFFFFB547),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildThisMonthCard(
+    BuildContext context,
+    String title,
+    String value,
+    String subtitle,
+    IconData icon,
+    Color color,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0C152B),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: color.withValues(alpha: 0.2),
+          width: 1.5,
+        ),
+        boxShadow: AppTheme.neonGlow(color: color, opacity: 0.08, blurRadius: 10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: color, size: 20),
+              const SizedBox(width: 8),
+              Text(
+                title,
+                style: GoogleFonts.spaceGrotesk(
+                  color: Colors.white54,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            value,
+            style: GoogleFonts.spaceGrotesk(
+              color: color,
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+              letterSpacing: -0.5,
+            ),
+          ),
+          Text(
+            subtitle,
+            style: GoogleFonts.plusJakartaSans(
+              color: Colors.white38,
+              fontSize: 11,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatAmount(double amount) {
+    if (amount >= 100000) return '${(amount / 100000).toStringAsFixed(1)}L';
+    if (amount >= 1000) return '${(amount / 1000).toStringAsFixed(1)}K';
+    return amount.toStringAsFixed(0);
+  }
+
+  /// Wraps the SmartTransactionAnalyzer widget (reuses existing code)
+  Widget _buildSmartAnalyzerSection(BuildContext context, WidgetRef ref) {
+    final authState = ref.watch(authStateProvider);
+    return SmartTransactionAnalyzer(userId: authState.user?.id);
+  }
+
   Widget _buildQuickActionsSection(BuildContext context, WidgetRef ref) {
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
