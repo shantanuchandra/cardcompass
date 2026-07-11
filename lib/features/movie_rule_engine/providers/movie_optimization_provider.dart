@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import '../data/movie_rule_engine_service.dart';
 import '../domain/models/movie_ticket_request.dart';
 import '../domain/models/movie_recommendation.dart';

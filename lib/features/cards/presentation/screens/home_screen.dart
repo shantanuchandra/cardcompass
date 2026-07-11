@@ -974,42 +974,101 @@ class _HomeTabState extends ConsumerState<HomeTab> {
           style: AppTextStyles.heading3,
         ),
         const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(
-              child: Consumer(
-                builder: (context, ref, child) {
-                  final totalCreditLimit = ref.watch(totalCreditLimitProvider);
-                  return _buildStatCard(
-                    context,
-                    'Total Credit',
-                    '₹${(totalCreditLimit / 1000).toStringAsFixed(0)}K',
-                    Icons.credit_card,
-                    Theme.of(context).colorScheme.primary,
-                  );
-                },
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Consumer(
-                builder: (context, ref, child) {
-                  final monthlyRewards = ref.watch(monthlyRewardsProvider);
-                  return _buildStatCard(
-                    context,
-                    'This Month Rewards',
-                    '₹${monthlyRewards.toStringAsFixed(0)}',
-                    Icons.star,
-                    Colors.amber,
-                  );
-                },
-              ),
-            ),
-          ],
+        // Responsive: 3 cards in a row on wide screens, wrapped on narrow screens
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final isNarrow = constraints.maxWidth < 480;
+            if (isNarrow) {
+              // Stack 2 cards on top, 1 centered below on very narrow screens
+              return Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(child: _buildTotalCreditCard(context, ref)),
+                      const SizedBox(width: 12),
+                      Expanded(child: _buildAvailableCreditCard(context, ref)),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  _buildMonthlyRewardsCard(context, ref),
+                ],
+              );
+            }
+            return Row(
+              children: [
+                Expanded(child: _buildTotalCreditCard(context, ref)),
+                const SizedBox(width: 12),
+                Expanded(child: _buildAvailableCreditCard(context, ref)),
+                const SizedBox(width: 12),
+                Expanded(child: _buildMonthlyRewardsCard(context, ref)),
+              ],
+            );
+          },
         ),
       ],
     );
   }
+
+  Widget _buildTotalCreditCard(BuildContext context, WidgetRef ref) {
+    final totalCreditLimit = ref.watch(totalCreditLimitProvider);
+    final displayStr = totalCreditLimit >= 100000
+        ? '₹${(totalCreditLimit / 100000).toStringAsFixed(1)}L'
+        : totalCreditLimit >= 1000
+            ? '₹${(totalCreditLimit / 1000).toStringAsFixed(0)}K'
+            : '₹${totalCreditLimit.toStringAsFixed(0)}';
+    return _buildStatCard(
+      context,
+      'Total Credit',
+      displayStr,
+      Icons.account_balance_wallet_outlined,
+      const Color(0xFF6C63FF),
+    );
+  }
+
+  Widget _buildAvailableCreditCard(BuildContext context, WidgetRef ref) {
+    final availableCreditAsync = ref.watch(availableCreditProvider);
+    return availableCreditAsync.when(
+      data: (available) {
+        final displayStr = available >= 100000
+            ? '₹${(available / 100000).toStringAsFixed(1)}L'
+            : available >= 1000
+                ? '₹${(available / 1000).toStringAsFixed(0)}K'
+                : '₹${available.toStringAsFixed(0)}';
+        return _buildStatCard(
+          context,
+          'Available Credit',
+          displayStr,
+          Icons.credit_score_outlined,
+          const Color(0xFF00D4AA),
+        );
+      },
+      loading: () => _buildStatCard(
+        context, 'Available Credit', '—',
+        Icons.credit_score_outlined, const Color(0xFF00D4AA),
+      ),
+      error: (_, __) => _buildStatCard(
+        context, 'Available Credit', '—',
+        Icons.credit_score_outlined, const Color(0xFF00D4AA),
+      ),
+    );
+  }
+
+  Widget _buildMonthlyRewardsCard(BuildContext context, WidgetRef ref) {
+    // Combine per-transaction rewards with statement-level rewards
+    final txRewards = ref.watch(monthlyRewardsProvider);
+    final statementRewardsAsync = ref.watch(statementRewardsTotalProvider);
+    final statementRewards = statementRewardsAsync.whenOrNull(data: (v) => v) ?? 0.0;
+    final total = txRewards + statementRewards;
+    return _buildStatCard(
+      context,
+      'Monthly Rewards',
+      total > 0 ? '₹${total.toStringAsFixed(0)}' : '—',
+      Icons.star_outline_rounded,
+      const Color(0xFFFFB547),
+    );
+  }
+
+
 
   Widget _buildStatCard(
     BuildContext context,

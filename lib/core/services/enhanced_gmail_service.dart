@@ -945,6 +945,19 @@ Card name:'''
       }
     }
 
+    // Parse reward points earned for this transaction (Gemini may return as 'reward_points' or 'points')
+    double? rewardEarned;
+    final rewardRaw = geminiTx['reward_points'] ?? geminiTx['points'] ?? geminiTx['rewardPoints'];
+    if (rewardRaw != null) {
+      if (rewardRaw is num) {
+        rewardEarned = rewardRaw.toDouble();
+      } else if (rewardRaw is String) {
+        rewardEarned = double.tryParse(rewardRaw);
+      }
+      // Only set if positive
+      if (rewardEarned != null && rewardEarned <= 0) rewardEarned = null;
+    }
+
     return Transaction(
       id: geminiTx['id'] ?? 'tx_${DateTime.now().millisecondsSinceEpoch}',
       userId: userId,
@@ -956,8 +969,8 @@ Card name:'''
       type: type,
       transactionDate: transactionDate,
       location: null,
-      rewardEarned: null,
-      rewardType: null,
+      rewardEarned: rewardEarned,
+      rewardType: rewardEarned != null ? 'points' : null,
       metadata: {
         'source': 'gemini',
         'reference': geminiTx['reference'],
@@ -969,43 +982,62 @@ Card name:'''
   }  /// Build Gmail search query with enhanced filtering
   String _buildGmailSearchQuery(BankEmailQuery bankQuery, DateTime? startDate, DateTime? endDate) {
     final queryParts = <String>[];
-    
-    // Add domain-based email filtering with OR logic
+
+    // Add domain-based email filtering with OR logic (optional override)
     if (bankQuery.fromEmails.isNotEmpty) {
       final fromPart = bankQuery.fromEmails.map((domain) => 'from:$domain').join(' OR ');
       queryParts.add('($fromPart)');
+    } else {
+      // Broad Indian bank sender domain filter — catches almost all major banks
+      const bankSenderFilter =
+          '(from:hdfcbank.com OR from:netbanking.hdfc.com OR from:alerts.hdfcbank.com OR '
+          'from:icicibank.com OR from:icard.com OR from:alerts.icicibank.com OR '
+          'from:sbicard.com OR from:cards.sbi.co.in OR '
+          'from:axisbank.com OR from:axisbank.net OR '
+          'from:kotak.com OR from:kotakbank.com OR '
+          'from:indusind.com OR from:yesbank.in OR from:rbl.co.in OR '
+          'from:citi.com OR from:citibank.co.in OR '
+          'from:idfc.com OR from:idfcfirstbank.com OR '
+          'from:amexnetwork.com OR from:americanexpress.com)';
+      queryParts.add(bankSenderFilter);
     }
-    
-    // Enhanced attachment filtering
+
+    // PDF attachment filtering
     queryParts.add('has:attachment');
     queryParts.add('filename:pdf');
-      // Use comprehensive generic subject keywords for all banks
-    final commonSubjectKeywords = [
+
+    // Comprehensive subject keyword matching — covers most Indian bank email formats
+    const subjectKeywords = [
       'credit card statement',
       'card statement',
+      'e-statement',
+      'eStatement',
+      'billing statement',
       'credit card',
-      'billing statement'
+      'statement of account',
+      'monthly statement',
     ];
-    final genericSubjectPart = commonSubjectKeywords.map((keyword) => 'subject:"$keyword"').join(' OR ');
-    queryParts.add('($genericSubjectPart)');
-    
-    // Ensure it's not spam or promotional
+    final subjectPart = subjectKeywords.map((kw) => 'subject:"$kw"').join(' OR ');
+    queryParts.add('($subjectPart)');
+
+    // Exclude spam and social tabs
     queryParts.add('-label:spam');
     queryParts.add('-label:promotions');
-    
-    // Size filter - statements are typically larger than 50KB
-    queryParts.add('size:51200'); // 50KB minimum
-    
-    // Always use 1 month date range for search
+    queryParts.add('-label:social');
+
+    // Size filter — statements are typically larger than 30KB
+    queryParts.add('size:30720'); // 30KB minimum (relaxed from 50KB for smaller SBI statements)
+
+    // Date range
     final searchStartDate = startDate ?? DateTime.now().subtract(const Duration(days: 30));
     final searchEndDate = endDate ?? DateTime.now();
-    
+
     queryParts.add('after:${searchStartDate.year}/${searchStartDate.month}/${searchStartDate.day}');
     queryParts.add('before:${searchEndDate.year}/${searchEndDate.month}/${searchEndDate.day}');
-    
+
     final finalQuery = queryParts.join(' ');
-    // print('🔍 Gmail search query for ${bankQuery.bankName}: $finalQuery');
-    
+    print('🔍 Gmail search query: $finalQuery');
+
     return finalQuery;
   }
 

@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import 'package:cardcompass/shared/models/user.dart';
 import 'package:cardcompass/core/services/auth_service.dart';
 import 'package:cardcompass/core/services/storage_service.dart';

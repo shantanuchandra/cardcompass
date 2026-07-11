@@ -208,6 +208,7 @@ JSON OUTPUT (return ONLY this array, no markdown blocks):
     "merchantName": "Primary merchant name",
     "category": "shopping|dining|travel|fuel|entertainment|bills|transfer|fee|payment|cash|other",
     "type": "debit|credit",
+    "reward_points": number or null (reward/loyalty points earned for this transaction, 0 if none),
     "reference": "transaction reference if clearly visible"
   }
 ]

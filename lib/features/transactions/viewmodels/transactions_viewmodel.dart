@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import 'package:cardcompass/shared/models/transaction.dart';
 import 'package:cardcompass/shared/models/credit_card.dart';
 import 'package:cardcompass/features/transactions/data/transactions_repository.dart';

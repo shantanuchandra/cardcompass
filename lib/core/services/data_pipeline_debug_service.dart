@@ -556,8 +556,8 @@ class DataPipelineDebugService {
     }
   }
 
-  /// Sequential user flow as per requirements
-  Future<void> debugSequentialUserFlow(String userId, [int? maxEmailsToRead, DateTime? customStartDate]) async {
+  /// Sequential user flow as per requirements. Returns a summary map with sync results.
+  Future<Map<String, int>> debugSequentialUserFlow(String userId, [int? maxEmailsToRead, DateTime? customStartDate]) async {
     print('\n--- Sequential User Flow Implementation ---');
     print('==========================================');
     
@@ -591,20 +591,8 @@ class DataPipelineDebugService {
         );
       }
       
-      // Step 1: DOB storage via Gmail API
-      // print('\n📅 Step 1: Fetching and storing DOB via Gmail API...');
-      // SyncFlowDebugger.logStep('DOB_FETCH', 'Fetching user DOB from Google People API');
-      final userProfile = await _gmailService!.getUserProfile(userId: userId, verbose: false);
-      // if (userProfile.containsKey('birthday')) {
-      //   print('+ DOB stored successfully: ${userProfile['birthday']['ddmm']} format available');
-      //   SyncFlowDebugger.logStep('DOB_FETCHED', 'Retrieved DOB from Google People API', data: {
-      //     'dob': userProfile['birthday']['raw'],
-      //     'formats': userProfile['birthday']['formats'],
-      //   });
-      // } else {
-      //   print('⚠️ DOB not available from Google People API - manual passwords may be needed');
-      //   SyncFlowDebugger.logStep('DOB_FETCH', 'DOB not available from Google People API');
-      // }
+      // Fetch user profile — uses DB first, then Google People API, then manual fallback
+      final userProfile = await _gmailService!.getUserProfileWithFallback(userId: userId, verbose: false);
       
       // Get all relevant emails
       print('\n📧 Step 2: Finding relevant statement emails...');
@@ -642,6 +630,7 @@ class DataPipelineDebugService {
       // Step 3-6: Process emails sequentially, one at a time
       int emailsProcessed = 0;
       int emailsStoredToDb = 0;
+      int totalTransactionsStored = 0;
       
       for (int i = 0; i < allStatements.length; i++) {
         final statement = allStatements[i];
@@ -660,7 +649,7 @@ class DataPipelineDebugService {
         
         // Process this single email with complete flow
         final emailStartTime = SyncFlowDebugger.startTimer('Process Email ${i + 1}');
-        final success = await _processEmailSequentially(
+        final txCount = await _processEmailSequentially(
           userId,
           statement,
           userProfile,
@@ -670,8 +659,9 @@ class DataPipelineDebugService {
         SyncFlowDebugger.endTimer('Process Email ${i + 1}', emailStartTime);
         
         emailsProcessed++;
-        if (success) {
+        if (txCount > 0) {
           emailsStoredToDb++;
+          totalTransactionsStored += txCount;
         }
         
         print('─' * 60); // Separator after each email
@@ -684,13 +674,20 @@ class DataPipelineDebugService {
       print('============================');
       print('📧 Emails processed: $emailsProcessed');
       print('💾 Emails stored to DB: $emailsStoredToDb');
+      print('🔢 Total transactions stored: $totalTransactionsStored');
       print('⏱️ Processing completed at: ${DateTime.now().toString().substring(0, 19)}');
       
       SyncFlowDebugger.logStep('SYNC_COMPLETE', 'All emails processed successfully', data: {
         'emailsProcessed': emailsProcessed,
         'emailsStored': emailsStoredToDb,
-        'totalTransactions': emailsStoredToDb * 30, // Approximate
+        'totalTransactions': totalTransactionsStored,
       });
+
+      return {
+        'emailsProcessed': emailsProcessed,
+        'emailsStored': emailsStoredToDb,
+        'transactionsStored': totalTransactionsStored,
+      };
       
     } catch (e) {
       print('❌ Sequential user flow failed: $e');
@@ -698,6 +695,7 @@ class DataPipelineDebugService {
       rethrow;
     }
   }
+
 
   /// Process a single email with the complete sequential flow
   Future<bool> _processEmailSequentially(
@@ -742,7 +740,7 @@ class DataPipelineDebugService {
       
       if (transactionCount == 0) {
         print('⚠️ No transactions found - skipping database storage');
-        return false;
+        return 0;
       }
       
       // Check if there's a due amount > 0
@@ -778,22 +776,22 @@ class DataPipelineDebugService {
           await _storeStatementToDatabase(userId, statement, userProfile);
           SyncFlowDebugger.endTimer('Store to Database $emailIndex', storeStartTime);
           print('💾 Database storage completed successfully');
-          return true;
+          return transactionCount;
         } catch (e) {
           print('❌ Database storage failed: $e');
           SyncFlowDebugger.logError('DB_STORE', 'Database storage failed', exception: e);
-          return false;
+          return 0;
         }
       } else {
         print('⚠️ Step 5: Conditions not met - NOT storing to database');
         print('   Transaction count > 0: ${transactionCount > 0}');
         SyncFlowDebugger.logStep('DB_STORE', 'Skipping database storage - no transactions');
-        return false;
+        return 0;
       }
       
     } catch (e) {
       print('❌ Error processing email sequentially: $e');
-      return false;
+      return 0;
     }
   }  /// Store statement data to database (actual implementation)
   Future<void> _storeStatementToDatabase(
