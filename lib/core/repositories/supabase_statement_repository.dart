@@ -226,7 +226,13 @@ class SupabaseStatementRepository implements StatementRepository {
         'transaction_count': (statementData['transactions'] as List?)?.length ?? 0,
         'created_at': now.toIso8601String(),
         'updated_at': now.toIso8601String(),
-      };      final result = await _supabase.from('statements').insert(statementMap).select().single();
+      };      // Upsert on (user_id, card_id, statement_date) so re-syncing the same
+      // statement period is idempotent and returns the existing row instead of 409.
+      final result = await _supabase
+          .from('statements')
+          .upsert(statementMap, onConflict: 'user_id,card_id,statement_date')
+          .select()
+          .single();
 
       return Statement.fromJson(result);
     } catch (e) {

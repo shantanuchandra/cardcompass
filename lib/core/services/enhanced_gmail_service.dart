@@ -996,7 +996,7 @@ Product name:'''
       'hdfcbankinfoline.com', 'hdfcbankcard.com', 'credit.hdfcbank.com',
       // ICICI Bank
       'icicibank.com', 'icici.com', 'icard.com', 'alerts.icicibank.com',
-      'icicibank.net',
+      'icicibank.net', 'icici.bank.in',
       // SBI Card
       'sbicard.com', 'cards.sbi.co.in', 'sbi.co.in',
       // Axis Bank

@@ -998,18 +998,48 @@ class DataPipelineDebugService {
         return exact.first['id'] as String;
       }
 
-      // ── Fuzzy match: bank only ────────────────────────────────────────
-      // When Gemini returns just the bank name as the variant, find any card
-      // in the catalog that belongs to this bank and use the first one.
+      // ── Fuzzy match tier 1: bank + subject keyword ────────────────────
+      // Extract distinctive words from the email subject (e.g. "BPCL", "Coral",
+      // "Flipkart") and prefer catalog cards whose card_name contains them.
+      final subjectWords = emailSubject
+          .toUpperCase()
+          .split(RegExp(r'[\s\-_/]+'))
+          .where((w) => w.length > 2 &&
+              !['YOUR', 'CARD', 'CREDIT', 'BANK', 'STATEMENT', 'MONTHLY',
+                'ACCOUNT', 'FOR', 'THE', 'AND', 'DUE', 'DATE', 'JAN', 'FEB',
+                'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT',
+                'NOV', 'DEC', 'SBI', 'HDFC', 'ICICI', 'AXIS', 'KOTAK'].contains(w))
+          .toSet();
+      final bankRoot = bankName.replaceAll(' Card', '').replaceAll(' Bank', '').trim();
+      for (final keyword in subjectWords) {
+        final bySubjectKw = await Supabase.instance.client
+            .from('card_catalog')
+            .select('id, bank, card_name')
+            .ilike('bank', '%$bankRoot%')
+            .ilike('card_name', '%$keyword%')
+            .limit(1);
+        if (bySubjectKw.isNotEmpty) {
+          print('   ✅ Catalog subject-keyword match ($keyword): ${bySubjectKw.first['card_name']} (${bySubjectKw.first['bank']})');
+          return bySubjectKw.first['id'] as String;
+        }
+      }
+
+      // ── Fuzzy match tier 2: any card from this bank (last resort) ─────
+      // Only reached when no subject keyword matched — avoids wrong-card
+      // associations like "Etihad Guest" for an SBI BPCL statement.
+      // We skip this tier entirely if this bank has NO user card — in that case
+      // fall through to the URL prompt so the user can register the card.
       final byBank = await Supabase.instance.client
           .from('card_catalog')
           .select('id, bank, card_name')
-          .ilike('bank', '%${bankName.replaceAll(' Card', '').trim()}%')
+          .ilike('bank', '%$bankRoot%')
+          .order('card_name')   // alphabetical determinism
           .limit(1);
       if (byBank.isNotEmpty) {
-        print('   ✅ Catalog bank-fuzzy match: ${byBank.first['card_name']} (${byBank.first['bank']})');
+        print('   ⚠️ Catalog bank-any match (may be approximate): ${byBank.first['card_name']} (${byBank.first['bank']})');
         return byBank.first['id'] as String;
       }
+
 
       // ── No catalog match → ask user for URL ──────────────────────────
       print('   🔄 Card not found in catalog. Requesting URL from user...');
