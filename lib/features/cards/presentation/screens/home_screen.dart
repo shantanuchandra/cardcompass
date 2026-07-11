@@ -663,6 +663,8 @@ class _HomeTabState extends ConsumerState<HomeTab> {
         );
         return;
       }
+      // kIsWeb path ends here — accessToken is now set from Supabase session/cache
+    } else {
       // Native: use GoogleSignIn SDK directly.
       try {
         GoogleSignInAccount? googleAccount =
