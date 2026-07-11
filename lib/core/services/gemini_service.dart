@@ -14,36 +14,9 @@ class GeminiService {
     try {
       // ── OLLAMA PROVIDER ROAD ──
       if (AIConfig.activeProvider == AIProvider.ollama) {
-        final requestBody = {
-          'model': AIConfig.ollamaModel,
-          'prompt': prompt,
-          'stream': false,
-          'options': {
-            'temperature': temperature,
-          }
-        };
-
-        final targetUrl = '${AIConfig.ollamaUrl}/api/generate';
-        print('🤖 Ollama API: Sending request to $targetUrl with model: ${AIConfig.ollamaModel}');
-
-        final response = await http.post(
-          Uri.parse(targetUrl),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode(requestBody),
-        ).timeout(const Duration(seconds: 45), onTimeout: () {
-          throw Exception('Ollama API timeout. Check if Ollama is running at ${AIConfig.ollamaUrl}');
-        });
-
-        if (response.statusCode == 200) {
-          final jsonResponse = jsonDecode(response.body);
-          final text = jsonResponse['response'] as String?;
-          if (text != null && text.isNotEmpty) {
-            return text;
-          }
-          throw Exception('Ollama returned empty response');
-        } else {
-          throw Exception('Ollama API error: ${response.statusCode} - ${response.body}');
-        }
+        final text = await _executeOllamaRequest(prompt, temperature);
+        if (text != null) return text;
+        throw Exception('Ollama query failed.');
       }
 
       // ── GROQ PROVIDER ROAD ──
@@ -52,41 +25,66 @@ class GeminiService {
           throw Exception('Groq API Key is empty. Please enter your Groq key in settings.');
         }
 
-        final requestBody = {
-          'model': AIConfig.groqModel,
-          'messages': [
-            {
-              'role': 'user',
-              'content': prompt,
-            }
-          ],
-          'temperature': temperature,
-        };
-
-        print('🤖 Groq API: Sending request to completions endpoint with model: ${AIConfig.groqModel}');
-
-        final response = await http.post(
-          Uri.parse('https://api.groq.com/openai/v1/chat/completions'),
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ${AIConfig.groqApiKey}',
-          },
-          body: jsonEncode(requestBody),
-        ).timeout(const Duration(seconds: 45), onTimeout: () {
-          throw Exception('Groq API timeout. Check your network connection.');
-        });
-
-        if (response.statusCode == 200) {
-          final jsonResponse = jsonDecode(response.body);
-          final text = jsonResponse['choices']?[0]?['message']?['content'] as String?;
-          if (text != null && text.isNotEmpty) {
-            return text;
-          }
-          throw Exception('Groq returned empty response');
-        } else {
-          throw Exception('Groq API error: ${response.statusCode} - ${response.body}');
+        final groqModels = ['llama-3.1-8b-instant', 'llama-3.3-70b-versatile', 'mixtral-8x7b-32768'];
+        final activeModel = AIConfig.groqModel;
+        final modelQueue = [activeModel];
+        for (final m in groqModels) {
+          if (m != activeModel) modelQueue.add(m);
         }
+
+        for (int i = 0; i < modelQueue.length; i++) {
+          final currentModel = modelQueue[i];
+          try {
+            print('🤖 Groq API: Attempting request using model: $currentModel');
+
+            final requestBody = {
+              'model': currentModel,
+              'messages': [
+                {
+                  'role': 'user',
+                  'content': prompt,
+                }
+              ],
+              'temperature': temperature,
+            };
+
+            final response = await http.post(
+              Uri.parse('https://api.groq.com/openai/v1/chat/completions'),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ${AIConfig.groqApiKey}',
+              },
+              body: jsonEncode(requestBody),
+            ).timeout(const Duration(seconds: 45));
+
+            if (response.statusCode == 200) {
+              final jsonResponse = jsonDecode(response.body);
+              final text = jsonResponse['choices']?[0]?['message']?['content'] as String?;
+              if (text != null && text.isNotEmpty) {
+                return text;
+              }
+            } else {
+              print('⚠️ Groq API model $currentModel returned error: ${response.statusCode} - ${response.body}');
+              if (response.statusCode == 429 || response.statusCode == 413 || response.statusCode == 400) {
+                continue;
+              }
+              throw Exception('Groq API error: ${response.statusCode} - ${response.body}');
+            }
+          } catch (e) {
+            print('⚠️ Groq API call failed on model $currentModel: $e');
+          }
+        }
+
+        // Check if local Ollama is available as backup on Groq failure
+        if (await _isOllamaAvailable()) {
+          print('🔄 [HYBRID BACKUP] Groq content generation failed. Automatically switching to local Ollama fallback...');
+          final backupText = await _executeOllamaRequest(prompt, temperature);
+          if (backupText != null) return backupText;
+        }
+
+        throw Exception('All Groq API model attempts failed.');
       }
+
 
 
       // ── GEMINI PROVIDER ROAD ──
@@ -627,8 +625,51 @@ Consider:
         prompt: prompt,
         schema: schema,
       );
-    } catch (error) {
-      throw Exception('Failed to get best card for transaction: $error');
+  }
+
+  static Future<bool> _isOllamaAvailable() async {
+    try {
+      final response = await http.get(
+        Uri.parse('${AIConfig.ollamaUrl}/api/tags'),
+      ).timeout(const Duration(milliseconds: 500));
+      return response.statusCode == 200;
+    } catch (_) {
+      return false;
     }
+  }
+
+  static Future<String?> _executeOllamaRequest(String prompt, double temp) async {
+    try {
+      final ollamaReq = {
+        'model': AIConfig.ollamaModel,
+        'prompt': prompt,
+        'stream': false,
+        'options': {
+          'temperature': temp,
+        }
+      };
+
+      final targetUrl = '${AIConfig.ollamaUrl}/api/generate';
+      print('🤖 Ollama API: Sending fallback request to $targetUrl with model: ${AIConfig.ollamaModel}');
+
+      final response = await http.post(
+        Uri.parse(targetUrl),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(ollamaReq),
+      ).timeout(const Duration(seconds: 45), onTimeout: () {
+        throw Exception('Ollama API timeout.');
+      });
+
+      if (response.statusCode == 200) {
+        final jsonResponse = jsonDecode(response.body);
+        final text = jsonResponse['response'] as String?;
+        if (text != null && text.isNotEmpty) {
+          return text;
+        }
+      }
+    } catch (e) {
+      print('❌ Ollama fallback call failed: $e');
+    }
+    return null;
   }
 }

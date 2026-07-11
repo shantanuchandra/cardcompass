@@ -80,14 +80,11 @@ ANALYZE THE STATEMENT:''';
         
         if (content != null) {
           try {
-            // Strip markdown code fences robustly (Gemini wraps in ```json\n...\n```)
-            String cleanContent = content.trim();
-            cleanContent = cleanContent.replaceAll(RegExp(r'^```(?:json)?\s*', multiLine: false), '');
-            cleanContent = cleanContent.replaceAll(RegExp(r'\s*```$', multiLine: false), '');
-            cleanContent = cleanContent.trim();
+            String cleanContent = _extractJsonPayload(content);
             
             // Try to parse the JSON response
             final Map<String, dynamic> result = json.decode(cleanContent);
+
             
             // Normalize bank and card names
             final normBank = normalizeBankName(bankName);
@@ -233,13 +230,10 @@ ANALYZE THIS STATEMENT:''';
         
         if (content != null) {
           try {
-            // Strip markdown code fences robustly (Gemini wraps in ```json\n...\n```)
-            String cleanContent = content.trim();
-            cleanContent = cleanContent.replaceAll(RegExp(r'^```(?:json)?\s*', multiLine: false), '');
-            cleanContent = cleanContent.replaceAll(RegExp(r'\s*```$', multiLine: false), '');
-            cleanContent = cleanContent.trim();
+            String cleanContent = _extractJsonPayload(content);
 
             final List<dynamic> list = json.decode(cleanContent);
+
             // Assign UUIDs to each transaction if missing
             final uuid = Uuid();
             final transactions = list.map<Map<String, dynamic>>((item) {
@@ -595,131 +589,105 @@ CONTENT TO ANALYZE:
     Map<String, dynamic> requestBody, {
     int maxRetries = 3,
   }) async {
+    // Extract the prompt from requestBody
+    final contentsList = requestBody['contents'] as List?;
+    final partsList = contentsList?[0]?['parts'] as List?;
+    final prompt = partsList?[0]?['text'] as String? ?? '';
+
     // ── OLLAMA PROVIDER ROAD ──
     if (AIConfig.activeProvider == AIProvider.ollama) {
-      try {
-        final contentsList = requestBody['contents'] as List?;
-        final partsList = contentsList?[0]?['parts'] as List?;
-        final prompt = partsList?[0]?['text'] as String? ?? '';
-
-        final ollamaReq = {
-          'model': AIConfig.ollamaModel,
-          'prompt': prompt,
-          'stream': false,
-          'options': {
-            'temperature': 0.1,
-          }
-        };
-
-        final targetUrl = '${AIConfig.ollamaUrl}/api/generate';
-        print('🤖 Ollama Parser: Sending request to $targetUrl with model: ${AIConfig.ollamaModel}');
-
-        final response = await http.post(
-          Uri.parse(targetUrl),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode(ollamaReq),
-        ).timeout(const Duration(seconds: 45), onTimeout: () {
-          throw Exception('Ollama API timeout. Check if Ollama is running at ${AIConfig.ollamaUrl}');
-        });
-
-        if (response.statusCode == 200) {
-          final jsonResponse = jsonDecode(response.body);
-          final text = jsonResponse['response'] as String? ?? '';
-          
-          // Wrap the local LLM response into Gemini's JSON structure so
-          // existing parser callers can extract the text seamlessly.
-          final geminiJsonWrapper = {
-            'candidates': [
-              {
-                'content': {
-                  'parts': [
-                    {'text': text}
-                  ]
-                }
-              }
-            ]
-          };
-
-          return http.Response(
-            jsonEncode(geminiJsonWrapper),
-            200,
-            headers: response.headers,
-          );
-        } else {
-          return response;
-        }
-      } catch (e) {
-        print('❌ Ollama Parser call error: $e');
-        return null;
-      }
+      final response = await _executeOllamaRequest(prompt);
+      if (response != null) return response;
+      return null;
     }
 
     // ── GROQ PROVIDER ROAD ──
     if (AIConfig.activeProvider == AIProvider.groq) {
-      try {
-        if (AIConfig.groqApiKey.isEmpty) {
-          throw Exception('Groq API Key is empty. Please enter your Groq key in settings.');
-        }
+      if (AIConfig.groqApiKey.isEmpty) {
+        throw Exception('Groq API Key is empty. Please enter your Groq key in settings.');
+      }
 
-        final contentsList = requestBody['contents'] as List?;
-        final partsList = contentsList?[0]?['parts'] as List?;
-        final prompt = partsList?[0]?['text'] as String? ?? '';
+      // Model fallback queue (try the user's active configuration first)
+      final groqModels = ['llama-3.1-8b-instant', 'llama-3.3-70b-versatile', 'mixtral-8x7b-32768'];
+      final activeModel = AIConfig.groqModel;
+      final modelQueue = [activeModel];
+      for (final m in groqModels) {
+        if (m != activeModel) modelQueue.add(m);
+      }
 
-        final groqReq = {
-          'model': AIConfig.groqModel,
-          'messages': [
-            {
-              'role': 'user',
-              'content': prompt,
-            }
-          ],
-          'temperature': 0.1,
-        };
+      http.Response? lastResponse;
 
-        print('🤖 Groq Parser: Sending request to completions endpoint with model: ${AIConfig.groqModel}');
+      for (int i = 0; i < modelQueue.length; i++) {
+        final currentModel = modelQueue[i];
+        try {
+          print('🤖 Groq Parser: Attempting request using model: $currentModel');
 
-        final response = await http.post(
-          Uri.parse('https://api.groq.com/openai/v1/chat/completions'),
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ${AIConfig.groqApiKey}',
-          },
-          body: jsonEncode(groqReq),
-        ).timeout(const Duration(seconds: 45), onTimeout: () {
-          throw Exception('Groq API timeout. Check your network connection.');
-        });
-
-        if (response.statusCode == 200) {
-          final jsonResponse = jsonDecode(response.body);
-          final text = jsonResponse['choices']?[0]?['message']?['content'] as String? ?? '';
-
-          // Wrap the Groq response into Gemini's JSON structure so
-          // existing parser callers can extract the text seamlessly.
-          final geminiJsonWrapper = {
-            'candidates': [
+          final groqReq = {
+            'model': currentModel,
+            'messages': [
               {
-                'content': {
-                  'parts': [
-                    {'text': text}
-                  ]
-                }
+                'role': 'user',
+                'content': prompt,
               }
-            ]
+            ],
+            'temperature': 0.1,
           };
 
-          return http.Response(
-            jsonEncode(geminiJsonWrapper),
-            200,
-            headers: response.headers,
-          );
-        } else {
-          return response;
+          final response = await http.post(
+            Uri.parse('https://api.groq.com/openai/v1/chat/completions'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ${AIConfig.groqApiKey}',
+            },
+            body: jsonEncode(groqReq),
+          ).timeout(const Duration(seconds: 45));
+
+          lastResponse = response;
+
+          if (response.statusCode == 200) {
+            final jsonResponse = jsonDecode(response.body);
+            final text = jsonResponse['choices']?[0]?['message']?['content'] as String? ?? '';
+
+            final geminiJsonWrapper = {
+              'candidates': [
+                {
+                  'content': {
+                    'parts': [
+                      {'text': text}
+                    ]
+                  }
+                }
+              ]
+            };
+
+            return http.Response(
+              jsonEncode(geminiJsonWrapper),
+              200,
+              headers: response.headers,
+            );
+          } else {
+            print('⚠️ Groq model $currentModel returned error: ${response.statusCode} - ${response.body}');
+            // If it is a rate limit or prompt size error, try next model immediately
+            if (response.statusCode == 429 || response.statusCode == 413 || response.statusCode == 400) {
+              continue;
+            }
+            return response;
+          }
+        } catch (e) {
+          print('⚠️ Groq call failed on model $currentModel: $e');
         }
-      } catch (e) {
-        print('❌ Groq Parser call error: $e');
-        return null;
       }
+
+      // If all Groq models failed, check if Ollama is available locally as a backup
+      if (await _isOllamaAvailable()) {
+        print('🔄 [HYBRID BACKUP] All Groq API models failed/rate-limited. Automatically switching to local Ollama fallback...');
+        final backupResponse = await _executeOllamaRequest(prompt);
+        if (backupResponse != null) return backupResponse;
+      }
+
+      return lastResponse;
     }
+
 
 
     // ── GEMINI PROVIDER ROAD ──
@@ -781,8 +749,16 @@ CONTENT TO ANALYZE:
     }
     
     print('❌ All Gemini API attempts exhausted after $maxRetries tries');
+
+    if (await _isOllamaAvailable()) {
+      print('🔄 [HYBRID BACKUP] Gemini API failed/rate-limited. Automatically switching to local Ollama fallback...');
+      final backupResponse = await _executeOllamaRequest(prompt);
+      if (backupResponse != null) return backupResponse;
+    }
+
     return null;
   }
+
 
   static String _pruneAndCleanText(String text) {
     if (text.isEmpty) return text;
@@ -825,6 +801,93 @@ CONTENT TO ANALYZE:
     }
     
     return cleaned;
+  }
+
+  static Future<bool> _isOllamaAvailable() async {
+    try {
+      final response = await http.get(
+        Uri.parse('${AIConfig.ollamaUrl}/api/tags'),
+      ).timeout(const Duration(milliseconds: 500));
+      return response.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<http.Response?> _executeOllamaRequest(String prompt) async {
+    try {
+      final ollamaReq = {
+        'model': AIConfig.ollamaModel,
+        'prompt': prompt,
+        'stream': false,
+        'options': {
+          'temperature': 0.1,
+        }
+      };
+
+      final targetUrl = '${AIConfig.ollamaUrl}/api/generate';
+      print('🤖 Ollama Parser: Sending automatic fallback request to $targetUrl with model: ${AIConfig.ollamaModel}');
+
+      final response = await http.post(
+        Uri.parse(targetUrl),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(ollamaReq),
+      ).timeout(const Duration(seconds: 45), onTimeout: () {
+        throw Exception('Ollama API timeout.');
+      });
+
+      if (response.statusCode == 200) {
+        final jsonResponse = jsonDecode(response.body);
+        final text = jsonResponse['response'] as String? ?? '';
+        
+        final geminiJsonWrapper = {
+          'candidates': [
+            {
+              'content': {
+                'parts': [
+                  {'text': text}
+                ]
+              }
+            }
+          ]
+        };
+
+        return http.Response(
+          jsonEncode(geminiJsonWrapper),
+          200,
+          headers: response.headers,
+        );
+      }
+    } catch (e) {
+      print('❌ Ollama fallback call failed: $e');
+    }
+    return null;
+  }
+
+  static String _extractJsonPayload(String text) {
+
+    text = text.trim();
+    
+    // Find the first bracket/brace
+    final firstBracket = text.indexOf('[');
+    final firstBrace = text.indexOf('{');
+    
+    int startIdx = -1;
+    int endIdx = -1;
+    
+    if (firstBracket != -1 && (firstBrace == -1 || firstBracket < firstBrace)) {
+      startIdx = firstBracket;
+      endIdx = text.lastIndexOf(']');
+    } else if (firstBrace != -1) {
+      startIdx = firstBrace;
+      endIdx = text.lastIndexOf('}');
+    }
+    
+    if (startIdx != -1 && endIdx != -1 && endIdx > startIdx) {
+      return text.substring(startIdx, endIdx + 1);
+    }
+    
+    return text;
   }
 }
 
