@@ -11,7 +11,6 @@ import '../services/gemini_transaction_parser.dart';
 import '../services/error_handling_service.dart';
 import '../services/simple_birthday_input_service.dart';
 import '../services/user_profile_database_service.dart';
-import '../config/ai_config.dart';
 
 class GmailEmail {
   final String id;
@@ -566,69 +565,53 @@ class EnhancedGmailService {
       final requestBody = {
         'contents': [{
           'parts': [{
-            'text': '''Extract only the credit card product name from this email subject. Remove bank names, "Credit Card", "Statement", and dates.
+            'text': '''You extract credit card product names from email subjects.
+Rules:
+- Return ONLY the product/variant name (1-3 words max), e.g. "BPCL", "Platinum", "Signature", "Regalia", "Amazon Pay"
+- Remove: bank names, "Credit Card", "Statement", "Monthly", dates, card numbers
+- If the subject has no specific product name (just a generic card statement), return "NONE"
+- Never return explanations or sentences, only the product name or NONE
 
 Subject: $emailSubject
+Bank: $bankName
 
-Card name:'''
+Product name:'''
           }]
         }],
         'generationConfig': {
           'temperature': 0.0,
-          'maxOutputTokens': 1000
+          'maxOutputTokens': 20,
         }
       };
-      
-      final response = await http.post(
-        Uri.parse(AIConfig.geminiGenerateUrl),
-        headers: AIConfig.geminiHeaders,
-        body: json.encode(requestBody),
-      );
-      
-      // print('📡 Gemini API response: Status ${response.statusCode}');
-      // if (response.statusCode != 200) {
-      //   print('   Response body: ${response.body}');
-      // }
-      
-      if (response.statusCode == 200) {
+
+      final response = await GeminiTransactionParser.callGeminiRaw(requestBody);
+
+      if (response != null && response.statusCode == 200) {
         final decoded = json.decode(response.body);
-        // print('🔍 Decoded response keys: ${decoded.keys.toList()}');
-        // if (decoded.containsKey('candidates')) {
-        //   print('   Candidates: ${decoded['candidates']}');
-        //   // Check the structure more deeply
-        //   if (decoded['candidates'] is List && decoded['candidates'].isNotEmpty) {
-        //     final firstCandidate = decoded['candidates'][0];
-        //     print('   First candidate keys: ${firstCandidate.keys.toList()}');
-        //     if (firstCandidate.containsKey('content')) {
-        //       print('   Content structure: ${firstCandidate['content']}');
-        //       if (firstCandidate['content'] is Map && firstCandidate['content'].containsKey('parts')) {
-        //         print('   Parts: ${firstCandidate['content']['parts']}');
-        //       }
-        //     }
-        //   }
-        // }
-        
         final content = decoded['candidates']?[0]?['content']?['parts']?[0]?['text'];
         if (content != null) {
           final variant = content.trim();
+          // If Gemini says NONE or returns a sentence (>30 chars), fall back to bank name
+          if (variant.toUpperCase() == 'NONE' || variant.length > 30) {
+            print('ℹ️ No specific card variant — using bank name "$bankName"');
+            return bankName;
+          }
           print('🎯 Gemini detected card variant: "$variant" (from subject: "$emailSubject")');
           return variant;
-        } else {
-          print('❌ Content is null! Check response structure.');
         }
       } else {
-        print('❌ Gemini card variant detection failed with status: ${response.statusCode}');
+        print('❌ Gemini card variant detection failed with status: ${response?.statusCode}');
       }
-      
+
       // Fallback to bank name if Gemini fails
       print('⚠️ Using fallback: returning bank name "$bankName"');
       return bankName;
     } catch (e) {
-      // Fallback to bank name on error
       print('❌ Exception in _detectCardVariant: $e');
       print('⚠️ Using fallback: returning bank name "$bankName"');
       return bankName;
-    }  }
+    }
+  }
 
   /// Process statement emails and extract transactions
   Future<List<StatementParsingResult>> processStatementEmails({
@@ -858,8 +841,9 @@ Card name:'''
       print('TRANSACTIONS: ${transactions.length}');
 
       
-      // Add pause
-      await Future.delayed(const Duration(seconds: 2));
+      // Add pause between emails to respect Gemini free tier rate limits
+      // (each email triggers ~3 Gemini calls; 15 RPM limit = ~5s minimum between emails)
+      await Future.delayed(const Duration(seconds: 8));
       
       // Clean up card variant name to remove bank name and "Credit Card" terms
       final cleanCardName = _cleanCardVariantName(cardVariant, bankFromSender);

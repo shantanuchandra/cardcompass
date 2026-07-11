@@ -589,7 +589,14 @@ CONTENT TO ANALYZE:
     
     return confidence.clamp(0.0, 1.0);
   }
-  
+
+  /// Public wrapper around _callGeminiWithFallback for use by external services.
+  static Future<http.Response?> callGeminiRaw(
+    Map<String, dynamic> requestBody, {
+    int maxRetries = 3,
+  }) =>
+      _callGeminiWithFallback(requestBody, maxRetries: maxRetries);
+
   /// Call Gemini API with automatic fallback to alternate models on rate limit
   /// Returns the response if successful, null if all attempts failed
   static Future<http.Response?> _callGeminiWithFallback(
@@ -610,39 +617,44 @@ CONTENT TO ANALYZE:
           body: json.encode(requestBody),
         );
         
-        // Check if rate limit error occurred
+        // Check if rate limit error occurred (429)
         if (AIConfig.isRateLimitError(response.statusCode, response.body)) {
           print('⚠️  Rate limit detected (Status: ${response.statusCode})');
-          
+
           // Try to switch to fallback model
           final switched = AIConfig.switchToFallbackModel();
-          
+
           if (!switched) {
             print('❌ No more fallback models available');
-            return response; // Return the error response
+            if (attempt < maxRetries) {
+              // Free-tier resets every 60s — wait for the window to pass
+              print('⏳ Waiting 60s for Gemini rate limit reset...');
+              await Future.delayed(const Duration(seconds: 60));
+              AIConfig.resetToDefaultModel();
+              continue;
+            }
+            return response;
           }
-          
-          // Wait a bit before retrying with new model
-          print('⏳ Waiting 2 seconds before retry with new model...');
-          await Future.delayed(Duration(seconds: 2));
-          continue; // Retry with new model
+
+          // Stepped backoff when switching models: 15s → 30s → 45s
+          final waitSeconds = attempt * 15;
+          print('⏳ Waiting ${waitSeconds}s before retry with fallback model...');
+          await Future.delayed(Duration(seconds: waitSeconds));
+          continue;
         }
-        
-        // Success or non-rate-limit error - return the response
+
+        // Success or non-rate-limit error — return the response
         if (response.statusCode == 200) {
           print('✅ Gemini API call successful with model: ${AIConfig.geminiModel}');
         }
         return response;
-        
+
       } catch (e) {
         print('❌ Gemini API call error on attempt $attempt: $e');
-        
-        // If not last attempt, wait and try fallback
+
         if (attempt < maxRetries) {
-          print('⏳ Waiting 3 seconds before retry...');
-          await Future.delayed(Duration(seconds: 3));
-          
-          // Try switching model on network errors too
+          print('⏳ Waiting 10 seconds before retry...');
+          await Future.delayed(const Duration(seconds: 10));
           AIConfig.switchToFallbackModel();
         }
       }
