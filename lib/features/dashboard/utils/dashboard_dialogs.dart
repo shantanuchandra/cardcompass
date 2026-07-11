@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:cardcompass/core/config/ai_config.dart';
 
 /// Utility class for managing dashboard dialogs
 class DashboardDialogs {
@@ -8,6 +9,11 @@ class DashboardDialogs {
   static Future<Map<String, dynamic>?> showSyncDialog(BuildContext context) async {
     final numberOfEmailsController = TextEditingController(text: '30');
     DateTime? startDate = DateTime.now().subtract(const Duration(days: 30));
+
+    // Ollama parameters
+    var localProvider = AIConfig.activeProvider;
+    final ollamaUrlController = TextEditingController(text: AIConfig.ollamaUrl);
+    final ollamaModelController = TextEditingController(text: AIConfig.ollamaModel);
 
     return showDialog<Map<String, dynamic>>(
       context: context,
@@ -28,7 +34,7 @@ class DashboardDialogs {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'This will fetch credit card statements from your Gmail account and import transactions into the app.',
+                       'This will fetch credit card statements from your Gmail account and import transactions into the app.',
                       style: TextStyle(fontSize: 14),
                     ),
                     const SizedBox(height: 16),
@@ -67,6 +73,69 @@ class DashboardDialogs {
                         ),
                       ],
                     ),
+                    const Divider(height: 32),
+                    const Text(
+                      'AI LLM Parsing Engine Settings',
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<AIProvider>(
+                      value: localProvider,
+                      decoration: const InputDecoration(
+                        labelText: 'LLM Provider',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: AIProvider.gemini,
+                          child: Text('Google Gemini (Cloud)'),
+                        ),
+                        DropdownMenuItem(
+                          value: AIProvider.ollama,
+                          child: Text('Ollama (Local LLM)'),
+                        ),
+                      ],
+                      onChanged: (val) {
+                        if (val != null) {
+                          setState(() {
+                            localProvider = val;
+                          });
+                        }
+                      },
+                    ),
+                    if (localProvider == AIProvider.ollama) ...[
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: ollamaUrlController,
+                        decoration: const InputDecoration(
+                          labelText: 'Ollama Host URL',
+                          hintText: 'http://localhost:11434',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: ollamaModelController,
+                        decoration: const InputDecoration(
+                          labelText: 'Ollama Model Name',
+                          hintText: 'gemma4 or gemma2',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.amber.shade50,
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: Colors.amber.shade300),
+                        ),
+                        child: const Text(
+                          'Note: Ensure your local Ollama is running and CORS origins are enabled (set OLLAMA_ORIGINS="*" before starting).',
+                          style: TextStyle(fontSize: 11, color: Colors.brown),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 16),
                     const Text(
                       '• Gmail will be searched for bank statements\n'
@@ -84,7 +153,14 @@ class DashboardDialogs {
                   child: const Text('Cancel'),
                 ),
                 ElevatedButton(
-                  onPressed: () {
+                  onPressed: () async {
+                    // Apply and save LLM configs
+                    await AIConfig.saveConfiguration(
+                      localProvider,
+                      ollamaUrlController.text.trim(),
+                      ollamaModelController.text.trim(),
+                    );
+
                     final numberOfEmails = int.tryParse(numberOfEmailsController.text) ?? 30;
                     Navigator.of(context).pop({
                       'numberOfEmails': numberOfEmails,

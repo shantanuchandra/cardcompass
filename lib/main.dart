@@ -6,11 +6,15 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/app_config.dart';
+import 'core/config/ai_config.dart';
 import 'core/providers/service_providers.dart';
 import 'app.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Load AI configuration settings
+  await AIConfig.loadSavedConfiguration();
   
   // Initialize SharedPreferences
   final sharedPreferences = await SharedPreferences.getInstance();

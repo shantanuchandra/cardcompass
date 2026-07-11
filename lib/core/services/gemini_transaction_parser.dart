@@ -583,12 +583,74 @@ CONTENT TO ANALYZE:
   }) =>
       _callGeminiWithFallback(requestBody, maxRetries: maxRetries);
 
-  /// Call Gemini API with automatic fallback to alternate models on rate limit
+  /// Call Gemini API with automatic fallback to alternate models on rate limit.
+  /// If activeProvider is Ollama, query Ollama instead and wrap the response
+  /// to mimic Gemini structure for caller compatibility.
   /// Returns the response if successful, null if all attempts failed
   static Future<http.Response?> _callGeminiWithFallback(
     Map<String, dynamic> requestBody, {
     int maxRetries = 3,
   }) async {
+    // ── OLLAMA PROVIDER ROAD ──
+    if (AIConfig.activeProvider == AIProvider.ollama) {
+      try {
+        final contentsList = requestBody['contents'] as List?;
+        final partsList = contentsList?[0]?['parts'] as List?;
+        final prompt = partsList?[0]?['text'] as String? ?? '';
+
+        final ollamaReq = {
+          'model': AIConfig.ollamaModel,
+          'prompt': prompt,
+          'stream': false,
+          'options': {
+            'temperature': 0.1,
+          }
+        };
+
+        final targetUrl = '${AIConfig.ollamaUrl}/api/generate';
+        print('🤖 Ollama Parser: Sending request to $targetUrl with model: ${AIConfig.ollamaModel}');
+
+        final response = await http.post(
+          Uri.parse(targetUrl),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(ollamaReq),
+        ).timeout(const Duration(seconds: 45), onTimeout: () {
+          throw Exception('Ollama API timeout. Check if Ollama is running at ${AIConfig.ollamaUrl}');
+        });
+
+        if (response.statusCode == 200) {
+          final jsonResponse = jsonDecode(response.body);
+          final text = jsonResponse['response'] as String? ?? '';
+          
+          // Wrap the local LLM response into Gemini's JSON structure so
+          // existing parser callers can extract the text seamlessly.
+          final geminiJsonWrapper = {
+            'candidates': [
+              {
+                'content': {
+                  'parts': [
+                    {'text': text}
+                  ]
+                }
+              }
+            ]
+          };
+
+          return http.Response(
+            jsonEncode(geminiJsonWrapper),
+            200,
+            headers: response.headers,
+          );
+        } else {
+          return response;
+        }
+      } catch (e) {
+        print('❌ Ollama Parser call error: $e');
+        return null;
+      }
+    }
+
+    // ── GEMINI PROVIDER ROAD ──
     int attempt = 0;
     
     while (attempt < maxRetries) {

@@ -12,6 +12,41 @@ class GeminiService {
     int maxTokens = 4000,
   }) async {
     try {
+      // ── OLLAMA PROVIDER ROAD ──
+      if (AIConfig.activeProvider == AIProvider.ollama) {
+        final requestBody = {
+          'model': AIConfig.ollamaModel,
+          'prompt': prompt,
+          'stream': false,
+          'options': {
+            'temperature': temperature,
+          }
+        };
+
+        final targetUrl = '${AIConfig.ollamaUrl}/api/generate';
+        print('🤖 Ollama API: Sending request to $targetUrl with model: ${AIConfig.ollamaModel}');
+
+        final response = await http.post(
+          Uri.parse(targetUrl),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(requestBody),
+        ).timeout(const Duration(seconds: 45), onTimeout: () {
+          throw Exception('Ollama API timeout. Check if Ollama is running at ${AIConfig.ollamaUrl}');
+        });
+
+        if (response.statusCode == 200) {
+          final jsonResponse = jsonDecode(response.body);
+          final text = jsonResponse['response'] as String?;
+          if (text != null && text.isNotEmpty) {
+            return text;
+          }
+          throw Exception('Ollama returned empty response');
+        } else {
+          throw Exception('Ollama API error: ${response.statusCode} - ${response.body}');
+        }
+      }
+
+      // ── GEMINI PROVIDER ROAD ──
       final requestBody = {
         'contents': [
           {
@@ -52,7 +87,8 @@ class GeminiService {
         throw Exception('Gemini API error: ${response.statusCode} - ${response.body}');
       }
     } catch (error) {
-      throw Exception('Failed to generate content with Gemini: $error');
+      final isOllama = AIConfig.activeProvider == AIProvider.ollama;
+      throw Exception('Failed to generate content with ${isOllama ? 'Ollama' : 'Gemini'}: $error');
     }
   }  /// Generate structured JSON response for recommendations
   Future<Map<String, dynamic>> generateStructuredRecommendation({

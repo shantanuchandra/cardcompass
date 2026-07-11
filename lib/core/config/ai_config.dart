@@ -1,4 +1,8 @@
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/foundation.dart';
 import '../env.dart';
+
+enum AIProvider { gemini, ollama }
 
 /// Configuration for AI services with automatic fallback mechanism.
 ///
@@ -7,6 +11,58 @@ import '../env.dart';
 ///   2. If key 2 also 429s, advance to next model in the fallback chain
 ///   3. If all models exhausted, wait 60 s and reset (handled in parser)
 class AIConfig {
+  // ──────────────────────────────────────────────────────────────────────────
+  // Provider Selection & Settings (dynamic runtime selections)
+  // ──────────────────────────────────────────────────────────────────────────
+  static AIProvider activeProvider = AIProvider.gemini;
+  static String _ollamaUrl = 'http://localhost:11434';
+  static String ollamaModel = 'gemma4';
+
+  static String get ollamaUrl {
+    // Premium loopback rewrite for Android Emulator accessing local host server
+    if (defaultTargetPlatform == TargetPlatform.android &&
+        (_ollamaUrl.contains('localhost') || _ollamaUrl.contains('127.0.0.1'))) {
+      return _ollamaUrl
+          .replaceAll('localhost', '10.0.2.2')
+          .replaceAll('127.0.0.1', '10.0.2.2');
+    }
+    return _ollamaUrl;
+  }
+
+  static set ollamaUrl(String val) {
+    _ollamaUrl = val;
+  }
+
+  /// Initialize and load saved LLM settings from SharedPreferences
+  static Future<void> loadSavedConfiguration() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final providerStr = prefs.getString('llm_provider') ?? 'gemini';
+      activeProvider = providerStr == 'ollama' ? AIProvider.ollama : AIProvider.gemini;
+      _ollamaUrl = prefs.getString('ollama_url') ?? 'http://localhost:11434';
+      ollamaModel = prefs.getString('ollama_model') ?? 'gemma4';
+      print('💾 Loaded AIConfig: provider=$activeProvider, url=$ollamaUrl, model=$ollamaModel');
+    } catch (e) {
+      print('⚠️ Failed to load AIConfig from SharedPreferences: $e');
+    }
+  }
+
+  /// Save LLM settings to SharedPreferences and apply immediately
+  static Future<void> saveConfiguration(AIProvider provider, String url, String model) async {
+    activeProvider = provider;
+    _ollamaUrl = url;
+    ollamaModel = model;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('llm_provider', provider == AIProvider.ollama ? 'ollama' : 'gemini');
+      await prefs.setString('ollama_url', url);
+      await prefs.setString('ollama_model', model);
+      print('💾 Saved AIConfig: provider=$provider, url=$url, model=$model');
+    } catch (e) {
+      print('⚠️ Failed to save AIConfig to SharedPreferences: $e');
+    }
+  }
+
   // ──────────────────────────────────────────────────────────────────────────
   // API Keys — two keys for double free-tier RPM capacity
   // ──────────────────────────────────────────────────────────────────────────
