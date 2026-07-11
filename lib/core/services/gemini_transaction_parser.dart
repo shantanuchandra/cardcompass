@@ -650,6 +650,74 @@ CONTENT TO ANALYZE:
       }
     }
 
+    // ── GROQ PROVIDER ROAD ──
+    if (AIConfig.activeProvider == AIProvider.groq) {
+      try {
+        if (AIConfig.groqApiKey.isEmpty) {
+          throw Exception('Groq API Key is empty. Please enter your Groq key in settings.');
+        }
+
+        final contentsList = requestBody['contents'] as List?;
+        final partsList = contentsList?[0]?['parts'] as List?;
+        final prompt = partsList?[0]?['text'] as String? ?? '';
+
+        final groqReq = {
+          'model': AIConfig.groqModel,
+          'messages': [
+            {
+              'role': 'user',
+              'content': prompt,
+            }
+          ],
+          'temperature': 0.1,
+        };
+
+        print('🤖 Groq Parser: Sending request to completions endpoint with model: ${AIConfig.groqModel}');
+
+        final response = await http.post(
+          Uri.parse('https://api.groq.com/openai/v1/chat/completions'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ${AIConfig.groqApiKey}',
+          },
+          body: jsonEncode(groqReq),
+        ).timeout(const Duration(seconds: 45), onTimeout: () {
+          throw Exception('Groq API timeout. Check your network connection.');
+        });
+
+        if (response.statusCode == 200) {
+          final jsonResponse = jsonDecode(response.body);
+          final text = jsonResponse['choices']?[0]?['message']?['content'] as String? ?? '';
+
+          // Wrap the Groq response into Gemini's JSON structure so
+          // existing parser callers can extract the text seamlessly.
+          final geminiJsonWrapper = {
+            'candidates': [
+              {
+                'content': {
+                  'parts': [
+                    {'text': text}
+                  ]
+                }
+              }
+            ]
+          };
+
+          return http.Response(
+            jsonEncode(geminiJsonWrapper),
+            200,
+            headers: response.headers,
+          );
+        } else {
+          return response;
+        }
+      } catch (e) {
+        print('❌ Groq Parser call error: $e');
+        return null;
+      }
+    }
+
+
     // ── GEMINI PROVIDER ROAD ──
     int attempt = 0;
     

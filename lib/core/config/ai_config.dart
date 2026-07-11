@@ -2,7 +2,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart';
 import '../env.dart';
 
-enum AIProvider { gemini, ollama }
+enum AIProvider { gemini, ollama, groq }
 
 /// Configuration for AI services with automatic fallback mechanism.
 ///
@@ -17,6 +17,9 @@ class AIConfig {
   static AIProvider activeProvider = AIProvider.gemini;
   static String _ollamaUrl = 'http://localhost:11434';
   static String ollamaModel = 'gemma4';
+  
+  static String groqApiKey = '';
+  static String groqModel = 'gemma2-9b-it';
 
   static String get ollamaUrl {
     // Premium loopback rewrite for Android Emulator accessing local host server
@@ -38,30 +41,54 @@ class AIConfig {
     try {
       final prefs = await SharedPreferences.getInstance();
       final providerStr = prefs.getString('llm_provider') ?? 'gemini';
-      activeProvider = providerStr == 'ollama' ? AIProvider.ollama : AIProvider.gemini;
+      if (providerStr == 'ollama') {
+        activeProvider = AIProvider.ollama;
+      } else if (providerStr == 'groq') {
+        activeProvider = AIProvider.groq;
+      } else {
+        activeProvider = AIProvider.gemini;
+      }
       _ollamaUrl = prefs.getString('ollama_url') ?? 'http://localhost:11434';
       ollamaModel = prefs.getString('ollama_model') ?? 'gemma4';
-      print('💾 Loaded AIConfig: provider=$activeProvider, url=$ollamaUrl, model=$ollamaModel');
+      groqApiKey = prefs.getString('groq_api_key') ?? '';
+      groqModel = prefs.getString('groq_model') ?? 'gemma2-9b-it';
+      print('💾 Loaded AIConfig: provider=$activeProvider, ollamaUrl=$ollamaUrl, ollamaModel=$ollamaModel, groqModel=$groqModel');
     } catch (e) {
       print('⚠️ Failed to load AIConfig from SharedPreferences: $e');
     }
   }
 
   /// Save LLM settings to SharedPreferences and apply immediately
-  static Future<void> saveConfiguration(AIProvider provider, String url, String model) async {
+  static Future<void> saveConfiguration(
+    AIProvider provider,
+    String url,
+    String model, {
+    String? groqKey,
+    String? groqMod,
+  }) async {
     activeProvider = provider;
     _ollamaUrl = url;
     ollamaModel = model;
+    if (groqKey != null) groqApiKey = groqKey;
+    if (groqMod != null) groqModel = groqMod;
+    
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('llm_provider', provider == AIProvider.ollama ? 'ollama' : 'gemini');
+      String provStr = 'gemini';
+      if (provider == AIProvider.ollama) provStr = 'ollama';
+      if (provider == AIProvider.groq) provStr = 'groq';
+      
+      await prefs.setString('llm_provider', provStr);
       await prefs.setString('ollama_url', url);
       await prefs.setString('ollama_model', model);
-      print('💾 Saved AIConfig: provider=$provider, url=$url, model=$model');
+      if (groqKey != null) await prefs.setString('groq_api_key', groqKey);
+      if (groqMod != null) await prefs.setString('groq_model', groqMod);
+      print('💾 Saved AIConfig: provider=$provider, ollamaUrl=$url, ollamaModel=$model, groqModel=$groqModel');
     } catch (e) {
       print('⚠️ Failed to save AIConfig to SharedPreferences: $e');
     }
   }
+
 
   // ──────────────────────────────────────────────────────────────────────────
   // API Keys — two keys for double free-tier RPM capacity
@@ -78,11 +105,12 @@ class AIConfig {
   // Model Fallback Chain
   // ──────────────────────────────────────────────────────────────────────────
   static const List<String> geminiModelFallbackChain = [
-    'gemini-3.5-flash',  // Primary
-    'gemini-2.5-flash',  // Fallback 1
-    'gemini-2.0-flash',  // Fallback 2
-    'gemini-2.5-pro',    // Fallback 3 (last resort)
+    'gemini-3.5-flash',       // Primary
+    'gemini-3.1-flash-lite',  // Fallback 1 (fast, cheap)
+    'gemini-2.5-flash',       // Fallback 2 (stable)
+    'gemini-3.1-pro',         // Fallback 3 (last resort reasoning)
   ];
+
 
   static int _currentModelIndex = 0;
 

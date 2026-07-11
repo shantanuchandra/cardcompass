@@ -15,6 +15,11 @@ class DashboardDialogs {
     final ollamaUrlController = TextEditingController(text: AIConfig.ollamaUrl);
     final ollamaModelController = TextEditingController(text: AIConfig.ollamaModel);
 
+    // Groq parameters
+    final groqApiKeyController = TextEditingController(text: AIConfig.groqApiKey);
+    final groqModelController = TextEditingController(text: AIConfig.groqModel);
+
+
     return showDialog<Map<String, dynamic>>(
       context: context,
       builder: (BuildContext context) {
@@ -91,6 +96,10 @@ class DashboardDialogs {
                           child: Text('Google Gemini (Cloud)'),
                         ),
                         DropdownMenuItem(
+                          value: AIProvider.groq,
+                          child: Text('Groq API (Cloud)'),
+                        ),
+                        DropdownMenuItem(
                           value: AIProvider.ollama,
                           child: Text('Ollama (Local LLM)'),
                         ),
@@ -103,6 +112,27 @@ class DashboardDialogs {
                         }
                       },
                     ),
+                    if (localProvider == AIProvider.groq) ...[
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: groqApiKeyController,
+                        obscureText: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Groq API Key',
+                          hintText: 'gsk_...',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: groqModelController,
+                        decoration: const InputDecoration(
+                          labelText: 'Groq Model Name',
+                          hintText: 'gemma2-9b-it or llama-3.3-70b-versatile',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ],
                     if (localProvider == AIProvider.ollama) ...[
                       const SizedBox(height: 12),
                       TextFormField(
@@ -159,7 +189,10 @@ class DashboardDialogs {
                       localProvider,
                       ollamaUrlController.text.trim(),
                       ollamaModelController.text.trim(),
+                      groqKey: groqApiKeyController.text.trim(),
+                      groqMod: groqModelController.text.trim(),
                     );
+
 
                     final numberOfEmails = int.tryParse(numberOfEmailsController.text) ?? 30;
                     Navigator.of(context).pop({

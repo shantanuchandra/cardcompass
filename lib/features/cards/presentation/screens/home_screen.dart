@@ -513,10 +513,17 @@ class _HomeTabState extends ConsumerState<HomeTab> {
 
             // Snap labels for Max Emails slider
             const List<int> emailSnaps = [5, 10, 20, 30, 50];
-            final emailsLabel = '$_maxEmails emails';            // Ollama parameters
+            final emailsLabel = '$_maxEmails emails';
+            // Ollama parameters
             var localProvider = AIConfig.activeProvider;
+
             final ollamaUrlController = TextEditingController(text: AIConfig.ollamaUrl);
             final ollamaModelController = TextEditingController(text: AIConfig.ollamaModel);
+
+            // Groq parameters
+            final groqApiKeyController = TextEditingController(text: AIConfig.groqApiKey);
+            final groqModelController = TextEditingController(text: AIConfig.groqModel);
+
 
             return Dialog(
               backgroundColor: Colors.transparent,
@@ -694,6 +701,10 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                                   child: Text('Google Gemini (Cloud)', style: TextStyle(color: textPrimary)),
                                 ),
                                 DropdownMenuItem(
+                                  value: AIProvider.groq,
+                                  child: Text('Groq API (Cloud)', style: TextStyle(color: textPrimary)),
+                                ),
+                                DropdownMenuItem(
                                   value: AIProvider.ollama,
                                   child: Text('Ollama (Local LLM)', style: TextStyle(color: textPrimary)),
                                 ),
@@ -706,6 +717,40 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                                 }
                               },
                             ),
+
+                            if (localProvider == AIProvider.groq) ...[
+                              const SizedBox(height: 12),
+                              TextFormField(
+                                controller: groqApiKeyController,
+                                obscureText: true,
+                                style: TextStyle(color: textPrimary, fontSize: 14),
+                                decoration: InputDecoration(
+                                  labelText: 'Groq API Key',
+                                  labelStyle: TextStyle(color: textSecondary, fontSize: 12),
+                                  hintText: 'gsk_...',
+                                  hintStyle: TextStyle(color: textSecondary.withOpacity(0.5), fontSize: 12),
+                                  filled: true,
+                                  fillColor: surfaceBg,
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              TextFormField(
+                                controller: groqModelController,
+                                style: TextStyle(color: textPrimary, fontSize: 14),
+                                decoration: InputDecoration(
+                                  labelText: 'Groq Model Name',
+                                  labelStyle: TextStyle(color: textSecondary, fontSize: 12),
+                                  filled: true,
+                                  fillColor: surfaceBg,
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                ),
+                              ),
+                            ],
 
                             if (localProvider == AIProvider.ollama) ...[
                               const SizedBox(height: 12),
@@ -759,6 +804,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                                 ),
                               ),
                             ],
+
 
                             const SizedBox(height: 16),
 
@@ -848,6 +894,8 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                                           localProvider,
                                           ollamaUrlController.text.trim(),
                                           ollamaModelController.text.trim(),
+                                          groqKey: groqApiKeyController.text.trim(),
+                                          groqMod: groqModelController.text.trim(),
                                         );
 
                                         final days = _selectedDays;

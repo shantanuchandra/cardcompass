@@ -46,6 +46,49 @@ class GeminiService {
         }
       }
 
+      // ── GROQ PROVIDER ROAD ──
+      if (AIConfig.activeProvider == AIProvider.groq) {
+        if (AIConfig.groqApiKey.isEmpty) {
+          throw Exception('Groq API Key is empty. Please enter your Groq key in settings.');
+        }
+
+        final requestBody = {
+          'model': AIConfig.groqModel,
+          'messages': [
+            {
+              'role': 'user',
+              'content': prompt,
+            }
+          ],
+          'temperature': temperature,
+        };
+
+        print('🤖 Groq API: Sending request to completions endpoint with model: ${AIConfig.groqModel}');
+
+        final response = await http.post(
+          Uri.parse('https://api.groq.com/openai/v1/chat/completions'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ${AIConfig.groqApiKey}',
+          },
+          body: jsonEncode(requestBody),
+        ).timeout(const Duration(seconds: 45), onTimeout: () {
+          throw Exception('Groq API timeout. Check your network connection.');
+        });
+
+        if (response.statusCode == 200) {
+          final jsonResponse = jsonDecode(response.body);
+          final text = jsonResponse['choices']?[0]?['message']?['content'] as String?;
+          if (text != null && text.isNotEmpty) {
+            return text;
+          }
+          throw Exception('Groq returned empty response');
+        } else {
+          throw Exception('Groq API error: ${response.statusCode} - ${response.body}');
+        }
+      }
+
+
       // ── GEMINI PROVIDER ROAD ──
       final requestBody = {
         'contents': [
@@ -87,8 +130,10 @@ class GeminiService {
         throw Exception('Gemini API error: ${response.statusCode} - ${response.body}');
       }
     } catch (error) {
-      final isOllama = AIConfig.activeProvider == AIProvider.ollama;
-      throw Exception('Failed to generate content with ${isOllama ? 'Ollama' : 'Gemini'}: $error');
+      String provName = 'Gemini';
+      if (AIConfig.activeProvider == AIProvider.ollama) provName = 'Ollama';
+      if (AIConfig.activeProvider == AIProvider.groq) provName = 'Groq';
+      throw Exception('Failed to generate content with $provName: $error');
     }
   }  /// Generate structured JSON response for recommendations
   Future<Map<String, dynamic>> generateStructuredRecommendation({
