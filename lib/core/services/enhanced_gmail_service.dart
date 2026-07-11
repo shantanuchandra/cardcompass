@@ -852,7 +852,8 @@ Product name:'''
           (subjectLower.contains('account statement') ||
            subjectLower.contains('bank statement') ||
            subjectLower.contains('relationship') ||
-           subjectLower.contains('summary of your') ||
+           subjectLower.contains('relationship') ||
+           subjectLower.contains('combined email statement') ||
            (subjectLower.contains('statement') &&
             (subjectLower.contains('savings') ||
              subjectLower.contains('current') ||
