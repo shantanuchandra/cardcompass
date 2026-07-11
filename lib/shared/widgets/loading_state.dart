@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:cardcompass/core/theme.dart';
 
 class LoadingState extends StatelessWidget {
   final String? message;
@@ -17,21 +19,24 @@ class LoadingState extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           SizedBox(
-            width: size ?? 50,
-            height: size ?? 50,
-            child: CircularProgressIndicator(
-              strokeWidth: 3,
+            width: size ?? 32,
+            height: size ?? 32,
+            child: const CircularProgressIndicator(
+              strokeWidth: 2.5,
               valueColor: AlwaysStoppedAnimation<Color>(
-                Theme.of(context).primaryColor,
+                AppTheme.primaryColor,
               ),
             ),
           ),
           if (message != null) ...[
             const SizedBox(height: 16),
             Text(
-              message!,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Colors.grey[600],
+              message!.toUpperCase(),
+              style: GoogleFonts.spaceGrotesk(
+                color: Colors.white38,
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.5,
               ),
               textAlign: TextAlign.center,
             ),
@@ -65,16 +70,18 @@ class LoadingSpinner extends StatelessWidget {
           child: CircularProgressIndicator(
             strokeWidth: 2,
             valueColor: AlwaysStoppedAnimation<Color>(
-              color ?? Theme.of(context).primaryColor,
+              color ?? AppTheme.primaryColor,
             ),
           ),
         ),
         if (message != null) ...[
           const SizedBox(height: 8),
           Text(
-            message!,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: Colors.grey[600],
+            message!.toUpperCase(),
+            style: GoogleFonts.spaceGrotesk(
+              color: Colors.white38,
+              fontSize: 8,
+              fontWeight: FontWeight.bold,
             ),
             textAlign: TextAlign.center,
           ),
@@ -103,39 +110,64 @@ class ErrorState extends StatelessWidget {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              icon ?? Icons.error_outline,
-              size: 64,
-              color: Colors.grey[400],
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Something went wrong',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.bold,
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: const Color(0xFF0C152B),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: AppTheme.errorColor.withValues(alpha: 0.25), width: 1.2),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon ?? Icons.warning_amber_outlined,
+                size: 48,
+                color: AppTheme.errorColor,
               ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              error,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Colors.grey[600],
+              const SizedBox(height: 16),
+              Text(
+                'SYSTEM DISCREPANCY',
+                style: GoogleFonts.spaceGrotesk(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                  letterSpacing: 1.0,
+                  color: AppTheme.errorColor,
+                ),
+                textAlign: TextAlign.center,
               ),
-              textAlign: TextAlign.center,
-            ),
-            if (onRetry != null) ...[
-              const SizedBox(height: 24),
-              ElevatedButton.icon(
-                onPressed: onRetry,
-                icon: const Icon(Icons.refresh),
-                label: Text(retryText ?? 'Retry'),
+              const SizedBox(height: 8),
+              Text(
+                error,
+                style: GoogleFonts.plusJakartaSans(
+                  color: Colors.white70,
+                  fontSize: 12,
+                ),
+                textAlign: TextAlign.center,
               ),
+              if (onRetry != null) ...[
+                const SizedBox(height: 20),
+                OutlinedButton.icon(
+                  onPressed: onRetry,
+                  icon: const Icon(Icons.refresh, size: 14, color: AppTheme.errorColor),
+                  label: Text(
+                    (retryText ?? 'RETRY CONNECTION').toUpperCase(),
+                    style: GoogleFonts.spaceGrotesk(
+                      color: AppTheme.errorColor,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: AppTheme.errorColor, width: 1.2),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  ),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -165,41 +197,66 @@ class EmptyState extends StatelessWidget {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            if (illustration != null)
-              illustration!
-            else
-              Icon(
-                icon ?? Icons.inbox_outlined,
-                size: 64,
-                color: Colors.grey[400],
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: const Color(0xFF0C152B),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (illustration != null)
+                illustration!
+              else
+                Icon(
+                  icon ?? Icons.inbox_outlined,
+                  size: 40,
+                  color: Colors.white38,
+                ),
+              const SizedBox(height: 16),
+              Text(
+                title.toUpperCase(),
+                style: GoogleFonts.spaceGrotesk(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                  letterSpacing: 0.5,
+                ),
+                textAlign: TextAlign.center,
               ),
-            const SizedBox(height: 16),
-            Text(
-              title,
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.bold,
+              const SizedBox(height: 6),
+              Text(
+                message,
+                style: GoogleFonts.plusJakartaSans(
+                  color: Colors.white60,
+                  fontSize: 11,
+                ),
+                textAlign: TextAlign.center,
               ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              message,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Colors.grey[600],
-              ),
-              textAlign: TextAlign.center,
-            ),
-            if (buttonText != null && onButtonPressed != null) ...[
-              const SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: onButtonPressed,
-                child: Text(buttonText!),
-              ),
+              if (buttonText != null && onButtonPressed != null) ...[
+                const SizedBox(height: 20),
+                ElevatedButton(
+                  onPressed: onButtonPressed,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primaryColor,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  ),
+                  child: Text(
+                    buttonText!.toUpperCase(),
+                    style: GoogleFonts.spaceGrotesk(
+                      color: Colors.black,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:cardcompass/core/theme.dart';
 import 'package:cardcompass/core/services/enhanced_analytics_service.dart';
 import 'package:cardcompass/shared/models/credit_card.dart';
 import 'package:cardcompass/shared/models/transaction.dart';
@@ -155,92 +157,132 @@ class _FinancialInsightsWidgetState extends ConsumerState<FinancialInsightsWidge
   
   Widget _buildFinancialHealthCard() {
     final healthScore = _insights!.financialHealthScore;
+    final themeColor = _getHealthScoreColor(healthScore.overallScore);
     
-    return Card(
-      elevation: 4,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  Icons.health_and_safety,
-                  color: _getHealthScoreColor(healthScore.overallScore),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'Financial Health Score',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            
-            // Overall Score
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${healthScore.overallScore.toStringAsFixed(0)}/100',
-                        style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                          color: _getHealthScoreColor(healthScore.overallScore),
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Text(
-                        _getHealthScoreDescription(healthScore.overallScore),
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
-                    ],
-                  ),
-                ),
-                CircularProgressIndicator(
-                  value: healthScore.overallScore / 100,
-                  backgroundColor: Colors.grey[300],
-                  valueColor: AlwaysStoppedAnimation<Color>(
-                    _getHealthScoreColor(healthScore.overallScore),
-                  ),
-                ),
-              ],
-            ),
-            
-            const SizedBox(height: 16),
-            
-            // Detailed Scores
-            _buildScoreBreakdown(healthScore),
-            
-            if (healthScore.insights.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              const Divider(),
-              Text(
-                'Key Insights',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0C152B),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: themeColor.withValues(alpha: 0.25),
+          width: 1.5,
+        ),
+        boxShadow: AppTheme.neonGlow(color: themeColor, opacity: 0.12, blurRadius: 12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.health_and_safety_outlined,
+                color: themeColor,
+                size: 20,
               ),
-              ...healthScore.insights.map((insight) => 
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Icon(Icons.info_outline, size: 16),
-                      const SizedBox(width: 8),
-                      Expanded(child: Text(insight)),
-                    ],
-                  ),
+              const SizedBox(width: 8),
+              Text(
+                'FINANCIAL HEALTH PROFILE',
+                style: GoogleFonts.spaceGrotesk(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                  letterSpacing: 1.0,
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 20),
+          
+          // Overall Score with a beautiful circular indicator
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${healthScore.overallScore.toStringAsFixed(0)}/100',
+                      style: GoogleFonts.spaceGrotesk(
+                        color: themeColor,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 32,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _getHealthScoreDescription(healthScore.overallScore).toUpperCase(),
+                      style: GoogleFonts.spaceGrotesk(
+                        color: Colors.white70,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(
+                width: 50,
+                height: 50,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    CircularProgressIndicator(
+                      value: healthScore.overallScore / 100,
+                      backgroundColor: Colors.white.withValues(alpha: 0.05),
+                      valueColor: AlwaysStoppedAnimation<Color>(themeColor),
+                      strokeWidth: 4.5,
+                    ),
+                    Text(
+                      '${healthScore.overallScore.toStringAsFixed(0)}%',
+                      style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          
+          const SizedBox(height: 20),
+          
+          // Detailed Scores
+          _buildScoreBreakdown(healthScore),
+          
+          if (healthScore.insights.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            const Divider(color: Color(0xFF1E293B)),
+            const SizedBox(height: 8),
+            Text(
+              'KEY OBSERVATIONS',
+              style: GoogleFonts.spaceGrotesk(
+                color: Colors.white70,
+                fontWeight: FontWeight.bold,
+                fontSize: 10,
+                letterSpacing: 1.0,
+              ),
+            ),
+            const SizedBox(height: 8),
+            ...healthScore.insights.map((insight) => 
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.bolt, size: 14, color: themeColor),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        insight,
+                        style: GoogleFonts.plusJakartaSans(color: Colors.white60, fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ],
-        ),
+        ],
       ),
     );
   }
@@ -255,28 +297,46 @@ class _FinancialInsightsWidgetState extends ConsumerState<FinancialInsightsWidge
       ],
     );
   }
-  
+
   Widget _buildScoreItem(String label, double score) {
+    final scoreColor = _getHealthScoreColor(score);
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         children: [
           Expanded(
             flex: 2,
-            child: Text(label),
-          ),
-          Expanded(
-            flex: 1,
-            child: LinearProgressIndicator(
-              value: score / 100,
-              backgroundColor: Colors.grey[300],
-              valueColor: AlwaysStoppedAnimation<Color>(
-                _getHealthScoreColor(score),
+            child: Text(
+              label.toUpperCase(),
+              style: GoogleFonts.spaceGrotesk(
+                color: Colors.white70,
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.5,
               ),
             ),
           ),
-          const SizedBox(width: 8),
-          Text('${score.toStringAsFixed(0)}'),
+          Expanded(
+            flex: 1,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: score / 100,
+                backgroundColor: Colors.white.withValues(alpha: 0.05),
+                valueColor: AlwaysStoppedAnimation<Color>(scoreColor),
+                minHeight: 5,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            '${score.toStringAsFixed(0)}',
+            style: GoogleFonts.spaceGrotesk(
+              color: scoreColor,
+              fontWeight: FontWeight.bold,
+              fontSize: 11,
+            ),
+          ),
         ],
       ),
     );

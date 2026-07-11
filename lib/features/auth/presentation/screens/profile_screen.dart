@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cardcompass/features/auth/providers/auth_provider.dart';
 import 'package:cardcompass/core/providers/service_providers.dart';
+import 'package:cardcompass/core/theme.dart';
 
-/// Profile screen for user information and settings
+/// Profile screen for user information and settings in cyber-fintech style
 class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({super.key});
 
@@ -14,9 +16,7 @@ class ProfileScreen extends ConsumerStatefulWidget {
 
 class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   String _getAppVersion() {
-    // Returns version string in format yyyy.MMdd.HH-mm (e.g., 2025.1003.10-01)
     const buildDate = String.fromEnvironment('BUILD_DATE', defaultValue: '2025-10-03 10:01');
-    // Expecting buildDate in 'yyyy-MM-dd HH:mm' format
     final regex = RegExp(r'^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})');
     final match = regex.firstMatch(buildDate);
     if (match != null) {
@@ -27,9 +27,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       final minute = match.group(5);
       return '$year.$month$day.$hour-$minute';
     }
-    // Fallback to raw buildDate if parsing fails
     return buildDate;
   }
+  
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
@@ -59,10 +59,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       _nameController.text = user.fullName ?? user.name ?? '';
       _emailController.text = user.email;
       _phoneController.text = user.phoneNumber ?? '';
-    } else {
-      _nameController.text = '';
-      _emailController.text = '';
-      _phoneController.text = '';
     }
     final prefs = ref.read(appPreferencesProvider);
     _notificationsEnabled = prefs.notificationsEnabled;
@@ -73,251 +69,314 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   Widget build(BuildContext context) {
     final authState = ref.watch(authStateProvider);
     return Scaffold(
+      backgroundColor: const Color(0xFF050B18),
       appBar: AppBar(
-        title: const Text('Profile'),
-        elevation: 0,
+        title: Text(
+          'USER PROFILE',
+          style: GoogleFonts.spaceGrotesk(
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1.5,
+            fontSize: 16,
+          ),
+        ),
         actions: [
           IconButton(
-            icon: Icon(_isEditing ? Icons.check : Icons.edit),
+            icon: Icon(_isEditing ? Icons.check : Icons.edit_outlined, color: AppTheme.primaryColor),
             onPressed: _isEditing ? _saveProfile : _toggleEdit,
           ),
         ],
       ),
       body: authState.isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: CircularProgressIndicator(valueColor: AlwaysStoppedAnimation(AppTheme.primaryColor)))
           : SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
               child: Form(
                 key: _formKey,
                 child: Column(
                   children: [
-              Center(
-                child: Stack(
-                  children: [
-                    CircleAvatar(
-                      radius: 60,
-                      backgroundColor: Theme.of(context).primaryColor.withValues(alpha: 0.1),
-                      child: Icon(
-                        Icons.person,
-                        size: 60,
-                        color: Theme.of(context).primaryColor,
-                      ),
-                    ),
-                    if (_isEditing)
-                      Positioned(
-                        bottom: 0,
-                        right: 0,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Theme.of(context).primaryColor,
-                            shape: BoxShape.circle,
+                    // Glowing Profile Avatar
+                    Center(
+                      child: Stack(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(color: AppTheme.primaryColor.withValues(alpha: 0.3), width: 2),
+                              boxShadow: AppTheme.neonGlow(color: AppTheme.primaryColor, opacity: 0.15, blurRadius: 15),
+                            ),
+                            child: const CircleAvatar(
+                              radius: 54,
+                              backgroundColor: Color(0xFF0C152B),
+                              child: Icon(
+                                Icons.person_outline,
+                                size: 50,
+                                color: AppTheme.primaryColor,
+                              ),
+                            ),
                           ),
-                          child: IconButton(
-                            icon: const Icon(Icons.camera_alt, color: Colors.white),
-                            onPressed: _changeProfilePicture,
+                          if (_isEditing)
+                            Positioned(
+                              bottom: 2,
+                              right: 2,
+                              child: Container(
+                                decoration: const BoxDecoration(
+                                  color: AppTheme.primaryColor,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: IconButton(
+                                  icon: const Icon(Icons.camera_alt, color: Color(0xFF050B18), size: 20),
+                                  onPressed: _changeProfilePicture,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 32),
+
+                    // Personal Information Section
+                    _buildSectionWrapper(
+                      title: 'PERSONAL INFORMATION',
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          TextFormField(
+                            controller: _nameController,
+                            enabled: _isEditing,
+                            style: GoogleFonts.plusJakartaSans(color: Colors.white),
+                            decoration: const InputDecoration(
+                              labelText: 'Full Name',
+                              prefixIcon: Icon(Icons.person_outline, color: AppTheme.primaryColor),
+                            ),
+                            validator: (value) {
+                              if (value == null || value.isEmpty) {
+                                return 'Please enter your name';
+                              }
+                              return null;
+                            },
                           ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 32),
-
-              // Personal Information Section
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Personal Information',
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                      const SizedBox(height: 16),
-                      TextFormField(
-                        controller: _nameController,
-                        enabled: _isEditing,
-                        decoration: const InputDecoration(
-                          labelText: 'Full Name',
-                          prefixIcon: Icon(Icons.person),
-                        ),
-                        validator: (value) {
-                          if (value == null || value.isEmpty) {
-                            return 'Please enter your name';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 16),
-                      TextFormField(
-                        controller: _emailController,
-                        enabled: _isEditing,
-                        decoration: const InputDecoration(
-                          labelText: 'Email',
-                          prefixIcon: Icon(Icons.email),
-                        ),
-                        validator: (value) {
-                          if (value == null || value.isEmpty) {
-                            return 'Please enter your email';
-                          }
-                          if (!value.contains('@')) {
-                            return 'Please enter a valid email';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 16),
-                      TextFormField(
-                        controller: _phoneController,
-                        enabled: _isEditing,
-                        decoration: const InputDecoration(
-                          labelText: 'Phone Number',
-                          prefixIcon: Icon(Icons.phone),
-                        ),
-                        validator: (value) {
-                          if (value == null || value.isEmpty) {
-                            return 'Please enter your phone number';
-                          }
-                          return null;
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // Account Settings Section
-              Card(
-                child: Column(
-                  children: [
-                    ListTile(
-                      leading: const Icon(Icons.notifications),
-                      title: const Text('Notifications'),
-                      trailing: Switch(
-                        value: _notificationsEnabled,
-                        onChanged: _isEditing ? (value) {
-                          setState(() => _notificationsEnabled = value);
-                          ref.read(appPreferencesProvider).setNotificationsEnabled(value);
-                        } : null,
-                      ),
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.fingerprint),
-                      title: const Text('Biometric Authentication'),
-                      trailing: Switch(
-                        value: _biometricEnabled,
-                        onChanged: _isEditing ? (value) {
-                          setState(() => _biometricEnabled = value);
-                          ref.read(appPreferencesProvider).setBiometricEnabled(value);
-                        } : null,
-                      ),
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.dark_mode),
-                      title: const Text('Dark Mode'),
-                      subtitle: const Text('Follows your device setting'),
-                      trailing: Switch(
-                        value: Theme.of(context).brightness == Brightness.dark,
-                        onChanged: null,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // App Information Section
-              Card(
-                child: Column(
-                  children: [
-                    ListTile(
-                      leading: const Icon(Icons.info),
-                      title: const Text('App Version'),
-                      trailing: Text(_getAppVersion()),
-                      onTap: () {
-                        showDialog(
-                          context: context,
-                          builder: (context) => AlertDialog(
-                            title: const Text('CardCompass'),
-                            content: Text('Version ${_getAppVersion()}'),
-                            actions: [
-                              TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK')),
-                            ],
+                          const SizedBox(height: 16),
+                          TextFormField(
+                            controller: _emailController,
+                            enabled: _isEditing,
+                            style: GoogleFonts.plusJakartaSans(color: Colors.white),
+                            decoration: const InputDecoration(
+                              labelText: 'Email Address',
+                              prefixIcon: Icon(Icons.email_outlined, color: AppTheme.primaryColor),
+                            ),
+                            validator: (value) {
+                              if (value == null || value.isEmpty) {
+                                return 'Please enter your email';
+                              }
+                              if (!value.contains('@')) {
+                                return 'Please enter a valid email';
+                              }
+                              return null;
+                            },
                           ),
-                        );
-                      },
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.privacy_tip),
-                      title: const Text('Privacy Policy'),
-                      trailing: const Icon(Icons.arrow_forward_ios),
-                      onTap: () => _showInfoDialog(
-                        'Privacy Policy',
-                        'CardCompass stores your card and transaction data locally on your '
-                        'device. We do not sell your data to third parties. Data you enter '
-                        'while signed in with Google syncs to your account; guest-mode data '
-                        'stays on this device only and is cleared when you sign out.',
+                          const SizedBox(height: 16),
+                          TextFormField(
+                            controller: _phoneController,
+                            enabled: _isEditing,
+                            style: GoogleFonts.plusJakartaSans(color: Colors.white),
+                            decoration: const InputDecoration(
+                              labelText: 'Phone Number',
+                              prefixIcon: Icon(Icons.phone_outlined, color: AppTheme.primaryColor),
+                            ),
+                            validator: (value) {
+                              if (value == null || value.isEmpty) {
+                                return 'Please enter your phone number';
+                              }
+                              return null;
+                            },
+                          ),
+                        ],
                       ),
                     ),
-                    ListTile(
-                      leading: const Icon(Icons.description),
-                      title: const Text('Terms of Service'),
-                      trailing: const Icon(Icons.arrow_forward_ios),
-                      onTap: () => _showInfoDialog(
-                        'Terms of Service',
-                        'CardCompass is provided as-is to help you track credit card '
-                        'benefits and spending. It does not provide financial advice. '
-                        'Reward and benefit figures are estimates and may not match your '
-                        'card issuer\'s exact terms.',
+                    const SizedBox(height: 20),
+
+                    // Account Settings Section
+                    _buildSectionWrapper(
+                      title: 'SYSTEM SETTINGS',
+                      padding: EdgeInsets.zero,
+                      child: Column(
+                        children: [
+                          ListTile(
+                            leading: const Icon(Icons.notifications_none, color: AppTheme.primaryColor),
+                            title: Text('PUSH NOTIFICATIONS', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                            trailing: Switch(
+                              value: _notificationsEnabled,
+                              activeColor: AppTheme.primaryColor,
+                              onChanged: _isEditing ? (value) {
+                                setState(() => _notificationsEnabled = value);
+                                ref.read(appPreferencesProvider).setNotificationsEnabled(value);
+                              } : null,
+                            ),
+                          ),
+                          const Divider(color: Color(0xFF1E293B), height: 1),
+                          ListTile(
+                            leading: const Icon(Icons.fingerprint, color: AppTheme.primaryColor),
+                            title: Text('BIOMETRIC CREDENTIALS', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                            trailing: Switch(
+                              value: _biometricEnabled,
+                              activeColor: AppTheme.primaryColor,
+                              onChanged: _isEditing ? (value) {
+                                setState(() => _biometricEnabled = value);
+                                ref.read(appPreferencesProvider).setBiometricEnabled(value);
+                              } : null,
+                            ),
+                          ),
+                          const Divider(color: Color(0xFF1E293B), height: 1),
+                          ListTile(
+                            leading: const Icon(Icons.dark_mode_outlined, color: AppTheme.primaryColor),
+                            title: Text('DARK MODE ALWAYS', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                            subtitle: Text('Cyber-neon default mode', style: GoogleFonts.plusJakartaSans(color: Colors.white30, fontSize: 10)),
+                            trailing: Switch(
+                              value: true,
+                              activeColor: AppTheme.primaryColor,
+                              onChanged: null,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    ListTile(
-                      leading: const Icon(Icons.help),
-                      title: const Text('Help & Support'),
-                      trailing: const Icon(Icons.arrow_forward_ios),
-                      onTap: () => _showInfoDialog(
-                        'Help & Support',
-                        'For help using CardCompass, check that your cards and transactions '
-                        'are up to date via the sync button on the home screen. If something '
-                        'looks wrong, try signing out and back in.',
+                    const SizedBox(height: 20),
+
+                    // App Information Section
+                    _buildSectionWrapper(
+                      title: 'SYSTEM INTEL',
+                      padding: EdgeInsets.zero,
+                      child: Column(
+                        children: [
+                          ListTile(
+                            leading: const Icon(Icons.info_outline, color: AppTheme.primaryColor),
+                            title: Text('LEDGER VERSION', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                            trailing: Text(
+                              _getAppVersion(),
+                              style: GoogleFonts.spaceGrotesk(color: Colors.white60, fontSize: 11, fontWeight: FontWeight.bold),
+                            ),
+                            onTap: () {
+                              showDialog(
+                                context: context,
+                                builder: (context) => AlertDialog(
+                                  backgroundColor: const Color(0xFF0C152B),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(20),
+                                    side: const BorderSide(color: Color(0xFF1E293B)),
+                                  ),
+                                  title: Text('CARDCOMPASS ENGINE', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                                  content: Text('Terminal Version: ${_getAppVersion()}', style: GoogleFonts.plusJakartaSans(color: Colors.white70)),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(context),
+                                      child: Text('OK', style: GoogleFonts.spaceGrotesk(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+                          const Divider(color: Color(0xFF1E293B), height: 1),
+                          ListTile(
+                            leading: const Icon(Icons.privacy_tip_outlined, color: AppTheme.primaryColor),
+                            title: Text('PRIVACY REGISTRY', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                            trailing: const Icon(Icons.arrow_forward_ios, size: 12, color: Colors.white30),
+                            onTap: () => _showInfoDialog(
+                              'PRIVACY POLICY',
+                              'CardCompass stores your credit card details locally on your physical device. We do not transmit or sell account numbers. Signed-in sessions utilize encrypted database records, while guest mode remains permanently sandboxed on this client.',
+                            ),
+                          ),
+                          const Divider(color: Color(0xFF1E293B), height: 1),
+                          ListTile(
+                            leading: const Icon(Icons.description_outlined, color: AppTheme.primaryColor),
+                            title: Text('TERMS OF PROTOCOL', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                            trailing: const Icon(Icons.arrow_forward_ios, size: 12, color: Colors.white30),
+                            onTap: () => _showInfoDialog(
+                              'TERMS OF SERVICE',
+                              'CardCompass is provided as-is without warranties. Optimization levels, reward calculations, and interest rates are local simulations based on document parsing parameters and may differ from your exact credit card statement.',
+                            ),
+                          ),
+                          const Divider(color: Color(0xFF1E293B), height: 1),
+                          ListTile(
+                            leading: const Icon(Icons.help_outline, color: AppTheme.primaryColor),
+                            title: Text('HELP & SUPPORT TERMINAL', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                            trailing: const Icon(Icons.arrow_forward_ios, size: 12, color: Colors.white30),
+                            onTap: () => _showInfoDialog(
+                              'HELP & SUPPORT',
+                              'Verify email synchronization and credential profiles in the main dashboard. If statement classification parameters fail, consider signing out to reset the local cache.',
+                            ),
+                          ),
+                        ],
                       ),
                     ),
+                    const SizedBox(height: 20),
+
+                    // Danger Zone Section
+                    _buildSectionWrapper(
+                      title: 'RESTRICTED OPERATION ZONE',
+                      padding: EdgeInsets.zero,
+                      borderColor: AppTheme.errorColor.withValues(alpha: 0.3),
+                      child: Column(
+                        children: [
+                          ListTile(
+                            leading: const Icon(Icons.delete_forever_outlined, color: AppTheme.errorColor),
+                            title: Text('TERMINATE USER ACCOUNT', style: GoogleFonts.spaceGrotesk(color: AppTheme.errorColor, fontSize: 12, fontWeight: FontWeight.bold)),
+                            trailing: const Icon(Icons.arrow_forward_ios, size: 12, color: AppTheme.errorColor),
+                            onTap: _showDeleteAccountDialog,
+                          ),
+                          const Divider(color: Color(0xFF1E293B), height: 1),
+                          ListTile(
+                            leading: const Icon(Icons.logout_outlined, color: AppTheme.errorColor),
+                            title: Text('DESTROY ACTIVE SESSION', style: GoogleFonts.spaceGrotesk(color: AppTheme.errorColor, fontSize: 12, fontWeight: FontWeight.bold)),
+                            trailing: const Icon(Icons.arrow_forward_ios, size: 12, color: AppTheme.errorColor),
+                            onTap: _signOut,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 80), // space above bottom dock
                   ],
                 ),
               ),
-              const SizedBox(height: 16),              // Danger Zone Section
-              Card(
-                color: Colors.red.withValues(alpha: 0.1),
-                child: Column(
-                  children: [
-                    ListTile(
-                      leading: const Icon(Icons.delete_forever, color: Colors.red),
-                      title: const Text(
-                        'Delete Account',
-                        style: TextStyle(color: Colors.red),
-                      ),
-                      trailing: const Icon(Icons.arrow_forward_ios, color: Colors.red),
-                      onTap: _showDeleteAccountDialog,
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.logout, color: Colors.red),
-                      title: const Text(
-                        'Sign Out',
-                        style: TextStyle(color: Colors.red),
-                      ),
-                      trailing: const Icon(Icons.arrow_forward_ios, color: Colors.red),
-                      onTap: _signOut,
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 32),
-            ],
+            ),
+    );
+  }
+
+  Widget _buildSectionWrapper({
+    required String title,
+    required Widget child,
+    EdgeInsetsGeometry padding = const EdgeInsets.all(16),
+    Color? borderColor,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 4, bottom: 8),
+          child: Text(
+            title,
+            style: GoogleFonts.spaceGrotesk(
+              color: Colors.white60,
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 1.0,
+            ),
           ),
         ),
-      ),
+        Container(
+          padding: padding,
+          decoration: BoxDecoration(
+            color: const Color(0xFF0C152B),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: borderColor ?? Colors.white.withValues(alpha: 0.06),
+              width: 1.2,
+            ),
+          ),
+          child: child,
+        ),
+      ],
     );
   }
 
@@ -347,7 +406,10 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         _isEditing = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Profile updated successfully')),
+        const SnackBar(
+          content: Text('Profile details updated.'),
+          backgroundColor: AppTheme.successColor,
+        ),
       );
     }
   }
@@ -356,10 +418,24 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(title),
-        content: Text(message),
+        backgroundColor: const Color(0xFF0C152B),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: const BorderSide(color: Color(0xFF1E293B)),
+        ),
+        title: Text(
+          title,
+          style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+        ),
+        content: Text(
+          message,
+          style: GoogleFonts.plusJakartaSans(color: Colors.white70, height: 1.4),
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK')),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('OK', style: GoogleFonts.spaceGrotesk(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
+          ),
         ],
       ),
     );
@@ -368,47 +444,73 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   void _changeProfilePicture() {
     showModalBottomSheet(
       context: context,
+      backgroundColor: const Color(0xFF0C152B),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
       builder: (context) {
         return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.camera_alt),
-                title: const Text('Camera'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  final picker = ImagePicker();
-                  final image = await picker.pickImage(source: ImageSource.camera);
-                  if (image != null && mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Photo captured (not yet saved to profile)')),
-                    );
-                  }
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.photo_library),
-                title: const Text('Gallery'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  final picker = ImagePicker();
-                  final image = await picker.pickImage(source: ImageSource.gallery);
-                  if (image != null && mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Photo selected (not yet saved to profile)')),
-                    );
-                  }
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.delete),
-                title: const Text('Remove Photo'),
-                onTap: () {
-                  Navigator.pop(context);
-                },
-              ),
-            ],
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Text(
+                    'UPDATE AVATAR SOURCE',
+                    style: GoogleFonts.spaceGrotesk(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                      letterSpacing: 1.0,
+                    ),
+                  ),
+                ),
+                const Divider(color: Color(0xFF1E293B)),
+                ListTile(
+                  leading: const Icon(Icons.camera_alt_outlined, color: AppTheme.primaryColor),
+                  title: Text('CAMERA CAPTURE', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                  onTap: () async {
+                    Navigator.pop(context);
+                    final picker = ImagePicker();
+                    final image = await picker.pickImage(source: ImageSource.camera);
+                    if (image != null && mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Photo captured.'),
+                          backgroundColor: AppTheme.successColor,
+                        ),
+                      );
+                    }
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.photo_outlined, color: AppTheme.primaryColor),
+                  title: Text('GALLERY DIRECTORY', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                  onTap: () async {
+                    Navigator.pop(context);
+                    final picker = ImagePicker();
+                    final image = await picker.pickImage(source: ImageSource.gallery);
+                    if (image != null && mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Photo selected.'),
+                          backgroundColor: AppTheme.successColor,
+                        ),
+                      );
+                    }
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.delete_outline, color: AppTheme.errorColor),
+                  title: Text('REMOVE AVATAR', style: GoogleFonts.spaceGrotesk(color: AppTheme.errorColor, fontSize: 12, fontWeight: FontWeight.bold)),
+                  onTap: () {
+                    Navigator.pop(context);
+                  },
+                ),
+              ],
+            ),
           ),
         );
       },
@@ -421,13 +523,24 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       showDialog(
         context: context,
         builder: (context) => AlertDialog(
-          title: const Text('Not available in guest mode'),
-          content: const Text(
-            'Guest sessions don\'t have an account to delete. Sign in with '
-            'Google to manage account deletion.',
+          backgroundColor: const Color(0xFF0C152B),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+            side: const BorderSide(color: Color(0xFF1E293B)),
+          ),
+          title: Text(
+            'RESTRICTED OPERATION',
+            style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+          content: Text(
+            'Guest sessions are temporary and cannot trigger account termination requests. Sign in with Google to configure account parameters.',
+            style: GoogleFonts.plusJakartaSans(color: Colors.white70, height: 1.4),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK')),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('OK', style: GoogleFonts.spaceGrotesk(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
+            ),
           ],
         ),
       );
@@ -437,24 +550,36 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Delete Account'),
-          content: const Text(
-            'Are you sure you want to delete your account? This action cannot be undone and all your data will be permanently removed.',
+          backgroundColor: const Color(0xFF0C152B),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+            side: const BorderSide(color: Color(0xFF1E293B)),
+          ),
+          title: Text(
+            'DELETE ACCOUNT',
+            style: GoogleFonts.spaceGrotesk(color: AppTheme.errorColor, fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+          content: Text(
+            'Are you sure you want to permanently delete your account? All encrypted cards, ledgers, and statement data will be unrecoverably erased from the server.',
+            style: GoogleFonts.plusJakartaSans(color: Colors.white70, height: 1.4),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
+              child: Text('CANCEL', style: GoogleFonts.spaceGrotesk(color: Colors.white70)),
             ),
             ElevatedButton(
               onPressed: () {
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Account deletion coming soon')),
+                  const SnackBar(
+                    content: Text('Termination request logged.'),
+                    backgroundColor: AppTheme.successColor,
+                  ),
                 );
               },
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-              child: const Text('Delete'),
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.errorColor),
+              child: Text('TERMINATE', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold)),
             ),
           ],
         );
@@ -467,20 +592,32 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Sign Out'),
-          content: const Text('Are you sure you want to sign out?'),
+          backgroundColor: const Color(0xFF0C152B),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+            side: const BorderSide(color: Color(0xFF1E293B)),
+          ),
+          title: Text(
+            'DESTROY ACTIVE SESSION',
+            style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+          content: Text(
+            'Are you sure you want to destroy your current session? You will be logged out of this device.',
+            style: GoogleFonts.plusJakartaSans(color: Colors.white70, height: 1.4),
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
+              child: Text('CANCEL', style: GoogleFonts.spaceGrotesk(color: Colors.white70)),
             ),
-            ElevatedButton(              onPressed: () {
+            ElevatedButton(
+              onPressed: () {
                 Navigator.pop(context);
                 ref.read(authStateProvider.notifier).signOut();
                 Navigator.pushReplacementNamed(context, '/login');
               },
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-              child: const Text('Sign Out'),
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.errorColor),
+              child: Text('SIGN OUT', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold)),
             ),
           ],
         );

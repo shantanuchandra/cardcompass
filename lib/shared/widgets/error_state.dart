@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:cardcompass/core/theme.dart';
 
 class ErrorState extends StatelessWidget {
   final String error;
@@ -19,39 +21,64 @@ class ErrorState extends StatelessWidget {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              icon ?? Icons.error_outline,
-              size: 64,
-              color: Colors.grey[400],
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Something went wrong',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.bold,
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: const Color(0xFF0C152B),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: AppTheme.errorColor.withValues(alpha: 0.25), width: 1.2),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon ?? Icons.warning_amber_outlined,
+                size: 48,
+                color: AppTheme.errorColor,
               ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              error,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Colors.grey[600],
+              const SizedBox(height: 16),
+              Text(
+                'SYSTEM DISCREPANCY',
+                style: GoogleFonts.spaceGrotesk(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                  letterSpacing: 1.0,
+                  color: AppTheme.errorColor,
+                ),
+                textAlign: TextAlign.center,
               ),
-              textAlign: TextAlign.center,
-            ),
-            if (onRetry != null) ...[
-              const SizedBox(height: 24),
-              ElevatedButton.icon(
-                onPressed: onRetry,
-                icon: const Icon(Icons.refresh),
-                label: Text(retryText ?? 'Retry'),
+              const SizedBox(height: 8),
+              Text(
+                error,
+                style: GoogleFonts.plusJakartaSans(
+                  color: Colors.white70,
+                  fontSize: 12,
+                ),
+                textAlign: TextAlign.center,
               ),
+              if (onRetry != null) ...[
+                const SizedBox(height: 20),
+                OutlinedButton.icon(
+                  onPressed: onRetry,
+                  icon: const Icon(Icons.refresh, size: 14, color: AppTheme.errorColor),
+                  label: Text(
+                    (retryText ?? 'RETRY CONNECTION').toUpperCase(),
+                    style: GoogleFonts.spaceGrotesk(
+                      color: AppTheme.errorColor,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: AppTheme.errorColor, width: 1.2),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  ),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );

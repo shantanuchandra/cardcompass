@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../../../../core/theme.dart';
 import '../../../../features/dashboard/widgets/financial_insights_widget.dart';
 import '../../../auth/providers/auth_provider.dart';
@@ -36,14 +37,13 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
     });
     
     try {
-      // Load data only once
       await Future.wait([
         ref.read(cardsProvider.notifier).loadUserCards(authState.user!.id),
         ref.read(transactionsProvider.notifier).loadUserTransactions(authState.user!.id),
       ]);
-        _hasLoadedData = true;
+      _hasLoadedData = true;
     } catch (e) {
-      // Handle error silently for production
+      // Handle error silently
     } finally {
       if (mounted) {
         setState(() {
@@ -57,69 +57,99 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
   Widget build(BuildContext context) {
     final authState = ref.watch(authStateProvider);
     final cards = ref.watch(cardsProvider);
-    final allTransactions = ref.watch(transactionsProvider);    // Filter out suspicious transactions (amounts over ₹1,00,000)
+    final allTransactions = ref.watch(transactionsProvider);
     final transactions = allTransactions.where((t) => t.amount <= 100000).toList();
 
     return Scaffold(
+      backgroundColor: const Color(0xFF050B18),
       appBar: AppBar(
-        title: const Text('Analytics'),
+        title: Text(
+          'ANALYTICS',
+          style: GoogleFonts.spaceGrotesk(
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1.5,
+            fontSize: 18,
+          ),
+        ),
         actions: [
           IconButton(
             onPressed: () {
               showDialog(
                 context: context,
                 builder: (context) => AlertDialog(
-                  title: const Text('Export Analytics'),
-                  content: const Text('CSV/PDF export isn\'t available yet in this build.'),
+                  backgroundColor: const Color(0xFF0C152B),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                    side: const BorderSide(color: Color(0xFF1E293B)),
+                  ),
+                  title: Text(
+                    'EXPORT INTEL',
+                    style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                  content: Text(
+                    'CSV/PDF ledger download isn\'t available in guest mode.',
+                    style: GoogleFonts.plusJakartaSans(color: Colors.white70),
+                  ),
                   actions: [
-                    TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK')),
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: Text('OK', style: GoogleFonts.spaceGrotesk(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
+                    ),
                   ],
                 ),
               );
             },
-            icon: const Icon(Icons.file_download),
+            icon: const Icon(Icons.file_download, color: AppTheme.primaryColor),
           ),
         ],
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 100), // padding for floating dock
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Header Section
             Text(
-              'Financial Analytics',
-              style: AppTextStyles.heading2,
+              'FINANCIAL INTELLIGENCE',
+              style: GoogleFonts.spaceGrotesk(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 22,
+                letterSpacing: 0.5,
+              ),
             ),
             const SizedBox(height: 8),
             Text(
-              'Comprehensive insights into your spending patterns and financial health',
-              style: AppTextStyles.body1.copyWith(
-                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
+              'Real-time deep analysis of reward utilization and billing habits.',
+              style: GoogleFonts.plusJakartaSans(
+                color: Colors.white60,
+                fontSize: 13,
               ),
             ),
             const SizedBox(height: 24),
-              // Analytics Content
+            
+            // Analytics Content
             Builder(
               builder: (context) {
-                // Show loading indicator
                 if (_isLoading) {
-                  return const Center(
-                    child: CircularProgressIndicator(),
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 80),
+                    child: Center(
+                      child: CircularProgressIndicator(
+                        valueColor: AlwaysStoppedAnimation(AppTheme.primaryColor),
+                      ),
+                    ),
                   );
                 }
                 
-                // Check if user is authenticated
                 if (!authState.isAuthenticated || authState.user == null) {
                   return _buildAuthRequiredState(context);
                 }
                 
-                // Check if we have data
                 if (cards.isEmpty && transactions.isEmpty) {
                   return _buildEmptyDataState(context);
                 }
                 
-                // Show comprehensive analytics with filtered data
                 return FinancialInsightsWidget(
                   userId: authState.user!.id,
                   transactions: transactions,
@@ -132,28 +162,30 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
       ),
     );
   }
+
   Widget _buildAuthRequiredState(BuildContext context) {
-    return Center(
+    return Container(
+      padding: const EdgeInsets.all(28),
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: const Color(0xFF0C152B),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+      ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            Icons.login,
-            size: 64,
-            color: Theme.of(context).colorScheme.outline,
-          ),
+          const Icon(Icons.lock_outline, size: 48, color: AppTheme.accentColor),
           const SizedBox(height: 16),
           Text(
-            'Login Required',
-            style: AppTextStyles.heading3,
+            'ACCESS RESTRICTED',
+            style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16, letterSpacing: 1.0),
           ),
           const SizedBox(height: 8),
           Text(
-            'Please log in to view your financial analytics',
-            style: AppTextStyles.body1.copyWith(
-              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
-            ),
+            'Please authenticate your session to decrypt and view financial analytics.',
             textAlign: TextAlign.center,
+            style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 12),
           ),
         ],
       ),
@@ -161,27 +193,28 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
   }
 
   Widget _buildEmptyDataState(BuildContext context) {
-    return Center(
+    return Container(
+      padding: const EdgeInsets.all(28),
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: const Color(0xFF0C152B),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+      ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            Icons.analytics,
-            size: 64,
-            color: Theme.of(context).colorScheme.outline,
-          ),
+          const Icon(Icons.analytics_outlined, size: 48, color: Colors.white24),
           const SizedBox(height: 16),
           Text(
-            'No Data Available',
-            style: AppTextStyles.heading3,
+            'NO DATA DECRYPTED',
+            style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16, letterSpacing: 1.0),
           ),
           const SizedBox(height: 8),
           Text(
-            'Add some credit cards and transactions to see your analytics',
-            style: AppTextStyles.body1.copyWith(
-              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
-            ),
+            'Add credit cards and import statements to compile financial intelligence graphs.',
             textAlign: TextAlign.center,
+            style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 12),
           ),
         ],
       ),

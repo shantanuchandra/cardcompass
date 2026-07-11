@@ -216,43 +216,81 @@ class _HomeTabState extends ConsumerState<HomeTab> {
         label: const Text('Add Card'),
       ),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: AnimationLimiter(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: AnimationConfiguration.toStaggeredList(
-                duration: const Duration(milliseconds: 375),
-                childAnimationBuilder: (widget) => SlideAnimation(
-                  verticalOffset: 50.0,
-                  child: FadeInAnimation(
-                    child: widget,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final isWide = constraints.maxWidth > 900;
+            if (isWide) {
+              return SingleChildScrollView(
+                padding: const EdgeInsets.all(24),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildQuickStatsSection(context, ref),
+                          const SizedBox(height: 28),
+                          _buildMyCardsSection(context, ref),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 28),
+                    Expanded(
+                      flex: 2,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildRecentTransactionsSection(context, ref),
+                          const SizedBox(height: 28),
+                          _buildRecommendationsSection(context),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }
+            return SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: AnimationLimiter(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: AnimationConfiguration.toStaggeredList(
+                    duration: const Duration(milliseconds: 375),
+                    childAnimationBuilder: (widget) => SlideAnimation(
+                      verticalOffset: 50.0,
+                      child: FadeInAnimation(
+                        child: widget,
+                      ),
+                    ),
+                    children: [
+                      // Quick Stats Section
+                      _buildQuickStatsSection(context, ref),
+
+                      const SizedBox(height: 24),
+
+                      // My Cards Section
+                      _buildMyCardsSection(context, ref),
+
+                      const SizedBox(height: 24),
+
+                      // Recent Transactions Section
+                      _buildRecentTransactionsSection(context, ref),
+
+                      const SizedBox(height: 24),
+
+                      // Recommendations Section
+                      _buildRecommendationsSection(context),
+
+                      const SizedBox(height: 100), // Space for FAB
+                    ],
                   ),
                 ),
-                children: [
-                  // Quick Stats Section
-                  _buildQuickStatsSection(context, ref),
-
-                  const SizedBox(height: 24),
-
-                  // My Cards Section
-                  _buildMyCardsSection(context, ref),
-
-                  const SizedBox(height: 24),
-
-                  // Recent Transactions Section
-                  _buildRecentTransactionsSection(context, ref),
-
-                  const SizedBox(height: 24),
-
-                  // Recommendations Section
-                  _buildRecommendationsSection(context),
-
-                  const SizedBox(height: 100), // Space for FAB
-                ],
               ),
-            ),
-          ),
+            );
+          },
         ),
       ),
     );
