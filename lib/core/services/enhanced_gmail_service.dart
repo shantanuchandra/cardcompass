@@ -981,65 +981,98 @@ Product name:'''
     );
   }  /// Build Gmail search query with enhanced filtering
   String _buildGmailSearchQuery(BankEmailQuery bankQuery, DateTime? startDate, DateTime? endDate) {
-    final queryParts = <String>[];
+    // ── Date range ────────────────────────────────────────────────────────────
+    final searchStartDate = startDate ?? DateTime.now().subtract(const Duration(days: 30));
+    final searchEndDate   = endDate   ?? DateTime.now();
+    final afterClause  = 'after:${searchStartDate.year}/${searchStartDate.month}/${searchStartDate.day}';
+    final beforeClause = 'before:${searchEndDate.year}/${searchEndDate.month}/${searchEndDate.day}';
 
-    // Add domain-based email filtering with OR logic (optional override)
-    if (bankQuery.fromEmails.isNotEmpty) {
-      final fromPart = bankQuery.fromEmails.map((domain) => 'from:$domain').join(' OR ');
-      queryParts.add('($fromPart)');
-    } else {
-      // Broad Indian bank sender domain filter — catches almost all major banks
-      const bankSenderFilter =
-          '(from:hdfcbank.com OR from:netbanking.hdfc.com OR from:alerts.hdfcbank.com OR '
-          'from:icicibank.com OR from:icard.com OR from:alerts.icicibank.com OR '
-          'from:sbicard.com OR from:cards.sbi.co.in OR '
-          'from:axisbank.com OR from:axisbank.net OR '
-          'from:kotak.com OR from:kotakbank.com OR '
-          'from:indusind.com OR from:yesbank.in OR from:rbl.co.in OR '
-          'from:citi.com OR from:citibank.co.in OR '
-          'from:idfc.com OR from:idfcfirstbank.com OR '
-          'from:amexnetwork.com OR from:americanexpress.com)';
-      queryParts.add(bankSenderFilter);
-    }
+    // ── Sender domains ────────────────────────────────────────────────────────
+    // Covers all known sending domains for major Indian banks.
+    // NOTE: Indian bank emails use many different subdomains / ESPs.
+    const fromDomains = [
+      // HDFC Bank — multiple known domains / ESPs
+      'hdfcbank.com', 'netbanking.hdfc.com', 'alerts.hdfcbank.com',
+      'hdfcbankinfoline.com', 'hdfcbankcard.com', 'credit.hdfcbank.com',
+      // ICICI Bank
+      'icicibank.com', 'icici.com', 'icard.com', 'alerts.icicibank.com',
+      'icicibank.net',
+      // SBI Card
+      'sbicard.com', 'cards.sbi.co.in', 'sbi.co.in',
+      // Axis Bank
+      'axisbank.com', 'axisbank.net', 'axisbank.in',
+      // Kotak Mahindra
+      'kotak.com', 'kotakbank.com', 'kotak811.com',
+      // IndusInd Bank
+      'indusind.com', 'indusindbank.com',
+      // Yes Bank
+      'yesbank.in', 'yesbank.com',
+      // RBL Bank
+      'rbl.co.in', 'rblbank.com',
+      // Citi / Citi India
+      'citi.com', 'citibank.co.in', 'citibankonline.com',
+      // IDFC First Bank
+      'idfc.com', 'idfcfirstbank.com', 'idfcbank.com',
+      // Amex
+      'amexnetwork.com', 'americanexpress.com', 'aexp.com',
+      // Standard Chartered
+      'sc.com', 'standardchartered.com',
+      // HSBC
+      'hsbc.co.in', 'hsbc.com',
+      // AU Small Finance
+      'aubank.in',
+      // Bob Financial (Bank of Baroda cards)
+      'bobfinancial.com',
+    ];
 
-    // PDF attachment filtering
-    queryParts.add('has:attachment');
-    queryParts.add('filename:pdf');
+    final fromPart = bankQuery.fromEmails.isNotEmpty
+        ? bankQuery.fromEmails.map((d) => 'from:$d').join(' OR ')
+        : fromDomains.map((d) => 'from:$d').join(' OR ');
 
-    // Comprehensive subject keyword matching — covers most Indian bank email formats
+    // ── Subject keywords ──────────────────────────────────────────────────────
+    // Cast a wide net — different banks use very different subject formats.
     const subjectKeywords = [
+      // Generic statement phrases
       'credit card statement',
       'card statement',
+      'account statement',
       'e-statement',
       'eStatement',
       'billing statement',
-      'credit card',
-      'statement of account',
       'monthly statement',
+      'statement of account',
+      'your statement',
+      // Bank-specific common phrases
+      'credit card',         // HDFC: "Your HDFC Bank Credit Card Statement"
+      'card outstanding',    // IndusInd: "your card outstanding"
+      'card dues',
     ];
     final subjectPart = subjectKeywords.map((kw) => 'subject:"$kw"').join(' OR ');
-    queryParts.add('($subjectPart)');
 
-    // Exclude spam and social tabs
-    queryParts.add('-label:spam');
-    queryParts.add('-label:promotions');
-    queryParts.add('-label:social');
+    // ── Core query logic ──────────────────────────────────────────────────────
+    // CRITICAL: Use OR between sender and subject so an email is fetched if EITHER:
+    //   (a) it comes from a known bank domain, OR
+    //   (b) its subject contains a statement keyword
+    // Previously both had to match (AND), silently dropping many real statements.
+    //
+    // Also REMOVED: -label:promotions and -label:social
+    // Indian bank statement emails routinely land in Promotions — excluding
+    // that label was hiding the vast majority of HDFC/ICICI/Axis emails.
+    final query = [
+      'has:attachment',
+      'filename:pdf',
+      '(($fromPart) OR ($subjectPart))',
+      '-label:spam',
+      'size:30720',         // > 30 KB — filters out tiny non-statement PDFs
+      afterClause,
+      beforeClause,
+    ].join(' ');
 
-    // Size filter — statements are typically larger than 30KB
-    queryParts.add('size:30720'); // 30KB minimum (relaxed from 50KB for smaller SBI statements)
-
-    // Date range
-    final searchStartDate = startDate ?? DateTime.now().subtract(const Duration(days: 30));
-    final searchEndDate = endDate ?? DateTime.now();
-
-    queryParts.add('after:${searchStartDate.year}/${searchStartDate.month}/${searchStartDate.day}');
-    queryParts.add('before:${searchEndDate.year}/${searchEndDate.month}/${searchEndDate.day}');
-
-    final finalQuery = queryParts.join(' ');
-    print('🔍 Gmail search query: $finalQuery');
-
-    return finalQuery;
+    print('🔍 Gmail search query: $query');
+    return query;
   }
+
+
 
   /// Extract email body content
   String _extractEmailBody(gmail.MessagePart? payload) {
