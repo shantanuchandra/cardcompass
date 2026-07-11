@@ -3,6 +3,7 @@ import 'package:http/http.dart' as http;
 import '../config/ai_config.dart';
 import 'package:uuid/uuid.dart';
 import 'card_normalizer_service.dart';
+import 'pruning_audit_service.dart';
 
 /// Gemini AI Transaction Parser service
 class GeminiTransactionParser {
@@ -57,7 +58,7 @@ JSON OUTPUT (return ONLY this object, no markdown or code blocks):
 
 ANALYZE THE STATEMENT:''';
       
-      final cleanedText = _pruneAndCleanText(pdfText);
+      final cleanedText = _pruneAndCleanText(pdfText, bankName);
       final requestBody = {
         'contents': [{
           'parts': [{
@@ -207,7 +208,7 @@ JSON OUTPUT (return ONLY this array, no markdown blocks):
 
 ANALYZE THIS STATEMENT:''';
       
-      final cleanedText = _pruneAndCleanText(pdfText);
+      final cleanedText = _pruneAndCleanText(pdfText, bankName);
       final requestBody = {
         'contents': [{
           'parts': [{
@@ -760,7 +761,7 @@ CONTENT TO ANALYZE:
   }
 
 
-  static String _pruneAndCleanText(String text) {
+  static String _pruneAndCleanText(String text, [String? bankName]) {
     if (text.isEmpty) return text;
     
     // 1. Clean whitespace
@@ -797,7 +798,16 @@ CONTENT TO ANALYZE:
     // Truncate only if we keep at least 3500 chars (safe threshold for transactions)
     if (bestCutIndex > 3500) {
       print('✂️ Pruning PDF statement text: reduced from ${cleaned.length} to $bestCutIndex characters');
+      final original = cleaned;
       cleaned = cleaned.substring(0, bestCutIndex);
+      
+      // Log the pruning event to the audit service (async)
+      PruningAuditService().logPruning(
+        bankName: bankName ?? 'Unknown Bank',
+        cardVariant: bankName ?? 'Unknown Card',
+        originalText: original,
+        prunedText: cleaned,
+      );
     }
     
     return cleaned;
@@ -866,7 +876,6 @@ CONTENT TO ANALYZE:
   }
 
   static String _extractJsonPayload(String text) {
-
     text = text.trim();
     
     // Find the first bracket/brace
@@ -874,21 +883,59 @@ CONTENT TO ANALYZE:
     final firstBrace = text.indexOf('{');
     
     int startIdx = -1;
-    int endIdx = -1;
     
     if (firstBracket != -1 && (firstBrace == -1 || firstBracket < firstBrace)) {
       startIdx = firstBracket;
-      endIdx = text.lastIndexOf(']');
     } else if (firstBrace != -1) {
       startIdx = firstBrace;
-      endIdx = text.lastIndexOf('}');
     }
     
-    if (startIdx != -1 && endIdx != -1 && endIdx > startIdx) {
-      return text.substring(startIdx, endIdx + 1);
+    if (startIdx != -1) {
+      text = text.substring(startIdx);
     }
     
+    // Heal the JSON payload to recover truncated arrays or objects
+    text = _healJsonPayload(text);
+    return text;
+  }
+
+  static String _healJsonPayload(String text) {
+    text = text.trim();
+    if (text.isEmpty) return text;
+
+    if (text.startsWith('[')) {
+      if (!text.endsWith(']')) {
+        // If it doesn't end with a closing array bracket, it was truncated.
+        // Find the last complete object in the array
+        final lastBrace = text.lastIndexOf('}');
+        if (lastBrace != -1) {
+          text = text.substring(0, lastBrace + 1);
+        }
+        // If there's a trailing comma (like between objects), remove it
+        text = text.trim();
+        if (text.endsWith(',')) {
+          text = text.substring(0, text.length - 1).trim();
+        }
+        text += ']';
+        print('🩹 Healed JSON array: recovered up to last complete object and appended "]"');
+      }
+    } else if (text.startsWith('{')) {
+      if (!text.endsWith('}')) {
+        // For a JSON object, if it's incomplete, close open braces
+        int openBraces = 0;
+        int closeBraces = 0;
+        for (int i = 0; i < text.length; i++) {
+          if (text[i] == '{') openBraces++;
+          if (text[i] == '}') closeBraces++;
+        }
+        if (openBraces > closeBraces) {
+          text += '}' * (openBraces - closeBraces);
+        }
+        print('🩹 Healed JSON object: closed open braces');
+      }
+    }
     return text;
   }
 }
+
 
