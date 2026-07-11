@@ -1,11 +1,13 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_riverpod/legacy.dart';
+import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:cardcompass/core/services/advanced_benefit_calculation_service.dart';
 
+part 'enhanced_transaction_advisor_provider.g.dart';
+
 /// Provider for Advanced Benefit Calculation Service
-final advancedBenefitCalculationServiceProvider = Provider<AdvancedBenefitCalculationService>((ref) {
+@riverpod
+AdvancedBenefitCalculationService advancedBenefitCalculationService(Ref ref) {
   return AdvancedBenefitCalculationService();
-});
+}
 
 /// State class for Enhanced Transaction Advisor
 class EnhancedTransactionAdvisorState {
@@ -49,10 +51,15 @@ class EnhancedTransactionAdvisorState {
 }
 
 /// ViewModel for Enhanced Transaction Advisor
-class EnhancedTransactionAdvisorViewModel extends StateNotifier<EnhancedTransactionAdvisorState> {
-  final AdvancedBenefitCalculationService _benefitService;
+@riverpod
+class EnhancedTransactionAdvisorViewModel extends _$EnhancedTransactionAdvisorViewModel {
+  late final AdvancedBenefitCalculationService _benefitService;
 
-  EnhancedTransactionAdvisorViewModel(this._benefitService) : super(const EnhancedTransactionAdvisorState());
+  @override
+  EnhancedTransactionAdvisorState build() {
+    _benefitService = ref.watch(advancedBenefitCalculationServiceProvider);
+    return const EnhancedTransactionAdvisorState();
+  }
 
   /// Calculate best card for transaction
   Future<void> calculateBestCard({
@@ -144,10 +151,3 @@ class EnhancedTransactionAdvisorViewModel extends StateNotifier<EnhancedTransact
     state = state.copyWith(recommendation: null);
   }
 }
-
-/// Provider for Enhanced Transaction Advisor ViewModel
-final enhancedTransactionAdvisorViewModelProvider = 
-    StateNotifierProvider<EnhancedTransactionAdvisorViewModel, EnhancedTransactionAdvisorState>((ref) {
-  final benefitService = ref.read(advancedBenefitCalculationServiceProvider);
-  return EnhancedTransactionAdvisorViewModel(benefitService);
-});
