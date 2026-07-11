@@ -503,6 +503,15 @@ class _HomeTabState extends ConsumerState<HomeTab> {
       context: context,
       barrierColor: Colors.black54,
       builder: (BuildContext dialogContext) {
+        // Ollama parameters
+        var localProvider = AIConfig.activeProvider;
+        final ollamaUrlController = TextEditingController(text: AIConfig.ollamaUrl);
+        final ollamaModelController = TextEditingController(text: AIConfig.ollamaModel);
+
+        // Groq parameters
+        final groqApiKeyController = TextEditingController(text: AIConfig.groqApiKey);
+        final groqModelController = TextEditingController(text: AIConfig.groqModel);
+
         return StatefulBuilder(
           builder: (context, setState) {
             // Snap labels for "Look back" slider
@@ -514,16 +523,6 @@ class _HomeTabState extends ConsumerState<HomeTab> {
             // Snap labels for Max Emails slider
             const List<int> emailSnaps = [5, 10, 20, 30, 50];
             final emailsLabel = '$_maxEmails emails';
-            // Ollama parameters
-            var localProvider = AIConfig.activeProvider;
-
-            final ollamaUrlController = TextEditingController(text: AIConfig.ollamaUrl);
-            final ollamaModelController = TextEditingController(text: AIConfig.ollamaModel);
-
-            // Groq parameters
-            final groqApiKeyController = TextEditingController(text: AIConfig.groqApiKey);
-            final groqModelController = TextEditingController(text: AIConfig.groqModel);
-
 
             return Dialog(
               backgroundColor: Colors.transparent,
