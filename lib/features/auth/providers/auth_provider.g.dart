@@ -61,7 +61,7 @@ final class AuthNotifierProvider
           argument: null,
           retry: null,
           name: r'authProvider',
-          isAutoDispose: true,
+          isAutoDispose: false,
           dependencies: null,
           $allTransitiveDependencies: null,
         );
@@ -82,7 +82,7 @@ final class AuthNotifierProvider
   }
 }
 
-String _$authNotifierHash() => r'10fd9c986eefbee64a2fb9686ed8d06c28c069c6';
+String _$authNotifierHash() => r'a48cfc1185ada3a74c28205fa369ba9091e84a42';
 
 abstract class _$AuthNotifier extends $Notifier<AuthState> {
   AuthState build();

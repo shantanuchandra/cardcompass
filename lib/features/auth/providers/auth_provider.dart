@@ -14,89 +14,89 @@ const String _kGoogleProviderTokenKey = 'google_provider_token';
 @riverpod
 AuthService authService(Ref ref) => AuthService();
 
-@riverpod
+@Riverpod(keepAlive: true)
 class AuthNotifier extends _$AuthNotifier {
-  late final AuthService _authService;
+  AuthService? _authService;
+  // _disposed is set synchronously inside onDispose — no race window
+  bool _disposed = false;
+
+  /// Safe state setter: guards against the race where the notifier is
+  /// disposed between a ref.mounted check and the actual state assignment.
+  void _safeSetState(AuthState newState) {
+    if (_disposed) return;
+    try {
+      state = newState;
+    } catch (_) {
+      // Swallow: notifier was disposed in the tiny gap after _disposed check
+    }
+  }
 
   @override
   AuthState build() {
-    _authService = ref.watch(authServiceProvider);
+    // Use read (not watch) so authServiceProvider changes never trigger a
+    // rebuild of authNotifierProvider, which would dispose this notifier.
+    _authService = ref.read(authServiceProvider);
+    ref.onDispose(() => _disposed = true);
     Future.microtask(() => _checkAuthState());
     return const AuthState.initial();
   }
 
   Future<void> _checkAuthState() async {
     print('🔑 AuthNotifier: _checkAuthState started');
-    // Guard: provider may have already been rebuilt by the time we start
-    if (!ref.mounted) return;
-    state = const AuthState.loading();
+    if (_disposed) return;
+    _safeSetState(const AuthState.loading());
     try {
       print('🔑 AuthNotifier: Fetching current user...');
-      final user = await _authService.getCurrentUser()
+      final user = await _authService!.getCurrentUser()
           .timeout(const Duration(seconds: 6), onTimeout: () {
         print('🔑 AuthNotifier: getCurrentUser timed out, treating as unauthenticated');
         return null;
       });
       print('🔑 AuthNotifier: Current user: $user');
-      // Guard: provider may have been rebuilt while waiting for the auth check
-      if (!ref.mounted) return;
-      if (user != null) {
-        state = AuthState.authenticated(user);
-      } else {
-        state = const AuthState.unauthenticated();
-      }
+      if (_disposed) return;
+      _safeSetState(user != null
+          ? AuthState.authenticated(user)
+          : const AuthState.unauthenticated());
     } catch (e, stack) {
       print('🔑 AuthNotifier: Error in _checkAuthState: $e\n$stack');
-      if (!ref.mounted) return;
-      // Treat errors as unauthenticated so the user can still reach the login screen
-      state = const AuthState.unauthenticated();
+      _safeSetState(const AuthState.unauthenticated());
     }
   }
 
   Future<void> signInWithGoogle() async {
-    if (!ref.mounted) return;
-    state = const AuthState.loading();
+    _safeSetState(const AuthState.loading());
     try {
-      final user = await _authService.signInWithGoogle();
-      if (!ref.mounted) return;
-      if (user != null) {
-        state = AuthState.authenticated(user);
-      } else {
-        state = const AuthState.unauthenticated();
-      }
+      final user = await _authService!.signInWithGoogle();
+      if (_disposed) return;
+      _safeSetState(user != null
+          ? AuthState.authenticated(user)
+          : const AuthState.unauthenticated());
     } catch (e) {
-      if (!ref.mounted) return;
-      state = AuthState.error(e.toString());
+      _safeSetState(AuthState.error(e.toString()));
     }
   }
 
   Future<void> signInAsGuest() async {
-    // For demo purposes, create a guest user
-    final guestUser = User(
+    _safeSetState(AuthState.authenticated(User(
       id: 'guest',
       email: 'guest@cardcompass.com',
       name: 'Guest User',
       createdAt: DateTime.now(),
       lastLoginAt: DateTime.now(),
-    );
-    if (!ref.mounted) return;
-    state = AuthState.authenticated(guestUser);
+    )));
   }
 
   Future<void> signOut() async {
     final isGuest = state.user?.id == 'guest';
     if (isGuest) {
-      if (!ref.mounted) return;
-      state = const AuthState.unauthenticated();
+      _safeSetState(const AuthState.unauthenticated());
       return;
     }
     try {
-      await _authService.signOut();
-      if (!ref.mounted) return;
-      state = const AuthState.unauthenticated();
+      await _authService!.signOut();
+      _safeSetState(const AuthState.unauthenticated());
     } catch (e) {
-      if (!ref.mounted) return;
-      state = AuthState.error(e.toString());
+      _safeSetState(AuthState.error(e.toString()));
     }
   }
 

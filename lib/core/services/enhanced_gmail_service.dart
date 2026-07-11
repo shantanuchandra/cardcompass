@@ -860,7 +860,7 @@ Product name:'''
           !isCreditCardEmail;
       if (isSavingsStatement) {
         print('⏭️  Skipping savings/account statement (not a credit card): "$emailSubject"');
-        continue;
+        return null;
       }
 
       // Use Gemini to detect the exact card variant
