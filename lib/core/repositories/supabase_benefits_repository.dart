@@ -1,5 +1,6 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cardcompass/shared/models/benefit.dart';
+import 'package:cardcompass/core/repositories/supabase_helpers.dart';
 
 /// Repository for managing benefits data in Supabase
 class SupabaseBenefitsRepository {
@@ -26,7 +27,7 @@ class SupabaseBenefitsRepository {
           .eq('is_active', true)
           .order('benefit_type');
 
-      final benefits = (response as List)
+      final benefits = asList(response)
           .map((json) => Benefit.fromJson(json))
           .toList();
       
@@ -48,7 +49,7 @@ class SupabaseBenefitsRepository {
           .inFilter('applicable_categories', categories)
           .order('benefit_type');
 
-      return (response as List)
+      return asList(response)
           .map((json) => Benefit.fromJson(json))
           .toList();
     } catch (e) {
@@ -68,7 +69,7 @@ class SupabaseBenefitsRepository {
           .eq('catalog_card_id', cardId)
           .eq('is_active', true);
 
-      return (response as List)
+      return asList(response)
           .map((json) => CardBenefit.fromJson(json))
           .toList();
     } catch (e) {
@@ -102,8 +103,8 @@ class SupabaseBenefitsRepository {
 
       final List<CardBenefit> allBenefits = [];
       
-      for (final userCardJson in response as List) {
-        final cardBenefits = userCardJson['card_catalog']['card_benefits'] as List;
+      for (final userCardJson in asList(response)) {
+        final cardBenefits = asListDynamic(userCardJson['card_catalog']['card_benefits']);
         for (final benefitJson in cardBenefits) {
           allBenefits.add(CardBenefit.fromJson(benefitJson));
         }
@@ -170,7 +171,7 @@ class SupabaseBenefitsRepository {
           .or('name.ilike.%$query%,description.ilike.%$query%')
           .order('name');
 
-      return (response as List)
+      return asList(response)
           .map((json) => Benefit.fromJson(json))
           .toList();
     } catch (e) {
@@ -215,7 +216,7 @@ class SupabaseBenefitsRepository {
 
       final response = await query;
 
-      return (response as List)
+      return asList(response)
           .map((json) => Benefit.fromJson(json))
           .toList();
     } catch (e) {

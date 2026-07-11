@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:cardcompass/core/repositories/supabase_helpers.dart';
 
 /// Service for deleting all user data from the database
 class UserDataDeletionService {
@@ -18,7 +19,7 @@ class UserDataDeletionService {
           .delete()
           .eq('user_id', userId)
           .select('id');
-      print('✅ Deleted transactions: ${(txDeleted as List).length} rows');
+      print('✅ Deleted transactions: ${asList(txDeleted).length} rows');
 
       // 2. Emails
       final emailDeleted = await _supabase
@@ -26,7 +27,7 @@ class UserDataDeletionService {
           .delete()
           .eq('user_id', userId)
           .select('id');
-      print('✅ Deleted emails: ${(emailDeleted as List).length} rows');
+      print('✅ Deleted emails: ${asList(emailDeleted).length} rows');
 
       // 3. Statements
       final stmtDeleted = await _supabase
@@ -34,7 +35,7 @@ class UserDataDeletionService {
           .delete()
           .eq('user_id', userId)
           .select('id');
-      print('✅ Deleted statements: ${(stmtDeleted as List).length} rows');
+      print('✅ Deleted statements: ${asList(stmtDeleted).length} rows');
 
       // 4. User-card associations
       final ucDeleted = await _supabase
@@ -42,7 +43,7 @@ class UserDataDeletionService {
           .delete()
           .eq('user_id', userId)
           .select('id');
-      print('✅ Deleted user_cards: ${(ucDeleted as List).length} rows');
+      print('✅ Deleted user_cards: ${asList(ucDeleted).length} rows');
 
       // card_catalog and user profile are intentionally preserved.
       print('🎉 Successfully deleted all user data (user profile preserved)');
@@ -64,25 +65,25 @@ class UserDataDeletionService {
           .from('transactions')
           .select('id')
           .eq('user_id', userId);
-      counts['transactions'] = (txResp as List).length;
+      counts['transactions'] = asList(txResp).length;
 
       final stmtResp = await _supabase
           .from('statements')
           .select('id')
           .eq('user_id', userId);
-      counts['statements'] = (stmtResp as List).length;
+      counts['statements'] = asList(stmtResp).length;
 
       final emailResp = await _supabase
           .from('emails')
           .select('id')
           .eq('user_id', userId);
-      counts['emails'] = (emailResp as List).length;
+      counts['emails'] = asList(emailResp).length;
 
       final ucResp = await _supabase
           .from('user_cards')
           .select('id')
           .eq('user_id', userId);
-      counts['user cards'] = (ucResp as List).length;
+      counts['user cards'] = asList(ucResp).length;
 
       return counts;
 

@@ -1,5 +1,6 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cardcompass/core/repositories/transaction_repository.dart';
+import 'package:cardcompass/core/repositories/supabase_helpers.dart';
 import 'package:cardcompass/shared/models/transaction.dart';
 
 /// Supabase implementation of TransactionRepository
@@ -32,7 +33,7 @@ class SupabaseTransactionRepository implements TransactionRepository {
         '_limit': limit ?? 50,
       });
       
-      final transactions = (response as List<dynamic>)
+      final transactions = asListDynamic(response)
           .map((json) => _mapTransactionRpcResponse(json as Map<String, dynamic>))
           .toList();
       // Apply additional filters if needed
@@ -179,7 +180,7 @@ class SupabaseTransactionRepository implements TransactionRepository {
       
       final response = await query.order('transaction_date', ascending: false);
       
-      return (response as List)
+      return asList(response)
           .map((json) => Transaction.fromJson(json))
           .toList();
     } catch (error) {

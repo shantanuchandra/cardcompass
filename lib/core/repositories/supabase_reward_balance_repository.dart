@@ -1,6 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cardcompass/core/repositories/reward_balance_repository.dart';
 import 'package:cardcompass/shared/models/reward_balance.dart';
+import 'package:cardcompass/core/repositories/supabase_helpers.dart';
 
 /// Supabase implementation of RewardBalanceRepository
 class SupabaseRewardBalanceRepository implements RewardBalanceRepository {
@@ -15,7 +16,7 @@ class SupabaseRewardBalanceRepository implements RewardBalanceRepository {
           .eq('user_id', userId)
           .order('available_balance', ascending: false);
 
-      return (response as List)
+      return asList(response)
           .map((json) => RewardBalance.fromJson(json))
           .toList();
     } catch (error) {
@@ -32,7 +33,7 @@ class SupabaseRewardBalanceRepository implements RewardBalanceRepository {
           .eq('user_card_id', userCardId)
           .order('available_balance', ascending: false);
 
-      return (response as List)
+      return asList(response)
           .map((json) => RewardBalance.fromJson(json))
           .toList();
     } catch (error) {
@@ -105,7 +106,7 @@ class SupabaseRewardBalanceRepository implements RewardBalanceRepository {
         'categories': <Map<String, dynamic>>[],
       };
 
-      for (final item in response as List) {
+      for (final item in asList(response)) {
         final rewardType = item['reward_type'] as String;
         final totalBalance = (item['total_balance'] as num).toDouble();
         final expiringSoon = (item['expiring_soon'] as num).toDouble();
@@ -194,7 +195,7 @@ class SupabaseRewardBalanceRepository implements RewardBalanceRepository {
 
       final response = await orderedQuery;
 
-      return (response as List)
+      return asList(response)
           .map((json) => RewardRedemption.fromJson(json))
           .toList();
     } catch (error) {
@@ -225,7 +226,7 @@ class SupabaseRewardBalanceRepository implements RewardBalanceRepository {
 
       final response = await orderedQuery;
 
-      return (response as List)
+      return asList(response)
           .map((json) => RewardRedemption.fromJson(json))
           .toList();
     } catch (error) {
@@ -272,7 +273,7 @@ class SupabaseRewardBalanceRepository implements RewardBalanceRepository {
           .gt('available_balance', 0)
           .order('expiry_date', ascending: true);
 
-      return (response as List)
+      return asList(response)
           .map((json) => RewardBalance.fromJson(json))
           .toList();
     } catch (error) {
@@ -298,7 +299,7 @@ class SupabaseRewardBalanceRepository implements RewardBalanceRepository {
       final response = await query;
 
       double total = 0.0;
-      for (final item in response as List) {
+      for (final item in asList(response)) {
         total += (item['available_balance'] as num).toDouble();
       }
 
@@ -328,7 +329,7 @@ class SupabaseRewardBalanceRepository implements RewardBalanceRepository {
       // Group by month and reward type
       final Map<String, Map<String, double>> monthlyTrends = {};
 
-      for (final transaction in response as List) {
+      for (final transaction in asList(response)) {
         final transactionDate = DateTime.parse(transaction['transaction_date']);
         final monthKey = '${transactionDate.year}-${transactionDate.month.toString().padLeft(2, '0')}';
         final rewardType = transaction['reward_type'] ?? 'points';

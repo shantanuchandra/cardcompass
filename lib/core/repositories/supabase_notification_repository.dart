@@ -1,5 +1,6 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cardcompass/shared/models/notification.dart';
+import 'package:cardcompass/core/repositories/supabase_helpers.dart';
 
 /// Repository for managing notifications in Supabase
 class SupabaseNotificationRepository {
@@ -49,7 +50,7 @@ class SupabaseNotificationRepository {
 
       final response = await transformBuilder;
 
-      return (response as List)
+      return asList(response)
           .map((json) => AppNotification.fromJson(json))
           .toList();
     } catch (e) {
@@ -112,7 +113,7 @@ class SupabaseNotificationRepository {
           .eq('user_id', userId)
           .eq('is_read', false);
 
-      return (response as List).length;
+      return asList(response).length;
     } catch (e) {
       throw Exception('Failed to get unread count: $e');
     }
@@ -185,7 +186,7 @@ class SupabaseNotificationRepository {
           .lte('scheduled_for', DateTime.now().toIso8601String())
           .eq('is_read', false);
 
-      return (response as List)
+      return asList(response)
           .map((json) => AppNotification.fromJson(json))
           .toList();
     } catch (e) {

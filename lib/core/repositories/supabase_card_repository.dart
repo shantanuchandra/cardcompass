@@ -2,6 +2,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cardcompass/core/repositories/card_repository.dart';
 import 'package:cardcompass/shared/models/credit_card.dart';
 import 'package:cardcompass/config/constants.dart';
+import 'package:cardcompass/core/repositories/supabase_helpers.dart';
 import 'package:cardcompass/core/repositories/supabase_benefits_repository.dart';
 
 /// Supabase implementation of CardRepository
@@ -27,7 +28,7 @@ class SupabaseCardRepository implements CardRepository {
       // Use RPC function to get card catalog
       final response = await _supabase.rpc('get_card_catalog');
 
-      final cards = (response as List)
+      final cards = asList(response)
           .map((json) => _mapCatalogToCreditCard(json))
           .toList();
       
@@ -52,7 +53,7 @@ class SupabaseCardRepository implements CardRepository {
         '_user_id': userId,
       });
 
-      final cards = (response as List)
+      final cards = asList(response)
           .map((json) => _mapUserCardRpcToCreditCard(json))
           .toList();
       
@@ -181,7 +182,7 @@ class SupabaseCardRepository implements CardRepository {
 
       final response = await query;
 
-      return (response as List)
+      return asList(response)
           .map((json) => _mapCatalogToCreditCard(json))
           .toList();
     } catch (e) {
@@ -197,7 +198,7 @@ class SupabaseCardRepository implements CardRepository {
           .select('bank')
           .eq('is_discontinued', false);
 
-      final banks = (response as List)
+      final banks = asList(response)
           .map((item) => item['bank'] as String)
           .toSet()
           .toList();
@@ -218,7 +219,7 @@ class SupabaseCardRepository implements CardRepository {
           .select('network')
           .eq('is_discontinued', false);
 
-      final networks = (response as List)
+      final networks = asList(response)
           .map((item) => item['network'] as String)
           .toSet()
           .toList();
