@@ -1216,8 +1216,27 @@ class _HomeTabState extends ConsumerState<HomeTab> {
       if (dialogContext != null && dialogContext!.mounted) {
         Navigator.of(dialogContext!).pop();
       }
-      GlobalMessageService.showError('Sync failed: $error');
+      
+      final errStr = error.toString();
+      if (errStr.contains('401') || 
+          errStr.contains('Unauthorized') || 
+          errStr.contains('Invalid Credentials') ||
+          errStr.contains('invalid_grant')) {
+        print('⚠️ Expired Google token detected. Clearing SharedPreferences token cached value...');
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.remove('google_provider_token');
+        } catch (e) {
+          print('Error clearing token: $e');
+        }
+        GlobalMessageService.showError(
+          'Google / Gmail session expired. Please sign out and sign in again to refresh Google permissions.',
+        );
+      } else {
+        GlobalMessageService.showError('Sync failed: $error');
+      }
     }
+
   }
 
   void _showDeleteAllDataDialog(BuildContext context, WidgetRef ref) async {

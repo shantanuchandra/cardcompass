@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:cardcompass/core/services/global_message_service.dart';
 import 'package:cardcompass/core/services/data_pipeline_debug_service.dart';
 import 'package:cardcompass/core/services/user_data_deletion_service.dart';
 import 'package:cardcompass/core/services/robust_benefit_extraction_service.dart';
@@ -7,6 +9,7 @@ import 'package:cardcompass/core/services/global_password_service.dart';
 import 'package:cardcompass/shared/widgets/sync_progress_dialog.dart';
 import 'package:cardcompass/debug/sync_flow_debugger.dart';
 import 'package:cardcompass/features/sync/widgets/card_url_input_dialog.dart';
+
 
 /// Service to handle dashboard operations like sync, delete, and AI benefits
 class DashboardOperationsService {
@@ -117,6 +120,23 @@ class DashboardOperationsService {
       // Close progress dialog on error
       if (dialogContext != null && dialogContext!.mounted) {
         Navigator.of(dialogContext!).pop();
+      }
+
+      final errStr = error.toString();
+      if (errStr.contains('401') || 
+          errStr.contains('Unauthorized') || 
+          errStr.contains('Invalid Credentials') ||
+          errStr.contains('invalid_grant')) {
+        print('⚠️ Expired Google token detected. Clearing SharedPreferences token cached value...');
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.remove('google_provider_token');
+        } catch (e) {
+          print('Error clearing token: $e');
+        }
+        GlobalMessageService.showError(
+          'Google / Gmail session expired. Please sign out and sign in again to refresh Google permissions.',
+        );
       }
       
       throw error; // Re-throw for caller to handle
