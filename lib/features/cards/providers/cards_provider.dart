@@ -1,4 +1,4 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:cardcompass/core/repositories/card_repository.dart';
 import 'package:cardcompass/core/providers/service_providers.dart';
@@ -6,17 +6,18 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../shared/models/credit_card.dart';
 import '../../auth/providers/auth_provider.dart';
 
-// Real data provider that uses the repository
-final cardsProvider = StateNotifierProvider<CardsNotifier, List<CreditCard>>((ref) {
-  final cardRepository = ref.watch(cardRepositoryProvider);
-  return CardsNotifier(cardRepository);
-});
+part 'cards_provider.g.dart';
 
-class CardsNotifier extends StateNotifier<List<CreditCard>> {
-  final CardRepository _cardRepository;
+@riverpod
+class CardsNotifier extends _$CardsNotifier {
+  late final CardRepository _cardRepository;
   String? _currentUserId;
 
-  CardsNotifier(this._cardRepository) : super([]);
+  @override
+  List<CreditCard> build() {
+    _cardRepository = ref.watch(cardRepositoryProvider);
+    return [];
+  }
 
   Future<void> loadUserCards(String userId) async {
     try {
@@ -38,6 +39,7 @@ class CardsNotifier extends StateNotifier<List<CreditCard>> {
       _currentUserId = null;
     }
   }
+
   Future<void> addUserCard({
     required String userId,
     required String cardId,
@@ -93,49 +95,50 @@ class CardsNotifier extends StateNotifier<List<CreditCard>> {
   }
 }
 
+
+
 // Provider for selected card
 final selectedCardProvider = StateProvider<CreditCard?>((ref) => null);
 
 // Provider for active cards only
-final activeCardsProvider = Provider<List<CreditCard>>((ref) {
+@riverpod
+List<CreditCard> activeCards(Ref ref) {
   final cards = ref.watch(cardsProvider);
   return cards.where((card) => card.isActive).toList();
-});
+}
 
 // Provider for total credit limit
-final totalCreditLimitProvider = Provider<double>((ref) {
+@riverpod
+double totalCreditLimit(Ref ref) {
   final cards = ref.watch(activeCardsProvider);
   return cards.fold(0.0, (sum, card) => sum + (card.creditLimit ?? 0.0));
-});
+}
 
 // Provider for cards count
-final cardsCountProvider = Provider<int>((ref) {
+@riverpod
+int cardsCount(Ref ref) {
   final cards = ref.watch(activeCardsProvider);
   return cards.length;
-});
+}
 
 // Provider that loads user cards when explicitly requested
-// DO NOT USE for auto-loading as it can cause infinite loops
-final userCardsForAnalyticsProvider = Provider.family<List<CreditCard>, String?>((ref, userId) {
+@riverpod
+List<CreditCard> userCardsForAnalytics(Ref ref, String? userId) {
   if (userId == null) return [];
-  
-  // Only fetch once per userId
   return ref.watch(cardsProvider);
-});
+}
 
 /// Async provider that fetches the sum of available_credit from the most recent
 /// statement per user card. Falls back to 0 if no statements are found.
-final availableCreditProvider = FutureProvider<double>((ref) async {
+@riverpod
+Future<double> availableCredit(Ref ref) async {
   final authState = ref.watch(authStateProvider);
   final userId = authState.user?.id;
   if (userId == null || userId == 'guest') return 0.0;
 
   try {
-    // Get all user cards to build a list of user_card_ids
     final supabase = Supabase.instance.client;
 
-    // Query: for each user_card, get the most recent statement's available_credit
-    // Using a GROUP BY approach: select max(statement_date), available_credit for each card
     final response = await supabase
         .from('statements')
         .select('card_id, available_credit, statement_date')
@@ -145,7 +148,6 @@ final availableCreditProvider = FutureProvider<double>((ref) async {
     final rows = response as List;
     if (rows.isEmpty) return 0.0;
 
-    // Keep only the most recent statement per card_id
     final Map<String, double> latestAvailablePerCard = {};
     for (final row in rows) {
       final cardId = row['card_id'] as String?;
@@ -161,11 +163,12 @@ final availableCreditProvider = FutureProvider<double>((ref) async {
     print('availableCreditProvider error: $e');
     return 0.0;
   }
-});
+}
 
 /// Async provider that fetches total rewards_earned from the most recent
 /// statement per user card (statement-level rewards, as opposed to per-tx rewards).
-final statementRewardsTotalProvider = FutureProvider<double>((ref) async {
+@riverpod
+Future<double> statementRewardsTotal(Ref ref) async {
   final authState = ref.watch(authStateProvider);
   final userId = authState.user?.id;
   if (userId == null || userId == 'guest') return 0.0;
@@ -192,4 +195,4 @@ final statementRewardsTotalProvider = FutureProvider<double>((ref) async {
     print('statementRewardsTotalProvider error: $e');
     return 0.0;
   }
-});
+}

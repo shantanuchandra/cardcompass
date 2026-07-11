@@ -319,7 +319,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
 
     // Build welcome greeting with actual user name
     final authState = ref.watch(authStateProvider);
-    final userName = authState.user?.name ?? authState.user?.email?.split('@').first ?? 'there';
+    final userName = authState.user?.name ?? authState.user?.email.split('@').first ?? 'there';
     // Capitalize first letter of name
     final displayName = userName.isNotEmpty
         ? userName[0].toUpperCase() + userName.substring(1)
