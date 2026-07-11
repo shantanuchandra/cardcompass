@@ -37,7 +37,7 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
     });
     
     try {
-      await Future.wait([
+      await Future.wait(<Future<void>>[
         ref.read(cardsProvider.notifier).loadUserCards(authState.user!.id),
         ref.read(transactionsProvider.notifier).loadUserTransactions(authState.user!.id),
       ]);

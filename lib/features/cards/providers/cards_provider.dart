@@ -1,5 +1,4 @@
 import 'package:riverpod_annotation/riverpod_annotation.dart';
-import 'package:flutter_riverpod/legacy.dart';
 import 'package:cardcompass/core/repositories/card_repository.dart';
 import 'package:cardcompass/core/providers/service_providers.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -97,8 +96,7 @@ class CardsNotifier extends _$CardsNotifier {
 
 
 
-// Provider for selected card
-final selectedCardProvider = StateProvider<CreditCard?>((ref) => null);
+
 
 // Provider for active cards only
 @riverpod

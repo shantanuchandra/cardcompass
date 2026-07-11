@@ -1,4 +1,4 @@
-import 'package:flutter_riverpod/legacy.dart';
+import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:cardcompass/shared/models/statement.dart';
 import 'package:cardcompass/shared/models/credit_card.dart';
 import 'package:cardcompass/core/repositories/statement_repository.dart';
@@ -6,6 +6,8 @@ import 'package:cardcompass/core/services/pdf_service.dart';
 import 'package:cardcompass/core/services/enhanced_gmail_service.dart';
 import 'package:cardcompass/core/repositories/card_repository.dart';
 import 'package:cardcompass/core/providers/service_providers.dart';
+
+part 'statements_viewmodel.g.dart';
 
 class StatementsViewState {
   final List<Statement> statements;

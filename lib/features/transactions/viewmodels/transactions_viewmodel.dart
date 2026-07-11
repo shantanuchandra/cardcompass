@@ -1,18 +1,10 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_riverpod/legacy.dart';
+import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:cardcompass/shared/models/transaction.dart';
 import 'package:cardcompass/shared/models/credit_card.dart';
 import 'package:cardcompass/features/transactions/data/transactions_repository.dart';
 
-/// Provider for transactions view model
-final transactionsViewModelProvider = StateNotifierProvider<TransactionsViewModel, TransactionsViewState>((ref) {
-  return TransactionsViewModel(ref);
-});
-
-/// Provider for transactions repository
-final transactionsRepositoryProvider = Provider<TransactionsRepository>((ref) {
-  return TransactionsRepository();
-});
+part 'transactions_viewmodel.g.dart';
 
 /// Transactions view state
 class TransactionsViewState {
@@ -68,17 +60,19 @@ class DateRange {
 }
 
 /// Transactions view model
-class TransactionsViewModel extends StateNotifier<TransactionsViewState> {
-  final Ref _ref;
-
-  TransactionsViewModel(this._ref) : super(const TransactionsViewState());
+@riverpod
+class TransactionsViewModelController extends _$TransactionsViewModelController {
+  @override
+  TransactionsViewState build() {
+    return const TransactionsViewState();
+  }
 
   /// Load transactions for user
   Future<void> loadTransactions(String userId) async {
     state = state.copyWith(isLoading: true, error: null);
     
     try {
-      final repository = _ref.read(transactionsRepositoryProvider);
+      final repository = ref.read(transactionsRepositoryProvider);
       final transactions = await repository.getUserTransactions(userId);
       final userCards = await repository.getUserCards(userId);
       
@@ -99,11 +93,11 @@ class TransactionsViewModel extends StateNotifier<TransactionsViewState> {
   /// Apply filters
   void applyFilters() {
     var filtered = state.transactions;
-      // Filter by card
+    // Filter by card
     if (state.selectedCardId.isNotEmpty) {
       filtered = filtered.where((t) => t.userCardId == state.selectedCardId).toList();
     }
-      // Filter by category
+    // Filter by category
     if (state.selectedCategory != 'All') {
       filtered = filtered.where((t) => t.category.name == state.selectedCategory).toList();
     }
@@ -154,6 +148,7 @@ class TransactionsViewModel extends StateNotifier<TransactionsViewState> {
   Future<void> refreshTransactions(String userId) async {
     await loadTransactions(userId);
   }
+
   /// Get available categories from transactions
   List<String> getAvailableCategories() {
     final categories = state.transactions
@@ -169,7 +164,7 @@ class TransactionsViewModel extends StateNotifier<TransactionsViewState> {
     final filtered = state.filteredTransactions;
     final totalAmount = filtered.fold<double>(0, (sum, t) => sum + t.amount.abs());
     final totalCount = filtered.length;
-      // Group by category
+    // Group by category
     final categoryTotals = <String, double>{};
     for (final transaction in filtered) {
       categoryTotals[transaction.category.name] = 
@@ -194,4 +189,13 @@ class TransactionsViewModel extends StateNotifier<TransactionsViewState> {
       'categoryTotals': categoryTotals,
     };
   }
+}
+
+// Alias for compatibility
+final transactionsViewModelProvider = transactionsViewModelControllerProvider;
+
+/// Provider for transactions repository
+@riverpod
+TransactionsRepository transactionsRepository(Ref ref) {
+  return TransactionsRepository();
 }
