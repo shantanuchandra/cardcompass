@@ -232,6 +232,8 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                         children: [
                           _buildQuickStatsSection(context, ref),
                           const SizedBox(height: 28),
+                          _buildQuickActionsSection(context, ref),
+                          const SizedBox(height: 28),
                           _buildMyCardsSection(context, ref),
                         ],
                       ),
@@ -268,6 +270,11 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                     children: [
                       // Quick Stats Section
                       _buildQuickStatsSection(context, ref),
+
+                      const SizedBox(height: 24),
+
+                      // Quick Actions Section
+                      _buildQuickActionsSection(context, ref),
 
                       const SizedBox(height: 24),
 
@@ -664,6 +671,134 @@ class _HomeTabState extends ConsumerState<HomeTab> {
         print('⚠️ Context no longer mounted after error, cannot dismiss dialog');
       }
     }
+  }
+
+  Widget _buildQuickActionsSection(BuildContext context, WidgetRef ref) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Quick Actions',
+          style: AppTextStyles.heading3,
+        ),
+        const SizedBox(height: 16),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final cols = constraints.maxWidth > 600 ? 6 : 3;
+            return GridView.count(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisCount: cols,
+              mainAxisSpacing: 12,
+              crossAxisSpacing: 12,
+              childAspectRatio: 1.0,
+              children: [
+                _buildQuickActionItem(
+                  context,
+                  'Sync Gmail',
+                  Icons.sync,
+                  Theme.of(context).colorScheme.primary,
+                  () => _showSyncDataDialog(context, ref),
+                ),
+                _buildQuickActionItem(
+                  context,
+                  'Add Card',
+                  Icons.add_card,
+                  Colors.amber,
+                  () => Navigator.of(context).pushNamed('/add-card'),
+                ),
+                _buildQuickActionItem(
+                  context,
+                  'Advisor AI',
+                  Icons.lightbulb_outline,
+                  Colors.greenAccent,
+                  () => Navigator.of(context).pushNamed('/enhanced-transaction-advisor'),
+                ),
+                _buildQuickActionItem(
+                  context,
+                  'Ledger',
+                  Icons.receipt_long,
+                  Colors.purpleAccent,
+                  () => Navigator.of(context).pushNamed('/statements'),
+                ),
+                _buildQuickActionItem(
+                  context,
+                  'Benefits',
+                  Icons.card_giftcard,
+                  Colors.tealAccent,
+                  () => Navigator.of(context).pushNamed('/benefits'),
+                ),
+                _buildQuickActionItem(
+                  context,
+                  'Clear Data',
+                  Icons.delete_forever_outlined,
+                  AppTheme.errorColor,
+                  () => _showDeleteAllDataDialog(context, ref),
+                ),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildQuickActionItem(
+    BuildContext context,
+    String label,
+    IconData icon,
+    Color color,
+    VoidCallback onTap,
+  ) {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF0C152B),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: color.withValues(alpha: 0.2),
+          width: 1.5,
+        ),
+        boxShadow: AppTheme.neonGlow(color: color, opacity: 0.08, blurRadius: 10),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    icon,
+                    color: color,
+                    size: 18,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  label.toUpperCase(),
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.spaceGrotesk(
+                    color: Colors.white,
+                    fontSize: 9,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildQuickStatsSection(BuildContext context, WidgetRef ref) {
