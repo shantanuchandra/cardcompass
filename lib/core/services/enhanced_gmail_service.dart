@@ -108,7 +108,6 @@ class EnhancedGmailService {
   gmail.GmailApi? _gmailApi;
   final PdfParsingServiceImpl _pdfParsingService;
   http.Client? _httpClient;  // Remove final to allow updating
-  GoogleSignIn? _googleSignIn;
   GoogleSignInAccount? _currentUser;
   bool _isAuthenticated = false;
 
@@ -119,10 +118,7 @@ class EnhancedGmailService {
   }) : _gmailApi = gmailApi,
        _pdfParsingService = pdfParsingService,
        _httpClient = httpClient {
-    // Initialize Google Sign-In if Gmail API is not provided
-    if (_gmailApi == null) {
-      _googleSignIn = GoogleSignIn(scopes: _scopes);
-    } else {
+    if (_gmailApi != null) {
       _isAuthenticated = true; // Assume authenticated if API is provided
     }
   }
@@ -134,32 +130,26 @@ class EnhancedGmailService {
     }
 
     try {
-      if (_googleSignIn == null) {
-        ErrorHandlingService.logError('Gmail Authentication', 'GoogleSignIn not initialized');
-        return false;
-      }
+      // Try lightweight (silent) auth first, then full interactive
+      _currentUser = await GoogleSignIn.instance.attemptLightweightAuthentication();
+      _currentUser ??= await GoogleSignIn.instance.authenticate(
+        scopeHint: _scopes,
+      );
 
-      // Try to sign in silently first
-      _currentUser = await _googleSignIn!.signInSilently();
-      
-      // If silent sign-in fails, try interactive sign-in
-      _currentUser ??= await _googleSignIn!.signIn();
+      // Request access token for the required Gmail scopes
+      final authz = await _currentUser!.authorizationClient.authorizeScopes(_scopes);
+      final accessToken = authz.accessToken;
 
-      if (_currentUser == null) {
-        ErrorHandlingService.logError('Gmail Authentication', 'User cancelled sign-in');
-        return false;
-      }
-
-      // Get authentication headers
-      final authHeaders = await _currentUser!.authHeaders;
-      final authenticateClient = _AuthenticatedClient(authHeaders);
+      final authenticateClient = _AuthenticatedClient(
+        <String, String>{'Authorization': 'Bearer $accessToken'},
+      );
       
       // Initialize Gmail API and set HTTP client for People API
       _gmailApi = gmail.GmailApi(authenticateClient);
-      _httpClient = authenticateClient;  // Use same authenticated client for People API
+      _httpClient = authenticateClient;
       _isAuthenticated = true;
 
-      ErrorHandlingService.logError('Gmail Authentication', 'Successfully authenticated: ${_currentUser!.email}');
+      print('+ Gmail authenticated: ${_currentUser!.email}');
       return true;
     } catch (error, stackTrace) {
       ErrorHandlingService.logError(
@@ -287,9 +277,7 @@ class EnhancedGmailService {
   /// Sign out from Gmail and revoke access
   Future<void> signOut() async {
     try {
-      if (_googleSignIn != null) {
-        await _googleSignIn!.signOut();
-      }
+      await GoogleSignIn.instance.signOut();
     } catch (error) {
       print('Error during sign out: $error');
     }

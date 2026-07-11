@@ -212,45 +212,42 @@ class DataPipelineDebugService {
   Future<AuthClient?> debugGmailAuthentication() async {
     print('\nStep 2: Gmail API Authentication');
     print('-----------------------------------');
+
+    const List<String> scopes = [
+      'https://www.googleapis.com/auth/gmail.readonly',
+      'https://www.googleapis.com/auth/gmail.modify',
+      'https://www.googleapis.com/auth/userinfo.profile',
+      'https://www.googleapis.com/auth/userinfo.email',
+      'https://www.googleapis.com/auth/user.birthday.read',
+      'https://www.googleapis.com/auth/user.addresses.read',
+    ];
     
-    try {      // Configure Google Sign-In for Gmail access with web-specific configuration
-      final googleSignIn = GoogleSignIn(
-        clientId: AppConfig.googleClientId,
-        scopes: [
-          'https://www.googleapis.com/auth/gmail.readonly',
-          'https://www.googleapis.com/auth/gmail.modify',
-          'https://www.googleapis.com/auth/userinfo.profile',
-          'https://www.googleapis.com/auth/userinfo.email',
-          'https://www.googleapis.com/auth/user.birthday.read',
-          'https://www.googleapis.com/auth/user.addresses.read',
-        ],
-      );
-      
+    try {
       print('- Attempting Google Sign-In...');
-      final account = await googleSignIn.signIn();
-      
-      if (account == null) {
-        print('X User cancelled sign-in');
-        return null;
-      }
+      // Try silent auth first (uses existing session), then interactive
+      GoogleSignInAccount? account =
+          await GoogleSignIn.instance.attemptLightweightAuthentication();
+      account ??= await GoogleSignIn.instance.authenticate(scopeHint: scopes);
       
       print('+ Google Sign-In successful: ${account.email}');
-      
-      // Get authentication headers
-      final auth = await account.authentication;
-      print('+ Access token obtained: ${auth.accessToken?.substring(0, 20)}...');        // Create AuthClient with UTC DateTime
+
+      // Request OAuth access token for required Gmail scopes
+      final authz = await account.authorizationClient.authorizeScopes(scopes);
+      final accessToken = authz.accessToken;
+      print('+ Access token obtained: ${accessToken.substring(0, 20)}...');
+
+      // Build an AuthClient using googleapis_auth
       final authClient = authenticatedClient(
         http.Client(),
         AccessCredentials(
-          AccessToken('Bearer', auth.accessToken!, DateTime.now().toUtc().add(const Duration(hours: 1))),
+          AccessToken('Bearer', accessToken,
+              DateTime.now().toUtc().add(const Duration(hours: 1))),
           null,
-          [
-            'https://www.googleapis.com/auth/gmail.readonly',
-            'https://www.googleapis.com/auth/gmail.modify',
-            'https://www.googleapis.com/auth/user.birthday.read',
-            'https://www.googleapis.com/auth/userinfo.profile',
-          ],
-        ),      );      // Initialize Gmail service with required dependencies
+          scopes,
+        ),
+      );
+
+      // Initialize Gmail service with required dependencies
       final gmailApi = gmail.GmailApi(authClient);
       final pdfParsingService = PdfParsingServiceImpl();
       
@@ -267,7 +264,8 @@ class DataPipelineDebugService {
       print('X Gmail authentication failed: $e');
       return null;
     }
-  }  /// Step 3: Process emails sequentially with proper user flow
+  }
+
   Future<List<StatementParsingResult>> debugEmailReading(String userId, AuthClient authClient) async {
     print('\nStep 3: Sequential Email Processing');
     print('----------------------------------');
