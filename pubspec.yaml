@@ -44,9 +44,9 @@ dependencies:
   supabase_flutter: ^2.10.3
   hive: ^2.2.3
   hive_flutter: ^1.1.0
-    # Authentication & APIs
-  google_sign_in: ^6.2.1
-  googleapis: ^15.0.0
+  # Authentication & APIs
+  google_sign_in: ^6.3.0
+  googleapis: ^16.0.0
   googleapis_auth: ^2.0.0
   google_generative_ai: ^0.4.3
 
@@ -55,8 +55,8 @@ dependencies:
   dio: ^5.9.0
 
   # PDF Processing
-  pdf: ^3.11.1
-  syncfusion_flutter_pdf: ^31.2.3
+  pdf: ^3.13.0
+  syncfusion_flutter_pdf: ^34.1.30
   pdfx: ^2.6.0
 
   # File Operations
@@ -64,7 +64,6 @@ dependencies:
 
   # Charts & Visualization
   fl_chart: ^1.2.0
-  syncfusion_flutter_charts: ^31.1.23
   # Image & Media
   image_picker: ^1.2.0
   cached_network_image: ^3.4.1
@@ -148,3 +147,4 @@ flutter:
 dependency_overrides:
   test_api: 0.7.11
   matcher: 0.12.19
+  xml: 7.0.1
