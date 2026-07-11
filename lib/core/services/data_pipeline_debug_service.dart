@@ -630,7 +630,13 @@ class DataPipelineDebugService {
       if (allStatements.isEmpty) {
         print('ℹ️ No statement emails found in the specified date range.');
         SyncFlowDebugger.logStep('EMAIL_FOUND', 'No statement emails found');
-        return;
+        throw Exception(
+          'No credit-card statement emails were found between '
+          '${startDate.toIso8601String().substring(0, 10)} and '
+          '${endDate.toIso8601String().substring(0, 10)}. '
+          'Check that Gmail contains PDF statement emails matching the app search '
+          'terms, or broaden the sync date range/email limit from the sync dialog.',
+        );
       }
       
       // Step 3-6: Process emails sequentially, one at a time

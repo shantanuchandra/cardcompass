@@ -669,7 +669,7 @@ Card name:'''
       );
     } catch (error) {
       debugPrint('Error processing statement emails: $error');
-      return [];
+      rethrow;
     }
   }
 
@@ -708,6 +708,7 @@ Card name:'''
       }
     } catch (error) {
       debugPrint('Error searching emails for ${bankQuery.bankName}: $error');
+      rethrow;
     }
 
     return results;
