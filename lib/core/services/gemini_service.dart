@@ -656,9 +656,10 @@ Consider:
         Uri.parse(targetUrl),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(ollamaReq),
-      ).timeout(const Duration(seconds: 45), onTimeout: () {
+      ).timeout(const Duration(minutes: 5), onTimeout: () {
         throw Exception('Ollama API timeout.');
       });
+
 
       if (response.statusCode == 200) {
         final jsonResponse = jsonDecode(response.body);
