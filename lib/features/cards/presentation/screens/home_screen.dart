@@ -531,6 +531,18 @@ class _HomeTabState extends ConsumerState<HomeTab> {
             const List<int> emailSnaps = [5, 10, 20, 30, 50];
             final emailsLabel = '$_maxEmails emails';
 
+            // Models dropdown lists
+            final groqModels = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'];
+            if (!groqModels.contains(groqModelController.text)) {
+              groqModels.insert(0, groqModelController.text);
+            }
+
+            final ollamaModels = ['gemma4', 'qwen2.5', 'llama3', 'mistral'];
+            if (!ollamaModels.contains(ollamaModelController.text)) {
+              ollamaModels.insert(0, ollamaModelController.text);
+            }
+
+
             return Dialog(
               backgroundColor: Colors.transparent,
               insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
@@ -744,8 +756,9 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                                 ),
                               ),
                               const SizedBox(height: 12),
-                              TextFormField(
-                                controller: groqModelController,
+                              DropdownButtonFormField<String>(
+                                value: groqModelController.text,
+                                dropdownColor: surfaceBg,
                                 style: TextStyle(color: textPrimary, fontSize: 14),
                                 decoration: InputDecoration(
                                   labelText: 'Groq Model Name',
@@ -756,8 +769,19 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                                     borderRadius: BorderRadius.circular(10),
                                   ),
                                 ),
+                                items: groqModels.map((m) => DropdownMenuItem(
+                                  value: m,
+                                  child: Text(m, style: TextStyle(color: textPrimary)),
+                                )).toList(),
+                                onChanged: (val) {
+                                  if (val != null) {
+                                    groqModelController.text = val;
+                                    setState(() {});
+                                  }
+                                },
                               ),
                             ],
+
 
                             if (localProvider == AIProvider.ollama) ...[
                               const SizedBox(height: 12),
@@ -775,8 +799,9 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                                 ),
                               ),
                               const SizedBox(height: 12),
-                              TextFormField(
-                                controller: ollamaModelController,
+                              DropdownButtonFormField<String>(
+                                value: ollamaModelController.text,
+                                dropdownColor: surfaceBg,
                                 style: TextStyle(color: textPrimary, fontSize: 14),
                                 decoration: InputDecoration(
                                   labelText: 'Ollama Model Name',
@@ -787,7 +812,18 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                                     borderRadius: BorderRadius.circular(10),
                                   ),
                                 ),
+                                items: ollamaModels.map((m) => DropdownMenuItem(
+                                  value: m,
+                                  child: Text(m, style: TextStyle(color: textPrimary)),
+                                )).toList(),
+                                onChanged: (val) {
+                                  if (val != null) {
+                                    ollamaModelController.text = val;
+                                    setState(() {});
+                                  }
+                                },
                               ),
+
                               const SizedBox(height: 8),
                               Container(
                                 padding: const EdgeInsets.all(10),

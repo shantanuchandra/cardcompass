@@ -31,7 +31,19 @@ class DashboardDialogs {
       builder: (BuildContext context) {
         return StatefulBuilder(
           builder: (context, setState) {
+            // Models dropdown lists
+            final groqModels = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'];
+            if (!groqModels.contains(groqModelController.text)) {
+              groqModels.insert(0, groqModelController.text);
+            }
+
+            final ollamaModels = ['gemma4', 'gemma2', 'llama3', 'mistral'];
+            if (!ollamaModels.contains(ollamaModelController.text)) {
+              ollamaModels.insert(0, ollamaModelController.text);
+            }
+
             return AlertDialog(
+
               title: const Row(
                 children: [
                   Icon(Icons.sync, color: Colors.blue),
@@ -130,16 +142,25 @@ class DashboardDialogs {
                         ),
                       ),
                       const SizedBox(height: 12),
-                      TextFormField(
-                        controller: groqModelController,
+                      DropdownButtonFormField<String>(
+                        value: groqModelController.text,
                         decoration: const InputDecoration(
                           labelText: 'Groq Model Name',
-                          hintText: 'llama-3.3-70b-versatile or llama-3.1-8b-instant',
                           border: OutlineInputBorder(),
                         ),
+                        items: groqModels.map((m) => DropdownMenuItem(
+                          value: m,
+                          child: Text(m),
+                        )).toList(),
+                        onChanged: (val) {
+                          if (val != null) {
+                            groqModelController.text = val;
+                            setState(() {});
+                          }
+                        },
                       ),
-
                     ],
+
                     if (localProvider == AIProvider.ollama) ...[
                       const SizedBox(height: 12),
                       TextFormField(
@@ -151,14 +172,24 @@ class DashboardDialogs {
                         ),
                       ),
                       const SizedBox(height: 12),
-                      TextFormField(
-                        controller: ollamaModelController,
+                      DropdownButtonFormField<String>(
+                        value: ollamaModelController.text,
                         decoration: const InputDecoration(
                           labelText: 'Ollama Model Name',
-                          hintText: 'gemma4 or gemma2',
                           border: OutlineInputBorder(),
                         ),
+                        items: ollamaModels.map((m) => DropdownMenuItem(
+                          value: m,
+                          child: Text(m),
+                        )).toList(),
+                        onChanged: (val) {
+                          if (val != null) {
+                            ollamaModelController.text = val;
+                            setState(() {});
+                          }
+                        },
                       ),
+
                       const SizedBox(height: 8),
                       Container(
                         padding: const EdgeInsets.all(8),
