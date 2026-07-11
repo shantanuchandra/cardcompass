@@ -479,6 +479,10 @@ class _HomeTabState extends ConsumerState<HomeTab> {
   }
 
   void _showSyncDataDialog(BuildContext context, WidgetRef ref) {
+    // Mutable state for the dialog controls
+    int _selectedDays = 90;
+    int _maxEmails = 10;
+
     showDialog(
       context: context,
       builder: (BuildContext context) {
@@ -492,21 +496,96 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                   Text('Sync Data from Gmail'),
                 ],
               ),
-              content: const Column(
+              content: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    'This will fetch credit card statements from your Gmail account and import transactions into the app.',
+                  const Text(
+                    'Fetch credit card statements from Gmail and import transactions automatically.',
                     style: TextStyle(fontSize: 14),
                   ),
-                  SizedBox(height: 16),
-                  Text(
-                    '• Gmail will be searched for bank statements\n'
-                    '• PDF attachments will be parsed\n'
-                    '• Transactions will be imported to the database\n'
-                    '• Credit cards will be automatically detected',
-                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  const SizedBox(height: 20),
+
+                  // Days to look back
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Look back:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                      Text(
+                        _selectedDays == 365 ? '1 year' : '$_selectedDays days',
+                        style: const TextStyle(fontSize: 13, color: Colors.blue, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                  Slider(
+                    value: _selectedDays.toDouble(),
+                    min: 7,
+                    max: 365,
+                    divisions: 8,
+                    label: _selectedDays == 365 ? '1 year' : '$_selectedDays days',
+                    onChanged: (value) => setState(() => _selectedDays = value.round()),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: const [
+                        Text('7d', style: TextStyle(fontSize: 10, color: Colors.grey)),
+                        Text('30d', style: TextStyle(fontSize: 10, color: Colors.grey)),
+                        Text('90d', style: TextStyle(fontSize: 10, color: Colors.grey)),
+                        Text('180d', style: TextStyle(fontSize: 10, color: Colors.grey)),
+                        Text('1yr', style: TextStyle(fontSize: 10, color: Colors.grey)),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // Max emails
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Max emails:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                      Text(
+                        '$_maxEmails',
+                        style: const TextStyle(fontSize: 13, color: Colors.blue, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                  Slider(
+                    value: _maxEmails.toDouble(),
+                    min: 1,
+                    max: 50,
+                    divisions: 9,
+                    label: '$_maxEmails',
+                    onChanged: (value) => setState(() => _maxEmails = value.round()),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: const [
+                        Text('1', style: TextStyle(fontSize: 10, color: Colors.grey)),
+                        Text('10', style: TextStyle(fontSize: 10, color: Colors.grey)),
+                        Text('25', style: TextStyle(fontSize: 10, color: Colors.grey)),
+                        Text('50', style: TextStyle(fontSize: 10, color: Colors.grey)),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Text(
+                      '• Searches Gmail for PDF bank statements\n'
+                      '• PDFs are parsed via AI (password prompt if needed)\n'
+                      '• Transactions stored to your account',
+                      style: TextStyle(fontSize: 11, color: Colors.grey),
+                    ),
                   ),
                 ],
               ),
@@ -515,12 +594,15 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                   onPressed: () => Navigator.of(context).pop(),
                   child: const Text('Cancel'),
                 ),
-                ElevatedButton(
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.sync, size: 16),
                   onPressed: () {
+                    final days = _selectedDays;
+                    final maxEmails = _maxEmails;
                     Navigator.of(context).pop();
-                    _syncDataFromGmail(context, ref);
+                    _syncDataFromGmail(context, ref, lookbackDays: days, maxEmails: maxEmails);
                   },
-                  child: const Text('Start Sync'),
+                  label: const Text('Start Sync'),
                 ),
               ],
             );
@@ -530,7 +612,8 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     );
   }
 
-  void _syncDataFromGmail(BuildContext context, WidgetRef ref) async {
+
+  void _syncDataFromGmail(BuildContext context, WidgetRef ref, {int lookbackDays = 90, int maxEmails = 10}) async {
     // Get current user
     final authState = ref.read(authStateProvider);
     if (!authState.isAuthenticated || authState.user == null) {
@@ -621,9 +704,14 @@ class _HomeTabState extends ConsumerState<HomeTab> {
       print('🔧 Set onCardUrlRequired callback on debugService');
       print('🔧 Callback is now: ${debugService.onCardUrlRequired == null ? "NULL" : "SET"}');
 
-      // Run the sequential user flow
-      print('🔧 About to call debugSequentialUserFlow...');
-      final syncResult = await debugService.debugSequentialUserFlow(authState.user!.id);
+      // Run the sequential user flow with user-selected params
+      print('🔧 About to call debugSequentialUserFlow (lookback: ${lookbackDays}d, maxEmails: $maxEmails)...');
+      final customStartDate = DateTime.now().subtract(Duration(days: lookbackDays));
+      final syncResult = await debugService.debugSequentialUserFlow(
+        authState.user!.id,
+        maxEmails,
+        customStartDate,
+      );
 
       // Close progress dialog
       if (dialogContext != null && dialogContext!.mounted) {
