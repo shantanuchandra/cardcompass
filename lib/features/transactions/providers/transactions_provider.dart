@@ -1,4 +1,3 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:cardcompass/core/repositories/transaction_repository.dart';
 import 'package:cardcompass/core/providers/service_providers.dart';
