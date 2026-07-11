@@ -134,10 +134,11 @@ class DashboardDialogs {
                         controller: groqModelController,
                         decoration: const InputDecoration(
                           labelText: 'Groq Model Name',
-                          hintText: 'gemma2-9b-it or llama-3.3-70b-versatile',
+                          hintText: 'llama-3.3-70b-versatile or llama-3.1-8b-instant',
                           border: OutlineInputBorder(),
                         ),
                       ),
+
                     ],
                     if (localProvider == AIProvider.ollama) ...[
                       const SizedBox(height: 12),

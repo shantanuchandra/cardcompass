@@ -19,7 +19,8 @@ class AIConfig {
   static String ollamaModel = 'gemma4';
   
   static String groqApiKey = '';
-  static String groqModel = 'gemma2-9b-it';
+  static String groqModel = 'llama-3.3-70b-versatile';
+
 
   static String get ollamaUrl {
     // Premium loopback rewrite for Android Emulator accessing local host server
@@ -51,7 +52,8 @@ class AIConfig {
       _ollamaUrl = prefs.getString('ollama_url') ?? 'http://localhost:11434';
       ollamaModel = prefs.getString('ollama_model') ?? 'gemma4';
       groqApiKey = prefs.getString('groq_api_key') ?? '';
-      groqModel = prefs.getString('groq_model') ?? 'gemma2-9b-it';
+      groqModel = prefs.getString('groq_model') ?? 'llama-3.3-70b-versatile';
+
       print('💾 Loaded AIConfig: provider=$activeProvider, ollamaUrl=$ollamaUrl, ollamaModel=$ollamaModel, groqModel=$groqModel');
     } catch (e) {
       print('⚠️ Failed to load AIConfig from SharedPreferences: $e');
