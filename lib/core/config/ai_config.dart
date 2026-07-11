@@ -8,6 +8,7 @@ class AIConfig {
   /// List of Gemini models to try in order (fallback chain)
   /// First model is primary, subsequent models are fallbacks when rate limits hit
   static const List<String> geminiModelFallbackChain = [
+    'gemini-3.5-flash',          // Primary: Best price-performance, fast and intelligent
     'gemini-2.5-flash',          // Primary: Best price-performance, fast and intelligent
     'gemini-2.0-flash',          // Fallback 1: Second gen workhorse, 1M context
     'gemini-2.5-pro',            // Fallback 2: Most advanced, complex reasoning
