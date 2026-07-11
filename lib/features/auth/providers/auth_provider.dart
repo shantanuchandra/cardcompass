@@ -27,6 +27,8 @@ class AuthNotifier extends _$AuthNotifier {
 
   Future<void> _checkAuthState() async {
     print('🔑 AuthNotifier: _checkAuthState started');
+    // Guard: provider may have already been rebuilt by the time we start
+    if (!ref.mounted) return;
     state = const AuthState.loading();
     try {
       print('🔑 AuthNotifier: Fetching current user...');
@@ -36,6 +38,8 @@ class AuthNotifier extends _$AuthNotifier {
         return null;
       });
       print('🔑 AuthNotifier: Current user: $user');
+      // Guard: provider may have been rebuilt while waiting for the auth check
+      if (!ref.mounted) return;
       if (user != null) {
         state = AuthState.authenticated(user);
       } else {
@@ -43,21 +47,25 @@ class AuthNotifier extends _$AuthNotifier {
       }
     } catch (e, stack) {
       print('🔑 AuthNotifier: Error in _checkAuthState: $e\n$stack');
+      if (!ref.mounted) return;
       // Treat errors as unauthenticated so the user can still reach the login screen
       state = const AuthState.unauthenticated();
     }
   }
 
   Future<void> signInWithGoogle() async {
+    if (!ref.mounted) return;
     state = const AuthState.loading();
     try {
       final user = await _authService.signInWithGoogle();
+      if (!ref.mounted) return;
       if (user != null) {
         state = AuthState.authenticated(user);
       } else {
         state = const AuthState.unauthenticated();
       }
     } catch (e) {
+      if (!ref.mounted) return;
       state = AuthState.error(e.toString());
     }
   }
@@ -71,19 +79,23 @@ class AuthNotifier extends _$AuthNotifier {
       createdAt: DateTime.now(),
       lastLoginAt: DateTime.now(),
     );
+    if (!ref.mounted) return;
     state = AuthState.authenticated(guestUser);
   }
 
   Future<void> signOut() async {
     final isGuest = state.user?.id == 'guest';
     if (isGuest) {
+      if (!ref.mounted) return;
       state = const AuthState.unauthenticated();
       return;
     }
     try {
       await _authService.signOut();
+      if (!ref.mounted) return;
       state = const AuthState.unauthenticated();
     } catch (e) {
+      if (!ref.mounted) return;
       state = AuthState.error(e.toString());
     }
   }
@@ -92,6 +104,7 @@ class AuthNotifier extends _$AuthNotifier {
     await _checkAuthState();
   }
 }
+
 
 // Alias to maintain compatibility with legacy code
 final authStateProvider = authProvider;
