@@ -5,8 +5,20 @@ import 'package:cardcompass/shared/models/benefit.dart';
 class SupabaseBenefitsRepository {
   final SupabaseClient _supabase = Supabase.instance.client;
 
-  /// Get all available benefits
+  // In-memory caching fields
+  static List<Benefit>? _allBenefitsCache;
+  static final Map<String, List<CardBenefit>> _userCardBenefitsCache = {};
+
+  static void clearUserCache(String userId) {
+    _userCardBenefitsCache.remove(userId);
+  }
+
   Future<List<Benefit>> getAllBenefits() async {
+    if (_allBenefitsCache != null) {
+      print('💾 SupabaseBenefitsRepository: Returning cached benefits (${_allBenefitsCache!.length} benefits)');
+      return _allBenefitsCache!;
+    }
+
     try {
       final response = await _supabase
           .from('benefits')
@@ -14,9 +26,13 @@ class SupabaseBenefitsRepository {
           .eq('is_active', true)
           .order('benefit_type');
 
-      return (response as List)
+      final benefits = (response as List)
           .map((json) => Benefit.fromJson(json))
           .toList();
+      
+      _allBenefitsCache = benefits;
+      print('💾 SupabaseBenefitsRepository: Cached benefits (${benefits.length} benefits)');
+      return benefits;
     } catch (e) {
       throw Exception('Failed to fetch benefits: $e');
     }
@@ -60,8 +76,12 @@ class SupabaseBenefitsRepository {
     }
   }
 
-  /// Get user card benefits (for user's specific cards)
   Future<List<CardBenefit>> getUserCardBenefits(String userId) async {
+    if (_userCardBenefitsCache.containsKey(userId)) {
+      print('💾 SupabaseBenefitsRepository: Returning cached user card benefits for user: $userId (${_userCardBenefitsCache[userId]!.length} benefits)');
+      return _userCardBenefitsCache[userId]!;
+    }
+
     try {
       final response = await _supabase
           .from('user_cards')
@@ -89,6 +109,8 @@ class SupabaseBenefitsRepository {
         }
       }
 
+      _userCardBenefitsCache[userId] = allBenefits;
+      print('💾 SupabaseBenefitsRepository: Cached user card benefits for user: $userId (${allBenefits.length} benefits)');
       return allBenefits;
     } catch (e) {
       throw Exception('Failed to fetch user card benefits: $e');

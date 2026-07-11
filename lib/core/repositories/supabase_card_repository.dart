@@ -2,19 +2,38 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cardcompass/core/repositories/card_repository.dart';
 import 'package:cardcompass/shared/models/credit_card.dart';
 import 'package:cardcompass/config/constants.dart';
+import 'package:cardcompass/core/repositories/supabase_benefits_repository.dart';
 
 /// Supabase implementation of CardRepository
 class SupabaseCardRepository implements CardRepository {
   final SupabaseClient _supabase = Supabase.instance.client;
+
+  // In-memory caching fields
+  static List<CreditCard>? _cardCatalogCache;
+  static final Map<String, List<CreditCard>> _userCardsCache = {};
+
+  static void clearUserCache(String userId) {
+    _userCardsCache.remove(userId);
+    SupabaseBenefitsRepository.clearUserCache(userId);
+  }
   @override
   Future<List<CreditCard>> getAllCards() async {
+    if (_cardCatalogCache != null) {
+      print('💾 SupabaseCardRepository: Returning cached card catalog (${_cardCatalogCache!.length} cards)');
+      return _cardCatalogCache!;
+    }
+
     try {
       // Use RPC function to get card catalog
       final response = await _supabase.rpc('get_card_catalog');
 
-      return (response as List)
+      final cards = (response as List)
           .map((json) => _mapCatalogToCreditCard(json))
           .toList();
+      
+      _cardCatalogCache = cards;
+      print('💾 SupabaseCardRepository: Cached card catalog (${cards.length} cards)');
+      return cards;
     } catch (e) {
       throw Exception('Failed to fetch all cards: $e');
     }
@@ -22,15 +41,24 @@ class SupabaseCardRepository implements CardRepository {
 
   @override
   Future<List<CreditCard>> getUserCards(String userId) async {
+    if (_userCardsCache.containsKey(userId)) {
+      print('💾 SupabaseCardRepository: Returning cached user cards for user: $userId (${_userCardsCache[userId]!.length} cards)');
+      return _userCardsCache[userId]!;
+    }
+
     try {
       // Use RPC function to get user cards with catalog information
       final response = await _supabase.rpc('get_user_cards', params: {
         '_user_id': userId,
       });
 
-      return (response as List)
+      final cards = (response as List)
           .map((json) => _mapUserCardRpcToCreditCard(json))
           .toList();
+      
+      _userCardsCache[userId] = cards;
+      print('💾 SupabaseCardRepository: Cached user cards for user: $userId (${cards.length} cards)');
+      return cards;
     } catch (e) {
       throw Exception('Failed to fetch user cards: $e');
     }
@@ -49,6 +77,10 @@ class SupabaseCardRepository implements CardRepository {
         '_catalog_card_id': cardId,
         '_last_four_digits': lastFourDigits,
       });
+      
+      // Invalidate cache on change
+      clearUserCache(userId);
+      print('💾 SupabaseCardRepository: Invalidated user card cache for user: $userId due to addUserCard');
     } catch (e) {
       throw Exception('Failed to add user card: $e');
     }
@@ -68,6 +100,10 @@ class SupabaseCardRepository implements CardRepository {
       if (result != true) {
         throw Exception('User card not found or could not be removed');
       }
+      
+      // Invalidate cache on change
+      clearUserCache(userId);
+      print('💾 SupabaseCardRepository: Invalidated user card cache for user: $userId due to removeUserCard');
     } catch (e) {
       throw Exception('Failed to remove user card: $e');
     }
@@ -92,6 +128,10 @@ class SupabaseCardRepository implements CardRepository {
       if (result != true) {
         throw Exception('User card not found or could not be updated');
       }
+      
+      // Invalidate cache on change
+      clearUserCache(userId);
+      print('💾 SupabaseCardRepository: Invalidated user card cache for user: $userId due to updateUserCard');
     } catch (e) {
       throw Exception('Failed to update user card: $e');
     }
