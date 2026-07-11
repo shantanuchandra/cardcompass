@@ -575,24 +575,26 @@ class DataPipelineDebugService {
       await debugDatabaseSetup();
       
       // Step 2: Gmail authentication
-      SyncFlowDebugger.logStep('GMAIL_AUTH', 'Authenticating with Gmail API');
-      final authClient = await debugGmailAuthentication();
-      if (authClient == null) {
-        SyncFlowDebugger.logError('GMAIL_AUTH', 'Gmail authentication failed');
-        throw Exception('Gmail authentication failed');
-      }
-      SyncFlowDebugger.logStep('GMAIL_AUTH', 'Gmail API authenticated successfully');
-      
-      // Ensure Gmail service is initialized
+      // Skip if _gmailService was already injected (e.g., from home_screen with pre-auth)
       if (_gmailService == null) {
+        SyncFlowDebugger.logStep('GMAIL_AUTH', 'Authenticating with Gmail API');
+        final authClient = await debugGmailAuthentication();
+        if (authClient == null) {
+          SyncFlowDebugger.logError('GMAIL_AUTH', 'Gmail authentication failed');
+          throw Exception('Gmail authentication failed');
+        }
+        SyncFlowDebugger.logStep('GMAIL_AUTH', 'Gmail API authenticated successfully');
+
+        // Build GmailService from the auth client
         final gmailApi = gmail.GmailApi(authClient);
         final pdfParsingService = PdfParsingServiceImpl();
-        
         _gmailService = EnhancedGmailService(
           gmailApi: gmailApi,
           pdfParsingService: pdfParsingService,
           httpClient: authClient,
         );
+      } else {
+        SyncFlowDebugger.logStep('GMAIL_AUTH', 'Using pre-authenticated Gmail service (skipping OAuth)');
       }
       
       // Fetch user profile — uses DB first, then Google People API, then manual fallback

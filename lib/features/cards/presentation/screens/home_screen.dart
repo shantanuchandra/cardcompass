@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
@@ -7,6 +8,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:googleapis/gmail/v1.dart' as gmail;
 import 'package:googleapis_auth/auth_io.dart';
 import 'package:http/http.dart' as http;
+import 'package:supabase_flutter/supabase_flutter.dart' as supabase_lib;
 
 import '../../../../core/theme.dart';
 import '../../../../core/services/data_pipeline_debug_service.dart';
@@ -618,7 +620,6 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     );
   }
 
-
   void _syncDataFromGmail(BuildContext context, WidgetRef ref, {int lookbackDays = 90, int maxEmails = 10}) async {
     final authState = ref.read(authStateProvider);
     if (!authState.isAuthenticated || authState.user == null) {
@@ -630,29 +631,55 @@ class _HomeTabState extends ConsumerState<HomeTab> {
       return;
     }
 
-    // ── STEP 1: Authenticate with Google IMMEDIATELY (must be in user-gesture context)
-    // Browsers block OAuth popups unless triggered directly from a tap handler.
-    // We do this before showing any progress dialog.
-    print('🔑 Starting Gmail OAuth (must stay in user-gesture context)...');
-    GoogleSignInAccount? googleAccount;
-    try {
-      googleAccount = await GoogleSignIn.instance.attemptLightweightAuthentication();
-      googleAccount ??= await GoogleSignIn.instance.authenticate(
-        scopeHint: [
+    // ── STEP 1: Get access token — platform-aware
+    // On WEB: reuse the Supabase provider token from the existing Google OAuth session.
+    //   google_sign_in on web throws UnimplementedError for authenticate().
+    // On NATIVE: use GoogleSignIn.instance.authenticate() normally.
+    String? accessToken;
+
+    if (kIsWeb) {
+      // Web: provider token is stored in the Supabase session after Google sign-in.
+      // It will have Gmail scopes IF the user signed in after we added them to the OAuth call.
+      final session = supabase_lib.Supabase.instance.client.auth.currentSession;
+      accessToken = session?.providerToken;
+
+      if (accessToken == null || accessToken.isEmpty) {
+        // Provider token missing — user needs to re-login with updated scopes.
+        GlobalMessageService.showError(
+          'Gmail access not available. Please sign out and sign in again to grant Gmail permissions.',
+        );
+        return;
+      }
+      print('✅ Using Supabase provider token for Gmail (web mode)');
+    } else {
+      // Native: use GoogleSignIn SDK directly.
+      try {
+        GoogleSignInAccount? googleAccount =
+            await GoogleSignIn.instance.attemptLightweightAuthentication();
+        googleAccount ??= await GoogleSignIn.instance.authenticate(
+          scopeHint: [
+            'https://www.googleapis.com/auth/gmail.readonly',
+            'https://www.googleapis.com/auth/gmail.modify',
+            'https://www.googleapis.com/auth/userinfo.profile',
+            'https://www.googleapis.com/auth/user.birthday.read',
+          ],
+        );
+        const List<String> gmailScopes = [
           'https://www.googleapis.com/auth/gmail.readonly',
           'https://www.googleapis.com/auth/gmail.modify',
           'https://www.googleapis.com/auth/userinfo.profile',
-          'https://www.googleapis.com/auth/userinfo.email',
           'https://www.googleapis.com/auth/user.birthday.read',
-        ],
-      );
-      print('✅ Google Sign-In successful: ${googleAccount.email}');
-    } on GoogleSignInException catch (e) {
-      GlobalMessageService.showError('Google Sign-In failed: ${e.description ?? e.code.toString()}');
-      return;
-    } catch (e) {
-      GlobalMessageService.showError('Google Sign-In failed: $e');
-      return;
+        ];
+        final authz = await googleAccount.authorizationClient.authorizeScopes(gmailScopes);
+        accessToken = authz.accessToken;
+        print('✅ Google Sign-In successful: ${googleAccount.email}');
+      } on GoogleSignInException catch (e) {
+        GlobalMessageService.showError('Google Sign-In failed: ${e.description ?? e.code.toString()}');
+        return;
+      } catch (e) {
+        GlobalMessageService.showError('Google Sign-In failed: $e');
+        return;
+      }
     }
 
     // ── STEP 2: Show progress dialog now that auth is done
@@ -667,22 +694,18 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     );
 
     try {
-      // Get access token for Gmail API
       const List<String> gmailScopes = [
         'https://www.googleapis.com/auth/gmail.readonly',
         'https://www.googleapis.com/auth/gmail.modify',
         'https://www.googleapis.com/auth/userinfo.profile',
-        'https://www.googleapis.com/auth/userinfo.email',
         'https://www.googleapis.com/auth/user.birthday.read',
       ];
-      final authz = await googleAccount.authorizationClient.authorizeScopes(gmailScopes);
-      final accessToken = authz.accessToken;
 
-      // Build an authenticated HTTP client for the Gmail API
+      // Build authenticated HTTP client from the access token
       final authClient = authenticatedClient(
         http.Client(),
         AccessCredentials(
-          AccessToken('Bearer', accessToken,
+          AccessToken('Bearer', accessToken!,
               DateTime.now().toUtc().add(const Duration(hours: 1))),
           null,
           gmailScopes,
@@ -747,7 +770,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
         customStartDate,
       );
 
-      // Close progress dialog
+      // Close progress dialog and show result
       if (dialogContext != null && dialogContext!.mounted) {
         Navigator.of(dialogContext!).pop();
         final txCount = syncResult['transactionsStored'] ?? 0;

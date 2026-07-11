@@ -102,7 +102,16 @@ class AuthService {
 
       final bool success = await _supabase.auth.signInWithOAuth(
         OAuthProvider.google,
-        // For web: explicitly set redirectTo so Supabase returns to the same origin (localhost/dev or prod)
+        // Include Gmail scopes so the provider token can be reused for Gmail API
+        // without a separate Google Sign-In flow on web
+        scopes: [
+          'email',
+          'profile',
+          'https://www.googleapis.com/auth/gmail.readonly',
+          'https://www.googleapis.com/auth/gmail.modify',
+          'https://www.googleapis.com/auth/user.birthday.read',
+        ].join(' '),
+        // For web: explicitly set redirectTo so Supabase returns to the same origin
         redirectTo: webRedirect ?? 'io.supabase.cardcompass://login-callback/',
       );
 
