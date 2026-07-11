@@ -775,7 +775,42 @@ Product name:'''
       print('BANK: $bankFromSender (from sender email)');
       print('SUBJECT: $emailSubject');
       
+      // ── SKIP non-credit-card account statements early ───────────────────
+      final subjectLower = emailSubject.toLowerCase();
+      
+      // Unconditional exclusion of combined statements, demat, or relationship/savings account statements
+      if (subjectLower.contains('combined email statement') ||
+          subjectLower.contains('combined statement') ||
+          subjectLower.contains('demat statement') ||
+          subjectLower.contains('relationship statement') ||
+          subjectLower.contains('savings account statement')) {
+        print('⏭️  Skipping non-credit-card combined/savings statement: "$emailSubject"');
+        return null;
+      }
+
+      final isCreditCardEmail =
+          subjectLower.contains('credit card') ||
+          subjectLower.contains('card statement') ||
+          subjectLower.contains('credit card statement') ||
+          subjectLower.contains('e-statement') ||     // SBI / IndusInd
+          subjectLower.contains('monthly statement');  // SBI
+      final isSavingsStatement =
+          (subjectLower.contains('account statement') ||
+           subjectLower.contains('bank statement') ||
+           subjectLower.contains('relationship') ||
+           subjectLower.contains('combined email statement') ||
+           (subjectLower.contains('statement') &&
+            (subjectLower.contains('savings') ||
+             subjectLower.contains('current') ||
+             subjectLower.contains('salary account')))) &&
+          !isCreditCardEmail;
+      if (isSavingsStatement) {
+        print('⏭️  Skipping savings/account statement (not a credit card): "$emailSubject"');
+        return null;
+      }
+
       // Get email body
+
       emailBody = _extractEmailBody(message.payload);
       
       // Find PDF attachments
@@ -838,44 +873,9 @@ Product name:'''
       }
       // ──────────────────────────────────────────────────────────────────
       
-      // ── SKIP non-credit-card account statements ─────────────────────────
-      // Bank account / savings statements occasionally match our broad query.
-      // Detect them early so we don't waste Gemini calls on them.
-      final subjectLower = emailSubject.toLowerCase();
-      
-      // Unconditional exclusion of combined statements, demat, or relationship/savings account statements
-      if (subjectLower.contains('combined email statement') ||
-          subjectLower.contains('combined statement') ||
-          subjectLower.contains('demat statement') ||
-          subjectLower.contains('relationship statement') ||
-          subjectLower.contains('savings account statement')) {
-        print('⏭️  Skipping non-credit-card combined/savings statement: "$emailSubject"');
-        return null;
-      }
-
-      final isCreditCardEmail =
-          subjectLower.contains('credit card') ||
-          subjectLower.contains('card statement') ||
-          subjectLower.contains('credit card statement') ||
-          subjectLower.contains('e-statement') ||     // SBI / IndusInd
-          subjectLower.contains('monthly statement');  // SBI
-      final isSavingsStatement =
-          (subjectLower.contains('account statement') ||
-           subjectLower.contains('bank statement') ||
-           subjectLower.contains('relationship') ||
-           subjectLower.contains('relationship') ||
-           subjectLower.contains('combined email statement') ||
-           (subjectLower.contains('statement') &&
-            (subjectLower.contains('savings') ||
-             subjectLower.contains('current') ||
-             subjectLower.contains('salary account')))) &&
-          !isCreditCardEmail;
-      if (isSavingsStatement) {
-        print('⏭️  Skipping savings/account statement (not a credit card): "$emailSubject"');
-        return null;
-      }
 
       // Use Gemini to detect the exact card variant
+
       final cardVariant = await _detectCardVariant(
         emailSubject: emailSubject,
         emailBody: emailBody,
