@@ -190,6 +190,22 @@ CREATE TABLE IF NOT EXISTS statement_milestone_cache (
   UNIQUE(user_id, card_id, benefit_category, statement_start_date, statement_end_date)
 );
 
+-- Email Records Table (for Gmail sync dedupe/status tracking)
+CREATE TABLE IF NOT EXISTS emails (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  email_id TEXT NOT NULL UNIQUE,
+  subject TEXT,
+  sender TEXT,
+  received_date TIMESTAMP WITH TIME ZONE,
+  has_attachments BOOLEAN DEFAULT false,
+  processed BOOLEAN DEFAULT false,
+  bank_detected TEXT,
+  statement_id TEXT,
+  metadata JSONB DEFAULT '{}',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- ============================================================================
 -- REWARDS & POINTS (Future Implementation)
 -- ============================================================================
@@ -268,6 +284,7 @@ ALTER TABLE user_cards ENABLE ROW LEVEL SECURITY;
 ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE statements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE statement_milestone_cache ENABLE ROW LEVEL SECURITY;
+ALTER TABLE emails ENABLE ROW LEVEL SECURITY;
 
 -- User Cards Policies
 CREATE POLICY user_cards_policy ON user_cards
@@ -289,6 +306,12 @@ CREATE POLICY statement_milestone_user_policy ON statement_milestone_cache
   FOR ALL TO authenticated
   USING (auth.uid() = user_id);
 
+-- Emails Policies
+CREATE POLICY emails_policy ON emails
+  FOR ALL TO authenticated
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
 -- ============================================================================
 -- GRANTS
 -- ============================================================================
@@ -304,6 +327,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON user_cards TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON transactions TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON statements TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON statement_milestone_cache TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON emails TO authenticated;
 
 -- Grant sequence usage
 GRANT USAGE, SELECT ON SEQUENCE statement_milestone_cache_id_seq TO authenticated;
