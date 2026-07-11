@@ -1,5 +1,4 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_riverpod/legacy.dart';
+import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:cardcompass/shared/models/credit_card.dart';
 import 'package:cardcompass/features/cards/providers/cards_provider.dart';
 import 'package:cardcompass/features/auth/providers/auth_provider.dart';
@@ -9,19 +8,17 @@ import 'package:cardcompass/core/repositories/supabase_benefits_repository.dart'
 import 'package:cardcompass/core/repositories/supabase_benefit_tracking_repository.dart';
 import 'package:cardcompass/core/mock/mock_data.dart';
 
-/// Repository providers
-final supabaseBenefitsRepositoryProvider = Provider<SupabaseBenefitsRepository>((ref) {
+part 'benefits_viewmodel.g.dart';
+
+@riverpod
+SupabaseBenefitsRepository supabaseBenefitsRepository(Ref ref) {
   return SupabaseBenefitsRepository();
-});
+}
 
-final supabaseBenefitTrackingRepositoryProvider = Provider<SupabaseBenefitTrackingRepository>((ref) {
+@riverpod
+SupabaseBenefitTrackingRepository supabaseBenefitTrackingRepository(Ref ref) {
   return SupabaseBenefitTrackingRepository();
-});
-
-/// Provider for benefits view model
-final benefitsViewModelProvider = StateNotifierProvider<BenefitsViewModel, BenefitsViewState>((ref) {
-  return BenefitsViewModel(ref);
-});
+}
 
 /// Benefits view state
 class BenefitsViewState {
@@ -112,15 +109,16 @@ class BenefitMetric {
   });
 }
 
-/// Benefits view model
-class BenefitsViewModel extends StateNotifier<BenefitsViewState> {
-  final Ref _ref;
+@riverpod
+class BenefitsViewModel extends _$BenefitsViewModel {
   late final SupabaseBenefitsRepository _benefitsRepository;
   late final SupabaseBenefitTrackingRepository _trackingRepository;
 
-  BenefitsViewModel(this._ref) : super(const BenefitsViewState()) {
-    _benefitsRepository = _ref.read(supabaseBenefitsRepositoryProvider);
-    _trackingRepository = _ref.read(supabaseBenefitTrackingRepositoryProvider);
+  @override
+  BenefitsViewState build() {
+    _benefitsRepository = ref.watch(supabaseBenefitsRepositoryProvider);
+    _trackingRepository = ref.watch(supabaseBenefitTrackingRepositoryProvider);
+    return const BenefitsViewState();
   }
 
   /// Load benefits data for user
@@ -153,10 +151,10 @@ class BenefitsViewModel extends StateNotifier<BenefitsViewState> {
   /// Load user cards
   Future<void> _loadUserCards(String userId) async {
     try {
-      await _ref.read(cardsProvider.notifier)
+      await ref.read(cardsProvider.notifier)
           .loadUserCards(userId)
           .timeout(const Duration(seconds: 5));
-      final cards = _ref.read(cardsProvider);
+      final cards = ref.read(cardsProvider);
       final userCards = cards.where((card) => card.userId.isNotEmpty).toList();
       
       // Use mock cards if no real cards found
@@ -265,7 +263,7 @@ class BenefitsViewModel extends StateNotifier<BenefitsViewState> {
   void setSelectedPeriod(String period) {
     state = state.copyWith(selectedPeriod: period);
     // Reload analytics and tracking data with new period
-    final user = _ref.read(authStateProvider).user;
+    final user = ref.read(authStateProvider).user;
     if (user != null) {
       _loadBenefitAnalytics(user.id);
       _loadBenefitTracking(user.id);

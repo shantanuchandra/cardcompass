@@ -1,17 +1,14 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_riverpod/legacy.dart';
+import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:cardcompass/shared/models/notification.dart';
 import 'package:cardcompass/core/repositories/supabase_notification_repository.dart';
 
-/// Repository provider
-final supabaseNotificationRepositoryProvider = Provider<SupabaseNotificationRepository>((ref) {
-  return SupabaseNotificationRepository();
-});
+part 'notifications_viewmodel.g.dart';
 
-/// Provider for notifications view model
-final notificationsViewModelProvider = StateNotifierProvider<NotificationsViewModel, NotificationsViewState>((ref) {
-  return NotificationsViewModel(ref);
-});
+/// Repository provider
+@riverpod
+SupabaseNotificationRepository supabaseNotificationRepository(Ref ref) {
+  return SupabaseNotificationRepository();
+}
 
 /// Notifications view state
 class NotificationsViewState {
@@ -54,13 +51,14 @@ class NotificationsViewState {
   }
 }
 
-/// Notifications view model
-class NotificationsViewModel extends StateNotifier<NotificationsViewState> {
-  final Ref _ref;
+@riverpod
+class NotificationsViewModel extends _$NotificationsViewModel {
   late final SupabaseNotificationRepository _repository;
 
-  NotificationsViewModel(this._ref) : super(const NotificationsViewState()) {
-    _repository = _ref.read(supabaseNotificationRepositoryProvider);
+  @override
+  NotificationsViewState build() {
+    _repository = ref.watch(supabaseNotificationRepositoryProvider);
+    return const NotificationsViewState();
   }
 
   /// Load all notifications for user

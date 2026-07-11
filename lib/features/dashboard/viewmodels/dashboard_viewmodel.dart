@@ -1,11 +1,12 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_riverpod/legacy.dart';
+import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:cardcompass/shared/models/credit_card.dart';
 import 'package:cardcompass/shared/models/transaction.dart';
 import 'package:cardcompass/core/services/recommendation_service.dart';
 import 'package:cardcompass/core/providers/service_providers.dart';
 import 'package:cardcompass/core/repositories/supabase_card_repository.dart';
 import 'package:cardcompass/core/repositories/supabase_transaction_repository.dart';
+
+part 'dashboard_viewmodel.g.dart';
 
 /// State class for dashboard view
 class DashboardViewState {
@@ -68,11 +69,15 @@ class DashboardViewState {
   }
 }
 
-/// ViewModel for dashboard screen
-class DashboardViewModel extends StateNotifier<DashboardViewState> {
-  final RecommendationService _recommendationService;
-  
-  DashboardViewModel(this._recommendationService) : super(DashboardViewState());
+@riverpod
+class DashboardViewModel extends _$DashboardViewModel {
+  late final RecommendationService _recommendationService;
+
+  @override
+  DashboardViewState build() {
+    _recommendationService = ref.watch(recommendationServiceProvider);
+    return DashboardViewState();
+  }
 
   /// Load dashboard data for user
   Future<void> loadDashboardData(String userId) async {
@@ -172,9 +177,4 @@ class DashboardViewModel extends StateNotifier<DashboardViewState> {
   double get totalMonthlyRewards => state.totalMonthlyRewards;
 }
 
-/// Provider for dashboard view model
-final dashboardViewModelProvider = 
-    StateNotifierProvider<DashboardViewModel, DashboardViewState>((ref) {
-  final recommendationService = ref.watch(recommendationServiceProvider);
-  return DashboardViewModel(recommendationService);
-});
+
