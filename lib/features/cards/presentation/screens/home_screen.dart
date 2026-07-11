@@ -3,9 +3,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:googleapis/gmail/v1.dart' as gmail;
+import 'package:googleapis_auth/auth_io.dart';
+import 'package:http/http.dart' as http;
 
 import '../../../../core/theme.dart';
 import '../../../../core/services/data_pipeline_debug_service.dart';
+import '../../../../core/services/enhanced_gmail_service.dart';
+import '../../../../core/services/pdf_parsing_service_impl.dart';
 import '../../../../core/services/user_data_deletion_service.dart';
 import '../../../../core/services/password_input_service.dart';
 import '../../../../core/services/global_password_service.dart';
@@ -614,98 +620,126 @@ class _HomeTabState extends ConsumerState<HomeTab> {
 
 
   void _syncDataFromGmail(BuildContext context, WidgetRef ref, {int lookbackDays = 90, int maxEmails = 10}) async {
-    // Get current user
     final authState = ref.read(authStateProvider);
     if (!authState.isAuthenticated || authState.user == null) {
       GlobalMessageService.showError('Please log in first');
       return;
     }
-
     if (authState.user!.id == 'guest') {
       GlobalMessageService.showError('Gmail sync isn\'t available in guest mode. Sign in with Google to sync.');
       return;
     }
 
-    // Store context reference for progress dialogs
-    BuildContext? dialogContext;
+    // ── STEP 1: Authenticate with Google IMMEDIATELY (must be in user-gesture context)
+    // Browsers block OAuth popups unless triggered directly from a tap handler.
+    // We do this before showing any progress dialog.
+    print('🔑 Starting Gmail OAuth (must stay in user-gesture context)...');
+    GoogleSignInAccount? googleAccount;
+    try {
+      googleAccount = await GoogleSignIn.instance.attemptLightweightAuthentication();
+      googleAccount ??= await GoogleSignIn.instance.authenticate(
+        scopeHint: [
+          'https://www.googleapis.com/auth/gmail.readonly',
+          'https://www.googleapis.com/auth/gmail.modify',
+          'https://www.googleapis.com/auth/userinfo.profile',
+          'https://www.googleapis.com/auth/userinfo.email',
+          'https://www.googleapis.com/auth/user.birthday.read',
+        ],
+      );
+      print('✅ Google Sign-In successful: ${googleAccount.email}');
+    } on GoogleSignInException catch (e) {
+      GlobalMessageService.showError('Google Sign-In failed: ${e.description ?? e.code.toString()}');
+      return;
+    } catch (e) {
+      GlobalMessageService.showError('Google Sign-In failed: $e');
+      return;
+    }
 
-    // Show progress dialog
+    // ── STEP 2: Show progress dialog now that auth is done
+    BuildContext? dialogContext;
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (BuildContext context) {
-        dialogContext = context; // Store the dialog context
+      builder: (BuildContext ctx) {
+        dialogContext = ctx;
         return const SyncProgressDialog();
       },
     );
 
     try {
-      // Set up password input callback for manual password entry
+      // Get access token for Gmail API
+      const List<String> gmailScopes = [
+        'https://www.googleapis.com/auth/gmail.readonly',
+        'https://www.googleapis.com/auth/gmail.modify',
+        'https://www.googleapis.com/auth/userinfo.profile',
+        'https://www.googleapis.com/auth/userinfo.email',
+        'https://www.googleapis.com/auth/user.birthday.read',
+      ];
+      final authz = await googleAccount.authorizationClient.authorizeScopes(gmailScopes);
+      final accessToken = authz.accessToken;
+
+      // Build an authenticated HTTP client for the Gmail API
+      final authClient = authenticatedClient(
+        http.Client(),
+        AccessCredentials(
+          AccessToken('Bearer', accessToken,
+              DateTime.now().toUtc().add(const Duration(hours: 1))),
+          null,
+          gmailScopes,
+        ),
+      );
+
+      // Set up password input callback
       PasswordInputService.setGlobalPasswordCallback((String bankName, String? hint) async {
         print('🔐 Manual password callback triggered for $bankName');
-
-        // Close progress dialog temporarily for password input
         if (dialogContext != null && dialogContext!.mounted) {
           Navigator.of(dialogContext!).pop();
-          print('📱 Progress dialog closed, showing password input');
-
-          // Add a small delay to ensure dialog is closed
           await Future.delayed(const Duration(milliseconds: 200));
         }
-
-        // Request password using the global service
         final password = await GlobalPasswordService.requestPassword(bankName, hint: hint);
-        print('🔑 Password result: ${password != null ? 'provided' : 'cancelled'}');
-
-        // Show progress dialog again after password input
         if (context.mounted) {
           await Future.delayed(const Duration(milliseconds: 200));
           showDialog(
             context: context,
             barrierDismissible: false,
             builder: (BuildContext ctx) {
-              dialogContext = ctx; // Update the dialog context reference
+              dialogContext = ctx;
               return const SyncProgressDialog();
             },
           );
-          print('📱 Progress dialog restored');
         }
-
         return password;
       });
 
-      // Initialize the debug service for data sync
-      final debugService = DataPipelineDebugService();
-      print('🔧 Created DataPipelineDebugService instance');
+      // Build the pipeline service with the pre-authenticated client
+      final gmailApi = gmail.GmailApi(authClient);
+      final pdfParsingService = PdfParsingServiceImpl();
+      final gmailService = EnhancedGmailService(
+        gmailApi: gmailApi,
+        pdfParsingService: pdfParsingService,
+        httpClient: authClient,
+      );
 
-      // Set up card URL prompt callback
+      final debugService = DataPipelineDebugService();
+      debugService.injectGmailService(gmailService);
+
       debugService.onCardUrlRequired = ({
         required String bankName,
         required String cardVariant,
         required String emailSubject,
         String? suggestedUrl,
       }) async {
-        print('🔔 CALLBACK INVOKED in home_screen!');
-        print('   Bank: $bankName, Card: $cardVariant');
-        print('   Context: $context');
-        print('   Context mounted: ${context.mounted}');
-
-        final result = await showCardUrlInputDialog(
+        return showCardUrlInputDialog(
           context: context,
           bankName: bankName,
           cardVariant: cardVariant,
           emailSubject: emailSubject,
           suggestedUrl: suggestedUrl,
         );
-
-        print('🔔 CALLBACK RETURNING: $result');
-        return result;
       };
-      print('🔧 Set onCardUrlRequired callback on debugService');
-      print('🔧 Callback is now: ${debugService.onCardUrlRequired == null ? "NULL" : "SET"}');
 
-      // Run the sequential user flow with user-selected params
-      print('🔧 About to call debugSequentialUserFlow (lookback: ${lookbackDays}d, maxEmails: $maxEmails)...');
+      // ── STEP 3: Run the pipeline
+      print('🔧 Starting sync (lookback: ${lookbackDays}d, maxEmails: $maxEmails)...');
       final customStartDate = DateTime.now().subtract(Duration(days: lookbackDays));
       final syncResult = await debugService.debugSequentialUserFlow(
         authState.user!.id,
@@ -716,31 +750,22 @@ class _HomeTabState extends ConsumerState<HomeTab> {
       // Close progress dialog
       if (dialogContext != null && dialogContext!.mounted) {
         Navigator.of(dialogContext!).pop();
-
         final txCount = syncResult['transactionsStored'] ?? 0;
         final emailCount = syncResult['emailsProcessed'] ?? 0;
         final successMsg = txCount > 0
             ? 'Sync complete! Imported $txCount transactions from $emailCount statement(s).'
             : 'Sync complete! ${emailCount > 0 ? "$emailCount email(s) processed." : "No new statements found."}';
-
         GlobalMessageService.showSuccess(successMsg);
-
-        // Refresh the UI by reloading the underlying data
         _loadData();
-
-        // Invalidate async providers so they re-fetch from DB
         ref.invalidate(availableCreditProvider);
         ref.invalidate(statementRewardsTotalProvider);
       }
-
-    } catch (error) {
-      // Close progress dialog
+    } catch (error, stack) {
+      print('❌ Sync failed: $error\n$stack');
       if (dialogContext != null && dialogContext!.mounted) {
         Navigator.of(dialogContext!).pop();
-
-        // Show error message using global service
-        GlobalMessageService.showError('Sync failed: ${error.toString()}');
       }
+      GlobalMessageService.showError('Sync failed: $error');
     }
   }
 

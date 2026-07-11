@@ -53,6 +53,12 @@ class DataPipelineDebugService {
     String? suggestedUrl,
   })? onCardUrlRequired;
 
+  /// Inject a pre-authenticated [EnhancedGmailService] so the pipeline skips
+  /// its own sign-in flow (used when the caller already performed OAuth).
+  void injectGmailService(EnhancedGmailService service) {
+    _gmailService = service;
+  }
+
   /// Loads benefits from an external source (e.g., API, file).
   Future<void> loadBenefitsFromSource(String source) async {
     print('\nLoading benefits from source: $source');
