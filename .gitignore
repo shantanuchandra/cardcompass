@@ -11,6 +11,7 @@
 .svn/
 .swiftpm/
 migrate_working_dir/
+/.tmp_chrome_profile/
 
 # IntelliJ related
 *.iml
