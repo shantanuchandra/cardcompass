@@ -232,6 +232,18 @@ class EnhancedWebScraper {
 
   /// Extract benefit-related content from HTML
   static String extractBenefitContent(String html) {
+    var scopedHtml = html
+        .replaceAll(
+          RegExp(r'<(script|style|nav|footer)[^>]*>.*?</\1>',
+              caseSensitive: false, dotAll: true),
+          ' ',
+        )
+        .replaceAll(
+          RegExp(r'</?(?:p|div|section|article|li|h[1-6]|tr|br)[^>]*>',
+              caseSensitive: false),
+          '\n',
+        );
+
     // Look for benefit-related sections
     final benefitKeywords = [
       'benefit',
@@ -253,27 +265,106 @@ class EnhancedWebScraper {
       'accelerated'
     ];
 
-    final lines = html.split('\n');
+    final contamination = RegExp(
+      r'personal loan|savings account|current account|salary account|wealth management|customer support|request a callback|apply now',
+      caseSensitive: false,
+    );
+    final lines = scopedHtml.split('\n');
     final benefitLines = <String>[];
 
     for (final line in lines) {
-      final lowerLine = line.toLowerCase();
-      if (benefitKeywords.any((keyword) => lowerLine.contains(keyword))) {
-        benefitLines.add(line.trim());
+      final cleanLine = _cleanWhitespace(_removeHtmlTags(line));
+      final lowerLine = cleanLine.toLowerCase();
+      if (cleanLine.isNotEmpty &&
+          !contamination.hasMatch(cleanLine) &&
+          benefitKeywords.any((keyword) => lowerLine.contains(keyword))) {
+        benefitLines.add(cleanLine);
       }
     }
 
-    // Remove HTML tags and clean up
-    String benefitContent = benefitLines.join('\n');
-    benefitContent = _removeHtmlTags(benefitContent);
-    benefitContent = _cleanWhitespace(benefitContent);
-
-    return benefitContent;
+    return benefitLines.toSet().join('\n');
   }
+
+  static SourceValidationResult validateCardSource({
+    required String url,
+    required String content,
+    required String bankName,
+    required String cardName,
+  }) {
+    final reasons = <SourceValidationIssue>[];
+    final uri = Uri.tryParse(url);
+    final domains = _officialDomainsForBank(bankName);
+    if (uri == null || uri.scheme != 'https') {
+      reasons.add(const SourceValidationIssue(
+        'invalid_source_url',
+        'The source URL must be a valid HTTPS URL.',
+      ));
+    } else if (!domains
+        .any((domain) => uri.host == domain || uri.host.endsWith('.$domain'))) {
+      reasons.add(const SourceValidationIssue(
+        'unofficial_domain',
+        'The source host is not an official domain for the selected bank.',
+      ));
+    }
+
+    final normalizedHaystack = _identityText('${uri?.path ?? ''} $content');
+    final cardTokens = _identityTokens(cardName);
+    if (cardTokens.isEmpty ||
+        !cardTokens.every((token) => normalizedHaystack.contains(token))) {
+      reasons.add(const SourceValidationIssue(
+        'card_identity_not_found',
+        'The source does not identify the requested card variant.',
+      ));
+    }
+
+    final lower = content.toLowerCase();
+    if (!lower.contains('credit card') ||
+        !RegExp(r'cashback|reward|annual fee|joining fee|lounge|waiver|points')
+            .hasMatch(lower)) {
+      reasons.add(const SourceValidationIssue(
+        'not_a_card_product_page',
+        'The source lacks card-product and benefit evidence.',
+      ));
+    }
+
+    return SourceValidationResult(reasons);
+  }
+
+  static Set<String> _officialDomainsForBank(String bankName) {
+    final bank = bankName.toLowerCase();
+    if (bank.contains('axis')) return {'axisbank.com'};
+    if (bank.contains('hdfc')) return {'hdfcbank.com'};
+    if (bank.contains('icici')) return {'icicibank.com'};
+    if (bank.contains('idfc')) return {'idfcfirstbank.com'};
+    if (bank.contains('kotak')) return {'kotak.com'};
+    if (bank.contains('sbi')) return {'sbicard.com'};
+    if (bank.contains('au small')) return {'aubank.in'};
+    if (bank.contains('punjab national')) return {'pnbcsl.in', 'pnbindia.in'};
+    return const {};
+  }
+
+  static Set<String> _identityTokens(String value) {
+    const ignored = {'bank', 'credit', 'card', 'the'};
+    return _identityText(value)
+        .split(' ')
+        .where((token) => token.isNotEmpty && !ignored.contains(token))
+        .toSet();
+  }
+
+  static String _identityText(String value) => value
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
 
   /// Remove HTML tags
   static String _removeHtmlTags(String html) {
-    return html.replaceAll(RegExp(r'<[^>]*>'), ' ');
+    return html
+        .replaceAll(RegExp(r'<[^>]*>'), ' ')
+        .replaceAll('&amp;', '&')
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll('&#39;', "'")
+        .replaceAll('&quot;', '"');
   }
 
   /// Clean whitespace
@@ -307,6 +398,24 @@ class EnhancedWebScraper {
 
     return matchCount >= 2; // At least 2 benefit indicators
   }
+}
+
+class SourceValidationIssue {
+  final String code;
+  final String message;
+
+  const SourceValidationIssue(this.code, this.message);
+
+  Map<String, dynamic> toJson() => {'code': code, 'message': message};
+}
+
+class SourceValidationResult {
+  final List<SourceValidationIssue> reasons;
+
+  const SourceValidationResult(this.reasons);
+
+  bool get isValid => reasons.isEmpty;
+  List<String> get reasonCodes => reasons.map((reason) => reason.code).toList();
 }
 
 /// Scraped content data structure

@@ -375,7 +375,7 @@ GENERAL INDIAN BANK INSTRUCTIONS:
       ParsingLogger.summary(
           'Benefits Extraction: Starting extraction for $bankName $cardName using Gemini AI');
 
-      final prompt = _buildBenefitExtractionPrompt(cardName, bankName);
+      final prompt = buildBenefitExtractionPrompt(cardName, bankName);
       final content = htmlContent +
           (pdfContent != null ? '\n\nPDF CONTENT:\n$pdfContent' : '');
 
@@ -388,10 +388,7 @@ GENERAL INDIAN BANK INSTRUCTIONS:
             ]
           }
         ],
-        'generationConfig': {
-          'temperature': 0.1, // Low temperature for factual extraction
-          'maxOutputTokens': 4096, // Higher limit for detailed benefits
-        }
+        'generationConfig': benefitGenerationConfig,
       };
 
       // Call Gemini API with automatic fallback
@@ -411,6 +408,14 @@ GENERAL INDIAN BANK INSTRUCTIONS:
           // Parse the JSON response from Gemini
           final benefitData = _parseBenefitResponse(text, cardName, bankName);
 
+          if (benefitData['success'] == false) {
+            return {
+              'success': false,
+              'error': benefitData['error'] ?? 'Invalid extraction response',
+              'data': benefitData,
+            };
+          }
+
           return {
             'success': true,
             'data': benefitData,
@@ -422,7 +427,7 @@ GENERAL INDIAN BANK INSTRUCTIONS:
 
       if (response != null) {
         ParsingLogger.error(
-            'Benefits Extraction: Non-200 response, status ${response.statusCode}');
+            'Benefits Extraction: Non-200 response, status ${response.statusCode}: ${response.body.length > 500 ? response.body.substring(0, 500) : response.body}');
         return {
           'success': false,
           'error': 'API request failed with status ${response.statusCode}',
@@ -446,57 +451,31 @@ GENERAL INDIAN BANK INSTRUCTIONS:
     }
   }
 
+  static Map<String, dynamic> get benefitGenerationConfig => const {
+        'temperature': 0.1,
+        'maxOutputTokens': 8192,
+      };
+
   /// Build the specialized prompt for benefit extraction
-  static String _buildBenefitExtractionPrompt(
-      String cardName, String bankName) {
+  static String buildBenefitExtractionPrompt(String cardName, String bankName) {
     return '''
-You are an expert credit card analyst. Extract ALL benefits from this $bankName $cardName credit card information.
+You are a source-grounded credit card analyst. Extract only claims explicitly supported by the supplied source for this exact card variant.
 
 CARD: $bankName $cardName
-TASK: Extract detailed benefit information in structured JSON format.
+TASK: Return factual benefit information in structured JSON. The supplied source is the only authority.
 
-BENEFIT CATEGORIES TO LOOK FOR:
-1. CASHBACK RATES (% or flat amounts)
-   - Dining/Food delivery (Zomato, Swiggy, restaurants)
-   - Travel (flights, hotels, booking sites)
-   - Fuel/Petrol (specific pump chains)
-   - Shopping (online/offline, specific merchants)
-   - Grocery/Supermarkets
-   - Entertainment (movies, streaming, OTT)
-   - Utilities (electricity, mobile, DTH)
-   - General purchases
-
-2. REWARD POINTS
-   - Points per ₹100 spent
-   - Category-specific multipliers
-   - Point redemption values
-
-3. MILESTONE BENEFITS
-   - Annual spending thresholds
-   - Bonus points/cashback on milestones
-
-4. CAPS & LIMITS
-   - Monthly cashback caps
-   - Annual benefit limits
-   - Category-wise caps
-
-5. FEES & CHARGES
-   - Annual fee (first year, renewal)
-   - Joining fee
-   - Foreign transaction charges
-
-6. SPECIAL BENEFITS
-   - Airport lounge access
-   - Insurance benefits
-   - Concierge services
-   - Movie ticket discounts
-
-EXTRACTION RULES:
-- Extract exact percentages and amounts (don't assume)
-- Note any conditions or restrictions
-- Identify merchant-specific offers
-- Look for "up to X%" vs "flat X%" differences
-- Extract both promotional and standard rates
+STRICT GROUNDING RULES:
+- Do not emit a claim unless an exact supporting sentence occurs in the supplied source.
+- Copy that sentence into evidence_excerpt. Never paraphrase evidence_excerpt.
+- Every percentage, amount, points rate, cap, threshold, fee, waiver, and lounge count must occur in evidence_excerpt.
+- Do not use prior knowledge about this card or infer a benefit from the card name.
+- Do not complete categories merely because they exist in this schema. Return only categories supported by evidence.
+- Do not emit zero-value placeholders such as "Travel benefits" or "Lounge benefits".
+- Ignore navigation, headers, footers, calls to action, customer support, savings account or salary account promotions, personal loan promotions, wealth management, unrelated cards, and generic bank services.
+- EMI conversion availability, application links, customer service, and generic concierge copy are not card benefits without a concrete card-specific entitlement.
+- Missing information must remain null. Never estimate, assume, or substitute a default.
+- If the source identifies a different card variant, return no benefits and explain the mismatch in extraction_notes.
+- Preserve qualifiers such as "up to", promotional dates, merchant restrictions, exclusions, and spend conditions.
 
 JSON OUTPUT FORMAT:
 {
@@ -505,7 +484,8 @@ JSON OUTPUT FORMAT:
   "annual_fee": {
     "first_year": amount_or_null,
     "renewal": amount_or_null,
-    "waiver_conditions": "text or null"
+    "waiver_conditions": "text or null",
+    "evidence_excerpt": "exact source sentence or null"
   },
   "cashback_benefits": [
     {
@@ -521,7 +501,8 @@ JSON OUTPUT FORMAT:
       "excluded_categories": ["category names excluded from earning rewards"],
       "excluded_merchants": ["merchant names excluded from earning rewards"],
       "is_accelerated": true_or_false,
-      "merchants": ["specific merchant names if any"]
+      "merchants": ["specific merchant names if any"],
+      "evidence_excerpt": "exact source sentence containing the claim"
     }
   ],
   "reward_points": {
@@ -530,7 +511,8 @@ JSON OUTPUT FORMAT:
       {
         "category": "category name",
         "rate": points_per_100_rupees,
-        "conditions": "conditions if any"
+        "conditions": "conditions if any",
+        "evidence_excerpt": "exact source sentence containing the claim"
       }
     ]
   },
@@ -538,7 +520,8 @@ JSON OUTPUT FORMAT:
     {
       "type": "LOUNGE|INSURANCE|CONCIERGE|OTHER",
       "description": "detailed description",
-      "value": "estimated annual value"
+      "value": "explicit value or null",
+      "evidence_excerpt": "exact source sentence containing the claim"
     }
   ],
   "confidence_score": 0.0_to_1.0,

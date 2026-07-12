@@ -1,9 +1,10 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:http/http.dart' as http;
 import 'gemini_transaction_parser.dart';
 import 'card_normalizer_service.dart';
 import 'enhanced_web_scraper.dart';
 import 'parsing_logger.dart';
+import 'benefit_extraction_validator.dart';
+import 'benefit_staging_policy.dart';
 
 /// Advanced benefit calculation service with tier-based rewards
 class AdvancedBenefitCalculationService {
@@ -572,6 +573,28 @@ class AdvancedBenefitCalculationService {
           'card_id': cardId,
         };
       }
+
+      if (sourceUrl.isEmpty) {
+        return {
+          'success': false,
+          'error': 'Extraction requires a persisted official card product URL for source validation.',
+          'card_id': cardId,
+        };
+      }
+      final sourceValidation = EnhancedWebScraper.validateCardSource(
+        url: sourceUrl,
+        content: htmlContent,
+        bankName: normalizedBank,
+        cardName: normalizedCard,
+      );
+      if (!sourceValidation.isValid) {
+        return {
+          'success': false,
+          'error': 'Source page failed card identity validation.',
+          'card_id': cardId,
+          'validation_reasons': sourceValidation.reasons.map((reason) => reason.toJson()).toList(),
+        };
+      }
       
       // 3. Use existing Gemini AI integration to extract benefits
       final extractionResult = await GeminiTransactionParser.extractCardBenefits(
@@ -587,44 +610,48 @@ class AdvancedBenefitCalculationService {
           'card_id': cardId,
         };
       }
+
+      final extractedData = Map<String, dynamic>.from(extractionResult['data'] as Map);
+      final validation = BenefitExtractionValidator.validate(
+        extractedData: extractedData,
+        evidenceText: htmlContent,
+        cardName: normalizedCard,
+        bankName: normalizedBank,
+        sourceUrl: sourceUrl,
+      );
       
       // 4. Save to staging table for review before committing
       String? stagingId;
       try {
-        ParsingLogger.summary('💾 STAGING: Saving extracted benefits to review staging table...');
-        final insertResult = await _supabase.from('card_benefits_staging').insert({
-          'card_id': cardId,
-          'source_url': sourceUrl.isNotEmpty ? sourceUrl : 'Official Bank Website',
-          'extracted_data': extractionResult['data'],
-          'status': 'pending',
-        }).select('id').single();
+        final effectiveSource = sourceUrl.isNotEmpty ? sourceUrl : 'Official Bank Website';
+        ParsingLogger.summary('💾 STAGING: Saving ${validation.accepted ? "validated" : "rejected"} extraction...');
+        final payload = BenefitStagingPolicy.buildInsertPayload(
+          cardId: cardId,
+          sourceUrl: effectiveSource,
+          sourceEvidence: htmlContent,
+          validation: validation,
+        );
+        final insertResult = await _supabase.from('card_benefits_staging').insert(payload).select('id').single();
         stagingId = insertResult['id'] as String;
-        ParsingLogger.summary('✅ STAGING: Successfully saved staging record ID: $stagingId');
+        ParsingLogger.summary('${validation.accepted ? "✅" : "⛔"} STAGING: Saved ${payload['status']} record ID: $stagingId');
         
         return {
-          'success': true,
+          'success': validation.accepted,
           'card_id': cardId,
           'staging_id': stagingId,
-          'extracted_data': extractionResult['data'],
-          'source_url': sourceUrl.isNotEmpty ? sourceUrl : 'Official Bank Website',
+          'status': payload['status'],
+          'extracted_data': validation.normalizedData,
+          'confidence_score': validation.confidence,
+          'validation_reasons': validation.reasons.map((reason) => reason.toJson()).toList(),
+          'source_url': effectiveSource,
+          if (!validation.accepted) 'error': 'Extraction rejected by source-grounding validation',
         };
       } catch (e) {
-        ParsingLogger.warning('⚠️ Staging table not found, falling back to direct database insertion. (Apply supabase/migrations/20260712030000_card_benefits_staging.sql in Supabase dashboard to enable staging). Error: $e');
-        
-        final updateResult = await _updateCardBenefitsFromAI(
-          cardId, 
-          extractionResult['data'],
-          sourceUrl.isNotEmpty ? sourceUrl : 'Official Bank Website',
-        );
-        
+        ParsingLogger.error('STAGING FAILED: Refusing unsafe direct application: $e');
         return {
-          'success': true,
+          'success': false,
           'card_id': cardId,
-          'direct_applied': true,
-          'benefits_extracted': updateResult['benefits_count'],
-          'confidence_score': updateResult['avg_confidence'],
-          'source_url': sourceUrl.isNotEmpty ? sourceUrl : 'Official Bank Website',
-          'extracted_at': DateTime.now().toIso8601String(),
+          'error': 'Could not persist validated staging result: $e',
         };
       }
       
@@ -648,24 +675,62 @@ class AdvancedBenefitCalculationService {
           .select('*')
           .eq('id', stagingId)
           .single();
+
+      if (!BenefitStagingPolicy.canApprove(stagingRecord)) {
+        return {
+          'success': false,
+          'error': 'Staging record is rejected, obsolete, or lacks evidence.',
+        };
+      }
       
       final cardId = stagingRecord['card_id'] as String;
       final sourceUrl = stagingRecord['source_url'] as String;
       final aiData = stagingRecord['extracted_data'] as Map<String, dynamic>;
+      final sourceEvidence = stagingRecord['source_evidence'] as Map;
+      final card = await _supabase
+          .from('card_catalog')
+          .select('card_name, bank')
+          .eq('id', cardId)
+          .single();
+      final validation = BenefitExtractionValidator.validate(
+        extractedData: aiData,
+        evidenceText: sourceEvidence['text']?.toString() ?? '',
+        cardName: card['card_name'] as String,
+        bankName: card['bank'] as String,
+        sourceUrl: sourceUrl,
+      );
+      if (!validation.accepted) {
+        await _supabase.from('card_benefits_staging').update({
+          'status': 'rejected',
+          'calculated_confidence': validation.confidence,
+          'validation_reasons': validation.reasons.map((reason) => reason.toJson()).toList(),
+          'validation_warnings': validation.warnings.map((warning) => warning.toJson()).toList(),
+          'rejected_at': DateTime.now().toUtc().toIso8601String(),
+        }).eq('id', stagingId);
+        return {
+          'success': false,
+          'error': 'Staging record failed approval-time validation.',
+          'validation_reasons': validation.reasons.map((reason) => reason.toJson()).toList(),
+        };
+      }
       
       // Update catalog fees & waivers
       final annualFee = aiData['annual_fee'] as Map<String, dynamic>?;
       if (annualFee != null) {
-        final firstYear = annualFee['first_year'] != null ? (annualFee['first_year'] as num).toDouble() : 0.0;
-        final renewal = annualFee['renewal'] != null ? (annualFee['renewal'] as num).toDouble() : firstYear;
-        final waiver = annualFee['waiver_conditions'] as String? ?? '';
-        
-        ParsingLogger.summary('💳 CATALOG METADATA: Updating fees (Annual: ₹$renewal, Joining: ₹$firstYear)');
-        await _supabase.from('card_catalog').update({
-          'annual_fee': renewal,
-          'joining_fee': firstYear,
-          'rewards_summary': waiver,
-        }).eq('id', cardId);
+        final catalogUpdates = <String, dynamic>{};
+        if (annualFee['first_year'] is num) {
+          catalogUpdates['joining_fee'] = (annualFee['first_year'] as num).toDouble();
+        }
+        if (annualFee['renewal'] is num) {
+          catalogUpdates['annual_fee'] = (annualFee['renewal'] as num).toDouble();
+        }
+        if (annualFee['waiver_conditions'] is String &&
+            (annualFee['waiver_conditions'] as String).trim().isNotEmpty) {
+          catalogUpdates['rewards_summary'] = annualFee['waiver_conditions'];
+        }
+        if (catalogUpdates.isNotEmpty) {
+          await _supabase.from('card_catalog').update(catalogUpdates).eq('id', cardId);
+        }
       }
       
       final updateResult = await _updateCardBenefitsFromAI(cardId, aiData, sourceUrl);

@@ -45,6 +45,9 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
   bool _isExtracting = false;
   Map<String, dynamic>? _selectedCardBenefits;
   String? _selectedCardName;
+  String? _selectedValidationStatus;
+  num? _selectedValidationConfidence;
+  List<dynamic> _selectedValidationReasons = [];
   bool _showRawJson = false;
   @override
   void initState() {
@@ -104,22 +107,12 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
         );
 
         if (result['success'] == true) {
-          if (result['direct_applied'] != true) {
-            final stagingId = result['staging_id'] as String;
-            _onLogReceived('✅ Staged. Auto-approving staging ID $stagingId...');
-            final applyRes =
-                await benefitService.applyApprovedBenefits(stagingId);
-            if (applyRes['success'] == true) {
-              _onLogReceived('🚀 Applied benefits for ${card['card_name']}');
-            } else {
-              _onLogReceived('❌ Failed to apply: ${applyRes['error']}');
-            }
-          } else {
-            _onLogReceived(
-                '✅ Directly applied benefits for ${card['card_name']}');
-          }
+          _onLogReceived(
+              '✅ Validated and staged for PM review: ${card['card_name']}');
         } else {
-          _onLogReceived('❌ Extraction failed: ${result['error']}');
+          _onLogReceived(result['status'] == 'rejected'
+              ? '⛔ Extraction rejected for ${card['card_name']}: ${result['validation_reasons']}'
+              : '❌ Extraction failed: ${result['error']}');
         }
       } catch (e) {
         _onLogReceived('❌ Exception: $e');
@@ -139,7 +132,7 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
       final response = await _supabase
           .from('card_catalog')
           .select(
-              '*, card_benefits(*), card_benefits_staging(id, status, created_at)')
+              '*, card_benefits(*), card_benefits_staging(id, status, created_at, calculated_confidence, validation_reasons, validation_warnings)')
           .order('bank', ascending: true);
 
       _safeSetState(() {
@@ -408,25 +401,12 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
                     );
 
                     if (result['success'] == true) {
-                      if (result['direct_applied'] != true) {
-                        final stagingId = result['staging_id'] as String;
-                        _onLogReceived(
-                            '✅ Staged. Auto-approving staging ID $stagingId...');
-                        final applyRes = await benefitService
-                            .applyApprovedBenefits(stagingId);
-                        if (applyRes['success'] == true) {
-                          _onLogReceived(
-                              '🚀 Applied benefits for ${card['card_name']}');
-                        } else {
-                          _onLogReceived(
-                              '❌ Failed to apply: ${applyRes['error']}');
-                        }
-                      } else {
-                        _onLogReceived(
-                            '✅ Directly applied benefits for ${card['card_name']}');
-                      }
+                      _onLogReceived(
+                          '✅ Validated and staged for PM review: ${card['card_name']}');
                     } else {
-                      _onLogReceived('❌ Extraction failed: ${result['error']}');
+                      _onLogReceived(result['status'] == 'rejected'
+                          ? '⛔ Extraction rejected for ${card['card_name']}: ${result['validation_reasons']}'
+                          : '❌ Extraction failed: ${result['error']}');
                     }
                   } catch (e) {
                     _onLogReceived('❌ Exception: $e');
@@ -667,6 +647,7 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
                             final stagingMeta =
                                 (card['card_benefits_staging'] as List).first;
                             lastScraped = stagingMeta['created_at'];
+                            confidence = stagingMeta['calculated_confidence'];
                             hasStagingData = true;
                           }
 
@@ -684,7 +665,7 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
 
                           String confidenceStr = confidence != null
                               ? '${((confidence as num) * 100).toStringAsFixed(0)}%'
-                              : (hasStagingData ? '95%' : 'N/A');
+                              : 'N/A';
 
                           return InkWell(
                             onTap: () async {
@@ -693,6 +674,9 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
                               _safeSetState(() {
                                 _selectedCardName = '$bankName - $cardName';
                                 _selectedCardBenefits = null; // reset
+                                _selectedValidationStatus = null;
+                                _selectedValidationConfidence = null;
+                                _selectedValidationReasons = [];
                               });
                               if (card['card_benefits'] is List &&
                                   (card['card_benefits'] as List).isNotEmpty) {
@@ -705,6 +689,9 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
                                       '✅ Benefits found for $cardName');
                                   _safeSetState(() {
                                     _selectedCardBenefits = benefitsJson;
+                                    _selectedValidationStatus = 'active';
+                                    _selectedValidationConfidence =
+                                        benefitMeta['extraction_confidence'];
                                   });
                                 } else {
                                   _onLogReceived(
@@ -718,7 +705,7 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
                                   final stagingData = await _supabase
                                       .from('card_benefits_staging')
                                       .select(
-                                          'extracted_data, status, created_at')
+                                          'extracted_data, status, created_at, calculated_confidence, validation_reasons')
                                       .eq('card_id', cardId)
                                       .order('created_at', ascending: false)
                                       .limit(1)
@@ -731,6 +718,15 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
                                       _selectedCardBenefits =
                                           stagingData['extracted_data']
                                               as Map<String, dynamic>;
+                                      _selectedValidationStatus =
+                                          stagingData['status']?.toString();
+                                      _selectedValidationConfidence =
+                                          stagingData['calculated_confidence']
+                                              as num?;
+                                      _selectedValidationReasons =
+                                          stagingData['validation_reasons']
+                                                  as List? ??
+                                              [];
                                     });
                                   } else {
                                     _onLogReceived(
@@ -893,6 +889,36 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
                       ),
                     ),
                     const SizedBox(height: 4),
+                    Text(
+                      'VALIDATION: ${(_selectedValidationStatus ?? 'UNKNOWN').toUpperCase()} | CONF: ${_selectedValidationConfidence == null ? 'N/A' : '${(_selectedValidationConfidence! * 100).toStringAsFixed(0)}%'}',
+                      style: GoogleFonts.shareTechMono(
+                        color: _selectedValidationStatus == 'rejected'
+                            ? AppTheme.errorColor
+                            : const Color(0xFF10B981),
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    if (_selectedValidationReasons.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      SizedBox(
+                        width: 620,
+                        child: Text(
+                          _selectedValidationReasons
+                              .map((reason) => reason is Map
+                                  ? '${reason['code']}: ${reason['message']}'
+                                  : reason.toString())
+                              .join(' • '),
+                          style: GoogleFonts.shareTechMono(
+                            color: AppTheme.errorColor,
+                            fontSize: 10,
+                          ),
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 4),
                     Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 8, vertical: 4),
@@ -996,14 +1022,14 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
                       ]
                       // === LEGACY FORMAT: reward_points, cashback_benefits, etc. ===
                       else ...[
-                        if (b['reward_points'] != null &&
-                            (b['reward_points'] as List).isNotEmpty) ...[
+                        if (_rewardPointEntries(b['reward_points'])
+                            .isNotEmpty) ...[
                           _buildSectionTitle('REWARD MULTIPLIERS', Icons.stars),
                           const SizedBox(height: 16),
                           Wrap(
                             spacing: 16,
                             runSpacing: 16,
-                            children: (b['reward_points'] as List)
+                            children: _rewardPointEntries(b['reward_points'])
                                 .map((rp) => _buildRewardCard(rp))
                                 .toList(),
                           ),
@@ -1358,6 +1384,31 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
         ],
       ),
     );
+  }
+
+  List<Map<String, dynamic>> _rewardPointEntries(dynamic rewardPoints) {
+    if (rewardPoints is List) {
+      return rewardPoints
+          .whereType<Map>()
+          .map(Map<String, dynamic>.from)
+          .toList();
+    }
+    if (rewardPoints is! Map) return [];
+    final rewards = Map<String, dynamic>.from(rewardPoints);
+    final entries = <Map<String, dynamic>>[];
+    if (rewards['base_rate'] is num) {
+      entries.add({
+        'rate': rewards['base_rate'],
+        'category': 'Base rewards',
+        'conditions': rewards['evidence_excerpt'] ?? '',
+      });
+    }
+    if (rewards['accelerated_categories'] is List) {
+      entries.addAll((rewards['accelerated_categories'] as List)
+          .whereType<Map>()
+          .map(Map<String, dynamic>.from));
+    }
+    return entries;
   }
 
   Widget _buildSpecialBenefitCard(Map<String, dynamic> sb) {
