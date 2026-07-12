@@ -3,6 +3,7 @@ import 'package:http/http.dart' as http;
 import 'gemini_transaction_parser.dart';
 import 'card_normalizer_service.dart';
 import 'enhanced_web_scraper.dart';
+import 'parsing_logger.dart';
 
 /// Advanced benefit calculation service with tier-based rewards
 class AdvancedBenefitCalculationService {
@@ -93,23 +94,50 @@ class AdvancedBenefitCalculationService {
 
           if (!merchantMatches) continue;
 
+          // Check exclusions and thresholds from JSONB configuration
+          final configuration = cardBenefit['configuration'] as Map<String, dynamic>?;
+          if (configuration != null) {
+            final excludedCategories = configuration['excluded_categories'] as List<dynamic>?;
+            if (excludedCategories != null && excludedCategories.any((cat) => cat.toString().toLowerCase() == category.toLowerCase())) {
+              continue; 
+            }
+            
+            final excludedMerchants = configuration['excluded_merchants'] as List<dynamic>?;
+            if (excludedMerchants != null && excludedMerchants.any((m) => merchantName.toLowerCase().contains(m.toString().toLowerCase()))) {
+              continue; 
+            }
+            
+            final minSpend = configuration['min_spend_threshold'];
+            if (minSpend != null) {
+              final minSpendVal = minSpend is num ? minSpend.toDouble() : double.tryParse(minSpend.toString());
+              if (minSpendVal != null && amount < minSpendVal) {
+                continue; 
+              }
+            }
+          }
+
           // Calculate reward based on benefit type and tiers
           double reward = 0.0;
           String calculationMethod = benefit['calculation_method'] ?? 'percentage';
 
           if (benefitTiers != null && benefitTiers.isNotEmpty) {
-            // Use tier-based calculation
             reward = _calculateTierBasedReward(amount, benefitTiers, calculationMethod);
           } else {
-            // Use default value
             double defaultValue = (cardBenefit['value'] ?? benefit['default_value'] ?? 0.0).toDouble();
             reward = _calculateSimpleReward(amount, defaultValue, calculationMethod);
           }
 
-          // Apply monthly/annual caps
+          // Apply monthly/annual caps and max cap limits
           final monthlyCap = cardBenefit['monthly_cap']?.toDouble();
           final annualCap = cardBenefit['annual_cap']?.toDouble();
+          final maxCapLimit = configuration?['max_cap_limit'];
           
+          if (maxCapLimit != null) {
+            final maxCapLimitVal = maxCapLimit is num ? maxCapLimit.toDouble() : double.tryParse(maxCapLimit.toString());
+            if (maxCapLimitVal != null && reward > maxCapLimitVal) {
+              reward = maxCapLimitVal;
+            }
+          }
           if (monthlyCap != null && reward > monthlyCap) {
             reward = monthlyCap;
           }
@@ -377,6 +405,22 @@ class AdvancedBenefitCalculationService {
             }
 
             if (categoryMatches) {
+              final configuration = cardBenefit['configuration'] as Map<String, dynamic>?;
+              if (configuration != null) {
+                final excludedCategories = configuration['excluded_categories'] as List<dynamic>?;
+                if (excludedCategories != null && excludedCategories.any((cat) => cat.toString().toLowerCase() == category.toLowerCase())) {
+                  continue; 
+                }
+                
+                final minSpend = configuration['min_spend_threshold'];
+                if (minSpend != null) {
+                  final minSpendVal = minSpend is num ? minSpend.toDouble() : double.tryParse(minSpend.toString());
+                  if (minSpendVal != null && monthlySpending < minSpendVal) {
+                    continue; 
+                  }
+                }
+              }
+
               final benefitTiers = cardBenefit['benefit_tiers'] as List<dynamic>?;
               String calculationMethod = benefit['calculation_method'] ?? 'percentage';
               double rewardRate = 0.0;
@@ -386,6 +430,19 @@ class AdvancedBenefitCalculationService {
               } else {
                 double defaultValue = (cardBenefit['value'] ?? benefit['default_value'] ?? 0.0).toDouble();
                 rewardRate = _calculateSimpleReward(monthlySpending, defaultValue, calculationMethod);
+              }
+
+              final monthlyCap = cardBenefit['monthly_cap']?.toDouble();
+              final maxCapLimit = configuration?['max_cap_limit'];
+              
+              if (maxCapLimit != null) {
+                final maxCapLimitVal = maxCapLimit is num ? maxCapLimit.toDouble() : double.tryParse(maxCapLimit.toString());
+                if (maxCapLimitVal != null && rewardRate > maxCapLimitVal) {
+                  rewardRate = maxCapLimitVal;
+                }
+              }
+              if (monthlyCap != null && rewardRate > monthlyCap) {
+                rewardRate = monthlyCap;
               }
 
               if (rewardRate > bestRewardRate) {
@@ -480,16 +537,33 @@ class AdvancedBenefitCalculationService {
     required String cardId,
     required String cardName,
     required String bankName,
+    String? customUrl,
   }) async {
     try {
-      print('🤖 EXTRACTING BENEFITS: Starting extraction for $bankName $cardName');
+      ParsingLogger.summary('🤖 EXTRACTING BENEFITS: Starting extraction for $bankName $cardName');
       
       // 1. Normalize card and bank names using existing service
       final normalizedBank = CardNormalizerService.normalizeBankName(bankName);
       final normalizedCard = CardNormalizerService.normalizeCardName(cardName, normalizedBank);
       
-      // 2. Fetch card web content using simple HTTP GET
-      final htmlContent = await _fetchCardWebContent(normalizedCard, normalizedBank);
+      // 2. Fetch card web content
+      String htmlContent = '';
+      String sourceUrl = customUrl ?? '';
+      
+      if (customUrl != null && customUrl.isNotEmpty) {
+        ParsingLogger.summary('🌐 FETCHING: Scraping custom URL: $customUrl');
+        final scrapedContent = await EnhancedWebScraper.scrapeUrl(customUrl);
+        if (scrapedContent.isSuccess) {
+          htmlContent = scrapedContent.benefitContent.isNotEmpty 
+              ? scrapedContent.benefitContent 
+              : scrapedContent.html;
+          ParsingLogger.summary('✅ FETCHED: Successfully scraped ${htmlContent.length} chars from $customUrl');
+        } else {
+          ParsingLogger.error('SCRAPING FAILED for custom URL: ${scrapedContent.error}');
+        }
+      } else {
+        htmlContent = await _fetchCardWebContent(normalizedCard, normalizedBank);
+      }
       
       if (htmlContent.isEmpty) {
         return {
@@ -514,28 +588,104 @@ class AdvancedBenefitCalculationService {
         };
       }
       
-      // 4. Update database with extracted benefits using existing patterns
-      final updateResult = await _updateCardBenefitsFromAI(
-        cardId, 
-        extractionResult['data'],
-        htmlContent.length > 100 ? htmlContent.substring(0, 100) + '...' : htmlContent,
-      );
+      // 4. Save to staging table for review before committing
+      String? stagingId;
+      try {
+        ParsingLogger.summary('💾 STAGING: Saving extracted benefits to review staging table...');
+        final insertResult = await _supabase.from('card_benefits_staging').insert({
+          'card_id': cardId,
+          'source_url': sourceUrl.isNotEmpty ? sourceUrl : 'Official Bank Website',
+          'extracted_data': extractionResult['data'],
+          'status': 'pending',
+        }).select('id').single();
+        stagingId = insertResult['id'] as String;
+        ParsingLogger.summary('✅ STAGING: Successfully saved staging record ID: $stagingId');
+        
+        return {
+          'success': true,
+          'card_id': cardId,
+          'staging_id': stagingId,
+          'extracted_data': extractionResult['data'],
+          'source_url': sourceUrl.isNotEmpty ? sourceUrl : 'Official Bank Website',
+        };
+      } catch (e) {
+        ParsingLogger.warning('⚠️ Staging table not found, falling back to direct database insertion. (Apply supabase/migrations/20260712030000_card_benefits_staging.sql in Supabase dashboard to enable staging). Error: $e');
+        
+        final updateResult = await _updateCardBenefitsFromAI(
+          cardId, 
+          extractionResult['data'],
+          sourceUrl.isNotEmpty ? sourceUrl : 'Official Bank Website',
+        );
+        
+        return {
+          'success': true,
+          'card_id': cardId,
+          'direct_applied': true,
+          'benefits_extracted': updateResult['benefits_count'],
+          'confidence_score': updateResult['avg_confidence'],
+          'source_url': sourceUrl.isNotEmpty ? sourceUrl : 'Official Bank Website',
+          'extracted_at': DateTime.now().toIso8601String(),
+        };
+      }
       
+    } catch (e) {
+      ParsingLogger.error('BENEFIT EXTRACTION ERROR: $e');
+      return {
+        'success': false,
+        'error': e.toString(),
+        'card_id': cardId,
+      };
+    }
+  }
+
+  /// Apply approved card benefits and update catalog metadata
+  Future<Map<String, dynamic>> applyApprovedBenefits(String stagingId) async {
+    try {
+      ParsingLogger.summary('💾 APPLYING APPROVED BENEFITS: Staging ID = $stagingId');
+      
+      final stagingRecord = await _supabase
+          .from('card_benefits_staging')
+          .select('*')
+          .eq('id', stagingId)
+          .single();
+      
+      final cardId = stagingRecord['card_id'] as String;
+      final sourceUrl = stagingRecord['source_url'] as String;
+      final aiData = stagingRecord['extracted_data'] as Map<String, dynamic>;
+      
+      // Update catalog fees & waivers
+      final annualFee = aiData['annual_fee'] as Map<String, dynamic>?;
+      if (annualFee != null) {
+        final firstYear = annualFee['first_year'] != null ? (annualFee['first_year'] as num).toDouble() : 0.0;
+        final renewal = annualFee['renewal'] != null ? (annualFee['renewal'] as num).toDouble() : firstYear;
+        final waiver = annualFee['waiver_conditions'] as String? ?? '';
+        
+        ParsingLogger.summary('💳 CATALOG METADATA: Updating fees (Annual: ₹$renewal, Joining: ₹$firstYear)');
+        await _supabase.from('card_catalog').update({
+          'annual_fee': renewal,
+          'joining_fee': firstYear,
+          'rewards_summary': waiver,
+        }).eq('id', cardId);
+      }
+      
+      final updateResult = await _updateCardBenefitsFromAI(cardId, aiData, sourceUrl);
+      
+      await _supabase.from('card_benefits_staging').update({
+        'status': 'approved',
+      }).eq('id', stagingId);
+      
+      ParsingLogger.summary('✅ APPLIED: Successfully synced approved benefits to card');
       return {
         'success': true,
         'card_id': cardId,
         'benefits_extracted': updateResult['benefits_count'],
         'confidence_score': updateResult['avg_confidence'],
-        'source_url': updateResult['source_url'],
-        'extracted_at': DateTime.now().toIso8601String(),
       };
-      
     } catch (e) {
-      print('❌ BENEFIT EXTRACTION ERROR: $e');
+      ParsingLogger.error('❌ APPLY FAILED: $e');
       return {
         'success': false,
         'error': e.toString(),
-        'card_id': cardId,
       };
     }
   }
@@ -545,7 +695,7 @@ class AdvancedBenefitCalculationService {
   /// web content extraction with multiple fallback strategies.
   Future<String> _fetchCardWebContent(String cardName, String bankName) async {
     try {
-      print('🌐 FETCHING: Starting web scraping for $bankName $cardName');
+      ParsingLogger.summary('🌐 FETCHING: Starting web scraping for $bankName $cardName');
       
       // Use the enhanced web scraper with multiple strategies
       final scrapedContent = await EnhancedWebScraper.scrapeCardPage(
@@ -554,67 +704,60 @@ class AdvancedBenefitCalculationService {
       );
       
       if (scrapedContent.isSuccess) {
-        print('✅ FETCHED: Successfully scraped ${scrapedContent.html.length} chars from ${scrapedContent.url}');
+        ParsingLogger.summary('✅ FETCHED: Successfully scraped ${scrapedContent.html.length} chars from ${scrapedContent.url}');
         
         // Extract benefit-specific content
         final benefitContent = scrapedContent.benefitContent;
         
         if (EnhancedWebScraper.isValidBenefitContent(benefitContent)) {
-          print('✅ BENEFIT CONTENT: Found ${benefitContent.length} chars of benefit information');
+          ParsingLogger.summary('✅ BENEFIT CONTENT: Found ${benefitContent.length} chars of benefit information');
           return benefitContent;
         } else {
-          print('⚠️ BENEFIT CONTENT: No valid benefit content found, using full HTML');
+          ParsingLogger.warning('BENEFIT CONTENT: No valid benefit content found, using full HTML');
           return scrapedContent.html;
         }
       } else {
-        print('❌ SCRAPING FAILED: ${scrapedContent.error}');
+        ParsingLogger.error('SCRAPING FAILED: ${scrapedContent.error}');
         return '';
       }
       
     } catch (e) {
-      print('❌ SCRAPING ERROR: $e');
+      ParsingLogger.error('SCRAPING ERROR: $e');
       // Fallback to simple HTTP if enhanced scraper fails
       return await _fallbackSimpleHttp(cardName, bankName);
     }
   }
 
-  /// Fallback method using simple HTTP requests
+  /// Fallback method using EnhancedWebScraper (handles CORS proxy on web)
   Future<String> _fallbackSimpleHttp(String cardName, String bankName) async {
     try {
-      print('🔄 FALLBACK: Using simple HTTP for $bankName $cardName');
+      ParsingLogger.summary('🔄 FALLBACK: Using EnhancedWebScraper for $bankName $cardName');
       
       // Generate potential URLs based on bank and card name
       final urls = _generateCardUrls(cardName, bankName);
       
       for (final url in urls) {
         try {
-          print('🌐 FALLBACK: Trying $url');
+          ParsingLogger.summary('🌐 FALLBACK: Trying $url');
           
-          final response = await http.get(
-            Uri.parse(url),
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-              'Accept-Language': 'en-US,en;q=0.5',
-            },
-          ).timeout(const Duration(seconds: 10));
+          final scraped = await EnhancedWebScraper.scrapeUrl(url);
           
-          if (response.statusCode == 200 && response.body.isNotEmpty) {
-            print('✅ FALLBACK: Successfully retrieved content (${response.body.length} chars)');
-            return response.body;
+          if (scraped.isSuccess && scraped.html.isNotEmpty) {
+            ParsingLogger.summary('✅ FALLBACK: Successfully retrieved content (${scraped.html.length} chars)');
+            return scraped.html;
           }
           
         } catch (e) {
-          print('⚠️ FALLBACK ERROR: $url - $e');
+          ParsingLogger.warning('FALLBACK ERROR: $url - $e');
           continue; // Try next URL
         }
       }
       
-      print('❌ FALLBACK FAILED: No URLs returned valid content');
+      ParsingLogger.error('FALLBACK FAILED: No URLs returned valid content');
       return '';
       
     } catch (e) {
-      print('❌ FALLBACK ERROR: $e');
+      ParsingLogger.error('FALLBACK ERROR: $e');
       return '';
     }
   }
@@ -689,13 +832,28 @@ class AdvancedBenefitCalculationService {
             .eq('ai_extracted', true);
       }
       
+      final validCategories = [
+        'DINING',
+        'TRAVEL',
+        'FUEL',
+        'SHOPPING',
+        'GROCERY',
+        'ENTERTAINMENT',
+        'UTILITIES',
+        'HEALTHCARE',
+        'GENERAL'
+      ];
+
       // Process cashback benefits
       if (aiData['cashback_benefits'] is List) {
         final cashbackBenefits = aiData['cashback_benefits'] as List;
         
         for (final benefit in cashbackBenefits) {
           if (benefit is Map<String, dynamic>) {
-            await _insertAIBenefit(cardId, benefit, 'CASHBACK', sourceUrl);
+            final category = (benefit['category'] as String? ?? 'GENERAL').toUpperCase();
+            final categoryCode = validCategories.contains(category) ? category : 'GENERAL';
+            
+            await _insertAIBenefit(cardId, benefit, categoryCode, sourceUrl);
             benefitsCount++;
             totalConfidence += (benefit['confidence'] ?? 0.8);
           }
@@ -707,11 +865,11 @@ class AdvancedBenefitCalculationService {
         final rewardData = aiData['reward_points'] as Map<String, dynamic>;
         
         await _insertAIBenefit(cardId, {
-          'category': 'POINTS',
+          'category': 'GENERAL',
           'rate': rewardData['base_rate'] ?? 1.0,
           'description': 'Base reward points',
           'rate_type': 'points',
-        }, 'POINTS', sourceUrl);
+        }, 'GENERAL', sourceUrl);
         
         benefitsCount++;
         totalConfidence += 0.8;
@@ -723,7 +881,10 @@ class AdvancedBenefitCalculationService {
         
         for (final benefit in specialBenefits) {
           if (benefit is Map<String, dynamic>) {
-            await _insertAIBenefit(cardId, benefit, 'OTHER', sourceUrl);
+            final type = (benefit['type'] as String? ?? 'GENERAL').toUpperCase();
+            final categoryCode = validCategories.contains(type) ? type : 'GENERAL';
+            
+            await _insertAIBenefit(cardId, benefit, categoryCode, sourceUrl);
             benefitsCount++;
             totalConfidence += 0.7;
           }
@@ -739,7 +900,7 @@ class AdvancedBenefitCalculationService {
       };
       
     } catch (e) {
-      print('❌ DATABASE UPDATE ERROR: $e');
+      ParsingLogger.error('DATABASE UPDATE ERROR: $e');
       return {
         'benefits_count': 0,
         'avg_confidence': 0.0,
@@ -796,6 +957,12 @@ class AdvancedBenefitCalculationService {
         'configuration': {
           'ai_extracted_data': benefitData,
           'conditions': benefitData['conditions'],
+          // NEW: structured calculation limits
+          'min_spend_threshold': benefitData['min_spend_threshold'],
+          'max_cap_limit': benefitData['max_cap_limit'],
+          'excluded_categories': benefitData['excluded_categories'],
+          'excluded_merchants': benefitData['excluded_merchants'],
+          'is_accelerated': benefitData['is_accelerated'] ?? false,
         },
         // NEW: AI tracking fields
         'ai_extracted': true,
@@ -806,7 +973,7 @@ class AdvancedBenefitCalculationService {
       });
       
     } catch (e) {
-      print('❌ INSERT BENEFIT ERROR: $e');
+      ParsingLogger.error('INSERT BENEFIT ERROR: $e');
     }
   }
   /// Classify URLs using AI for better credit card page detection

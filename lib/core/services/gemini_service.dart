@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:cardcompass/core/config/ai_config.dart';
+import 'gemini_request_service.dart';
 
 /// Service for interacting with Google Gemini AI API
 class GeminiService {
@@ -12,6 +13,93 @@ class GeminiService {
     int maxTokens = 4000,
   }) async {
     try {
+      // ── OLLAMA PROVIDER ROAD ──
+      if (AIConfig.activeProvider == AIProvider.ollama) {
+        final text = await _executeOllamaRequest(prompt, temperature);
+        if (text != null) return text;
+        throw Exception('Ollama query failed.');
+      }
+
+      // ── GROQ PROVIDER ROAD ──
+      if (AIConfig.activeProvider == AIProvider.groq) {
+        if (AIConfig.groqApiKey.isEmpty) {
+          throw Exception(
+              'Groq API Key is empty. Please enter your Groq key in settings.');
+        }
+
+        final groqModels = [
+          'llama-3.1-8b-instant',
+          'llama-3.3-70b-versatile',
+          'mixtral-8x7b-32768'
+        ];
+        final activeModel = AIConfig.groqModel;
+        final modelQueue = [activeModel];
+        for (final m in groqModels) {
+          if (m != activeModel) modelQueue.add(m);
+        }
+
+        for (int i = 0; i < modelQueue.length; i++) {
+          final currentModel = modelQueue[i];
+          try {
+            print('🤖 Groq API: Attempting request using model: $currentModel');
+
+            final requestBody = {
+              'model': currentModel,
+              'messages': [
+                {
+                  'role': 'user',
+                  'content': prompt,
+                }
+              ],
+              'temperature': temperature,
+            };
+
+            final response = await http
+                .post(
+                  Uri.parse('https://api.groq.com/openai/v1/chat/completions'),
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ${AIConfig.groqApiKey}',
+                  },
+                  body: jsonEncode(requestBody),
+                )
+                .timeout(const Duration(seconds: 45));
+
+            if (response.statusCode == 200) {
+              final jsonResponse = jsonDecode(response.body);
+              final text = jsonResponse['choices']?[0]?['message']?['content']
+                  as String?;
+              if (text != null && text.isNotEmpty) {
+                return text;
+              }
+            } else {
+              print(
+                  '⚠️ Groq API model $currentModel returned error: ${response.statusCode} - ${response.body}');
+              if (response.statusCode == 429 ||
+                  response.statusCode == 413 ||
+                  response.statusCode == 400) {
+                continue;
+              }
+              throw Exception(
+                  'Groq API error: ${response.statusCode} - ${response.body}');
+            }
+          } catch (e) {
+            print('⚠️ Groq API call failed on model $currentModel: $e');
+          }
+        }
+
+        // Check if local Ollama is available as backup on Groq failure
+        if (await _isOllamaAvailable()) {
+          print(
+              '🔄 [HYBRID BACKUP] Groq content generation failed. Automatically switching to local Ollama fallback...');
+          final backupText = await _executeOllamaRequest(prompt, temperature);
+          if (backupText != null) return backupText;
+        }
+
+        throw Exception('All Groq API model attempts failed.');
+      }
+
+      // ── GEMINI PROVIDER ROAD ──
       final requestBody = {
         'contents': [
           {
@@ -28,33 +116,35 @@ class GeminiService {
         }
       };
 
-      final response = await http.post(
-        Uri.parse(AIConfig.geminiGenerateUrl),
-        headers: AIConfig.geminiHeaders,
-        body: jsonEncode(requestBody),
-      );
+      final response = await sendGeminiRequest(requestBody);
 
       if (response.statusCode == 200) {
         final jsonResponse = jsonDecode(response.body);
         final candidates = jsonResponse['candidates'] as List?;
-        
+
         if (candidates != null && candidates.isNotEmpty) {
           final content = candidates[0]['content'];
           final parts = content['parts'] as List?;
-          
+
           if (parts != null && parts.isNotEmpty) {
             return parts[0]['text'] as String;
           }
         }
-        
+
         throw Exception('No content generated');
       } else {
-        throw Exception('Gemini API error: ${response.statusCode} - ${response.body}');
+        throw Exception(
+            'Gemini API error: ${response.statusCode} - ${response.body}');
       }
     } catch (error) {
-      throw Exception('Failed to generate content with Gemini: $error');
+      String provName = 'Gemini';
+      if (AIConfig.activeProvider == AIProvider.ollama) provName = 'Ollama';
+      if (AIConfig.activeProvider == AIProvider.groq) provName = 'Groq';
+      throw Exception('Failed to generate content with $provName: $error');
     }
-  }  /// Generate structured JSON response for recommendations
+  }
+
+  /// Generate structured JSON response for recommendations
   Future<Map<String, dynamic>> generateStructuredRecommendation({
     required String prompt,
     required String schema,
@@ -84,7 +174,8 @@ CRITICAL REQUIREMENTS:
 
       return _parseJsonResponse(response);
     } catch (error) {
-      debugPrint('JSON parsing error in generateStructuredRecommendation: $error');
+      debugPrint(
+          'JSON parsing error in generateStructuredRecommendation: $error');
       throw Exception('Failed to generate structured recommendation: $error');
     }
   }
@@ -92,17 +183,17 @@ CRITICAL REQUIREMENTS:
   /// Parse JSON response with multiple fallback strategies
   Map<String, dynamic> _parseJsonResponse(String response) {
     String cleanedResponse = response.trim();
-    
+
     // Strategy 1: Remove markdown formatting
     cleanedResponse = _removeMarkdownFormatting(cleanedResponse);
-    
+
     // Strategy 2: Try direct parsing
     try {
       return jsonDecode(cleanedResponse) as Map<String, dynamic>;
     } catch (e) {
       debugPrint('Direct JSON parsing failed: $e');
     }
-    
+
     // Strategy 3: Extract JSON boundaries and try again
     try {
       final jsonString = _extractJsonBoundaries(cleanedResponse);
@@ -110,7 +201,7 @@ CRITICAL REQUIREMENTS:
     } catch (e) {
       debugPrint('JSON boundary extraction failed: $e');
     }
-    
+
     // Strategy 4: Fix common JSON issues and try again
     try {
       final fixedJson = _fixCommonJsonIssues(cleanedResponse);
@@ -118,7 +209,7 @@ CRITICAL REQUIREMENTS:
     } catch (e) {
       debugPrint('JSON fixing failed: $e');
     }
-    
+
     // Strategy 5: Try to extract and fix from boundaries
     try {
       final extractedJson = _extractJsonBoundaries(cleanedResponse);
@@ -127,7 +218,7 @@ CRITICAL REQUIREMENTS:
     } catch (e) {
       debugPrint('Combined extraction and fixing failed: $e');
     }
-    
+
     // Strategy 6: Last resort - try regex to extract JSON structure
     try {
       final regexJson = _extractJsonWithRegex(cleanedResponse);
@@ -135,24 +226,25 @@ CRITICAL REQUIREMENTS:
     } catch (e) {
       debugPrint('Regex JSON extraction failed: $e');
     }
-    
-    throw Exception('Failed to parse JSON response after all strategies: $cleanedResponse');
+
+    throw Exception(
+        'Failed to parse JSON response after all strategies: $cleanedResponse');
   }
 
   /// Remove markdown formatting from response
   String _removeMarkdownFormatting(String response) {
     String cleaned = response;
-    
+
     // Remove code blocks
     cleaned = cleaned.replaceAll(RegExp(r'```json\s*'), '');
     cleaned = cleaned.replaceAll(RegExp(r'```\s*'), '');
-    
+
     // Remove any text before first { or [
     final jsonStart = cleaned.indexOf(RegExp(r'[{\[]'));
     if (jsonStart > 0) {
       cleaned = cleaned.substring(jsonStart);
     }
-    
+
     return cleaned.trim();
   }
 
@@ -160,83 +252,87 @@ CRITICAL REQUIREMENTS:
   String _extractJsonBoundaries(String response) {
     final jsonStart = response.indexOf('{');
     final jsonEnd = response.lastIndexOf('}');
-    
+
     if (jsonStart != -1 && jsonEnd != -1 && jsonEnd > jsonStart) {
       return response.substring(jsonStart, jsonEnd + 1);
     }
-    
+
     // Try with array boundaries
     final arrayStart = response.indexOf('[');
     final arrayEnd = response.lastIndexOf(']');
-    
+
     if (arrayStart != -1 && arrayEnd != -1 && arrayEnd > arrayStart) {
       return response.substring(arrayStart, arrayEnd + 1);
     }
-    
+
     return response;
   }
 
   /// Extract JSON using regex patterns
   String _extractJsonWithRegex(String response) {
     // Try to find JSON object pattern
-    final objectPattern = RegExp(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', dotAll: true);
+    final objectPattern =
+        RegExp(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', dotAll: true);
     final objectMatch = objectPattern.firstMatch(response);
-    
+
     if (objectMatch != null) {
       return objectMatch.group(0)!;
     }
-    
+
     // Try to find JSON array pattern
-    final arrayPattern = RegExp(r'\[[^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*\]', dotAll: true);
+    final arrayPattern =
+        RegExp(r'\[[^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*\]', dotAll: true);
     final arrayMatch = arrayPattern.firstMatch(response);
-    
+
     if (arrayMatch != null) {
       return arrayMatch.group(0)!;
     }
-    
+
     return response;
   }
+
   /// Fix common JSON formatting issues
   String _fixCommonJsonIssues(String jsonString) {
     String fixed = jsonString.trim();
-    
+
     try {
       // First, try basic cleanup
       // Remove trailing commas before closing brackets/braces
       fixed = fixed.replaceAll(RegExp(r',(\s*[}\]])'), r'$1');
-      
+
       // Remove any text before the first { or [
       final jsonStart = fixed.indexOf(RegExp(r'[{\[]'));
       if (jsonStart > 0) {
         fixed = fixed.substring(jsonStart);
       }
-      
+
       // Remove any text after the last } or ]
       final jsonEnd = fixed.lastIndexOf(RegExp(r'[}\]]'));
       if (jsonEnd != -1 && jsonEnd < fixed.length - 1) {
         fixed = fixed.substring(0, jsonEnd + 1);
       }
-      
+
       // Fix common quote issues in string values
       // Replace smart quotes with regular quotes
       fixed = fixed.replaceAll('"', '"').replaceAll('"', '"');
       fixed = fixed.replaceAll(''', "'").replaceAll(''', "'");
-      
+
       // Fix newlines and special characters in strings
       fixed = fixed.replaceAll('\n', '\\n');
       fixed = fixed.replaceAll('\r', '\\r');
       fixed = fixed.replaceAll('\t', '\\t');
-      
+
       // Remove control characters that can break JSON
       fixed = fixed.replaceAll(RegExp(r'[\x00-\x1F\x7F]'), '');
-      
+
       // Fix incomplete strings (basic attempt)
-      fixed = fixed.replaceAll(RegExp(r':\s*"([^"]*)"([^,}\]]*)"'), r': "$1$2"');
-      
+      fixed =
+          fixed.replaceAll(RegExp(r':\s*"([^"]*)"([^,}\]]*)"'), r': "$1$2"');
+
       // Ensure proper spacing around colons and commas
       fixed = fixed.replaceAll(RegExp(r'\s*:\s*'), ': ');
       fixed = fixed.replaceAll(RegExp(r'\s*,\s*(?![}\]])'), ', ');
-      
+
       return fixed;
     } catch (error) {
       debugPrint('Error in JSON fixing: $error');
@@ -306,6 +402,7 @@ For each recommendation, provide:
       throw Exception('Failed to generate card recommendations: $error');
     }
   }
+
   /// Generate spending optimization suggestions
   Future<List<Map<String, dynamic>>> generateSpendingOptimizations({
     required Map<String, dynamic> userProfile,
@@ -363,12 +460,12 @@ For each optimization, provide:
       );
 
       final optimizations = result['optimizations'] as List?;
-      
+
       if (optimizations == null || optimizations.isEmpty) {
         debugPrint('AI returned null or empty optimizations');
         return _getMockOptimizations();
       }
-      
+
       return List<Map<String, dynamic>>.from(optimizations);
     } catch (error) {
       debugPrint('Failed to generate spending optimizations with AI: $error');
@@ -384,7 +481,8 @@ For each optimization, provide:
         "currentMonthlySpending": 5000,
         "currentRewardRate": 1.0,
         "optimizedRewardRate": 5.0,
-        "recommendation": "Use your dining-focused credit card for restaurant purchases to earn 5x rewards instead of 1x",
+        "recommendation":
+            "Use your dining-focused credit card for restaurant purchases to earn 5x rewards instead of 1x",
         "potentialMonthlySavings": 200,
         "actionRequired": "Switch to dining rewards card",
         "cardToUse": "Dining Rewards Card"
@@ -394,7 +492,8 @@ For each optimization, provide:
         "currentMonthlySpending": 3000,
         "currentRewardRate": 1.0,
         "optimizedRewardRate": 4.0,
-        "recommendation": "Use grocery category card for supermarket purchases to maximize cashback",
+        "recommendation":
+            "Use grocery category card for supermarket purchases to maximize cashback",
         "potentialMonthlySavings": 90,
         "actionRequired": "Use grocery rewards card",
         "cardToUse": "Grocery Cashback Card"
@@ -404,7 +503,8 @@ For each optimization, provide:
         "currentMonthlySpending": 2000,
         "currentRewardRate": 1.0,
         "optimizedRewardRate": 3.5,
-        "recommendation": "Switch to fuel-specific card for petrol purchases to earn higher rewards",
+        "recommendation":
+            "Switch to fuel-specific card for petrol purchases to earn higher rewards",
         "potentialMonthlySavings": 50,
         "actionRequired": "Use fuel rewards card",
         "cardToUse": "Fuel Rewards Card"
@@ -547,7 +647,59 @@ Consider:
         schema: schema,
       );
     } catch (error) {
-      throw Exception('Failed to get best card for transaction: $error');
+      throw Exception('Failed to recommend a card for transaction: $error');
     }
+  }
+
+  static Future<bool> _isOllamaAvailable() async {
+    try {
+      final response = await http
+          .get(
+            Uri.parse('${AIConfig.ollamaUrl}/api/tags'),
+          )
+          .timeout(const Duration(milliseconds: 500));
+      return response.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<String?> _executeOllamaRequest(
+      String prompt, double temp) async {
+    try {
+      final ollamaReq = {
+        'model': AIConfig.ollamaModel,
+        'prompt': prompt,
+        'stream': false,
+        'options': {
+          'temperature': temp,
+        }
+      };
+
+      final targetUrl = '${AIConfig.ollamaUrl}/api/generate';
+      print(
+          '🤖 Ollama API: Sending fallback request to $targetUrl with model: ${AIConfig.ollamaModel}');
+
+      final response = await http
+          .post(
+        Uri.parse(targetUrl),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(ollamaReq),
+      )
+          .timeout(const Duration(minutes: 5), onTimeout: () {
+        throw Exception('Ollama API timeout.');
+      });
+
+      if (response.statusCode == 200) {
+        final jsonResponse = jsonDecode(response.body);
+        final text = jsonResponse['response'] as String?;
+        if (text != null && text.isNotEmpty) {
+          return text;
+        }
+      }
+    } catch (e) {
+      print('❌ Ollama fallback call failed: $e');
+    }
+    return null;
   }
 }

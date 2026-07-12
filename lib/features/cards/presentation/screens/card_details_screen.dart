@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:cardcompass/core/theme.dart';
 import 'package:cardcompass/core/mock/mock_data.dart';
 import 'package:cardcompass/core/providers/service_providers.dart';
@@ -118,28 +119,45 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
     }
 
     return Scaffold(
+      backgroundColor: const Color(0xFF050B18),
       appBar: AppBar(
-        title: Text(_card!.cardName),
+        title: Text(
+          _card!.cardName.toUpperCase(),
+          style: GoogleFonts.spaceGrotesk(
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1.0,
+            fontSize: 16,
+          ),
+        ),
         elevation: 0,
         actions: [
           IconButton(
-            icon: const Icon(Icons.edit),
+            icon: const Icon(Icons.edit, color: AppTheme.primaryColor),
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (context) => const AddCardScreen()),
             ),
           ),
           IconButton(
-            icon: const Icon(Icons.more_vert),
+            icon: const Icon(Icons.more_vert, color: Colors.white70),
             onPressed: () => _showCardOptions(),
           ),
         ],
         bottom: TabBar(
           controller: _tabController,
+          labelColor: AppTheme.primaryColor,
+          unselectedLabelColor: Colors.white38,
+          indicatorColor: AppTheme.primaryColor,
+          indicatorSize: TabBarIndicatorSize.tab,
+          labelStyle: GoogleFonts.spaceGrotesk(
+            fontWeight: FontWeight.bold,
+            fontSize: 10,
+            letterSpacing: 0.5,
+          ),
           tabs: const [
-            Tab(icon: Icon(Icons.info), text: 'Overview'),
-            Tab(icon: Icon(Icons.list), text: 'Transactions'),
-            Tab(icon: Icon(Icons.star), text: 'Benefits'),
-            Tab(icon: Icon(Icons.analytics), text: 'Analytics'),
+            Tab(icon: Icon(Icons.info_outline, size: 18), text: 'OVERVIEW'),
+            Tab(icon: Icon(Icons.list_alt, size: 18), text: 'TXNS'),
+            Tab(icon: Icon(Icons.bolt, size: 18), text: 'BENEFITS'),
+            Tab(icon: Icon(Icons.analytics_outlined, size: 18), text: 'CHARTS'),
           ],
         ),
       ),
@@ -332,40 +350,71 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
   Widget _buildBenefitsTab() {
     if (_benefits.isEmpty) {
       return const EmptyState(
-        title: 'No Benefits',
-        message: 'No benefits configured for this card',
+        title: 'No Benefits Configured',
+        message: 'No benefits rules detected for this card variant',
         icon: Icons.star_border,
       );
     }
 
     return ListView.builder(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
       itemCount: _benefits.length,
       itemBuilder: (context, index) {
         final benefit = _benefits[index];
-        return Card(
+        final rate = benefit['reward_rate']?.toString() ?? 'N/A';
+        return Container(
           margin: const EdgeInsets.only(bottom: 12),
+          decoration: BoxDecoration(
+            color: const Color(0xFF0C152B),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.06),
+              width: 1,
+            ),
+          ),
           child: ListTile(
-            leading: CircleAvatar(
-              backgroundColor: Theme.of(context).primaryColor,
+            leading: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: AppTheme.primaryColor.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+                border: Border.all(color: AppTheme.primaryColor.withValues(alpha: 0.2), width: 1),
+              ),
               child: Icon(
                 benefit['icon'],
-                color: Colors.white,
+                color: AppTheme.primaryColor,
+                size: 18,
               ),
             ),
-            title: Text(benefit['category']),
-            subtitle: Text(benefit['description']),
+            title: Text(
+              benefit['category'].toString().toUpperCase(),
+              style: GoogleFonts.spaceGrotesk(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 13,
+                letterSpacing: 0.5,
+              ),
+            ),
+            subtitle: Text(
+              benefit['description'],
+              style: GoogleFonts.plusJakartaSans(
+                color: Colors.white60,
+                fontSize: 11,
+              ),
+            ),
             trailing: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
-                color: Colors.green,
-                borderRadius: BorderRadius.circular(4),
+                color: AppTheme.successColor.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppTheme.successColor.withValues(alpha: 0.3), width: 1),
               ),
               child: Text(
-                benefit['reward_rate'],
-                style: const TextStyle(
-                  color: Colors.white,
+                rate,
+                style: GoogleFonts.spaceGrotesk(
+                  color: AppTheme.successColor,
                   fontWeight: FontWeight.bold,
+                  fontSize: 11,
                 ),
               ),
             ),
@@ -377,45 +426,69 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
 
   Widget _buildAnalyticsTab() {
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 80),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Spending Analytics',
-            style: Theme.of(context).textTheme.headlineSmall,
-          ),
-          const SizedBox(height: 16),
-
-          // Monthly spending
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'This Month',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '₹${_calculateMonthlySpending().toStringAsFixed(0)}',
-                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                      color: Theme.of(context).primaryColor,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
+            'SPENDING ANALYTICS',
+            style: GoogleFonts.spaceGrotesk(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              fontSize: 16,
+              letterSpacing: 1.0,
             ),
           ),
           const SizedBox(height: 16),
 
+          // Monthly spending card
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0C152B),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: AppTheme.primaryColor.withValues(alpha: 0.2),
+                width: 1,
+              ),
+              boxShadow: AppTheme.neonGlow(color: AppTheme.primaryColor, opacity: 0.1, blurRadius: 10),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'CURRENT BILLING CYCLE',
+                  style: GoogleFonts.spaceGrotesk(
+                    color: Colors.white70,
+                    fontSize: 9,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1.0,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  '₹${_calculateMonthlySpending().toStringAsFixed(0)}',
+                  style: GoogleFonts.spaceGrotesk(
+                    color: AppTheme.primaryColor,
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+
           // Category breakdown
           Text(
-            'Spending by Category',
-            style: Theme.of(context).textTheme.titleMedium,
+            'SPENDING BY CATEGORY',
+            style: GoogleFonts.spaceGrotesk(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              fontSize: 12,
+              letterSpacing: 1.0,
+            ),
           ),
           const SizedBox(height: 8),
           ..._buildCategoryBreakdown(),
@@ -447,35 +520,48 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
   }
 
   Widget _buildStatCard(String title, String value, IconData icon, Color color) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(icon, color: color, size: 20),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    title,
-                    style: Theme.of(context).textTheme.bodySmall,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              value,
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.bold,
-                color: color,
-              ),
-            ),
-          ],
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0C152B),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: color.withValues(alpha: 0.25),
+          width: 1.5,
         ),
+        boxShadow: AppTheme.neonGlow(color: color, opacity: 0.12, blurRadius: 10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: color, size: 16),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title.toUpperCase(),
+                  style: GoogleFonts.spaceGrotesk(
+                    color: Colors.white70,
+                    fontSize: 8,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1.0,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: GoogleFonts.spaceGrotesk(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -504,17 +590,46 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
     }
 
     return categoryTotals.entries.map((entry) {
-      return Card(
-        margin: const EdgeInsets.only(bottom: 8),
-        child: ListTile(
-          leading: Icon(
-            _getCategoryIcon(entry.key),
-            color: _getCategoryColor(entry.key),
+      final categoryColor = _getCategoryColor(entry.key);
+      return Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0C152B),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.06),
+            width: 1,
           ),
-          title: Text(entry.key),
+        ),
+        child: ListTile(
+          leading: Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: categoryColor.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              _getCategoryIcon(entry.key),
+              color: categoryColor,
+              size: 18,
+            ),
+          ),
+          title: Text(
+            entry.key.toUpperCase(),
+            style: GoogleFonts.spaceGrotesk(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              fontSize: 12,
+              letterSpacing: 0.5,
+            ),
+          ),
           trailing: Text(
             '₹${entry.value.toStringAsFixed(0)}',
-            style: const TextStyle(fontWeight: FontWeight.bold),
+            style: GoogleFonts.spaceGrotesk(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              fontSize: 14,
+            ),
           ),
         ),
       );

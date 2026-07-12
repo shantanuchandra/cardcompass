@@ -15,6 +15,7 @@ import 'package:cardcompass/features/statements/presentation/screens/statements_
 import 'package:cardcompass/features/settings/presentation/screens/settings_screen.dart';
 import 'package:cardcompass/features/benefits/presentation/screens/benefits_screen.dart';
 import 'package:cardcompass/features/notifications/presentation/screens/notifications_screen.dart';
+import 'package:cardcompass/features/debug/pm_pruning_debug_screen.dart';
 
 /// Application routes configuration
 class AppRoutes {
@@ -34,6 +35,7 @@ class AppRoutes {
   static const String benefits = '/benefits';  static const String notifications = '/notifications';  static const String statements = '/statements';
   static const String profile = '/profile';
   static const String settings = '/settings';
+  static const String adminPm = '/admin/pm';
 
   /// Generate routes for the application
   static Route<dynamic> generateRoute(RouteSettings settings) {
@@ -107,6 +109,11 @@ class AppRoutes {
         );      case '/settings':
         return MaterialPageRoute(
           builder: (_) => const SettingsScreen(),
+          settings: settings,
+        );
+      case adminPm:
+        return MaterialPageRoute(
+          builder: (_) => const PmPruningDebugScreen(),
           settings: settings,
         );
       case '/benefits':

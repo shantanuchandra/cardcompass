@@ -1,19 +1,56 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:cardcompass/core/config/ai_config.dart';
 
 /// Utility class for managing dashboard dialogs
 class DashboardDialogs {
-  
   /// Show sync data configuration dialog
-  static Future<Map<String, dynamic>?> showSyncDialog(BuildContext context) async {
+  static Future<Map<String, dynamic>?> showSyncDialog(
+      BuildContext context) async {
     final numberOfEmailsController = TextEditingController(text: '30');
     DateTime? startDate = DateTime.now().subtract(const Duration(days: 30));
+
+    // Ollama parameters
+    var localProvider = AIConfig.activeProvider;
+    final ollamaUrlController = TextEditingController(text: AIConfig.ollamaUrl);
+    final ollamaModelController =
+        TextEditingController(text: AIConfig.ollamaModel);
+
+    // Groq parameters
+    final groqApiKeyController =
+        TextEditingController(text: AIConfig.groqApiKey);
+    final groqModelController = TextEditingController(text: AIConfig.groqModel);
+
+    // Instantly cache in memory as they type
+    ollamaUrlController.addListener(
+        () => AIConfig.ollamaUrl = ollamaUrlController.text.trim());
+    ollamaModelController.addListener(
+        () => AIConfig.ollamaModel = ollamaModelController.text.trim());
+    groqApiKeyController.addListener(
+        () => AIConfig.groqApiKey = groqApiKeyController.text.trim());
+    groqModelController.addListener(
+        () => AIConfig.groqModel = groqModelController.text.trim());
 
     return showDialog<Map<String, dynamic>>(
       context: context,
       builder: (BuildContext context) {
         return StatefulBuilder(
           builder: (context, setState) {
+            // Models dropdown lists
+            final groqModels = [
+              'llama-3.3-70b-versatile',
+              'llama-3.1-8b-instant',
+              'mixtral-8x7b-32768'
+            ];
+            if (!groqModels.contains(groqModelController.text)) {
+              groqModels.insert(0, groqModelController.text);
+            }
+
+            final ollamaModels = ['gemma4', 'gemma2', 'llama3', 'mistral'];
+            if (!ollamaModels.contains(ollamaModelController.text)) {
+              ollamaModels.insert(0, ollamaModelController.text);
+            }
+
             return AlertDialog(
               title: const Row(
                 children: [
@@ -67,6 +104,77 @@ class DashboardDialogs {
                         ),
                       ],
                     ),
+                    const Divider(height: 32),
+                    const Text(
+                      'AI LLM Parsing Engine Settings',
+                      style:
+                          TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<AIProvider>(
+                      value: localProvider,
+                      decoration: const InputDecoration(
+                        labelText: 'LLM Provider',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: AIProvider.gemini,
+                          child: Text('Google Gemini (Cloud)'),
+                        ),
+                        DropdownMenuItem(
+                          value: AIProvider.groq,
+                          child: Text('Groq API (Cloud)'),
+                        ),
+                        DropdownMenuItem(
+                          value: AIProvider.ollama,
+                          child: Text('Ollama (Local LLM)'),
+                        ),
+                      ],
+                      onChanged: (val) {
+                        if (val != null) {
+                          setState(() {
+                            localProvider = val;
+                          });
+                        }
+                      },
+                    ),
+                    if (localProvider == AIProvider.groq) ...[
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: groqApiKeyController,
+                        obscureText: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Groq API Key',
+                          hintText: 'gsk_...',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ],
+                    if (localProvider == AIProvider.ollama) ...[
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: ollamaUrlController,
+                        decoration: const InputDecoration(
+                          labelText: 'Ollama Host URL',
+                          hintText: 'http://localhost:11434',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.amber.shade50,
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: Colors.amber.shade300),
+                        ),
+                        child: const Text(
+                          'Note: Ensure your local Ollama is running and CORS origins are enabled (set OLLAMA_ORIGINS="*" before starting).',
+                          style: TextStyle(fontSize: 11, color: Colors.brown),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 16),
                     const Text(
                       '• Gmail will be searched for bank statements\n'
@@ -84,8 +192,18 @@ class DashboardDialogs {
                   child: const Text('Cancel'),
                 ),
                 ElevatedButton(
-                  onPressed: () {
-                    final numberOfEmails = int.tryParse(numberOfEmailsController.text) ?? 30;
+                  onPressed: () async {
+                    // Apply and save LLM configs
+                    await AIConfig.saveConfiguration(
+                      localProvider,
+                      ollamaUrlController.text.trim(),
+                      ollamaModelController.text.trim(),
+                      groqKey: groqApiKeyController.text.trim(),
+                      groqMod: groqModelController.text.trim(),
+                    );
+
+                    final numberOfEmails =
+                        int.tryParse(numberOfEmailsController.text) ?? 30;
                     Navigator.of(context).pop({
                       'numberOfEmails': numberOfEmails,
                       'startDate': startDate,
@@ -103,7 +221,7 @@ class DashboardDialogs {
 
   /// Show delete confirmation dialog with data counts
   static Future<bool?> showDeleteConfirmationDialog(
-    BuildContext context, 
+    BuildContext context,
     Map<String, int> counts,
   ) async {
     return showDialog<bool>(
@@ -127,16 +245,16 @@ class DashboardDialogs {
               ),
               const SizedBox(height: 12),
               if (counts.isNotEmpty) ...[
-                Text('📊 Current data to be deleted:', 
-                     style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                Text('📊 Current data to be deleted:',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600])),
                 const SizedBox(height: 8),
                 ...counts.entries.map((entry) => Padding(
-                  padding: const EdgeInsets.only(left: 8, bottom: 4),
-                  child: Text(
-                    '• ${entry.value} ${entry.key}',
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                )),
+                      padding: const EdgeInsets.only(left: 8, bottom: 4),
+                      child: Text(
+                        '• ${entry.value} ${entry.key}',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    )),
               ] else ...[
                 const Text(
                   '• All credit cards\n'
@@ -150,7 +268,10 @@ class DashboardDialogs {
               const SizedBox(height: 12),
               const Text(
                 '⚠️ This action cannot be undone!',
-                style: TextStyle(fontSize: 12, color: Colors.red, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.red,
+                    fontWeight: FontWeight.bold),
               ),
             ],
           ),

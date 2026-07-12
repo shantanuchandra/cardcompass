@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:cardcompass/features/auth/providers/auth_provider.dart';
+import 'package:cardcompass/core/theme.dart';
 import '../providers/movie_optimization_provider.dart';
 import '../domain/models/movie_ticket_request.dart';
 import '../domain/models/movie_recommendation.dart';
@@ -92,47 +94,52 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
       children: [
         Row(
           children: [
-            Icon(
-              Icons.local_movies_rounded,
-              size: 28,
-              color: Theme.of(context).primaryColor,
+            const Icon(
+              Icons.local_movies_outlined,
+              size: 24,
+              color: AppTheme.primaryColor,
             ),
             const SizedBox(width: 12),
             Text(
-              'Movie Ticket Optimizer',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+              'MOVIE TICKET OPTIMIZER',
+              style: GoogleFonts.spaceGrotesk(
                 fontWeight: FontWeight.bold,
-                color: Theme.of(context).primaryColor,
+                letterSpacing: 1.0,
+                fontSize: 16,
+                color: Colors.white,
               ),
             ),
           ],
         ),
         const SizedBox(height: 8),
         Text(
-          'Get personalized recommendations for maximum savings on movie tickets',
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-            color: _scheme.onSurface.withOpacity(0.7),
+          'Query ticket combinations across major platforms and calculate optimal savings route.',
+          style: GoogleFonts.plusJakartaSans(
+            color: Colors.white60,
+            fontSize: 12,
+            height: 1.4,
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 12),
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
           decoration: BoxDecoration(
-            color: Colors.blue[50],
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.blue[200]!, width: 1),
+            color: const Color(0xFF0C152B),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppTheme.primaryColor.withValues(alpha: 0.25), width: 1.2),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.star, size: 16, color: Colors.blue[600]),
+              const Icon(Icons.bolt, size: 14, color: AppTheme.primaryColor),
               const SizedBox(width: 4),
               Text(
-                'Smart AI-powered optimization',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.blue[700],
-                  fontWeight: FontWeight.w500,
+                'AI RULE OPTIMIZATION ENGINE',
+                style: GoogleFonts.spaceGrotesk(
+                  fontSize: 9,
+                  color: AppTheme.primaryColor,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.5,
                 ),
               ),
             ],
@@ -143,148 +150,153 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
   }
 
   Widget _buildInputForm() {
-    return Card(
-      elevation: 2,
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF0C152B),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(20.0),
         child: Form(
           key: _formKey,
           autovalidateMode: AutovalidateMode.onUserInteraction,
           child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Movie Details',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w600,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'TICKET SPECIFICATIONS',
+                style: GoogleFonts.spaceGrotesk(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                  fontSize: 11,
+                  letterSpacing: 1.0,
+                ),
               ),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: TextFormField(
-                    controller: _ticketCountController,
-                    keyboardType: TextInputType.number,
-                    inputFormatters: [
-                      FilteringTextInputFormatter.digitsOnly,
-                      LengthLimitingTextInputFormatter(2),
-                    ],
-                    decoration: const InputDecoration(
-                      labelText: 'Number of Tickets',
-                      prefixIcon: Icon(Icons.confirmation_number),
-                      border: OutlineInputBorder(),
-                      hintText: 'e.g., 4',
-                    ),
-                    validator: (v) {
-                      final n = int.tryParse(v ?? '');
-                      if (n == null || n <= 0) return 'Enter at least 1 ticket';
-                      if (n > 10) return 'That’s a lot! Try up to 10';
-                      return null;
-                    },
-                    onChanged: (_) => setState(() {}),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: TextFormField(
-                    controller: _priceController,
-                    keyboardType: TextInputType.number,
-                    inputFormatters: [
-                      FilteringTextInputFormatter.allow(RegExp(r'[0-9]')),
-                      LengthLimitingTextInputFormatter(5),
-                    ],
-                    decoration: const InputDecoration(
-                      labelText: 'Price per Ticket (₹)',
-                      prefixIcon: Icon(Icons.currency_rupee),
-                      border: OutlineInputBorder(),
-                      hintText: 'e.g., 280',
-                    ),
-                    validator: (v) {
-                      final p = double.tryParse(v ?? '');
-                      if (p == null || p <= 0) return 'Enter a valid price';
-                      if (p > 3000) return 'Price looks too high';
-                      return null;
-                    },
-                    onChanged: (_) => setState(() {}),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            _buildQuickChips(),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    initialValue: _selectedPlatform,
-                    decoration: const InputDecoration(
-                      labelText: 'Preferred Platform (Optional)',
-                      prefixIcon: Icon(Icons.smartphone),
-                      border: OutlineInputBorder(),
-                    ),
-                    items: [
-                      const DropdownMenuItem<String>(
-                        value: null,
-                        child: Text('Any Platform'),
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: _ticketCountController,
+                      keyboardType: TextInputType.number,
+                      style: GoogleFonts.plusJakartaSans(color: Colors.white),
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly,
+                        LengthLimitingTextInputFormatter(2),
+                      ],
+                      decoration: const InputDecoration(
+                        labelText: 'Tickets Count',
+                        prefixIcon: Icon(Icons.confirmation_number_outlined, color: AppTheme.primaryColor),
                       ),
-                      ..._platforms.map((platform) => DropdownMenuItem<String>(
-                        value: platform,
-                        child: Text(platform),
-                      )),
-                    ],
-                    onChanged: (value) {
-                      setState(() {
-                        _selectedPlatform = value;
-                      });
-                    },
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    initialValue: _selectedCinema,
-                    decoration: const InputDecoration(
-                      labelText: 'Preferred Cinema (Optional)',
-                      prefixIcon: Icon(Icons.theater_comedy),
-                      border: OutlineInputBorder(),
+                      validator: (v) {
+                        final n = int.tryParse(v ?? '');
+                        if (n == null || n <= 0) return 'Required';
+                        if (n > 10) return 'Max 10 tickets';
+                        return null;
+                      },
+                      onChanged: (_) => setState(() {}),
                     ),
-                    items: [
-                      const DropdownMenuItem<String>(
-                        value: null,
-                        child: Text('Any Cinema'),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _priceController,
+                      keyboardType: TextInputType.number,
+                      style: GoogleFonts.plusJakartaSans(color: Colors.white),
+                      inputFormatters: [
+                        FilteringTextInputFormatter.allow(RegExp(r'[0-9]')),
+                        LengthLimitingTextInputFormatter(5),
+                      ],
+                      decoration: const InputDecoration(
+                        labelText: 'Ticket Price (₹)',
+                        prefixIcon: Icon(Icons.currency_rupee, color: AppTheme.primaryColor),
                       ),
-                      ..._cinemas.map((cinema) => DropdownMenuItem<String>(
-                        value: cinema,
-                        child: Text(cinema),
-                      )),
-                    ],
-                    onChanged: (value) {
-                      setState(() {
-                        _selectedCinema = value;
-                      });
-                    },
+                      validator: (v) {
+                        final p = double.tryParse(v ?? '');
+                        if (p == null || p <= 0) return 'Required';
+                        if (p > 3000) return 'Price too high';
+                        return null;
+                      },
+                      onChanged: (_) => setState(() {}),
+                    ),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            _buildTotalAmount(),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Icon(Icons.info_outline, size: 16, color: Colors.grey[600]),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    'Tip: Try 2 or 4 tickets—many BOGO or 50% offers align with even counts.',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
+                ],
+              ),
+              const SizedBox(height: 16),
+              _buildQuickChips(),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      initialValue: _selectedPlatform,
+                      dropdownColor: const Color(0xFF0C152B),
+                      decoration: const InputDecoration(
+                        labelText: 'Platform (Optional)',
+                        prefixIcon: Icon(Icons.smartphone_outlined, color: AppTheme.primaryColor),
+                      ),
+                      items: [
+                        DropdownMenuItem<String>(
+                          value: null,
+                          child: Text('ANY PLATFORM', style: GoogleFonts.spaceGrotesk(fontSize: 10, color: Colors.white70)),
+                        ),
+                        ..._platforms.map((platform) => DropdownMenuItem<String>(
+                          value: platform,
+                          child: Text(platform.toUpperCase(), style: GoogleFonts.spaceGrotesk(fontSize: 10, color: Colors.white)),
+                        )),
+                      ],
+                      onChanged: (value) {
+                        setState(() {
+                          _selectedPlatform = value;
+                        });
+                      },
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ],
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      initialValue: _selectedCinema,
+                      dropdownColor: const Color(0xFF0C152B),
+                      decoration: const InputDecoration(
+                        labelText: 'Cinema (Optional)',
+                        prefixIcon: Icon(Icons.theater_comedy_outlined, color: AppTheme.primaryColor),
+                      ),
+                      items: [
+                        DropdownMenuItem<String>(
+                          value: null,
+                          child: Text('ANY CINEMA', style: GoogleFonts.spaceGrotesk(fontSize: 10, color: Colors.white70)),
+                        ),
+                        ..._cinemas.map((cinema) => DropdownMenuItem<String>(
+                          value: cinema,
+                          child: Text(cinema.toUpperCase(), style: GoogleFonts.spaceGrotesk(fontSize: 10, color: Colors.white)),
+                        )),
+                      ],
+                      onChanged: (value) {
+                        setState(() {
+                          _selectedCinema = value;
+                        });
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              _buildTotalAmount(),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  const Icon(Icons.info_outline, size: 14, color: Colors.white30),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'BOGO and 50% movie offers are commonly optimized with even ticket counts.',
+                      style: GoogleFonts.plusJakartaSans(color: Colors.white30, fontSize: 10),
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
       ),
@@ -296,27 +308,31 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
     final price = double.tryParse(_priceController.text) ?? 0.0;
     final total = tickets * price;
 
-    // Show the total even if it's 0 to help with debugging
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: Theme.of(context).primaryColor.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(8),
+        color: const Color(0xFF050B18),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(
-            'Total Amount:',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w600,
+            'TOTAL BASE AMOUNT:',
+            style: GoogleFonts.spaceGrotesk(
+              fontWeight: FontWeight.bold,
+              color: Colors.white60,
+              fontSize: 10,
+              letterSpacing: 0.5,
             ),
           ),
           Text(
             total > 0 ? '₹${total.toStringAsFixed(0)}' : '₹0',
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+            style: GoogleFonts.spaceGrotesk(
               fontWeight: FontWeight.bold,
-              color: Theme.of(context).primaryColor,
+              color: AppTheme.primaryColor,
+              fontSize: 16,
             ),
           ),
         ],
@@ -325,7 +341,6 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
   }
 
   Widget _buildQuickChips() {
-    // Presets commonly used in India; tweak as per usage insights
     final ticketOptions = [2, 3, 4, 6];
     final priceOptions = [200, 250, 300, 400];
 
@@ -334,32 +349,64 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
       children: [
         Expanded(
           child: Wrap(
-            spacing: 8,
-            runSpacing: 8,
+            spacing: 6,
+            runSpacing: 6,
             children: [
-              ...ticketOptions.map((n) => ChoiceChip(
-                    label: Text('$n tickets'),
-                    selected: int.tryParse(_ticketCountController.text) == n,
-                    onSelected: (_) {
-                      setState(() => _ticketCountController.text = '$n');
-                    },
-                  )),
+              ...ticketOptions.map((n) {
+                final isSelected = int.tryParse(_ticketCountController.text) == n;
+                return ChoiceChip(
+                  label: Text(
+                    '$n TICKETS',
+                    style: GoogleFonts.spaceGrotesk(
+                      fontSize: 9, 
+                      fontWeight: FontWeight.bold,
+                      color: isSelected ? Colors.black : Colors.white60,
+                    ),
+                  ),
+                  selectedColor: AppTheme.primaryColor,
+                  backgroundColor: const Color(0xFF050B18),
+                  selected: isSelected,
+                  side: BorderSide(
+                    color: isSelected ? AppTheme.primaryColor : Colors.white.withValues(alpha: 0.08),
+                  ),
+                  showCheckmark: false,
+                  onSelected: (_) {
+                    setState(() => _ticketCountController.text = '$n');
+                  },
+                );
+              }),
             ],
           ),
         ),
-        const SizedBox(width: 8),
+        const SizedBox(width: 12),
         Expanded(
           child: Wrap(
-            spacing: 8,
-            runSpacing: 8,
+            spacing: 6,
+            runSpacing: 6,
             children: [
-              ...priceOptions.map((p) => ChoiceChip(
-                    label: Text('₹$p'),
-                    selected: double.tryParse(_priceController.text) == p.toDouble(),
-                    onSelected: (_) {
-                      setState(() => _priceController.text = '$p');
-                    },
-                  )),
+              ...priceOptions.map((p) {
+                final isSelected = double.tryParse(_priceController.text) == p.toDouble();
+                return ChoiceChip(
+                  label: Text(
+                    '₹$p',
+                    style: GoogleFonts.spaceGrotesk(
+                      fontSize: 9, 
+                      fontWeight: FontWeight.bold,
+                      color: isSelected ? Colors.black : Colors.white60,
+                    ),
+                  ),
+                  selectedColor: AppTheme.primaryColor,
+                  backgroundColor: const Color(0xFF050B18),
+                  selected: isSelected,
+                  side: BorderSide(
+                    color: isSelected ? AppTheme.primaryColor : Colors.white.withValues(alpha: 0.08),
+                  ),
+                  showCheckmark: false,
+                  onSelected: (_) {
+                    setState(() => _priceController.text = '$p');
+                  },
+                );
+              }),
             ],
           ),
         ),
@@ -381,26 +428,30 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
         onPressed: (!isLoading && formValid) ? _analyzeTickets : null,
         icon: isLoading 
             ? const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(Colors.black)),
               )
-            : const Icon(Icons.search),
+            : const Icon(Icons.bolt, color: Colors.black, size: 16),
         label: Text(
           isLoading
-              ? 'Analyzing...'
+              ? 'CALCULATING ROUTE...'
               : total > 0
-                  ? '🎬 Find Best Deals • ₹${total.toStringAsFixed(0)}'
-                  : '🎬 Find Best Deals',
-          style: const TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
+                  ? 'OPTIMIZE DEALS • ₹${total.toStringAsFixed(0)}'
+                  : 'OPTIMIZE DEALS',
+          style: GoogleFonts.spaceGrotesk(
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1.0,
+            color: Colors.black,
           ),
         ),
         style: ElevatedButton.styleFrom(
+          backgroundColor: AppTheme.primaryColor,
+          disabledBackgroundColor: Colors.white10,
           padding: const EdgeInsets.symmetric(vertical: 16),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(12),
           ),
         ),
       ),
@@ -448,16 +499,14 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
   }
 
   Widget _buildRecommendationHeader(MovieRecommendation recommendation) {
+    final hasRec = recommendation.hasRecommendations;
+    final activeColor = hasRec ? AppTheme.successColor : AppTheme.warningColor;
     return Row(
       children: [
         Icon(
-          recommendation.hasRecommendations 
-              ? Icons.recommend_rounded 
-              : Icons.info_outline,
-          color: recommendation.hasRecommendations 
-              ? _onSuccessContainer 
-              : Colors.orange[600],
-          size: 28,
+          hasRec ? Icons.verified_outlined : Icons.info_outline,
+          color: activeColor,
+          size: 24,
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -465,29 +514,33 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                recommendation.hasRecommendations 
-                    ? '🎉 Optimized Strategy Found!' 
-                    : 'No Special Offers Found',
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                hasRec ? 'OPTIMIZED ROUTE GENERATED' : 'NO ACTIVE BOGO OFFERS',
+                style: GoogleFonts.spaceGrotesk(
                   fontWeight: FontWeight.bold,
-                  color: recommendation.hasRecommendations 
-                      ? _onSuccessContainer 
-                      : Colors.orange[600],
+                  fontSize: 14,
+                  letterSpacing: 1.0,
+                  color: activeColor,
                 ),
               ),
-              if (recommendation.hasRecommendations && recommendation.savingsPercentage > 0)
-                Text(
-                  'Save ${recommendation.savingsPercentage.toStringAsFixed(1)}% on your movie tickets!',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: _onSuccessContainer,
-                    fontWeight: FontWeight.w500,
+              if (hasRec && recommendation.savingsPercentage > 0)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    'TOTAL SAVINGS OF ${recommendation.savingsPercentage.toStringAsFixed(1)}% DETECTED',
+                    style: GoogleFonts.spaceGrotesk(
+                      color: AppTheme.primaryColor,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 0.5,
+                    ),
                   ),
                 )
               else
                 Text(
                   recommendation.explanation,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: _scheme.onSurface.withOpacity(0.7),
+                  style: GoogleFonts.plusJakartaSans(
+                    color: Colors.white70,
+                    fontSize: 12,
                   ),
                 ),
             ],
@@ -502,9 +555,12 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Recommended Actions (Top ${steps.length}):',
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.w600,
+          'EXECUTION PROTOCOL:',
+          style: GoogleFonts.spaceGrotesk(
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+            fontSize: 11,
+            letterSpacing: 0.5,
           ),
         ),
         const SizedBox(height: 12),
@@ -519,32 +575,39 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
 
   Widget _buildStepCard(TransactionStep step, int stepNumber) {
     final isOwned = step.isOwned;
+    final cardBorderColor = isOwned 
+        ? AppTheme.primaryColor.withValues(alpha: 0.25)
+        : AppTheme.secondaryColor.withValues(alpha: 0.25);
     
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        border: Border.all(
-          color: isOwned ? _outline : Colors.orange.withOpacity(0.5),
-          width: isOwned ? 1 : 2,
-        ),
-        borderRadius: BorderRadius.circular(8),
-        color: _surfaceCard,
+        color: const Color(0xFF0C152B),
+        border: Border.all(color: cardBorderColor, width: 1.2),
+        borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              CircleAvatar(
-                radius: 12,
-                backgroundColor: Theme.of(context).primaryColor,
-                child: Text(
-                  stepNumber.toString(),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
+              Container(
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF050B18),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: AppTheme.primaryColor, width: 1),
+                ),
+                child: Center(
+                  child: Text(
+                    stepNumber.toString(),
+                    style: GoogleFonts.spaceGrotesk(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
               ),
@@ -554,17 +617,20 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '${step.ticketCount} tickets via ${step.cardName}',
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
+                      '${step.ticketCount} TICKETS VIA ${step.cardName.toUpperCase()}',
+                      style: GoogleFonts.spaceGrotesk(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
                       ),
                     ),
                     if (step.bank != null)
                       Text(
-                        '${step.bank} • ${step.cardNetwork ?? ""}',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: _scheme.onSurface.withOpacity(0.6),
-                          fontSize: 11,
+                        '${step.bank!.toUpperCase()} • ${step.cardNetwork?.toUpperCase() ?? ""}',
+                        style: GoogleFonts.spaceGrotesk(
+                          color: Colors.white38,
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
                   ],
@@ -573,53 +639,53 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: _successContainer,
-                  borderRadius: BorderRadius.circular(12),
+                  color: AppTheme.successColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppTheme.successColor.withValues(alpha: 0.2)),
                 ),
                 child: Text(
-                  'Save ₹${step.savings.toStringAsFixed(0)}',
-                  style: TextStyle(
-                    color: _onSuccessContainer,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
+                  'SAVE ₹${step.savings.toStringAsFixed(0)}',
+                  style: GoogleFonts.spaceGrotesk(
+                    color: AppTheme.successColor,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
           
-          // Ownership status badge
           Row(
             children: [
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
                   color: isOwned 
-                      ? Colors.green.withOpacity(0.1) 
-                      : Colors.orange.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
+                      ? AppTheme.successColor.withValues(alpha: 0.1) 
+                      : AppTheme.secondaryColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
                   border: Border.all(
                     color: isOwned 
-                        ? Colors.green.withOpacity(0.3) 
-                        : Colors.orange.withOpacity(0.3),
+                        ? AppTheme.successColor.withValues(alpha: 0.2) 
+                        : AppTheme.secondaryColor.withValues(alpha: 0.2),
                   ),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
-                      isOwned ? Icons.check_circle : Icons.shopping_bag_outlined,
-                      size: 14,
-                      color: isOwned ? Colors.green[700] : Colors.orange[700],
+                      isOwned ? Icons.verified_outlined : Icons.add_circle_outline,
+                      size: 12,
+                      color: isOwned ? AppTheme.successColor : AppTheme.secondaryColor,
                     ),
-                    const SizedBox(width: 4),
+                    const SizedBox(width: 6),
                     Text(
-                      isOwned ? 'You own this card' : 'Card not owned',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                        color: isOwned ? Colors.green[700] : Colors.orange[700],
+                      isOwned ? 'OWNED INTEGRATION' : 'CATALOG RECOMMENDATION',
+                      style: GoogleFonts.spaceGrotesk(
+                        fontSize: 8,
+                        fontWeight: FontWeight.bold,
+                        color: isOwned ? AppTheme.successColor : AppTheme.secondaryColor,
                       ),
                     ),
                   ],
@@ -628,35 +694,41 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
             ],
           ),
           
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
           Text(
             '${step.explanation} on ${step.platform}',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: _scheme.onSurface.withOpacity(0.75),
+            style: GoogleFonts.plusJakartaSans(
+              color: Colors.white70,
+              fontSize: 11,
+              height: 1.3,
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 8),
           Text(
-            '₹${step.amount.toStringAsFixed(0)} → ₹${step.effectiveAmount.toStringAsFixed(0)}',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              fontWeight: FontWeight.w500,
+            '₹${step.amount.toStringAsFixed(0)} → ₹${step.effectiveAmount.toStringAsFixed(0)} EFFECTIVE',
+            style: GoogleFonts.spaceGrotesk(
+              fontWeight: FontWeight.bold,
+              color: Colors.white30,
+              fontSize: 10,
             ),
           ),
           
-          // Action button
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
               onPressed: () => _handleCardAction(step),
-              icon: Icon(isOwned ? Icons.credit_card : Icons.add_card),
-              label: Text(isOwned ? 'Use This Card' : 'Get This Card'),
+              icon: Icon(isOwned ? Icons.bolt : Icons.add_card, color: Colors.black, size: 14),
+              label: Text(
+                isOwned ? 'ROUTE TRANSACTION' : 'ACQUIRE THIS CARD',
+                style: GoogleFonts.spaceGrotesk(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black),
+              ),
               style: ElevatedButton.styleFrom(
                 backgroundColor: isOwned 
-                    ? Theme.of(context).primaryColor 
-                    : Colors.orange[600],
-                foregroundColor: Colors.white,
+                    ? AppTheme.primaryColor 
+                    : AppTheme.secondaryColor,
                 padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
               ),
             ),
           ),

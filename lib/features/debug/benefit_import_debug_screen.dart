@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:cardcompass/core/services/benefit_import_service.dart';
 
-/// Debug app for testing benefit import functionality
+/// Debug app for testing benefit import functionality in monospaced cyber terminal theme
 class BenefitImportDebugApp extends StatefulWidget {
   const BenefitImportDebugApp({super.key});
 
@@ -12,7 +13,7 @@ class BenefitImportDebugApp extends StatefulWidget {
 class _BenefitImportDebugAppState extends State<BenefitImportDebugApp> {
   final BenefitImportService _importService = BenefitImportService();
   bool _isLoading = false;
-  String _status = 'Ready to import benefits';
+  String _status = 'TERMINAL READY. WAITING FOR COMMANDS...';
   Map<String, dynamic>? _lastResult;
   bool _disposed = false;
 
@@ -30,131 +31,172 @@ class _BenefitImportDebugAppState extends State<BenefitImportDebugApp> {
 
   @override
   Widget build(BuildContext context) {
+    Color getStatusColor() {
+      if (_status.contains('Error') || _status.contains('failed') || _status.contains('❌')) {
+        return const Color(0xFFFF3333);
+      }
+      if (_status.contains('successfully') || _status.contains('✅') || _status.contains('READY')) {
+        return const Color(0xFF33FF33);
+      }
+      return const Color(0xFFFFFF33);
+    }
+
     return Scaffold(
+      backgroundColor: const Color(0xFF050505),
       appBar: AppBar(
-        title: const Text('Benefit Import Debug'),
-        backgroundColor: Colors.blue,
-        foregroundColor: Colors.white,
+        backgroundColor: const Color(0xFF050505),
+        elevation: 0,
+        title: Text(
+          'BENEFIT_IMPORTER_DEBUG_v1.0.sh',
+          style: GoogleFonts.shareTechMono(
+            color: const Color(0xFF33FF33),
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        iconTheme: const IconThemeData(color: Color(0xFF33FF33)),
       ),
       body: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Benefit Import Status',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+            // Status Terminal Panel
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0B0B0B),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFF33FF33).withValues(alpha: 0.3), width: 1.5),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: getStatusColor(),
+                          shape: BoxShape.circle,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      _status,
-                      style: TextStyle(
-                        color: _status.contains('Error') || _status.contains('Failed') 
-                            ? Colors.red 
-                            : _status.contains('Success') || _status.contains('completed')
-                            ? Colors.green
-                            : Colors.orange,
-                        fontWeight: FontWeight.w500,
+                      const SizedBox(width: 8),
+                      Text(
+                        'SYSTEM_STATUS_LOG:',
+                        style: GoogleFonts.shareTechMono(
+                          color: const Color(0xFF33FF33),
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    _status.toUpperCase(),
+                    style: GoogleFonts.shareTechMono(
+                      color: getStatusColor(),
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 16),
-            ElevatedButton(
+            const SizedBox(height: 20),
+            
+            // Test Button
+            OutlinedButton(
               onPressed: _isLoading ? null : _testImportService,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.orange,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16),
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: Color(0xFF33FF33), width: 1.5),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
               ),
               child: _isLoading
                   ? const Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         SizedBox(
-                          width: 20,
-                          height: 20,
+                          width: 14,
+                          height: 14,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: Colors.white,
+                            color: Color(0xFF33FF33),
                           ),
                         ),
-                        SizedBox(width: 8),
-                        Text('Testing...'),
                       ],
                     )
-                  : const Text(
-                      'Test Import Service',
-                      style: TextStyle(fontSize: 16),
+                  : Text(
+                      'EXECUTE: testImport()',
+                      style: GoogleFonts.shareTechMono(color: const Color(0xFF33FF33), fontSize: 13, fontWeight: FontWeight.bold),
                     ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
+            
+            // Run Full Import Button
             ElevatedButton(
               onPressed: _isLoading ? null : _runFullImport,
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16),
+                backgroundColor: const Color(0xFF33FF33),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
               ),
               child: _isLoading
                   ? const Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         SizedBox(
-                          width: 20,
-                          height: 20,
+                          width: 14,
+                          height: 14,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: Colors.white,
+                            color: Colors.black,
                           ),
                         ),
-                        SizedBox(width: 8),
-                        Text('Importing...'),
                       ],
                     )
-                  : const Text(
-                      'Run Full Import from CSV',
-                      style: TextStyle(fontSize: 16),
+                  : Text(
+                      'EXECUTE: importFromEnhancedCsv()',
+                      style: GoogleFonts.shareTechMono(color: Colors.black, fontSize: 13, fontWeight: FontWeight.bold),
                     ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 28),
+            
             if (_lastResult != null) ...[
-              const Text(
-                'Last Import Result:',
-                style: TextStyle(
-                  fontSize: 16,
+              Text(
+                'COMPILATION_OUTPUT_FEED:',
+                style: GoogleFonts.shareTechMono(
+                  color: Colors.white70,
+                  fontSize: 11,
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
               Expanded(
-                child: Card(
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0B0B0B),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.white10, width: 1),
+                  ),
                   child: SingleChildScrollView(
-                    padding: const EdgeInsets.all(16),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _buildResultRow('Success', _lastResult!['success']?.toString() ?? 'N/A'),
-                        _buildResultRow('Message', _lastResult!['message']?.toString() ?? 'N/A'),
+                        _buildResultRow('SUCCESS', _lastResult!['success']?.toString() ?? 'N/A'),
+                        _buildResultRow('MESSAGE', _lastResult!['message']?.toString() ?? 'N/A'),
                         if (_lastResult!.containsKey('cards_processed'))
-                          _buildResultRow('Cards Processed', _lastResult!['cards_processed']?.toString() ?? '0'),
+                          _buildResultRow('CARDS_PROCESSED', _lastResult!['cards_processed']?.toString() ?? '0'),
                         if (_lastResult!.containsKey('benefits_created'))
-                          _buildResultRow('Benefits Created', _lastResult!['benefits_created']?.toString() ?? '0'),
+                          _buildResultRow('BENEFITS_CREATED', _lastResult!['benefits_created']?.toString() ?? '0'),
                         if (_lastResult!.containsKey('total_csv_records'))
-                          _buildResultRow('CSV Records', _lastResult!['total_csv_records']?.toString() ?? '0'),
+                          _buildResultRow('CSV_RECORDS_COUNT', _lastResult!['total_csv_records']?.toString() ?? '0'),
                         if (_lastResult!.containsKey('error'))
-                          _buildResultRow('Error', _lastResult!['error']?.toString() ?? '', isError: true),
+                          _buildResultRow('COMPILER_ERROR', _lastResult!['error']?.toString() ?? '', isError: true),
                       ],
                     ),
                   ),
@@ -168,35 +210,38 @@ class _BenefitImportDebugAppState extends State<BenefitImportDebugApp> {
   }
 
   Widget _buildResultRow(String label, String value, {bool isError = false}) {
+    final activeColor = isError ? const Color(0xFFFF3333) : const Color(0xFF33FF33);
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 120,
+            width: 150,
             child: Text(
               '$label:',
-              style: const TextStyle(fontWeight: FontWeight.w500),
+              style: GoogleFonts.shareTechMono(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.bold),
             ),
           ),
           Expanded(
             child: Text(
-              value,
-              style: TextStyle(
-                color: isError ? Colors.red : null,
-                fontFamily: isError ? 'monospace' : null,
+              value.toUpperCase(),
+              style: GoogleFonts.shareTechMono(
+                color: activeColor,
+                fontSize: 11,
               ),
             ),
           ),
         ],
       ),
     );
-  }  Future<void> _testImportService() async {
+  }
+
+  Future<void> _testImportService() async {
     if (_disposed) return;
     _safeSetState(() {
       _isLoading = true;
-      _status = 'Testing import service...';
+      _status = 'RUNNING DIAGNOSTIC TEST ROUTINES...';
     });
 
     try {
@@ -205,16 +250,16 @@ class _BenefitImportDebugAppState extends State<BenefitImportDebugApp> {
       _safeSetState(() {
         _lastResult = result;
         _status = result['success'] == true 
-            ? 'Test completed successfully ✅'
-            : 'Test failed ❌: ${result['message']}';
+            ? 'TEST PIPELINE COMPLETED SUCCESSFULLY ✅'
+            : 'TEST SCHEMATICS FAILED ❌';
       });
     } catch (e) {
       if (_disposed) return;
       _safeSetState(() {
-        _status = 'Test error: $e';
+        _status = 'TEST COMPILE ERROR: $e';
         _lastResult = {
           'success': false,
-          'message': 'Test execution failed',
+          'message': 'Diagnostic routines terminated prematurely',
           'error': e.toString(),
         };
       });
@@ -224,11 +269,13 @@ class _BenefitImportDebugAppState extends State<BenefitImportDebugApp> {
         _isLoading = false;
       });
     }
-  }  Future<void> _runFullImport() async {
+  }
+
+  Future<void> _runFullImport() async {
     if (_disposed) return;
     _safeSetState(() {
       _isLoading = true;
-      _status = 'Running full benefit import from CSV...';
+      _status = 'PIPELINE RUNNING: PARSING CSV DATABASE...';
     });
 
     try {
@@ -237,16 +284,16 @@ class _BenefitImportDebugAppState extends State<BenefitImportDebugApp> {
       _safeSetState(() {
         _lastResult = result;
         _status = result['success'] == true 
-            ? 'Import completed successfully ✅'
-            : 'Import failed ❌: ${result['message']}';
+            ? 'DATABASE IMPORT COMPLETED SUCCESSFULLY ✅'
+            : 'DATABASE IMPORT PROCESS FAILED ❌';
       });
     } catch (e) {
       if (_disposed) return;
       _safeSetState(() {
-        _status = 'Import error: $e';
+        _status = 'IMPORT COMPILE ERROR: $e';
         _lastResult = {
           'success': false,
-          'message': 'Import execution failed',
+          'message': 'CSV parsing script crashed',
           'error': e.toString(),
         };
       });

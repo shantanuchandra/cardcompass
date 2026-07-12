@@ -14,7 +14,7 @@ void main() {
   group('All Bank PDF Parsing Tests', () {
     
     test('Parse SBI statement', () async {
-      final file = File('d:/CC/CC_all/cardcompass/assets/9391656461119329_08062025_SBI.pdf');
+      final file = File('assets/9391656461119329_08062025_SBI.pdf');
       final Uint8List pdfBytes = await file.readAsBytes();
       final parsingService = PdfParsingServiceImpl();
 
@@ -42,7 +42,7 @@ void main() {
     });
 
     test('Parse HDFC DCB statement', () async {
-      final file = File('d:/CC/CC_all/cardcompass/assets/3610XXXXXXXX81_15-06-2025_HDFC_DCB.PDF');
+      final file = File('assets/3610XXXXXXXX81_15-06-2025_HDFC_DCB.PDF');
       final Uint8List pdfBytes = await file.readAsBytes();
       final parsingService = PdfParsingServiceImpl();
 
@@ -70,7 +70,7 @@ void main() {
     });
 
     test('Parse HDFC Swiggy statement', () async {
-      final file = File('d:/CC/CC_all/cardcompass/assets/5268XXXXXXXXXX01_15-06-2025_HDFC_Swiggy.PDF');
+      final file = File('assets/5268XXXXXXXXXX01_15-06-2025_HDFC_Swiggy.PDF');
       final Uint8List pdfBytes = await file.readAsBytes();
       final parsingService = PdfParsingServiceImpl();
 
@@ -98,7 +98,7 @@ void main() {
     });
 
     test('Parse HDFC Tata Neu Infinity statement', () async {
-      final file = File('d:/CC/CC_all/cardcompass/assets/6529XXXXXXXXXX11_01-06-2025_HDFC_TataNeuInfinity.PDF');
+      final file = File('assets/6529XXXXXXXXXX11_01-06-2025_HDFC_TataNeuInfinity.PDF');
       final Uint8List pdfBytes = await file.readAsBytes();
       final parsingService = PdfParsingServiceImpl();
 
@@ -126,7 +126,7 @@ void main() {
     });
 
     test('Parse IndusInd statement', () async {
-      final file = File('d:/CC/CC_all/cardcompass/assets/CC_STMT_075992154_527254_0605202505062025_IndusInd.pdf');
+      final file = File('assets/CC_STMT_075992154_527254_0605202505062025_IndusInd.pdf');
       final Uint8List pdfBytes = await file.readAsBytes();
       final parsingService = PdfParsingServiceImpl();
 
@@ -154,7 +154,7 @@ void main() {
     });
 
     test('Parse ICICI Sapphiro statement', () async {
-      final file = File('d:/CC/CC_all/cardcompass/assets/3769XXXXXXXX3003_777450_ICICI_Sapphiro_NORM.pdf');
+      final file = File('assets/3769XXXXXXXX3003_777450_ICICI_Sapphiro_NORM.pdf');
       final Uint8List pdfBytes = await file.readAsBytes();
       final parsingService = PdfParsingServiceImpl();
 
@@ -182,7 +182,7 @@ void main() {
     });
 
     test('Parse ICICI Amazon statement', () async {
-      final file = File('d:/CC/CC_all/cardcompass/assets/4315XXXXXXXX6006_1343157_ICICI_Amazon_NORM.pdf');
+      final file = File('assets/4315XXXXXXXX6006_1343157_ICICI_Amazon_NORM.pdf');
       final Uint8List pdfBytes = await file.readAsBytes();
       final parsingService = PdfParsingServiceImpl();
 
@@ -210,7 +210,7 @@ void main() {
     });
 
     test('Parse Axis Vistara statement', () async {
-      final file = File('d:/CC/CC_all/cardcompass/assets/Credit Card Statement_AxisVistara.pdf');
+      final file = File('assets/Credit Card Statement_AxisVistara.pdf');
       final Uint8List pdfBytes = await file.readAsBytes();
       final parsingService = PdfParsingServiceImpl();
 
@@ -238,7 +238,7 @@ void main() {
     });
 
     test('Parse HSBC statement', () async {
-      final file = File('d:/CC/CC_all/cardcompass/assets/20250605_HSBC.pdf');
+      final file = File('assets/20250605_HSBC.pdf');
       final Uint8List pdfBytes = await file.readAsBytes();
       final parsingService = PdfParsingServiceImpl();
 
@@ -266,7 +266,7 @@ void main() {
     });
 
     test('Parse PNB statement', () async {
-      final file = File('d:/CC/CC_all/cardcompass/assets/2231832797_PNB.pdf');
+      final file = File('assets/2231832797_PNB.pdf');
       final Uint8List pdfBytes = await file.readAsBytes();
       final parsingService = PdfParsingServiceImpl();
 
@@ -294,7 +294,7 @@ void main() {
     });
 
     test('Parse IDFC PowerPlus statement', () async {
-      final file = File('d:/CC/CC_all/cardcompass/assets/90300002407570_20062025_132200376_IDFC_PowerPlus.pdf');
+      final file = File('assets/90300002407570_20062025_132200376_IDFC_PowerPlus.pdf');
       final Uint8List pdfBytes = await file.readAsBytes();
       final parsingService = PdfParsingServiceImpl();
 
@@ -322,7 +322,7 @@ void main() {
     });
 
     test('Parse Zenith statement', () async {
-      final file = File('d:/CC/CC_all/cardcompass/assets/0001694019044117488_ZENITH_21002159_Jun-25.pdf');
+      final file = File('assets/0001694019044117488_ZENITH_21002159_Jun-25.pdf');
       final Uint8List pdfBytes = await file.readAsBytes();
       final parsingService = PdfParsingServiceImpl();
 

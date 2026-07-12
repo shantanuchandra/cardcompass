@@ -11,6 +11,7 @@
 .svn/
 .swiftpm/
 migrate_working_dir/
+/.tmp_chrome_profile/
 
 # IntelliJ related
 *.iml
@@ -43,3 +44,19 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Secrets / credentials - never commit these
+.env
+.env.*
+*.local
+*.pem
+*.key
+supabase/.temp/
+dart_defines.json
+
+# Database backups/dumps - contain real user data, never commit
+*.backup
+*.backup.gz
+db_cluster*
+*.sql.gz
+*.dump

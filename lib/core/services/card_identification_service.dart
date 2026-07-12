@@ -1,5 +1,6 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cardcompass/shared/models/credit_card.dart';
+import 'package:cardcompass/core/repositories/supabase_helpers.dart';
 
 /// Service to handle card identification and suggestions
 class CardIdentificationService {
@@ -27,7 +28,7 @@ class CardIdentificationService {
         '_user_id': userId,
       });
       
-      return (response as List)
+      return asList(response)
           .map((json) => CreditCard.fromJson(json))
           .toList();
     } catch (e) {

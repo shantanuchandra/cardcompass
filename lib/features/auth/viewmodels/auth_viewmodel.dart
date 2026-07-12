@@ -1,7 +1,10 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:cardcompass/shared/models/user.dart';
 import 'package:cardcompass/core/services/auth_service.dart';
 import 'package:cardcompass/core/services/storage_service.dart';
+
+part 'auth_viewmodel.g.dart';
 
 // AuthState represents the current authentication state
 class AuthState {
@@ -33,12 +36,17 @@ class AuthState {
 }
 
 // AuthViewModel manages authentication state and operations
-class AuthViewModel extends StateNotifier<AuthState> {
-  final AuthService _authService;
-  final StorageService _storageService;
+@riverpod
+class AuthViewModelController extends _$AuthViewModelController {
+  late final AuthService _authService;
+  late final StorageService _storageService;
 
-  AuthViewModel(this._authService, this._storageService) : super(const AuthState()) {
-    _initializeAuth();
+  @override
+  AuthState build() {
+    _authService = ref.watch(authServiceProvider);
+    _storageService = ref.watch(storageServiceProvider);
+    Future.microtask(() => _initializeAuth());
+    return const AuthState();
   }
 
   // Initialize authentication state
@@ -248,12 +256,8 @@ class AuthViewModel extends StateNotifier<AuthState> {
   }
 }
 
-// Provider for AuthViewModel
-final authViewModelProvider = StateNotifierProvider<AuthViewModel, AuthState>((ref) {
-  final authService = ref.watch(authServiceProvider);
-  final storageService = ref.watch(storageServiceProvider);
-  return AuthViewModel(authService, storageService);
-});
+// Alias to maintain compatibility with legacy code
+final authViewModelProvider = authViewModelControllerProvider;
 
 // Provider for AuthService (to be defined in services)
 final authServiceProvider = Provider<AuthService>((ref) {

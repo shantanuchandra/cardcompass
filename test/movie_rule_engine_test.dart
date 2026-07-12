@@ -80,7 +80,7 @@ void main() {
         'efficiency_threshold': 200.0,
         'min_transaction_amount': 150.0,
         'start_date': '2025-01-01T00:00:00.000Z',
-        'end_date': '2025-12-31T23:59:59.000Z',
+        'end_date': '2030-12-31T23:59:59.000Z',
       };
 
       final config = MovieBenefitConfig.fromJson(configJson);

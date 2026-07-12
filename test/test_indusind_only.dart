@@ -12,7 +12,7 @@ void main() {
   });
 
   test('Test IndusInd transaction extraction only', () async {
-    final file = File('d:/CC/CC_all/cardcompass/assets/CC_STMT_075992154_527254_0605202505062025_IndusInd.pdf');
+    final file = File('assets/CC_STMT_075992154_527254_0605202505062025_IndusInd.pdf');
     final Uint8List pdfBytes = await file.readAsBytes();
     final parsingService = PdfParsingServiceImpl();
 

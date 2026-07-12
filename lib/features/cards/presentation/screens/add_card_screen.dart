@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../core/theme.dart';
 import '../../../../core/providers/service_providers.dart';
@@ -70,109 +71,180 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final networkColor = _getNetworkColor(_selectedNetwork);
+    
     return Scaffold(
+      backgroundColor: const Color(0xFF050B18),
       appBar: AppBar(
-        title: const Text('Add Credit Card'),
+        title: Text(
+          'ADD CREDIT CARD',
+          style: GoogleFonts.spaceGrotesk(
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1.5,
+            fontSize: 16,
+          ),
+        ),
         actions: [
           TextButton(
             onPressed: _saveCard,
-            child: const Text('Save'),
+            child: Text(
+              'SAVE',
+              style: GoogleFonts.spaceGrotesk(
+                color: AppTheme.primaryColor,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1.0,
+              ),
+            ),
           ),
         ],
       ),
       body: Form(
         key: _formKey,
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Card Preview
+              // High-tech Cyber Card Preview
               Container(
                 height: 200,
                 width: double.infinity,
                 margin: const EdgeInsets.only(bottom: 32),
-                decoration: BoxDecoration(                  gradient: LinearGradient(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
                     colors: [
-                      _getNetworkColor(_selectedNetwork).withValues(alpha: 0.8),
-                      _getNetworkColor(_selectedNetwork),
+                      networkColor.withValues(alpha: 0.8),
+                      networkColor,
                     ],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                   ),
-                  borderRadius: BorderRadius.circular(16),                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.1),
-                      blurRadius: 10,
-                      offset: const Offset(0, 5),
-                    ),
-                  ],
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.15),
+                    width: 1.5,
+                  ),
+                  boxShadow: AppTheme.neonGlow(color: networkColor, opacity: 0.25, blurRadius: 15),
                 ),
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            _bankNameController.text.isEmpty 
-                              ? 'Bank Name' 
-                              : _bankNameController.text,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w500,
+                child: Stack(
+                  children: [
+                    // Holographic diagonal sheen overlay
+                    Positioned.fill(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(20),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              stops: const [0.0, 0.4, 0.45, 0.5, 0.55, 0.6, 1.0],
+                              colors: [
+                                Colors.transparent,
+                                Colors.transparent,
+                                Colors.white.withValues(alpha: 0.05),
+                                Colors.white.withValues(alpha: 0.12),
+                                Colors.white.withValues(alpha: 0.05),
+                                Colors.transparent,
+                                Colors.transparent,
+                              ],
                             ),
                           ),
-                          Text(
-                            _selectedNetwork.name.toUpperCase(),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const Spacer(),
-                      Text(
-                        '**** **** **** ${_lastFourDigitsController.text.isEmpty ? '0000' : _lastFourDigitsController.text}',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: 2,
                         ),
                       ),
-                      const SizedBox(height: 16),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    ),
+                    
+                    // Card Details Overlay
+                    Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                _bankNameController.text.isEmpty 
+                                  ? 'BANK NAME' 
+                                  : _bankNameController.text.toUpperCase(),
+                                style: GoogleFonts.spaceGrotesk(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 1.5,
+                                ),
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  _selectedNetwork.name.toUpperCase(),
+                                  style: GoogleFonts.spaceGrotesk(
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                    letterSpacing: 1.0,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const Spacer(),
                           Text(
-                            _cardNameController.text.isEmpty 
-                              ? 'Card Name' 
-                              : _cardNameController.text,
-                            style: const TextStyle(
+                            '••••  ••••  ••••  ${_lastFourDigitsController.text.isEmpty ? '0000' : _lastFourDigitsController.text}',
+                            style: GoogleFonts.spaceGrotesk(
                               color: Colors.white,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 2,
                             ),
                           ),
-                          Text(
-                            _expiryDate != null 
-                              ? '${_expiryDate!.month.toString().padLeft(2, '0')}/${_expiryDate!.year.toString().substring(2)}'
-                              : 'MM/YY',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 14,
-                            ),
+                          const SizedBox(height: 20),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                _cardNameController.text.isEmpty 
+                                  ? 'CARD NAME' 
+                                  : _cardNameController.text.toUpperCase(),
+                                style: GoogleFonts.spaceGrotesk(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(
+                                    'VALID THRU',
+                                    style: GoogleFonts.spaceGrotesk(
+                                      color: Colors.white38,
+                                      fontSize: 7,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  Text(
+                                    _expiryDate != null 
+                                      ? '${_expiryDate!.month.toString().padLeft(2, '0')}/${_expiryDate!.year.toString().substring(2)}'
+                                      : 'MM/YY',
+                                    style: GoogleFonts.spaceGrotesk(
+                                      color: Colors.white,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
                           ),
                         ],
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
 
@@ -244,6 +316,7 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
 
               DropdownButtonFormField<CardNetwork>(
                 initialValue: _selectedNetwork,
+                dropdownColor: const Color(0xFF0C152B),
                 decoration: const InputDecoration(
                   labelText: 'Card Network',
                   border: OutlineInputBorder(),
@@ -390,74 +463,79 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
     }
   }
   Widget _buildQuickAddSuggestions() {
-    // Show loading state or empty state if no identified cards
     if (_isLoadingIdentifiedCards) {
       return Container(
         margin: const EdgeInsets.only(bottom: 24),
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
-          color: Colors.blue[50],
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.blue[200]!),
+          color: const Color(0xFF0C152B),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
         ),
         child: Column(
           children: [
             Row(
               children: [
-                Icon(Icons.auto_awesome, color: Colors.blue[700], size: 20),
+                const Icon(Icons.bolt, color: AppTheme.primaryColor, size: 20),
                 const SizedBox(width: 8),
                 Text(
-                  'Loading identified cards...',
-                  style: TextStyle(
-                    color: Colors.blue[700],
+                  'DETECTING CREDENTIALS...',
+                  style: GoogleFonts.spaceGrotesk(
+                    color: Colors.white,
                     fontWeight: FontWeight.bold,
-                    fontSize: 16,
+                    fontSize: 13,
+                    letterSpacing: 1.0,
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            const CircularProgressIndicator(),
+            const SizedBox(height: 16),
+            const CircularProgressIndicator(
+              valueColor: AlwaysStoppedAnimation(AppTheme.primaryColor),
+            ),
           ],
         ),
       );
     }
     
     if (_identifiedCards.isEmpty) {
-      return const SizedBox.shrink(); // Don't show anything if no identified cards
+      return const SizedBox.shrink();
     }
 
     return Container(
       margin: const EdgeInsets.only(bottom: 24),
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: Colors.blue[50],
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.blue[200]!),
+        color: const Color(0xFF0C152B),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.secondaryColor.withValues(alpha: 0.25), width: 1.5),
+        boxShadow: AppTheme.neonGlow(color: AppTheme.secondaryColor, opacity: 0.1, blurRadius: 10),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(Icons.auto_awesome, color: Colors.blue[700], size: 20),
+              const Icon(Icons.bolt, color: AppTheme.primaryColor, size: 20),
               const SizedBox(width: 8),
               Text(
-                'Quick Add - Recently Identified Cards',
-                style: TextStyle(
-                  color: Colors.blue[700],
+                'AUTO-DETECTED PORTFOLIO',
+                style: GoogleFonts.spaceGrotesk(
+                  color: Colors.white,
                   fontWeight: FontWeight.bold,
-                  fontSize: 16,
+                  fontSize: 13,
+                  letterSpacing: 0.5,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           Text(
-            'These cards were identified from your transaction history:',
-            style: TextStyle(
-              color: Colors.blue[600],
-              fontSize: 14,
+            'We identified these credit cards from your transaction history. Tap to pre-fill the form:',
+            style: GoogleFonts.plusJakartaSans(
+              color: Colors.white70,
+              fontSize: 12,
+              height: 1.4,
             ),
           ),
           const SizedBox(height: 12),
@@ -470,21 +548,23 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
       ),
     );
   }
+
   Widget _buildQuickAddChip(Map<String, dynamic> card) {
     final cardName = card['card_name']?.toString() ?? card['name']?.toString() ?? 'Unknown Card';
     final bankName = card['bank']?.toString() ?? card['bank_name']?.toString() ?? 'Unknown Bank';
     
     return ActionChip(
-      avatar: Icon(Icons.credit_card, size: 16, color: Colors.blue[700]),
+      avatar: const Icon(Icons.add, size: 14, color: AppTheme.primaryColor),
       label: Text(
-        cardName,
-        style: TextStyle(
-          color: Colors.blue[700],
-          fontWeight: FontWeight.w500,
+        cardName.toUpperCase(),
+        style: GoogleFonts.spaceGrotesk(
+          color: Colors.white,
+          fontWeight: FontWeight.bold,
+          fontSize: 10,
         ),
       ),
-      backgroundColor: Colors.white,
-      side: BorderSide(color: Colors.blue[300]!),
+      backgroundColor: const Color(0xFF050B18),
+      side: const BorderSide(color: AppTheme.primaryColor, width: 1),
       onPressed: () => _fillFormWithSuggestion({
         'name': cardName,
         'bank': bankName,
@@ -496,13 +576,12 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
     setState(() {
       _cardNameController.text = card['name']!;
       _bankNameController.text = card['bank']!;
-      // You can add more fields as needed
     });
     
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Pre-filled form with ${card['name']}'),
-        backgroundColor: Colors.green,
+        content: Text('Form populated with ${card['name']}.'),
+        backgroundColor: AppTheme.successColor,
         duration: const Duration(seconds: 2),
       ),
     );

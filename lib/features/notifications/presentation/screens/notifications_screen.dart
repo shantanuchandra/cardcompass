@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:cardcompass/shared/models/notification.dart';
 import 'package:cardcompass/features/notifications/viewmodels/notifications_viewmodel.dart';
 import 'package:cardcompass/features/auth/providers/auth_provider.dart';
+import 'package:cardcompass/core/theme.dart';
 
 class NotificationsScreen extends ConsumerStatefulWidget {
   const NotificationsScreen({super.key});
@@ -40,43 +42,64 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen>
     final state = ref.watch(notificationsViewModelProvider);
     
     return Scaffold(
+      backgroundColor: const Color(0xFF050B18),
       appBar: AppBar(
-        title: const Text('Notifications'),
+        title: Text(
+          'NOTIFICATIONS',
+          style: GoogleFonts.spaceGrotesk(
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1.5,
+            fontSize: 16,
+          ),
+        ),
         bottom: TabBar(
           controller: _tabController,
+          labelColor: AppTheme.primaryColor,
+          unselectedLabelColor: Colors.white38,
+          indicatorColor: AppTheme.primaryColor,
+          indicatorSize: TabBarIndicatorSize.tab,
+          labelStyle: GoogleFonts.spaceGrotesk(
+            fontWeight: FontWeight.bold,
+            fontSize: 10,
+            letterSpacing: 0.5,
+          ),
           tabs: const [
-            Tab(text: 'All'),
-            Tab(text: 'Benefit Alerts'),
-            Tab(text: 'Recommendations'),
+            Tab(text: 'ALL'),
+            Tab(text: 'BENEFITS'),
+            Tab(text: 'SUGGESTIONS'),
           ],
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.mark_email_read),
+            icon: const Icon(Icons.mark_email_read_outlined, color: AppTheme.primaryColor),
             onPressed: () => _markAllAsRead(),
             tooltip: 'Mark all as read',
           ),
           IconButton(
-            icon: const Icon(Icons.settings),
+            icon: const Icon(Icons.tune, color: AppTheme.primaryColor),
             onPressed: () => _showNotificationSettings(),
             tooltip: 'Settings',
           ),
         ],
       ),
       body: state.isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: CircularProgressIndicator(valueColor: AlwaysStoppedAnimation(AppTheme.primaryColor)))
           : state.error != null
               ? Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.error_outline, size: 64, color: Colors.grey[400]),
+                      const Icon(Icons.error_outline, size: 48, color: AppTheme.errorColor),
                       const SizedBox(height: 16),
-                      Text(state.error!, style: Theme.of(context).textTheme.bodyMedium),
+                      Text(
+                        state.error!.toUpperCase(),
+                        style: GoogleFonts.spaceGrotesk(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold),
+                      ),
                       const SizedBox(height: 16),
-                      ElevatedButton(
+                      OutlinedButton(
                         onPressed: _loadNotifications,
-                        child: const Text('Retry'),
+                        style: OutlinedButton.styleFrom(side: const BorderSide(color: AppTheme.primaryColor)),
+                        child: Text('RETRY', style: GoogleFonts.spaceGrotesk(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
                       ),
                     ],
                   ),
@@ -95,34 +118,43 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen>
   Widget _buildNotificationsList(List<AppNotification> notifications) {
     if (notifications.isEmpty) {
       return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.notifications_none, size: 64, color: Colors.grey[400]),
-            const SizedBox(height: 16),
-            Text(
-              'No notifications',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                color: Colors.grey[600],
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.notifications_none_outlined, size: 48, color: Colors.white24),
+              const SizedBox(height: 16),
+              Text(
+                'NO ALERTS FOUND',
+                style: GoogleFonts.spaceGrotesk(
+                  color: Colors.white60,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.5,
+                ),
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'We\'ll notify you about benefits and recommendations here',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Colors.grey[500],
+              const SizedBox(height: 8),
+              Text(
+                'New optimization opportunities and rule updates will log here.',
+                style: GoogleFonts.plusJakartaSans(
+                  color: Colors.white30,
+                  fontSize: 11,
+                ),
+                textAlign: TextAlign.center,
               ),
-              textAlign: TextAlign.center,
-            ),
-          ],
+            ],
+          ),
         ),
       );
     }
 
     return RefreshIndicator(
+      color: AppTheme.primaryColor,
+      backgroundColor: const Color(0xFF0C152B),
       onRefresh: () async => _loadNotifications(),
       child: ListView.builder(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 20, 16, 80),
         itemCount: notifications.length,
         itemBuilder: (context, index) {
           final notification = notifications[index];
@@ -133,51 +165,73 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen>
   }
 
   Widget _buildNotificationCard(AppNotification notification) {
-    return Card(
+    final activeBorderColor = notification.isRead 
+        ? Colors.white.withValues(alpha: 0.06) 
+        : AppTheme.primaryColor.withValues(alpha: 0.25);
+    final textWeight = notification.isRead ? FontWeight.normal : FontWeight.bold;
+    
+    return Container(
       margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0C152B),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: activeBorderColor, width: 1.2),
+        boxShadow: notification.isRead 
+            ? null 
+            : AppTheme.neonGlow(color: AppTheme.primaryColor, opacity: 0.08, blurRadius: 10),
+      ),
       child: InkWell(
         onTap: () => _handleNotificationTap(notification),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _buildNotificationIcon(notification),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: 14),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          notification.title,
-                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: notification.isRead ? FontWeight.normal : FontWeight.bold,
+                          notification.title.toUpperCase(),
+                          style: GoogleFonts.spaceGrotesk(
+                            color: Colors.white,
+                            fontWeight: textWeight,
+                            fontSize: 12,
+                            letterSpacing: 0.5,
                           ),
                         ),
                         if (notification.message.isNotEmpty) ...[
-                          const SizedBox(height: 4),
+                          const SizedBox(height: 6),
                           Text(
                             notification.message,
-                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: Colors.grey[600],
+                            style: GoogleFonts.plusJakartaSans(
+                              color: Colors.white70,
+                              fontSize: 11,
+                              height: 1.3,
                             ),
                           ),
                         ],
                       ],
                     ),
                   ),
+                  const SizedBox(width: 12),
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       _buildPriorityChip(notification.priority),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 8),
                       Text(
-                        _formatDateTime(notification.createdAt),
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Colors.grey[500],
+                        _formatDateTime(notification.createdAt).toUpperCase(),
+                        style: GoogleFonts.spaceGrotesk(
+                          color: Colors.white30,
+                          fontSize: 8,
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
                     ],
@@ -189,15 +243,25 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen>
                 Row(
                   children: [
                     const Spacer(),
-                    TextButton(
+                    OutlinedButton(
                       onPressed: () => _handleNotificationAction(notification),
-                      child: Text(_getActionText(notification.actionType)),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        side: const BorderSide(color: AppTheme.primaryColor, width: 1),
+                      ),
+                      child: Text(
+                        _getActionText(notification.actionType).toUpperCase(),
+                        style: GoogleFonts.spaceGrotesk(color: AppTheme.primaryColor, fontSize: 9, fontWeight: FontWeight.bold),
+                      ),
                     ),
                     const SizedBox(width: 8),
                     if (!notification.isRead)
                       TextButton(
                         onPressed: () => _markAsRead(notification),
-                        child: const Text('Mark as Read'),
+                        child: Text(
+                          'DISMISS',
+                          style: GoogleFonts.spaceGrotesk(color: Colors.white38, fontSize: 9, fontWeight: FontWeight.bold),
+                        ),
                       ),
                   ],
                 ),
@@ -216,28 +280,30 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen>
     switch (notification.type) {
       case 'benefit_alert':
         iconData = Icons.card_giftcard;
-        color = Colors.green;
+        color = AppTheme.successColor;
         break;
       case 'card_recommendation':
         iconData = Icons.credit_card;
-        color = Colors.blue;
+        color = AppTheme.primaryColor;
         break;
       case 'spending_insight':
-        iconData = Icons.analytics;
-        color = Colors.orange;
+        iconData = Icons.analytics_outlined;
+        color = AppTheme.secondaryColor;
         break;
       default:
-        iconData = Icons.notifications;
-        color = Colors.grey;
+        iconData = Icons.notifications_none_outlined;
+        color = Colors.white54;
     }
 
     return Container(
-      width: 48,
-      height: 48,      decoration: BoxDecoration(
+      width: 36,
+      height: 36,
+      decoration: BoxDecoration(
         color: color.withValues(alpha: 0.1),
         shape: BoxShape.circle,
+        border: Border.all(color: color.withValues(alpha: 0.2)),
       ),
-      child: Icon(iconData, color: color, size: 24),
+      child: Icon(iconData, color: color, size: 18),
     );
   }
 
@@ -245,29 +311,30 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen>
     Color color;
     switch (priority) {
       case 'high':
-        color = Colors.red;
+        color = AppTheme.errorColor;
         break;
       case 'medium':
-        color = Colors.orange;
+        color = AppTheme.warningColor;
         break;
       case 'low':
-        color = Colors.green;
+        color = AppTheme.successColor;
         break;
       default:
-        color = Colors.grey;
+        color = Colors.white38;
     }
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),      decoration: BoxDecoration(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
         color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withValues(alpha: 0.3)),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
       ),
       child: Text(
         priority.toUpperCase(),
-        style: TextStyle(
+        style: GoogleFonts.spaceGrotesk(
           color: color,
-          fontSize: 10,
+          fontSize: 8,
           fontWeight: FontWeight.bold,
         ),
       ),
@@ -285,7 +352,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen>
     } else if (difference.inMinutes > 0) {
       return '${difference.inMinutes}m ago';
     } else {
-      return 'Just now';
+      return 'now';
     }
   }
 
@@ -315,7 +382,6 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen>
     ref.read(notificationsViewModelProvider.notifier)
         .handleNotificationAction(userId, notification);
 
-    // Navigate based on action type
     switch (notification.actionType) {
       case 'view_benefit':
         Navigator.pushNamed(context, '/benefits');
@@ -348,6 +414,10 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen>
   void _showNotificationSettings() {
     showModalBottomSheet(
       context: context,
+      backgroundColor: const Color(0xFF0C152B),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
       builder: (context) => const NotificationSettingsSheet(),
     );
   }
@@ -361,49 +431,55 @@ class NotificationSettingsSheet extends ConsumerWidget {
     final state = ref.watch(notificationsViewModelProvider);
     final preferences = state.preferences;
 
-    return Container(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Notification Settings',
-            style: Theme.of(context).textTheme.headlineSmall,
-          ),
-          const SizedBox(height: 24),          SwitchListTile(
-            title: const Text('Benefit Alerts'),
-            subtitle: const Text('Get notified about new benefits and rewards'),
-            value: preferences?.benefitAlerts ?? true,
-            onChanged: (value) => _updatePreference(ref, 'benefit_alerts', value),
-          ),
-          SwitchListTile(
-            title: const Text('Card Recommendations'),
-            subtitle: const Text('Receive personalized card recommendations'),
-            value: preferences?.cardRecommendations ?? true,
-            onChanged: (value) => _updatePreference(ref, 'card_recommendations', value),
-          ),
-          SwitchListTile(
-            title: const Text('Spending Insights'),
-            subtitle: const Text('Get insights about your spending patterns'),
-            value: preferences?.spendingInsights ?? true,
-            onChanged: (value) => _updatePreference(ref, 'spending_insights', value),
-          ),
-          SwitchListTile(
-            title: const Text('Email Notifications'),
-            subtitle: const Text('Receive notifications via email'),
-            value: preferences?.emailFrequency != 'never',
-            onChanged: (value) => _updatePreference(ref, 'email_notifications', value),
-          ),
-          const SizedBox(height: 24),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Done'),
+    return SafeArea(
+      child: Container(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'ALERT SETTINGS',
+              style: GoogleFonts.spaceGrotesk(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+                letterSpacing: 1.0,
+              ),
             ),
-          ),
-        ],
+            const Divider(color: Color(0xFF1E293B), height: 24),
+            SwitchListTile(
+              title: Text('BENEFIT ALERTS', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+              subtitle: Text('Get notified about card perks', style: GoogleFonts.plusJakartaSans(color: Colors.white30, fontSize: 10)),
+              value: preferences?.benefitAlerts ?? true,
+              activeColor: AppTheme.primaryColor,
+              onChanged: (value) => _updatePreference(ref, 'benefit_alerts', value),
+            ),
+            SwitchListTile(
+              title: Text('CARD RECOMMENDATIONS', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+              subtitle: Text('Receive optimized match options', style: GoogleFonts.plusJakartaSans(color: Colors.white30, fontSize: 10)),
+              value: preferences?.cardRecommendations ?? true,
+              activeColor: AppTheme.primaryColor,
+              onChanged: (value) => _updatePreference(ref, 'card_recommendations', value),
+            ),
+            SwitchListTile(
+              title: Text('SPENDING INSIGHTS', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+              subtitle: Text('Get patterns analysis alerts', style: GoogleFonts.plusJakartaSans(color: Colors.white30, fontSize: 10)),
+              value: preferences?.spendingInsights ?? true,
+              activeColor: AppTheme.primaryColor,
+              onChanged: (value) => _updatePreference(ref, 'spending_insights', value),
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryColor),
+                child: Text('DONE', style: GoogleFonts.spaceGrotesk(color: const Color(0xFF050B18), fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

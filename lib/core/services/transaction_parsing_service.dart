@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'parsing_logger.dart';
 
 /// Enhanced transaction parsing service with improved pattern recognition
 class TransactionParsingService {
@@ -134,39 +135,38 @@ class TransactionParsingService {
         transactionSectionEnd != -1 ? transactionSectionEnd : lines.length,
       );      
       
-      print('🔍 Transaction section found: start=${transactionSectionStart}, end=${transactionSectionEnd}, lines=${transactionLines.length}');
-      print('🔍 First 10 transaction lines:');
+      ParsingLogger.summary('Section Discovery: Found transaction section (lines $transactionSectionStart to $transactionSectionEnd)');
       for (int i = 0; i < 10 && i < transactionLines.length; i++) {
-        print('  Line $i: "${transactionLines[i]}"');
+        ParsingLogger.debug('  Line $i: "${transactionLines[i]}"');
       }
       
       // DEBUG: Show more lines for IndusInd specifically 
       if (bankName.toLowerCase() == 'indusind' && transactionLines.length < 20) {
-        print('🔍 IndusInd DEBUG: Expanding section to look for more transaction data...');
+        ParsingLogger.debug('IndusInd DEBUG: Expanding section to look for more transaction data...');
         final expandedLines = lines.sublist(
           transactionSectionStart,
           min(transactionSectionStart + 50, lines.length),
         );
-        print('🔍 Expanded to ${expandedLines.length} lines');
+        ParsingLogger.debug('Expanded to ${expandedLines.length} lines');
         
         // Try IndusInd extraction on expanded section
         final indusindTransactions = TransactionParsingService.extractIndusIndMultiLineTransactions(expandedLines);
-        print('🔍 IndusInd expanded extraction returned ${indusindTransactions.length} transactions');
+        ParsingLogger.debug('IndusInd expanded extraction returned ${indusindTransactions.length} transactions');
         if (indusindTransactions.isNotEmpty) {
           transactions.addAll(indusindTransactions);
-          print('✅ Added ${indusindTransactions.length} IndusInd expanded transactions. Total now: ${transactions.length}');
+          ParsingLogger.debug('Added ${indusindTransactions.length} IndusInd expanded transactions. Total now: ${transactions.length}');
         }
       }
       
       // DEBUG: Show more lines for HDFC specifically 
       if (bankName.toLowerCase() == 'hdfc' && transactionLines.length < 20) {
-        print('🔍 HDFC DEBUG: Expanding section to look for more transaction data...');
+        ParsingLogger.debug('HDFC DEBUG: Expanding section to look for more transaction data...');
         // Look for "Domestic Transactions" section specifically
         int domesticSectionStart = -1;
         for (int i = 0; i < lines.length; i++) {
           if (lines[i].toLowerCase().contains('domestic transactions')) {
             domesticSectionStart = i;
-            print('🔍 HDFC: Found "Domestic Transactions" at line $i');
+            ParsingLogger.debug('HDFC: Found "Domestic Transactions" at line $i');
             break;
           }
         }
@@ -176,14 +176,14 @@ class TransactionParsingService {
             domesticSectionStart,
             min(domesticSectionStart + 100, lines.length),
           );
-          print('🔍 HDFC: Expanded to ${expandedLines.length} lines from Domestic Transactions section');
+          ParsingLogger.debug('HDFC: Expanded to ${expandedLines.length} lines from Domestic Transactions section');
           
           // Try HDFC extraction on expanded section
           final hdfcTransactions = TransactionParsingService.extractHDFCMultiLineTransactions(expandedLines);
-          print('🔍 HDFC expanded extraction returned ${hdfcTransactions.length} transactions');
+          ParsingLogger.debug('HDFC expanded extraction returned ${hdfcTransactions.length} transactions');
           if (hdfcTransactions.isNotEmpty) {
             transactions.addAll(hdfcTransactions);
-            print('✅ Added ${hdfcTransactions.length} HDFC expanded transactions. Total now: ${transactions.length}');
+            ParsingLogger.debug('Added ${hdfcTransactions.length} HDFC expanded transactions. Total now: ${transactions.length}');
           }
         }
       }
@@ -194,80 +194,80 @@ class TransactionParsingService {
       // For SBI, try multi-line extraction first
       if (bankName.toLowerCase() == 'sbi') {
         final sbiTransactions = TransactionParsingService.extractSBIMultiLineTransactions(transactionLines);
-        print('🔍 SBI multi-line extraction returned ${sbiTransactions.length} transactions');
+        ParsingLogger.debug('SBI multi-line extraction returned ${sbiTransactions.length} transactions');
         if (sbiTransactions.isNotEmpty) {
           transactions.addAll(sbiTransactions);
-          print('✅ Added ${sbiTransactions.length} SBI transactions to main list. Total now: ${transactions.length}');
+          ParsingLogger.debug('Added ${sbiTransactions.length} SBI transactions to main list. Total now: ${transactions.length}');
         }
       }
       
       // For HDFC, try multi-line extraction
       if (bankName.toLowerCase() == 'hdfc') {
         final hdfcTransactions = TransactionParsingService.extractHDFCMultiLineTransactions(transactionLines);
-        print('🔍 HDFC multi-line extraction returned ${hdfcTransactions.length} transactions');
+        ParsingLogger.debug('HDFC multi-line extraction returned ${hdfcTransactions.length} transactions');
         if (hdfcTransactions.isNotEmpty) {
           transactions.addAll(hdfcTransactions);
-          print('✅ Added ${hdfcTransactions.length} HDFC transactions to main list. Total now: ${transactions.length}');
+          ParsingLogger.debug('Added ${hdfcTransactions.length} HDFC transactions to main list. Total now: ${transactions.length}');
         }
       }
       
       // For ICICI, try multi-line extraction
       if (bankName.toLowerCase() == 'icici') {
         final iciciTransactions = TransactionParsingService.extractICICITransactions(transactionLines);
-        print('🔍 ICICI extraction returned ${iciciTransactions.length} transactions');
+        ParsingLogger.debug('ICICI extraction returned ${iciciTransactions.length} transactions');
         if (iciciTransactions.isNotEmpty) {
           transactions.addAll(iciciTransactions);
-          print('✅ Added ${iciciTransactions.length} ICICI transactions to main list. Total now: ${transactions.length}');
+          ParsingLogger.debug('Added ${iciciTransactions.length} ICICI transactions to main list. Total now: ${transactions.length}');
         }
       }
       
       // For Axis, try multi-line extraction
       if (bankName.toLowerCase() == 'axis') {
         final axisTransactions = TransactionParsingService.extractAxisMultiLineTransactions(transactionLines);
-        print('🔍 Axis multi-line extraction returned ${axisTransactions.length} transactions');
+        ParsingLogger.debug('Axis multi-line extraction returned ${axisTransactions.length} transactions');
         if (axisTransactions.isNotEmpty) {
           transactions.addAll(axisTransactions);
-          print('✅ Added ${axisTransactions.length} Axis transactions to main list. Total now: ${transactions.length}');
+          ParsingLogger.debug('Added ${axisTransactions.length} Axis transactions to main list. Total now: ${transactions.length}');
         }
       }
       
       // For IDFC, try multi-line extraction
       if (bankName.toLowerCase() == 'idfc') {
         final idfcTransactions = TransactionParsingService.extractIDFCMultiLineTransactions(transactionLines);
-        print('🔍 IDFC multi-line extraction returned ${idfcTransactions.length} transactions');
+        ParsingLogger.debug('IDFC multi-line extraction returned ${idfcTransactions.length} transactions');
         if (idfcTransactions.isNotEmpty) {
           transactions.addAll(idfcTransactions);
-          print('✅ Added ${idfcTransactions.length} IDFC transactions to main list. Total now: ${transactions.length}');
+          ParsingLogger.debug('Added ${idfcTransactions.length} IDFC transactions to main list. Total now: ${transactions.length}');
         }
       }
       
       // For HSBC, try multi-line extraction from ALL lines (not just transaction section)
       if (bankName.toLowerCase() == 'hsbc') {
         final hsbcTransactions = TransactionParsingService.extractHSBCMultiLineTransactions(lines);
-        print('🔍 HSBC multi-line extraction returned ${hsbcTransactions.length} transactions');
+        ParsingLogger.debug('HSBC multi-line extraction returned ${hsbcTransactions.length} transactions');
         if (hsbcTransactions.isNotEmpty) {
           transactions.addAll(hsbcTransactions);
-          print('✅ Added ${hsbcTransactions.length} HSBC transactions to main list. Total now: ${transactions.length}');
+          ParsingLogger.debug('Added ${hsbcTransactions.length} HSBC transactions to main list. Total now: ${transactions.length}');
         }
       }
       
       // For PNB, try multi-line extraction from ALL lines (concatenated format like ICICI)
       if (bankName.toLowerCase() == 'pnb') {
         final pnbTransactions = TransactionParsingService.extractPNBMultiLineTransactions(lines);
-        print('🔍 PNB multi-line extraction returned ${pnbTransactions.length} transactions');
+        ParsingLogger.debug('PNB multi-line extraction returned ${pnbTransactions.length} transactions');
         if (pnbTransactions.isNotEmpty) {
           transactions.addAll(pnbTransactions);
-          print('✅ Added ${pnbTransactions.length} PNB transactions to main list. Total now: ${transactions.length}');
+          ParsingLogger.debug('Added ${pnbTransactions.length} PNB transactions to main list. Total now: ${transactions.length}');
         }
       }
       
       // For Zenith, try multi-line extraction from ALL lines
       if (bankName.toLowerCase() == 'zenith') {
         final zenithTransactions = TransactionParsingService.extractZenithMultiLineTransactions(lines);
-        print('🔍 Zenith multi-line extraction returned ${zenithTransactions.length} transactions');
+        ParsingLogger.debug('Zenith multi-line extraction returned ${zenithTransactions.length} transactions');
         if (zenithTransactions.isNotEmpty) {
           transactions.addAll(zenithTransactions);
-          print('✅ Added ${zenithTransactions.length} Zenith transactions to main list. Total now: ${transactions.length}');
+          ParsingLogger.debug('Added ${zenithTransactions.length} Zenith transactions to main list. Total now: ${transactions.length}');
         }
       }
       
@@ -288,7 +288,7 @@ class TransactionParsingService {
       // Post-process and validate transactions
     final validTransactions = _validateAndCleanTransactions(transactions);
     
-    print('🎯 FINAL RESULT: ${validTransactions.length} valid transactions extracted');
+    ParsingLogger.summary('Extraction Complete: ${validTransactions.length} valid transactions extracted');
     
     return validTransactions;
   }
@@ -309,25 +309,25 @@ class TransactionParsingService {
       // Look for "TRANSACTIONS FOR" specifically (highest priority)
       if (line.contains('transactions for') && transactionsForIndex == -1) {
         transactionsForIndex = i;
-        print('🔍 "TRANSACTIONS FOR" found at line $i: "${lines[i]}"');
+        ParsingLogger.debug('"TRANSACTIONS FOR" found at line $i: "${lines[i]}"');
       }
       
       // Look for "Domestic Transactions" (specific to HDFC)
       if (line.contains('domestic transactions') && domesticTransactionsIndex == -1) {
         domesticTransactionsIndex = i;
-        print('🔍 "Domestic Transactions" found at line $i: "${lines[i]}"');
+        ParsingLogger.debug('"Domestic Transactions" found at line $i: "${lines[i]}"');
       }
       
       // Look for "Transaction Details" (medium priority)
       if (line.contains('transaction details') && transactionDetailsIndex == -1) {
         transactionDetailsIndex = i;
-        print('🔍 "Transaction Details" found at line $i: "${lines[i]}"');
+        ParsingLogger.debug('"Transaction Details" found at line $i: "${lines[i]}"');
       }
       
       // Look for "Statement Date" (for Zenith and others)
       if (line.contains('statement date') && statementDateIndex == -1) {
         statementDateIndex = i;
-        print('🔍 "Statement Date" found at line $i: "${lines[i]}"');
+        ParsingLogger.debug('"Statement Date" found at line $i: "${lines[i]}"');
       }
       
       // Look for date patterns (lowest priority)
@@ -335,33 +335,33 @@ class TransactionParsingService {
           RegExp(r'\d{1,2}\s+\w{3}\s+\d{2}').hasMatch(line) ||
           RegExp(r'\d{2}\s+\w{3}\s+\d{4}').hasMatch(line))) {
         datePatternIndex = i;
-        print('🔍 Date pattern found at line $i: "${lines[i]}"');
+        ParsingLogger.debug('Date pattern found at line $i: "${lines[i]}"');
       }
     }
     
     // Return the highest priority match
     if (transactionsForIndex != -1) {
-      print('✅ Using "TRANSACTIONS FOR" section at line $transactionsForIndex');
+      ParsingLogger.summary('Section Discovery: Selected "TRANSACTIONS FOR" section at line $transactionsForIndex');
       return transactionsForIndex;
     }
     
     if (domesticTransactionsIndex != -1) {
-      print('✅ Using "Domestic Transactions" section at line $domesticTransactionsIndex');
+      ParsingLogger.summary('Section Discovery: Selected "Domestic Transactions" section at line $domesticTransactionsIndex');
       return domesticTransactionsIndex;
     }
     
     if (transactionDetailsIndex != -1) {
-      print('✅ Using "Transaction Details" section at line $transactionDetailsIndex');
+      ParsingLogger.summary('Section Discovery: Selected "Transaction Details" section at line $transactionDetailsIndex');
       return transactionDetailsIndex;
     }
     
     if (statementDateIndex != -1) {
-      print('✅ Using "Statement Date" section at line $statementDateIndex');
+      ParsingLogger.summary('Section Discovery: Selected "Statement Date" section at line $statementDateIndex');
       return statementDateIndex;
     }
     
     if (datePatternIndex != -1) {
-      print('✅ Using date pattern section at line $datePatternIndex');
+      ParsingLogger.summary('Section Discovery: Selected date pattern section at line $datePatternIndex');
       return max(0, datePatternIndex - 2); // Start a bit before the first date
     }
     
@@ -380,12 +380,12 @@ class TransactionParsingService {
           (line.contains('date') || line.contains('amount') || line.contains('statement') || line.contains('card number')) &&
           !line.contains('minimum amount due') && // Exclude account summary
           !line.contains('total amount due')) {
-        print('🔍 Transaction section start found at line $i: "${lines[i]}"');
+        ParsingLogger.debug('Transaction section start found at line $i: "${lines[i]}"');
         return i;
       }
     }
     
-    print('❌ No transaction section start found');
+    ParsingLogger.warning('Section Discovery: No transaction section start found');
     return -1;
   }
   
@@ -404,7 +404,7 @@ class TransactionParsingService {
       
       // For SBI specifically, stop at "Schedule of Charges"
       if (line.contains('schedule of charges')) {
-        print('🛑 SBI: Stopping at "Schedule of Charges" at line ${i + 1}');
+        ParsingLogger.summary('SBI Parser: End boundary reached at "Schedule of Charges" (line ${i + 1})');
         return i;
       }
       
@@ -448,7 +448,7 @@ class TransactionParsingService {
             break; // Use first matching pattern
           }
         } catch (e) {
-          print('Error parsing transaction line: $e');
+          ParsingLogger.error('Error parsing transaction line', e);
           continue;
         }
       }
@@ -496,9 +496,9 @@ class TransactionParsingService {
       }
       
       // Clean and parse amount
-      print('🔍 _parseTransactionMatch: amountStr = "$amountStr"');
+      ParsingLogger.debug('_parseTransactionMatch: amountStr = "$amountStr"');
       final cleanAmount = amountStr.replaceAll(',', '');
-      print('🔍 _parseTransactionMatch: cleanAmount = "$cleanAmount"');
+      ParsingLogger.debug('_parseTransactionMatch: cleanAmount = "$cleanAmount"');
       final amount = double.tryParse(cleanAmount);
       
       if (amount == null || amount <= 0) {
@@ -528,7 +528,7 @@ class TransactionParsingService {
         'bankName': bankName,
       };
     } catch (e) {
-      print('Error parsing transaction match: $e');
+      ParsingLogger.error('Error parsing transaction match', e);
       return null;
     }
   }
@@ -568,7 +568,7 @@ class TransactionParsingService {
       
       return date; // Fallback - return original
     } catch (e) {
-      print('Error converting date format: $e');
+      ParsingLogger.warning('Error converting date format: $e');
       return date;
     }
   }
@@ -585,7 +585,7 @@ class TransactionParsingService {
       for (int i = 0; i < lines.length; i++) {
         if (lines[i].toLowerCase().contains('schedule of charges')) {
           endIndex = i;
-          print('🛑 SBI Fallback: Stopping at "Schedule of Charges" at line ${i + 1}');
+          ParsingLogger.summary('SBI Fallback: End boundary reached at "Schedule of Charges" (line ${i + 1})');
           break;
         }
       }
@@ -641,7 +641,7 @@ class TransactionParsingService {
   
   /// Analyze full text when no clear section is found
   static List<Map<String, dynamic>> _analyzeFullText(List<String> lines, String bankName) {
-    print('🔍 FULL TEXT: Analyzing entire document for transactions...');
+    ParsingLogger.summary('Parser: Transaction section not detected, falling back to full text analysis');
     
     // Use fallback extraction on all lines
     return _fallbackTransactionExtraction(lines, bankName);
@@ -688,7 +688,7 @@ class TransactionParsingService {
   static List<Map<String, dynamic>> _validateAndCleanTransactions(
     List<Map<String, dynamic>> transactions,
   ) {
-    print('🔍 Validating ${transactions.length} transactions...');
+    ParsingLogger.debug('Validating ${transactions.length} transactions...');
     final validTransactions = <Map<String, dynamic>>[];
     final seenTransactions = <String>{};
     
@@ -696,7 +696,7 @@ class TransactionParsingService {
       // Create unique key for deduplication
       final key = '${transaction['date']}_${transaction['description']}_${transaction['amount']}';
       
-      print('  Checking transaction: ${transaction['date']} | ${transaction['description']} | ${transaction['amount']}');
+      ParsingLogger.debug('  Checking transaction: ${transaction['date']} | ${transaction['description']} | ${transaction['amount']}');
       
       if (!seenTransactions.contains(key) &&
           transaction['amount'] is double &&
@@ -705,13 +705,13 @@ class TransactionParsingService {
         
         seenTransactions.add(key);
         validTransactions.add(transaction);
-        print('    ✅ Valid transaction added');
+        ParsingLogger.debug('    Valid transaction added');
       } else {
-        print('    ❌ Transaction rejected: duplicate=${seenTransactions.contains(key)}, amount=${transaction['amount']}, descLength=${transaction['description'].toString().length}');
+        ParsingLogger.debug('    Transaction rejected: duplicate=${seenTransactions.contains(key)}, amount=${transaction['amount']}, descLength=${transaction['description'].toString().length}');
       }
     }
     
-    print('🔍 Validation complete: ${validTransactions.length} valid transactions');
+    ParsingLogger.summary('Validation: Checked ${transactions.length} transactions, kept ${validTransactions.length} unique/valid transactions');
     
     // Sort by date (newest first)
     validTransactions.sort((a, b) {
@@ -781,10 +781,10 @@ class TransactionParsingService {
             'bankName': 'sbi',
           });
           
-          print('✅ SBI Multi-line transaction extracted: $date - $description - ₹$amount');
+          ParsingLogger.transaction('SBI: $date - $description - ₹$amount');
         }
       } catch (e) {
-        print('❌ Error parsing SBI multi-line transaction: $e');
+        ParsingLogger.error('Error parsing SBI multi-line transaction', e);
         continue;
       }
     }
@@ -814,12 +814,12 @@ class TransactionParsingService {
       for (int i = 0; i < lines.length; i++) {
         if (lines[i].toLowerCase().contains('important information')) {
           endIndex = i;
-          print('🛑 HDFC Multi-line: Stopping at "Important Information" at line ${i + 1}');
+          ParsingLogger.summary('HDFC Multi-line: End boundary reached at "Important Information" (line ${i + 1})');
           break;
         }
       }
     } else {
-      print('🔍 HDFC Multi-line: Swiggy statement detected, reading full document');
+      ParsingLogger.debug('HDFC Multi-line: Swiggy statement detected, reading full document');
     }
     
     // Look for "Domestic Transactions" section
@@ -827,13 +827,13 @@ class TransactionParsingService {
     for (int i = 0; i < lines.length; i++) {
       if (lines[i].toLowerCase().contains('domestic transactions')) {
         startIndex = i;
-        print('🔍 HDFC: Found "Domestic Transactions" section at line ${i + 1}');
+        ParsingLogger.debug('HDFC: Found "Domestic Transactions" section at line ${i + 1}');
         break;
       }
     }
     
     if (startIndex == -1) {
-      print('⚠️ HDFC: No "Domestic Transactions" section found');
+      ParsingLogger.warning('HDFC: No "Domestic Transactions" section found');
       return transactions;
     }
     
@@ -865,8 +865,8 @@ class TransactionParsingService {
         final description = line2.trim().replaceAll(RegExp(r'\s+'), ' ');
         final type = creditDebitIndicator?.toLowerCase() == 'cr' ? 'credit' : 'debit';
         
-        print('🔍 HDFC Multi-line parsing: Date="$dateStr", Desc="$description", RawAmount="$rawAmountStr"');
-        print('🔍 HDFC Robust amount parsing: $rawAmountStr -> $amount');
+        ParsingLogger.debug('HDFC Multi-line parsing: Date="$dateStr", Desc="$description", RawAmount="$rawAmountStr"');
+        ParsingLogger.debug('HDFC Robust amount parsing: $rawAmountStr -> $amount');
         
         if (amount != null && amount > 0) {
           transactions.add({
@@ -881,10 +881,10 @@ class TransactionParsingService {
             'bankName': 'hdfc',
           });
           
-          print('✅ HDFC Multi-line transaction extracted: $dateStr - $description - ₹$amount (from $rawAmountStr)');
+          ParsingLogger.transaction('HDFC: $dateStr - $description - ₹$amount');
         }
       } catch (e) {
-        print('❌ Error parsing HDFC multi-line transaction: $e');
+        ParsingLogger.error('Error parsing HDFC multi-line transaction', e);
         continue;
       }
     }
@@ -908,7 +908,7 @@ class TransactionParsingService {
       // Check if description line is reasonable
       if (line2.isEmpty || line2.length < 5) continue;
       
-      print('🔍 IndusInd checking: Date="$line1", Desc="$line2", Category="$line3"');
+      ParsingLogger.debug('IndusInd checking: Date="$line1", Desc="$line2", Category="$line3"');
       
       // Look for amount in the next few lines (there can be gaps)
       String? amountLine;
@@ -923,7 +923,7 @@ class TransactionParsingService {
           amountLine = candidateLine;
           amountValue = amountMatch.group(1);
           transactionType = amountMatch.group(2)?.toLowerCase() == 'cr' ? 'credit' : 'debit';
-          print('🔍 IndusInd found amount at line ${j}: "$candidateLine"');
+          ParsingLogger.debug('IndusInd found amount at line ${j}: "$candidateLine"');
           break;
         }
       }
@@ -948,10 +948,10 @@ class TransactionParsingService {
             'bankName': 'indusind',
           });
           
-          print('✅ IndusInd Multi-line transaction extracted: $dateStr - $description - ₹$amount');
+          ParsingLogger.transaction('IndusInd: $dateStr - $description - ₹$amount');
         }
       } catch (e) {
-        print('❌ Error parsing IndusInd multi-line transaction: $e');
+        ParsingLogger.error('Error parsing IndusInd multi-line transaction', e);
         continue;
       }
     }
@@ -961,14 +961,14 @@ class TransactionParsingService {
 
   /// Robust amount parsing that handles reward points concatenation and uses comma placement as a signal
   static double? parseRobustAmount(String amountStr) {
-    print('🔍 Parsing amount: "$amountStr"');
+    ParsingLogger.debug('Parsing amount: "$amountStr"');
     try {
       // Remove currency symbols and extra spaces, but keep dots and commas initially
       String cleanAmount = amountStr
           .replaceAll(RegExp(r'[₹\$€£\s]'), '') // Remove currency and spaces
           .replaceAll(RegExp(r'[^\d\.,]'), ''); // Keep only digits, dots, and commas
 
-      print('🔍 Clean amount after initial cleaning: "$cleanAmount"');
+      ParsingLogger.debug('Clean amount after initial cleaning: "$cleanAmount"');
 
       // Check if there are commas - use them as signals for amount boundaries
       bool hasCommas = cleanAmount.contains(',');
@@ -981,7 +981,7 @@ class TransactionParsingService {
             commaPositions.add(i);
           }
         }
-        print('🔍 Comma positions found at: $commaPositions');
+        ParsingLogger.debug('Comma positions found at: $commaPositions');
       }
 
       // Handle OCR error where Feature Reward Points get concatenated with amounts
@@ -1028,7 +1028,7 @@ class TransactionParsingService {
                           final amountWithCommas = possibleAmount;
                           if (_isValidCommaPlacement(amountWithCommas)) {
                             score += 15; // Big bonus for valid comma placement
-                            print('🔍 Valid comma placement detected in: "$amountWithCommas"');
+                            ParsingLogger.debug('Valid comma placement detected in: "$amountWithCommas"');
                           }
                           
                           // Check if splitting at this point preserves meaningful comma structure
@@ -1059,7 +1059,7 @@ class TransactionParsingService {
                           bestSplit = '$cleanPossibleAmount.$afterDecimal';
                         }
                         
-                        print('🔍 Split candidate: rewards="$possibleRewardPoints", amount="$cleanPossibleAmount.$afterDecimal", score=$score');
+                        ParsingLogger.debug('Split candidate: rewards="$possibleRewardPoints", amount="$cleanPossibleAmount.$afterDecimal", score=$score');
                       }
                     }
                   }
@@ -1068,7 +1068,7 @@ class TransactionParsingService {
               
               if (bestSplit != null) {
                 cleanAmount = bestSplit;
-                print('🔍 Found best split: "$bestSplit" from "$amountStr" (score: $bestScore)');
+                ParsingLogger.debug('Found best split: "$bestSplit" from "$amountStr" (score: $bestScore)');
               } else {
                 // No good split found, just remove commas and use original
                 cleanAmount = cleanAmount.replaceAll(',', '');
@@ -1105,7 +1105,7 @@ class TransactionParsingService {
                   // Check comma placement in this split
                   if (hasCommas && _isValidCommaPlacement(remainingDigits)) {
                     score += 15; // Bonus for valid comma placement
-                    print('🔍 Valid comma placement in no-decimal split: "$remainingDigits"');
+                    ParsingLogger.debug('Valid comma placement in no-decimal split: "$remainingDigits"');
                   }
                   
                   if (testAmount >= 100 && testAmount <= 5000) score += 10;
@@ -1116,7 +1116,7 @@ class TransactionParsingService {
                     bestSplit = '$intPart.$decPart';
                   }
                   
-                  print('🔍 No-decimal split candidate: rewards="$possibleRewardPoints", amount="$intPart.$decPart", score=$score');
+                  ParsingLogger.debug('No-decimal split candidate: rewards="$possibleRewardPoints", amount="$intPart.$decPart", score=$score');
                 }
               }
             }
@@ -1125,7 +1125,7 @@ class TransactionParsingService {
         
         if (bestSplit != null) {
           cleanAmount = bestSplit;
-          print('🔍 Found best no-decimal split: "$bestSplit" (score: $bestScore)');
+          ParsingLogger.debug('Found best no-decimal split: "$bestSplit" (score: $bestScore)');
         } else {
           // No good split found, just remove commas
           cleanAmount = cleanAmount.replaceAll(',', '');
@@ -1137,10 +1137,10 @@ class TransactionParsingService {
 
       // Final parsing attempt
       final result = double.tryParse(cleanAmount);
-      print('🔍 Final parsed amount: $result from "$cleanAmount"');
+      ParsingLogger.debug('Final parsed amount: $result from "$cleanAmount"');
       return result;
     } catch (e) {
-      print('❌ Error parsing amount "$amountStr": $e');
+      ParsingLogger.error('Error parsing amount "$amountStr"', e);
       return null;
     }
   }
@@ -1177,7 +1177,7 @@ class TransactionParsingService {
       }
       
       if (isIndianFormat) {
-        print('🔍 Detected Indian comma format: $numberStr');
+        ParsingLogger.debug('Detected Indian comma format: $numberStr');
         return true;
       }
     }
@@ -1196,11 +1196,11 @@ class TransactionParsingService {
     }
     
     if (isInternationalFormat) {
-      print('🔍 Detected international comma format: $numberStr');
+      ParsingLogger.debug('Detected international comma format: $numberStr');
       return true;
     }
     
-    print('🔍 Invalid comma format detected: $numberStr');
+    ParsingLogger.debug('Invalid comma format detected: $numberStr');
     return false;
   }
 
@@ -1217,7 +1217,7 @@ class TransactionParsingService {
       final matches = datePattern.allMatches(line);
       
       if (matches.isNotEmpty) {
-        print('🔍 ICICI: Processing concatenated line with ${matches.length} potential transactions');
+        ParsingLogger.debug('ICICI: Processing concatenated line with ${matches.length} potential transactions');
         
         // Split the line by date patterns to separate transactions
         final dateRegex = RegExp(r'(\d{2}\/\d{2}\/\d{4})');
@@ -1264,7 +1264,7 @@ class TransactionParsingService {
                     'bankName': 'icici',
                   });
                   
-                  print('✅ ICICI transaction extracted: $dateStr - $description - ₹$amount');
+                  ParsingLogger.transaction('ICICI: $dateStr - $description - ₹$amount');
                 }
               }
             }
@@ -1316,10 +1316,10 @@ class TransactionParsingService {
             'bankName': 'axis',
           });
           
-          print('✅ Axis Multi-line transaction extracted: $dateStr - $description - ₹$amount');
+          ParsingLogger.transaction('Axis: $dateStr - $description - ₹$amount');
         }
       } catch (e) {
-        print('❌ Error parsing Axis multi-line transaction: $e');
+        ParsingLogger.error('Error parsing Axis multi-line transaction', e);
         continue;
       }
     }
@@ -1375,11 +1375,11 @@ class TransactionParsingService {
             'amount': amount,
             'transaction_type': transactionType,
           });
-          print('✅ IDFC Multi-line transaction extracted: $dateStr - $description - ₹$amount');
+          ParsingLogger.transaction('IDFC: $dateStr - $description - ₹$amount');
         }
       }
     } catch (e) {
-      print('❌ Error parsing IDFC multi-line transactions: $e');
+      ParsingLogger.error('Error parsing IDFC multi-line transactions', e);
     }
     
     return transactions;
@@ -1428,12 +1428,12 @@ class TransactionParsingService {
               'originalLine': line,
               'bankName': 'hsbc',
             });
-            print('✅ HSBC Multi-line transaction extracted: $dateStr - $description - ₹$amount');
+            ParsingLogger.transaction('HSBC: $dateStr - $description - ₹$amount');
           }
         }
       }
     } catch (e) {
-      print('❌ Error parsing HSBC multi-line transactions: $e');
+      ParsingLogger.error('Error parsing HSBC multi-line transactions', e);
     }
     
     return transactions;
@@ -1457,7 +1457,7 @@ class TransactionParsingService {
             .allMatches(line);
         
         if (transactionMatches.isNotEmpty) {
-          print('🔍 PNB: Processing concatenated line with ${transactionMatches.length} potential transactions');
+          ParsingLogger.debug('PNB: Processing concatenated line with ${transactionMatches.length} potential transactions');
           
           for (final match in transactionMatches) {
             final transactionDate = match.group(1)!; // First date is transaction date
@@ -1493,13 +1493,13 @@ class TransactionParsingService {
                 'bankName': 'pnb',
               });
               
-              print('✅ PNB transaction extracted: $transactionDate - $description - ₹$amount');
+              ParsingLogger.transaction('PNB: $transactionDate - $description - ₹$amount');
             }
           }
         }
       }
     } catch (e) {
-      print('❌ Error parsing PNB multi-line transactions: $e');
+      ParsingLogger.error('Error parsing PNB multi-line transactions', e);
     }
     
     return transactions;
@@ -1560,12 +1560,12 @@ class TransactionParsingService {
               'bankName': 'zenith',
             });
             
-            print('✅ Zenith Multi-line transaction extracted: $cleanDate - $description - ₹$amount ($transactionType)');
+            ParsingLogger.transaction('Zenith: $cleanDate - $description - ₹$amount ($transactionType)');
           }
         }
       }
     } catch (e) {
-      print('❌ Error parsing Zenith multi-line transactions: $e');
+      ParsingLogger.error('Error parsing Zenith multi-line transactions', e);
     }
     
     return transactions;

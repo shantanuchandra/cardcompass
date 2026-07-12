@@ -13,7 +13,7 @@ void main() {
 
   test('Parse Axis Vistara statement and check amounts', () async {
     // Load the Axis Vistara PDF file
-    final file = File('d:/CC/CC_all/cardcompass/assets/Credit Card Statement_AxisVistara.pdf');
+    final file = File('assets/Credit Card Statement_AxisVistara.pdf');
     final Uint8List pdfBytes = await file.readAsBytes();
 
     // Create an instance of the parsing service

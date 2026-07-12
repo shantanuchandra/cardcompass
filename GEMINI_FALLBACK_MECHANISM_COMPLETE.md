@@ -10,6 +10,7 @@ Successfully implemented an **automatic fallback mechanism** for Gemini API that
 #### Fallback Chain Strategy
 ```dart
 static const List<String> geminiModelFallbackChain = [
+  'gemini-2.5-flash',  // Primary: Experimental model with higher limits
   'gemini-2.0-flash-exp',  // Primary: Experimental model with higher limits
   'gemini-1.5-flash-8b',   // Fallback 1: Smaller, faster model
   'gemini-1.5-flash',      // Fallback 2: Standard flash model

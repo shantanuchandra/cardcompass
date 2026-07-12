@@ -3,95 +3,34 @@
 part of 'transaction.dart';
 
 // **************************************************************************
-// TypeAdapterGenerator
-// **************************************************************************
-
-class TransactionAdapter extends TypeAdapter<Transaction> {
-  @override
-  final int typeId = 4;
-
-  @override
-  Transaction read(BinaryReader reader) {
-    final numOfFields = reader.readByte();
-    final fields = <int, dynamic>{
-      for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
-    };
-    return Transaction(
-      id: fields[0] as String,
-      userId: fields[1] as String,
-      userCardId: fields[17] as String?,
-      amount: fields[3] as double,
-      currency: fields[4] as String,
-      description: fields[5] as String,
-      merchantName: fields[6] as String?,
-      category: fields[7] as TransactionCategory,
-      type: fields[8] as TransactionType,
-      transactionDate: fields[9] as DateTime,
-      location: fields[10] as String?,
-      rewardEarned: fields[11] as double?,
-      rewardType: fields[12] as String?,
-      metadata: (fields[13] as Map).cast<String, dynamic>(),
-      statementId: fields[14] as String?,
-      isRecurring: fields[15] as bool,
-      createdAt: fields[16] as DateTime,
-    );
-  }
-
-  @override
-  void write(BinaryWriter writer, Transaction obj) {
-    writer
-      ..writeByte(17)
-      ..writeByte(0)
-      ..write(obj.id)
-      ..writeByte(1)
-      ..write(obj.userId)
-      ..writeByte(17)
-      ..write(obj.userCardId)
-      ..writeByte(3)
-      ..write(obj.amount)
-      ..writeByte(4)
-      ..write(obj.currency)
-      ..writeByte(5)
-      ..write(obj.description)
-      ..writeByte(6)
-      ..write(obj.merchantName)
-      ..writeByte(7)
-      ..write(obj.category)
-      ..writeByte(8)
-      ..write(obj.type)
-      ..writeByte(9)
-      ..write(obj.transactionDate)
-      ..writeByte(10)
-      ..write(obj.location)
-      ..writeByte(11)
-      ..write(obj.rewardEarned)
-      ..writeByte(12)
-      ..write(obj.rewardType)
-      ..writeByte(13)
-      ..write(obj.metadata)
-      ..writeByte(14)
-      ..write(obj.statementId)
-      ..writeByte(15)
-      ..write(obj.isRecurring)
-      ..writeByte(16)
-      ..write(obj.createdAt);
-  }
-
-  @override
-  int get hashCode => typeId.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is TransactionAdapter &&
-          runtimeType == other.runtimeType &&
-          typeId == other.typeId;
-}
-
-// **************************************************************************
 // JsonSerializableGenerator
 // **************************************************************************
 
+Transaction _$TransactionFromJson(Map<String, dynamic> json) => Transaction(
+      id: json['id'] as String,
+      userId: json['userId'] as String,
+      userCardId: json['userCardId'] as String?,
+      amount: (json['amount'] as num).toDouble(),
+      currency: json['currency'] as String? ?? 'INR',
+      description: json['description'] as String,
+      merchantName: json['merchantName'] as String?,
+      category:
+          $enumDecodeNullable(_$TransactionCategoryEnumMap, json['category']) ??
+              TransactionCategory.other,
+      type: $enumDecodeNullable(_$TransactionTypeEnumMap, json['type']) ??
+          TransactionType.debit,
+      transactionDate: DateTime.parse(json['transactionDate'] as String),
+      location: json['location'] as String?,
+      rewardEarned: (json['rewardEarned'] as num?)?.toDouble(),
+      rewardType: json['rewardType'] as String?,
+      metadata: json['metadata'] as Map<String, dynamic>? ?? const {},
+      statementId: json['statementId'] as String?,
+      isRecurring: json['isRecurring'] as bool? ?? false,
+      createdAt: DateTime.parse(json['createdAt'] as String),
+      source: $enumDecodeNullable(_$TransactionSourceEnumMap, json['source']) ??
+          TransactionSource.statement,
+      alertEmailId: json['alertEmailId'] as String?,
+    );
 
 Map<String, dynamic> _$TransactionToJson(Transaction instance) =>
     <String, dynamic>{
@@ -112,6 +51,8 @@ Map<String, dynamic> _$TransactionToJson(Transaction instance) =>
       'statementId': instance.statementId,
       'isRecurring': instance.isRecurring,
       'createdAt': instance.createdAt.toIso8601String(),
+      'source': _$TransactionSourceEnumMap[instance.source]!,
+      'alertEmailId': instance.alertEmailId,
     };
 
 const _$TransactionCategoryEnumMap = {
@@ -140,4 +81,10 @@ const _$TransactionTypeEnumMap = {
   TransactionType.fee: 'fee',
   TransactionType.interest: 'interest',
   TransactionType.reward: 'reward',
+};
+
+const _$TransactionSourceEnumMap = {
+  TransactionSource.statement: 'statement',
+  TransactionSource.alertEmail: 'alertEmail',
+  TransactionSource.manual: 'manual',
 };

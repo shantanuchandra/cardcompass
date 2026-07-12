@@ -43,10 +43,12 @@ class EmailRepository {
 
   /// Update email processing status
   Future<void> updateEmailStatus({
+    required String userId,
     required String emailId,
     required bool processed,
     String? statementId,
-  }) async {    try {
+  }) async {
+    try {
       final updateData = <String, dynamic>{
         'processed': processed,
       };
@@ -58,6 +60,7 @@ class EmailRepository {
       await _supabase
           .from('emails')
           .update(updateData)
+          .eq('user_id', userId)
           .eq('email_id', emailId);
     } catch (e) {
       throw Exception('Failed to update email status: $e');
@@ -80,15 +83,33 @@ class EmailRepository {
   }
 
   /// Check if email already exists
-  Future<bool> emailExists(String emailId) async {
+  Future<bool> emailExists(String userId, String emailId) async {
     try {
       final response = await _supabase
           .from('emails')
           .select('id')
+          .eq('user_id', userId)
           .eq('email_id', emailId)
           .limit(1);
 
       return response.isNotEmpty;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// Check if email has been successfully processed
+  Future<bool> isEmailProcessed(String userId, String emailId) async {
+    try {
+      final response = await _supabase
+          .from('emails')
+          .select('processed')
+          .eq('user_id', userId)
+          .eq('email_id', emailId)
+          .maybeSingle();
+
+      if (response == null) return false;
+      return response['processed'] == true;
     } catch (e) {
       return false;
     }

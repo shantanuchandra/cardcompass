@@ -1,6 +1,9 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:cardcompass/shared/models/credit_card.dart';
 import 'package:cardcompass/core/repositories/card_repository.dart';
+
+part 'cards_viewmodel.g.dart';
 
 class CardsViewState {
   final List<CreditCard> userCards;
@@ -64,10 +67,15 @@ class CardsViewState {
   }
 }
 
-class CardsViewModel extends StateNotifier<CardsViewState> {
-  final CardRepository _cardsRepository;
+@riverpod
+class CardsViewModelController extends _$CardsViewModelController {
+  late final CardRepository _cardsRepository;
 
-  CardsViewModel(this._cardsRepository) : super(const CardsViewState());
+  @override
+  CardsViewState build() {
+    _cardsRepository = ref.watch(cardsRepositoryProvider);
+    return const CardsViewState();
+  }
 
   Future<void> loadCards(String userId) async {
     state = state.copyWith(isLoading: true, error: null);
@@ -197,7 +205,8 @@ class CardsViewModel extends StateNotifier<CardsViewState> {
 
     if (state.bankFilter != null) {
       filtered = filtered.where((card) => card.bankName == state.bankFilter).toList();
-    }    if (state.cardTypeFilter != null) {
+    }
+    if (state.cardTypeFilter != null) {
       filtered = filtered.where((card) => card.type.toString().split('.').last == state.cardTypeFilter).toList();
     }
 
@@ -220,11 +229,8 @@ class CardsViewModel extends StateNotifier<CardsViewState> {
   }
 }
 
-// Provider for CardsViewModel
-final cardsViewModelProvider = StateNotifierProvider<CardsViewModel, CardsViewState>((ref) {
-  final cardsRepository = ref.watch(cardsRepositoryProvider);
-  return CardsViewModel(cardsRepository);
-});
+// Alias for compatibility
+final cardsViewModelProvider = cardsViewModelControllerProvider;
 
 // Provider for CardsRepository (to be defined)
 final cardsRepositoryProvider = Provider<CardRepository>((ref) {

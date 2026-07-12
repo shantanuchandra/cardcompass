@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:cardcompass/shared/components/app_bar.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:cardcompass/shared/widgets/empty_state.dart' as empty_widgets;
 import 'package:cardcompass/features/auth/providers/auth_provider.dart';
 import 'package:cardcompass/core/providers/service_providers.dart';
 import 'package:cardcompass/core/services/recommendation_service.dart';
 import 'package:cardcompass/core/theme.dart';
 
-/// Screen displaying personalized credit card recommendations
+/// Screen displaying personalized credit card recommendations in cyber-fintech visual style
 class RecommendationsScreen extends ConsumerStatefulWidget {
   const RecommendationsScreen({super.key});
 
@@ -34,7 +34,7 @@ class _RecommendationsScreenState extends ConsumerState<RecommendationsScreen> {
     if (user == null) {
       setState(() {
         _isLoading = false;
-        _error = 'Please sign in to see recommendations.';
+        _error = 'Please sign in to view recommendations.';
       });
       return;
     }
@@ -59,7 +59,7 @@ class _RecommendationsScreenState extends ConsumerState<RecommendationsScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = 'Could not load recommendations: $e';
+        _error = 'Could not decrypt recommendations: $e';
         _isLoading = false;
       });
     }
@@ -68,12 +68,21 @@ class _RecommendationsScreenState extends ConsumerState<RecommendationsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: const CustomAppBar(
-        title: 'Card Recommendations',
-        showBackButton: true,
+      backgroundColor: const Color(0xFF050B18),
+      appBar: AppBar(
+        title: Text(
+          'RECOMMENDATIONS',
+          style: GoogleFonts.spaceGrotesk(
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1.5,
+            fontSize: 18,
+          ),
+        ),
       ),
       body: RefreshIndicator(
         onRefresh: _loadRecommendations,
+        color: AppTheme.primaryColor,
+        backgroundColor: const Color(0xFF0C152B),
         child: _buildBody(context),
       ),
     );
@@ -81,16 +90,21 @@ class _RecommendationsScreenState extends ConsumerState<RecommendationsScreen> {
 
   Widget _buildBody(BuildContext context) {
     if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(
+        child: CircularProgressIndicator(
+          valueColor: AlwaysStoppedAnimation(AppTheme.primaryColor),
+        ),
+      );
     }
 
     if (_error != null) {
       return ListView(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
         children: [
           const SizedBox(height: 80),
           empty_widgets.EmptyState(
             icon: Icons.recommend,
-            title: 'No recommendations yet',
+            title: 'NO RECOMMENDATIONS YET',
             message: _error!,
           ),
         ],
@@ -99,28 +113,45 @@ class _RecommendationsScreenState extends ConsumerState<RecommendationsScreen> {
 
     if (_optimizations.isEmpty && _rewardOptimizations.isEmpty) {
       return ListView(
-        children: const [
-          SizedBox(height: 80),
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        children: [
+          const SizedBox(height: 80),
           empty_widgets.EmptyState(
             icon: Icons.recommend,
-            title: 'You\'re all optimized!',
-            message: 'We don\'t see any better card matches for your recent spending right now.',
+            title: 'YOU ARE FULLY OPTIMIZED',
+            message: 'We don\'t see any better card matches for your recent spending patterns right now.',
           ),
         ],
       );
     }
 
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 80),
       children: [
         if (_rewardOptimizations.isNotEmpty) ...[
-          Text('Reward opportunities', style: AppTextStyles.heading3),
+          Text(
+            'REWARD OPPORTUNITIES',
+            style: GoogleFonts.spaceGrotesk(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              fontSize: 14,
+              letterSpacing: 1.0,
+            ),
+          ),
           const SizedBox(height: 12),
           ..._rewardOptimizations.map((r) => _buildRewardCard(context, r)),
           const SizedBox(height: 24),
         ],
         if (_optimizations.isNotEmpty) ...[
-          Text('Spending optimizations', style: AppTextStyles.heading3),
+          Text(
+            'SPENDING OPTIMIZATIONS',
+            style: GoogleFonts.spaceGrotesk(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              fontSize: 14,
+              letterSpacing: 1.0,
+            ),
+          ),
           const SizedBox(height: 12),
           ..._optimizations.map((o) => _buildOptimizationCard(context, o)),
         ],
@@ -129,37 +160,134 @@ class _RecommendationsScreenState extends ConsumerState<RecommendationsScreen> {
   }
 
   Widget _buildRewardCard(BuildContext context, RewardOptimization r) {
-    return Card(
+    return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: AppTheme.accentColor.withValues(alpha: 0.15),
-          child: const Icon(Icons.stars, color: AppTheme.accentColor),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0C152B),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppTheme.accentColor.withValues(alpha: 0.2),
+          width: 1,
         ),
-        title: Text(r.title, style: AppTextStyles.body1.copyWith(fontWeight: FontWeight.w600)),
-        subtitle: Text(r.description),
-        trailing: Text(
-          '+₹${r.potentialReward.toStringAsFixed(0)}',
-          style: AppTextStyles.body1.copyWith(color: AppTheme.successColor, fontWeight: FontWeight.w700),
-        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: AppTheme.accentColor.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+              border: Border.all(color: AppTheme.accentColor.withValues(alpha: 0.3), width: 1),
+            ),
+            child: const Icon(
+              Icons.stars,
+              color: AppTheme.accentColor,
+              size: 18,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  r.title,
+                  style: GoogleFonts.plusJakartaSans(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  r.description,
+                  style: GoogleFonts.plusJakartaSans(
+                    color: Colors.white60,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            '+₹${r.potentialReward.toStringAsFixed(0)}',
+            style: GoogleFonts.spaceGrotesk(
+              color: AppTheme.successColor,
+              fontWeight: FontWeight.bold,
+              fontSize: 15,
+            ),
+          ),
+        ],
       ),
     );
   }
 
   Widget _buildOptimizationCard(BuildContext context, SpendingOptimization o) {
-    return Card(
+    return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-          child: Icon(Icons.trending_up, color: Theme.of(context).colorScheme.primary),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0C152B),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppTheme.primaryColor.withValues(alpha: 0.2),
+          width: 1,
         ),
-        title: Text('${o.category} spending', style: AppTextStyles.body1.copyWith(fontWeight: FontWeight.w600)),
-        subtitle: Text(o.suggestion),
-        trailing: Text(
-          '+₹${o.potentialSavings.toStringAsFixed(0)}',
-          style: AppTextStyles.body1.copyWith(color: AppTheme.successColor, fontWeight: FontWeight.w700),
-        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: AppTheme.primaryColor.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+              border: Border.all(color: AppTheme.primaryColor.withValues(alpha: 0.3), width: 1),
+            ),
+            child: const Icon(
+              Icons.trending_up,
+              color: AppTheme.primaryColor,
+              size: 18,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${o.category.toUpperCase()} OPTIMIZATION',
+                  style: GoogleFonts.spaceGrotesk(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  o.suggestion,
+                  style: GoogleFonts.plusJakartaSans(
+                    color: Colors.white60,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            '+₹${o.potentialSavings.toStringAsFixed(0)}',
+            style: GoogleFonts.spaceGrotesk(
+              color: AppTheme.successColor,
+              fontWeight: FontWeight.bold,
+              fontSize: 15,
+            ),
+          ),
+        ],
       ),
     );
   }

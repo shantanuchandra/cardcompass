@@ -30,6 +30,29 @@ class AiSearchService {
     return finalResults;
   }
   
+  /// Search for a specific card variant's official page
+  static Future<List<SearchResult>> searchCardPage(String bankName, String cardName) async {
+    developer.log('🤖 AI Agent Search Card: $bankName $cardName', name: 'AiSearch');
+    
+    final queries = [
+      '$bankName $cardName credit card official website',
+      '$bankName $cardName benefits features key details',
+    ];
+    final results = <SearchResult>[];
+    
+    final futures = queries.map((query) => _executeAiQuery(query, bankName));
+    final queryResults = await Future.wait(futures);
+    
+    for (final batch in queryResults) {
+      results.addAll(batch);
+    }
+    
+    final finalResults = _aiRankResults(results, bankName);
+    
+    developer.log('✅ AI Found for Card: ${finalResults.length} results', name: 'AiSearch');
+    return finalResults;
+  }
+  
   /// Generate AI-optimized search queries (no hardcoded patterns)
   static List<String> _generateAiQueries(String bankName) {
     return [

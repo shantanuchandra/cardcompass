@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../core/app_config.dart';
 import '../../../../core/theme.dart';
@@ -38,134 +39,202 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     });
 
     return Scaffold(
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            children: [
-              const Spacer(),
-              
-              // Welcome Section
-              Column(
-                children: [
-                  Container(
-                    width: 100,
-                    height: 100,
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.primaryContainer,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Icon(
-                      Icons.credit_card,
-                      size: 48,
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
-                  )
-                  .animate()
-                  .scale(duration: 600.ms, curve: Curves.elasticOut),
-                  
-                  const SizedBox(height: 32),
-                  
-                  Text(
-                    'Welcome to\n${AppConfig.appName}',
-                    textAlign: TextAlign.center,
-                    style: AppTextStyles.heading1.copyWith(
-                      color: Theme.of(context).colorScheme.onSurface,
-                    ),
-                  )
-                  .animate()
-                  .fadeIn(delay: 200.ms, duration: 600.ms)
-                  .slideY(begin: 0.3, end: 0),
-                  
-                  const SizedBox(height: 16),
-                  Text(
-                    'Maximize your credit card rewards and never miss out on benefits again',
-                    textAlign: TextAlign.center,
-                    style: AppTextStyles.body1.copyWith(
-                      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
-                    ),
-                  )
-                  .animate()
-                  .fadeIn(delay: 400.ms, duration: 600.ms)
-                  .slideY(begin: 0.3, end: 0),
-                ],
-              ),
-              
-              const Spacer(),
-              
-              // Login Buttons
-              Column(
-                children: [
-                  SizedBox(
-                    width: double.infinity,
-                    height: 56,
-                    child: ElevatedButton.icon(
-                      onPressed: authState.isLoading 
-                        ? null 
-                        : () => ref.read(authStateProvider.notifier).signInWithGoogle(),
-                      icon: authState.isLoading 
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : Image.asset(
-                            'assets/icons/google.png',
-                            width: 24,
-                            height: 24,
-                            errorBuilder: (context, error, stackTrace) => 
-                              const Icon(Icons.login, size: 24),
-                          ),
-                      label: Text(
-                        authState.isLoading ? 'Signing In...' : 'Continue with Google',
-                        style: AppTextStyles.button,
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Theme.of(context).colorScheme.primary,
-                        foregroundColor: Theme.of(context).colorScheme.onPrimary,
-                      ),
-                    ),
-                  )
-                  .animate()
-                  .fadeIn(delay: 600.ms, duration: 600.ms)
-                  .slideY(begin: 0.5, end: 0),
-                  
-                  const SizedBox(height: 16),
-                  
-                  SizedBox(
-                    width: double.infinity,
-                    height: 56,
-                    child: OutlinedButton.icon(
-                      onPressed: authState.isLoading 
-                        ? null 
-                        : () => ref.read(authStateProvider.notifier).signInAsGuest(),
-                      icon: const Icon(Icons.person_outline),
-                      label: Text(
-                        'Continue as Guest',
-                        style: AppTextStyles.button,
-                      ),
-                    ),
-                  )
-                  .animate()
-                  .fadeIn(delay: 800.ms, duration: 600.ms)
-                  .slideY(begin: 0.5, end: 0),
-                ],
-              ),
-              
-              const SizedBox(height: 32),
-              
-              // Terms and Privacy
-              Text(                'By continuing, you agree to our Terms of Service and Privacy Policy',
-                textAlign: TextAlign.center,
-                style: AppTextStyles.caption.copyWith(
-                  color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
-                ),
-              )
-              .animate()
-              .fadeIn(delay: 1000.ms, duration: 600.ms),
-              
-              const SizedBox(height: 16),
+      backgroundColor: const Color(0xFF050B18),
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              const Color(0xFF0C152B),
+              const Color(0xFF050B18),
+              AppTheme.secondaryColor.withValues(alpha: 0.1),
             ],
+          ),
+        ),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 450),
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 20),
+                child: Column(
+                  children: [
+                    const Spacer(),
+                    
+                    // Glowing Glass Card Container for Branding
+                    Container(
+                      padding: const EdgeInsets.all(28),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0C152B).withValues(alpha: 0.8),
+                        borderRadius: BorderRadius.circular(24),
+                        border: Border.all(
+                          color: AppTheme.primaryColor.withValues(alpha: 0.25),
+                          width: 1.5,
+                        ),
+                        boxShadow: AppTheme.neonGlow(color: AppTheme.primaryColor, opacity: 0.15, blurRadius: 20),
+                      ),
+                      child: Column(
+                        children: [
+                          // App Logo (Glowing Credit Card)
+                          Container(
+                            width: 80,
+                            height: 80,
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: [AppTheme.primaryColor, AppTheme.secondaryColor],
+                              ),
+                              borderRadius: BorderRadius.circular(18),
+                              boxShadow: AppTheme.neonGlow(color: AppTheme.primaryColor, opacity: 0.3, blurRadius: 10),
+                            ),
+                            child: const Icon(
+                              Icons.credit_card,
+                              size: 40,
+                              color: Color(0xFF050B18),
+                            ),
+                          )
+                          .animate()
+                          .scale(duration: 600.ms, curve: Curves.elasticOut),
+                          
+                          const SizedBox(height: 24),
+                          
+                          Text(
+                            AppConfig.appName.toUpperCase(),
+                            textAlign: TextAlign.center,
+                            style: GoogleFonts.spaceGrotesk(
+                              fontSize: 32,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 2.0,
+                              color: Colors.white,
+                            ),
+                          )
+                          .animate()
+                          .fadeIn(delay: 200.ms, duration: 600.ms)
+                          .slideY(begin: 0.2, end: 0),
+                          
+                          const SizedBox(height: 12),
+                          
+                          Text(
+                            'Maximize your rewards. Hyper-optimize your card choices in real-time.',
+                            textAlign: TextAlign.center,
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 14,
+                              color: Colors.white70,
+                              height: 1.5,
+                            ),
+                          )
+                          .animate()
+                          .fadeIn(delay: 400.ms, duration: 600.ms)
+                          .slideY(begin: 0.2, end: 0),
+                        ],
+                      ),
+                    ),
+                    
+                    const Spacer(),
+                    
+                    // Login Buttons
+                    Column(
+                      children: [
+                        // Google sign-in with Neon Cyber style
+                        Container(
+                          width: double.infinity,
+                          height: 56,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(16),
+                            boxShadow: AppTheme.neonGlow(color: AppTheme.primaryColor, opacity: 0.1, blurRadius: 10),
+                          ),
+                          child: ElevatedButton.icon(
+                            onPressed: authState.isLoading 
+                              ? null 
+                              : () => ref.read(authStateProvider.notifier).signInWithGoogle(),
+                            icon: authState.isLoading 
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(Color(0xFF050B18))),
+                                )
+                              : Image.asset(
+                                  'assets/icons/google.png',
+                                  width: 24,
+                                  height: 24,
+                                  errorBuilder: (context, error, stackTrace) => 
+                                    const Icon(Icons.login, size: 24),
+                                ),
+                            label: Text(
+                              authState.isLoading ? 'AUTHENTICATING...' : 'SIGN IN WITH GOOGLE',
+                              style: GoogleFonts.spaceGrotesk(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 1.5,
+                              ),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppTheme.primaryColor,
+                              foregroundColor: const Color(0xFF050B18),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16),
+                              ),
+                            ),
+                          ),
+                        )
+                        .animate()
+                        .fadeIn(delay: 600.ms, duration: 600.ms)
+                        .slideY(begin: 0.3, end: 0),
+                        
+                        const SizedBox(height: 16),
+                        
+                        // Continue as Guest (Neon Outlined style)
+                        SizedBox(
+                          width: double.infinity,
+                          height: 56,
+                          child: OutlinedButton.icon(
+                            onPressed: authState.isLoading 
+                              ? null 
+                              : () => ref.read(authStateProvider.notifier).signInAsGuest(),
+                            icon: const Icon(Icons.person_outline, color: AppTheme.secondaryColor),
+                            label: Text(
+                              'CONTINUE AS GUEST',
+                              style: GoogleFonts.spaceGrotesk(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 1.5,
+                                color: Colors.white,
+                              ),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: AppTheme.secondaryColor, width: 1.5),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                            ),
+                          ),
+                        )
+                        .animate()
+                        .fadeIn(delay: 800.ms, duration: 600.ms)
+                        .slideY(begin: 0.3, end: 0),
+                      ],
+                    ),
+                    
+                    const SizedBox(height: 40),
+                    
+                    // Terms and Privacy
+                    Text(
+                      'By continuing, you agree to our Terms of Service and Privacy Policy.',
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 11,
+                        color: Colors.white30,
+                        letterSpacing: 0.2,
+                      ),
+                    )
+                    .animate()
+                    .fadeIn(delay: 1000.ms, duration: 600.ms),
+                    
+                    const SizedBox(height: 10),
+                  ],
+                ),
+              ),
+            ),
           ),
         ),
       ),

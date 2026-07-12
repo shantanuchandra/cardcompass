@@ -33,6 +33,18 @@
 
   <title>cardcompass</title>
   <link rel="manifest" href="manifest.json">
+  <style>
+    /* Enable text selection across the Flutter web app */
+    flt-glass-pane {
+      user-select: text !important;
+      -webkit-user-select: text !important;
+    }
+    /* Also ensure the body cursor shows text selection */
+    body {
+      user-select: text;
+      -webkit-user-select: text;
+    }
+  </style>
 </head>
 <body>
   <script src='https://cdn.jsdelivr.net/npm/pdfjs-dist@4.6.82/build/pdf.min.mjs' type='module'></script>

@@ -1,5 +1,6 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cardcompass/shared/models/benefit_tracking.dart';
+import 'package:cardcompass/core/repositories/supabase_helpers.dart';
 
 /// Repository for managing benefit tracking in Supabase
 class SupabaseBenefitTrackingRepository {
@@ -52,7 +53,7 @@ class SupabaseBenefitTrackingRepository {
 
       final response = await transformBuilder;
 
-      return (response as List)
+      return asList(response)
           .map((json) => BenefitUsageRecord.fromJson(json))
           .toList();
     } catch (e) {

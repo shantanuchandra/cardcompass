@@ -1,22 +1,23 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:cardcompass/shared/models/notification.dart';
 import 'package:cardcompass/core/repositories/supabase_notification_repository.dart';
+import 'package:cardcompass/core/providers/service_providers.dart'
+    show rewardsNudgeServiceProvider, cardRepositoryProvider;
+
+part 'notifications_viewmodel.g.dart';
 
 /// Repository provider
-final supabaseNotificationRepositoryProvider = Provider<SupabaseNotificationRepository>((ref) {
+@riverpod
+SupabaseNotificationRepository supabaseNotificationRepository(Ref ref) {
   return SupabaseNotificationRepository();
-});
-
-/// Provider for notifications view model
-final notificationsViewModelProvider = StateNotifierProvider<NotificationsViewModel, NotificationsViewState>((ref) {
-  return NotificationsViewModel(ref);
-});
+}
 
 /// Notifications view state
 class NotificationsViewState {
   final List<AppNotification> notifications;
   final List<AppNotification> benefitAlerts;
   final List<AppNotification> recommendations;
+  final List<AppNotification> rewardNudges; // Phase 3
   final NotificationPreferences? preferences;
   final int unreadCount;
   final bool isLoading;
@@ -26,6 +27,7 @@ class NotificationsViewState {
     this.notifications = const [],
     this.benefitAlerts = const [],
     this.recommendations = const [],
+    this.rewardNudges = const [], // Phase 3
     this.preferences,
     this.unreadCount = 0,
     this.isLoading = false,
@@ -36,6 +38,7 @@ class NotificationsViewState {
     List<AppNotification>? notifications,
     List<AppNotification>? benefitAlerts,
     List<AppNotification>? recommendations,
+    List<AppNotification>? rewardNudges, // Phase 3
     NotificationPreferences? preferences,
     int? unreadCount,
     bool? isLoading,
@@ -45,6 +48,7 @@ class NotificationsViewState {
       notifications: notifications ?? this.notifications,
       benefitAlerts: benefitAlerts ?? this.benefitAlerts,
       recommendations: recommendations ?? this.recommendations,
+      rewardNudges: rewardNudges ?? this.rewardNudges, // Phase 3
       preferences: preferences ?? this.preferences,
       unreadCount: unreadCount ?? this.unreadCount,
       isLoading: isLoading ?? this.isLoading,
@@ -53,37 +57,58 @@ class NotificationsViewState {
   }
 }
 
-/// Notifications view model
-class NotificationsViewModel extends StateNotifier<NotificationsViewState> {
-  final Ref _ref;
+@riverpod
+class NotificationsViewModel extends _$NotificationsViewModel {
   late final SupabaseNotificationRepository _repository;
 
-  NotificationsViewModel(this._ref) : super(const NotificationsViewState()) {
-    _repository = _ref.read(supabaseNotificationRepositoryProvider);
+  @override
+  NotificationsViewState build() {
+    _repository = ref.watch(supabaseNotificationRepositoryProvider);
+    return const NotificationsViewState();
   }
 
   /// Load all notifications for user
   Future<void> loadNotifications(String userId) async {
     state = state.copyWith(isLoading: true, error: null);
-    
+
+    // ── Phase 3: silently generate reward nudges before showing the list ──
+    try {
+      final nudgeService = ref.read(rewardsNudgeServiceProvider);
+      final cardRepo = ref.read(cardRepositoryProvider);
+      final userCards = await cardRepo.getUserCards(userId);
+      await nudgeService.run(userId: userId, cards: userCards);
+    } catch (e) {
+      // Non-fatal — proceed to display existing notifications
+      print('⚠️  Rewards nudge generation failed (non-fatal): $e');
+    }
+
     try {
       // Load all notifications
       final allNotifications = await _repository.getUserNotifications(userId);
-      
+
       // Filter by type
-      final benefitAlerts = allNotifications.where((n) => n.type == 'benefit_alert').toList();
-      final recommendations = allNotifications.where((n) => n.type == 'card_recommendation').toList();
-      
+      final benefitAlerts = allNotifications
+          .where((n) => n.type == 'benefit_alert')
+          .toList();
+      final recommendations = allNotifications
+          .where((n) => n.type == 'card_recommendation')
+          .toList();
+      final rewardNudges = allNotifications
+          .where((n) => n.type == 'reward_nudge')
+          .toList();
+
       // Load unread count
       final unreadCount = await _repository.getUnreadCount(userId);
-      
+
       // Load preferences
-      final preferences = await _repository.getNotificationPreferences(userId);
-      
+      final preferences =
+          await _repository.getNotificationPreferences(userId);
+
       state = state.copyWith(
         notifications: allNotifications,
         benefitAlerts: benefitAlerts,
         recommendations: recommendations,
+        rewardNudges: rewardNudges,
         unreadCount: unreadCount,
         preferences: preferences,
         isLoading: false,
@@ -91,11 +116,15 @@ class NotificationsViewModel extends StateNotifier<NotificationsViewState> {
     } catch (e) {
       // Create mock notifications as fallback
       final mockNotifications = _createMockNotifications(userId);
-      
+
       state = state.copyWith(
         notifications: mockNotifications,
-        benefitAlerts: mockNotifications.where((n) => n.type == 'benefit_alert').toList(),
-        recommendations: mockNotifications.where((n) => n.type == 'card_recommendation').toList(),
+        benefitAlerts:
+            mockNotifications.where((n) => n.type == 'benefit_alert').toList(),
+        recommendations: mockNotifications
+            .where((n) => n.type == 'card_recommendation')
+            .toList(),
+        rewardNudges: [],
         unreadCount: mockNotifications.where((n) => !n.isRead).length,
         isLoading: false,
         error: 'Using mock data: ${e.toString()}',

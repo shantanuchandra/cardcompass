@@ -1,4 +1,4 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:cardcompass/shared/models/statement.dart';
 import 'package:cardcompass/shared/models/credit_card.dart';
 import 'package:cardcompass/core/repositories/statement_repository.dart';
@@ -6,6 +6,8 @@ import 'package:cardcompass/core/services/pdf_service.dart';
 import 'package:cardcompass/core/services/enhanced_gmail_service.dart';
 import 'package:cardcompass/core/repositories/card_repository.dart';
 import 'package:cardcompass/core/providers/service_providers.dart';
+
+part 'statements_viewmodel.g.dart';
 
 class StatementsViewState {
   final List<Statement> statements;
@@ -43,18 +45,23 @@ class StatementsViewState {
   }
 }
 
-class StatementsViewModel extends StateNotifier<StatementsViewState> {
-  final StatementRepository _statementRepository;
-  final PdfService _pdfService;
-  final EnhancedGmailService _gmailService;
-  final CardRepository _cardRepository;
+@riverpod
+class StatementsViewModel extends _$StatementsViewModel {
+  late final StatementRepository _statementRepository;
+  late final PdfService _pdfService;
+  late final EnhancedGmailService _gmailService;
+  late final CardRepository _cardRepository;
 
-  StatementsViewModel(
-    this._statementRepository,
-    this._pdfService,
-    this._gmailService,
-    this._cardRepository,
-  ) : super(const StatementsViewState());  Future<void> loadStatements(String userId) async {
+  @override
+  StatementsViewState build() {
+    _statementRepository = ref.watch(statementRepositoryProvider);
+    _pdfService = ref.watch(pdfServiceProvider);
+    _gmailService = ref.watch(gmailServiceProvider);
+    _cardRepository = ref.watch(cardRepositoryProvider);
+    return const StatementsViewState();
+  }
+
+  Future<void> loadStatements(String userId) async {
     print('🔍 StatementsViewModel: Loading statements for user: $userId');
     state = state.copyWith(isLoading: true, error: null);
 
@@ -378,13 +385,4 @@ class StatementsViewModel extends StateNotifier<StatementsViewState> {
   }
 }
 
-// Provider for StatementsViewModel
-final statementsViewModelProvider =
-    StateNotifierProvider<StatementsViewModel, StatementsViewState>((ref) {
-  final statementRepository = ref.watch(statementRepositoryProvider);
-  final pdfService = ref.watch(pdfServiceProvider);
-  final gmailService = ref.watch(gmailServiceProvider);
-  final cardRepository = ref.watch(cardRepositoryProvider);
-  return StatementsViewModel(
-      statementRepository, pdfService, gmailService, cardRepository);
-});
+

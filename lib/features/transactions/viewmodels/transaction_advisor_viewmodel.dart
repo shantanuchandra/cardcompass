@@ -1,7 +1,9 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:cardcompass/shared/models/credit_card.dart';
 import 'package:cardcompass/core/services/recommendation_service.dart';
 import 'package:cardcompass/core/providers/service_providers.dart';
+
+part 'transaction_advisor_viewmodel.g.dart';
 
 class TransactionRecommendation {
   final CreditCard? bestUserCard;
@@ -60,12 +62,16 @@ class TransactionAdvisorViewState {
   bool get canCalculate => userCards.isNotEmpty;
 }
 
-class TransactionAdvisorViewModel extends StateNotifier<TransactionAdvisorViewState> {
-  final RecommendationService _recommendationService;
+@riverpod
+class TransactionAdvisorViewModel extends _$TransactionAdvisorViewModel {
+  late final RecommendationService _recommendationService;
 
-  TransactionAdvisorViewModel(
-    this._recommendationService,
-  ) : super(const TransactionAdvisorViewState());
+  @override
+  TransactionAdvisorViewState build() {
+    _recommendationService = ref.watch(recommendationServiceProvider);
+    return const TransactionAdvisorViewState();
+  }
+
   Future<void> initialize(String userId) async {
     state = state.copyWith(isLoading: true, error: null);
 
@@ -185,9 +191,4 @@ class TransactionAdvisorViewModel extends StateNotifier<TransactionAdvisorViewSt
   }
 }
 
-// Provider for TransactionAdvisorViewModel
-final transactionAdvisorViewModelProvider = 
-    StateNotifierProvider<TransactionAdvisorViewModel, TransactionAdvisorViewState>((ref) {
-  final recommendationService = ref.watch(recommendationServiceProvider);
-  return TransactionAdvisorViewModel(recommendationService);
-});
+

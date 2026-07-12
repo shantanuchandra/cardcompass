@@ -12,25 +12,35 @@
             "args": [
                 "-d",
                 "chrome",
-                "--web-port=54321"
+                "--web-port=54321",
+                "--dart-define-from-file=dart_defines.json"
             ]
         },
 		{
 			"name": "cardcompass",
 			"request": "launch",
-			"type": "dart"
+			"type": "dart",
+			"args": [
+				"--dart-define-from-file=dart_defines.json"
+			]
 		},
 		{
 			"name": "cardcompass (profile mode)",
 			"request": "launch",
 			"type": "dart",
-			"flutterMode": "profile"
+			"flutterMode": "profile",
+			"args": [
+				"--dart-define-from-file=dart_defines.json"
+			]
 		},
 		{
 			"name": "cardcompass (release mode)",
 			"request": "launch",
 			"type": "dart",
-			"flutterMode": "release"
+			"flutterMode": "release",
+			"args": [
+				"--dart-define-from-file=dart_defines.json"
+			]
 		}
 	]
 }

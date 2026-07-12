@@ -332,7 +332,7 @@ void main() async {
   // Initialize Supabase (you'll need to provide your credentials)
   // await Supabase.initialize(
   //   url: 'YOUR_SUPABASE_URL',
-  //   anonKey: 'YOUR_SUPABASE_ANON_KEY',
+  //   publishableKey: 'YOUR_SUPABASE_ANON_KEY',
   // );
   
   runApp(MaterialApp(

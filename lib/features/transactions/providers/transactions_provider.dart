@@ -1,19 +1,20 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:cardcompass/core/repositories/transaction_repository.dart';
 import 'package:cardcompass/core/providers/service_providers.dart';
 import '../../../shared/models/transaction.dart';
 
-// Real data provider that uses the repository
-final transactionsProvider = StateNotifierProvider<TransactionsNotifier, List<Transaction>>((ref) {
-  final transactionRepository = ref.watch(transactionRepositoryProvider);
-  return TransactionsNotifier(transactionRepository);
-});
+part 'transactions_provider.g.dart';
 
-class TransactionsNotifier extends StateNotifier<List<Transaction>> {
-  final TransactionRepository _transactionRepository;
+@riverpod
+class TransactionsNotifier extends _$TransactionsNotifier {
+  late final TransactionRepository _transactionRepository;
   String? _currentUserId;
-  
-  TransactionsNotifier(this._transactionRepository) : super([]);
+
+  @override
+  List<Transaction> build() {
+    _transactionRepository = ref.watch(transactionRepositoryProvider);
+    return [];
+  }
 
   Future<void> loadUserTransactions(String userId, {
     int? limit,
@@ -84,14 +85,16 @@ class TransactionsNotifier extends StateNotifier<List<Transaction>> {
 }
 
 // Provider for recent transactions (last 7 days)
-final recentTransactionsProvider = Provider<List<Transaction>>((ref) {
+@riverpod
+List<Transaction> recentTransactions(Ref ref) {
   final transactions = ref.watch(transactionsProvider);
   final sevenDaysAgo = DateTime.now().subtract(const Duration(days: 7));
   return transactions.where((transaction) => transaction.transactionDate.isAfter(sevenDaysAgo)).take(3).toList();
-});
+}
 
 // Provider for total spending this month
-final monthlySpendingProvider = Provider<double>((ref) {
+@riverpod
+double monthlySpending(Ref ref) {
   final transactions = ref.watch(transactionsProvider);
   final now = DateTime.now();
   final firstDayOfMonth = DateTime(now.year, now.month, 1);
@@ -101,10 +104,11 @@ final monthlySpendingProvider = Provider<double>((ref) {
           transaction.transactionDate.isAfter(firstDayOfMonth) && 
           transaction.type == TransactionType.debit)
       .fold(0.0, (sum, transaction) => sum + transaction.amount);
-});
+}
 
 // Provider for total rewards earned this month
-final monthlyRewardsProvider = Provider<double>((ref) {
+@riverpod
+double monthlyRewards(Ref ref) {
   final transactions = ref.watch(transactionsProvider);
   final now = DateTime.now();
   final firstDayOfMonth = DateTime(now.year, now.month, 1);
@@ -114,10 +118,11 @@ final monthlyRewardsProvider = Provider<double>((ref) {
           transaction.transactionDate.isAfter(firstDayOfMonth) && 
           transaction.rewardEarned != null)
       .fold(0.0, (sum, transaction) => sum + (transaction.rewardEarned ?? 0.0));
-});
+}
 
 // Provider for transaction by category
-final transactionsByCategoryProvider = Provider<Map<TransactionCategory, double>>((ref) {
+@riverpod
+Map<TransactionCategory, double> transactionsByCategory(Ref ref) {
   final transactions = ref.watch(transactionsProvider);
   final Map<TransactionCategory, double> categoryTotals = {};
   
@@ -129,13 +134,11 @@ final transactionsByCategoryProvider = Provider<Map<TransactionCategory, double>
   }
   
   return categoryTotals;
-});
+}
 
 // Provider that loads user transactions when explicitly requested
-// DO NOT USE for auto-loading as it can cause infinite loops
-final userTransactionsForAnalyticsProvider = Provider.family<List<Transaction>, String?>((ref, userId) {
+@riverpod
+List<Transaction> userTransactionsForAnalytics(Ref ref, String? userId) {
   if (userId == null) return [];
-  
-  // Only fetch once per userId
   return ref.watch(transactionsProvider);
-});
+}

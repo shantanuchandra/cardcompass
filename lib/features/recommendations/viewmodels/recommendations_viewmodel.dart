@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:cardcompass/shared/models/credit_card.dart';
 import 'package:cardcompass/core/services/recommendation_service.dart';
 import 'package:cardcompass/core/providers/service_providers.dart';
+
+part 'recommendations_viewmodel.g.dart';
 
 /// Card recommendation model
 @immutable
@@ -52,13 +54,15 @@ class RecommendationsViewState {
   }
 }
 
-/// Recommendations ViewModel
-class RecommendationsViewModel extends StateNotifier<RecommendationsViewState> {
-  final RecommendationService _recommendationService;
+@riverpod
+class RecommendationsViewModel extends _$RecommendationsViewModel {
+  late final RecommendationService _recommendationService;
 
-  RecommendationsViewModel(
-    this._recommendationService,
-  ) : super(const RecommendationsViewState());
+  @override
+  RecommendationsViewState build() {
+    _recommendationService = ref.watch(recommendationServiceProvider);
+    return const RecommendationsViewState();
+  }
 
   /// Load personalized card recommendations
   Future<void> loadRecommendations(String userId) async {
@@ -122,10 +126,4 @@ class RecommendationsViewModel extends StateNotifier<RecommendationsViewState> {
   }
 }
 
-/// Provider for RecommendationsViewModel
-final recommendationsViewModelProvider = 
-    StateNotifierProvider<RecommendationsViewModel, RecommendationsViewState>((ref) {
-  return RecommendationsViewModel(
-    ref.watch(recommendationServiceProvider),
-  );
-});
+

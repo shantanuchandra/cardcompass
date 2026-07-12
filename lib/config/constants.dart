@@ -3,16 +3,21 @@ class AppConstants {
   // App Information
   static const String appName = 'CardCompass';
   static const String appTagline = 'Navigate Your Credit Card Benefits';
-  static const String appVersion = '1.0.0';  // Supabase Configuration
-  static const String supabaseUrl = 'https://hpvxlazlgyykqwpmstmw.supabase.co';
-  static const String supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhwdnhsYXpsZ3l5a3F3cG1zdG13Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk5MDIyODAsImV4cCI6MjA2NTQ3ODI4MH0.tyTQ-6scFQp5e4EVtufTpLtyr0s6-N1DWiXOEujwaFA';
+  static const String appVersion = '1.0.0';
+
+  // NOTE: Supabase URL/anon key, Gmail client ID and a Gmail *client secret*
+  // used to be hardcoded here as dead, unused fields (never referenced
+  // anywhere in the app). Removed rather than migrated to lib/core/env.dart
+  // to avoid keeping two parallel config sources - lib/core/app_config.dart
+  // (backed by lib/core/env.dart) is the single source of truth. The client
+  // secret in particular should never have shipped in a client app; if
+  // Gmail OAuth needs it again, that's a sign the OAuth client should be
+  // reconfigured as a public/native client (PKCE) instead of resurrecting a
+  // secret into client-side code.
 
   // API Endpoints
   static const String baseApiUrl = 'https://your-api.com/api/v1';
 
-  // Gmail API Configuration
-  static const String gmailClientId = '634383830161-cg9q9acc830kdi97shi1fkhifnalvpj4.apps.googleusercontent.com';
-  static const String gmailClientSecret = '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';
   static const List<String> gmailScopes = [
     'https://www.googleapis.com/auth/gmail.readonly'
   ];

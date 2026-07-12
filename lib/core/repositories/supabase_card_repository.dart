@@ -2,19 +2,42 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cardcompass/core/repositories/card_repository.dart';
 import 'package:cardcompass/shared/models/credit_card.dart';
 import 'package:cardcompass/config/constants.dart';
+import 'package:cardcompass/core/repositories/supabase_helpers.dart';
+import 'package:cardcompass/core/repositories/supabase_benefits_repository.dart';
 
 /// Supabase implementation of CardRepository
 class SupabaseCardRepository implements CardRepository {
   final SupabaseClient _supabase = Supabase.instance.client;
+
+  // In-memory caching fields
+  static List<CreditCard>? _cardCatalogCache;
+  static final Map<String, List<CreditCard>> _userCardsCache = {};
+
+  static void clearUserCache(String userId) {
+    _userCardsCache.remove(userId);
+    SupabaseBenefitsRepository.clearUserCache(userId);
+  }
+
   @override
   Future<List<CreditCard>> getAllCards() async {
+    if (_cardCatalogCache != null) {
+      print(
+          '💾 SupabaseCardRepository: Returning cached card catalog (${_cardCatalogCache!.length} cards)');
+      return _cardCatalogCache!;
+    }
+
     try {
       // Use RPC function to get card catalog
       final response = await _supabase.rpc('get_card_catalog');
 
-      return (response as List)
+      final cards = asList(response)
           .map((json) => _mapCatalogToCreditCard(json))
           .toList();
+
+      _cardCatalogCache = cards;
+      print(
+          '💾 SupabaseCardRepository: Cached card catalog (${cards.length} cards)');
+      return cards;
     } catch (e) {
       throw Exception('Failed to fetch all cards: $e');
     }
@@ -22,15 +45,26 @@ class SupabaseCardRepository implements CardRepository {
 
   @override
   Future<List<CreditCard>> getUserCards(String userId) async {
+    if (_userCardsCache.containsKey(userId)) {
+      print(
+          '💾 SupabaseCardRepository: Returning cached user cards for user: $userId (${_userCardsCache[userId]!.length} cards)');
+      return _userCardsCache[userId]!;
+    }
+
     try {
       // Use RPC function to get user cards with catalog information
       final response = await _supabase.rpc('get_user_cards', params: {
         '_user_id': userId,
       });
 
-      return (response as List)
+      final cards = asList(response)
           .map((json) => _mapUserCardRpcToCreditCard(json))
           .toList();
+
+      _userCardsCache[userId] = cards;
+      print(
+          '💾 SupabaseCardRepository: Cached user cards for user: $userId (${cards.length} cards)');
+      return cards;
     } catch (e) {
       throw Exception('Failed to fetch user cards: $e');
     }
@@ -49,10 +83,16 @@ class SupabaseCardRepository implements CardRepository {
         '_catalog_card_id': cardId,
         '_last_four_digits': lastFourDigits,
       });
+
+      // Invalidate cache on change
+      clearUserCache(userId);
+      print(
+          '💾 SupabaseCardRepository: Invalidated user card cache for user: $userId due to addUserCard');
     } catch (e) {
       throw Exception('Failed to add user card: $e');
     }
   }
+
   @override
   Future<void> removeUserCard({
     required String userId,
@@ -64,10 +104,15 @@ class SupabaseCardRepository implements CardRepository {
         '_user_id': userId,
         '_catalog_card_id': cardId,
       });
-      
+
       if (result != true) {
         throw Exception('User card not found or could not be removed');
       }
+
+      // Invalidate cache on change
+      clearUserCache(userId);
+      print(
+          '💾 SupabaseCardRepository: Invalidated user card cache for user: $userId due to removeUserCard');
     } catch (e) {
       throw Exception('Failed to remove user card: $e');
     }
@@ -88,10 +133,15 @@ class SupabaseCardRepository implements CardRepository {
         '_last_four_digits': lastFourDigits,
         '_credit_limit': creditLimit,
       });
-      
+
       if (result != true) {
         throw Exception('User card not found or could not be updated');
       }
+
+      // Invalidate cache on change
+      clearUserCache(userId);
+      print(
+          '💾 SupabaseCardRepository: Invalidated user card cache for user: $userId due to updateUserCard');
     } catch (e) {
       throw Exception('Failed to update user card: $e');
     }
@@ -141,7 +191,7 @@ class SupabaseCardRepository implements CardRepository {
 
       final response = await query;
 
-      return (response as List)
+      return asList(response)
           .map((json) => _mapCatalogToCreditCard(json))
           .toList();
     } catch (e) {
@@ -157,7 +207,7 @@ class SupabaseCardRepository implements CardRepository {
           .select('bank')
           .eq('is_discontinued', false);
 
-      final banks = (response as List)
+      final banks = asList(response)
           .map((item) => item['bank'] as String)
           .toSet()
           .toList();
@@ -178,7 +228,7 @@ class SupabaseCardRepository implements CardRepository {
           .select('network')
           .eq('is_discontinued', false);
 
-      final networks = (response as List)
+      final networks = asList(response)
           .map((item) => item['network'] as String)
           .toSet()
           .toList();
@@ -199,42 +249,43 @@ class SupabaseCardRepository implements CardRepository {
   }) async {
     try {
       // Get card benefits for the specific card and category
-      final response = await _supabase
-          .from('card_benefits')
-          .select('''
+      final response = await _supabase.from('card_benefits').select('''
             value,
             spending_categories,
             monthly_cap,
             annual_cap
-          ''')
-          .eq('catalog_card_id', cardId)  // Updated to use catalog_card_id
-          .eq('is_active', true);
+          ''').eq('card_id', cardId).eq('is_active', true);
 
       if (response.isEmpty) {
         return amount * (AppConstants.defaultRewardRate / 100);
       }
 
       double bestReward = 0.0;
-      
+
       for (final benefit in response) {
-        final categories = List<String>.from(benefit['spending_categories'] ?? []);
-        
+        final categories =
+            List<String>.from(benefit['spending_categories'] ?? []);
+
         // Check if category matches or if it's a general benefit
-        if (categories.contains('all') || categories.contains(category.toLowerCase())) {
+        if (categories.contains('all') ||
+            categories.contains(category.toLowerCase())) {
           final rewardRate = (benefit['value'] as num).toDouble();
           final reward = amount * (rewardRate / 100);
-          
+
           // Apply caps if they exist
           double finalReward = reward;
           if (benefit['monthly_cap'] != null) {
-            finalReward = finalReward.clamp(0, (benefit['monthly_cap'] as num).toDouble());
+            finalReward = finalReward.clamp(
+                0, (benefit['monthly_cap'] as num).toDouble());
           }
-          
+
           bestReward = finalReward > bestReward ? finalReward : bestReward;
         }
       }
 
-      return bestReward > 0 ? bestReward : amount * (AppConstants.defaultRewardRate / 100);
+      return bestReward > 0
+          ? bestReward
+          : amount * (AppConstants.defaultRewardRate / 100);
     } catch (e) {
       // Fallback to default rate if calculation fails
       return amount * (AppConstants.defaultRewardRate / 100);
@@ -251,7 +302,7 @@ class SupabaseCardRepository implements CardRepository {
     try {
       // Get user's cards
       final userCards = await getUserCards(userId);
-      
+
       if (userCards.isEmpty) return null;
 
       CreditCard? bestCard;
@@ -274,21 +325,24 @@ class SupabaseCardRepository implements CardRepository {
     } catch (e) {
       return null;
     }
-  }  /// Map card_catalog JSON to CreditCard model
+  }
+
+  /// Map card_catalog JSON to CreditCard model
   CreditCard _mapCatalogToCreditCard(Map<String, dynamic> json) {
     // Use direct JSON mapping instead of CardCatalog to handle column name differences
     return CreditCard(
       id: json['id'],
-      catalogCardId: json['id'], // catalogCardId is the same as id for catalog entries
-      userId: '',  // Card catalog entries don't have a user ID
+      catalogCardId:
+          json['id'], // catalogCardId is the same as id for catalog entries
+      userId: '', // Card catalog entries don't have a user ID
       cardName: _normalizeCardName(json['card_name'] ?? 'Unknown Card'),
       bankName: json['bank'] ?? 'Unknown Bank',
       cardNumber: null,
       network: _parseCardNetwork(json['network']),
       type: _parseCardType(json['card_type']),
       cardImage: null,
-      issuedDate: json['created_at'] != null 
-          ? DateTime.parse(json['created_at']) 
+      issuedDate: json['created_at'] != null
+          ? DateTime.parse(json['created_at'])
           : DateTime.now(),
       expiryDate: null,
       annualFee: json['annual_fee']?.toDouble(),
@@ -296,18 +350,20 @@ class SupabaseCardRepository implements CardRepository {
       benefits: [],
       rewardRates: {},
       isActive: !(json['is_discontinued'] ?? false),
-      createdAt: json['created_at'] != null 
-          ? DateTime.parse(json['created_at']) 
+      createdAt: json['created_at'] != null
+          ? DateTime.parse(json['created_at'])
           : DateTime.now(),
-      updatedAt: json['updated_at'] != null 
-          ? DateTime.parse(json['updated_at']) 
+      updatedAt: json['updated_at'] != null
+          ? DateTime.parse(json['updated_at'])
           : DateTime.now(),
     );
-  }/// Map user_card RPC response with card_catalog to CreditCard model
+  }
+
+  /// Map user_card RPC response with card_catalog to CreditCard model
   CreditCard _mapUserCardRpcToCreditCard(Map<String, dynamic> json) {
     // The RPC response includes flattened card catalog fields
     return CreditCard(
-      id: json['id'],  // This is the user_card_id
+      id: json['id'], // This is the user_card_id
       catalogCardId: json['catalog_card_id'], // This is the catalog_card_id
       userId: json['user_id'],
       cardName: _normalizeCardName(json['card_name'] ?? 'Unknown Card'),
@@ -316,39 +372,40 @@ class SupabaseCardRepository implements CardRepository {
       network: _parseCardNetwork(json['network']),
       type: _parseCardType(json['card_type']),
       cardImage: null,
-      issuedDate: json['created_at'] != null 
-          ? DateTime.parse(json['created_at']) 
+      issuedDate: json['created_at'] != null
+          ? DateTime.parse(json['created_at'])
           : DateTime.now(),
-      expiryDate: json['expiry_date'] != null 
-          ? _parseExpiryDate(json['expiry_date']) 
+      expiryDate: json['expiry_date'] != null
+          ? _parseExpiryDate(json['expiry_date'])
           : null,
       annualFee: json['annual_fee']?.toDouble(),
       creditLimit: json['credit_limit']?.toDouble(),
       benefits: [],
       rewardRates: {},
       isActive: json['is_active'] ?? true,
-      createdAt: json['created_at'] != null 
-          ? DateTime.parse(json['created_at']) 
+      createdAt: json['created_at'] != null
+          ? DateTime.parse(json['created_at'])
           : DateTime.now(),
-      updatedAt: json['updated_at'] != null 
-          ? DateTime.parse(json['updated_at']) 
+      updatedAt: json['updated_at'] != null
+          ? DateTime.parse(json['updated_at'])
           : DateTime.now(),
     );
   }
+
   // Helper function to parse MM/YY format to DateTime
   DateTime _parseExpiryDate(String expiry) {
     try {
       final parts = expiry.split('/');
       if (parts.length != 2) return DateTime.now().add(Duration(days: 365));
-      
+
       final month = int.tryParse(parts[0]) ?? 1;
       int year = int.tryParse(parts[1]) ?? 25;
-      
+
       // Adjust year if it's a 2-digit representation
       if (year < 100) {
         year += 2000;
       }
-      
+
       return DateTime(year, month, 1);
     } catch (e) {
       return DateTime.now().add(Duration(days: 365));
@@ -358,33 +415,44 @@ class SupabaseCardRepository implements CardRepository {
   // Helper function to parse CardNetwork from string
   CardNetwork _parseCardNetwork(String? network) {
     if (network == null) return CardNetwork.visa;
-    
+
     switch (network.toLowerCase()) {
-      case 'visa': return CardNetwork.visa;
-      case 'mastercard': return CardNetwork.mastercard;
-      case 'rupay': return CardNetwork.rupay;
-      case 'amex': return CardNetwork.amex;
-      case 'discover': return CardNetwork.discover;
-      case 'diners': return CardNetwork.diners;
-      default: return CardNetwork.visa;
+      case 'visa':
+        return CardNetwork.visa;
+      case 'mastercard':
+        return CardNetwork.mastercard;
+      case 'rupay':
+        return CardNetwork.rupay;
+      case 'amex':
+        return CardNetwork.amex;
+      case 'discover':
+        return CardNetwork.discover;
+      case 'diners':
+        return CardNetwork.diners;
+      default:
+        return CardNetwork.visa;
     }
   }
 
   // Helper function to parse CardType from string
   CardType _parseCardType(String? type) {
     if (type == null) return CardType.credit;
-    
+
     switch (type.toLowerCase()) {
-      case 'credit': return CardType.credit;
-      case 'debit': return CardType.debit;
-      case 'prepaid': return CardType.prepaid;
-      default: return CardType.credit;
+      case 'credit':
+        return CardType.credit;
+      case 'debit':
+        return CardType.debit;
+      case 'prepaid':
+        return CardType.prepaid;
+      default:
+        return CardType.credit;
     }
   }
 
   // Helper functions for working with the new schema
-  
-  /// Create a new card in the catalog or get existing one
+
+  /// Resolve an existing catalog card. Catalog creation requires admin review.
   Future<String> createOrGetCardCatalog({
     required String bank,
     required String cardName,
@@ -395,22 +463,24 @@ class SupabaseCardRepository implements CardRepository {
     double? apr,
   }) async {
     try {
-      final result = await _supabase.rpc('create_or_get_card_catalog', params: {
-        '_bank': bank,
-        '_card_name': cardName,
-        '_network': network,
-        '_card_type': cardType,
-        '_joining_fee': joiningFee,
-        '_annual_fee': annualFee,
-        '_apr': apr,
-      });
-      
-      return result as String;
+      final result = await _supabase
+          .from('card_catalog')
+          .select('id')
+          .ilike('bank', bank)
+          .ilike('card_name', cardName)
+          .eq('network', network)
+          .maybeSingle();
+      if (result == null) {
+        throw StateError(
+          'This card is not yet in the approved catalog. Submit it for admin review first.',
+        );
+      }
+      return result['id'] as String;
     } catch (e) {
       throw Exception('Failed to create card catalog entry: $e');
     }
   }
-  
+
   /// Associate a user with a card
   Future<String> associateUserWithCard({
     required String userId,
@@ -435,13 +505,13 @@ class SupabaseCardRepository implements CardRepository {
         '_statement_date': statementDate,
         '_due_date': dueDate,
       });
-      
+
       return result as String;
     } catch (e) {
       throw Exception('Failed to associate user with card: $e');
     }
   }
-  
+
   /// Ensure a card exists in the catalog and associate it with the user
   Future<String> ensureCreditCardExists({
     required String userId,
@@ -455,28 +525,29 @@ class SupabaseCardRepository implements CardRepository {
     final catalogCardId = await createOrGetCardCatalog(
       bank: bankName,
       cardName: cardName,
-      network: network, 
+      network: network,
       cardType: cardType,
     );
-    
+
     // Step 2: Associate the card with the user
     final userCardId = await associateUserWithCard(
       userId: userId,
       catalogCardId: catalogCardId,
       lastFourDigits: lastFourDigits ?? '0000',
     );
-    
+
     return userCardId;
   }
 
   /// Normalize card name by removing redundant terms
   String _normalizeCardName(String cardName) {
     String normalized = cardName.trim();
-    
+
     // Remove redundant "Credit Card" suffix if it already contains the bank name
     if (normalized.toLowerCase().endsWith('credit card')) {
-      final withoutSuffix = normalized.substring(0, normalized.length - 11).trim();
-      
+      final withoutSuffix =
+          normalized.substring(0, normalized.length - 11).trim();
+
       // Check if it's just "Bank Name Credit Card" pattern
       if (withoutSuffix.split(' ').length <= 2) {
         // Keep it as is for simple patterns like "Zenith Credit Card"
@@ -486,7 +557,7 @@ class SupabaseCardRepository implements CardRepository {
         normalized = withoutSuffix;
       }
     }
-    
+
     return normalized;
   }
 }

@@ -1,12 +1,25 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cardcompass/shared/models/benefit.dart';
+import 'package:cardcompass/core/repositories/supabase_helpers.dart';
 
 /// Repository for managing benefits data in Supabase
 class SupabaseBenefitsRepository {
   final SupabaseClient _supabase = Supabase.instance.client;
 
-  /// Get all available benefits
+  // In-memory caching fields
+  static List<Benefit>? _allBenefitsCache;
+  static final Map<String, List<CardBenefit>> _userCardBenefitsCache = {};
+
+  static void clearUserCache(String userId) {
+    _userCardBenefitsCache.remove(userId);
+  }
+
   Future<List<Benefit>> getAllBenefits() async {
+    if (_allBenefitsCache != null) {
+      print('💾 SupabaseBenefitsRepository: Returning cached benefits (${_allBenefitsCache!.length} benefits)');
+      return _allBenefitsCache!;
+    }
+
     try {
       final response = await _supabase
           .from('benefits')
@@ -14,9 +27,13 @@ class SupabaseBenefitsRepository {
           .eq('is_active', true)
           .order('benefit_type');
 
-      return (response as List)
+      final benefits = asList(response)
           .map((json) => Benefit.fromJson(json))
           .toList();
+      
+      _allBenefitsCache = benefits;
+      print('💾 SupabaseBenefitsRepository: Cached benefits (${benefits.length} benefits)');
+      return benefits;
     } catch (e) {
       throw Exception('Failed to fetch benefits: $e');
     }
@@ -32,7 +49,7 @@ class SupabaseBenefitsRepository {
           .inFilter('applicable_categories', categories)
           .order('benefit_type');
 
-      return (response as List)
+      return asList(response)
           .map((json) => Benefit.fromJson(json))
           .toList();
     } catch (e) {
@@ -49,10 +66,10 @@ class SupabaseBenefitsRepository {
             *,
             benefits!inner(*)
           ''')
-          .eq('catalog_card_id', cardId)
+          .eq('card_id', cardId)
           .eq('is_active', true);
 
-      return (response as List)
+      return asList(response)
           .map((json) => CardBenefit.fromJson(json))
           .toList();
     } catch (e) {
@@ -60,8 +77,12 @@ class SupabaseBenefitsRepository {
     }
   }
 
-  /// Get user card benefits (for user's specific cards)
   Future<List<CardBenefit>> getUserCardBenefits(String userId) async {
+    if (_userCardBenefitsCache.containsKey(userId)) {
+      print('💾 SupabaseBenefitsRepository: Returning cached user card benefits for user: $userId (${_userCardBenefitsCache[userId]!.length} benefits)');
+      return _userCardBenefitsCache[userId]!;
+    }
+
     try {
       final response = await _supabase
           .from('user_cards')
@@ -82,13 +103,15 @@ class SupabaseBenefitsRepository {
 
       final List<CardBenefit> allBenefits = [];
       
-      for (final userCardJson in response as List) {
-        final cardBenefits = userCardJson['card_catalog']['card_benefits'] as List;
+      for (final userCardJson in asList(response)) {
+        final cardBenefits = asListDynamic(userCardJson['card_catalog']['card_benefits']);
         for (final benefitJson in cardBenefits) {
           allBenefits.add(CardBenefit.fromJson(benefitJson));
         }
       }
 
+      _userCardBenefitsCache[userId] = allBenefits;
+      print('💾 SupabaseBenefitsRepository: Cached user card benefits for user: $userId (${allBenefits.length} benefits)');
       return allBenefits;
     } catch (e) {
       throw Exception('Failed to fetch user card benefits: $e');
@@ -148,7 +171,7 @@ class SupabaseBenefitsRepository {
           .or('name.ilike.%$query%,description.ilike.%$query%')
           .order('name');
 
-      return (response as List)
+      return asList(response)
           .map((json) => Benefit.fromJson(json))
           .toList();
     } catch (e) {
@@ -193,7 +216,7 @@ class SupabaseBenefitsRepository {
 
       final response = await query;
 
-      return (response as List)
+      return asList(response)
           .map((json) => Benefit.fromJson(json))
           .toList();
     } catch (e) {

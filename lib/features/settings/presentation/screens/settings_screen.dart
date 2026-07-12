@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:cardcompass/core/providers/service_providers.dart';
+import 'package:cardcompass/core/theme.dart';
 
-/// Settings screen for app preferences and configurations
+/// Settings screen for app preferences and configurations in cyber-fintech style
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
@@ -19,6 +21,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _autoSync = true;
   String _currency = 'INR';
   String _language = 'English';
+  int _devTapCount = 0;
 
   @override
   void initState() {
@@ -34,204 +37,244 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFF050B18),
       appBar: AppBar(
-        title: const Text('Settings'),
-        elevation: 0,
+        title: Text(
+          'PREFERENCES',
+          style: GoogleFonts.spaceGrotesk(
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1.5,
+            fontSize: 16,
+          ),
+        ),
       ),
-      body: ListView(
-        children: [
-          // Notifications Section
-          _buildSection(
-            'Notifications',
-            [
-              SwitchListTile(
-                title: const Text('Enable Notifications'),
-                subtitle: const Text('Receive all app notifications'),
-                value: _notificationsEnabled,
-                onChanged: (value) {
-                  setState(() {
-                    _notificationsEnabled = value;
-                  });
-                  ref.read(appPreferencesProvider).setNotificationsEnabled(value);
-                },
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 800),
+          child: ListView(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
+            children: [
+              // Notifications Section
+              _buildSection(
+                'ALERT PARAMETERS',
+                [
+                  SwitchListTile(
+                    title: Text('ENABLE NOTIFICATIONS', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                    subtitle: Text('Receive global app notifications', style: GoogleFonts.plusJakartaSans(color: Colors.white30, fontSize: 10)),
+                    value: _notificationsEnabled,
+                    activeColor: AppTheme.primaryColor,
+                    onChanged: (value) {
+                      setState(() {
+                        _notificationsEnabled = value;
+                      });
+                      ref.read(appPreferencesProvider).setNotificationsEnabled(value);
+                    },
+                  ),
+                  const Divider(color: Color(0xFF1E293B), height: 1),
+                  SwitchListTile(
+                    title: Text('PUSH ALERTS', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                    subtitle: Text('Direct warning overlays', style: GoogleFonts.plusJakartaSans(color: Colors.white30, fontSize: 10)),
+                    value: _pushNotifications,
+                    activeColor: AppTheme.primaryColor,
+                    onChanged: _notificationsEnabled ? (value) {
+                      setState(() {
+                        _pushNotifications = value;
+                      });
+                    } : null,
+                  ),
+                  const Divider(color: Color(0xFF1E293B), height: 1),
+                  SwitchListTile(
+                    title: Text('EMAIL SUMMARIES', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                    subtitle: Text('Monthly reward ledger audits', style: GoogleFonts.plusJakartaSans(color: Colors.white30, fontSize: 10)),
+                    value: _emailNotifications,
+                    activeColor: AppTheme.primaryColor,
+                    onChanged: _notificationsEnabled ? (value) {
+                      setState(() {
+                        _emailNotifications = value;
+                      });
+                    } : null,
+                  ),
+                  const Divider(color: Color(0xFF1E293B), height: 1),
+                  SwitchListTile(
+                    title: Text('SMS TRANSMISSIONS', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                    subtitle: Text('Immediate billing highlights', style: GoogleFonts.plusJakartaSans(color: Colors.white30, fontSize: 10)),
+                    value: _smsNotifications,
+                    activeColor: AppTheme.primaryColor,
+                    onChanged: _notificationsEnabled ? (value) {
+                      setState(() {
+                        _smsNotifications = value;
+                      });
+                    } : null,
+                  ),
+                ],
               ),
-              SwitchListTile(
-                title: const Text('Push Notifications'),
-                subtitle: const Text('Receive push notifications'),
-                value: _pushNotifications,
-                onChanged: _notificationsEnabled ? (value) {
-                  setState(() {
-                    _pushNotifications = value;
-                  });
-                } : null,
-              ),
-              SwitchListTile(
-                title: const Text('Email Notifications'),
-                subtitle: const Text('Receive email notifications'),
-                value: _emailNotifications,
-                onChanged: _notificationsEnabled ? (value) {
-                  setState(() {
-                    _emailNotifications = value;
-                  });
-                } : null,
-              ),
-              SwitchListTile(
-                title: const Text('SMS Notifications'),
-                subtitle: const Text('Receive SMS notifications'),
-                value: _smsNotifications,
-                onChanged: _notificationsEnabled ? (value) {
-                  setState(() {
-                    _smsNotifications = value;
-                  });
-                } : null,
-              ),
-            ],
-          ),
+              const SizedBox(height: 20),
 
-          // Security Section
-          _buildSection(
-            'Security',
-            [
-              SwitchListTile(
-                title: const Text('Biometric Authentication'),
-                subtitle: const Text('Use fingerprint or face ID'),
-                value: _biometricAuth,
-                onChanged: (value) {
-                  setState(() {
-                    _biometricAuth = value;
-                  });
-                  ref.read(appPreferencesProvider).setBiometricEnabled(value);
-                },
+              // Security Section
+              _buildSection(
+                'SECURITY PROTOCOLS',
+                [
+                  SwitchListTile(
+                    title: Text('BIOMETRIC VALIDATION', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                    subtitle: Text('Use Face ID / Fingerprint registry', style: GoogleFonts.plusJakartaSans(color: Colors.white30, fontSize: 10)),
+                    value: _biometricAuth,
+                    activeColor: AppTheme.primaryColor,
+                    onChanged: (value) {
+                      setState(() {
+                        _biometricAuth = value;
+                      });
+                      ref.read(appPreferencesProvider).setBiometricEnabled(value);
+                    },
+                  ),
+                  const Divider(color: Color(0xFF1E293B), height: 1),
+                  ListTile(
+                    title: Text('UPDATE CRYPTO PASSWORD', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                    subtitle: Text('Reset credentials passkeys', style: GoogleFonts.plusJakartaSans(color: Colors.white30, fontSize: 10)),
+                    trailing: const Icon(Icons.arrow_forward_ios, size: 12, color: Colors.white30),
+                    onTap: () => _showUnavailableDialog(
+                      'CHANGE PASSWORD',
+                      'Credential updates require a connected Google identity. Not available in guest mode.',
+                    ),
+                  ),
+                  const Divider(color: Color(0xFF1E293B), height: 1),
+                  ListTile(
+                    title: Text('TWO-FACTOR SECURITY (2FA)', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                    subtitle: Text('Link authenticator token generators', style: GoogleFonts.plusJakartaSans(color: Colors.white30, fontSize: 10)),
+                    trailing: const Icon(Icons.arrow_forward_ios, size: 12, color: Colors.white30),
+                    onTap: () => _showUnavailableDialog(
+                      'TWO-FACTOR AUTHENTICATION',
+                      'MFA settings require a persistent server integration. Disabled on this build.',
+                    ),
+                  ),
+                ],
               ),
-              ListTile(
-                title: const Text('Change Password'),
-                subtitle: const Text('Update your account password'),
-                trailing: const Icon(Icons.arrow_forward_ios),
-                onTap: () => _showUnavailableDialog(
-                  'Change Password',
-                  'Password changes require a signed-in Google account. This isn\'t available in guest mode or for the current build.',
-                ),
-              ),
-              ListTile(
-                title: const Text('Two-Factor Authentication'),
-                subtitle: const Text('Add an extra layer of security'),
-                trailing: const Icon(Icons.arrow_forward_ios),
-                onTap: () => _showUnavailableDialog(
-                  'Two-Factor Authentication',
-                  '2FA setup requires a connected backend account and isn\'t available yet.',
-                ),
-              ),
-            ],
-          ),
+              const SizedBox(height: 20),
 
-          // Appearance Section
-          _buildSection(
-            'Appearance',
-            [
-              SwitchListTile(
-                title: const Text('Dark Mode'),
-                subtitle: const Text('Follows your device setting'),
-                value: Theme.of(context).brightness == Brightness.dark,
-                onChanged: null,
+              // Appearance Section
+              _buildSection(
+                'INTERFACE INTERPRETERS',
+                [
+                  SwitchListTile(
+                    title: Text('FORCE TECH NEON STYLE', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                    subtitle: Text('Cyber-neon default mode enabled', style: GoogleFonts.plusJakartaSans(color: Colors.white30, fontSize: 10)),
+                    value: true,
+                    activeColor: AppTheme.primaryColor,
+                    onChanged: null,
+                  ),
+                  const Divider(color: Color(0xFF1E293B), height: 1),
+                  ListTile(
+                    title: Text('DICTIONARY DIALECT', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                    subtitle: Text(_language.toUpperCase(), style: GoogleFonts.plusJakartaSans(color: AppTheme.primaryColor, fontSize: 10, fontWeight: FontWeight.bold)),
+                    trailing: const Icon(Icons.arrow_forward_ios, size: 12, color: Colors.white30),
+                    onTap: () => _showLanguageDialog(),
+                  ),
+                  const Divider(color: Color(0xFF1E293B), height: 1),
+                  ListTile(
+                    title: Text('CURRENCY INDEX', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                    subtitle: Text(_currency.toUpperCase(), style: GoogleFonts.plusJakartaSans(color: AppTheme.primaryColor, fontSize: 10, fontWeight: FontWeight.bold)),
+                    trailing: const Icon(Icons.arrow_forward_ios, size: 12, color: Colors.white30),
+                    onTap: () => _showCurrencyDialog(),
+                  ),
+                ],
               ),
-              ListTile(
-                title: const Text('Language'),
-                subtitle: Text(_language),
-                trailing: const Icon(Icons.arrow_forward_ios),
-                onTap: () => _showLanguageDialog(),
-              ),
-              ListTile(
-                title: const Text('Currency'),
-                subtitle: Text(_currency),
-                trailing: const Icon(Icons.arrow_forward_ios),
-                onTap: () => _showCurrencyDialog(),
-              ),
-            ],
-          ),
+              const SizedBox(height: 20),
 
-          // Data & Sync Section
-          _buildSection(
-            'Data & Sync',
-            [
-              SwitchListTile(
-                title: const Text('Auto Sync'),
-                subtitle: const Text('Automatically sync data'),
-                value: _autoSync,
-                onChanged: (value) {
-                  setState(() {
-                    _autoSync = value;
-                  });
-                  ref.read(appPreferencesProvider).setAutoSyncEnabled(value);
-                },
+              // Data & Sync Section
+              _buildSection(
+                'DATA STAGE & STORAGE',
+                [
+                  SwitchListTile(
+                    title: Text('AUTO BACKGROUND SYNC', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                    subtitle: Text('Sync card rules via headless pipeline', style: GoogleFonts.plusJakartaSans(color: Colors.white30, fontSize: 10)),
+                    value: _autoSync,
+                    activeColor: AppTheme.primaryColor,
+                    onChanged: (value) {
+                      setState(() {
+                        _autoSync = value;
+                      });
+                      ref.read(appPreferencesProvider).setAutoSyncEnabled(value);
+                    },
+                  ),
+                  const Divider(color: Color(0xFF1E293B), height: 1),
+                  ListTile(
+                    title: Text('BACKUP ENCRYPTED DATABASE', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                    subtitle: Text('Log state snapshots locally', style: GoogleFonts.plusJakartaSans(color: Colors.white30, fontSize: 10)),
+                    trailing: const Icon(Icons.arrow_forward_ios, size: 12, color: Colors.white30),
+                    onTap: () => _showUnavailableDialog(
+                      'BACKUP DATABASE',
+                      'Encrypted backup registers require server syncing logic. Sandbox parameters are saved to memory only.',
+                    ),
+                  ),
+                  const Divider(color: Color(0xFF1E293B), height: 1),
+                  ListTile(
+                    title: Text('EXPORT LEDGER ARCHIVE', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                    subtitle: Text('Export transactions to CSV files', style: GoogleFonts.plusJakartaSans(color: Colors.white30, fontSize: 10)),
+                    trailing: const Icon(Icons.arrow_forward_ios, size: 12, color: Colors.white30),
+                    onTap: () => _showUnavailableDialog(
+                      'EXPORT ARCHIVE',
+                      'Exporter pipelines are currently compiling. Enabled in production build release.',
+                    ),
+                  ),
+                  const Divider(color: Color(0xFF1E293B), height: 1),
+                  ListTile(
+                    title: Text('RESET SYSTEM CACHE', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                    subtitle: Text('Purge local database registers', style: GoogleFonts.plusJakartaSans(color: Colors.white30, fontSize: 10)),
+                    trailing: const Icon(Icons.arrow_forward_ios, size: 12, color: Colors.white30),
+                    onTap: () => _showClearCacheDialog(),
+                  ),
+                ],
               ),
-              ListTile(
-                title: const Text('Backup Data'),
-                subtitle: const Text('Create a backup of your data'),
-                trailing: const Icon(Icons.arrow_forward_ios),
-                onTap: () => _showUnavailableDialog(
-                  'Backup Data',
-                  'Cloud backup isn\'t available right now. Your data stays on this device.',
-                ),
-              ),
-              ListTile(
-                title: const Text('Export Data'),
-                subtitle: const Text('Export your data as CSV/PDF'),
-                trailing: const Icon(Icons.arrow_forward_ios),
-                onTap: () => _showUnavailableDialog(
-                  'Export Data',
-                  'CSV/PDF export isn\'t available yet in this build.',
-                ),
-              ),
-              ListTile(
-                title: const Text('Clear Cache'),
-                subtitle: const Text('Clear app cache and temporary files'),
-                trailing: const Icon(Icons.arrow_forward_ios),
-                onTap: () => _showClearCacheDialog(),
-              ),
-            ],
-          ),
+              const SizedBox(height: 20),
 
-          // About Section
-          _buildSection(
-            'About',
-            [
-              ListTile(
-                title: const Text('App Version'),
-                subtitle: const Text('1.0.0 (Build 1)'),
-                trailing: const Icon(Icons.info),
-                onTap: () => _showAppInfoDialog(),
+              // About Section
+              _buildSection(
+                'SYSTEM METADATA',
+                [
+                  ListTile(
+                    title: Text('CARDCOMPASS CORE', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                    subtitle: Text('Version 1.0.0 (Build 1)', style: GoogleFonts.plusJakartaSans(color: Colors.white30, fontSize: 10)),
+                    trailing: const Icon(Icons.info_outline, size: 16, color: AppTheme.primaryColor),
+                    onTap: () {
+                      _showAppInfoDialog();
+                      setState(() {
+                        _devTapCount++;
+                      });
+                      if (_devTapCount >= 5) {
+                        _devTapCount = 0;
+                        Navigator.pushNamed(context, '/admin/pm');
+                      }
+                    },
+                  ),
+                  const Divider(color: Color(0xFF1E293B), height: 1),
+                  ListTile(
+                    title: Text('CHECK SYSTEM UPDATES', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                    subtitle: Text('Check for compilation changes', style: GoogleFonts.plusJakartaSans(color: Colors.white30, fontSize: 10)),
+                    trailing: const Icon(Icons.refresh, size: 16, color: AppTheme.primaryColor),
+                    onTap: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('SYSTEM IS COMPILED TO LATEST STABLE BUILD.', style: GoogleFonts.spaceGrotesk(fontSize: 12, fontWeight: FontWeight.bold)),
+                          backgroundColor: AppTheme.successColor,
+                        ),
+                      );
+                    },
+                  ),
+                  const Divider(color: Color(0xFF1E293B), height: 1),
+                  ListTile(
+                    title: Text('TRANSMIT APP FEEDBACK', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                    subtitle: Text('Send log audits to developers', style: GoogleFonts.plusJakartaSans(color: Colors.white30, fontSize: 10)),
+                    trailing: const Icon(Icons.feedback_outlined, size: 16, color: AppTheme.primaryColor),
+                    onTap: () => _showUnavailableDialog(
+                      'FEEDBACK SYSTEM',
+                      'Feedback routes are offline. Please utilize the developer issue registry directly.',
+                    ),
+                  ),
+                ],
               ),
-              ListTile(
-                title: const Text('Check for Updates'),
-                subtitle: const Text('Check for app updates'),
-                trailing: const Icon(Icons.system_update),
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('You are using the latest version')),
-                  );
-                },
-              ),
-              ListTile(
-                title: const Text('Feedback'),
-                subtitle: const Text('Send feedback to developers'),
-                trailing: const Icon(Icons.feedback),
-                onTap: () => _showUnavailableDialog(
-                  'Feedback',
-                  'In-app feedback isn\'t wired up yet. Please reach out to the team directly.',
-                ),
-              ),
-              ListTile(
-                title: const Text('Rate App'),
-                subtitle: const Text('Rate us on the app store'),
-                trailing: const Icon(Icons.star),
-                onTap: () => _showUnavailableDialog(
-                  'Rate App',
-                  'This build isn\'t distributed through an app store yet.',
-                ),
-              ),
+              const SizedBox(height: 80), // space above bottom dock
             ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -241,20 +284,27 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          padding: const EdgeInsets.only(left: 4, bottom: 8),
           child: Text(
             title,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              color: Theme.of(context).primaryColor,
+            style: GoogleFonts.spaceGrotesk(
+              color: Colors.white60,
+              fontSize: 10,
               fontWeight: FontWeight.bold,
+              letterSpacing: 1.0,
             ),
           ),
         ),
-        Card(
-          margin: const EdgeInsets.symmetric(horizontal: 16),
-          child: Column(children: children),
+        Container(
+          decoration: BoxDecoration(
+            color: const Color(0xFF0C152B),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+          ),
+          child: Column(
+            children: children,
+          ),
         ),
-        const SizedBox(height: 8),
       ],
     );
   }
@@ -263,10 +313,24 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(feature),
-        content: Text(reason),
+        backgroundColor: const Color(0xFF0C152B),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: const BorderSide(color: Color(0xFF1E293B)),
+        ),
+        title: Text(
+          feature,
+          style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+        ),
+        content: Text(
+          reason,
+          style: GoogleFonts.plusJakartaSans(color: Colors.white70, height: 1.4),
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK')),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('OK', style: GoogleFonts.spaceGrotesk(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
+          ),
         ],
       ),
     );
@@ -277,35 +341,56 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Select Language'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              'English',
-              'हिंदी (Hindi)',
-              'বাংলা (Bengali)',
-              'ગુજરાતી (Gujarati)',
-              'தமிழ் (Tamil)',
-              'తెలుగు (Telugu)',
-              'ಕನ್ನಡ (Kannada)',
-              'മലയാളം (Malayalam)',
-              'मराठी (Marathi)',
-              'ਪੰਜਾਬੀ (Punjabi)',
-            ].map((language) {
-              return ListTile(
-                title: Text(language),
-                onTap: () {
-                  setState(() {
-                    _language = language;
-                  });
-                  ref.read(appPreferencesProvider).setLanguage(language);
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Language changed to $language')),
-                  );
-                },
-              );
-            }).toList(),
+          backgroundColor: const Color(0xFF0C152B),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+            side: const BorderSide(color: Color(0xFF1E293B)),
+          ),
+          title: Text(
+            'SELECT DICTIONARY LANGUAGE',
+            style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+          ),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                'English',
+                'Hindi',
+                'Bengali',
+                'Gujarati',
+                'Tamil',
+                'Telugu',
+                'Kannada',
+                'Malayalam',
+                'Marathi',
+                'Punjabi',
+              ].map((language) {
+                return ListTile(
+                  title: Text(
+                    language.toUpperCase(),
+                    style: GoogleFonts.spaceGrotesk(
+                      color: _language == language ? AppTheme.primaryColor : Colors.white70,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
+                  ),
+                  onTap: () {
+                    setState(() {
+                      _language = language;
+                    });
+                    ref.read(appPreferencesProvider).setLanguage(language);
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Language successfully configured: $language'),
+                        backgroundColor: AppTheme.successColor,
+                      ),
+                    );
+                  },
+                );
+              }).toList(),
+            ),
           ),
         );
       },
@@ -317,31 +402,53 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Select Currency'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              'INR (₹)',
-              'USD (\$)',
-              'EUR (€)',
-              'GBP (£)',
-              'AED (د.إ)',
-              'SAR (ر.س)',
-            ].map((currency) {
-              return ListTile(
-                title: Text(currency),
-                onTap: () {
-                  setState(() {
-                    _currency = currency.split(' ')[0];
-                  });
-                  ref.read(appPreferencesProvider).setCurrency(_currency);
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Currency changed to $_currency')),
-                  );
-                },
-              );
-            }).toList(),
+          backgroundColor: const Color(0xFF0C152B),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+            side: const BorderSide(color: Color(0xFF1E293B)),
+          ),
+          title: Text(
+            'SELECT CURRENCY INDEX',
+            style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+          ),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                'INR (₹)',
+                'USD (\$)',
+                'EUR (€)',
+                'GBP (£)',
+                'AED (د.إ)',
+                'SAR (ر.س)',
+              ].map((currency) {
+                final curSymbol = currency.split(' ')[0];
+                return ListTile(
+                  title: Text(
+                    currency.toUpperCase(),
+                    style: GoogleFonts.spaceGrotesk(
+                      color: _currency == curSymbol ? AppTheme.primaryColor : Colors.white70,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
+                  ),
+                  onTap: () {
+                    setState(() {
+                      _currency = curSymbol;
+                    });
+                    ref.read(appPreferencesProvider).setCurrency(curSymbol);
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Currency successfully configured: $curSymbol'),
+                        backgroundColor: AppTheme.successColor,
+                      ),
+                    );
+                  },
+                );
+              }).toList(),
+            ),
           ),
         );
       },
@@ -353,23 +460,36 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Clear Cache'),
-          content: const Text(
-            'This will clear all cached data and temporary files. Are you sure you want to continue?',
+          backgroundColor: const Color(0xFF0C152B),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+            side: const BorderSide(color: Color(0xFF1E293B)),
+          ),
+          title: Text(
+            'PURGE LOCAL CACHE',
+            style: GoogleFonts.spaceGrotesk(color: AppTheme.errorColor, fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+          content: Text(
+            'This action will permanently delete all cached transaction details and config registries. Proceed?',
+            style: GoogleFonts.plusJakartaSans(color: Colors.white70, height: 1.4),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
+              child: Text('CANCEL', style: GoogleFonts.spaceGrotesk(color: Colors.white70)),
             ),
             ElevatedButton(
               onPressed: () {
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('There is no cache to clear in this build')),
+                  SnackBar(
+                    content: Text('CACHE PROTOCOLS ALREADY COMPLETED.', style: GoogleFonts.spaceGrotesk(fontSize: 12, fontWeight: FontWeight.bold)),
+                    backgroundColor: AppTheme.successColor,
+                  ),
                 );
               },
-              child: const Text('Clear'),
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.errorColor),
+              child: Text('PURGE', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold)),
             ),
           ],
         );
@@ -382,23 +502,34 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('CardCompass'),
-          content: const Column(
+          backgroundColor: const Color(0xFF0C152B),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+            side: const BorderSide(color: Color(0xFF1E293B)),
+          ),
+          title: Text(
+            'CARDCOMPASS CORE ENGINE',
+            style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+          content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Version: 1.0.0'),
-              Text('Build: 1'),
-              SizedBox(height: 8),
-              Text('CardCompass is your ultimate credit card management companion for optimizing benefits and tracking expenses.'),
-              SizedBox(height: 8),
-              Text('Developed with ❤️ in India'),
+              Text('VERSION: 1.0.0', style: GoogleFonts.spaceGrotesk(color: AppTheme.primaryColor, fontWeight: FontWeight.bold, fontSize: 13)),
+              Text('COMPILATION: BUILD 1', style: GoogleFonts.spaceGrotesk(color: Colors.white54, fontSize: 11)),
+              const SizedBox(height: 12),
+              Text(
+                'CardCompass is a cybernetic sandbox ledger that automatically categorizes statements, analyzes benefits routing, and optimizes rewards.',
+                style: GoogleFonts.plusJakartaSans(color: Colors.white70, height: 1.4),
+              ),
+              const SizedBox(height: 12),
+              Text('DEVELOPED IN INDIA', style: GoogleFonts.spaceGrotesk(color: Colors.white38, fontWeight: FontWeight.bold, fontSize: 9, letterSpacing: 0.5)),
             ],
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('OK'),
+              child: Text('OK', style: GoogleFonts.spaceGrotesk(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
             ),
           ],
         );

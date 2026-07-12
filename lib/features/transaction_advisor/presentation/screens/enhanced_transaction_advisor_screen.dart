@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:cardcompass/features/auth/providers/auth_provider.dart';
 import 'package:cardcompass/core/services/advanced_benefit_calculation_service.dart';
 import 'package:cardcompass/shared/widgets/state_widgets.dart';
 import 'package:cardcompass/features/movie_rule_engine/presentation/movie_analyzer_tab.dart';
 import 'package:intl/intl.dart';
+import 'package:cardcompass/core/theme.dart';
 
-/// Enhanced transaction advisor with advanced benefit calculations
+/// Enhanced transaction advisor with advanced benefit calculations in tech-neon style
 class EnhancedTransactionAdvisorScreen extends ConsumerStatefulWidget {
   const EnhancedTransactionAdvisorScreen({super.key});
 
@@ -23,11 +25,9 @@ class _EnhancedTransactionAdvisorScreenState
   final AdvancedBenefitCalculationService _benefitService = 
       AdvancedBenefitCalculationService();
   
-  // Form controllers
   final _amountController = TextEditingController();
   final _merchantController = TextEditingController();
   
-  // State variables
   String _selectedCategory = 'dining';
   bool _isCalculating = false;
   Map<String, dynamic>? _recommendation;
@@ -77,7 +77,10 @@ class _EnhancedTransactionAdvisorScreenState
   Future<void> _calculateBestCard() async {
     if (_amountController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter an amount')),
+        SnackBar(
+          content: Text('Please enter an amount.', style: GoogleFonts.spaceGrotesk(fontSize: 12)),
+          backgroundColor: AppTheme.errorColor,
+        ),
       );
       return;
     }
@@ -107,7 +110,10 @@ class _EnhancedTransactionAdvisorScreenState
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
+          SnackBar(
+            content: Text('Error calculating: $e', style: GoogleFonts.spaceGrotesk(fontSize: 12)),
+            backgroundColor: AppTheme.errorColor,
+          ),
         );
       }
     } finally {
@@ -186,21 +192,34 @@ class _EnhancedTransactionAdvisorScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFF050B18),
       appBar: AppBar(
-        title: const Text('Smart Card Advisor'),
-        backgroundColor: Theme.of(context).primaryColor,
-        foregroundColor: Colors.white,
+        title: Text(
+          'SMART CARD ADVISOR',
+          style: GoogleFonts.spaceGrotesk(
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1.5,
+            fontSize: 16,
+          ),
+        ),
         bottom: TabBar(
           controller: _tabController,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white70,
-          indicatorColor: Colors.white,
+          labelColor: AppTheme.primaryColor,
+          unselectedLabelColor: Colors.white38,
+          indicatorColor: AppTheme.primaryColor,
+          indicatorSize: TabBarIndicatorSize.tab,
+          isScrollable: true,
+          labelStyle: GoogleFonts.spaceGrotesk(
+            fontWeight: FontWeight.bold,
+            fontSize: 10,
+            letterSpacing: 0.5,
+          ),
           tabs: const [
-            Tab(icon: Icon(Icons.calculate), text: 'Calculator'),
-            Tab(icon: Icon(Icons.local_movies), text: 'Movies'),
-            Tab(icon: Icon(Icons.trending_up), text: 'Optimize'),
-            Tab(icon: Icon(Icons.analytics), text: 'Summary'),
-            Tab(icon: Icon(Icons.recommend), text: 'Recommendations'),
+            Tab(icon: Icon(Icons.calculate_outlined, size: 18), text: 'CALCULATE'),
+            Tab(icon: Icon(Icons.local_movies_outlined, size: 18), text: 'SHOWTIMES'),
+            Tab(icon: Icon(Icons.trending_up, size: 18), text: 'OPTIMIZE'),
+            Tab(icon: Icon(Icons.analytics_outlined, size: 18), text: 'SUMMARY'),
+            Tab(icon: Icon(Icons.recommend_outlined, size: 18), text: 'SUGGESTIONS'),
           ],
         ),
       ),
@@ -219,91 +238,105 @@ class _EnhancedTransactionAdvisorScreenState
 
   Widget _buildCalculatorTab() {
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Transaction Details',
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0C152B),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'TRANSACTION DATA INPUT',
+                  style: GoogleFonts.spaceGrotesk(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                    fontSize: 11,
+                    letterSpacing: 1.0,
                   ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: _amountController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Amount (₹)',
-                      prefixIcon: Icon(Icons.currency_rupee),
-                      border: OutlineInputBorder(),
-                    ),
+                ),
+                const SizedBox(height: 18),
+                TextField(
+                  controller: _amountController,
+                  style: GoogleFonts.plusJakartaSans(color: Colors.white),
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Amount (₹)',
+                    prefixIcon: Icon(Icons.currency_rupee, color: AppTheme.primaryColor),
                   ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: _merchantController,
-                    decoration: const InputDecoration(
-                      labelText: 'Merchant (Optional)',
-                      prefixIcon: Icon(Icons.store),
-                      border: OutlineInputBorder(),
-                      hintText: 'e.g., Amazon, Swiggy, BPCL',
-                    ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _merchantController,
+                  style: GoogleFonts.plusJakartaSans(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Merchant Name (Optional)',
+                    prefixIcon: Icon(Icons.store_outlined, color: AppTheme.primaryColor),
+                    hintText: 'e.g., Amazon, Swiggy, BPCL',
                   ),
-                  const SizedBox(height: 16),
-                  DropdownButtonFormField<String>(
-                    initialValue: _selectedCategory,
-                    decoration: const InputDecoration(
-                      labelText: 'Category',
-                      prefixIcon: Icon(Icons.category),
-                      border: OutlineInputBorder(),
-                    ),
-                    items: _categories.map((category) {
-                      return DropdownMenuItem(
-                        value: category,
-                        child: Text(category.toUpperCase()),
-                      );
-                    }).toList(),
-                    onChanged: (value) {
-                      setState(() {
-                        _selectedCategory = value!;
-                      });
-                    },
+                ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<String>(
+                  dropdownColor: const Color(0xFF0C152B),
+                  initialValue: _selectedCategory,
+                  decoration: const InputDecoration(
+                    labelText: 'Spend Category',
+                    prefixIcon: Icon(Icons.category_outlined, color: AppTheme.primaryColor),
                   ),
-                  const SizedBox(height: 20),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: _isCalculating ? null : _calculateBestCard,
-                      icon: _isCalculating 
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.calculate),
-                      label: Text(_isCalculating ? 'Calculating...' : 'Find Best Card'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Theme.of(context).primaryColor,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
+                  items: _categories.map((category) {
+                    return DropdownMenuItem(
+                      value: category,
+                      child: Text(
+                        category.toUpperCase(),
+                        style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
                       ),
+                    );
+                  }).toList(),
+                  onChanged: (value) {
+                    setState(() {
+                      _selectedCategory = value!;
+                    });
+                  },
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _isCalculating ? null : _calculateBestCard,
+                    icon: _isCalculating 
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(Colors.black)),
+                          )
+                        : const Icon(Icons.bolt, color: Colors.black, size: 16),
+                    label: Text(
+                      _isCalculating ? 'EVALUATING ROUTE...' : 'FIND BEST CARD',
+                      style: GoogleFonts.spaceGrotesk(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.black, letterSpacing: 0.5),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.primaryColor,
+                      disabledBackgroundColor: Colors.white10,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
           
           if (_recommendation != null) ...[
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
             _buildRecommendationResult(),
           ],
+          const SizedBox(height: 80),
         ],
       ),
     );
@@ -314,29 +347,28 @@ class _EnhancedTransactionAdvisorScreenState
     final recommendations = _recommendation!['recommendations'] as List<dynamic>;
 
     if (bestCard == null) {
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            children: [
-              Icon(
-                Icons.info_outline,
-                size: 48,
-                color: Colors.grey[400],
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'No Cards Found',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'You don\'t have any cards that offer rewards for this transaction.',
-                style: Theme.of(context).textTheme.bodyMedium,
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
+      return Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0C152B),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+        ),
+        child: Column(
+          children: [
+            const Icon(Icons.info_outline, size: 40, color: Colors.white24),
+            const SizedBox(height: 12),
+            Text(
+              'NO ACTIVE MATCHES',
+              style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'No configured benefits yield rewards for this specific transaction profile.',
+              style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 11),
+              textAlign: TextAlign.center,
+            ),
+          ],
         ),
       );
     }
@@ -344,129 +376,162 @@ class _EnhancedTransactionAdvisorScreenState
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Best card recommendation
-        Card(
-          color: Colors.green.shade50,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(Icons.star, color: Colors.green.shade700),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Best Card',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: Colors.green.shade700,
-                      ),
+        // Best Card Container
+        Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: const Color(0xFF0C152B),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: AppTheme.successColor.withValues(alpha: 0.3), width: 1.5),
+            boxShadow: AppTheme.neonGlow(color: AppTheme.successColor, opacity: 0.08, blurRadius: 12),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.verified_outlined, color: AppTheme.successColor, size: 20),
+                  const SizedBox(width: 8),
+                  Text(
+                    'BEST ROUTING MATCH',
+                    style: GoogleFonts.spaceGrotesk(
+                      fontWeight: FontWeight.bold,
+                      color: AppTheme.successColor,
+                      fontSize: 12,
+                      letterSpacing: 0.5,
                     ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  bestCard['card']['card_name'],
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
                   ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Text(
+                (bestCard['card']['card_name'] as String).toUpperCase(),
+                style: GoogleFonts.spaceGrotesk(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
                 ),
-                Text(
-                  bestCard['card']['bank_name'],
-                  style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              Text(
+                (bestCard['card']['bank_name'] as String).toUpperCase(),
+                style: GoogleFonts.plusJakartaSans(
+                  color: Colors.white38,
+                  fontSize: 10,
                 ),
-                const SizedBox(height: 8),
-                Row(
+              ),
+              const SizedBox(height: 14),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF050B18),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      'Reward: ₹${bestCard['total_reward'].toStringAsFixed(2)}',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: Colors.green.shade700,
-                      ),
+                      'ESTIMATED YIELD:',
+                      style: GoogleFonts.spaceGrotesk(color: Colors.white60, fontSize: 10, fontWeight: FontWeight.bold),
                     ),
                     Text(
-                      '${bestCard['reward_percentage'].toStringAsFixed(2)}%',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      '₹${bestCard['total_reward'].toStringAsFixed(2)} (${bestCard['reward_percentage'].toStringAsFixed(2)}%)',
+                      style: GoogleFonts.spaceGrotesk(
                         fontWeight: FontWeight.bold,
-                        color: Colors.green.shade700,
+                        color: AppTheme.successColor,
+                        fontSize: 12,
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                const Divider(),
-                const Text(
-                  'Applicable Benefits:',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 4),
-                ...bestCard['applicable_benefits'].map<Widget>((benefit) {
-                  return Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Row(
-                      children: [
-                        Icon(Icons.check_circle, 
-                             size: 16, 
-                             color: Colors.green.shade600),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            '${benefit['benefit_name']}: ₹${benefit['reward'].toStringAsFixed(2)}',
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
+              ),
+              const SizedBox(height: 14),
+              const Divider(color: Color(0xFF1E293B)),
+              const SizedBox(height: 6),
+              Text(
+                'APPLICABLE SAVINGS RULES:',
+                style: GoogleFonts.spaceGrotesk(color: Colors.white70, fontSize: 9, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+              ),
+              const SizedBox(height: 8),
+              ...bestCard['applicable_benefits'].map<Widget>((benefit) {
+                return Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.check_circle_outline, size: 14, color: AppTheme.successColor),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '${benefit['benefit_name'].toString().toUpperCase()}: ₹${benefit['reward'].toStringAsFixed(2)}',
+                          style: GoogleFonts.spaceGrotesk(color: Colors.white60, fontSize: 10, fontWeight: FontWeight.bold),
                         ),
-                      ],
-                    ),
-                  );
-                }).toList(),
-              ],
-            ),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ],
           ),
         ),
 
-        // All card recommendations
+        // Alternative Options list
         if (recommendations.length > 1) ...[
-          const SizedBox(height: 16),
+          const SizedBox(height: 24),
           Text(
-            'All Your Cards',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+            'ALTERNATIVE INTEGRATIONS',
+            style: GoogleFonts.spaceGrotesk(
+              color: Colors.white,
               fontWeight: FontWeight.bold,
+              fontSize: 11,
+              letterSpacing: 0.5,
             ),
           ),
-          const SizedBox(height: 8),
-          ...recommendations.map<Widget>((recommendation) {
-            final isFirst = recommendation == recommendations.first;
-            return Card(
-              color: isFirst ? Colors.green.shade50 : null,
+          const SizedBox(height: 12),
+          ...recommendations.map<Widget>((rec) {
+            final isFirst = rec == recommendations.first;
+            return Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0C152B),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: isFirst ? AppTheme.successColor.withValues(alpha: 0.25) : Colors.white.withValues(alpha: 0.05),
+                ),
+              ),
               child: ListTile(
                 leading: CircleAvatar(
-                  backgroundColor: isFirst ? Colors.green : Colors.grey,
+                  backgroundColor: isFirst ? AppTheme.successColor.withValues(alpha: 0.15) : Colors.white.withValues(alpha: 0.05),
                   child: Icon(
-                    isFirst ? Icons.star : Icons.credit_card,
-                    color: Colors.white,
+                    isFirst ? Icons.verified_outlined : Icons.credit_card_outlined,
+                    color: isFirst ? AppTheme.successColor : Colors.white38,
+                    size: 18,
                   ),
                 ),
-                title: Text(recommendation['card']['card_name']),
-                subtitle: Text(recommendation['card']['bank_name']),
+                title: Text(
+                  (rec['card']['card_name'] as String).toUpperCase(),
+                  style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                ),
+                subtitle: Text(
+                  (rec['card']['bank_name'] as String).toUpperCase(),
+                  style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 9),
+                ),
                 trailing: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
-                      '₹${recommendation['total_reward'].toStringAsFixed(2)}',
-                      style: TextStyle(
+                      '₹${rec['total_reward'].toStringAsFixed(2)}',
+                      style: GoogleFonts.spaceGrotesk(
                         fontWeight: FontWeight.bold,
-                        color: isFirst ? Colors.green.shade700 : null,
+                        color: isFirst ? AppTheme.successColor : Colors.white,
+                        fontSize: 11,
                       ),
                     ),
                     Text(
-                      '${recommendation['reward_percentage'].toStringAsFixed(2)}%',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey.shade600,
+                      '${rec['reward_percentage'].toStringAsFixed(2)}%',
+                      style: GoogleFonts.spaceGrotesk(
+                        fontSize: 9,
+                        color: isFirst ? AppTheme.successColor : Colors.white38,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
                   ],
@@ -481,21 +546,23 @@ class _EnhancedTransactionAdvisorScreenState
 
   Widget _buildOptimizationsTab() {
     if (_isLoadingOptimizations) {
-      return const LoadingState(message: 'Analyzing your spending...');
+      return const LoadingState(message: 'DECRYPTING EXPENDITURE METRICS...');
     }
 
     if (_optimizations.isEmpty) {
       return const EmptyState(
         icon: Icons.trending_up,
-        title: 'No Optimizations Found',
-        message: 'Your card usage is already optimized! Keep up the good work.',
+        title: 'ROUTING OPTIMAL',
+        message: 'All transaction categories processed yield optimal reward matching.',
       );
     }
 
     return RefreshIndicator(
+      color: AppTheme.primaryColor,
+      backgroundColor: const Color(0xFF0C152B),
       onRefresh: _loadOptimizations,
       child: ListView.builder(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
         itemCount: _optimizations.length + 1,
         itemBuilder: (context, index) {
           if (index == 0) {
@@ -504,32 +571,38 @@ class _EnhancedTransactionAdvisorScreenState
               (sum, opt) => sum + opt['potential_savings']
             );
             
-            return Card(
-              color: Colors.orange.shade50,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  children: [
-                    Icon(
-                      Icons.insights,
-                      size: 48,
-                      color: Colors.orange.shade700,
+            return Container(
+              margin: const EdgeInsets.only(bottom: 20),
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0C152B),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: AppTheme.secondaryColor.withValues(alpha: 0.3), width: 1.5),
+                boxShadow: AppTheme.neonGlow(color: AppTheme.secondaryColor, opacity: 0.08, blurRadius: 10),
+              ),
+              child: Column(
+                children: [
+                  const Icon(
+                    Icons.insights_outlined,
+                    size: 36,
+                    color: AppTheme.secondaryColor,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'REWARDS DISCREPANCY DETECTED',
+                    style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '₹${totalMissedRewards.toStringAsFixed(2)} was uncollected due to sub-optimal routing.',
+                    style: GoogleFonts.spaceGrotesk(
+                      color: AppTheme.secondaryColor,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Optimization Opportunities',
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'You could have earned ₹${totalMissedRewards.toStringAsFixed(2)} more this month!',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: Colors.orange.shade700,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
               ),
             );
           }
@@ -538,79 +611,81 @@ class _EnhancedTransactionAdvisorScreenState
           final transaction = optimization['transaction'];
           final bestCard = optimization['best_card'];
           
-          return Card(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Expanded(
-                        child: Text(
-                          transaction['merchant_name'] ?? 'Unknown Merchant',
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
+          return Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0C152B),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        (transaction['merchant_name'] ?? 'UNKNOWN').toString().toUpperCase(),
+                        style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8, 
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.red.shade100,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          '₹${optimization['potential_savings'].toStringAsFixed(2)} missed',
-                          style: TextStyle(
-                            color: Colors.red.shade700,
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Amount: ₹${transaction['amount']}',
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
-                  Text(
-                    'Date: ${DateFormat('MMM dd, yyyy').format(DateTime.parse(transaction['transaction_date']))}',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                  const SizedBox(height: 8),
-                  const Divider(),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Icon(Icons.lightbulb_outline, 
-                           size: 16, 
-                           color: Colors.orange.shade600),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Best card: ${bestCard['card']['card_name']}',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w500,
-                            color: Colors.orange.shade700,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  Text(
-                    'Would have earned: ₹${optimization['optimal_reward'].toStringAsFixed(2)}',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey.shade600,
                     ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppTheme.errorColor.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: AppTheme.errorColor.withValues(alpha: 0.2)),
+                      ),
+                      child: Text(
+                        '₹${optimization['potential_savings'].toStringAsFixed(2)} MISSED',
+                        style: GoogleFonts.spaceGrotesk(
+                          color: AppTheme.errorColor,
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'Amount: ₹${transaction['amount']}',
+                  style: GoogleFonts.plusJakartaSans(color: Colors.white60, fontSize: 11),
+                ),
+                Text(
+                  'Date: ${DateFormat('MMM dd, yyyy').format(DateTime.parse(transaction['transaction_date']))}',
+                  style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 10),
+                ),
+                const SizedBox(height: 12),
+                const Divider(color: Color(0xFF1E293B)),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    const Icon(Icons.lightbulb_outline, size: 14, color: AppTheme.primaryColor),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'BEST CARD: ${bestCard['card']['card_name'].toString().toUpperCase()}',
+                        style: GoogleFonts.spaceGrotesk(
+                          fontWeight: FontWeight.bold,
+                          color: AppTheme.primaryColor,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                Text(
+                  'Potential returns return rate: ₹${optimization['optimal_reward'].toStringAsFixed(2)}',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 10,
+                    color: Colors.white30,
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           );
         },
@@ -620,132 +695,148 @@ class _EnhancedTransactionAdvisorScreenState
 
   Widget _buildSummaryTab() {
     if (_isLoadingSummary) {
-      return const LoadingState(message: 'Loading reward summary...');
+      return const LoadingState(message: 'DECRYPTING LEDGER REWARDS...');
     }
 
     if (_rewardSummary == null || _rewardSummary!.isEmpty) {
       return const EmptyState(
         icon: Icons.analytics,
-        title: 'No Data Available',
-        message: 'Start making transactions to see your reward summary.',
+        title: 'NO LEDGERS STAGED',
+        message: 'Import statements to verify rewards audit logs.',
       );
     }
 
     final summary = _rewardSummary!;
     
     return RefreshIndicator(
+      color: AppTheme.primaryColor,
+      backgroundColor: const Color(0xFF0C152B),
       onRefresh: _loadRewardSummary,
       child: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Overall summary card
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'This Month\'s Summary',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.bold,
+            // Overall summary grid wrapper
+            Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0C152B),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'REWARDS AUDIT SUMMARY',
+                    style: GoogleFonts.spaceGrotesk(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 11,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildSummaryItem(
+                          'TOTAL SPEND',
+                          '₹${summary['total_spending']?.toStringAsFixed(0) ?? '0'}',
+                          Icons.account_balance_wallet_outlined,
+                          AppTheme.primaryColor,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _buildSummaryItem(
-                            'Total Spending',
-                            '₹${summary['total_spending']?.toStringAsFixed(0) ?? '0'}',
-                            Icons.account_balance_wallet,
-                            Colors.blue,
-                          ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _buildSummaryItem(
+                          'SAVED YIELD',
+                          '₹${summary['total_rewards_earned']?.toStringAsFixed(2) ?? '0'}',
+                          Icons.verified_outlined,
+                          AppTheme.successColor,
                         ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: _buildSummaryItem(
-                            'Rewards Earned',
-                            '₹${summary['total_rewards_earned']?.toStringAsFixed(2) ?? '0'}',
-                            Icons.stars,
-                            Colors.green,
-                          ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildSummaryItem(
+                          'MISSED YIELD',
+                          '₹${summary['missed_rewards']?.toStringAsFixed(2) ?? '0'}',
+                          Icons.warning_amber_outlined,
+                          AppTheme.errorColor,
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _buildSummaryItem(
-                            'Missed Rewards',
-                            '₹${summary['missed_rewards']?.toStringAsFixed(2) ?? '0'}',
-                            Icons.warning,
-                            Colors.orange,
-                          ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _buildSummaryItem(
+                          'EFFICIENCY SCORE',
+                          '${summary['optimization_score']?.toStringAsFixed(1) ?? '0'}%',
+                          Icons.speed_outlined,
+                          AppTheme.secondaryColor,
                         ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: _buildSummaryItem(
-                            'Optimization Score',
-                            '${summary['optimization_score']?.toStringAsFixed(1) ?? '0'}%',
-                            Icons.score,
-                            Colors.purple,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
 
             // Category breakdown
             if (summary['category_breakdown'] != null) ...[
-              const SizedBox(height: 16),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Rewards by Category',
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
+              const SizedBox(height: 20),
+              Container(
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0C152B),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'SAVINGS BREAKDOWN BY CLASSIFICATION',
+                      style: GoogleFonts.spaceGrotesk(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 11,
+                        letterSpacing: 0.5,
                       ),
-                      const SizedBox(height: 12),
-                      ...(summary['category_breakdown'] as Map<String, dynamic>)
-                          .entries
-                          .map((entry) {
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                entry.key.toUpperCase(),
-                                style: const TextStyle(fontWeight: FontWeight.w500),
+                    ),
+                    const SizedBox(height: 16),
+                    ...(summary['category_breakdown'] as Map<String, dynamic>)
+                        .entries
+                        .map((entry) {
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              entry.key.toUpperCase(),
+                              style: GoogleFonts.spaceGrotesk(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold),
+                            ),
+                            Text(
+                              '₹${entry.value.toStringAsFixed(2)}',
+                              style: GoogleFonts.spaceGrotesk(
+                                fontWeight: FontWeight.bold,
+                                color: AppTheme.successColor,
+                                fontSize: 11,
                               ),
-                              Text(
-                                '₹${entry.value.toStringAsFixed(2)}',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.green.shade700,
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      }).toList(),
-                    ],
-                  ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                  ],
                 ),
               ),
             ],
+            const SizedBox(height: 80),
           ],
         ),
       ),
@@ -753,72 +844,89 @@ class _EnhancedTransactionAdvisorScreenState
   }
 
   Widget _buildSummaryItem(String title, String value, IconData icon, Color color) {
-    return Column(
-      children: [
-        Icon(icon, color: color, size: 32),
-        const SizedBox(height: 8),
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-            color: color,
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF050B18),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: color, size: 20),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: GoogleFonts.spaceGrotesk(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
           ),
-        ),
-        Text(
-          title,
-          style: Theme.of(context).textTheme.bodySmall,
-          textAlign: TextAlign.center,
-        ),
-      ],
+          const SizedBox(height: 2),
+          Text(
+            title,
+            style: GoogleFonts.spaceGrotesk(color: Colors.white38, fontSize: 8, fontWeight: FontWeight.bold),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
     );
   }
 
   Widget _buildRecommendationsTab() {
     if (_isLoadingRecommendations) {
-      return const LoadingState(message: 'Finding personalized recommendations...');
+      return const LoadingState(message: 'SCANNING CATALOG ROUTINGS...');
     }
 
     if (_personalizedRecommendations.isEmpty) {
       return const EmptyState(
         icon: Icons.recommend,
-        title: 'No Recommendations Available',
-        message: 'We need more transaction data to provide personalized card recommendations.',
+        title: 'NO CATALOG SUGGESTIONS',
+        message: 'Import further transaction histories to calculate card recommendation index.',
       );
     }
 
     return RefreshIndicator(
+      color: AppTheme.primaryColor,
+      backgroundColor: const Color(0xFF0C152B),
       onRefresh: _loadPersonalizedRecommendations,
       child: ListView.builder(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
         itemCount: _personalizedRecommendations.length + 1,
         itemBuilder: (context, index) {
           if (index == 0) {
-            return Card(
-              color: Colors.blue.shade50,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  children: [
-                    Icon(
-                      Icons.recommend,
-                      size: 48,
-                      color: Colors.blue.shade700,
+            return Container(
+              margin: const EdgeInsets.only(bottom: 20),
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0C152B),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: AppTheme.primaryColor.withValues(alpha: 0.2), width: 1.5),
+                boxShadow: AppTheme.neonGlow(color: AppTheme.primaryColor, opacity: 0.06, blurRadius: 10),
+              ),
+              child: Column(
+                children: [
+                  const Icon(
+                    Icons.auto_awesome_outlined,
+                    size: 36,
+                    color: AppTheme.primaryColor,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'PORTFOLIO UPGRADES REGISTER',
+                    style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'These credit cards align optimal matching rates with your spending history.',
+                    style: GoogleFonts.plusJakartaSans(
+                      color: Colors.white70,
+                      fontSize: 11,
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Personalized Card Recommendations',
-                      style: Theme.of(context).textTheme.titleLarge,
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Based on your spending patterns',
-                      style: Theme.of(context).textTheme.bodyMedium,
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
-                ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
               ),
             );
           }
@@ -826,90 +934,106 @@ class _EnhancedTransactionAdvisorScreenState
           final recommendation = _personalizedRecommendations[index - 1];
           final card = recommendation['card'];
           
-          return Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              card['card_name'],
-                              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            Text(
-                              card['bank_name'],
-                              style: Theme.of(context).textTheme.bodyMedium,
-                            ),
-                          ],
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12, 
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.green.shade100,
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Text(
-                          '₹${recommendation['projected_monthly_reward'].toStringAsFixed(0)}/month',
-                          style: TextStyle(
-                            color: Colors.green.shade700,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Annual Fee: ₹${card['annual_fee']?.toStringAsFixed(0) ?? '0'}',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                  Text(
-                    'Net Annual Benefit: ₹${recommendation['net_annual_benefit'].toStringAsFixed(0)}',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: recommendation['net_annual_benefit'] > 0 
-                          ? Colors.green.shade700 
-                          : Colors.red.shade700,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Matching Benefits:',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 4),
-                  ...recommendation['matching_categories'].take(3).map<Widget>((category) {
-                    return Padding(
-                      padding: const EdgeInsets.only(top: 2),
-                      child: Row(
+          return Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0C152B),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(Icons.check, size: 14, color: Colors.green.shade600),
-                          const SizedBox(width: 4),
-                          Expanded(
-                            child: Text(
-                              category,
-                              style: Theme.of(context).textTheme.bodySmall,
+                          Text(
+                            (card['card_name'] as String).toUpperCase(),
+                            style: GoogleFonts.spaceGrotesk(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
+                          Text(
+                            (card['bank_name'] as String).toUpperCase(),
+                            style: GoogleFonts.plusJakartaSans(
+                              color: Colors.white38,
+                              fontSize: 10,
                             ),
                           ),
                         ],
                       ),
-                    );
-                  }).toList(),
-                ],
-              ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: AppTheme.successColor.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: AppTheme.successColor.withValues(alpha: 0.2)),
+                      ),
+                      child: Text(
+                        '+₹${recommendation['projected_monthly_reward'].toStringAsFixed(0)}/MO',
+                        style: GoogleFonts.spaceGrotesk(
+                          color: AppTheme.successColor,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Annual Fee: ₹${card['annual_fee']?.toStringAsFixed(0) ?? '0'}',
+                  style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 10),
+                ),
+                Text(
+                  'Net Annual Benefit: ₹${recommendation['net_annual_benefit'].toStringAsFixed(0)}',
+                  style: GoogleFonts.spaceGrotesk(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 11,
+                    color: recommendation['net_annual_benefit'] > 0 
+                        ? AppTheme.successColor 
+                        : AppTheme.errorColor,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Divider(color: Color(0xFF1E293B)),
+                const SizedBox(height: 6),
+                Text(
+                  'COMPATIBLE BENEFITS PATH:',
+                  style: GoogleFonts.spaceGrotesk(color: Colors.white70, fontSize: 8, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+                ),
+                const SizedBox(height: 8),
+                ...recommendation['matching_categories'].take(3).map<Widget>((category) {
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.check, size: 12, color: AppTheme.successColor),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            category.toString().toUpperCase(),
+                            style: GoogleFonts.spaceGrotesk(
+                              color: Colors.white60,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }).toList(),
+              ],
             ),
           );
         },

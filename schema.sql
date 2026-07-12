@@ -70,9 +70,9 @@ CREATE TABLE IF NOT EXISTS benefits (
   benefit_category TEXT NOT NULL, -- 'entertainment', 'dining', 'fuel', etc.
   benefit_type TEXT, -- Additional categorization
   value_config JSONB, -- Flexible configuration for different benefit types
-  partners TEXT[], -- Array of partner names where benefit is applicable
-  exclusions TEXT[], -- Array of exclusion conditions
-  regions TEXT[], -- Geographic regions where benefit is valid
+  partners JSONB DEFAULT '[]', -- Partner names where benefit is applicable (JSONB, not TEXT[] - matches production data shape)
+  exclusions JSONB DEFAULT '{}', -- Exclusion conditions, e.g. {"mcc_codes": [...], "merchants": [...], "additional": {...}} (JSONB, not TEXT[] - matches production data shape)
+  regions JSONB DEFAULT '[]', -- Geographic regions where benefit is valid (JSONB, not TEXT[] - matches production data shape)
   source_url TEXT, -- URL to official benefit documentation
   valid_from DATE, -- Benefit validity start date
   valid_until DATE, -- Benefit validity end date
@@ -84,7 +84,10 @@ CREATE TABLE IF NOT EXISTS benefits (
 -- Card Benefits Table (Detailed card-specific benefit configuration)
 CREATE TABLE IF NOT EXISTS card_benefits (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  card_id UUID NOT NULL REFERENCES card_catalog(id) ON DELETE CASCADE,
+  -- Nullable, not NOT NULL: in production every card_benefits row has card_id = NULL.
+  -- Actual card<->benefit linkage happens via card_benefit_mapping instead; this table
+  -- appears to hold benefit-value configs that aren't directly tied to one card row.
+  card_id UUID REFERENCES card_catalog(id) ON DELETE CASCADE,
   benefit_id UUID REFERENCES benefits(benefit_id) ON DELETE SET NULL,
   value DECIMAL(12,2),
   configuration JSONB,
@@ -187,6 +190,22 @@ CREATE TABLE IF NOT EXISTS statement_milestone_cache (
   UNIQUE(user_id, card_id, benefit_category, statement_start_date, statement_end_date)
 );
 
+-- Email Records Table (for Gmail sync dedupe/status tracking)
+CREATE TABLE IF NOT EXISTS emails (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  email_id TEXT NOT NULL UNIQUE,
+  subject TEXT,
+  sender TEXT,
+  received_date TIMESTAMP WITH TIME ZONE,
+  has_attachments BOOLEAN DEFAULT false,
+  processed BOOLEAN DEFAULT false,
+  bank_detected TEXT,
+  statement_id TEXT,
+  metadata JSONB DEFAULT '{}',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- ============================================================================
 -- REWARDS & POINTS (Future Implementation)
 -- ============================================================================
@@ -265,6 +284,7 @@ ALTER TABLE user_cards ENABLE ROW LEVEL SECURITY;
 ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE statements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE statement_milestone_cache ENABLE ROW LEVEL SECURITY;
+ALTER TABLE emails ENABLE ROW LEVEL SECURITY;
 
 -- User Cards Policies
 CREATE POLICY user_cards_policy ON user_cards
@@ -286,6 +306,12 @@ CREATE POLICY statement_milestone_user_policy ON statement_milestone_cache
   FOR ALL TO authenticated
   USING (auth.uid() = user_id);
 
+-- Emails Policies
+CREATE POLICY emails_policy ON emails
+  FOR ALL TO authenticated
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
 -- ============================================================================
 -- GRANTS
 -- ============================================================================
@@ -301,6 +327,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON user_cards TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON transactions TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON statements TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON statement_milestone_cache TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON emails TO authenticated;
 
 -- Grant sequence usage
 GRANT USAGE, SELECT ON SEQUENCE statement_milestone_cache_id_seq TO authenticated;
@@ -331,9 +358,11 @@ CREATE TRIGGER update_transactions_updated_at
   BEFORE UPDATE ON transactions
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_user_birthdays_updated_at
-  BEFORE UPDATE ON user_birthdays
-  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+-- Note: no trigger for user_birthdays here - that table is not yet implemented
+-- (see "USER PREFERENCES & DATA (Future Implementation)" note above). A trigger
+-- referencing it was previously left in this file by mistake and broke a clean
+-- schema apply; add the trigger back alongside the table's own CREATE TABLE
+-- statement whenever user_birthdays actually gets implemented.
 
 -- ============================================================================
 -- COMMENTS
