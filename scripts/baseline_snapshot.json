@@ -1,0 +1,3076 @@
+{
+  "0112dece-ebd3-4252-9731-48b28b7d9c48": {
+    "benefit_count": 13,
+    "special_count": 3,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "d0892f28"
+  },
+  "0333b43e-24af-4583-b5fc-7593c4c40d2d": {
+    "benefit_count": 9,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DEPARTMENTAL STORES",
+      "DINING",
+      "GENERAL",
+      "LOUNGE",
+      "MILESTONE",
+      "MOVIES",
+      "REWARDS",
+      "SHOPPING"
+    ],
+    "hash": "331a802e"
+  },
+  "03404fb2-ea89-4c9e-bcd2-4c43e0dc216c": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "c273d8c7"
+  },
+  "07ba715a-26cb-4c75-9e0d-d53af47fc002": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "02274578"
+  },
+  "0c5720b3-0d7f-40c8-9c42-b54efbaf5a03": {
+    "benefit_count": 12,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "UTILITY"
+    ],
+    "hash": "90ff7193"
+  },
+  "0e21eb8b-89b1-48be-9304-7fe97603e8dd": {
+    "benefit_count": 13,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "de685535"
+  },
+  "0f5bc8b6-b578-4813-b05f-e0c0f0d93537": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "d938bba5"
+  },
+  "1083c7ef-f193-474b-8720-04df22edb524": {
+    "benefit_count": 12,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "99ebd69c"
+  },
+  "111093d6-2de6-4b2e-8359-ed88c4e89113": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "a7534819"
+  },
+  "1122e933-b0cd-4fa2-86c7-d015ea8f25c0": {
+    "benefit_count": 12,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "b4302838"
+  },
+  "15e70722-cd7a-450a-806d-2ce003387405": {
+    "benefit_count": 14,
+    "special_count": 4,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "4abd10d2"
+  },
+  "168943ca-a608-4fc9-a2fb-9ed4314d010b": {
+    "benefit_count": 14,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "c33bef9f"
+  },
+  "181d5009-fe91-43e8-a6e9-eb220b87340a": {
+    "benefit_count": 9,
+    "special_count": 3,
+    "categories": [
+      "CASHBACK",
+      "ENTERTAINMENT",
+      "GENERAL",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "dd613ab7"
+  },
+  "1eadd9e5-d953-4119-8756-62a3fdba2a49": {
+    "benefit_count": 8,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "FUEL",
+      "GENERAL",
+      "LOUNGE",
+      "MILESTONE",
+      "SHOPPING",
+      "TRAVEL"
+    ],
+    "hash": "6589b563"
+  },
+  "1f6f5c25-d8d6-4372-9553-48b6e6d4f55c": {
+    "benefit_count": 13,
+    "special_count": 11,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "aa0a1cbb"
+  },
+  "1fec2e05-3eb9-4087-8c51-6ab04f5bb0a0": {
+    "benefit_count": 9,
+    "special_count": 1,
+    "categories": [
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "UTILITY"
+    ],
+    "hash": "9aff284f"
+  },
+  "20571292-2601-4a9e-a6e3-780d1ff2bbf5": {
+    "benefit_count": 13,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "dc78c46d"
+  },
+  "2192610a-37dd-483e-b236-186795fd27d5": {
+    "benefit_count": 10,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "UTILITY"
+    ],
+    "hash": "9bb2bce0"
+  },
+  "225b6ff1-996c-4b51-b916-5e6360234506": {
+    "benefit_count": 10,
+    "special_count": 3,
+    "categories": [
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL"
+    ],
+    "hash": "fddf2d6a"
+  },
+  "233884c7-75ac-4b0b-abb1-49d72bfd27da": {
+    "benefit_count": 12,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "0fe17b15"
+  },
+  "245a9579-aa2b-4161-9b9c-2776cd4ae5f7": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "bbdc4bf3"
+  },
+  "26fea5be-0558-4fa0-bbd3-0c0ecb36a5ee": {
+    "benefit_count": 8,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "GENERAL",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING"
+    ],
+    "hash": "2154beb5"
+  },
+  "27fe3a64-329d-4b04-9069-e5addef1eb1f": {
+    "benefit_count": 12,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "UTILITY"
+    ],
+    "hash": "b7eb303a"
+  },
+  "29983404-afcb-4188-ae9d-8dbc7b1eeea0": {
+    "benefit_count": 13,
+    "special_count": 3,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "870b33b6"
+  },
+  "2b6ade09-379a-4a15-83fb-70e3262a1c6e": {
+    "benefit_count": 2,
+    "special_count": 1,
+    "categories": [
+      "ENTERTAINMENT",
+      "GENERAL"
+    ],
+    "hash": "4073f84b"
+  },
+  "2ba4e2ce-fc6e-44f8-893f-22a29d3133f8": {
+    "benefit_count": 20,
+    "special_count": 5,
+    "categories": [
+      "CASHBACK",
+      "ENTERTAINMENT",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "UTILITY"
+    ],
+    "hash": "2bcca5c4"
+  },
+  "2ba8b967-aae6-4120-8ab0-348c2958dc36": {
+    "benefit_count": 9,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "GENERAL",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "dbdb7453"
+  },
+  "303ed9ad-9651-4e5b-8a85-7a46cae5f0f7": {
+    "benefit_count": 13,
+    "special_count": 13,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "6f01f168"
+  },
+  "3057bac8-6d49-45a2-bc87-22a22b0fa7dd": {
+    "benefit_count": 12,
+    "special_count": 7,
+    "categories": [
+      "CASHBACK",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "7eadf765"
+  },
+  "31cedc97-ad1f-47f4-9b1f-f0d506a31336": {
+    "benefit_count": 13,
+    "special_count": 7,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "1b2e71ca"
+  },
+  "322d1be9-05f1-402f-8a08-837a62cfa731": {
+    "benefit_count": 9,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "GENERAL",
+      "GROCERY",
+      "LOUNGE",
+      "MILESTONE",
+      "SHOPPING",
+      "UTILITY"
+    ],
+    "hash": "c6d5186f"
+  },
+  "35444f8b-77fb-4fef-8f98-53625d26155a": {
+    "benefit_count": 2,
+    "special_count": 1,
+    "categories": [
+      "GENERAL"
+    ],
+    "hash": "4aef7540"
+  },
+  "35d64b24-5d4c-4e50-b37a-58a0a68b4f49": {
+    "benefit_count": 13,
+    "special_count": 3,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "12f3cdb6"
+  },
+  "36880bd3-167f-4415-a4bc-d7ee977ee6ab": {
+    "benefit_count": 13,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "66542da2"
+  },
+  "3a29e646-e04c-42b1-b7ac-324a77d7f117": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "31dd3f99"
+  },
+  "3e1b6454-cdf8-40f5-aada-f90c6433936d": {
+    "benefit_count": 13,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "72821886"
+  },
+  "3ebebf59-f93a-48be-875d-d0937990f23c": {
+    "benefit_count": 11,
+    "special_count": 3,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "UTILITY"
+    ],
+    "hash": "d1cf7fd1"
+  },
+  "3fcafe44-5947-4d46-9fa8-8dd93d061a22": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "cc19a8dd"
+  },
+  "42907524-5691-4976-bfd9-3e3510ad45bf": {
+    "benefit_count": 11,
+    "special_count": 11,
+    "categories": [
+      "CASHBACK",
+      "ENTERTAINMENT",
+      "GENERAL",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "e6c0be4e"
+  },
+  "4487eed0-5a18-4285-8c65-2772ea27eb68": {
+    "benefit_count": 6,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "FUEL",
+      "GENERAL",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS"
+    ],
+    "hash": "f51d7dd7"
+  },
+  "477911dd-6da7-40e6-b48c-25668bec79c2": {
+    "benefit_count": 11,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "2a6e6fab"
+  },
+  "48d1dfc1-0a1d-45ed-9f38-7fe18ebc8eae": {
+    "benefit_count": 13,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "5122ab2d"
+  },
+  "4d6ac8c7-edd5-4d1a-84ed-f4abccfb9a95": {
+    "benefit_count": 11,
+    "special_count": 2,
+    "categories": [
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "f80637b5"
+  },
+  "4d8e01c7-d9fb-413a-8c4e-10dbb9442e6c": {
+    "benefit_count": 9,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "FUEL",
+      "GENERAL",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL"
+    ],
+    "hash": "370c9dec"
+  },
+  "502d04d4-f6ce-4886-a82c-c696d00ea9db": {
+    "benefit_count": 7,
+    "special_count": 1,
+    "categories": [
+      "ENTERTAINMENT",
+      "GENERAL",
+      "GROCERY",
+      "LOUNGE",
+      "MILESTONE",
+      "SHOPPING",
+      "UTILITY"
+    ],
+    "hash": "b5f171a2"
+  },
+  "520b5eca-8779-409a-b34b-ddb881b94fd7": {
+    "benefit_count": 13,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "5abc332c"
+  },
+  "57a75a5c-d1bb-4feb-bff1-ac48bd607ce1": {
+    "benefit_count": 11,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "GENERAL",
+      "GROCERY",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "ab064e47"
+  },
+  "58587502-c1b7-4be9-86b6-40f5e02c8a94": {
+    "benefit_count": 13,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "05684c8b"
+  },
+  "5bae308d-143f-4d68-bd5b-c56a5566c62e": {
+    "benefit_count": 13,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "56ff208d"
+  },
+  "5f3c8cab-e169-46d1-bf78-a8b2ede0e958": {
+    "benefit_count": 13,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "3584a515"
+  },
+  "5f4552d8-4762-43f8-a932-477312a8bcac": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "4cbed397"
+  },
+  "61c768db-b95d-4999-9bf9-f54f0d2ac39b": {
+    "benefit_count": 13,
+    "special_count": 4,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "ef4ff994"
+  },
+  "6476d325-6db6-4179-b3f9-ebecb7d5db27": {
+    "benefit_count": 13,
+    "special_count": 3,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "81624d6c"
+  },
+  "65c08cbe-190d-4987-af39-9649b1bc9fa5": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "3d54d622"
+  },
+  "6a1e4174-085a-4504-9f84-ded22397597b": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "11112bb4"
+  },
+  "6acbfb1d-8103-4b37-ba3f-df0634dfafac": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "460da8a5"
+  },
+  "6bcdb548-7321-4e80-bf94-52357923e5ed": {
+    "benefit_count": 13,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "44d764f0"
+  },
+  "6c776689-5eb6-4b02-a70f-f2ac65138fbe": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "cd81d47a"
+  },
+  "6c97db9d-069c-4e71-9b94-564978cf579c": {
+    "benefit_count": 12,
+    "special_count": 12,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "aab77427"
+  },
+  "6e426864-a6cb-4aca-82c9-ec7776b5b398": {
+    "benefit_count": 11,
+    "special_count": 3,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "GENERAL",
+      "GROCERY",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "7bb1048c"
+  },
+  "6eaec9fe-7bd6-4e0b-958d-4f5dc28ba327": {
+    "benefit_count": 11,
+    "special_count": 1,
+    "categories": [
+      "FUEL",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "SHOPPING"
+    ],
+    "hash": "7164a8a7"
+  },
+  "6eb1990d-11cc-4d1f-a673-9e038dea69a5": {
+    "benefit_count": 13,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "e492b1f4"
+  },
+  "70886874-05b0-447c-834b-577e2ffe90d9": {
+    "benefit_count": 13,
+    "special_count": 5,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "11a356b2"
+  },
+  "722655d4-7a7e-4a99-8b93-93befbc16b4b": {
+    "benefit_count": 13,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "775867db"
+  },
+  "7622af63-fa1b-40b8-a190-5dfa3e2a9856": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "491c5916"
+  },
+  "77fd17bf-c9ff-4373-9755-ba375381fc63": {
+    "benefit_count": 13,
+    "special_count": 13,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "1d0e11bc"
+  },
+  "7863c954-a59e-48f8-8828-f4a566cc1279": {
+    "benefit_count": 10,
+    "special_count": 1,
+    "categories": [
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "LOUNGE",
+      "MILESTONE",
+      "SHOPPING",
+      "TRAVEL"
+    ],
+    "hash": "9c67fd98"
+  },
+  "79271379-fd33-456f-9aaa-748b53867db7": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "49bc561f"
+  },
+  "7b7cdb45-af99-4731-99d4-8c0d290206a5": {
+    "benefit_count": 12,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "9b1ec384"
+  },
+  "7c6c176b-7488-4352-9308-aead50435e1c": {
+    "benefit_count": 11,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "UTILITY"
+    ],
+    "hash": "babff452"
+  },
+  "7f75d63e-f3aa-42fe-a70f-06352976d75b": {
+    "benefit_count": 12,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "d2f34b2f"
+  },
+  "82a4b05f-7b18-4458-b8b8-e837796a9187": {
+    "benefit_count": 13,
+    "special_count": 6,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "597ef95a"
+  },
+  "87bb8875-99ca-41e9-aadf-4b13060d99f0": {
+    "benefit_count": 12,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "UTILITY"
+    ],
+    "hash": "a8df1427"
+  },
+  "87cde037-271f-4196-b089-26708b973f6b": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "3f894a7a"
+  },
+  "89dcfea6-3e98-4ca7-8d93-b70da431f46c": {
+    "benefit_count": 13,
+    "special_count": 5,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "85270260"
+  },
+  "8cbddc7f-14bc-46e5-a724-be6ab724cb84": {
+    "benefit_count": 12,
+    "special_count": 3,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "fae29eb5"
+  },
+  "8cf9e034-2cc5-416c-9e3c-65c8ee31e591": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "3c46b034"
+  },
+  "8d28afff-c61b-472e-b8a1-b1f473ee60e1": {
+    "benefit_count": 12,
+    "special_count": 5,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "b375e3a0"
+  },
+  "90c05e44-4574-4701-aba3-87ddd2cddaef": {
+    "benefit_count": 13,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "dcdb51e6"
+  },
+  "91686bbe-f6db-4bb6-91f8-e99dd28d5e7a": {
+    "benefit_count": 9,
+    "special_count": 3,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING"
+    ],
+    "hash": "43978d6e"
+  },
+  "91fbd8ee-7e2c-410f-9ed9-a8be769554b7": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "2a07cbff"
+  },
+  "928c4412-cbf6-4ced-98e2-247fc60cf126": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "bbe08a36"
+  },
+  "95babb0d-a72a-434a-a33e-8b6209bb33a4": {
+    "benefit_count": 10,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "ENTERTAINMENT",
+      "FUEL",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "UTILITY"
+    ],
+    "hash": "b6b3f092"
+  },
+  "96fc1be5-1b23-48e2-b54e-3405e2efabf2": {
+    "benefit_count": 14,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "8364f7fb"
+  },
+  "98c6496f-caad-45e7-b2f4-d2a8d7fcd345": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "3866b6b4"
+  },
+  "9922dc90-a104-4231-8890-b7a92de3311e": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "95a632a8"
+  },
+  "9962426b-0f53-4c68-b36a-20585fb417f9": {
+    "benefit_count": 13,
+    "special_count": 3,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "31f32608"
+  },
+  "99a721fd-44ef-43aa-892f-31136fce4c20": {
+    "benefit_count": 9,
+    "special_count": 3,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING"
+    ],
+    "hash": "4b5ab118"
+  },
+  "99b1492c-7a69-4ae8-af62-0a67397e02ed": {
+    "benefit_count": 8,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "GENERAL",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "UTILITY"
+    ],
+    "hash": "d7a28c8d"
+  },
+  "99e14e50-5866-4911-b609-118f1028fa9f": {
+    "benefit_count": 13,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "915cdf54"
+  },
+  "9c5a6c57-6dc5-4be3-94fc-f76cb20478a6": {
+    "benefit_count": 10,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL"
+    ],
+    "hash": "1662269e"
+  },
+  "9c5d7d2c-556f-483c-a4b2-f88b7f3654de": {
+    "benefit_count": 11,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "GENERAL",
+      "GROCERY",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "ab064e47"
+  },
+  "9eac9da5-1327-4526-9f1c-5562fc76aac0": {
+    "benefit_count": 13,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "52006ee5"
+  },
+  "a05e6bcc-24d1-479d-ad89-271a1e857274": {
+    "benefit_count": 13,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "7aa7cf99"
+  },
+  "a0b1e8a5-6ebf-4c32-81e3-06decfd1deb3": {
+    "benefit_count": 13,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "489d4a7b"
+  },
+  "a0ddc0a8-a535-40c2-bd2d-2469dce26f55": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "7dcf834d"
+  },
+  "a28bb13e-c0ef-43ef-8f31-02ad09359023": {
+    "benefit_count": 12,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "5a7c8700"
+  },
+  "a667b8f7-deb4-4e48-86b3-c5c97f93fd1b": {
+    "benefit_count": 13,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "d1724d14"
+  },
+  "a9983853-a4eb-4b65-afdb-2d4f4139b68a": {
+    "benefit_count": 14,
+    "special_count": 3,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "9a905cc0"
+  },
+  "ac20b181-88aa-48a5-98d0-79e05eb09837": {
+    "benefit_count": 13,
+    "special_count": 4,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "ad15ad22"
+  },
+  "ad2f0d28-d292-4431-952f-d67cace94639": {
+    "benefit_count": 14,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "e345d223"
+  },
+  "ad746d8f-254b-4004-8bff-35372b98c7e7": {
+    "benefit_count": 13,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "dedef337"
+  },
+  "ad862119-e44f-4564-bd61-042f9df07d5c": {
+    "benefit_count": 13,
+    "special_count": 3,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "e89b861d"
+  },
+  "ad94f78f-adfe-40df-ae3d-69d432aa37f3": {
+    "benefit_count": 13,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "63a44182"
+  },
+  "adeca5f9-6ff3-432f-a15e-46f4092a39a1": {
+    "benefit_count": 9,
+    "special_count": 5,
+    "categories": [
+      "ENTERTAINMENT",
+      "GENERAL",
+      "GROCERY",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "57a9d901"
+  },
+  "b054db9a-f5b0-4f4c-becc-bb3b2688ac39": {
+    "benefit_count": 8,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "a7710f53"
+  },
+  "b0e49160-e2e2-45de-a85b-b7ad42145109": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "06225d49"
+  },
+  "b2a8d427-3d3e-4bff-bafb-6c32a1297aaf": {
+    "benefit_count": 10,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "GENERAL",
+      "GROCERY",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "UTILITY"
+    ],
+    "hash": "2cb1b2f7"
+  },
+  "b324b722-d483-40f0-b5e1-699607cd26ff": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "678888e2"
+  },
+  "b5a851c9-c586-4a5c-8b5a-6f8746472233": {
+    "benefit_count": 14,
+    "special_count": 1,
+    "categories": [
+      "GOLF",
+      "INSURANCE",
+      "LOUNGE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL"
+    ],
+    "hash": "82afbc64"
+  },
+  "b5ff643d-5cbb-4bce-a8db-943299046b5e": {
+    "benefit_count": 13,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "174de3c9"
+  },
+  "b6cd92fe-fdf2-4c71-9372-dfb031716e32": {
+    "benefit_count": 10,
+    "special_count": 3,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING"
+    ],
+    "hash": "2ae4a9e9"
+  },
+  "b71803f9-2120-4ee3-8f99-5c1e9313953f": {
+    "benefit_count": 9,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "INSURANCE",
+      "LIFESTYLE",
+      "LOUNGE",
+      "MILESTONE",
+      "SHOPPING",
+      "TRAVEL"
+    ],
+    "hash": "1b07f83c"
+  },
+  "b7b384d9-2eb9-43c7-a26f-b484b1e060c7": {
+    "benefit_count": 6,
+    "special_count": 4,
+    "categories": [
+      "CASHBACK",
+      "GENERAL",
+      "LIFESTYLE",
+      "LOUNGE",
+      "MILESTONE",
+      "SHOPPING"
+    ],
+    "hash": "b14dbbc0"
+  },
+  "b9bae2e3-da4e-4b11-b650-6d6d7cd25c09": {
+    "benefit_count": 9,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "ENTERTAINMENT",
+      "GENERAL",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "SHOPPING",
+      "TRAVEL"
+    ],
+    "hash": "efbea272"
+  },
+  "ba08f2f4-9a45-478f-8b34-212d9e3f86f1": {
+    "benefit_count": 14,
+    "special_count": 14,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "60012c24"
+  },
+  "bb6453d2-42c2-4b31-9fae-ade8e2262655": {
+    "benefit_count": 13,
+    "special_count": 3,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "b059511e"
+  },
+  "bc210283-9090-4a6c-b6e0-e8fedc680ffe": {
+    "benefit_count": 6,
+    "special_count": 1,
+    "categories": [
+      "FUEL",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "TRAVEL"
+    ],
+    "hash": "5ab56375"
+  },
+  "bc939af9-ac22-436f-935f-4cc8b41fb194": {
+    "benefit_count": 15,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "9d96a238"
+  },
+  "bca593d3-f3c8-4693-b2a7-dce0ebfc4bbd": {
+    "benefit_count": 10,
+    "special_count": 13,
+    "categories": [
+      "CASHBACK",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "UTILITY"
+    ],
+    "hash": "8afc5ec2"
+  },
+  "bd960470-96c5-4c89-95d6-49fe6dedfadc": {
+    "benefit_count": 13,
+    "special_count": 9,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "183f9065"
+  },
+  "beb56e25-f5b9-47d1-93e9-f6261f9e49d2": {
+    "benefit_count": 13,
+    "special_count": 3,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "a0b67224"
+  },
+  "bece57bd-950a-4c06-8874-58c895e02a7c": {
+    "benefit_count": 13,
+    "special_count": 5,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "af74c868"
+  },
+  "c0039ce6-4dbb-4607-a979-1c7caded41d4": {
+    "benefit_count": 13,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "57371101"
+  },
+  "c0370d94-2d08-4ffe-b9c7-53c0a6461221": {
+    "benefit_count": 11,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL"
+    ],
+    "hash": "ca67aa0c"
+  },
+  "c2cae9f6-19ce-4871-90f9-6e8cb719f9eb": {
+    "benefit_count": 14,
+    "special_count": 5,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "f4af4183"
+  },
+  "c3395741-c868-4db7-af2b-b6dba6678b65": {
+    "benefit_count": 11,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "GENERAL",
+      "GROCERY",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "bddd1e82"
+  },
+  "c35d7eb0-2869-49b6-9037-8cf661153178": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "cd818908"
+  },
+  "c43adf88-177f-482c-a047-4b3bb4b8effb": {
+    "benefit_count": 11,
+    "special_count": 3,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "GENERAL",
+      "GROCERY",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "d0c3028e"
+  },
+  "c517e8fd-9aff-4bfa-acf4-54324a60c28e": {
+    "benefit_count": 13,
+    "special_count": 3,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "7140c5e0"
+  },
+  "c9310237-3090-4f5f-b0af-2baa67765978": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "57e6794e"
+  },
+  "ceda338d-1f20-45a5-8751-688ea9fecc00": {
+    "benefit_count": 11,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "GENERAL",
+      "GROCERY",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "09fa679d"
+  },
+  "cf2b2520-5bd0-4d1f-914b-aa9730234cb8": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "49ca5369"
+  },
+  "cf7b2b91-3e91-4d76-9d2c-0fde2ffd9c55": {
+    "benefit_count": 12,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "e073f636"
+  },
+  "d0549ba6-91f3-4ab9-9858-b0ac02b74c5f": {
+    "benefit_count": 13,
+    "special_count": 4,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "aef79074"
+  },
+  "d69c6de5-0fa2-4d15-a6a4-eeaa2cb0c4dd": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "5d4fbb97"
+  },
+  "d7dd203b-f84e-4c26-b8b0-b4c1f0002b7a": {
+    "benefit_count": 43,
+    "special_count": 12,
+    "categories": [
+      "DINING",
+      "ENTERTAINMENT",
+      "GOLF",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "8bd9e781"
+  },
+  "da8bea02-8ad0-470f-9a96-12f7b51c1569": {
+    "benefit_count": 11,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "GENERAL",
+      "GROCERY",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "ab064e47"
+  },
+  "db5afc43-dbce-44b8-a1fb-73138b25ae60": {
+    "benefit_count": 12,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "1be13d95"
+  },
+  "dbad796f-2a42-4add-b238-5ee8b5d258c3": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "b321f0b8"
+  },
+  "de07de35-d1f0-423c-b729-fcb4ab34e293": {
+    "benefit_count": 12,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "UTILITY"
+    ],
+    "hash": "ee5db5c4"
+  },
+  "de17a2a5-d337-4092-a472-7a08d260eec4": {
+    "benefit_count": 10,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL"
+    ],
+    "hash": "c55e7f9e"
+  },
+  "de25a2a7-2fc2-48f1-8478-2adcebb5fcc6": {
+    "benefit_count": 13,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "588c45d3"
+  },
+  "e02b5994-fab0-4469-b33e-e84b4362c331": {
+    "benefit_count": 11,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "GENERAL",
+      "GROCERY",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "96c03576"
+  },
+  "e1bbb520-4ddb-431a-b56e-ce578eb625a0": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "3dff4efd"
+  },
+  "e37e570a-0782-4653-8bd7-dd59a95bb029": {
+    "benefit_count": 12,
+    "special_count": 8,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "a24c16be"
+  },
+  "e56c2bdf-60ab-4c95-a32e-760ee7e96dc6": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "caa0a52f"
+  },
+  "e64391dd-5b8f-453c-b327-c6e4edec7935": {
+    "benefit_count": 13,
+    "special_count": 4,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "7f5e79a8"
+  },
+  "e664f01c-e625-4e14-87ce-79f6e620ebc2": {
+    "benefit_count": 12,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "9644850c"
+  },
+  "e707c038-4328-41c3-a90a-13c313bdf4a6": {
+    "benefit_count": 11,
+    "special_count": 11,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "ba6f78ac"
+  },
+  "e88363b7-4749-470c-b437-75108a1b3add": {
+    "benefit_count": 7,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "FUEL",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS"
+    ],
+    "hash": "2d1da606"
+  },
+  "e8d7476a-fede-4312-bd60-b08fa81f0bc5": {
+    "benefit_count": 13,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "1a4d6bda"
+  },
+  "e94f14df-5584-4b60-bd8d-09972189c2c5": {
+    "benefit_count": 11,
+    "special_count": 5,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL"
+    ],
+    "hash": "5d8faa26"
+  },
+  "ec6a65fa-6169-4a58-9dcf-50c53bee2e65": {
+    "benefit_count": 12,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "1134f46d"
+  },
+  "ed181e7c-eaa5-4f88-ab8f-a557196fe94f": {
+    "benefit_count": 12,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "8d01d16e"
+  },
+  "ef9f7440-585b-459f-a803-efecd3683ee9": {
+    "benefit_count": 13,
+    "special_count": 5,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "b26e5df1"
+  },
+  "f0a0707a-1b4e-4f43-b09e-916ee88a4958": {
+    "benefit_count": 13,
+    "special_count": 6,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "bfd17d63"
+  },
+  "f5664f9f-88de-4ab5-8d11-194f0aed510a": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "0adba66a"
+  },
+  "f73c07e2-3385-4330-ba2b-1409d2c1ee8a": {
+    "benefit_count": 12,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "6cc6fa47"
+  },
+  "f7e0d27a-ed7b-4685-b0fd-44d7d6d06fae": {
+    "benefit_count": 8,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "FUEL",
+      "GENERAL",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING"
+    ],
+    "hash": "949a3491"
+  },
+  "fab01239-9bfb-4741-b212-eae254d729fe": {
+    "benefit_count": 13,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "4a6b96c5"
+  },
+  "faea3719-9fac-4425-9afe-c00f9cd80a60": {
+    "benefit_count": 8,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "FUEL",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "SHOPPING"
+    ],
+    "hash": "391f2fa3"
+  },
+  "fb59a170-4093-4599-9a43-d240f6e9b5ca": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "1ad4b8ef"
+  },
+  "fd676985-458e-439e-91c8-b35864df67b5": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "dbea6145"
+  },
+  "fdb145c1-4f8b-4f9b-8360-2d9e60aa75f2": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "b006f2d3"
+  },
+  "ff5219bd-4bd9-4351-82f7-2f371248aa34": {
+    "benefit_count": 12,
+    "special_count": 2,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "f3f9be7f"
+  },
+  "ff603e5e-7539-4e55-b700-1e7a3c9c1e83": {
+    "benefit_count": 13,
+    "special_count": 1,
+    "categories": [
+      "CASHBACK",
+      "DINING",
+      "ENTERTAINMENT",
+      "FUEL",
+      "GENERAL",
+      "GROCERY",
+      "INSURANCE",
+      "LOUNGE",
+      "MILESTONE",
+      "REWARDS",
+      "SHOPPING",
+      "TRAVEL",
+      "UTILITY"
+    ],
+    "hash": "ef320143"
+  }
+}

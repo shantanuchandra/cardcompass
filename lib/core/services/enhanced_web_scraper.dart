@@ -1,35 +1,50 @@
+import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart' show kIsWeb;
+import '../env.dart';
 import 'parsing_logger.dart';
 import 'ai_search_service.dart';
 
-/// Enhanced web scraping service for real bank card pages
+/// Enhanced web scraping service for real bank card pages.
+///
+/// On Flutter Web, uses a Supabase Edge Function (`scrape-card`) as a
+/// server-side proxy to bypass CORS restrictions. On mobile/desktop,
+/// makes direct HTTP requests.
 class EnhancedWebScraper {
   static const Duration _defaultTimeout = Duration(seconds: 30);
   static const Map<String, String> _defaultHeaders = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept':
+        'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
     'Accept-Language': 'en-US,en;q=0.5',
     'Accept-Encoding': 'gzip, deflate, br',
     'Connection': 'keep-alive',
     'Upgrade-Insecure-Requests': '1',
   };
+
+  /// The Supabase Edge Function URL for server-side scraping (CORS bypass).
+  static String get _proxyUrl => '${Env.supabaseUrl}/functions/v1/scrape-card';
+
   /// Scrape card benefit information from bank website
   static Future<ScrapedContent> scrapeCardPage({
     required String bankName,
     required String cardName,
   }) async {
     try {
-      ParsingLogger.summary('🔍 Searching credit card page for $bankName $cardName...');
+      ParsingLogger.summary(
+          '🔍 Searching credit card page for $bankName $cardName...');
       final results = await AiSearchService.searchCardPage(bankName, cardName);
       if (results.isEmpty) {
         throw Exception('No credit card pages found in search results');
       }
-      
+
       final bestUrl = results.first.url;
       ParsingLogger.summary('🌐 Found credit card URL: $bestUrl');
       return await scrapeUrl(bestUrl);
     } catch (e) {
-      ParsingLogger.warning('scrapeCardPage search failed, trying fallback URL generation: $e');
+      ParsingLogger.warning(
+          'scrapeCardPage search failed, trying fallback URL generation: $e');
       // Try generating potential URL patterns as a fallback
       final patterns = _generateUrlPatterns(bankName, cardName);
       for (final url in patterns) {
@@ -51,53 +66,126 @@ class EnhancedWebScraper {
   static List<String> _generateUrlPatterns(String bankName, String cardName) {
     final patterns = <String>[];
     final bank = bankName.toLowerCase();
-    final card = cardName.toLowerCase().replaceAll(RegExp(r'[^\w\s-]'), '').replaceAll(RegExp(r'\s+'), '-');
-    
+    final card = cardName
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^\w\s-]'), '')
+        .replaceAll(RegExp(r'\s+'), '-');
+
     if (bank.contains('hdfc')) {
-      patterns.add('https://www.hdfcbank.com/personal/pay/cards/credit-cards/$card');
+      patterns.add(
+          'https://www.hdfcbank.com/personal/pay/cards/credit-cards/$card');
     } else if (bank.contains('icici')) {
-      patterns.add('https://www.icicibank.com/personal-banking/cards/credit-card/$card');
+      patterns.add(
+          'https://www.icicibank.com/personal-banking/cards/credit-card/$card');
       patterns.add('https://www.icicibank.com/credit-card/$card');
     } else if (bank.contains('sbi')) {
-      patterns.add('https://www.sbicard.com/en/personal/credit-cards/$card.page');
+      patterns
+          .add('https://www.sbicard.com/en/personal/credit-cards/$card.page');
       patterns.add('https://www.sbicard.com/personal/credit-cards/$card');
     } else if (bank.contains('axis')) {
-      patterns.add('https://www.axisbank.com/personal/cards/credit-cards/$card');
+      patterns
+          .add('https://www.axisbank.com/personal/cards/credit-cards/$card');
     } else if (bank.contains('kotak')) {
-      patterns.add('https://www.kotak.com/en/personal-banking/cards/credit-cards/$card.html');
+      patterns.add(
+          'https://www.kotak.com/en/personal-banking/cards/credit-cards/$card.html');
     } else if (bank.contains('idfc')) {
       patterns.add('https://www.idfcfirstbank.com/credit-card/$card');
     }
     return patterns;
   }
 
-  /// Scrape a specific URL
+  /// Scrape a specific URL.
+  ///
+  /// On **web**: routes through the Supabase Edge Function proxy to bypass CORS.
+  /// On **mobile/desktop**: makes direct HTTP requests.
   static Future<ScrapedContent> scrapeUrl(String url) async {
     try {
-      ParsingLogger.summary('🌐 Attempting to scrape: $url');
-      
-      // Try multiple scraping strategies
-      ScrapedContent? content = await _scrapeWithSimpleHttp(url);
-      content ??= await _scrapeWithMobileUserAgent(url);
-      
+      ParsingLogger.summary(
+          '🌐 Attempting to scrape: $url (platform: ${kIsWeb ? "web" : "native"})');
+
+      ScrapedContent? content;
+
+      if (kIsWeb) {
+        // ── WEB: Use server-side proxy to bypass CORS ──
+        content = await _scrapeViaProxy(url);
+      } else {
+        // ── NATIVE: Direct HTTP (no CORS issues) ──
+        content = await _scrapeWithSimpleHttp(url);
+        content ??= await _scrapeWithMobileUserAgent(url);
+      }
+
       if (content != null && content.html.length > 1000) {
-        ParsingLogger.summary('✅ Successfully scraped ${content.html.length} chars from $url');
+        ParsingLogger.summary(
+            '✅ Successfully scraped ${content.html.length} chars from $url');
         return content;
       }
-      
-      throw Exception('Failed to get valid content from $url');
+
+      throw Exception(
+          'Failed to get valid content from $url (got ${content?.html.length ?? 0} chars)');
     } catch (e) {
       ParsingLogger.warning('Failed to scrape $url: $e');
       rethrow;
     }
   }
-  /// Simple HTTP scraping
+
+  /// Scrape via Supabase Edge Function proxy (for Flutter Web CORS bypass).
+  static Future<ScrapedContent?> _scrapeViaProxy(String url) async {
+    try {
+      ParsingLogger.summary(
+          '🔀 PROXY: Routing through Edge Function for CORS bypass...');
+
+      final response = await http
+          .post(
+            Uri.parse(_proxyUrl),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ${Env.supabaseAnonKey}',
+            },
+            body: jsonEncode({'url': url}),
+          )
+          .timeout(const Duration(seconds: 45));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+
+        if (data['success'] == true && data['html'] != null) {
+          final html = data['html'] as String;
+          final statusCode = data['status_code'] as int? ?? 200;
+          final finalUrl = data['final_url'] as String? ?? url;
+
+          ParsingLogger.summary(
+              '✅ PROXY: Successfully fetched ${html.length} chars (status: $statusCode, final URL: $finalUrl)');
+
+          return ScrapedContent(
+            url: finalUrl,
+            html: html,
+            statusCode: statusCode,
+            scrapedAt: DateTime.now(),
+            userAgent: 'proxy',
+          );
+        } else {
+          ParsingLogger.warning(
+              'PROXY: Server returned success=false: ${data['error']}');
+        }
+      } else {
+        ParsingLogger.warning(
+            'PROXY: Edge Function returned status ${response.statusCode}: ${response.body.length > 200 ? response.body.substring(0, 200) : response.body}');
+      }
+    } catch (e) {
+      ParsingLogger.error('PROXY: Edge Function call failed: $e');
+    }
+    return null;
+  }
+
+  /// Simple HTTP scraping (native platforms only)
   static Future<ScrapedContent?> _scrapeWithSimpleHttp(String url) async {
     try {
-      final response = await http.get(
-        Uri.parse(url),
-        headers: _defaultHeaders,
-      ).timeout(_defaultTimeout);
+      final response = await http
+          .get(
+            Uri.parse(url),
+            headers: _defaultHeaders,
+          )
+          .timeout(_defaultTimeout);
 
       if (response.statusCode == 200) {
         return ScrapedContent(
@@ -113,16 +201,19 @@ class EnhancedWebScraper {
     return null;
   }
 
-  /// Mobile user agent scraping
+  /// Mobile user agent scraping (native platforms only)
   static Future<ScrapedContent?> _scrapeWithMobileUserAgent(String url) async {
     try {
       final mobileHeaders = Map<String, String>.from(_defaultHeaders);
-      mobileHeaders['User-Agent'] = 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_7_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Mobile/15E148 Safari/604.1';
+      mobileHeaders['User-Agent'] =
+          'Mozilla/5.0 (iPhone; CPU iPhone OS 14_7_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Mobile/15E148 Safari/604.1';
 
-      final response = await http.get(
-        Uri.parse(url),
-        headers: mobileHeaders,
-      ).timeout(_defaultTimeout);
+      final response = await http
+          .get(
+            Uri.parse(url),
+            headers: mobileHeaders,
+          )
+          .timeout(_defaultTimeout);
 
       if (response.statusCode == 200) {
         return ScrapedContent(
@@ -138,13 +229,28 @@ class EnhancedWebScraper {
     }
     return null;
   }
+
   /// Extract benefit-related content from HTML
   static String extractBenefitContent(String html) {
     // Look for benefit-related sections
     final benefitKeywords = [
-      'benefit', 'reward', 'cashback', 'points', 'lounge', 'insurance',
-      'dining', 'travel', 'fuel', 'shopping', 'entertainment', 'utility',
-      'annual fee', 'joining fee', 'milestone', 'tier', 'accelerated'
+      'benefit',
+      'reward',
+      'cashback',
+      'points',
+      'lounge',
+      'insurance',
+      'dining',
+      'travel',
+      'fuel',
+      'shopping',
+      'entertainment',
+      'utility',
+      'annual fee',
+      'joining fee',
+      'milestone',
+      'tier',
+      'accelerated'
     ];
 
     final lines = html.split('\n');
@@ -183,8 +289,15 @@ class EnhancedWebScraper {
     if (content.length < 100) return false;
 
     final benefitIndicators = [
-      'reward points', 'cashback', '% on', 'per rupee', 'per rs',
-      'annual fee', 'lounge access', 'insurance cover', 'milestone'
+      'reward points',
+      'cashback',
+      '% on',
+      'per rupee',
+      'per rs',
+      'annual fee',
+      'lounge access',
+      'insurance cover',
+      'milestone'
     ];
 
     final lowerContent = content.toLowerCase();
@@ -222,12 +335,13 @@ class ScrapedContent {
 
   /// Get content summary
   Map<String, dynamic> toSummary() => {
-    'url': url,
-    'status_code': statusCode,
-    'content_length': html.length,
-    'scraped_at': scrapedAt.toIso8601String(),
-    'user_agent': userAgent ?? 'desktop',
-    'has_benefit_content': EnhancedWebScraper.isValidBenefitContent(benefitContent),
-    'benefit_content_length': benefitContent.length,
-  };
+        'url': url,
+        'status_code': statusCode,
+        'content_length': html.length,
+        'scraped_at': scrapedAt.toIso8601String(),
+        'user_agent': userAgent ?? 'desktop',
+        'has_benefit_content':
+            EnhancedWebScraper.isValidBenefitContent(benefitContent),
+        'benefit_content_length': benefitContent.length,
+      };
 }

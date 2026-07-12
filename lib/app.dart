@@ -24,7 +24,7 @@ class CardCompassApp extends ConsumerWidget {
       themeMode: ThemeMode.system,
       
       // Initial Route
-      initialRoute: AppRoutes.splash,
+      initialRoute: AppRoutes.adminPm,
       
       // Global Route Configuration
       onGenerateRoute: AppRoutes.generateRoute,
