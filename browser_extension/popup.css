@@ -1,0 +1,89 @@
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  width: 320px;
+  margin: 0;
+  padding: 0;
+  background-color: #050B18;
+  color: #ffffff;
+}
+
+.header {
+  background: linear-gradient(135deg, #6C63FF 0%, #483D8B 100%);
+  padding: 16px;
+  text-align: center;
+}
+
+.logo {
+  font-size: 18px;
+  font-weight: bold;
+  letter-spacing: 1px;
+}
+
+.container {
+  padding: 20px;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.loading {
+  text-align: center;
+  color: #888;
+  font-style: italic;
+  padding: 20px 0;
+}
+
+#merchant-name {
+  font-size: 14px;
+  color: #888;
+  margin-top: 0;
+  margin-bottom: 16px;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.recommendation-box {
+  background-color: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 16px;
+  text-align: center;
+}
+
+.label {
+  font-size: 12px;
+  color: #aaa;
+  margin: 0 0 8px 0;
+}
+
+#card-name {
+  font-size: 18px;
+  margin: 0 0 8px 0;
+  color: #6C63FF;
+}
+
+.savings {
+  font-size: 14px;
+  font-weight: bold;
+  color: #10B981;
+  margin: 0 0 12px 0;
+}
+
+.reasoning {
+  font-size: 11px;
+  color: #888;
+  margin: 0;
+  line-height: 1.4;
+}
+
+.auth-box {
+  text-align: center;
+  padding: 20px;
+  background-color: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 12px;
+  color: #EF4444;
+  font-size: 13px;
+}

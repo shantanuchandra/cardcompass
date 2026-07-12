@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>CardCompass</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="header">
+    <div class="logo">🧭 CardCompass</div>
+  </div>
+
+  <div class="container">
+    <div id="loading" class="loading">Analyzing...</div>
+
+    <div id="content" class="hidden">
+      <p id="merchant-name">No merchant detected</p>
+
+      <div id="recommendation-box" class="recommendation-box hidden">
+        <p class="label">Best Card to Use:</p>
+        <h2 id="card-name">--</h2>
+        <p id="savings-amount" class="savings">--</p>
+        <p id="logic-reasoning" class="reasoning">--</p>
+      </div>
+
+      <div id="auth-box" class="auth-box hidden">
+        <p>Please log in to the CardCompass app to sync your cards.</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
