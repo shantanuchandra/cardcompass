@@ -17,6 +17,9 @@ import 'package:cardcompass/core/services/recommendation_service_impl.dart';
 import 'package:cardcompass/core/services/user_profile_service.dart';
 import 'package:cardcompass/core/services/user_profile_service_impl.dart';
 import 'package:cardcompass/core/services/app_preferences.dart';
+import 'package:cardcompass/core/services/alert_email_parser_service.dart';
+import 'package:cardcompass/core/services/transaction_deduplication_service.dart';
+import 'package:cardcompass/core/services/alert_email_sync_service.dart';
 
 // Repositories
 import 'package:cardcompass/core/repositories/card_repository.dart';
@@ -28,6 +31,12 @@ import 'package:cardcompass/core/repositories/mock_transaction_repository.dart';
 import 'package:cardcompass/core/repositories/statement_repository.dart';
 import 'package:cardcompass/core/repositories/supabase_statement_repository.dart';
 import 'package:cardcompass/core/repositories/mock_statement_repository.dart';
+import 'package:cardcompass/core/repositories/reward_balance_repository.dart';
+import 'package:cardcompass/core/repositories/supabase_reward_balance_repository.dart';
+import 'package:cardcompass/core/repositories/mock_reward_balance_repository.dart';
+import 'package:cardcompass/core/repositories/supabase_notification_repository.dart';
+import 'package:cardcompass/core/services/reward_intelligence_service.dart';
+import 'package:cardcompass/core/services/rewards_nudge_service.dart';
 
 // Auth (for the guest/live switch)
 import 'package:cardcompass/features/auth/providers/auth_provider.dart' hide AuthService;
@@ -100,4 +109,65 @@ final cardIdentificationServiceProvider = Provider<CardIdentificationService>((r
 /// Provider for AppPreferences (local settings persistence)
 final appPreferencesProvider = Provider<AppPreferences>((ref) {
   return AppPreferences(ref.watch(sharedPreferencesProvider));
+});
+
+// ---------------------------------------------------------------------------
+// Phase 2 — Alert Email Pipeline
+// ---------------------------------------------------------------------------
+
+/// Stateless parser for alert email bodies.
+final alertEmailParserProvider = Provider<AlertEmailParserService>((ref) {
+  return AlertEmailParserService();
+});
+
+/// Stateless deduplication engine.
+final transactionDeduplicationProvider =
+    Provider<TransactionDeduplicationService>((ref) {
+  return TransactionDeduplicationService();
+});
+
+/// Orchestrator that fetches alert emails, parses them, deduplicates, and
+/// upserts into the transaction repository.
+/// Requires a [GoogleSignInAccount] — provided by the sync feature at runtime.
+final alertEmailSyncServiceProvider =
+    Provider<AlertEmailSyncService>((ref) {
+  return AlertEmailSyncService(
+    parser: ref.watch(alertEmailParserProvider),
+    deduplication: ref.watch(transactionDeduplicationProvider),
+    transactionRepository: ref.watch(transactionRepositoryProvider),
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Phase 3 — Rewards Intelligence & Nudges
+// ---------------------------------------------------------------------------
+
+
+
+/// Provider for RewardBalanceRepository — mock in guest, Supabase otherwise.
+final rewardBalanceRepositoryProvider = Provider<RewardBalanceRepository>((ref) {
+  return ref.watch(isGuestModeProvider)
+      ? MockRewardBalanceRepository()
+      : SupabaseRewardBalanceRepository();
+});
+
+/// Stateless reward intelligence engine (point valuations + insight detection).
+final rewardIntelligenceServiceProvider =
+    Provider<RewardIntelligenceService>((ref) {
+  return RewardIntelligenceService();
+});
+
+/// Notification repository (used by nudge service).
+final notificationRepositoryProvider =
+    Provider<SupabaseNotificationRepository>((ref) {
+  return SupabaseNotificationRepository();
+});
+
+/// Orchestrator: loads balances → generates insights → persists notifications.
+final rewardsNudgeServiceProvider = Provider<RewardsNudgeService>((ref) {
+  return RewardsNudgeService(
+    intelligence: ref.watch(rewardIntelligenceServiceProvider),
+    rewardRepo: ref.watch(rewardBalanceRepositoryProvider),
+    notificationRepo: ref.watch(notificationRepositoryProvider),
+  );
 });

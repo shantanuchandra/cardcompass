@@ -20,6 +20,8 @@ import '../../../../core/services/user_data_deletion_service.dart';
 import '../../../../core/services/password_input_service.dart';
 import '../../../../core/services/global_password_service.dart';
 import '../../../../core/services/global_message_service.dart';
+import '../../../../core/providers/service_providers.dart' show alertEmailSyncServiceProvider;
+import '../../../../core/services/reward_intelligence_service.dart' show InsightType;
 import '../../../../shared/widgets/credit_card_widget.dart';
 import '../../../../shared/widgets/sync_progress_dialog.dart';
 import '../../../auth/providers/auth_provider.dart';
@@ -405,13 +407,13 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              _buildSmartAnalyzerSection(context, ref),
+                              const SizedBox(height: 28),
                               _buildQuickStatsSection(context, ref),
                               const SizedBox(height: 28),
                               _buildQuickActionsSection(context, ref),
                               const SizedBox(height: 28),
                               _buildThisMonthSection(context, ref),
-                              const SizedBox(height: 28),
-                              _buildSmartAnalyzerSection(context, ref),
                               const SizedBox(height: 28),
                               _buildMyCardsSection(context, ref),
                             ],
@@ -448,6 +450,10 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                           ),
                         ),
                         children: [
+                          // Smart Transaction Analyzer (Hero)
+                          _buildSmartAnalyzerSection(context, ref),
+                          const SizedBox(height: 24),
+
                           // Quick Stats Section
                           _buildQuickStatsSection(context, ref),
                           const SizedBox(height: 24),
@@ -458,10 +464,6 @@ class _HomeTabState extends ConsumerState<HomeTab> {
 
                           // This Month Summary
                           _buildThisMonthSection(context, ref),
-                          const SizedBox(height: 24),
-
-                          // Smart Transaction Analyzer
-                          _buildSmartAnalyzerSection(context, ref),
                           const SizedBox(height: 24),
 
                           // My Cards Section
@@ -1053,6 +1055,10 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     // On NATIVE: use GoogleSignIn.instance.authenticate() normally.
     String? accessToken;
 
+    // Native GoogleSignInAccount — hoisted so it's accessible after auth
+    // for the Phase 2 alert email pipeline.
+    GoogleSignInAccount? googleAccount;
+
     if (kIsWeb) {
       // Web: Supabase stores the Google provider token in the session right after
       // OAuth redirect. On subsequent page loads it may be null, so we also check
@@ -1082,7 +1088,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     } else {
       // Native: use GoogleSignIn SDK directly.
       try {
-        GoogleSignInAccount? googleAccount =
+        googleAccount =
             await GoogleSignIn.instance.attemptLightweightAuthentication();
         googleAccount ??= await GoogleSignIn.instance.authenticate(
           scopeHint: [
@@ -1210,6 +1216,27 @@ class _HomeTabState extends ConsumerState<HomeTab> {
         _loadData();
         ref.invalidate(availableCreditProvider);
         ref.invalidate(statementRewardsTotalProvider);
+      }
+
+      // ── STEP 4 (Phase 2): Run alert email sync in the background ─────────
+      // Native-only: requires a GoogleSignInAccount. Runs silently after the
+      // main PDF pipeline so it doesn't block the user-visible progress dialog.
+      if (!kIsWeb && googleAccount != null) {
+        final alertSyncService = ref.read(alertEmailSyncServiceProvider);
+        alertSyncService.sync(
+          account: googleAccount,
+          userId: authState.user!.id,
+          lookback: const Duration(days: 7),
+        ).then((summary) {
+          if (summary.transactionsInserted > 0) {
+            print('⚡ Alert sync: +${summary.transactionsInserted} near-realtime transactions added.');
+            _loadData();
+            ref.invalidate(availableCreditProvider);
+          }
+        }).catchError((e) {
+          // Alert sync errors are non-fatal; log but don't surface to user.
+          print('⚠️  Alert email sync failed (non-fatal): $e');
+        });
       }
     } catch (error, stack) {
       print('❌ Sync failed: $error\n$stack');
@@ -1739,6 +1766,8 @@ class _HomeTabState extends ConsumerState<HomeTab> {
             );
           },
         ),
+        // Phase 3: Reward nudge banner
+        _buildRewardNudgesBanner(context, ref),
       ],
     );
   }
@@ -1803,6 +1832,118 @@ class _HomeTabState extends ConsumerState<HomeTab> {
   }
 
 
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Phase 3: Reward Nudges Banner
+  // ─────────────────────────────────────────────────────────────────────
+  Widget _buildRewardNudgesBanner(BuildContext context, WidgetRef ref) {
+    final insightsAsync = ref.watch(rewardInsightsProvider);
+    return insightsAsync.when(
+      data: (insights) {
+        if (insights.isEmpty) return const SizedBox.shrink();
+        final top = insights.first;
+        // Color by priority
+        final Color accentColor = top.priority == 'urgent'
+            ? const Color(0xFFFF4D4D)
+            : top.priority == 'high'
+                ? const Color(0xFFFFB547)
+                : const Color(0xFF00D4AA);
+        return Padding(
+          padding: const EdgeInsets.only(top: 14),
+          child: GestureDetector(
+            onTap: () {
+              // Navigate to notifications screen
+              Navigator.pushNamed(context, '/notifications');
+            },
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    accentColor.withValues(alpha: 0.18),
+                    accentColor.withValues(alpha: 0.06),
+                  ],
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                ),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: accentColor.withValues(alpha: 0.45),
+                  width: 1.5,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: accentColor.withValues(alpha: 0.15),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      top.priority == 'urgent'
+                          ? Icons.warning_amber_rounded
+                          : top.type == InsightType.highValuePoints
+                              ? Icons.monetization_on_outlined
+                              : Icons.star_rounded,
+                      color: accentColor,
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          top.title,
+                          style: GoogleFonts.spaceGrotesk(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          top.body,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.spaceGrotesk(
+                            color: Colors.white70,
+                            fontSize: 11,
+                          ),
+                        ),
+                        if (insights.length > 1)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(
+                              '+${insights.length - 1} more reward alert${insights.length > 2 ? "s" : ""}',
+                              style: GoogleFonts.spaceGrotesk(
+                                color: accentColor,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    color: accentColor.withValues(alpha: 0.8),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
+    );
+  }
 
   Widget _buildStatCard(
     BuildContext context,

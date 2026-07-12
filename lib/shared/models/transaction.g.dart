@@ -27,6 +27,9 @@ Transaction _$TransactionFromJson(Map<String, dynamic> json) => Transaction(
       statementId: json['statementId'] as String?,
       isRecurring: json['isRecurring'] as bool? ?? false,
       createdAt: DateTime.parse(json['createdAt'] as String),
+      source: $enumDecodeNullable(_$TransactionSourceEnumMap, json['source']) ??
+          TransactionSource.statement,
+      alertEmailId: json['alertEmailId'] as String?,
     );
 
 Map<String, dynamic> _$TransactionToJson(Transaction instance) =>
@@ -48,6 +51,8 @@ Map<String, dynamic> _$TransactionToJson(Transaction instance) =>
       'statementId': instance.statementId,
       'isRecurring': instance.isRecurring,
       'createdAt': instance.createdAt.toIso8601String(),
+      'source': _$TransactionSourceEnumMap[instance.source]!,
+      'alertEmailId': instance.alertEmailId,
     };
 
 const _$TransactionCategoryEnumMap = {
@@ -76,4 +81,10 @@ const _$TransactionTypeEnumMap = {
   TransactionType.fee: 'fee',
   TransactionType.interest: 'interest',
   TransactionType.reward: 'reward',
+};
+
+const _$TransactionSourceEnumMap = {
+  TransactionSource.statement: 'statement',
+  TransactionSource.alertEmail: 'alertEmail',
+  TransactionSource.manual: 'manual',
 };

@@ -344,3 +344,55 @@ final class StatementRewardsTotalProvider
 
 String _$statementRewardsTotalHash() =>
     r'3f826d3e57002b9e1806819ee7cbc4a599fe0157';
+
+/// Reward insights for the dashboard nudge banner (Phase 3).
+///
+/// Loads the user's reward balances and runs [RewardIntelligenceService]
+/// to produce ranked [RewardInsight] objects.
+
+@ProviderFor(rewardInsights)
+final rewardInsightsProvider = RewardInsightsProvider._();
+
+/// Reward insights for the dashboard nudge banner (Phase 3).
+///
+/// Loads the user's reward balances and runs [RewardIntelligenceService]
+/// to produce ranked [RewardInsight] objects.
+
+final class RewardInsightsProvider extends $FunctionalProvider<
+        AsyncValue<List<RewardInsight>>,
+        List<RewardInsight>,
+        FutureOr<List<RewardInsight>>>
+    with
+        $FutureModifier<List<RewardInsight>>,
+        $FutureProvider<List<RewardInsight>> {
+  /// Reward insights for the dashboard nudge banner (Phase 3).
+  ///
+  /// Loads the user's reward balances and runs [RewardIntelligenceService]
+  /// to produce ranked [RewardInsight] objects.
+  RewardInsightsProvider._()
+      : super(
+          from: null,
+          argument: null,
+          retry: null,
+          name: r'rewardInsightsProvider',
+          isAutoDispose: true,
+          dependencies: null,
+          $allTransitiveDependencies: null,
+        );
+
+  @override
+  String debugGetCreateSourceHash() => _$rewardInsightsHash();
+
+  @$internal
+  @override
+  $FutureProviderElement<List<RewardInsight>> $createElement(
+          $ProviderPointer pointer) =>
+      $FutureProviderElement(pointer);
+
+  @override
+  FutureOr<List<RewardInsight>> create(Ref ref) {
+    return rewardInsights(ref);
+  }
+}
+
+String _$rewardInsightsHash() => r'1a5f4708c564ec849f042d04a4071620c813cc51';

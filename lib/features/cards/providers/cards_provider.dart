@@ -1,6 +1,7 @@
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:cardcompass/core/repositories/card_repository.dart';
 import 'package:cardcompass/core/providers/service_providers.dart';
+import 'package:cardcompass/core/services/reward_intelligence_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../shared/models/credit_card.dart';
 import '../../auth/providers/auth_provider.dart';
@@ -192,5 +193,35 @@ Future<double> statementRewardsTotal(Ref ref) async {
   } catch (e) {
     print('statementRewardsTotalProvider error: $e');
     return 0.0;
+  }
+}
+
+/// Reward insights for the dashboard nudge banner (Phase 3).
+///
+/// Loads the user's reward balances and runs [RewardIntelligenceService]
+/// to produce ranked [RewardInsight] objects.
+@riverpod
+Future<List<RewardInsight>> rewardInsights(Ref ref) async {
+  final authState = ref.watch(authStateProvider);
+  final userId = authState.user?.id;
+  if (userId == null || userId == 'guest') return [];
+
+  try {
+    final rewardRepo = ref.watch(rewardBalanceRepositoryProvider);
+    final intelligence = ref.watch(rewardIntelligenceServiceProvider);
+    final cardRepo = ref.watch(cardRepositoryProvider);
+
+    final balances = await rewardRepo.getUserRewardBalances(userId);
+    if (balances.isEmpty) return [];
+
+    final cards = await cardRepo.getUserCards(userId);
+    final cardNames = {
+      for (final c in cards) c.id: '${c.bankName} ${c.cardName}'.trim(),
+    };
+
+    return intelligence.analyse(balances: balances, cardNames: cardNames);
+  } catch (e) {
+    print('rewardInsightsProvider error: $e');
+    return [];
   }
 }

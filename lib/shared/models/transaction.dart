@@ -33,6 +33,14 @@ enum TransactionType {
   reward
 }
 
+/// Source of a transaction — either parsed from a monthly PDF statement,
+/// or captured in near-real-time from an instant bank alert email.
+enum TransactionSource {
+  statement,   // from monthly PDF via enhanced_gmail_service
+  alertEmail,  // from instant debit/spend alert email body
+  manual,      // user-entered manually
+}
+
 /// Transaction model class
 @HiveType(typeId: 4)
 @JsonSerializable()
@@ -85,7 +93,18 @@ class Transaction extends HiveObject {
   final bool isRecurring;
 
   @HiveField(16)
-  final DateTime createdAt;  Transaction({
+  final DateTime createdAt;
+
+  /// Where this transaction came from (statement PDF vs. alert email).
+  @HiveField(18)
+  final TransactionSource source;
+
+  /// The Gmail message ID of the alert email, used for deduplication.
+  /// Null for statement-sourced transactions.
+  @HiveField(19)
+  final String? alertEmailId;
+
+  Transaction({
     required this.id,
     required this.userId,
     this.userCardId,  // References user_cards table
@@ -103,6 +122,8 @@ class Transaction extends HiveObject {
     this.statementId,
     this.isRecurring = false,
     required this.createdAt,
+    this.source = TransactionSource.statement,
+    this.alertEmailId,
   });
 
   /// Get category as display string
@@ -129,6 +150,8 @@ class Transaction extends HiveObject {
     String? statementId,
     bool? isRecurring,
     DateTime? createdAt,
+    TransactionSource? source,
+    String? alertEmailId,
   }) {    return Transaction(
       id: id ?? this.id,
       userId: userId ?? this.userId,
@@ -147,6 +170,8 @@ class Transaction extends HiveObject {
       statementId: statementId ?? this.statementId,
       isRecurring: isRecurring ?? this.isRecurring,
       createdAt: createdAt ?? this.createdAt,
+      source: source ?? this.source,
+      alertEmailId: alertEmailId ?? this.alertEmailId,
     );
   }
 
@@ -172,6 +197,8 @@ class Transaction extends HiveObject {
       'metadata': json['metadata'] ?? {},
       'created_at': json['createdAt'] ?? DateTime.now().toIso8601String(),
       'updated_at': DateTime.now().toIso8601String(),
+      'source': (json['source'] as TransactionSource? ?? source).toString().split('.').last,
+      'alert_email_id': json['alertEmailId'],
     };
     
     // Remove null values to prevent issues with NOT NULL constraints
@@ -226,6 +253,16 @@ class Transaction extends HiveObject {
       createdAt: json['created_at'] != null
           ? DateTime.parse(json['created_at'])
           : DateTime.now(),
+      source: _sourceFromString(json['source']),
+      alertEmailId: json['alert_email_id'],
+    );
+  }
+
+  static TransactionSource _sourceFromString(dynamic raw) {
+    final s = raw?.toString() ?? 'statement';
+    return TransactionSource.values.firstWhere(
+      (e) => e.toString().split('.').last == s,
+      orElse: () => TransactionSource.statement,
     );
   }
 
