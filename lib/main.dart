@@ -6,22 +6,24 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/app_config.dart';
+import 'core/env.dart';
 import 'core/config/ai_config.dart';
 import 'core/providers/service_providers.dart';
 import 'app.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+  Env.assertConfigured();
+
   // Load AI configuration settings
   await AIConfig.loadSavedConfiguration();
-  
+
   // Initialize SharedPreferences
   final sharedPreferences = await SharedPreferences.getInstance();
-  
+
   // Initialize Hive
   await Hive.initFlutter();
-  
+
   // Register Hive Adapters
   // Hive.registerAdapter(UserAdapter());
   // Hive.registerAdapter(CreditCardAdapter());
@@ -41,7 +43,7 @@ void main() async {
   await GoogleSignIn.instance.initialize(
     clientId: AppConfig.googleClientId,
   );
-  
+
   runApp(
     ProviderScope(
       overrides: [

@@ -47,17 +47,17 @@ class BankEmailQuery {
 /// Helper class for statement parsing results
 class StatementParsingResult {
   final String bankName;
-  final String? cardVariantName;  // Add card variant name
+  final String? cardVariantName; // Add card variant name
   final DateTime statementDate;
   final List<Transaction> transactions;
   final Uint8List originalPdfData;
   final String emailMessageId;
   final bool processingSuccess;
-  
+
   // Additional email-related properties
   final String? emailSubject;
   final String? emailSender;
-  
+
   // Additional statement-related properties
   final DateTime? dueDate;
   final double? totalAmountDue;
@@ -67,7 +67,7 @@ class StatementParsingResult {
 
   StatementParsingResult({
     required this.bankName,
-    this.cardVariantName,  // Add card variant name
+    this.cardVariantName, // Add card variant name
     required this.statementDate,
     required this.transactions,
     required this.originalPdfData,
@@ -107,7 +107,7 @@ class EnhancedGmailService {
 
   gmail.GmailApi? _gmailApi;
   final PdfParsingServiceImpl _pdfParsingService;
-  http.Client? _httpClient;  // Remove final to allow updating
+  http.Client? _httpClient; // Remove final to allow updating
   GoogleSignInAccount? _currentUser;
   bool _isAuthenticated = false;
 
@@ -115,13 +115,14 @@ class EnhancedGmailService {
     gmail.GmailApi? gmailApi,
     required PdfParsingServiceImpl pdfParsingService,
     http.Client? httpClient,
-  }) : _gmailApi = gmailApi,
-       _pdfParsingService = pdfParsingService,
-       _httpClient = httpClient {
+  })  : _gmailApi = gmailApi,
+        _pdfParsingService = pdfParsingService,
+        _httpClient = httpClient {
     if (_gmailApi != null) {
       _isAuthenticated = true; // Assume authenticated if API is provided
     }
   }
+
   /// Authenticate with Gmail API
   Future<bool> authenticate() async {
     if (_gmailApi != null) {
@@ -131,19 +132,21 @@ class EnhancedGmailService {
 
     try {
       // Try lightweight (silent) auth first, then full interactive
-      _currentUser = await GoogleSignIn.instance.attemptLightweightAuthentication();
+      _currentUser =
+          await GoogleSignIn.instance.attemptLightweightAuthentication();
       _currentUser ??= await GoogleSignIn.instance.authenticate(
         scopeHint: _scopes,
       );
 
       // Request access token for the required Gmail scopes
-      final authz = await _currentUser!.authorizationClient.authorizeScopes(_scopes);
+      final authz =
+          await _currentUser!.authorizationClient.authorizeScopes(_scopes);
       final accessToken = authz.accessToken;
 
       final authenticateClient = _AuthenticatedClient(
         <String, String>{'Authorization': 'Bearer $accessToken'},
       );
-      
+
       // Initialize Gmail API and set HTTP client for People API
       _gmailApi = gmail.GmailApi(authenticateClient);
       _httpClient = authenticateClient;
@@ -161,10 +164,12 @@ class EnhancedGmailService {
       return false;
     }
   }
+
   /// Check if user is authenticated
   bool isAuthenticated() {
     return _isAuthenticated && _gmailApi != null;
   }
+
   /// Search for credit card statement emails
   Future<List<GmailEmail>> searchStatements({
     DateTime? startDate,
@@ -173,16 +178,17 @@ class EnhancedGmailService {
   }) async {
     // Build generic search query (no sender filtering)
     String query = 'has:attachment filename:pdf';
-    
+
     // Add comprehensive subject filters for statements
     final subjectKeywords = [
       'credit card statement',
       'card statement',
       'credit card'
     ];
-    final subjectPart = subjectKeywords.map((keyword) => 'subject:"$keyword"').join(' OR ');
+    final subjectPart =
+        subjectKeywords.map((keyword) => 'subject:"$keyword"').join(' OR ');
     query += ' ($subjectPart)';
-    
+
     // Add date filters if provided
     if (startDate != null) {
       query += ' after:${startDate.year}/${startDate.month}/${startDate.day}';
@@ -202,7 +208,7 @@ class EnhancedGmailService {
       final parts = attachmentId.split(':');
       final messageId = parts.length > 1 ? parts[0] : attachmentId;
       final actualAttachmentId = parts.length > 1 ? parts[1] : attachmentId;
-      
+
       return await _downloadAttachment(messageId, actualAttachmentId);
     } catch (error) {
       print('Error downloading attachment: $error');
@@ -234,7 +240,7 @@ class EnhancedGmailService {
             'me',
             message.id!,
           );
-          
+
           final emailObj = _parseGmailMessage(detailedMessage);
           if (emailObj != null) {
             emails.add(emailObj);
@@ -261,6 +267,7 @@ class EnhancedGmailService {
       return null;
     }
   }
+
   /// Mark email as read
   Future<void> markAsRead(String emailId) async {
     try {
@@ -292,19 +299,22 @@ class EnhancedGmailService {
   }
 
   /// Get email attachment metadata
-  Future<Map<String, dynamic>?> getAttachmentMetadata(String attachmentId) async {
+  Future<Map<String, dynamic>?> getAttachmentMetadata(
+      String attachmentId) async {
     try {
       final parts = attachmentId.split(':');
       final messageId = parts.length > 1 ? parts[0] : attachmentId;
-      
+
       final message = await _gmailApi!.users.messages.get('me', messageId);
       final attachments = await _extractPdfAttachments(message);
-      
-      return attachments.isNotEmpty ? {
-        'filename': attachments.first.filename,
-        'size': attachments.first.size,
-        'attachmentId': attachments.first.attachmentId,
-      } : null;
+
+      return attachments.isNotEmpty
+          ? {
+              'filename': attachments.first.filename,
+              'size': attachments.first.size,
+              'attachmentId': attachments.first.attachmentId,
+            }
+          : null;
     } catch (error) {
       print('Error getting attachment metadata: $error');
       return null;
@@ -321,7 +331,7 @@ class EnhancedGmailService {
   GmailEmail? _parseGmailMessage(gmail.Message message) {
     try {
       final headers = message.payload?.headers ?? [];
-      
+
       String subject = '';
       String from = '';
       String to = '';
@@ -377,147 +387,152 @@ class EnhancedGmailService {
     }
   }
 
-
   /// Determine bank name from sender email address (Implementation 1)
   String _getBankNameFromSender(String senderEmail) {
     final email = senderEmail.toLowerCase();
-    
+
     // Amazon ICICI Bank (most specific first - check for Amazon keywords)
-    if (email.contains('@icicibank.com') && 
+    if (email.contains('@icicibank.com') &&
         (email.contains('amazon') || email.contains('amazonpay'))) {
       return 'Amazon ICICI Bank';
     }
-    
+
     // Amazon from domain
     if (email.contains('@amazon.com')) {
       return 'Amazon ICICI Bank';
     }
-    
+
     // ICICI Bank (general)
     if (email.contains('@icicibank.com')) {
       return 'ICICI Bank';
     }
-    
+
     // SBI Card
     if (email.contains('@sbicard.com')) {
       return 'SBI Card';
     }
-    
+
     // HDFC Bank
     if (email.contains('@hdfcbank.com') || email.contains('@hdfcbank.net')) {
       return 'HDFC Bank';
     }
-    
+
     // Axis Bank
     if (email.contains('@axisbank.com')) {
       return 'Axis Bank';
     }
-    
+
     // Kotak Mahindra Bank
     if (email.contains('@kotak.com')) {
       return 'Kotak Mahindra Bank';
     }
-    
+
     // Standard Chartered Bank
     if (email.contains('@sc.com') || email.contains('@standardchartered.com')) {
       return 'Standard Chartered Bank';
     }
-    
+
     // AU Small Finance Bank
-    if (email.contains('aubank.in') || email.contains('@aufinance.com') || email.contains('@ausfb.com')) {
+    if (email.contains('aubank.in') ||
+        email.contains('@aufinance.com') ||
+        email.contains('@ausfb.com')) {
       return 'AU Small Finance Bank';
     }
-    
+
     // Punjab National Bank
-    if (email.contains('@punjabnationalbank.in') || email.contains('@pnb.co.in')) {
+    if (email.contains('@punjabnationalbank.in') ||
+        email.contains('@pnb.co.in')) {
       return 'Punjab National Bank';
     }
-    
+
     // IDFC First Bank
     if (email.contains('@idfcfirstbank.com') || email.contains('@idfc.com')) {
       return 'IDFC First Bank';
     }
-    
+
     // HSBC India
     if (email.contains('@hsbc.co.in') || email.contains('@hsbc.com')) {
       return 'HSBC India';
     }
-    
+
     // IndusInd Bank
     if (email.contains('@indusind.com')) {
       return 'IndusInd Bank';
     }
-    
+
     // OneCard (by FPL Technologies)
-    if (email.contains('@onecardapp.com') || email.contains('@getonecard.app')) {
+    if (email.contains('@onecardapp.com') ||
+        email.contains('@getonecard.app')) {
       return 'OneCard';
     }
-    
+
     // Canara Bank
     if (email.contains('@canarabank.com') || email.contains('@canarabank.in')) {
       return 'Canara Bank';
     }
-    
+
     // Bank of Baroda
-    if (email.contains('@bankofbaroda.com') || email.contains('@bankofbaroda.in')) {
+    if (email.contains('@bankofbaroda.com') ||
+        email.contains('@bankofbaroda.in')) {
       return 'Bank of Baroda';
     }
-    
+
     // Union Bank of India
-    if (email.contains('@unionbankofindia.co.in') || email.contains('@ubi.co.in')) {
+    if (email.contains('@unionbankofindia.co.in') ||
+        email.contains('@ubi.co.in')) {
       return 'Union Bank of India';
     }
-    
+
     // Bank of India
     if (email.contains('@bankofindia.co.in')) {
       return 'Bank of India';
     }
-    
+
     // Central Bank of India
     if (email.contains('@centralbankofindia.co.in')) {
       return 'Central Bank of India';
     }
-    
+
     // Indian Bank
     if (email.contains('@indianbank.co.in')) {
       return 'Indian Bank';
     }
-    
+
     // RBL Bank
     if (email.contains('@rblbank.com')) {
       return 'RBL Bank';
     }
-    
+
     // Yes Bank
     if (email.contains('@yesbank.in')) {
       return 'Yes Bank';
     }
-    
+
     // Federal Bank
     if (email.contains('@federalbank.co.in')) {
       return 'Federal Bank';
     }
-    
+
     // South Indian Bank
     if (email.contains('@southindianbank.com')) {
       return 'South Indian Bank';
     }
-    
+
     // Karur Vysya Bank
     if (email.contains('@kvb.co.in')) {
       return 'Karur Vysya Bank';
     }
-    
+
     // City Union Bank
     if (email.contains('@cityunionbank.com')) {
       return 'City Union Bank';
     }
-    
+
     // Tamilnad Mercantile Bank
     if (email.contains('@tmb.in')) {
       return 'Tamilnad Mercantile Bank';
     }
-    
+
     // Fallback: try to extract from domain
     if (email.contains('@')) {
       final domain = email.split('@').last;
@@ -526,9 +541,13 @@ class EnhancedGmailService {
       if (domain.contains('hdfc')) return 'HDFC Bank';
       if (domain.contains('axis')) return 'Axis Bank';
       if (domain.contains('kotak')) return 'Kotak Mahindra Bank';
-      if (domain.contains('sc') || domain.contains('standard')) return 'Standard Chartered Bank';
-      if (domain.contains('au') || domain.contains('aubank') || domain.contains('aufinance')) return 'AU Small Finance Bank';
-      if (domain.contains('pnb') || domain.contains('punjab')) return 'Punjab National Bank';
+      if (domain.contains('sc') || domain.contains('standard'))
+        return 'Standard Chartered Bank';
+      if (domain.contains('au') ||
+          domain.contains('aubank') ||
+          domain.contains('aufinance')) return 'AU Small Finance Bank';
+      if (domain.contains('pnb') || domain.contains('punjab'))
+        return 'Punjab National Bank';
       if (domain.contains('idfc')) return 'IDFC First Bank';
       if (domain.contains('hsbc')) return 'HSBC India';
       if (domain.contains('indusind')) return 'IndusInd Bank';
@@ -547,7 +566,7 @@ class EnhancedGmailService {
       if (domain.contains('city')) return 'City Union Bank';
       if (domain.contains('tmb')) return 'Tamilnad Mercantile Bank';
     }
-    
+
     return 'Unknown Bank';
   }
 
@@ -611,7 +630,8 @@ class EnhancedGmailService {
             .split(' ')
             .map((w) => w.isEmpty ? '' : w[0] + w.substring(1).toLowerCase())
             .join(' ');
-        print('🎯 Regex detected card variant: "$titleCase" (from subject: "$emailSubject")');
+        print(
+            '🎯 Regex detected card variant: "$titleCase" (from subject: "$emailSubject")');
         return titleCase;
       }
     }
@@ -619,9 +639,12 @@ class EnhancedGmailService {
     // ── Fallback: call Gemini (only if regex found nothing) ────────────
     try {
       final requestBody = {
-        'contents': [{
-          'parts': [{
-            'text': '''You extract credit card product names from email subjects.
+        'contents': [
+          {
+            'parts': [
+              {
+                'text':
+                    '''You extract credit card product names from email subjects.
 Rules:
 - Return ONLY the product/variant name (1-5 words max), e.g. "BPCL", "Tata Neu Infinity", "Regalia Gold", "Amazon Pay"
 - Remove: bank names, "Credit Card", "Statement", "Monthly", dates, card numbers
@@ -632,8 +655,10 @@ Subject: $emailSubject
 Bank: $bankName
 
 Product name:'''
-          }]
-        }],
+              }
+            ]
+          }
+        ],
         'generationConfig': {
           'temperature': 0.0,
           'maxOutputTokens': 20,
@@ -644,11 +669,13 @@ Product name:'''
 
       if (response != null && response.statusCode == 200) {
         final decoded = json.decode(response.body);
-        final content = decoded['candidates']?[0]?['content']?['parts']?[0]?['text'];
+        final content =
+            decoded['candidates']?[0]?['content']?['parts']?[0]?['text'];
         if (content != null) {
           final variant = content.trim();
           if (variant.toUpperCase() != 'NONE' && variant.length <= 40) {
-            print('🎯 Gemini detected card variant: "$variant" (from subject: "$emailSubject")');
+            print(
+                '🎯 Gemini detected card variant: "$variant" (from subject: "$emailSubject")');
             return variant;
           }
         }
@@ -661,7 +688,6 @@ Product name:'''
     return bankName;
   }
 
-
   /// Process statement emails and extract transactions
   Future<List<StatementParsingResult>> processStatementEmails({
     required String userId,
@@ -670,7 +696,8 @@ Product name:'''
     int? maxEmails,
   }) async {
     // Set default date range if not provided (last 1 month)
-    final effectiveStartDate = startDate ?? DateTime.now().subtract(const Duration(days: 30));
+    final effectiveStartDate =
+        startDate ?? DateTime.now().subtract(const Duration(days: 30));
     final effectiveEndDate = endDate ?? DateTime.now();
 
     // print('🔍 Searching emails from ${effectiveStartDate.toString().substring(0, 10)} to ${effectiveEndDate.toString().substring(0, 10)}');
@@ -704,21 +731,24 @@ Product name:'''
     final results = <StatementParsingResult>[];
     try {
       final query = _buildGmailSearchQuery(bankQuery, startDate, endDate);
-      final searchResponse = await _gmailApi!.users.messages.list('me', q: query, maxResults: maxEmails);
+      final searchResponse = await _gmailApi!.users.messages
+          .list('me', q: query, maxResults: maxEmails);
 
       if (searchResponse.messages == null || searchResponse.messages!.isEmpty) {
         return results;
       }
-      
+
       final emailRepo = EmailRepository();
       for (final message in searchResponse.messages!) {
         if (message.id == null) continue;
 
         try {
           // Check if the email was already successfully processed to avoid parsing and LLM call
-          final isProcessed = await emailRepo.isEmailProcessed(message.id!);
+          final isProcessed =
+              await emailRepo.isEmailProcessed(userId, message.id!);
           if (isProcessed) {
-            print('⏭️  Skipping already processed email (ID: ${message.id}) to save API quota and time');
+            print(
+                '⏭️  Skipping already processed email (ID: ${message.id}) to save API quota and time');
             continue;
           }
 
@@ -751,94 +781,96 @@ Product name:'''
   }) async {
     try {
       // Get full message with attachments
-      final message = await _gmailApi!.users.messages.get('me', messageId, format: 'full');
-      
+      final message =
+          await _gmailApi!.users.messages.get('me', messageId, format: 'full');
+
       // Extract statement date from email
       final emailDate = DateTime.fromMillisecondsSinceEpoch(
         int.parse(message.internalDate ?? '0'),
       );
-      
+
       // print('EMAIL ${emailDate.toString().substring(0, 19)} | $bankName');
-      
+
       // Extract email headers
       String emailSubject = '';
       String emailBody = '';
       String userEmail = '';
       String senderEmail = '';
-      
+
       if (message.payload?.headers != null) {
         for (final header in message.payload!.headers!) {
           if (header.name?.toLowerCase() == 'subject') {
             emailSubject = header.value ?? '';
           } else if (header.name?.toLowerCase() == 'from') {
             senderEmail = header.value ?? '';
-          } else if (header.name?.toLowerCase() == 'delivered-to' || 
-                     header.name?.toLowerCase() == 'to') {
+          } else if (header.name?.toLowerCase() == 'delivered-to' ||
+              header.name?.toLowerCase() == 'to') {
             userEmail = header.value ?? '';
           }
         }
       }
-      
+
       // Determine bank name from sender email (more reliable)
       final bankFromSender = _getBankNameFromSender(senderEmail);
       print('SENDER: $senderEmail');
       print('BANK: $bankFromSender (from sender email)');
       print('SUBJECT: $emailSubject');
-      
+
       // ── SKIP non-credit-card account statements early ───────────────────
       final subjectLower = emailSubject.toLowerCase();
-      
+
       // Unconditional exclusion of combined statements, demat, or relationship/savings account statements
       if (subjectLower.contains('combined email statement') ||
           subjectLower.contains('combined statement') ||
           subjectLower.contains('demat statement') ||
           subjectLower.contains('relationship statement') ||
           subjectLower.contains('savings account statement')) {
-        print('⏭️  Skipping non-credit-card combined/savings statement: "$emailSubject"');
+        print(
+            '⏭️  Skipping non-credit-card combined/savings statement: "$emailSubject"');
         return null;
       }
 
-      final isCreditCardEmail =
-          subjectLower.contains('credit card') ||
+      final isCreditCardEmail = subjectLower.contains('credit card') ||
           subjectLower.contains('card statement') ||
           subjectLower.contains('credit card statement') ||
-          subjectLower.contains('e-statement') ||     // SBI / IndusInd
-          subjectLower.contains('monthly statement');  // SBI
-      final isSavingsStatement =
-          (subjectLower.contains('account statement') ||
-           subjectLower.contains('bank statement') ||
-           subjectLower.contains('relationship') ||
-           subjectLower.contains('combined email statement') ||
-           (subjectLower.contains('statement') &&
-            (subjectLower.contains('savings') ||
-             subjectLower.contains('current') ||
-             subjectLower.contains('salary account')))) &&
+          subjectLower.contains('e-statement') || // SBI / IndusInd
+          subjectLower.contains('monthly statement'); // SBI
+      final isSavingsStatement = (subjectLower.contains('account statement') ||
+              subjectLower.contains('bank statement') ||
+              subjectLower.contains('relationship') ||
+              subjectLower.contains('combined email statement') ||
+              (subjectLower.contains('statement') &&
+                  (subjectLower.contains('savings') ||
+                      subjectLower.contains('current') ||
+                      subjectLower.contains('salary account')))) &&
           !isCreditCardEmail;
       if (isSavingsStatement) {
-        print('⏭️  Skipping savings/account statement (not a credit card): "$emailSubject"');
+        print(
+            '⏭️  Skipping savings/account statement (not a credit card): "$emailSubject"');
         return null;
       }
 
       // Get email body
 
       emailBody = _extractEmailBody(message.payload);
-      
+
       // Find PDF attachments
       final pdfAttachments = await _extractPdfAttachments(message);
       if (pdfAttachments.isEmpty) return null;
-      
+
       // Process the largest PDF (likely the statement)
       pdfAttachments.sort((a, b) => b.size.compareTo(a.size));
       final statementPdf = pdfAttachments.first;
-      
+
       // Download PDF content
-      final pdfData = await _downloadAttachment(messageId, statementPdf.attachmentId);
-      
+      final pdfData =
+          await _downloadAttachment(messageId, statementPdf.attachmentId);
+
       // Get user profile for password detection with birthday fallback
       final userProfile = await getUserProfileWithFallback(
-        userId: userId, 
+        userId: userId,
         verbose: false,
-        // context: context, 
+        // context: context,
         // TODO: Pass context when available in UI
       );
       // if (userProfile.containsKey('birthday')) {
@@ -846,7 +878,7 @@ Product name:'''
       // } else {
       //   print('⚠️  No birthday found in user profile - password detection may be limited');
       // }
-      
+
       // Extract PDF text for Gemini analysis
       String pdfText = '';
       try {
@@ -875,14 +907,15 @@ Product name:'''
       print('   PDF size: ${(pdfData.length / 1024).toStringAsFixed(1)}KB');
       print('   Text length: ${pdfText.length} chars');
       if (pdfText.isEmpty) {
-        print('   ⚠️ PDF TEXT IS EMPTY — likely password-protected with no matching password');
+        print(
+            '   ⚠️ PDF TEXT IS EMPTY — likely password-protected with no matching password');
         print('   Subject: $emailSubject');
       } else {
         // Print first 300 chars to confirm content
-        print('   ✅ Text preview: ${pdfText.substring(0, pdfText.length.clamp(0, 300))}');
+        print(
+            '   ✅ Text preview: ${pdfText.substring(0, pdfText.length.clamp(0, 300))}');
       }
       // ──────────────────────────────────────────────────────────────────
-      
 
       // Use Gemini to detect the exact card variant
 
@@ -899,55 +932,59 @@ Product name:'''
         pdfText: pdfText,
         bankName: cardVariant,
       );
-      
+
       // Extract transactions using Gemini
       final geminiTxs = await GeminiTransactionParser.parseTransactions(
         pdfText: pdfText,
         bankName: cardVariant,
       );
-      
+
       // ── DIAGNOSTIC: Gemini results ───────────────────────────────────
       print('🤖 GEMINI RESULTS:');
       print('   Card variant used: $cardVariant');
       print('   PDF text length sent to Gemini: ${pdfText.length} chars');
       print('   Transactions found: ${geminiTxs.length}');
       if (geminiTxs.isEmpty && pdfText.isNotEmpty) {
-        print('   ⚠️ Gemini returned 0 transactions despite non-empty PDF text');
-        print('   This may indicate the PDF format is not being parsed correctly');
+        print(
+            '   ⚠️ Gemini returned 0 transactions despite non-empty PDF text');
+        print(
+            '   This may indicate the PDF format is not being parsed correctly');
       } else if (geminiTxs.isEmpty && pdfText.isEmpty) {
-        print('   ⚠️ Gemini got empty PDF text → 0 transactions (PDF password issue)');
+        print(
+            '   ⚠️ Gemini got empty PDF text → 0 transactions (PDF password issue)');
       }
       // ──────────────────────────────────────────────────────────────────
-      
+
       // Convert Gemini transactions to Transaction objects with explicit type casting
       final transactions = <Transaction>[];
       for (final geminiTx in geminiTxs) {
         transactions.add(_convertGeminiToTransaction(
-          geminiTx, 
-          userId: userId, 
+          geminiTx,
+          userId: userId,
           emailDate: emailDate,
         ));
       }
-      
+
       // Log metrics
-      final lines = pdfText.split('\n').where((line) => line.trim().isNotEmpty).length;
+      final lines =
+          pdfText.split('\n').where((line) => line.trim().isNotEmpty).length;
       final sizeKB = (pdfData.length / 1024).toStringAsFixed(1);
-      print('METRICS: Lines: $lines | Text: ${pdfText.length} chars | Size: ${sizeKB}KB');
+      print(
+          'METRICS: Lines: $lines | Text: ${pdfText.length} chars | Size: ${sizeKB}KB');
       print('TRANSACTIONS: ${transactions.length}');
 
-      
       // Add pause between emails to respect Gemini free tier rate limits
       // (each email triggers ~3 Gemini calls; 15 RPM limit = ~5s minimum between emails)
       await Future.delayed(const Duration(seconds: 8));
-      
+
       // Clean up card variant name to remove bank name and "Credit Card" terms
       final cleanCardName = _cleanCardVariantName(cardVariant, bankFromSender);
-      
+
       // Return result
       print('-' * 60);
       return StatementParsingResult(
-        bankName: bankFromSender,  // Use bank from sender, not card variant
-        cardVariantName: cleanCardName,  // Add clean card name
+        bankName: bankFromSender, // Use bank from sender, not card variant
+        cardVariantName: cleanCardName, // Add clean card name
         statementDate: emailDate,
         transactions: transactions,
         originalPdfData: pdfData,
@@ -957,10 +994,14 @@ Product name:'''
         emailSubject: emailSubject,
         emailSender: senderEmail,
         // Additional statement properties (TODO: extract from PDF if needed)
-        dueDate: statementInfo['due_date'] != null ? DateTime.tryParse(statementInfo['due_date']) : null,
+        dueDate: statementInfo['due_date'] != null
+            ? DateTime.tryParse(statementInfo['due_date'])
+            : null,
         totalAmountDue: (statementInfo['total_amount'] as num?)?.toDouble(),
-        minimumAmountDue: (statementInfo['minimum_payment'] as num?)?.toDouble(),
-        availableCredit: (statementInfo['available_credit'] as num?)?.toDouble(),
+        minimumAmountDue:
+            (statementInfo['minimum_payment'] as num?)?.toDouble(),
+        availableCredit:
+            (statementInfo['available_credit'] as num?)?.toDouble(),
         rewardsEarned: (statementInfo['rewards_earned'] as num?)?.toDouble(),
       );
     } catch (error) {
@@ -1042,7 +1083,9 @@ Product name:'''
 
     // Parse reward points earned for this transaction (Gemini may return as 'reward_points' or 'points')
     double? rewardEarned;
-    final rewardRaw = geminiTx['reward_points'] ?? geminiTx['points'] ?? geminiTx['rewardPoints'];
+    final rewardRaw = geminiTx['reward_points'] ??
+        geminiTx['points'] ??
+        geminiTx['rewardPoints'];
     if (rewardRaw != null) {
       if (rewardRaw is num) {
         rewardEarned = rewardRaw.toDouble();
@@ -1074,13 +1117,19 @@ Product name:'''
       isRecurring: false,
       createdAt: DateTime.now(),
     );
-  }  /// Build Gmail search query with enhanced filtering
-  String _buildGmailSearchQuery(BankEmailQuery bankQuery, DateTime? startDate, DateTime? endDate) {
+  }
+
+  /// Build Gmail search query with enhanced filtering
+  String _buildGmailSearchQuery(
+      BankEmailQuery bankQuery, DateTime? startDate, DateTime? endDate) {
     // ── Date range ────────────────────────────────────────────────────────────
-    final searchStartDate = startDate ?? DateTime.now().subtract(const Duration(days: 30));
-    final searchEndDate   = endDate   ?? DateTime.now();
-    final afterClause  = 'after:${searchStartDate.year}/${searchStartDate.month}/${searchStartDate.day}';
-    final beforeClause = 'before:${searchEndDate.year}/${searchEndDate.month}/${searchEndDate.day}';
+    final searchStartDate =
+        startDate ?? DateTime.now().subtract(const Duration(days: 30));
+    final searchEndDate = endDate ?? DateTime.now();
+    final afterClause =
+        'after:${searchStartDate.year}/${searchStartDate.month}/${searchStartDate.day}';
+    final beforeClause =
+        'before:${searchEndDate.year}/${searchEndDate.month}/${searchEndDate.day}';
 
     // ── Sender domains ────────────────────────────────────────────────────────
     // Covers all known sending domains for major Indian banks.
@@ -1089,7 +1138,7 @@ Product name:'''
       // HDFC Bank — multiple known domains / ESPs
       'hdfcbank.com', 'netbanking.hdfc.com', 'alerts.hdfcbank.com',
       'hdfcbankinfoline.com', 'hdfcbankcard.com', 'credit.hdfcbank.com',
-      'hdfcbank.bank.in',        // Live: Emailstatements.cards@hdfcbank.bank.in
+      'hdfcbank.bank.in', // Live: Emailstatements.cards@hdfcbank.bank.in
       // ICICI Bank
       'icicibank.com', 'icici.com', 'icard.com', 'alerts.icicibank.com',
       'icicibank.net', 'icici.bank.in',
@@ -1109,7 +1158,7 @@ Product name:'''
       'citi.com', 'citibank.co.in', 'citibankonline.com',
       // IDFC First Bank
       'idfc.com', 'idfcfirstbank.com', 'idfcbank.com',
-      'idfcfirst.bank.in',       // Live: statement@idfcfirst.bank.in
+      'idfcfirst.bank.in', // Live: statement@idfcfirst.bank.in
       // Amex
       'amexnetwork.com', 'americanexpress.com', 'aexp.com',
       // Standard Chartered
@@ -1140,11 +1189,12 @@ Product name:'''
       'statement of account',
       'your statement',
       // Bank-specific common phrases
-      'credit card',         // HDFC: "Your HDFC Bank Credit Card Statement"
-      'card outstanding',    // IndusInd: "your card outstanding"
+      'credit card', // HDFC: "Your HDFC Bank Credit Card Statement"
+      'card outstanding', // IndusInd: "your card outstanding"
       'card dues',
     ];
-    final subjectPart = subjectKeywords.map((kw) => 'subject:"$kw"').join(' OR ');
+    final subjectPart =
+        subjectKeywords.map((kw) => 'subject:"$kw"').join(' OR ');
 
     // ── Core query logic ──────────────────────────────────────────────────────
     // CRITICAL: Use OR between sender and subject so an email is fetched if EITHER:
@@ -1160,7 +1210,7 @@ Product name:'''
       'filename:pdf',
       '(($fromPart) OR ($subjectPart))',
       '-label:spam',
-      'size:30720',         // > 30 KB — filters out tiny non-statement PDFs
+      'size:30720', // > 30 KB — filters out tiny non-statement PDFs
       afterClause,
       beforeClause,
     ].join(' ');
@@ -1169,22 +1219,21 @@ Product name:'''
     return query;
   }
 
-
-
   /// Extract email body content
   String _extractEmailBody(gmail.MessagePart? payload) {
     if (payload == null) return '';
-    
+
     // Try to get text from body
     if (payload.body?.data != null) {
       try {
-        final decodedBytes = base64Decode(payload.body!.data!.replaceAll('-', '+').replaceAll('_', '/'));
+        final decodedBytes = base64Decode(
+            payload.body!.data!.replaceAll('-', '+').replaceAll('_', '/'));
         return utf8.decode(decodedBytes);
       } catch (e) {
         // Continue to try parts
       }
     }
-    
+
     // Try to get text from parts
     if (payload.parts != null) {
       for (final part in payload.parts!) {
@@ -1194,18 +1243,19 @@ Product name:'''
         }
       }
     }
-    
+
     return '';
   }
 
   /// Extract PDF attachments from message
-  Future<List<PdfAttachment>> _extractPdfAttachments(gmail.Message message) async {
+  Future<List<PdfAttachment>> _extractPdfAttachments(
+      gmail.Message message) async {
     final attachments = <PdfAttachment>[];
-    
+
     void findAttachments(gmail.MessagePart? part) {
       if (part == null) return;
-      
-      if (part.filename != null && 
+
+      if (part.filename != null &&
           part.filename!.toLowerCase().endsWith('.pdf') &&
           part.body?.attachmentId != null) {
         attachments.add(PdfAttachment(
@@ -1214,31 +1264,33 @@ Product name:'''
           size: part.body?.size ?? 0,
         ));
       }
-      
+
       if (part.parts != null) {
         for (final subPart in part.parts!) {
           findAttachments(subPart);
         }
       }
     }
-    
+
     findAttachments(message.payload);
     return attachments;
   }
 
   /// Download attachment by ID
-  Future<Uint8List> _downloadAttachment(String messageId, String attachmentId) async {
+  Future<Uint8List> _downloadAttachment(
+      String messageId, String attachmentId) async {
     final attachment = await _gmailApi!.users.messages.attachments.get(
       'me',
       messageId,
       attachmentId,
     );
-    
+
     if (attachment.data == null) {
       throw Exception('No attachment data found');
     }
-    
-    return base64Decode(attachment.data!.replaceAll('-', '+').replaceAll('_', '/'));
+
+    return base64Decode(
+        attachment.data!.replaceAll('-', '+').replaceAll('_', '/'));
   }
 
   /// Get user profile from Google People API
@@ -1248,30 +1300,33 @@ Product name:'''
   }) async {
     try {
       if (_httpClient == null) {
-        if (verbose) print('❌ No HTTP client available for People API - authentication may be incomplete');
+        if (verbose)
+          print(
+              '❌ No HTTP client available for People API - authentication may be incomplete');
         return {'displayName': 'User'};
       }
-        
+
       if (verbose) print('🔍 Fetching user profile from People API...');
-      
+
       // Make the API call with proper error handling
       final response = await _httpClient!.get(
-        Uri.parse('https://people.googleapis.com/v1/people/me?personFields=names,birthdays,emailAddresses'),
+        Uri.parse(
+            'https://people.googleapis.com/v1/people/me?personFields=names,birthdays,emailAddresses'),
       );
-      
+
       if (verbose) {
         print('📡 People API Response Status: ${response.statusCode}');
         print('📡 People API Response Headers: ${response.headers}');
       }
-      
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (verbose) {
           print('📋 Raw People API Response: ${json.encode(data)}');
         }
-        
+
         final profile = <String, dynamic>{};
-        
+
         // Extract display name
         if (data['names'] != null && data['names'].isNotEmpty) {
           profile['displayName'] = data['names'][0]['displayName'] ?? 'User';
@@ -1280,43 +1335,49 @@ Product name:'''
           profile['displayName'] = 'User';
           if (verbose) print('⚠️  No display name found, using default');
         }
-        
+
         // Extract birthday with comprehensive debugging
         if (data['birthdays'] != null && data['birthdays'].isNotEmpty) {
           // if (verbose) {
           //   print('📅 Processing birthday data...');
           //   print('📅 Total birthday entries found: ${data['birthdays'].length}');
           // }
-          
+
           // Try different birthday entries (Google can have multiple)
           bool foundValidBirthday = false;
           for (int i = 0; i < data['birthdays'].length; i++) {
             final birthdayEntry = data['birthdays'][i];
             // if (verbose) print('📅 Processing birthday entry #${i + 1}: $birthdayEntry');
-            
+
             final birthdayData = birthdayEntry['date'];
             if (birthdayData != null && birthdayData is Map<String, dynamic>) {
               // if (verbose) {
               //   print('📅 Raw birthday data: $birthdayData');
               //   print('📅 Year: ${birthdayData['year']}, Month: ${birthdayData['month']}, Day: ${birthdayData['day']}');
               // }
-              
+
               // Format birthday data for password generation
-              final formattedBirthday = _formatBirthdayForPasswordGeneration(birthdayData, verbose: false);
-              
+              final formattedBirthday = _formatBirthdayForPasswordGeneration(
+                  birthdayData,
+                  verbose: false);
+
               if (formattedBirthday.isNotEmpty) {
                 profile['birthday'] = formattedBirthday;
                 // if (verbose) print('✅ Found and formatted birthday: ${profile['birthday']['raw']}');
                 foundValidBirthday = true;
                 break; // Use the first valid birthday found
               } else {
-                if (verbose) print('⚠️  Birthday data incomplete for entry #${i + 1}: $birthdayData');
+                if (verbose)
+                  print(
+                      '⚠️  Birthday data incomplete for entry #${i + 1}: $birthdayData');
               }
             } else {
-              if (verbose) print('⚠️  Birthday entry #${i + 1} has null or invalid date: $birthdayEntry');
+              if (verbose)
+                print(
+                    '⚠️  Birthday entry #${i + 1} has null or invalid date: $birthdayEntry');
             }
           }
-          
+
           // If no valid birthday was found, set it explicitly to null
           if (!foundValidBirthday) {
             profile['birthday'] = null;
@@ -1339,14 +1400,14 @@ Product name:'''
             print('   - Birthday data is private in user settings');
           }
         }
-        
+
         // if (verbose) print('📋 Final profile keys available: ${profile.keys.join(', ')}');
         return profile;
       } else {
         if (verbose) {
           print('❌ People API returned status: ${response.statusCode}');
           print('❌ Response body: ${response.body}');
-          
+
           // Provide specific debugging for common error codes
           if (response.statusCode == 403) {
             print('💡 403 Forbidden - This usually means:');
@@ -1361,7 +1422,6 @@ Product name:'''
         }
         return {'displayName': 'User'};
       }
-      
     } catch (error) {
       if (verbose) {
         print('❌ Error fetching user profile: $error');
@@ -1395,26 +1455,35 @@ Product name:'''
         reason: reason,
       );
 
-      if (birthday != null && SimpleBirthdayInputService.isValidBirthday(birthday)) {
-        if (verbose) print('✅ User provided valid birthday: ${birthday.toString().substring(0, 10)}');
-        
+      if (birthday != null &&
+          SimpleBirthdayInputService.isValidBirthday(birthday)) {
+        if (verbose)
+          print(
+              '✅ User provided valid birthday: ${birthday.toString().substring(0, 10)}');
+
         // Store birthday in database
-        final stored = await UserProfileDatabaseService.storeUserDateOfBirth(userId, birthday);
+        final stored = await UserProfileDatabaseService.storeUserDateOfBirth(
+            userId, birthday);
         if (stored) {
           if (verbose) print('✅ Birthday stored successfully in database');
-          
+
           // Format birthday for password generation
-          fallbackProfile['birthday'] = SimpleBirthdayInputService.formatBirthdayForPasswords(birthday);
+          fallbackProfile['birthday'] =
+              SimpleBirthdayInputService.formatBirthdayForPasswords(birthday);
           if (verbose) print('✅ Birthday formatted for password generation');
-          
+
           return fallbackProfile;
         } else {
-          if (verbose) print('⚠️  Could not store birthday in database, but will use for this session');
-          fallbackProfile['birthday'] = SimpleBirthdayInputService.formatBirthdayForPasswords(birthday);
+          if (verbose)
+            print(
+                '⚠️  Could not store birthday in database, but will use for this session');
+          fallbackProfile['birthday'] =
+              SimpleBirthdayInputService.formatBirthdayForPasswords(birthday);
           return fallbackProfile;
         }
       } else {
-        if (verbose) print('⚠️  User did not provide valid birthday or cancelled');
+        if (verbose)
+          print('⚠️  User did not provide valid birthday or cancelled');
         fallbackProfile['birthday'] = null;
         return fallbackProfile;
       }
@@ -1434,70 +1503,80 @@ Product name:'''
     try {
       // STEP 1: Check database for stored birthday first
       if (verbose) print('📅 Step 1: Checking database for stored birthday...');
-      final storedBirthday = await UserProfileDatabaseService.getUserDateOfBirth(userId);
-      
+      final storedBirthday =
+          await UserProfileDatabaseService.getUserDateOfBirth(userId);
+
       if (storedBirthday != null) {
         if (verbose) {
-          print('✅ Found stored birthday: ${storedBirthday.toString().substring(0, 10)} (source: database)');
+          print(
+              '✅ Found stored birthday: ${storedBirthday.toString().substring(0, 10)} (source: database)');
         }
-        
+
         // Still try to get display name from Google API
         Map<String, dynamic> profile = {'displayName': 'User'};
         if (_httpClient != null) {
           try {
             final response = await _httpClient!.get(
-              Uri.parse('https://people.googleapis.com/v1/people/me?personFields=names,emailAddresses'),
+              Uri.parse(
+                  'https://people.googleapis.com/v1/people/me?personFields=names,emailAddresses'),
             );
             if (response.statusCode == 200) {
               final data = json.decode(response.body);
               if (data['names'] != null && data['names'].isNotEmpty) {
-                profile['displayName'] = data['names'][0]['displayName'] ?? 'User';
+                profile['displayName'] =
+                    data['names'][0]['displayName'] ?? 'User';
               }
             }
           } catch (e) {
-            if (verbose) print('⚠️  Could not fetch display name from Google API: $e');
+            if (verbose)
+              print('⚠️  Could not fetch display name from Google API: $e');
             // Use database display name if available
-            profile['displayName'] = await UserProfileDatabaseService.getUserDisplayName(userId);
+            profile['displayName'] =
+                await UserProfileDatabaseService.getUserDisplayName(userId);
           }
         }
-        
+
         // Use stored birthday
-        profile['birthday'] = UserProfileDatabaseService.formatBirthdayForPasswords(storedBirthday);
+        profile['birthday'] =
+            UserProfileDatabaseService.formatBirthdayForPasswords(
+                storedBirthday);
         return profile;
       }
-      
+
       // STEP 2: Try existing Google People API method
       if (verbose) print('📅 Step 2: Trying Google People API...');
-      final googleProfile = await getUserProfile(userId: userId, verbose: verbose);
-      
+      final googleProfile =
+          await getUserProfile(userId: userId, verbose: verbose);
+
       // If Google API provided birthday, store it and return
       if (googleProfile['birthday'] != null) {
         if (verbose) print('✅ Google API provided birthday successfully');
         try {
           final birthdayDate = DateTime.parse(googleProfile['birthday']['raw']);
-          await UserProfileDatabaseService.storeUserDateOfBirth(userId, birthdayDate);
-          if (verbose) print('✅ Stored Google API birthday in database for future use');
+          await UserProfileDatabaseService.storeUserDateOfBirth(
+              userId, birthdayDate);
+          if (verbose)
+            print('✅ Stored Google API birthday in database for future use');
         } catch (e) {
           if (verbose) print('⚠️  Could not store Google API birthday: $e');
         }
         return googleProfile;
       }
-      
+
       // STEP 3: Google API failed, trigger fallback
       return await _handleBirthdayFallback(
-        userId, 
+        userId,
         'Google API did not provide birthday data - see details above',
         context: context,
         verbose: verbose,
         profile: googleProfile,
       );
-      
     } catch (error) {
       if (verbose) {
         print('❌ Error in getUserProfileWithFallback: $error');
       }
       return await _handleBirthdayFallback(
-        userId, 
+        userId,
         'Unexpected error: ${error.toString()}',
         context: context,
         verbose: verbose,
@@ -1506,15 +1585,18 @@ Product name:'''
   }
 
   /// Format birthday data from Google People API for password generation
-  Map<String, String> _formatBirthdayForPasswordGeneration(Map<String, dynamic> birthdayData, {bool verbose = false}) {
+  Map<String, String> _formatBirthdayForPasswordGeneration(
+      Map<String, dynamic> birthdayData,
+      {bool verbose = false}) {
     final year = birthdayData['year']?.toString() ?? '';
     final month = birthdayData['month']?.toString().padLeft(2, '0') ?? '';
     final day = birthdayData['day']?.toString().padLeft(2, '0') ?? '';
-    
+
     if (verbose) {
-      print('🔍 Formatting birthday - Year: "$year", Month: "$month", Day: "$day"');
+      print(
+          '🔍 Formatting birthday - Year: "$year", Month: "$month", Day: "$day"');
     }
-    
+
     if (year.isEmpty || month.isEmpty || day.isEmpty) {
       if (verbose) {
         print('⚠️  Missing required fields for birthday formatting:');
@@ -1524,29 +1606,29 @@ Product name:'''
       }
       return {};
     }
-    
+
     final shortYear = year.length >= 4 ? year.substring(2) : year;
-    
+
     final result = {
-      'ddmm': '$day$month',           // 0212
+      'ddmm': '$day$month', // 0212
       'ddmmyy': '$day$month$shortYear', // 021290
-      'ddmmyyyy': '$day$month$year',   // 02121990
-      'yyyymmdd': '$year$month$day',   // 19901202
-      'mmddyyyy': '$month$day$year',   // 02121990
-      'raw': '$year-$month-$day',      // Keep raw format for reference
+      'ddmmyyyy': '$day$month$year', // 02121990
+      'yyyymmdd': '$year$month$day', // 19901202
+      'mmddyyyy': '$month$day$year', // 02121990
+      'raw': '$year-$month-$day', // Keep raw format for reference
     };
-    
+
     if (verbose) {
       print('✅ Successfully formatted birthday: $result');
     }
-    
+
     return result;
   }
 
   /// Get password hint for specific bank
   String? _getPasswordHintForBank(String bankName) {
     final bank = bankName.toLowerCase();
-    
+
     if (bank.contains('sbi')) {
       return 'Format: DOB(DDMMYYYY) + Last4Digits of card';
     } else if (bank.contains('idfc')) {
@@ -1558,14 +1640,14 @@ Product name:'''
     } else if (bank.contains('axis')) {
       return 'Try: Your date of birth (DDMMYYYY) or card last 4 digits';
     }
-    
+
     return 'Try: Your date of birth (DDMMYYYY) or card details';
   }
 
   /// Clean card variant name to remove bank name and "Credit Card" terms
   String _cleanCardVariantName(String cardVariant, String bankName) {
     String cleaned = cardVariant.trim();
-    
+
     // Remove bank name from the beginning or end
     final bankWords = bankName.toLowerCase().split(' ');
     for (final word in bankWords) {
@@ -1580,11 +1662,15 @@ Product name:'''
         }
       }
     }
-    
+
     // Remove "Credit Card" and variations
-    cleaned = cleaned.replaceAll(RegExp(r'\bcredit card\b', caseSensitive: false), '').trim();
-    cleaned = cleaned.replaceAll(RegExp(r'\bcard\b', caseSensitive: false), '').trim();
-    
+    cleaned = cleaned
+        .replaceAll(RegExp(r'\bcredit card\b', caseSensitive: false), '')
+        .trim();
+    cleaned = cleaned
+        .replaceAll(RegExp(r'\bcard\b', caseSensitive: false), '')
+        .trim();
+
     // Remove duplicate words (like "Zenith Zenith" -> "Zenith")
     final words = cleaned.split(' ');
     final uniqueWords = <String>[];
@@ -1594,7 +1680,7 @@ Product name:'''
       }
     }
     cleaned = uniqueWords.join(' ');
-    
+
     // Handle special cases
     if (cleaned.toLowerCase().contains('amazon pay')) {
       cleaned = 'Amazon Pay';
@@ -1607,10 +1693,11 @@ Product name:'''
     } else if (cleaned.toLowerCase() == 'zenith') {
       cleaned = 'Zenith';
     }
-    
+
     return cleaned.isNotEmpty ? cleaned : cardVariant;
   }
 }
+
 /// Authenticated HTTP client for Gmail API requests
 class _AuthenticatedClient extends http.BaseClient {
   final Map<String, String> _authHeaders;

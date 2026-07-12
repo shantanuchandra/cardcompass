@@ -5,10 +5,10 @@ import 'package:uuid/uuid.dart';
 import 'card_normalizer_service.dart';
 import 'pruning_audit_service.dart';
 import 'parsing_logger.dart';
+import 'gemini_request_service.dart';
 
 /// Gemini AI Transaction Parser service
 class GeminiTransactionParser {
-  
   /// Parse statement-level information using Gemini AI
   static Future<Map<String, dynamic>> parseStatementInfo({
     required String pdfText,
@@ -16,7 +16,8 @@ class GeminiTransactionParser {
   }) async {
     try {
       // Build enhanced prompt for statement information extraction
-      final prompt = '''You are an expert financial statement analyzer. Extract key information from this credit card statement.
+      final prompt =
+          '''You are an expert financial statement analyzer. Extract key information from this credit card statement.
 
 BANK: $bankName
 TASK: Extract essential statement details into JSON format.
@@ -58,101 +59,115 @@ JSON OUTPUT (return ONLY this object, no markdown or code blocks):
 }
 
 ANALYZE THE STATEMENT:''';
-      
+
       final cleanedText = _pruneAndCleanText(pdfText, bankName);
       final requestBody = {
-        'contents': [{
-          'parts': [{
-            'text': prompt + '\n\n' + cleanedText
-          }]
-        }],
-        'generationConfig': {
-          'temperature': 0.1,
-          'maxOutputTokens': 512
-        }
+        'contents': [
+          {
+            'parts': [
+              {'text': prompt + '\n\n' + cleanedText}
+            ]
+          }
+        ],
+        'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 512}
       };
 
-      
       // Call Gemini API with automatic fallback
-      final response = await _callGeminiWithFallback(requestBody, maxRetries: 3);
-      
+      final response =
+          await _callGeminiWithFallback(requestBody, maxRetries: 3);
+
       if (response != null && response.statusCode == 200) {
         final decoded = json.decode(response.body);
-        final content = decoded['candidates']?[0]?['content']?['parts']?[0]?['text'];
-        
+        final content =
+            decoded['candidates']?[0]?['content']?['parts']?[0]?['text'];
+
         if (content != null) {
           try {
             String cleanContent = _extractJsonPayload(content);
-            
+
             // Try to parse the JSON response
             final Map<String, dynamic> result = json.decode(cleanContent);
 
-            
             // Normalize bank and card names
             final normBank = normalizeBankName(bankName);
             result['bank_name'] = normBank;
-            if (result.containsKey('card_name') && result['card_name'] != null) {
-              result['card_name'] = normalizeCardName(result['card_name'].toString(), normBank);
+            if (result.containsKey('card_name') &&
+                result['card_name'] != null) {
+              result['card_name'] =
+                  normalizeCardName(result['card_name'].toString(), normBank);
             } else {
-              result['card_name'] = normalizeCardName('$normBank Credit Card', normBank);
+              result['card_name'] =
+                  normalizeCardName('$normBank Credit Card', normBank);
             }
-            
-            ParsingLogger.summary('Gemini Parser: Successfully parsed statement info');
+
+            ParsingLogger.summary(
+                'Gemini Parser: Successfully parsed statement info');
             return result;
           } catch (e) {
-            ParsingLogger.error('Gemini Parser: Failed to parse JSON response', e);
+            ParsingLogger.error(
+                'Gemini Parser: Failed to parse JSON response', e);
             ParsingLogger.debug('Raw content: $content');
           }
         }
       } else if (response != null) {
-        ParsingLogger.error('Gemini Parser: Non-200 response, status ${response.statusCode}');
+        ParsingLogger.error(
+            'Gemini Parser: Non-200 response, status ${response.statusCode}');
         ParsingLogger.debug('Response body: ${response.body}');
       } else {
         ParsingLogger.error('Gemini Parser: All API attempts failed');
       }
-      
+
       // Fallback to basic extraction if API fails
       return _fallbackStatementParsing(pdfText, bankName);
-      
     } catch (e) {
       ParsingLogger.error('Gemini Parser: Error parsing statement info', e);
       return _fallbackStatementParsing(pdfText, bankName);
     }
   }
-  
+
   /// Fallback method for basic statement parsing using regex
-  static Map<String, dynamic> _fallbackStatementParsing(String pdfText, String bankName) {
+  static Map<String, dynamic> _fallbackStatementParsing(
+      String pdfText, String bankName) {
     final Map<String, dynamic> statementInfo = {};
-    
+
     // Normalize bank name upfront
     statementInfo['bank_name'] = normalizeBankName(bankName);
-    
+
     // Try to extract statement date
-    final dateMatch = RegExp(r'statement date[:\s]*(\d{2}[-/]\d{2}[-/]\d{4})', caseSensitive: false).firstMatch(pdfText);
+    final dateMatch = RegExp(r'statement date[:\s]*(\d{2}[-/]\d{2}[-/]\d{4})',
+            caseSensitive: false)
+        .firstMatch(pdfText);
     if (dateMatch != null) {
       statementInfo['statement_date'] = _convertDateFormat(dateMatch.group(1)!);
     }
-    
+
     // Try to extract due date
-    final dueDateMatch = RegExp(r'due date[:\s]*(\d{2}[-/]\d{2}[-/]\d{4})', caseSensitive: false).firstMatch(pdfText);
+    final dueDateMatch =
+        RegExp(r'due date[:\s]*(\d{2}[-/]\d{2}[-/]\d{4})', caseSensitive: false)
+            .firstMatch(pdfText);
     if (dueDateMatch != null) {
       statementInfo['due_date'] = _convertDateFormat(dueDateMatch.group(1)!);
     }
-    
+
     // Try to extract total amount
-    final amountMatch = RegExp(r'total[:\s]*(?:amount|outstanding)[:\s]*(?:rs\.?|₹)?\s*([\d,]+\.?\d*)', caseSensitive: false).firstMatch(pdfText);
+    final amountMatch = RegExp(
+            r'total[:\s]*(?:amount|outstanding)[:\s]*(?:rs\.?|₹)?\s*([\d,]+\.?\d*)',
+            caseSensitive: false)
+        .firstMatch(pdfText);
     if (amountMatch != null) {
-      statementInfo['total_amount'] = double.tryParse(amountMatch.group(1)!.replaceAll(',', '')) ?? 0.0;
+      statementInfo['total_amount'] =
+          double.tryParse(amountMatch.group(1)!.replaceAll(',', '')) ?? 0.0;
     }
-    
+
     // Set defaults
     statementInfo['currency'] = 'INR';
     statementInfo['card_type'] = 'credit';
-    statementInfo['card_name'] = normalizeCardName('$bankName Credit Card', statementInfo['bank_name']);
-    
+    statementInfo['card_name'] =
+        normalizeCardName('$bankName Credit Card', statementInfo['bank_name']);
+
     return statementInfo;
   }
-  
+
   /// Convert date format from DD/MM/YYYY or DD-MM-YYYY to ISO string
   static String _convertDateFormat(String dateStr) {
     try {
@@ -166,10 +181,10 @@ ANALYZE THE STATEMENT:''';
     } catch (e) {
       ParsingLogger.warning('Gemini Parser: Error parsing date $dateStr');
     }
-    
+
     return DateTime.now().toIso8601String();
   }
-  
+
   /// Parse individual transactions using Gemini AI
   static Future<List<Map<String, dynamic>>> parseTransactions({
     required String pdfText,
@@ -178,7 +193,8 @@ ANALYZE THE STATEMENT:''';
     try {
       // Build enhanced prompt for transaction extraction based on bank-specific formats
       final bankSpecificInstructions = _getBankSpecificInstructions(bankName);
-      final prompt = '''You are an expert at extracting transactions from Indian credit card statements. Analyze this ${bankName.toUpperCase()} statement and extract ALL transactions.
+      final prompt =
+          '''You are an expert at extracting transactions from Indian credit card statements. Analyze this ${bankName.toUpperCase()} statement and extract ALL transactions.
 
 BANK: $bankName
 
@@ -208,28 +224,31 @@ JSON OUTPUT (return ONLY this array, no markdown blocks):
 ]
 
 ANALYZE THIS STATEMENT:''';
-      
+
       final cleanedText = _pruneAndCleanText(pdfText, bankName);
       final requestBody = {
-        'contents': [{
-          'parts': [{
-            'text': prompt + '\n\n' + cleanedText
-          }]
-        }],
+        'contents': [
+          {
+            'parts': [
+              {'text': prompt + '\n\n' + cleanedText}
+            ]
+          }
+        ],
         'generationConfig': {
           'temperature': 0.1,
-          'maxOutputTokens': 8192,  // SBI 39K-char statements need more room
+          'maxOutputTokens': 8192, // SBI 39K-char statements need more room
         }
       };
 
-      
       // Call Gemini API with automatic fallback
-      final response = await _callGeminiWithFallback(requestBody, maxRetries: 3);
-      
+      final response =
+          await _callGeminiWithFallback(requestBody, maxRetries: 3);
+
       if (response != null && response.statusCode == 200) {
         final decoded = json.decode(response.body);
-        final content = decoded['candidates']?[0]?['content']?['parts']?[0]?['text'];
-        
+        final content =
+            decoded['candidates']?[0]?['content']?['parts']?[0]?['text'];
+
         if (content != null) {
           try {
             String cleanContent = _extractJsonPayload(content);
@@ -243,16 +262,19 @@ ANALYZE THIS STATEMENT:''';
               m['id'] = m['id'] ?? uuid.v4();
               return m;
             }).toList();
-            
-            ParsingLogger.summary('Gemini Parser: Successfully parsed ${transactions.length} transactions');
+
+            ParsingLogger.summary(
+                'Gemini Parser: Successfully parsed ${transactions.length} transactions');
             return transactions;
           } catch (e) {
-            ParsingLogger.error('Gemini Parser: Failed to parse JSON response', e);
+            ParsingLogger.error(
+                'Gemini Parser: Failed to parse JSON response', e);
             ParsingLogger.debug('Raw content: $content');
           }
         }
       } else if (response != null) {
-        ParsingLogger.error('Gemini Parser: Non-200 response, status ${response.statusCode}');
+        ParsingLogger.error(
+            'Gemini Parser: Non-200 response, status ${response.statusCode}');
         ParsingLogger.debug('Response body: ${response.body}');
       } else {
         ParsingLogger.error('Gemini Parser: All API attempts failed');
@@ -263,9 +285,9 @@ ANALYZE THIS STATEMENT:''';
       return [];
     }
   }
-  
+
   /// Normalize a bank name to a canonical form to prevent duplicates
-  /// 
+  ///
   /// DEPRECATED: Use CardNormalizerService.normalizeBankName() instead
   /// This method is kept for backward compatibility but delegates to the shared service.
   static String normalizeBankName(String rawName) {
@@ -273,13 +295,13 @@ ANALYZE THIS STATEMENT:''';
   }
 
   /// Normalize a card name to extract just the variant name
-  /// 
+  ///
   /// DEPRECATED: Use CardNormalizerService.normalizeCardName() instead
   /// This method is kept for backward compatibility but delegates to the shared service.
-  /// 
+  ///
   /// [rawName] - The raw card name from the input (e.g., "Axis Bank Aura Credit Card")
   /// [bankName] - The normalized bank name (e.g., "Axis Bank")
-  /// 
+  ///
   /// Returns: Just the variant name (e.g., "Aura", "Miles", "Diners Club Rewardz")
   static String normalizeCardName(String rawName, String bankName) {
     return CardNormalizerService.normalizeCardName(rawName, bankName);
@@ -288,7 +310,7 @@ ANALYZE THIS STATEMENT:''';
   /// Get bank-specific transaction parsing instructions
   static String _getBankSpecificInstructions(String bankName) {
     final bank = bankName.toLowerCase();
-    
+
     if (bank.contains('icici')) {
       return '''
 ICICI SPECIFIC INSTRUCTIONS:
@@ -333,15 +355,15 @@ GENERAL INDIAN BANK INSTRUCTIONS:
   }
 
   /// NEW: Extract card benefits from web content using Gemini AI
-  /// 
+  ///
   /// This method leverages the existing Gemini API integration to extract
   /// structured benefit information from bank websites and card brochures.
-  /// 
+  ///
   /// [cardName] - The normalized card name (e.g., "Regalia")
   /// [bankName] - The normalized bank name (e.g., "HDFC Bank")
   /// [htmlContent] - The HTML content from the card's website
   /// [pdfContent] - Optional PDF content from brochures (nullable)
-  /// 
+  ///
   /// Returns: Structured benefit data with confidence scoring
   static Future<Map<String, dynamic>> extractCardBenefits({
     required String cardName,
@@ -350,16 +372,22 @@ GENERAL INDIAN BANK INSTRUCTIONS:
     String? pdfContent,
   }) async {
     try {
-      ParsingLogger.summary('Benefits Extraction: Starting extraction for $bankName $cardName using Gemini AI');
-      
+      ParsingLogger.summary(
+          'Benefits Extraction: Starting extraction for $bankName $cardName using Gemini AI');
+
       final prompt = _buildBenefitExtractionPrompt(cardName, bankName);
-      final content = htmlContent + (pdfContent != null ? '\n\nPDF CONTENT:\n$pdfContent' : '');
-      
+      final content = htmlContent +
+          (pdfContent != null ? '\n\nPDF CONTENT:\n$pdfContent' : '');
+
       // Use same API pattern as existing parseStatementInfo method
       final requestBody = {
-        'contents': [{
-          'parts': [{'text': prompt + '\n\n' + content}]
-        }],
+        'contents': [
+          {
+            'parts': [
+              {'text': prompt + '\n\n' + content}
+            ]
+          }
+        ],
         'generationConfig': {
           'temperature': 0.1, // Low temperature for factual extraction
           'maxOutputTokens': 4096, // Higher limit for detailed benefits
@@ -367,20 +395,22 @@ GENERAL INDIAN BANK INSTRUCTIONS:
       };
 
       // Call Gemini API with automatic fallback
-      final response = await _callGeminiWithFallback(requestBody, maxRetries: 3);
+      final response =
+          await _callGeminiWithFallback(requestBody, maxRetries: 3);
 
       if (response != null && response.statusCode == 200) {
         final jsonResponse = json.decode(response.body);
-        
-        if (jsonResponse['candidates'] != null && 
+
+        if (jsonResponse['candidates'] != null &&
             jsonResponse['candidates'].isNotEmpty) {
-          
-          final text = jsonResponse['candidates'][0]['content']['parts'][0]['text'];
-          ParsingLogger.summary('Benefits Extraction: Received response from Gemini AI');
-          
+          final text =
+              jsonResponse['candidates'][0]['content']['parts'][0]['text'];
+          ParsingLogger.summary(
+              'Benefits Extraction: Received response from Gemini AI');
+
           // Parse the JSON response from Gemini
           final benefitData = _parseBenefitResponse(text, cardName, bankName);
-          
+
           return {
             'success': true,
             'data': benefitData,
@@ -389,9 +419,10 @@ GENERAL INDIAN BANK INSTRUCTIONS:
           };
         }
       }
-      
+
       if (response != null) {
-        ParsingLogger.error('Benefits Extraction: Non-200 response, status ${response.statusCode}');
+        ParsingLogger.error(
+            'Benefits Extraction: Non-200 response, status ${response.statusCode}');
         return {
           'success': false,
           'error': 'API request failed with status ${response.statusCode}',
@@ -405,7 +436,6 @@ GENERAL INDIAN BANK INSTRUCTIONS:
           'data': null,
         };
       }
-      
     } catch (e) {
       ParsingLogger.error('Benefits Extraction: Error extracting benefits', e);
       return {
@@ -417,7 +447,8 @@ GENERAL INDIAN BANK INSTRUCTIONS:
   }
 
   /// Build the specialized prompt for benefit extraction
-  static String _buildBenefitExtractionPrompt(String cardName, String bankName) {
+  static String _buildBenefitExtractionPrompt(
+      String cardName, String bankName) {
     return '''
 You are an expert credit card analyst. Extract ALL benefits from this $bankName $cardName credit card information.
 
@@ -519,27 +550,30 @@ CONTENT TO ANALYZE:
   }
 
   /// Parse the benefit response from Gemini and validate the data
-  static Map<String, dynamic> _parseBenefitResponse(String responseText, String cardName, String bankName) {
+  static Map<String, dynamic> _parseBenefitResponse(
+      String responseText, String cardName, String bankName) {
     try {
       // Extract JSON from the response (handle cases where AI adds extra text)
-      final jsonMatch = RegExp(r'\{.*\}', dotAll: true).firstMatch(responseText);
-      
+      final jsonMatch =
+          RegExp(r'\{.*\}', dotAll: true).firstMatch(responseText);
+
       if (jsonMatch != null) {
         final jsonString = jsonMatch.group(0)!;
         final benefitData = json.decode(jsonString) as Map<String, dynamic>;
-        
+
         // Add metadata
         benefitData['extracted_for_card'] = cardName;
         benefitData['extracted_for_bank'] = bankName;
         benefitData['raw_response'] = responseText;
-        
+
         // Validate and calculate confidence score
         final confidence = _calculateExtractionConfidence(benefitData);
         benefitData['calculated_confidence'] = confidence;
-        
+
         return benefitData;
       } else {
-        ParsingLogger.warning('Benefits Extraction: No JSON found in Gemini response, returning raw text');
+        ParsingLogger.warning(
+            'Benefits Extraction: No JSON found in Gemini response, returning raw text');
         return {
           'success': false,
           'error': 'Could not parse JSON from response',
@@ -548,7 +582,8 @@ CONTENT TO ANALYZE:
         };
       }
     } catch (e) {
-      ParsingLogger.error('Benefits Extraction: Error parsing benefit response', e);
+      ParsingLogger.error(
+          'Benefits Extraction: Error parsing benefit response', e);
       return {
         'success': false,
         'error': 'JSON parsing failed: $e',
@@ -559,25 +594,28 @@ CONTENT TO ANALYZE:
   }
 
   /// Calculate confidence score for extracted benefits
-  static double _calculateExtractionConfidence(Map<String, dynamic> benefitData) {
+  static double _calculateExtractionConfidence(
+      Map<String, dynamic> benefitData) {
     double confidence = 0.0;
-    
+
     // Check if basic required fields exist
     if (benefitData['card_name'] != null) confidence += 0.2;
     if (benefitData['bank_name'] != null) confidence += 0.2;
-    
+
     // Check for benefit data
-    if (benefitData['cashback_benefits'] is List && 
-        (benefitData['cashback_benefits'] as List).isNotEmpty) confidence += 0.3;
-    
+    if (benefitData['cashback_benefits'] is List &&
+        (benefitData['cashback_benefits'] as List).isNotEmpty)
+      confidence += 0.3;
+
     if (benefitData['reward_points'] != null) confidence += 0.2;
-    
+
     // Check if AI provided its own confidence score
     if (benefitData['confidence_score'] is num) {
       final aiConfidence = (benefitData['confidence_score'] as num).toDouble();
-      confidence = (confidence + aiConfidence) / 2; // Average with AI's confidence
+      confidence =
+          (confidence + aiConfidence) / 2; // Average with AI's confidence
     }
-    
+
     return confidence.clamp(0.0, 1.0);
   }
 
@@ -611,11 +649,16 @@ CONTENT TO ANALYZE:
     // ── GROQ PROVIDER ROAD ──
     if (AIConfig.activeProvider == AIProvider.groq) {
       if (AIConfig.groqApiKey.isEmpty) {
-        throw Exception('Groq API Key is empty. Please enter your Groq key in settings.');
+        throw Exception(
+            'Groq API Key is empty. Please enter your Groq key in settings.');
       }
 
       // Model fallback queue (try the user's active configuration first)
-      final groqModels = ['llama-3.1-8b-instant', 'llama-3.3-70b-versatile', 'mixtral-8x7b-32768'];
+      final groqModels = [
+        'llama-3.1-8b-instant',
+        'llama-3.3-70b-versatile',
+        'mixtral-8x7b-32768'
+      ];
       final activeModel = AIConfig.groqModel;
       final modelQueue = [activeModel];
       for (final m in groqModels) {
@@ -627,7 +670,8 @@ CONTENT TO ANALYZE:
       for (int i = 0; i < modelQueue.length; i++) {
         final currentModel = modelQueue[i];
         try {
-          ParsingLogger.summary('Groq Parser: Attempting request using model: $currentModel');
+          ParsingLogger.summary(
+              'Groq Parser: Attempting request using model: $currentModel');
 
           final groqReq = {
             'model': currentModel,
@@ -640,20 +684,24 @@ CONTENT TO ANALYZE:
             'temperature': 0.1,
           };
 
-          final response = await http.post(
-            Uri.parse('https://api.groq.com/openai/v1/chat/completions'),
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer ${AIConfig.groqApiKey}',
-            },
-            body: jsonEncode(groqReq),
-          ).timeout(const Duration(seconds: 45));
+          final response = await http
+              .post(
+                Uri.parse('https://api.groq.com/openai/v1/chat/completions'),
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': 'Bearer ${AIConfig.groqApiKey}',
+                },
+                body: jsonEncode(groqReq),
+              )
+              .timeout(const Duration(seconds: 45));
 
           lastResponse = response;
 
           if (response.statusCode == 200) {
             final jsonResponse = jsonDecode(response.body);
-            final text = jsonResponse['choices']?[0]?['message']?['content'] as String? ?? '';
+            final text = jsonResponse['choices']?[0]?['message']?['content']
+                    as String? ??
+                '';
 
             final geminiJsonWrapper = {
               'candidates': [
@@ -673,21 +721,26 @@ CONTENT TO ANALYZE:
               headers: response.headers,
             );
           } else {
-            ParsingLogger.warning('Groq Parser: Model $currentModel returned error ${response.statusCode}');
+            ParsingLogger.warning(
+                'Groq Parser: Model $currentModel returned error ${response.statusCode}');
             // If it is a rate limit or prompt size error, try next model immediately
-            if (response.statusCode == 429 || response.statusCode == 413 || response.statusCode == 400) {
+            if (response.statusCode == 429 ||
+                response.statusCode == 413 ||
+                response.statusCode == 400) {
               continue;
             }
             return response;
           }
         } catch (e) {
-          ParsingLogger.error('Groq Parser: Call failed on model $currentModel', e);
+          ParsingLogger.error(
+              'Groq Parser: Call failed on model $currentModel', e);
         }
       }
 
       // If all Groq models failed, check if Ollama is available locally as a backup
       if (await _isOllamaAvailable()) {
-        ParsingLogger.warning('Groq Parser: All Groq API models failed/rate-limited. Automatically switching to local Ollama fallback...');
+        ParsingLogger.warning(
+            'Groq Parser: All Groq API models failed/rate-limited. Automatically switching to local Ollama fallback...');
         final backupResponse = await _executeOllamaRequest(prompt);
         if (backupResponse != null) return backupResponse;
       }
@@ -697,31 +750,31 @@ CONTENT TO ANALYZE:
 
     // ── GEMINI PROVIDER ROAD ──
     int attempt = 0;
-    
+
     while (attempt < maxRetries) {
       attempt++;
-      
+
       try {
-        ParsingLogger.summary('Gemini Parser: API call attempt $attempt/$maxRetries using model: ${AIConfig.geminiModel}');
-        
-        final response = await http.post(
-          Uri.parse(AIConfig.geminiGenerateUrl),
-          headers: AIConfig.geminiHeaders,
-          body: json.encode(requestBody),
-        );
-        
+        ParsingLogger.summary(
+            'Gemini Parser: API call attempt $attempt/$maxRetries using model: ${AIConfig.geminiModel}');
+
+        final response = await sendGeminiRequest(requestBody);
+
         // Check if rate limit error occurred (429)
         if (AIConfig.isRateLimitError(response.statusCode, response.body)) {
-          ParsingLogger.warning('Gemini Parser: Rate limit detected (Status: ${response.statusCode})');
+          ParsingLogger.warning(
+              'Gemini Parser: Rate limit detected (Status: ${response.statusCode})');
 
           // Try to switch to fallback model
           final switched = AIConfig.switchToFallbackModel();
 
           if (!switched) {
-            ParsingLogger.error('Gemini Parser: No more fallback models available');
+            ParsingLogger.error(
+                'Gemini Parser: No more fallback models available');
             if (attempt < maxRetries) {
               // Free-tier resets every 60s — wait for the window to pass
-              ParsingLogger.summary('Gemini Parser: Waiting 60s for rate limit reset...');
+              ParsingLogger.summary(
+                  'Gemini Parser: Waiting 60s for rate limit reset...');
               await Future.delayed(const Duration(seconds: 60));
               AIConfig.resetToPrimaryModel();
               continue;
@@ -731,32 +784,36 @@ CONTENT TO ANALYZE:
 
           // Stepped backoff when switching models: 15s → 30s → 45s
           final waitSeconds = attempt * 15;
-          ParsingLogger.summary('Gemini Parser: Waiting ${waitSeconds}s before retry with fallback model...');
+          ParsingLogger.summary(
+              'Gemini Parser: Waiting ${waitSeconds}s before retry with fallback model...');
           await Future.delayed(Duration(seconds: waitSeconds));
           continue;
         }
 
         // Success or non-rate-limit error — return the response
         if (response.statusCode == 200) {
-          ParsingLogger.summary('Gemini Parser: API call successful with model: ${AIConfig.geminiModel}');
+          ParsingLogger.summary(
+              'Gemini Parser: API call successful with model: ${AIConfig.geminiModel}');
         }
         return response;
-
       } catch (e) {
-        ParsingLogger.error('Gemini Parser: API call error on attempt $attempt', e);
+        ParsingLogger.error(
+            'Gemini Parser: API call error on attempt $attempt', e);
 
         if (attempt < maxRetries) {
-          ParsingLogger.summary('Gemini Parser: Waiting 10 seconds before retry...');
+          ParsingLogger.summary(
+              'Gemini Parser: Waiting 10 seconds before retry...');
           await Future.delayed(const Duration(seconds: 10));
           AIConfig.switchToFallbackModel();
         }
       }
     }
-    
+
     ParsingLogger.error('Gemini Parser: All API attempts exhausted');
 
     if (await _isOllamaAvailable()) {
-      ParsingLogger.warning('Gemini Parser: Gemini API failed/rate-limited. Automatically switching to local Ollama fallback...');
+      ParsingLogger.warning(
+          'Gemini Parser: Gemini API failed/rate-limited. Automatically switching to local Ollama fallback...');
       final backupResponse = await _executeOllamaRequest(prompt);
       if (backupResponse != null) return backupResponse;
     }
@@ -766,12 +823,12 @@ CONTENT TO ANALYZE:
 
   static String _pruneAndCleanText(String text, [String? bankName]) {
     if (text.isEmpty) return text;
-    
+
     // 1. Clean whitespace
     String cleaned = text.replaceAll(RegExp(r'\n+'), '\n');
     cleaned = cleaned.replaceAll(RegExp(r' {2,}'), ' ');
     cleaned = cleaned.trim();
-    
+
     // 2. Prune boilerplate (T&C, grievance redressal, branches list) at the end
     final lowerText = cleaned.toLowerCase();
     final markers = [
@@ -787,7 +844,7 @@ CONTENT TO ANALYZE:
       'branch addresses',
       'list of branches',
     ];
-    
+
     int bestCutIndex = -1;
     for (final marker in markers) {
       final idx = lowerText.indexOf(marker);
@@ -797,13 +854,14 @@ CONTENT TO ANALYZE:
         }
       }
     }
-    
+
     // Truncate only if we keep at least 3500 chars (safe threshold for transactions)
     if (bestCutIndex > 3500) {
-      ParsingLogger.summary('Text Pruning: PDF statement text reduced from ${cleaned.length} to $bestCutIndex characters');
+      ParsingLogger.summary(
+          'Text Pruning: PDF statement text reduced from ${cleaned.length} to $bestCutIndex characters');
       final original = cleaned;
       cleaned = cleaned.substring(0, bestCutIndex);
-      
+
       // Log the pruning event to the audit service (async)
       PruningAuditService().logPruning(
         bankName: bankName ?? 'Unknown Bank',
@@ -812,15 +870,17 @@ CONTENT TO ANALYZE:
         prunedText: cleaned,
       );
     }
-    
+
     return cleaned;
   }
 
   static Future<bool> _isOllamaAvailable() async {
     try {
-      final response = await http.get(
-        Uri.parse('${AIConfig.ollamaUrl}/api/tags'),
-      ).timeout(const Duration(milliseconds: 500));
+      final response = await http
+          .get(
+            Uri.parse('${AIConfig.ollamaUrl}/api/tags'),
+          )
+          .timeout(const Duration(milliseconds: 500));
       return response.statusCode == 200;
     } catch (_) {
       return false;
@@ -839,21 +899,23 @@ CONTENT TO ANALYZE:
       };
 
       final targetUrl = '${AIConfig.ollamaUrl}/api/generate';
-      ParsingLogger.summary('Ollama Parser: Sending fallback request using model: ${AIConfig.ollamaModel}');
+      ParsingLogger.summary(
+          'Ollama Parser: Sending fallback request using model: ${AIConfig.ollamaModel}');
 
-      final response = await http.post(
+      final response = await http
+          .post(
         Uri.parse(targetUrl),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(ollamaReq),
-      ).timeout(const Duration(minutes: 5), onTimeout: () {
+      )
+          .timeout(const Duration(minutes: 5), onTimeout: () {
         throw Exception('Ollama API timeout.');
       });
-
 
       if (response.statusCode == 200) {
         final jsonResponse = jsonDecode(response.body);
         final text = jsonResponse['response'] as String? ?? '';
-        
+
         final geminiJsonWrapper = {
           'candidates': [
             {
@@ -880,23 +942,23 @@ CONTENT TO ANALYZE:
 
   static String _extractJsonPayload(String text) {
     text = text.trim();
-    
+
     // Find the first bracket/brace
     final firstBracket = text.indexOf('[');
     final firstBrace = text.indexOf('{');
-    
+
     int startIdx = -1;
-    
+
     if (firstBracket != -1 && (firstBrace == -1 || firstBracket < firstBrace)) {
       startIdx = firstBracket;
     } else if (firstBrace != -1) {
       startIdx = firstBrace;
     }
-    
+
     if (startIdx != -1) {
       text = text.substring(startIdx);
     }
-    
+
     // Heal the JSON payload to recover truncated arrays or objects
     text = _healJsonPayload(text);
     return text;
@@ -920,7 +982,8 @@ CONTENT TO ANALYZE:
           text = text.substring(0, text.length - 1).trim();
         }
         text += ']';
-        ParsingLogger.summary('JSON Healing: Recovered incomplete JSON array and appended "]"');
+        ParsingLogger.summary(
+            'JSON Healing: Recovered incomplete JSON array and appended "]"');
       }
     } else if (text.startsWith('{')) {
       if (!text.endsWith('}')) {
@@ -934,11 +997,10 @@ CONTENT TO ANALYZE:
         if (openBraces > closeBraces) {
           text += '}' * (openBraces - closeBraces);
         }
-        ParsingLogger.summary('JSON Healing: Recovered incomplete JSON object by closing open braces');
+        ParsingLogger.summary(
+            'JSON Healing: Recovered incomplete JSON object by closing open braces');
       }
     }
     return text;
   }
 }
-
-

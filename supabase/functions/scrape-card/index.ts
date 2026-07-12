@@ -6,7 +6,8 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -22,40 +23,57 @@ serve(async (req) => {
     if (!url || typeof url !== "string") {
       return new Response(
         JSON.stringify({ error: "Missing or invalid 'url' parameter" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
       );
     }
 
     // Validate URL is a legitimate bank/financial website
     const parsedUrl = new URL(url);
     const allowedDomains = [
-      "axisbank.com", "axis.bank.in",
-      "hdfcbank.com", "hdfc.bank.in",
-      "icicibank.com", "icici.bank.in",
+      "axisbank.com",
+      "axis.bank.in",
+      "hdfcbank.com",
+      "hdfc.bank.in",
+      "icicibank.com",
+      "icici.bank.in",
       "sbicard.com",
-      "kotak.com", "kotak.bank.in",
-      "idfcfirstbank.com", "idfcfirst.bank.in",
-      "aubank.in", "au.bank.in",
-      "yesbank.in", "yes.bank.in",
-      "indusind.com", "indusind.bank.in",
-      "rbl.bank", "rblbank.com",
+      "kotak.com",
+      "kotak.bank.in",
+      "idfcfirstbank.com",
+      "idfcfirst.bank.in",
+      "aubank.in",
+      "au.bank.in",
+      "yesbank.in",
+      "yes.bank.in",
+      "indusind.com",
+      "indusind.bank.in",
+      "rbl.bank",
+      "rblbank.com",
       "bobfinancial.com",
-      "sc.com",          // Standard Chartered
+      "sc.com", // Standard Chartered
       "hsbc.co.in",
       "citibank.com",
       "americanexpress.com",
-      "google.com",      // For Google Search fallback
+      "google.com", // For Google Search fallback
     ];
 
     const hostname = parsedUrl.hostname.toLowerCase();
     const isDomainAllowed = allowedDomains.some(
-      (domain) => hostname === domain || hostname.endsWith(`.${domain}`) || hostname === `www.${domain}`
+      (domain) =>
+        hostname === domain || hostname.endsWith(`.${domain}`) ||
+        hostname === `www.${domain}`,
     );
 
     if (!isDomainAllowed) {
       return new Response(
         JSON.stringify({ error: `Domain not allowed: ${hostname}` }),
-        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
       );
     }
 
@@ -89,18 +107,22 @@ serve(async (req) => {
       {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      },
     );
   } catch (error) {
+    const message = error instanceof Error
+      ? error.message
+      : "Unknown error during scraping";
+
     return new Response(
       JSON.stringify({
         success: false,
-        error: error.message || "Unknown error during scraping",
+        error: message,
       }),
       {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      },
     );
   }
 });

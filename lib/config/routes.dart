@@ -42,7 +42,7 @@ class AppRoutes {
     switch (settings.name) {
       case splash:
         return MaterialPageRoute(
-          builder: (_) => const PmPruningDebugScreen(),
+          builder: (_) => const SplashScreen(),
           settings: settings,
         );
 

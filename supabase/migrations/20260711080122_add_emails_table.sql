@@ -10,7 +10,7 @@
 CREATE TABLE IF NOT EXISTS emails (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
-  email_id TEXT NOT NULL UNIQUE,
+  email_id TEXT NOT NULL,
   subject TEXT,
   sender TEXT,
   received_date TIMESTAMP WITH TIME ZONE,
@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS emails (
 );
 
 CREATE INDEX IF NOT EXISTS idx_emails_user_id ON emails(user_id);
-CREATE INDEX IF NOT EXISTS idx_emails_email_id ON emails(email_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_user_email_id ON emails(user_id, email_id);
 CREATE INDEX IF NOT EXISTS idx_emails_user_received_date ON emails(user_id, received_date DESC);
 CREATE INDEX IF NOT EXISTS idx_emails_unprocessed ON emails(user_id, processed) WHERE processed = false;
 

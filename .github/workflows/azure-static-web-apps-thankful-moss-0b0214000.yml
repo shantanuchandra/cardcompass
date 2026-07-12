@@ -25,11 +25,15 @@ jobs:
         with:
             flutter-version: '3.35.1' # or your required version
 
-      - name: Build Flutter web
-        run: flutter build web
-
       - name: Install dependencies
         run: flutter pub get
+
+      - name: Build Flutter web
+        run: >-
+          flutter build web --release
+          --dart-define=SUPABASE_URL=${{ secrets.SUPABASE_URL }}
+          --dart-define=SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
+          --dart-define=GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
 
       - name: Build And Deploy
         id: builddeploy

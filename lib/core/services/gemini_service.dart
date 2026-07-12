@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:cardcompass/core/config/ai_config.dart';
+import 'gemini_request_service.dart';
 
 /// Service for interacting with Google Gemini AI API
 class GeminiService {
@@ -115,11 +116,7 @@ class GeminiService {
         }
       };
 
-      final response = await http.post(
-        Uri.parse(AIConfig.geminiGenerateUrl),
-        headers: AIConfig.geminiHeaders,
-        body: jsonEncode(requestBody),
-      );
+      final response = await sendGeminiRequest(requestBody);
 
       if (response.statusCode == 200) {
         final jsonResponse = jsonDecode(response.body);

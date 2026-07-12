@@ -10,7 +10,8 @@ CREATE TABLE IF NOT EXISTS card_benefits_staging (
 );
 
 -- Grant appropriate permissions
+ALTER TABLE card_benefits_staging ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON card_benefits_staging FROM anon;
+REVOKE ALL ON card_benefits_staging FROM authenticated;
 GRANT ALL ON card_benefits_staging TO postgres;
-GRANT ALL ON card_benefits_staging TO anon;
-GRANT ALL ON card_benefits_staging TO authenticated;
 GRANT ALL ON card_benefits_staging TO service_role;
