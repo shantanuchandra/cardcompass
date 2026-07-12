@@ -4,35 +4,44 @@ import 'package:cardcompass/core/config/ai_config.dart';
 
 /// Utility class for managing dashboard dialogs
 class DashboardDialogs {
-  
   /// Show sync data configuration dialog
-  static Future<Map<String, dynamic>?> showSyncDialog(BuildContext context) async {
+  static Future<Map<String, dynamic>?> showSyncDialog(
+      BuildContext context) async {
     final numberOfEmailsController = TextEditingController(text: '30');
     DateTime? startDate = DateTime.now().subtract(const Duration(days: 30));
 
     // Ollama parameters
     var localProvider = AIConfig.activeProvider;
     final ollamaUrlController = TextEditingController(text: AIConfig.ollamaUrl);
-    final ollamaModelController = TextEditingController(text: AIConfig.ollamaModel);
+    final ollamaModelController =
+        TextEditingController(text: AIConfig.ollamaModel);
 
     // Groq parameters
-    final groqApiKeyController = TextEditingController(text: AIConfig.groqApiKey);
+    final groqApiKeyController =
+        TextEditingController(text: AIConfig.groqApiKey);
     final groqModelController = TextEditingController(text: AIConfig.groqModel);
 
     // Instantly cache in memory as they type
-    ollamaUrlController.addListener(() => AIConfig.ollamaUrl = ollamaUrlController.text.trim());
-    ollamaModelController.addListener(() => AIConfig.ollamaModel = ollamaModelController.text.trim());
-    groqApiKeyController.addListener(() => AIConfig.groqApiKey = groqApiKeyController.text.trim());
-    groqModelController.addListener(() => AIConfig.groqModel = groqModelController.text.trim());
+    ollamaUrlController.addListener(
+        () => AIConfig.ollamaUrl = ollamaUrlController.text.trim());
+    ollamaModelController.addListener(
+        () => AIConfig.ollamaModel = ollamaModelController.text.trim());
+    groqApiKeyController.addListener(
+        () => AIConfig.groqApiKey = groqApiKeyController.text.trim());
+    groqModelController.addListener(
+        () => AIConfig.groqModel = groqModelController.text.trim());
 
     return showDialog<Map<String, dynamic>>(
-
       context: context,
       builder: (BuildContext context) {
         return StatefulBuilder(
           builder: (context, setState) {
             // Models dropdown lists
-            final groqModels = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'];
+            final groqModels = [
+              'llama-3.3-70b-versatile',
+              'llama-3.1-8b-instant',
+              'mixtral-8x7b-32768'
+            ];
             if (!groqModels.contains(groqModelController.text)) {
               groqModels.insert(0, groqModelController.text);
             }
@@ -43,7 +52,6 @@ class DashboardDialogs {
             }
 
             return AlertDialog(
-
               title: const Row(
                 children: [
                   Icon(Icons.sync, color: Colors.blue),
@@ -57,7 +65,7 @@ class DashboardDialogs {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                       'This will fetch credit card statements from your Gmail account and import transactions into the app.',
+                      'This will fetch credit card statements from your Gmail account and import transactions into the app.',
                       style: TextStyle(fontSize: 14),
                     ),
                     const SizedBox(height: 16),
@@ -99,7 +107,8 @@ class DashboardDialogs {
                     const Divider(height: 32),
                     const Text(
                       'AI LLM Parsing Engine Settings',
-                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                      style:
+                          TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 12),
                     DropdownButtonFormField<AIProvider>(
@@ -142,8 +151,6 @@ class DashboardDialogs {
                         ),
                       ),
                     ],
-
-
                     if (localProvider == AIProvider.ollama) ...[
                       const SizedBox(height: 12),
                       TextFormField(
@@ -154,8 +161,7 @@ class DashboardDialogs {
                           border: OutlineInputBorder(),
                         ),
                       ),
-                    ],
-   const SizedBox(height: 8),
+                      const SizedBox(height: 8),
                       Container(
                         padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(
@@ -196,8 +202,8 @@ class DashboardDialogs {
                       groqMod: groqModelController.text.trim(),
                     );
 
-
-                    final numberOfEmails = int.tryParse(numberOfEmailsController.text) ?? 30;
+                    final numberOfEmails =
+                        int.tryParse(numberOfEmailsController.text) ?? 30;
                     Navigator.of(context).pop({
                       'numberOfEmails': numberOfEmails,
                       'startDate': startDate,
@@ -215,7 +221,7 @@ class DashboardDialogs {
 
   /// Show delete confirmation dialog with data counts
   static Future<bool?> showDeleteConfirmationDialog(
-    BuildContext context, 
+    BuildContext context,
     Map<String, int> counts,
   ) async {
     return showDialog<bool>(
@@ -239,16 +245,16 @@ class DashboardDialogs {
               ),
               const SizedBox(height: 12),
               if (counts.isNotEmpty) ...[
-                Text('📊 Current data to be deleted:', 
-                     style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                Text('📊 Current data to be deleted:',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600])),
                 const SizedBox(height: 8),
                 ...counts.entries.map((entry) => Padding(
-                  padding: const EdgeInsets.only(left: 8, bottom: 4),
-                  child: Text(
-                    '• ${entry.value} ${entry.key}',
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                )),
+                      padding: const EdgeInsets.only(left: 8, bottom: 4),
+                      child: Text(
+                        '• ${entry.value} ${entry.key}',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    )),
               ] else ...[
                 const Text(
                   '• All credit cards\n'
@@ -262,7 +268,10 @@ class DashboardDialogs {
               const SizedBox(height: 12),
               const Text(
                 '⚠️ This action cannot be undone!',
-                style: TextStyle(fontSize: 12, color: Colors.red, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.red,
+                    fontWeight: FontWeight.bold),
               ),
             ],
           ),
