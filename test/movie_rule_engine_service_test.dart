@@ -8,7 +8,12 @@ import 'package:cardcompass/core/app_config.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  final hasSupabaseConfig = AppConfig.supabaseUrl.isNotEmpty &&
+      AppConfig.supabaseAnonKey.isNotEmpty &&
+      Uri.tryParse(AppConfig.supabaseUrl)?.hasAuthority == true;
+
   setUpAll(() async {
+    if (!hasSupabaseConfig) return;
     SharedPreferences.setMockInitialValues({});
     try {
       Supabase.instance.client;
@@ -18,7 +23,7 @@ void main() {
         publishableKey: AppConfig.supabaseAnonKey,
       );
     }
-    
+
     // Seed test data
     final supabase = Supabase.instance.client;
     await _cleanupTestData(supabase);
@@ -26,6 +31,7 @@ void main() {
   });
 
   tearDownAll(() async {
+    if (!hasSupabaseConfig) return;
     final supabase = Supabase.instance.client;
     await _cleanupTestData(supabase);
   });
@@ -37,7 +43,8 @@ void main() {
       service = MovieRuleEngineService();
     });
 
-    test('returns empty recommendation if no cards with movie benefits', () async {
+    test('returns empty recommendation if no cards with movie benefits',
+        () async {
       // Arrange: Use a userId that has no cards/benefits in test DB
       const userId = 'test-user-no-benefits';
       final request = MovieTicketRequest(
@@ -46,7 +53,8 @@ void main() {
       );
 
       // Act
-      final result = await service.optimizeMovieTicketPurchase(userId: userId, request: request);
+      final result = await service.optimizeMovieTicketPurchase(
+          userId: userId, request: request);
 
       // Assert
       expect(result, isA<MovieRecommendation>());
@@ -55,7 +63,9 @@ void main() {
       expect(result.totalSavings, 0);
     });
 
-    test('returns a valid recommendation if user has a card with a valid movie benefit', () async {
+    test(
+        'returns a valid recommendation if user has a card with a valid movie benefit',
+        () async {
       // Arrange: Use a userId that has at least one card with a valid movie benefit in test DB
       final userId = AppConstants.testUserIdMovieRuleEngine;
       final request = MovieTicketRequest(
@@ -63,7 +73,8 @@ void main() {
         pricePerTicket: 300,
       );
       // Act
-      final result = await service.optimizeMovieTicketPurchase(userId: userId, request: request);
+      final result = await service.optimizeMovieTicketPurchase(
+          userId: userId, request: request);
       // Assert
       expect(result.steps, isNotEmpty);
       expect(result.totalSavings, greaterThan(0));
@@ -77,7 +88,8 @@ void main() {
         pricePerTicket: 250,
       );
       // Act
-      final result = await service.optimizeMovieTicketPurchase(userId: userId, request: request);
+      final result = await service.optimizeMovieTicketPurchase(
+          userId: userId, request: request);
       // Assert
       expect(result.steps.length, greaterThanOrEqualTo(1));
       expect(result.totalSavings, greaterThan(0));
@@ -91,7 +103,8 @@ void main() {
         pricePerTicket: 200,
       );
       // Act
-      final result = await service.optimizeMovieTicketPurchase(userId: userId, request: request);
+      final result = await service.optimizeMovieTicketPurchase(
+          userId: userId, request: request);
       // Assert
       // Should not apply benefit if limit is reached
       // (You may need to adjust this test based on your DB state)
@@ -106,7 +119,8 @@ void main() {
         pricePerTicket: 100,
       );
       // Act
-      final result = await service.optimizeMovieTicketPurchase(userId: userId, request: request);
+      final result = await service.optimizeMovieTicketPurchase(
+          userId: userId, request: request);
       // Assert
       expect(result, isA<MovieRecommendation>());
       // Should return an empty recommendation on error
@@ -122,7 +136,8 @@ void main() {
         preferredPlatform: 'BookMyShow',
       );
       // Act
-      final result = await service.optimizeMovieTicketPurchase(userId: userId, request: request);
+      final result = await service.optimizeMovieTicketPurchase(
+          userId: userId, request: request);
       // Assert
       expect(result.steps.any((step) => step.benefitType == 'BOGO'), isTrue);
       expect(result.totalSavings, greaterThan(0));
@@ -137,10 +152,14 @@ void main() {
         preferredPlatform: 'PVR',
       );
       // Act
-      final result = await service.optimizeMovieTicketPurchase(userId: userId, request: request);
+      final result = await service.optimizeMovieTicketPurchase(
+          userId: userId, request: request);
       // Assert: Pass if any step uses percent discount, even if not optimal
-      final hasPercentDiscount = result.steps.any((step) => step.benefitType == 'PERCENT_DISCOUNT');
-      expect(hasPercentDiscount, isTrue, reason: 'At least one step should use percent discount if available.');
+      final hasPercentDiscount =
+          result.steps.any((step) => step.benefitType == 'PERCENT_DISCOUNT');
+      expect(hasPercentDiscount, isTrue,
+          reason:
+              'At least one step should use percent discount if available.');
     });
 
     test('applies cashback offer correctly', () async {
@@ -152,10 +171,13 @@ void main() {
         preferredPlatform: 'Cinepolis',
       );
       // Act
-      final result = await service.optimizeMovieTicketPurchase(userId: userId, request: request);
+      final result = await service.optimizeMovieTicketPurchase(
+          userId: userId, request: request);
       // Assert: Pass if any step uses cashback, even if not optimal
-      final hasCashback = result.steps.any((step) => step.benefitType == 'CASHBACK');
-      expect(hasCashback, isTrue, reason: 'At least one step should use cashback if available.');
+      final hasCashback =
+          result.steps.any((step) => step.benefitType == 'CASHBACK');
+      expect(hasCashback, isTrue,
+          reason: 'At least one step should use cashback if available.');
     });
 
     test('applies milestone reward correctly', () async {
@@ -167,9 +189,11 @@ void main() {
         preferredPlatform: 'INOX',
       );
       // Act
-      final result = await service.optimizeMovieTicketPurchase(userId: userId, request: request);
+      final result = await service.optimizeMovieTicketPurchase(
+          userId: userId, request: request);
       // Assert
-      expect(result.steps.any((step) => step.benefitType == 'MILESTONE'), isTrue);
+      expect(
+          result.steps.any((step) => step.benefitType == 'MILESTONE'), isTrue);
     });
 
     test('respects platform preference (e.g., BookMyShow only)', () async {
@@ -179,8 +203,10 @@ void main() {
         pricePerTicket: 350,
         preferredPlatform: 'BookMyShow',
       );
-      final result = await service.optimizeMovieTicketPurchase(userId: userId, request: request);
-      expect(result.steps.every((step) => step.platform == 'BookMyShow'), isTrue);
+      final result = await service.optimizeMovieTicketPurchase(
+          userId: userId, request: request);
+      expect(
+          result.steps.every((step) => step.platform == 'BookMyShow'), isTrue);
     });
 
     test('does not apply benefit if below efficiency threshold', () async {
@@ -190,7 +216,8 @@ void main() {
         numberOfTickets: 1,
         pricePerTicket: 10, // Too low for efficiency
       );
-      final result = await service.optimizeMovieTicketPurchase(userId: userId, request: request);
+      final result = await service.optimizeMovieTicketPurchase(
+          userId: userId, request: request);
       expect(result.steps, isEmpty);
     });
 
@@ -201,30 +228,36 @@ void main() {
         numberOfTickets: 1,
         pricePerTicket: 50, // Below min amount
       );
-      final result = await service.optimizeMovieTicketPurchase(userId: userId, request: request);
+      final result = await service.optimizeMovieTicketPurchase(
+          userId: userId, request: request);
       expect(result.steps, isEmpty);
     });
 
-    test('does not apply benefit if not valid on today (day of week)', () async {
+    test('does not apply benefit if not valid on today (day of week)',
+        () async {
       // Arrange: Set up a benefit valid only on a different day
       final userId = AppConstants.testUserIdMovieRuleEngine;
       final request = MovieTicketRequest(
         numberOfTickets: 2,
         pricePerTicket: 200,
       );
-      final result = await service.optimizeMovieTicketPurchase(userId: userId, request: request);
+      final result = await service.optimizeMovieTicketPurchase(
+          userId: userId, request: request);
       // If today is not a valid day, expect no steps
       // (This test may need to be adjusted based on DB config)
       expect(result.steps, isA<List>());
     });
 
     // Add more tests for real DB/test data as needed
-  });
+  },
+      skip: hasSupabaseConfig
+          ? false
+          : 'Requires configured Supabase credentials');
 }
 
 Future<void> _seedTestData(SupabaseClient supabase) async {
   final testUserId = '5dc9b591-40b6-4486-944e-3b4ef58c3d47';
-  
+
   // Fetch 5 active cards from catalog
   final cards = await supabase
       .from('card_catalog')
@@ -380,11 +413,11 @@ Future<void> _seedTestData(SupabaseClient supabase) async {
       .from('user_cards')
       .select('catalog_card_id')
       .eq('user_id', testUserId);
-  
+
   final existingCardIds = (existingUserCards as List)
       .map((uc) => uc['catalog_card_id'].toString())
       .toSet();
-  
+
   final userCardsToInsert = <Map<String, dynamic>>[];
   for (int i = 0; i < cards.length; i++) {
     final cardId = cards[i]['id'].toString();
@@ -417,7 +450,7 @@ Future<void> _cleanupTestData(SupabaseClient supabase) async {
     '00000000-0000-0000-0000-0000000000a4',
     '00000000-0000-0000-0000-0000000000a5'
   ]);
-  
+
   await supabase.from('benefits').delete().inFilter('benefit_id', [
     '00000000-0000-0000-0000-000000000001',
     '00000000-0000-0000-0000-000000000002',

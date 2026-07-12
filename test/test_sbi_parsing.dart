@@ -13,7 +13,7 @@ void main() {
 
   test('Parse SBI statement and check amounts', () async {
     // Load the SBI PDF file
-    final file = File('d:/CC/CC_all/cardcompass/assets/9391656461119329_08062025_SBI.pdf');
+    final file = File('assets/9391656461119329_08062025_SBI.pdf');
     final Uint8List pdfBytes = await file.readAsBytes();
 
     // Create an instance of the parsing service

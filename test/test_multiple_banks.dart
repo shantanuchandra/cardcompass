@@ -13,7 +13,7 @@ void main() {
 
   test('Test HDFC DCB statement parsing', () async {
     // Load the HDFC DCB PDF file
-    final file = File('d:/CC/CC_all/cardcompass/assets/3610XXXXXXXX81_15-06-2025_HDFC_DCB.PDF');
+    final file = File('assets/3610XXXXXXXX81_15-06-2025_HDFC_DCB.PDF');
     final Uint8List pdfBytes = await file.readAsBytes();
 
     // Create an instance of the parsing service
@@ -102,7 +102,7 @@ void main() {
 
   test('Test Axis Vistara statement parsing', () async {
     // Load the Axis Vistara PDF file
-    final file = File('d:/CC/CC_all/cardcompass/assets/Credit Card Statement_AxisVistara.pdf');
+    final file = File('assets/Credit Card Statement_AxisVistara.pdf');
     final Uint8List pdfBytes = await file.readAsBytes();
 
     // Create an instance of the parsing service
@@ -191,7 +191,7 @@ void main() {
 
   test('Test IndusInd statement parsing', () async {
     // Load the IndusInd PDF file
-    final file = File('d:/CC/CC_all/cardcompass/assets/CC_STMT_075992154_527254_0605202505062025_IndusInd.pdf');
+    final file = File('assets/CC_STMT_075992154_527254_0605202505062025_IndusInd.pdf');
     final Uint8List pdfBytes = await file.readAsBytes();
 
     // Create an instance of the parsing service
@@ -280,7 +280,7 @@ void main() {
 
   test('Test SBI statement parsing', () async {
     // Load the SBI PDF file
-    final file = File('d:/CC/CC_all/cardcompass/assets/9391656461119329_08062025_SBI.pdf');
+    final file = File('assets/9391656461119329_08062025_SBI.pdf');
     final Uint8List pdfBytes = await file.readAsBytes();
 
     // Create an instance of the parsing service
@@ -369,7 +369,7 @@ void main() {
 
   test('Test HSBC statement parsing', () async {
     // Load the HSBC PDF file
-    final file = File('d:/CC/CC_all/cardcompass/assets/20250605_HSBC.pdf');
+    final file = File('assets/20250605_HSBC.pdf');
     final Uint8List pdfBytes = await file.readAsBytes();
 
     // Create an instance of the parsing service
