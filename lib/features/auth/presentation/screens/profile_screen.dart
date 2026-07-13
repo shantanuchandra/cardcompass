@@ -19,7 +19,8 @@ class ProfileScreen extends ConsumerStatefulWidget {
 
 class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   String _getAppVersion() {
-    const buildDate = String.fromEnvironment('BUILD_DATE', defaultValue: '2025-10-03 10:01');
+    const buildDate =
+        String.fromEnvironment('BUILD_DATE', defaultValue: '2025-10-03 10:01');
     final regex = RegExp(r'^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})');
     final match = regex.firstMatch(buildDate);
     if (match != null) {
@@ -32,7 +33,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     }
     return buildDate;
   }
-  
+
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
@@ -75,14 +76,16 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       title: 'User Profile',
       actions: [
         IconButton(
-          icon: Icon(_isEditing ? Icons.check : Icons.edit_outlined, color: AppTheme.primaryColor),
+          icon: Icon(_isEditing ? Icons.check : Icons.edit_outlined,
+              color: AppTheme.primaryColor),
           onPressed: _isEditing ? _saveProfile : _toggleEdit,
         ),
       ],
       body: authState.isLoading
           ? const LoadingState()
           : SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: AppSpacing.lg),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 18, vertical: AppSpacing.lg),
               child: Form(
                 key: _formKey,
                 child: Column(
@@ -95,8 +98,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                             padding: const EdgeInsets.all(AppSpacing.xs),
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              border: Border.all(color: AppTheme.primaryColor.withValues(alpha: 0.3), width: 2),
-                              boxShadow: AppTheme.neonGlow(color: AppTheme.primaryColor, opacity: 0.15, blurRadius: 15),
+                              border: Border.all(
+                                  color: AppTheme.primaryColor
+                                      .withValues(alpha: 0.3),
+                                  width: 2),
+                              boxShadow: AppTheme.neonGlow(
+                                  color: AppTheme.primaryColor,
+                                  opacity: 0.15,
+                                  blurRadius: 15),
                             ),
                             child: const CircleAvatar(
                               radius: 54,
@@ -118,7 +127,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                                   shape: BoxShape.circle,
                                 ),
                                 child: IconButton(
-                                  icon: const Icon(Icons.camera_alt, color: Color(0xFF050B18), size: 20),
+                                  icon: const Icon(Icons.camera_alt,
+                                      color: Color(0xFF050B18), size: 20),
                                   onPressed: _changeProfilePicture,
                                 ),
                               ),
@@ -137,10 +147,12 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                           TextFormField(
                             controller: _nameController,
                             enabled: _isEditing,
-                            style: AppTextStyles.body1.copyWith(color: Colors.white),
+                            style: AppTextStyles.body1
+                                .copyWith(color: Colors.white),
                             decoration: const InputDecoration(
                               labelText: 'Full Name',
-                              prefixIcon: Icon(Icons.person_outline, color: AppTheme.primaryColor),
+                              prefixIcon: Icon(Icons.person_outline,
+                                  color: AppTheme.primaryColor),
                             ),
                             validator: (value) {
                               if (value == null || value.isEmpty) {
@@ -153,10 +165,12 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                           TextFormField(
                             controller: _emailController,
                             enabled: _isEditing,
-                            style: AppTextStyles.body1.copyWith(color: Colors.white),
+                            style: AppTextStyles.body1
+                                .copyWith(color: Colors.white),
                             decoration: const InputDecoration(
                               labelText: 'Email Address',
-                              prefixIcon: Icon(Icons.email_outlined, color: AppTheme.primaryColor),
+                              prefixIcon: Icon(Icons.email_outlined,
+                                  color: AppTheme.primaryColor),
                             ),
                             validator: (value) {
                               if (value == null || value.isEmpty) {
@@ -172,10 +186,12 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                           TextFormField(
                             controller: _phoneController,
                             enabled: _isEditing,
-                            style: AppTextStyles.body1.copyWith(color: Colors.white),
+                            style: AppTextStyles.body1
+                                .copyWith(color: Colors.white),
                             decoration: const InputDecoration(
                               labelText: 'Phone Number',
-                              prefixIcon: Icon(Icons.phone_outlined, color: AppTheme.primaryColor),
+                              prefixIcon: Icon(Icons.phone_outlined,
+                                  color: AppTheme.primaryColor),
                             ),
                             validator: (value) {
                               if (value == null || value.isEmpty) {
@@ -196,35 +212,61 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       child: Column(
                         children: [
                           ListTile(
-                            leading: const Icon(Icons.notifications_none, color: AppTheme.primaryColor),
-                            title: Text('PUSH NOTIFICATIONS', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                            leading: const Icon(Icons.notifications_none,
+                                color: AppTheme.primaryColor),
+                            title: Text('PUSH NOTIFICATIONS',
+                                style: GoogleFonts.spaceGrotesk(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold)),
                             trailing: Switch(
                               value: _notificationsEnabled,
                               activeColor: AppTheme.primaryColor,
-                              onChanged: _isEditing ? (value) {
-                                setState(() => _notificationsEnabled = value);
-                                ref.read(appPreferencesProvider).setNotificationsEnabled(value);
-                              } : null,
+                              onChanged: _isEditing
+                                  ? (value) {
+                                      setState(
+                                          () => _notificationsEnabled = value);
+                                      ref
+                                          .read(appPreferencesProvider)
+                                          .setNotificationsEnabled(value);
+                                    }
+                                  : null,
                             ),
                           ),
                           const Divider(height: 1),
                           ListTile(
-                            leading: const Icon(Icons.fingerprint, color: AppTheme.primaryColor),
-                            title: Text('BIOMETRIC CREDENTIALS', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                            leading: const Icon(Icons.fingerprint,
+                                color: AppTheme.primaryColor),
+                            title: Text('BIOMETRIC CREDENTIALS',
+                                style: GoogleFonts.spaceGrotesk(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold)),
                             trailing: Switch(
                               value: _biometricEnabled,
                               activeColor: AppTheme.primaryColor,
-                              onChanged: _isEditing ? (value) {
-                                setState(() => _biometricEnabled = value);
-                                ref.read(appPreferencesProvider).setBiometricEnabled(value);
-                              } : null,
+                              onChanged: _isEditing
+                                  ? (value) {
+                                      setState(() => _biometricEnabled = value);
+                                      ref
+                                          .read(appPreferencesProvider)
+                                          .setBiometricEnabled(value);
+                                    }
+                                  : null,
                             ),
                           ),
                           const Divider(height: 1),
                           ListTile(
-                            leading: const Icon(Icons.dark_mode_outlined, color: AppTheme.primaryColor),
-                            title: Text('DARK MODE ALWAYS', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                            subtitle: Text('Cyber-neon default mode', style: GoogleFonts.plusJakartaSans(color: Colors.white30, fontSize: 10)),
+                            leading: const Icon(Icons.dark_mode_outlined,
+                                color: AppTheme.primaryColor),
+                            title: Text('DARK MODE ALWAYS',
+                                style: GoogleFonts.spaceGrotesk(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold)),
+                            subtitle: Text('Cyber-neon default mode',
+                                style: GoogleFonts.plusJakartaSans(
+                                    color: Colors.white30, fontSize: 10)),
                             trailing: Switch(
                               value: true,
                               activeColor: AppTheme.primaryColor,
@@ -243,11 +285,19 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       child: Column(
                         children: [
                           ListTile(
-                            leading: const Icon(Icons.info_outline, color: AppTheme.primaryColor),
-                            title: Text('LEDGER VERSION', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                            leading: const Icon(Icons.info_outline,
+                                color: AppTheme.primaryColor),
+                            title: Text('LEDGER VERSION',
+                                style: GoogleFonts.spaceGrotesk(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold)),
                             trailing: Text(
                               _getAppVersion(),
-                              style: GoogleFonts.spaceGrotesk(color: Colors.white60, fontSize: 11, fontWeight: FontWeight.bold),
+                              style: GoogleFonts.spaceGrotesk(
+                                  color: Colors.white60,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold),
                             ),
                             onTap: () => _showInfoDialog(
                               'CARDCOMPASS ENGINE',
@@ -256,9 +306,15 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                           ),
                           const Divider(height: 1),
                           ListTile(
-                            leading: const Icon(Icons.privacy_tip_outlined, color: AppTheme.primaryColor),
-                            title: Text('PRIVACY REGISTRY', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                            trailing: const Icon(Icons.arrow_forward_ios, size: 12, color: Colors.white30),
+                            leading: const Icon(Icons.privacy_tip_outlined,
+                                color: AppTheme.primaryColor),
+                            title: Text('PRIVACY REGISTRY',
+                                style: GoogleFonts.spaceGrotesk(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold)),
+                            trailing: const Icon(Icons.arrow_forward_ios,
+                                size: 12, color: Colors.white30),
                             onTap: () => _showInfoDialog(
                               'PRIVACY POLICY',
                               'CardCompass stores your credit card details locally on your physical device. We do not transmit or sell account numbers. Signed-in sessions utilize encrypted database records, while guest mode remains permanently sandboxed on this client.',
@@ -266,9 +322,15 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                           ),
                           const Divider(height: 1),
                           ListTile(
-                            leading: const Icon(Icons.description_outlined, color: AppTheme.primaryColor),
-                            title: Text('TERMS OF PROTOCOL', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                            trailing: const Icon(Icons.arrow_forward_ios, size: 12, color: Colors.white30),
+                            leading: const Icon(Icons.description_outlined,
+                                color: AppTheme.primaryColor),
+                            title: Text('TERMS OF PROTOCOL',
+                                style: GoogleFonts.spaceGrotesk(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold)),
+                            trailing: const Icon(Icons.arrow_forward_ios,
+                                size: 12, color: Colors.white30),
                             onTap: () => _showInfoDialog(
                               'TERMS OF SERVICE',
                               'CardCompass is provided as-is without warranties. Optimization levels, reward calculations, and interest rates are local simulations based on document parsing parameters and may differ from your exact credit card statement.',
@@ -276,9 +338,15 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                           ),
                           const Divider(height: 1),
                           ListTile(
-                            leading: const Icon(Icons.help_outline, color: AppTheme.primaryColor),
-                            title: Text('HELP & SUPPORT TERMINAL', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                            trailing: const Icon(Icons.arrow_forward_ios, size: 12, color: Colors.white30),
+                            leading: const Icon(Icons.help_outline,
+                                color: AppTheme.primaryColor),
+                            title: Text('HELP & SUPPORT TERMINAL',
+                                style: GoogleFonts.spaceGrotesk(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold)),
+                            trailing: const Icon(Icons.arrow_forward_ios,
+                                size: 12, color: Colors.white30),
                             onTap: () => _showInfoDialog(
                               'HELP & SUPPORT',
                               'Verify email synchronization and credential profiles in the main dashboard. If statement classification parameters fail, consider signing out to reset the local cache.',
@@ -297,16 +365,28 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       child: Column(
                         children: [
                           ListTile(
-                            leading: const Icon(Icons.delete_forever_outlined, color: AppTheme.errorColor),
-                            title: Text('TERMINATE USER ACCOUNT', style: GoogleFonts.spaceGrotesk(color: AppTheme.errorColor, fontSize: 12, fontWeight: FontWeight.bold)),
-                            trailing: const Icon(Icons.arrow_forward_ios, size: 12, color: AppTheme.errorColor),
+                            leading: const Icon(Icons.delete_forever_outlined,
+                                color: AppTheme.errorColor),
+                            title: Text('TERMINATE USER ACCOUNT',
+                                style: GoogleFonts.spaceGrotesk(
+                                    color: AppTheme.errorColor,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold)),
+                            trailing: const Icon(Icons.arrow_forward_ios,
+                                size: 12, color: AppTheme.errorColor),
                             onTap: _showDeleteAccountDialog,
                           ),
                           const Divider(height: 1),
                           ListTile(
-                            leading: const Icon(Icons.logout_outlined, color: AppTheme.errorColor),
-                            title: Text('DESTROY ACTIVE SESSION', style: GoogleFonts.spaceGrotesk(color: AppTheme.errorColor, fontSize: 12, fontWeight: FontWeight.bold)),
-                            trailing: const Icon(Icons.arrow_forward_ios, size: 12, color: AppTheme.errorColor),
+                            leading: const Icon(Icons.logout_outlined,
+                                color: AppTheme.errorColor),
+                            title: Text('DESTROY ACTIVE SESSION',
+                                style: GoogleFonts.spaceGrotesk(
+                                    color: AppTheme.errorColor,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold)),
+                            trailing: const Icon(Icons.arrow_forward_ios,
+                                size: 12, color: AppTheme.errorColor),
                             onTap: _signOut,
                           ),
                         ],
@@ -314,7 +394,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     ),
                     const SizedBox(height: 80), // space above bottom dock
                   ],
-                ).animate().fadeIn(duration: 250.ms, curve: Curves.easeOut).slideY(begin: 0.05, end: 0, duration: 250.ms, curve: Curves.easeOut),
+                )
+                    .animate()
+                    .fadeIn(duration: 250.ms, curve: Curves.easeOut)
+                    .slideY(
+                        begin: 0.05,
+                        end: 0,
+                        duration: 250.ms,
+                        curve: Curves.easeOut),
               ),
             ),
     );
@@ -330,7 +417,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.only(left: AppSpacing.xs, bottom: AppSpacing.sm),
+          padding:
+              const EdgeInsets.only(left: AppSpacing.xs, bottom: AppSpacing.sm),
           child: Text(
             title,
             style: GoogleFonts.spaceGrotesk(
@@ -351,7 +439,12 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               width: 1.2,
             ),
           ),
-          child: child,
+          // Material(transparency) restores ListTile ink splashes/tap
+          // feedback, which the DecoratedBox above would otherwise hide.
+          child: Material(
+            type: MaterialType.transparency,
+            child: child,
+          ),
         ),
       ],
     );
@@ -411,11 +504,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         ),
         title: Text(
           title,
-          style: GoogleFonts.spaceGrotesk(color: titleColor, fontWeight: FontWeight.bold, fontSize: 16),
+          style: GoogleFonts.spaceGrotesk(
+              color: titleColor, fontWeight: FontWeight.bold, fontSize: 16),
         ),
         content: Text(
           message,
-          style: GoogleFonts.plusJakartaSans(color: Colors.white70, height: 1.4),
+          style:
+              GoogleFonts.plusJakartaSans(color: Colors.white70, height: 1.4),
         ),
         actions: actions,
       ),
@@ -429,7 +524,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: Text('OK', style: GoogleFonts.spaceGrotesk(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
+          child: Text('OK',
+              style: GoogleFonts.spaceGrotesk(
+                  color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
         ),
       ],
     );
@@ -463,12 +560,18 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 ),
                 const Divider(),
                 ListTile(
-                  leading: const Icon(Icons.camera_alt_outlined, color: AppTheme.primaryColor),
-                  title: Text('CAMERA CAPTURE', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                  leading: const Icon(Icons.camera_alt_outlined,
+                      color: AppTheme.primaryColor),
+                  title: Text('CAMERA CAPTURE',
+                      style: GoogleFonts.spaceGrotesk(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold)),
                   onTap: () async {
                     Navigator.pop(context);
                     final picker = ImagePicker();
-                    final image = await picker.pickImage(source: ImageSource.camera);
+                    final image =
+                        await picker.pickImage(source: ImageSource.camera);
                     if (image != null && mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
@@ -480,12 +583,18 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   },
                 ),
                 ListTile(
-                  leading: const Icon(Icons.photo_outlined, color: AppTheme.primaryColor),
-                  title: Text('GALLERY DIRECTORY', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                  leading: const Icon(Icons.photo_outlined,
+                      color: AppTheme.primaryColor),
+                  title: Text('GALLERY DIRECTORY',
+                      style: GoogleFonts.spaceGrotesk(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold)),
                   onTap: () async {
                     Navigator.pop(context);
                     final picker = ImagePicker();
-                    final image = await picker.pickImage(source: ImageSource.gallery);
+                    final image =
+                        await picker.pickImage(source: ImageSource.gallery);
                     if (image != null && mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
@@ -497,8 +606,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   },
                 ),
                 ListTile(
-                  leading: const Icon(Icons.delete_outline, color: AppTheme.errorColor),
-                  title: Text('REMOVE AVATAR', style: GoogleFonts.spaceGrotesk(color: AppTheme.errorColor, fontSize: 12, fontWeight: FontWeight.bold)),
+                  leading: const Icon(Icons.delete_outline,
+                      color: AppTheme.errorColor),
+                  title: Text('REMOVE AVATAR',
+                      style: GoogleFonts.spaceGrotesk(
+                          color: AppTheme.errorColor,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold)),
                   onTap: () {
                     Navigator.pop(context);
                   },
@@ -516,11 +630,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     if (isGuest) {
       _showAppDialog(
         title: 'RESTRICTED OPERATION',
-        message: 'Guest sessions are temporary and cannot trigger account termination requests. Sign in with Google to configure account parameters.',
+        message:
+            'Guest sessions are temporary and cannot trigger account termination requests. Sign in with Google to configure account parameters.',
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text('OK', style: GoogleFonts.spaceGrotesk(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
+            child: Text('OK',
+                style: GoogleFonts.spaceGrotesk(
+                    color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
           ),
         ],
       );
@@ -529,11 +646,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     _showAppDialog(
       title: 'DELETE ACCOUNT',
       titleColor: AppTheme.errorColor,
-      message: 'Are you sure you want to permanently delete your account? All encrypted cards, ledgers, and statement data will be unrecoverably erased from the server.',
+      message:
+          'Are you sure you want to permanently delete your account? All encrypted cards, ledgers, and statement data will be unrecoverably erased from the server.',
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: Text('CANCEL', style: GoogleFonts.spaceGrotesk(color: Colors.white70)),
+          child: Text('CANCEL',
+              style: GoogleFonts.spaceGrotesk(color: Colors.white70)),
         ),
         ElevatedButton(
           onPressed: () {
@@ -546,7 +665,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             );
           },
           style: ElevatedButton.styleFrom(backgroundColor: AppTheme.errorColor),
-          child: Text('TERMINATE', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold)),
+          child: Text('TERMINATE',
+              style: GoogleFonts.spaceGrotesk(
+                  color: Colors.white, fontWeight: FontWeight.bold)),
         ),
       ],
     );
@@ -555,11 +676,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   void _signOut() {
     _showAppDialog(
       title: 'DESTROY ACTIVE SESSION',
-      message: 'Are you sure you want to destroy your current session? You will be logged out of this device.',
+      message:
+          'Are you sure you want to destroy your current session? You will be logged out of this device.',
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: Text('CANCEL', style: GoogleFonts.spaceGrotesk(color: Colors.white70)),
+          child: Text('CANCEL',
+              style: GoogleFonts.spaceGrotesk(color: Colors.white70)),
         ),
         ElevatedButton(
           onPressed: () {
@@ -568,7 +691,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             Navigator.pushReplacementNamed(context, '/login');
           },
           style: ElevatedButton.styleFrom(backgroundColor: AppTheme.errorColor),
-          child: Text('SIGN OUT', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold)),
+          child: Text('SIGN OUT',
+              style: GoogleFonts.spaceGrotesk(
+                  color: Colors.white, fontWeight: FontWeight.bold)),
         ),
       ],
     );

@@ -51,6 +51,7 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
     _tabController.dispose();
     super.dispose();
   }
+
   Future<void> _loadCardDetails() async {
     setState(() {
       _isLoading = true;
@@ -62,8 +63,12 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
       if (cards.isEmpty) {
         final authState = ref.read(authStateProvider);
         if (authState.user != null) {
-          await ref.read(cardsProvider.notifier).loadUserCards(authState.user!.id);
-          await ref.read(transactionsProvider.notifier).loadUserTransactions(authState.user!.id);
+          await ref
+              .read(cardsProvider.notifier)
+              .loadUserCards(authState.user!.id);
+          await ref
+              .read(transactionsProvider.notifier)
+              .loadUserTransactions(authState.user!.id);
         }
         cards = ref.read(cardsProvider);
       }
@@ -78,9 +83,8 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
       _card = matches.isEmpty ? cards.first : matches.first;
 
       final transactions = ref.read(transactionsProvider);
-      _transactions = transactions
-          .where((t) => t.userCardId == _card!.id)
-          .toList();
+      _transactions =
+          transactions.where((t) => t.userCardId == _card!.id).toList();
 
       // Load latest statement for this card
       await _fetchLatestStatement();
@@ -186,9 +190,13 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
               cardName: _card!.cardName,
               bankName: _card!.bankName,
               lastFourDigits: _card!.cardNumber ?? '****',
-              expiryDate: _card!.expiryDate?.toString().substring(0, 7) ?? 'MM/YY',
+              expiryDate:
+                  _card!.expiryDate?.toString().substring(0, 7) ?? 'MM/YY',
               cardType: _card!.type.name,
-              gradientColors: [_card!.networkColor, _card!.networkColor.withValues(alpha: 0.7)],
+              gradientColors: [
+                _card!.networkColor,
+                _card!.networkColor.withValues(alpha: 0.7)
+              ],
             ),
             const SizedBox(height: AppSpacing.lg),
             // Quick Stats
@@ -225,7 +233,8 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
                   child: _buildStatCard(
                     'Due Date',
                     _latestStatement != null
-                        ? _formatDate(_latestStatement!['due_date']?.toString() ?? '')
+                        ? _formatDate(
+                            _latestStatement!['due_date']?.toString() ?? '')
                         : 'N/A',
                     Icons.schedule,
                     AppTheme.warningColor,
@@ -287,26 +296,39 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
                     _buildDetailRow('Card Type', _card!.type.name),
                     _buildDetailRow('Network', _card!.network.name),
                     _buildDetailRow('Annual Fee', '₹${_card!.annualFee ?? 0}'),
-                    _buildDetailRow('Issued Date', _formatDate(_card!.issuedDate.toString())),
+                    _buildDetailRow('Issued Date',
+                        _formatDate(_card!.issuedDate.toString())),
                     if (_latestStatement != null) ...[
                       const Divider(),
                       Text(
                         'Statement Information',
-                        style: AppTextStyles.body1.copyWith(fontWeight: FontWeight.bold),
+                        style: AppTextStyles.body1
+                            .copyWith(fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: AppSpacing.sm),
-                      _buildDetailRow('Statement Date', _formatDate(_latestStatement!['statement_date']?.toString() ?? '')),
-                      _buildDetailRow('Due Date', _formatDate(_latestStatement!['due_date']?.toString() ?? '')),
-                      _buildDetailRow('Outstanding Amount', '₹${(_latestStatement!['outstanding_amount'] ?? 0).toStringAsFixed(2)}'),
-                      _buildDetailRow('Minimum Due', '₹${(_latestStatement!['minimum_amount_due'] ?? 0).toStringAsFixed(2)}'),
-                      _buildDetailRow('Previous Balance', '₹${(_latestStatement!['previous_balance'] ?? 0).toStringAsFixed(2)}'),
+                      _buildDetailRow(
+                          'Statement Date',
+                          _formatDate(
+                              _latestStatement!['statement_date']?.toString() ??
+                                  '')),
+                      _buildDetailRow(
+                          'Due Date',
+                          _formatDate(
+                              _latestStatement!['due_date']?.toString() ?? '')),
+                      _buildDetailRow('Outstanding Amount',
+                          '₹${(_latestStatement!['outstanding_amount'] ?? 0).toStringAsFixed(2)}'),
+                      _buildDetailRow('Minimum Due',
+                          '₹${(_latestStatement!['minimum_amount_due'] ?? 0).toStringAsFixed(2)}'),
+                      _buildDetailRow('Previous Balance',
+                          '₹${(_latestStatement!['previous_balance'] ?? 0).toStringAsFixed(2)}'),
                     ],
                   ],
                 ),
               ),
             ),
           ],
-        ).animate().fadeIn(duration: 250.ms, curve: Curves.easeOut).slideY(begin: 0.05, end: 0, duration: 250.ms, curve: Curves.easeOut),
+        ).animate().fadeIn(duration: 250.ms, curve: Curves.easeOut).slideY(
+            begin: 0.05, end: 0, duration: 250.ms, curve: Curves.easeOut),
       ),
     );
   }
@@ -346,7 +368,9 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
                 '₹${transaction.amount.toStringAsFixed(2)}',
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
-                  color: transaction.amount > 0 ? AppTheme.errorColor : AppTheme.successColor,
+                  color: transaction.amount > 0
+                      ? AppTheme.errorColor
+                      : AppTheme.successColor,
                 ),
               ),
             ),
@@ -369,7 +393,8 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
       onRefresh: _loadCardDetails,
       child: ListView.builder(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.lg - AppSpacing.xs),
+        padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md, vertical: AppSpacing.lg - AppSpacing.xs),
         itemCount: _benefits.length,
         itemBuilder: (context, index) {
           final benefit = _benefits[index];
@@ -382,7 +407,9 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
                 decoration: BoxDecoration(
                   color: AppTheme.primaryColor.withValues(alpha: 0.12),
                   shape: BoxShape.circle,
-                  border: Border.all(color: AppTheme.primaryColor.withValues(alpha: 0.2), width: 1),
+                  border: Border.all(
+                      color: AppTheme.primaryColor.withValues(alpha: 0.2),
+                      width: 1),
                 ),
                 child: Icon(
                   benefit['icon'],
@@ -407,11 +434,14 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
                 ),
               ),
               trailing: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
                   color: AppTheme.successColor.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(AppBorderRadius.md),
-                  border: Border.all(color: AppTheme.successColor.withValues(alpha: 0.3), width: 1),
+                  border: Border.all(
+                      color: AppTheme.successColor.withValues(alpha: 0.3),
+                      width: 1),
                 ),
                 child: Text(
                   rate,
@@ -434,7 +464,8 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
       onRefresh: _loadCardDetails,
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.lg - AppSpacing.xs, AppSpacing.md, 80),
+        padding: const EdgeInsets.fromLTRB(
+            AppSpacing.md, AppSpacing.lg - AppSpacing.xs, AppSpacing.md, 80),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -460,7 +491,8 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
                   color: AppTheme.primaryColor.withValues(alpha: 0.2),
                   width: 1,
                 ),
-                boxShadow: AppTheme.neonGlow(color: AppTheme.primaryColor, opacity: 0.1, blurRadius: 10),
+                boxShadow: AppTheme.neonGlow(
+                    color: AppTheme.primaryColor, opacity: 0.1, blurRadius: 10),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -515,8 +547,10 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
                       style: AppTextStyles.heading3,
                     ),
                     const SizedBox(height: AppSpacing.sm),
-                    _buildTip('Use this card for dining to maximize 5% cashback'),
-                    _buildTip('Consider paying down balance to improve utilization ratio'),
+                    _buildTip(
+                        'Use this card for dining to maximize 5% cashback'),
+                    _buildTip(
+                        'Consider paying down balance to improve utilization ratio'),
                     _buildTip('Set up auto-pay to avoid late fees'),
                   ],
                 ),
@@ -528,7 +562,8 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
     ).animate().fadeIn(duration: 250.ms, curve: Curves.easeOut);
   }
 
-  Widget _buildStatCard(String title, String value, IconData icon, Color color) {
+  Widget _buildStatCard(
+      String title, String value, IconData icon, Color color) {
     return Container(
       padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
@@ -538,7 +573,8 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
           color: color.withValues(alpha: 0.25),
           width: 1.5,
         ),
-        boxShadow: AppTheme.neonGlow(color: color, opacity: 0.12, blurRadius: 10),
+        boxShadow:
+            AppTheme.neonGlow(color: color, opacity: 0.12, blurRadius: 10),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -579,7 +615,8 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
   /// category-breakdown list on the Charts tab — same translucent surface,
   /// rounded corners, and hairline border, just wrapping a different
   /// [ListTile] per call site.
-  Widget _buildGlassListCard({required Widget child, EdgeInsetsGeometry? margin}) {
+  Widget _buildGlassListCard(
+      {required Widget child, EdgeInsetsGeometry? margin}) {
     return Container(
       margin: margin,
       decoration: BoxDecoration(
@@ -590,7 +627,14 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
           width: 1,
         ),
       ),
-      child: child,
+      // Material(transparency) restores ListTile ink splashes/tap
+      // feedback, which the DecoratedBox above would otherwise hide.
+      child: Material(
+        type: MaterialType.transparency,
+        borderRadius: BorderRadius.circular(16),
+        clipBehavior: Clip.antiAlias,
+        child: child,
+      ),
     );
   }
 
@@ -609,6 +653,7 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
       ),
     );
   }
+
   List<Widget> _buildCategoryBreakdown() {
     final categoryTotals = <String, double>{};
     for (final transaction in _transactions) {
@@ -668,8 +713,12 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
         ],
       ),
     );
-  }  Color _getCategoryColor(dynamic category) {
-    final categoryStr = category is TransactionCategory ? category.name : category?.toString().toLowerCase();
+  }
+
+  Color _getCategoryColor(dynamic category) {
+    final categoryStr = category is TransactionCategory
+        ? category.name
+        : category?.toString().toLowerCase();
     switch (categoryStr) {
       case 'food':
       case 'dining':
@@ -691,7 +740,9 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
   }
 
   IconData _getCategoryIcon(dynamic category) {
-    final categoryStr = category is TransactionCategory ? category.name : category?.toString().toLowerCase();
+    final categoryStr = category is TransactionCategory
+        ? category.name
+        : category?.toString().toLowerCase();
     switch (categoryStr) {
       case 'food':
       case 'dining':
@@ -711,6 +762,7 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
         return Icons.category;
     }
   }
+
   double _calculateMonthlySpending() {
     final now = DateTime.now();
     final thisMonth = DateTime(now.year, now.month, 1);
@@ -746,7 +798,8 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
                 onTap: () {
                   Navigator.pop(context);
                   Navigator.of(context).push(
-                    MaterialPageRoute(builder: (context) => const AddCardScreen()),
+                    MaterialPageRoute(
+                        builder: (context) => const AddCardScreen()),
                   );
                 },
               ),
@@ -762,7 +815,8 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
               ),
               ListTile(
                 leading: const Icon(Icons.delete, color: AppTheme.errorColor),
-                title: const Text('Remove Card', style: TextStyle(color: AppTheme.errorColor)),
+                title: const Text('Remove Card',
+                    style: TextStyle(color: AppTheme.errorColor)),
                 onTap: () {
                   Navigator.pop(context);
                   _showDeleteConfirmation();
@@ -795,9 +849,9 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
                 final authState = ref.read(authStateProvider);
                 if (authState.user != null && _card != null) {
                   await ref.read(cardsProvider.notifier).removeUserCard(
-                    userId: authState.user!.id,
-                    cardId: _card!.id,
-                  );
+                        userId: authState.user!.id,
+                        cardId: _card!.id,
+                      );
                 }
                 if (mounted) {
                   Navigator.pop(context); // Go back to cards list
@@ -806,7 +860,8 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
                   );
                 }
               },
-              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.errorColor),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.errorColor),
               child: const Text('Remove'),
             ),
           ],
@@ -820,7 +875,9 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
   Future<void> _fetchLatestStatement() async {
     final isGuest = ref.read(isGuestModeProvider);
     if (isGuest) {
-      final statements = MockData.statements().where((s) => s.userCardId == _card!.id).toList()
+      final statements = MockData.statements()
+          .where((s) => s.userCardId == _card!.id)
+          .toList()
         ..sort((a, b) => b.statementDate.compareTo(a.statementDate));
       if (statements.isNotEmpty) {
         final latest = statements.first;
@@ -857,12 +914,14 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
     final isGuest = ref.read(isGuestModeProvider);
     if (isGuest) {
       final mockBenefits = MockData.cardBenefits(_card!.id);
-      _benefits = mockBenefits.map((benefit) => {
-        'category': benefit['category'] ?? 'General',
-        'reward_rate': benefit['name']?.toString() ?? 'N/A',
-        'description': benefit['description'] ?? 'No description',
-        'icon': _getIconFromCategory(benefit['category'] ?? 'General'),
-      }).toList();
+      _benefits = mockBenefits
+          .map((benefit) => {
+                'category': benefit['category'] ?? 'General',
+                'reward_rate': benefit['name']?.toString() ?? 'N/A',
+                'description': benefit['description'] ?? 'No description',
+                'icon': _getIconFromCategory(benefit['category'] ?? 'General'),
+              })
+          .toList();
       return;
     }
 
@@ -873,12 +932,15 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
           .eq('card_id', widget.cardId);
 
       if (response.isNotEmpty) {
-        _benefits = response.map((benefit) => {
-          'category': benefit['category'] ?? 'General',
-          'reward_rate': benefit['value']?.toString() ?? 'N/A',
-          'description': benefit['description'] ?? 'No description',
-          'icon': _getIconFromCategory(benefit['category'] ?? 'General'),
-        }).toList();
+        _benefits = response
+            .map((benefit) => {
+                  'category': benefit['category'] ?? 'General',
+                  'reward_rate': benefit['value']?.toString() ?? 'N/A',
+                  'description': benefit['description'] ?? 'No description',
+                  'icon':
+                      _getIconFromCategory(benefit['category'] ?? 'General'),
+                })
+            .toList();
       } else {
         _benefits = []; // No benefits found
       }

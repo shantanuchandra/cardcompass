@@ -26,10 +26,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   /// Shared row-title style: body2 size, Space Grotesk family (matches the
   /// screen's original bold-technical look) via AppTextStyles.heading3.
-  TextStyle get _rowTitleStyle =>
-      AppTextStyles.heading3.copyWith(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white);
+  TextStyle get _rowTitleStyle => AppTextStyles.heading3
+      .copyWith(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white);
 
-  TextStyle get _rowSubtitleStyle => AppTextStyles.caption.copyWith(color: Colors.white30);
+  TextStyle get _rowSubtitleStyle =>
+      AppTextStyles.caption.copyWith(color: Colors.white30);
 
   @override
   void initState() {
@@ -50,7 +51,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 800),
           child: ListView(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: AppSpacing.md),
+            padding: const EdgeInsets.symmetric(
+                horizontal: 18, vertical: AppSpacing.md),
             children: [
               // Notifications Section
               _buildSection(
@@ -58,51 +60,63 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 [
                   SwitchListTile(
                     title: Text('ENABLE NOTIFICATIONS', style: _rowTitleStyle),
-                    subtitle: Text('Receive global app notifications', style: _rowSubtitleStyle),
+                    subtitle: Text('Receive global app notifications',
+                        style: _rowSubtitleStyle),
                     value: _notificationsEnabled,
                     activeColor: AppTheme.primaryColor,
                     onChanged: (value) {
                       setState(() {
                         _notificationsEnabled = value;
                       });
-                      ref.read(appPreferencesProvider).setNotificationsEnabled(value);
+                      ref
+                          .read(appPreferencesProvider)
+                          .setNotificationsEnabled(value);
                     },
                   ),
                   const Divider(color: Color(0xFF1E293B), height: 1),
                   SwitchListTile(
                     title: Text('PUSH ALERTS', style: _rowTitleStyle),
-                    subtitle: Text('Direct warning overlays', style: _rowSubtitleStyle),
+                    subtitle: Text('Direct warning overlays',
+                        style: _rowSubtitleStyle),
                     value: _pushNotifications,
                     activeColor: AppTheme.primaryColor,
-                    onChanged: _notificationsEnabled ? (value) {
-                      setState(() {
-                        _pushNotifications = value;
-                      });
-                    } : null,
+                    onChanged: _notificationsEnabled
+                        ? (value) {
+                            setState(() {
+                              _pushNotifications = value;
+                            });
+                          }
+                        : null,
                   ),
                   const Divider(color: Color(0xFF1E293B), height: 1),
                   SwitchListTile(
                     title: Text('EMAIL SUMMARIES', style: _rowTitleStyle),
-                    subtitle: Text('Monthly reward ledger audits', style: _rowSubtitleStyle),
+                    subtitle: Text('Monthly reward ledger audits',
+                        style: _rowSubtitleStyle),
                     value: _emailNotifications,
                     activeColor: AppTheme.primaryColor,
-                    onChanged: _notificationsEnabled ? (value) {
-                      setState(() {
-                        _emailNotifications = value;
-                      });
-                    } : null,
+                    onChanged: _notificationsEnabled
+                        ? (value) {
+                            setState(() {
+                              _emailNotifications = value;
+                            });
+                          }
+                        : null,
                   ),
                   const Divider(color: Color(0xFF1E293B), height: 1),
                   SwitchListTile(
                     title: Text('SMS TRANSMISSIONS', style: _rowTitleStyle),
-                    subtitle: Text('Immediate billing highlights', style: _rowSubtitleStyle),
+                    subtitle: Text('Immediate billing highlights',
+                        style: _rowSubtitleStyle),
                     value: _smsNotifications,
                     activeColor: AppTheme.primaryColor,
-                    onChanged: _notificationsEnabled ? (value) {
-                      setState(() {
-                        _smsNotifications = value;
-                      });
-                    } : null,
+                    onChanged: _notificationsEnabled
+                        ? (value) {
+                            setState(() {
+                              _smsNotifications = value;
+                            });
+                          }
+                        : null,
                   ),
                 ],
               ),
@@ -114,14 +128,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 [
                   SwitchListTile(
                     title: Text('BIOMETRIC VALIDATION', style: _rowTitleStyle),
-                    subtitle: Text('Use Face ID / Fingerprint registry', style: _rowSubtitleStyle),
+                    subtitle: Text('Use Face ID / Fingerprint registry',
+                        style: _rowSubtitleStyle),
                     value: _biometricAuth,
                     activeColor: AppTheme.primaryColor,
                     onChanged: (value) {
                       setState(() {
                         _biometricAuth = value;
                       });
-                      ref.read(appPreferencesProvider).setBiometricEnabled(value);
+                      ref
+                          .read(appPreferencesProvider)
+                          .setBiometricEnabled(value);
                     },
                   ),
                   const Divider(color: Color(0xFF1E293B), height: 1),
@@ -129,14 +146,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     title: 'UPDATE CRYPTO PASSWORD',
                     subtitle: 'Reset credentials passkeys',
                     dialogTitle: 'CHANGE PASSWORD',
-                    dialogReason: 'Credential updates require a connected Google identity. Not available in guest mode.',
+                    dialogReason:
+                        'Credential updates require a connected Google identity. Not available in guest mode.',
                   ),
                   const Divider(color: Color(0xFF1E293B), height: 1),
                   _buildComingSoonTile(
                     title: 'TWO-FACTOR SECURITY (2FA)',
                     subtitle: 'Link authenticator token generators',
                     dialogTitle: 'TWO-FACTOR AUTHENTICATION',
-                    dialogReason: 'MFA settings require a persistent server integration. Disabled on this build.',
+                    dialogReason:
+                        'MFA settings require a persistent server integration. Disabled on this build.',
                   ),
                 ],
               ),
@@ -148,7 +167,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 [
                   SwitchListTile(
                     title: Text('FORCE TECH NEON STYLE', style: _rowTitleStyle),
-                    subtitle: Text('Cyber-neon default mode enabled', style: _rowSubtitleStyle),
+                    subtitle: Text('Cyber-neon default mode enabled',
+                        style: _rowSubtitleStyle),
                     value: true,
                     activeColor: AppTheme.primaryColor,
                     onChanged: null,
@@ -156,15 +176,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   const Divider(color: Color(0xFF1E293B), height: 1),
                   ListTile(
                     title: Text('DICTIONARY DIALECT', style: _rowTitleStyle),
-                    subtitle: Text(_language.toUpperCase(), style: AppTextStyles.caption.copyWith(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
-                    trailing: const Icon(Icons.arrow_forward_ios, size: 12, color: Colors.white30),
+                    subtitle: Text(_language.toUpperCase(),
+                        style: AppTextStyles.caption.copyWith(
+                            color: AppTheme.primaryColor,
+                            fontWeight: FontWeight.bold)),
+                    trailing: const Icon(Icons.arrow_forward_ios,
+                        size: 12, color: Colors.white30),
                     onTap: () => _showLanguageDialog(),
                   ),
                   const Divider(color: Color(0xFF1E293B), height: 1),
                   ListTile(
                     title: Text('CURRENCY INDEX', style: _rowTitleStyle),
-                    subtitle: Text(_currency.toUpperCase(), style: AppTextStyles.caption.copyWith(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
-                    trailing: const Icon(Icons.arrow_forward_ios, size: 12, color: Colors.white30),
+                    subtitle: Text(_currency.toUpperCase(),
+                        style: AppTextStyles.caption.copyWith(
+                            color: AppTheme.primaryColor,
+                            fontWeight: FontWeight.bold)),
+                    trailing: const Icon(Icons.arrow_forward_ios,
+                        size: 12, color: Colors.white30),
                     onTap: () => _showCurrencyDialog(),
                   ),
                 ],
@@ -177,14 +205,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 [
                   SwitchListTile(
                     title: Text('AUTO BACKGROUND SYNC', style: _rowTitleStyle),
-                    subtitle: Text('Sync card rules via headless pipeline', style: _rowSubtitleStyle),
+                    subtitle: Text('Sync card rules via headless pipeline',
+                        style: _rowSubtitleStyle),
                     value: _autoSync,
                     activeColor: AppTheme.primaryColor,
                     onChanged: (value) {
                       setState(() {
                         _autoSync = value;
                       });
-                      ref.read(appPreferencesProvider).setAutoSyncEnabled(value);
+                      ref
+                          .read(appPreferencesProvider)
+                          .setAutoSyncEnabled(value);
                     },
                   ),
                   const Divider(color: Color(0xFF1E293B), height: 1),
@@ -192,20 +223,24 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     title: 'BACKUP ENCRYPTED DATABASE',
                     subtitle: 'Log state snapshots locally',
                     dialogTitle: 'BACKUP DATABASE',
-                    dialogReason: 'Encrypted backup registers require server syncing logic. Sandbox parameters are saved to memory only.',
+                    dialogReason:
+                        'Encrypted backup registers require server syncing logic. Sandbox parameters are saved to memory only.',
                   ),
                   const Divider(color: Color(0xFF1E293B), height: 1),
                   _buildComingSoonTile(
                     title: 'EXPORT LEDGER ARCHIVE',
                     subtitle: 'Export transactions to CSV files',
                     dialogTitle: 'EXPORT ARCHIVE',
-                    dialogReason: 'Exporter pipelines are currently compiling. Enabled in production build release.',
+                    dialogReason:
+                        'Exporter pipelines are currently compiling. Enabled in production build release.',
                   ),
                   const Divider(color: Color(0xFF1E293B), height: 1),
                   ListTile(
                     title: Text('RESET SYSTEM CACHE', style: _rowTitleStyle),
-                    subtitle: Text('Purge local database registers', style: _rowSubtitleStyle),
-                    trailing: const Icon(Icons.arrow_forward_ios, size: 12, color: Colors.white30),
+                    subtitle: Text('Purge local database registers',
+                        style: _rowSubtitleStyle),
+                    trailing: const Icon(Icons.arrow_forward_ios,
+                        size: 12, color: Colors.white30),
                     onTap: () => _showClearCacheDialog(),
                   ),
                 ],
@@ -218,8 +253,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 [
                   ListTile(
                     title: Text('CARDCOMPASS CORE', style: _rowTitleStyle),
-                    subtitle: Text('Version 1.0.0 (Build 1)', style: _rowSubtitleStyle),
-                    trailing: const Icon(Icons.info_outline, size: 16, color: AppTheme.primaryColor),
+                    subtitle: Text('Version 1.0.0 (Build 1)',
+                        style: _rowSubtitleStyle),
+                    trailing: const Icon(Icons.info_outline,
+                        size: 16, color: AppTheme.primaryColor),
                     onTap: () {
                       _showAppInfoDialog();
                       setState(() {
@@ -234,12 +271,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   const Divider(color: Color(0xFF1E293B), height: 1),
                   ListTile(
                     title: Text('CHECK SYSTEM UPDATES', style: _rowTitleStyle),
-                    subtitle: Text('Check for compilation changes', style: _rowSubtitleStyle),
-                    trailing: const Icon(Icons.refresh, size: 16, color: AppTheme.primaryColor),
+                    subtitle: Text('Check for compilation changes',
+                        style: _rowSubtitleStyle),
+                    trailing: const Icon(Icons.refresh,
+                        size: 16, color: AppTheme.primaryColor),
                     onTap: () {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content: Text('SYSTEM IS COMPILED TO LATEST STABLE BUILD.', style: AppTextStyles.body2.copyWith(fontWeight: FontWeight.bold, fontFamily: AppTextStyles.heading3.fontFamily)),
+                          content: Text(
+                              'SYSTEM IS COMPILED TO LATEST STABLE BUILD.',
+                              style: AppTextStyles.body2.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                  fontFamily:
+                                      AppTextStyles.heading3.fontFamily)),
                           backgroundColor: AppTheme.successColor,
                         ),
                       );
@@ -250,7 +294,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     title: 'TRANSMIT APP FEEDBACK',
                     subtitle: 'Send log audits to developers',
                     dialogTitle: 'FEEDBACK SYSTEM',
-                    dialogReason: 'Feedback routes are offline. Please utilize the developer issue registry directly.',
+                    dialogReason:
+                        'Feedback routes are offline. Please utilize the developer issue registry directly.',
                     trailingIcon: Icons.feedback_outlined,
                     trailingIconSize: 16,
                   ),
@@ -258,7 +303,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
               const SizedBox(height: 80), // space above bottom dock
             ],
-          ).animate().fadeIn(duration: 250.ms, curve: Curves.easeOut).slideY(begin: 0.05, end: 0, duration: 250.ms, curve: Curves.easeOut),
+          ).animate().fadeIn(duration: 250.ms, curve: Curves.easeOut).slideY(
+              begin: 0.05, end: 0, duration: 250.ms, curve: Curves.easeOut),
         ),
       ),
     );
@@ -269,7 +315,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.only(left: AppSpacing.xs, bottom: AppSpacing.sm),
+          padding:
+              const EdgeInsets.only(left: AppSpacing.xs, bottom: AppSpacing.sm),
           child: Text(
             title,
             style: AppTextStyles.caption.copyWith(
@@ -286,8 +333,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             borderRadius: BorderRadius.circular(AppBorderRadius.xl - 4),
             border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
           ),
-          child: Column(
-            children: children,
+          // Material(transparency) restores ListTile ink splashes/tap
+          // feedback, which the DecoratedBox above would otherwise hide.
+          child: Material(
+            type: MaterialType.transparency,
+            child: Column(
+              children: children,
+            ),
           ),
         ),
       ],
@@ -324,7 +376,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ],
         ),
         subtitle: Text(subtitle, style: _rowSubtitleStyle),
-        trailing: Icon(trailingIcon, size: trailingIconSize, color: Colors.white30),
+        trailing:
+            Icon(trailingIcon, size: trailingIconSize, color: Colors.white30),
         onTap: () => _showUnavailableDialog(dialogTitle, dialogReason),
       ),
     );
@@ -332,7 +385,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Widget _buildSoonBadge() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xs + 2, vertical: 2),
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.xs + 2, vertical: 2),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(AppBorderRadius.sm),
@@ -381,7 +435,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _showThemedDialog(
       title: Text(
         feature,
-        style: AppTextStyles.heading3.copyWith(color: Colors.white, fontWeight: FontWeight.bold),
+        style: AppTextStyles.heading3
+            .copyWith(color: Colors.white, fontWeight: FontWeight.bold),
       ),
       content: Text(
         reason,
@@ -390,7 +445,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: Text('OK', style: AppTextStyles.button.copyWith(color: AppTheme.primaryColor)),
+          child: Text('OK',
+              style:
+                  AppTextStyles.button.copyWith(color: AppTheme.primaryColor)),
         ),
       ],
     );
@@ -422,7 +479,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               title: Text(
                 language.toUpperCase(),
                 style: AppTextStyles.body2.copyWith(
-                  color: _language == language ? AppTheme.primaryColor : Colors.white70,
+                  color: _language == language
+                      ? AppTheme.primaryColor
+                      : Colors.white70,
                   fontWeight: FontWeight.bold,
                   fontFamily: AppTextStyles.heading3.fontFamily,
                 ),
@@ -435,7 +494,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text('Language successfully configured: $language'),
+                    content:
+                        Text('Language successfully configured: $language'),
                     backgroundColor: AppTheme.successColor,
                   ),
                 );
@@ -470,7 +530,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               title: Text(
                 currency.toUpperCase(),
                 style: AppTextStyles.body2.copyWith(
-                  color: _currency == curSymbol ? AppTheme.primaryColor : Colors.white70,
+                  color: _currency == curSymbol
+                      ? AppTheme.primaryColor
+                      : Colors.white70,
                   fontWeight: FontWeight.bold,
                   fontFamily: AppTextStyles.heading3.fontFamily,
                 ),
@@ -483,7 +545,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text('Currency successfully configured: $curSymbol'),
+                    content:
+                        Text('Currency successfully configured: $curSymbol'),
                     backgroundColor: AppTheme.successColor,
                   ),
                 );
@@ -499,7 +562,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _showThemedDialog(
       title: Text(
         'PURGE LOCAL CACHE',
-        style: AppTextStyles.heading3.copyWith(color: AppTheme.errorColor, fontWeight: FontWeight.bold),
+        style: AppTextStyles.heading3
+            .copyWith(color: AppTheme.errorColor, fontWeight: FontWeight.bold),
       ),
       content: Text(
         'This action will permanently delete all cached transaction details and config registries. Proceed?',
@@ -508,20 +572,25 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: Text('CANCEL', style: AppTextStyles.button.copyWith(color: Colors.white70)),
+          child: Text('CANCEL',
+              style: AppTextStyles.button.copyWith(color: Colors.white70)),
         ),
         ElevatedButton(
           onPressed: () {
             Navigator.pop(context);
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('CACHE PROTOCOLS ALREADY COMPLETED.', style: AppTextStyles.body2.copyWith(fontWeight: FontWeight.bold, fontFamily: AppTextStyles.heading3.fontFamily)),
+                content: Text('CACHE PROTOCOLS ALREADY COMPLETED.',
+                    style: AppTextStyles.body2.copyWith(
+                        fontWeight: FontWeight.bold,
+                        fontFamily: AppTextStyles.heading3.fontFamily)),
                 backgroundColor: AppTheme.successColor,
               ),
             );
           },
           style: ElevatedButton.styleFrom(backgroundColor: AppTheme.errorColor),
-          child: Text('PURGE', style: AppTextStyles.button.copyWith(color: Colors.white)),
+          child: Text('PURGE',
+              style: AppTextStyles.button.copyWith(color: Colors.white)),
         ),
       ],
     );
@@ -531,27 +600,44 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _showThemedDialog(
       title: Text(
         'CARDCOMPASS CORE ENGINE',
-        style: AppTextStyles.heading3.copyWith(color: Colors.white, fontWeight: FontWeight.bold),
+        style: AppTextStyles.heading3
+            .copyWith(color: Colors.white, fontWeight: FontWeight.bold),
       ),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('VERSION: 1.0.0', style: AppTextStyles.body2.copyWith(color: AppTheme.primaryColor, fontWeight: FontWeight.bold, fontFamily: AppTextStyles.heading3.fontFamily)),
-          Text('COMPILATION: BUILD 1', style: AppTextStyles.caption.copyWith(color: Colors.white54, fontFamily: AppTextStyles.heading3.fontFamily)),
+          Text('VERSION: 1.0.0',
+              style: AppTextStyles.body2.copyWith(
+                  color: AppTheme.primaryColor,
+                  fontWeight: FontWeight.bold,
+                  fontFamily: AppTextStyles.heading3.fontFamily)),
+          Text('COMPILATION: BUILD 1',
+              style: AppTextStyles.caption.copyWith(
+                  color: Colors.white54,
+                  fontFamily: AppTextStyles.heading3.fontFamily)),
           const SizedBox(height: AppSpacing.sm + 4),
           Text(
             'CardCompass is a cybernetic sandbox ledger that automatically categorizes statements, analyzes benefits routing, and optimizes rewards.',
-            style: AppTextStyles.body1.copyWith(color: Colors.white70, height: 1.4),
+            style: AppTextStyles.body1
+                .copyWith(color: Colors.white70, height: 1.4),
           ),
           const SizedBox(height: AppSpacing.sm + 4),
-          Text('DEVELOPED IN INDIA', style: AppTextStyles.caption.copyWith(color: Colors.white38, fontWeight: FontWeight.bold, fontSize: 9, letterSpacing: 0.5, fontFamily: AppTextStyles.heading3.fontFamily)),
+          Text('DEVELOPED IN INDIA',
+              style: AppTextStyles.caption.copyWith(
+                  color: Colors.white38,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 9,
+                  letterSpacing: 0.5,
+                  fontFamily: AppTextStyles.heading3.fontFamily)),
         ],
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: Text('OK', style: AppTextStyles.button.copyWith(color: AppTheme.primaryColor)),
+          child: Text('OK',
+              style:
+                  AppTextStyles.button.copyWith(color: AppTheme.primaryColor)),
         ),
       ],
     );

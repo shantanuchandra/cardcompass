@@ -15,21 +15,20 @@ class EnhancedTransactionAdvisorScreen extends ConsumerStatefulWidget {
   const EnhancedTransactionAdvisorScreen({super.key});
 
   @override
-  ConsumerState<EnhancedTransactionAdvisorScreen> createState() => 
+  ConsumerState<EnhancedTransactionAdvisorScreen> createState() =>
       _EnhancedTransactionAdvisorScreenState();
 }
 
-class _EnhancedTransactionAdvisorScreenState 
-    extends ConsumerState<EnhancedTransactionAdvisorScreen> 
+class _EnhancedTransactionAdvisorScreenState
+    extends ConsumerState<EnhancedTransactionAdvisorScreen>
     with TickerProviderStateMixin {
-  
   late TabController _tabController;
-  final AdvancedBenefitCalculationService _benefitService = 
+  final AdvancedBenefitCalculationService _benefitService =
       AdvancedBenefitCalculationService();
-  
+
   final _amountController = TextEditingController();
   final _merchantController = TextEditingController();
-  
+
   String _selectedCategory = 'dining';
   bool _isCalculating = false;
   Map<String, dynamic>? _recommendation;
@@ -80,7 +79,8 @@ class _EnhancedTransactionAdvisorScreenState
     if (_amountController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Please enter an amount.', style: AppTextStyles.caption),
+          content:
+              Text('Please enter an amount.', style: AppTextStyles.caption),
           backgroundColor: AppTheme.errorColor,
         ),
       );
@@ -98,7 +98,7 @@ class _EnhancedTransactionAdvisorScreenState
     try {
       final amount = double.parse(_amountController.text);
       final merchant = _merchantController.text.trim();
-      
+
       final result = await _benefitService.calculateBestCard(
         userId: user.id,
         amount: amount,
@@ -113,7 +113,8 @@ class _EnhancedTransactionAdvisorScreenState
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error calculating: $e', style: AppTextStyles.caption),
+            content:
+                Text('Error calculating: $e', style: AppTextStyles.caption),
             backgroundColor: AppTheme.errorColor,
           ),
         );
@@ -134,7 +135,8 @@ class _EnhancedTransactionAdvisorScreenState
     });
 
     try {
-      final optimizations = await _benefitService.getSpendingOptimizations(user.id);
+      final optimizations =
+          await _benefitService.getSpendingOptimizations(user.id);
       setState(() {
         _optimizations = optimizations;
       });
@@ -178,7 +180,8 @@ class _EnhancedTransactionAdvisorScreenState
     });
 
     try {
-      final recommendations = await _benefitService.getPersonalizedCardRecommendations(user.id);
+      final recommendations =
+          await _benefitService.getPersonalizedCardRecommendations(user.id);
       setState(() {
         _personalizedRecommendations = recommendations;
       });
@@ -208,11 +211,17 @@ class _EnhancedTransactionAdvisorScreenState
           letterSpacing: 0.5,
         ),
         tabs: const [
-          Tab(icon: Icon(Icons.calculate_outlined, size: 18), text: 'CALCULATE'),
-          Tab(icon: Icon(Icons.local_movies_outlined, size: 18), text: 'SHOWTIMES'),
+          Tab(
+              icon: Icon(Icons.calculate_outlined, size: 18),
+              text: 'CALCULATE'),
+          Tab(
+              icon: Icon(Icons.local_movies_outlined, size: 18),
+              text: 'SHOWTIMES'),
           Tab(icon: Icon(Icons.trending_up, size: 18), text: 'OPTIMIZE'),
           Tab(icon: Icon(Icons.analytics_outlined, size: 18), text: 'SUMMARY'),
-          Tab(icon: Icon(Icons.recommend_outlined, size: 18), text: 'SUGGESTIONS'),
+          Tab(
+              icon: Icon(Icons.recommend_outlined, size: 18),
+              text: 'SUGGESTIONS'),
         ],
       ),
       body: TabBarView(
@@ -230,7 +239,8 @@ class _EnhancedTransactionAdvisorScreenState
 
   Widget _buildCalculatorTab() {
     return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: AppSpacing.lg),
+      padding:
+          const EdgeInsets.symmetric(horizontal: 18, vertical: AppSpacing.lg),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -260,7 +270,8 @@ class _EnhancedTransactionAdvisorScreenState
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(
                     labelText: 'Amount (₹)',
-                    prefixIcon: Icon(Icons.currency_rupee, color: AppTheme.primaryColor),
+                    prefixIcon: Icon(Icons.currency_rupee,
+                        color: AppTheme.primaryColor),
                   ),
                 ),
                 const SizedBox(height: AppSpacing.md),
@@ -269,7 +280,8 @@ class _EnhancedTransactionAdvisorScreenState
                   style: AppTextStyles.body1.copyWith(color: Colors.white),
                   decoration: const InputDecoration(
                     labelText: 'Merchant Name (Optional)',
-                    prefixIcon: Icon(Icons.store_outlined, color: AppTheme.primaryColor),
+                    prefixIcon: Icon(Icons.store_outlined,
+                        color: AppTheme.primaryColor),
                     hintText: 'e.g., Amazon, Swiggy, BPCL',
                   ),
                 ),
@@ -279,14 +291,18 @@ class _EnhancedTransactionAdvisorScreenState
                   initialValue: _selectedCategory,
                   decoration: const InputDecoration(
                     labelText: 'Spend Category',
-                    prefixIcon: Icon(Icons.category_outlined, color: AppTheme.primaryColor),
+                    prefixIcon: Icon(Icons.category_outlined,
+                        color: AppTheme.primaryColor),
                   ),
                   items: _categories.map((category) {
                     return DropdownMenuItem(
                       value: category,
                       child: Text(
                         category.toUpperCase(),
-                        style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                        style: GoogleFonts.spaceGrotesk(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold),
                       ),
                     );
                   }).toList(),
@@ -305,25 +321,33 @@ class _EnhancedTransactionAdvisorScreenState
                         ? const SizedBox(
                             width: 16,
                             height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(Colors.black)),
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor:
+                                    AlwaysStoppedAnimation(Colors.black)),
                           )
                         : const Icon(Icons.bolt, color: Colors.black, size: 16),
                     label: Text(
                       _isCalculating ? 'EVALUATING ROUTE...' : 'FIND BEST CARD',
-                      style: GoogleFonts.spaceGrotesk(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.black, letterSpacing: 0.5),
+                      style: GoogleFonts.spaceGrotesk(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                          color: Colors.black,
+                          letterSpacing: 0.5),
                     ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppTheme.primaryColor,
                       disabledBackgroundColor: Colors.white10,
                       padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppBorderRadius.lg)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius:
+                              BorderRadius.circular(AppBorderRadius.lg)),
                     ),
                   ),
                 ),
               ],
             ),
           ),
-
           if (_recommendation != null) ...[
             const SizedBox(height: AppSpacing.lg),
             _buildRecommendationResult(),
@@ -331,12 +355,16 @@ class _EnhancedTransactionAdvisorScreenState
           const SizedBox(height: 80),
         ],
       ),
-    ).animate().fadeIn(duration: 250.ms, curve: Curves.easeOut).slideY(begin: 0.05, end: 0, duration: 250.ms, curve: Curves.easeOut);
+    )
+        .animate()
+        .fadeIn(duration: 250.ms, curve: Curves.easeOut)
+        .slideY(begin: 0.05, end: 0, duration: 250.ms, curve: Curves.easeOut);
   }
 
   Widget _buildRecommendationResult() {
     final bestCard = _recommendation!['bestCard'];
-    final recommendations = _recommendation!['recommendations'] as List<dynamic>;
+    final recommendations =
+        _recommendation!['recommendations'] as List<dynamic>;
 
     if (bestCard == null) {
       return Container(
@@ -352,12 +380,16 @@ class _EnhancedTransactionAdvisorScreenState
             const SizedBox(height: 12),
             Text(
               'NO ACTIVE MATCHES',
-              style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+              style: GoogleFonts.spaceGrotesk(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12),
             ),
             const SizedBox(height: 6),
             Text(
               'No configured benefits yield rewards for this specific transaction profile.',
-              style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 11),
+              style: GoogleFonts.plusJakartaSans(
+                  color: Colors.white38, fontSize: 11),
               textAlign: TextAlign.center,
             ),
           ],
@@ -374,15 +406,19 @@ class _EnhancedTransactionAdvisorScreenState
           decoration: BoxDecoration(
             color: const Color(0xFF0C152B),
             borderRadius: BorderRadius.circular(AppBorderRadius.xl),
-            border: Border.all(color: AppTheme.successColor.withValues(alpha: 0.3), width: 1.5),
-            boxShadow: AppTheme.neonGlow(color: AppTheme.successColor, opacity: 0.08, blurRadius: 12),
+            border: Border.all(
+                color: AppTheme.successColor.withValues(alpha: 0.3),
+                width: 1.5),
+            boxShadow: AppTheme.neonGlow(
+                color: AppTheme.successColor, opacity: 0.08, blurRadius: 12),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
-                  const Icon(Icons.verified_outlined, color: AppTheme.successColor, size: 20),
+                  const Icon(Icons.verified_outlined,
+                      color: AppTheme.successColor, size: 20),
                   const SizedBox(width: AppSpacing.sm),
                   Text(
                     'BEST ROUTING MATCH',
@@ -423,7 +459,10 @@ class _EnhancedTransactionAdvisorScreenState
                   children: [
                     Text(
                       'ESTIMATED YIELD:',
-                      style: GoogleFonts.spaceGrotesk(color: Colors.white60, fontSize: 10, fontWeight: FontWeight.bold),
+                      style: GoogleFonts.spaceGrotesk(
+                          color: Colors.white60,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold),
                     ),
                     Text(
                       '₹${bestCard['total_reward'].toStringAsFixed(2)} (${bestCard['reward_percentage'].toStringAsFixed(2)}%)',
@@ -441,7 +480,11 @@ class _EnhancedTransactionAdvisorScreenState
               const SizedBox(height: 6),
               Text(
                 'APPLICABLE SAVINGS RULES:',
-                style: GoogleFonts.spaceGrotesk(color: Colors.white70, fontSize: 9, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+                style: GoogleFonts.spaceGrotesk(
+                    color: Colors.white70,
+                    fontSize: 9,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.5),
               ),
               const SizedBox(height: AppSpacing.sm),
               ...bestCard['applicable_benefits'].map<Widget>((benefit) {
@@ -449,12 +492,16 @@ class _EnhancedTransactionAdvisorScreenState
                   padding: const EdgeInsets.only(top: 4),
                   child: Row(
                     children: [
-                      const Icon(Icons.check_circle_outline, size: 14, color: AppTheme.successColor),
+                      const Icon(Icons.check_circle_outline,
+                          size: 14, color: AppTheme.successColor),
                       const SizedBox(width: AppSpacing.sm),
                       Expanded(
                         child: Text(
                           '${benefit['benefit_name'].toString().toUpperCase()}: ₹${benefit['reward'].toStringAsFixed(2)}',
-                          style: GoogleFonts.spaceGrotesk(color: Colors.white60, fontSize: 10, fontWeight: FontWeight.bold),
+                          style: GoogleFonts.spaceGrotesk(
+                              color: Colors.white60,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold),
                         ),
                       ),
                     ],
@@ -486,47 +533,65 @@ class _EnhancedTransactionAdvisorScreenState
                 color: const Color(0xFF0C152B),
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
-                  color: isFirst ? AppTheme.successColor.withValues(alpha: 0.25) : Colors.white.withValues(alpha: 0.05),
+                  color: isFirst
+                      ? AppTheme.successColor.withValues(alpha: 0.25)
+                      : Colors.white.withValues(alpha: 0.05),
                 ),
               ),
-              child: ListTile(
-                leading: CircleAvatar(
-                  backgroundColor: isFirst ? AppTheme.successColor.withValues(alpha: 0.15) : Colors.white.withValues(alpha: 0.05),
-                  child: Icon(
-                    isFirst ? Icons.verified_outlined : Icons.credit_card_outlined,
-                    color: isFirst ? AppTheme.successColor : Colors.white38,
-                    size: 18,
+              // Material(transparency) restores ListTile ink splashes/tap
+              // feedback, which the DecoratedBox above would otherwise hide.
+              child: Material(
+                type: MaterialType.transparency,
+                borderRadius: BorderRadius.circular(16),
+                clipBehavior: Clip.antiAlias,
+                child: ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor: isFirst
+                        ? AppTheme.successColor.withValues(alpha: 0.15)
+                        : Colors.white.withValues(alpha: 0.05),
+                    child: Icon(
+                      isFirst
+                          ? Icons.verified_outlined
+                          : Icons.credit_card_outlined,
+                      color: isFirst ? AppTheme.successColor : Colors.white38,
+                      size: 18,
+                    ),
                   ),
-                ),
-                title: Text(
-                  (rec['card']['card_name'] as String).toUpperCase(),
-                  style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
-                ),
-                subtitle: Text(
-                  (rec['card']['bank_name'] as String).toUpperCase(),
-                  style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 9),
-                ),
-                trailing: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      '₹${rec['total_reward'].toStringAsFixed(2)}',
-                      style: GoogleFonts.spaceGrotesk(
-                        fontWeight: FontWeight.bold,
-                        color: isFirst ? AppTheme.successColor : Colors.white,
+                  title: Text(
+                    (rec['card']['card_name'] as String).toUpperCase(),
+                    style: GoogleFonts.spaceGrotesk(
+                        color: Colors.white,
                         fontSize: 11,
+                        fontWeight: FontWeight.bold),
+                  ),
+                  subtitle: Text(
+                    (rec['card']['bank_name'] as String).toUpperCase(),
+                    style: GoogleFonts.plusJakartaSans(
+                        color: Colors.white38, fontSize: 9),
+                  ),
+                  trailing: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        '₹${rec['total_reward'].toStringAsFixed(2)}',
+                        style: GoogleFonts.spaceGrotesk(
+                          fontWeight: FontWeight.bold,
+                          color: isFirst ? AppTheme.successColor : Colors.white,
+                          fontSize: 11,
+                        ),
                       ),
-                    ),
-                    Text(
-                      '${rec['reward_percentage'].toStringAsFixed(2)}%',
-                      style: GoogleFonts.spaceGrotesk(
-                        fontSize: 9,
-                        color: isFirst ? AppTheme.successColor : Colors.white38,
-                        fontWeight: FontWeight.bold,
+                      Text(
+                        '${rec['reward_percentage'].toStringAsFixed(2)}%',
+                        style: GoogleFonts.spaceGrotesk(
+                          fontSize: 9,
+                          color:
+                              isFirst ? AppTheme.successColor : Colors.white38,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             );
@@ -545,7 +610,8 @@ class _EnhancedTransactionAdvisorScreenState
       return const EmptyState(
         icon: Icons.trending_up,
         title: 'ROUTING OPTIMAL',
-        message: 'All transaction categories processed yield optimal reward matching.',
+        message:
+            'All transaction categories processed yield optimal reward matching.',
       );
     }
 
@@ -559,18 +625,21 @@ class _EnhancedTransactionAdvisorScreenState
         itemBuilder: (context, index) {
           if (index == 0) {
             final totalMissedRewards = _optimizations.fold<double>(
-              0.0, 
-              (sum, opt) => sum + opt['potential_savings']
-            );
-            
+                0.0, (sum, opt) => sum + opt['potential_savings']);
+
             return Container(
               margin: const EdgeInsets.only(bottom: 20),
               padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(
                 color: const Color(0xFF0C152B),
                 borderRadius: BorderRadius.circular(AppBorderRadius.xl),
-                border: Border.all(color: AppTheme.secondaryColor.withValues(alpha: 0.3), width: 1.5),
-                boxShadow: AppTheme.neonGlow(color: AppTheme.secondaryColor, opacity: 0.08, blurRadius: 10),
+                border: Border.all(
+                    color: AppTheme.secondaryColor.withValues(alpha: 0.3),
+                    width: 1.5),
+                boxShadow: AppTheme.neonGlow(
+                    color: AppTheme.secondaryColor,
+                    opacity: 0.08,
+                    blurRadius: 10),
               ),
               child: Column(
                 children: [
@@ -582,7 +651,10 @@ class _EnhancedTransactionAdvisorScreenState
                   const SizedBox(height: 12),
                   Text(
                     'REWARDS DISCREPANCY DETECTED',
-                    style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                    style: GoogleFonts.spaceGrotesk(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13),
                   ),
                   const SizedBox(height: 6),
                   Text(
@@ -602,7 +674,7 @@ class _EnhancedTransactionAdvisorScreenState
           final optimization = _optimizations[index - 1];
           final transaction = optimization['transaction'];
           final bestCard = optimization['best_card'];
-          
+
           return Container(
             margin: const EdgeInsets.only(bottom: 12),
             padding: const EdgeInsets.all(16),
@@ -619,17 +691,24 @@ class _EnhancedTransactionAdvisorScreenState
                   children: [
                     Expanded(
                       child: Text(
-                        (transaction['merchant_name'] ?? 'UNKNOWN').toString().toUpperCase(),
-                        style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+                        (transaction['merchant_name'] ?? 'UNKNOWN')
+                            .toString()
+                            .toUpperCase(),
+                        style: GoogleFonts.spaceGrotesk(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12),
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
                         color: AppTheme.errorColor.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(AppBorderRadius.md),
-                        border: Border.all(color: AppTheme.errorColor.withValues(alpha: 0.2)),
+                        border: Border.all(
+                            color: AppTheme.errorColor.withValues(alpha: 0.2)),
                       ),
                       child: Text(
                         '₹${optimization['potential_savings'].toStringAsFixed(2)} MISSED',
@@ -645,18 +724,21 @@ class _EnhancedTransactionAdvisorScreenState
                 const SizedBox(height: 10),
                 Text(
                   'Amount: ₹${transaction['amount']}',
-                  style: GoogleFonts.plusJakartaSans(color: Colors.white60, fontSize: 11),
+                  style: GoogleFonts.plusJakartaSans(
+                      color: Colors.white60, fontSize: 11),
                 ),
                 Text(
                   'Date: ${DateFormat('MMM dd, yyyy').format(DateTime.parse(transaction['transaction_date']))}',
-                  style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 10),
+                  style: GoogleFonts.plusJakartaSans(
+                      color: Colors.white38, fontSize: 10),
                 ),
                 const SizedBox(height: 12),
                 const Divider(color: Color(0xFF1E293B)),
                 const SizedBox(height: 6),
                 Row(
                   children: [
-                    const Icon(Icons.lightbulb_outline, size: 14, color: AppTheme.primaryColor),
+                    const Icon(Icons.lightbulb_outline,
+                        size: 14, color: AppTheme.primaryColor),
                     const SizedBox(width: AppSpacing.sm),
                     Expanded(
                       child: Text(
@@ -699,7 +781,7 @@ class _EnhancedTransactionAdvisorScreenState
     }
 
     final summary = _rewardSummary!;
-    
+
     return RefreshIndicator(
       color: AppTheme.primaryColor,
       backgroundColor: const Color(0xFF0C152B),
@@ -785,7 +867,8 @@ class _EnhancedTransactionAdvisorScreenState
                 decoration: BoxDecoration(
                   color: const Color(0xFF0C152B),
                   borderRadius: BorderRadius.circular(AppBorderRadius.xl),
-                  border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+                  border:
+                      Border.all(color: Colors.white.withValues(alpha: 0.06)),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -810,7 +893,10 @@ class _EnhancedTransactionAdvisorScreenState
                           children: [
                             Text(
                               entry.key.toUpperCase(),
-                              style: GoogleFonts.spaceGrotesk(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold),
+                              style: GoogleFonts.spaceGrotesk(
+                                  color: Colors.white70,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold),
                             ),
                             Text(
                               '₹${entry.value.toStringAsFixed(2)}',
@@ -835,7 +921,8 @@ class _EnhancedTransactionAdvisorScreenState
     );
   }
 
-  Widget _buildSummaryItem(String title, String value, IconData icon, Color color) {
+  Widget _buildSummaryItem(
+      String title, String value, IconData icon, Color color) {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
       decoration: BoxDecoration(
@@ -858,7 +945,10 @@ class _EnhancedTransactionAdvisorScreenState
           const SizedBox(height: 2),
           Text(
             title,
-            style: GoogleFonts.spaceGrotesk(color: Colors.white38, fontSize: 8, fontWeight: FontWeight.bold),
+            style: GoogleFonts.spaceGrotesk(
+                color: Colors.white38,
+                fontSize: 8,
+                fontWeight: FontWeight.bold),
             textAlign: TextAlign.center,
           ),
         ],
@@ -875,7 +965,8 @@ class _EnhancedTransactionAdvisorScreenState
       return const EmptyState(
         icon: Icons.recommend,
         title: 'NO CATALOG SUGGESTIONS',
-        message: 'Import further transaction histories to calculate card recommendation index.',
+        message:
+            'Import further transaction histories to calculate card recommendation index.',
       );
     }
 
@@ -894,8 +985,13 @@ class _EnhancedTransactionAdvisorScreenState
               decoration: BoxDecoration(
                 color: const Color(0xFF0C152B),
                 borderRadius: BorderRadius.circular(AppBorderRadius.xl),
-                border: Border.all(color: AppTheme.primaryColor.withValues(alpha: 0.2), width: 1.5),
-                boxShadow: AppTheme.neonGlow(color: AppTheme.primaryColor, opacity: 0.06, blurRadius: 10),
+                border: Border.all(
+                    color: AppTheme.primaryColor.withValues(alpha: 0.2),
+                    width: 1.5),
+                boxShadow: AppTheme.neonGlow(
+                    color: AppTheme.primaryColor,
+                    opacity: 0.06,
+                    blurRadius: 10),
               ),
               child: Column(
                 children: [
@@ -907,7 +1003,10 @@ class _EnhancedTransactionAdvisorScreenState
                   const SizedBox(height: 12),
                   Text(
                     'PORTFOLIO UPGRADES REGISTER',
-                    style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                    style: GoogleFonts.spaceGrotesk(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13),
                   ),
                   const SizedBox(height: 6),
                   Text(
@@ -925,7 +1024,7 @@ class _EnhancedTransactionAdvisorScreenState
 
           final recommendation = _personalizedRecommendations[index - 1];
           final card = recommendation['card'];
-          
+
           return Container(
             margin: const EdgeInsets.only(bottom: 12),
             padding: const EdgeInsets.all(16),
@@ -964,11 +1063,14 @@ class _EnhancedTransactionAdvisorScreenState
                     ),
                     const SizedBox(width: AppSpacing.sm),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
                       decoration: BoxDecoration(
                         color: AppTheme.successColor.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(AppBorderRadius.md),
-                        border: Border.all(color: AppTheme.successColor.withValues(alpha: 0.2)),
+                        border: Border.all(
+                            color:
+                                AppTheme.successColor.withValues(alpha: 0.2)),
                       ),
                       child: Text(
                         '+₹${recommendation['projected_monthly_reward'].toStringAsFixed(0)}/MO',
@@ -984,15 +1086,16 @@ class _EnhancedTransactionAdvisorScreenState
                 const SizedBox(height: 12),
                 Text(
                   'Annual Fee: ₹${card['annual_fee']?.toStringAsFixed(0) ?? '0'}',
-                  style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 10),
+                  style: GoogleFonts.plusJakartaSans(
+                      color: Colors.white38, fontSize: 10),
                 ),
                 Text(
                   'Net Annual Benefit: ₹${recommendation['net_annual_benefit'].toStringAsFixed(0)}',
                   style: GoogleFonts.spaceGrotesk(
                     fontWeight: FontWeight.bold,
                     fontSize: 11,
-                    color: recommendation['net_annual_benefit'] > 0 
-                        ? AppTheme.successColor 
+                    color: recommendation['net_annual_benefit'] > 0
+                        ? AppTheme.successColor
                         : AppTheme.errorColor,
                   ),
                 ),
@@ -1001,15 +1104,22 @@ class _EnhancedTransactionAdvisorScreenState
                 const SizedBox(height: 6),
                 Text(
                   'COMPATIBLE BENEFITS PATH:',
-                  style: GoogleFonts.spaceGrotesk(color: Colors.white70, fontSize: 8, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+                  style: GoogleFonts.spaceGrotesk(
+                      color: Colors.white70,
+                      fontSize: 8,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 0.5),
                 ),
                 const SizedBox(height: AppSpacing.sm),
-                ...recommendation['matching_categories'].take(3).map<Widget>((category) {
+                ...recommendation['matching_categories']
+                    .take(3)
+                    .map<Widget>((category) {
                   return Padding(
                     padding: const EdgeInsets.only(top: 4),
                     child: Row(
                       children: [
-                        const Icon(Icons.check, size: 12, color: AppTheme.successColor),
+                        const Icon(Icons.check,
+                            size: 12, color: AppTheme.successColor),
                         const SizedBox(width: 6),
                         Expanded(
                           child: Text(
