@@ -17,25 +17,30 @@ class CardCompassApp extends ConsumerWidget {
     return MaterialApp(
       title: 'CardCompass',
       debugShowCheckedModeBanner: false,
-      
+
       // Global Navigator Key
       navigatorKey: navigatorKey,
-      
+
       // App Theme Configuration
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.system,
-      
+
       // Initial Route
-      initialRoute: initialRoute,
-      
+      initialRoute: AppRoutes.startupRoute(
+        defaultRouteName:
+            WidgetsBinding.instance.platformDispatcher.defaultRouteName,
+        webHash: Uri.base.fragment,
+      ),
+
       // Global Route Configuration
       onGenerateRoute: AppRoutes.generateRoute,
-      
+
       // Global Builder for error handling and context management
       builder: (context, child) {
         return MediaQuery(
-          data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(1.0)),
+          data: MediaQuery.of(context)
+              .copyWith(textScaler: const TextScaler.linear(1.0)),
           child: child!,
         );
       },

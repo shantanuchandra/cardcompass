@@ -105,6 +105,7 @@ CREATE TABLE IF NOT EXISTS card_benefit_mapping (
   benefit_id UUID NOT NULL REFERENCES benefits(benefit_id) ON DELETE CASCADE,
   display_priority INTEGER DEFAULT 1,
   is_primary BOOLEAN DEFAULT true,
+  category_codes TEXT[] NOT NULL DEFAULT '{}', -- normalized searchable eligibility categories
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   UNIQUE(card_id, benefit_id)
 );
@@ -259,6 +260,8 @@ CREATE INDEX IF NOT EXISTS idx_benefits_active ON benefits(is_active);
 CREATE INDEX IF NOT EXISTS idx_card_benefit_card ON card_benefit_mapping(card_id);
 CREATE INDEX IF NOT EXISTS idx_card_benefit_benefit ON card_benefit_mapping(benefit_id);
 CREATE INDEX IF NOT EXISTS idx_card_benefit_primary ON card_benefit_mapping(card_id, is_primary);
+CREATE INDEX IF NOT EXISTS idx_card_benefit_mapping_category_codes
+  ON card_benefit_mapping USING GIN (category_codes);
 
 -- Transactions Indexes
 CREATE INDEX IF NOT EXISTS idx_transactions_user ON transactions(user_id);
@@ -279,8 +282,7 @@ CREATE INDEX IF NOT EXISTS idx_statement_milestone_cache_lookup
 CREATE INDEX IF NOT EXISTS idx_statement_milestone_user_card 
   ON statement_milestone_cache(user_card_id);
 
--- Card Benefits Indexes
-CREATE INDEX IF NOT EXISTS idx_card_benefits_card ON card_benefits(card_id);
+-- Historical Card Benefits Indexes
 CREATE INDEX IF NOT EXISTS idx_card_benefits_benefit ON card_benefits(benefit_id);
 CREATE INDEX IF NOT EXISTS idx_card_benefits_active ON card_benefits(is_active);
 

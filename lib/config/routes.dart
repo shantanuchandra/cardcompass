@@ -29,13 +29,58 @@ class AppRoutes {
   static const String cardDetails = '/card-details';
   static const String transactions = '/transactions';
   static const String transactionAdvisor = '/transaction-advisor';
-  static const String enhancedTransactionAdvisor = '/enhanced-transaction-advisor';
+  static const String enhancedTransactionAdvisor =
+      '/enhanced-transaction-advisor';
   static const String analytics = '/analytics';
   static const String recommendations = '/recommendations';
-  static const String benefits = '/benefits';  static const String notifications = '/notifications';  static const String statements = '/statements';
+  static const String benefits = '/benefits';
+  static const String notifications = '/notifications';
+  static const String statements = '/statements';
   static const String profile = '/profile';
   static const String settings = '/settings';
   static const String adminPm = '/admin/pm';
+
+  static const Set<String> _startupRoutes = {
+    splash,
+    login,
+    home,
+    dashboard,
+    cards,
+    addCard,
+    cardDetails,
+    transactions,
+    transactionAdvisor,
+    enhancedTransactionAdvisor,
+    analytics,
+    recommendations,
+    benefits,
+    notifications,
+    statements,
+    profile,
+    settings,
+    adminPm,
+  };
+
+  /// Resolves browser hash links before the splash screen can redirect an
+  /// authenticated user to the customer dashboard.
+  static String startupRoute({
+    required String defaultRouteName,
+    String? webHash,
+  }) {
+    for (final candidate in [webHash, defaultRouteName]) {
+      final route = _normalizeStartupRoute(candidate);
+      if (route != null && _startupRoutes.contains(route)) return route;
+    }
+    return splash;
+  }
+
+  static String? _normalizeStartupRoute(String? candidate) {
+    if (candidate == null || candidate.trim().isEmpty) return null;
+    var route = candidate.trim();
+    if (route.startsWith('#')) route = route.substring(1);
+    if (!route.startsWith('/')) route = '/$route';
+    return route;
+  }
 
   /// Generate routes for the application
   static Route<dynamic> generateRoute(RouteSettings settings) {
@@ -50,12 +95,14 @@ class AppRoutes {
         return MaterialPageRoute(
           builder: (_) => const LoginScreen(),
           settings: settings,
-        );      case home:
+        );
+      case home:
       case dashboard:
         return MaterialPageRoute(
           builder: (_) => const HomeScreen(),
           settings: settings,
-        );      case cards:
+        );
+      case cards:
         return MaterialPageRoute(
           builder: (_) => const CardsListScreen(),
           settings: settings,
@@ -65,7 +112,8 @@ class AppRoutes {
         return MaterialPageRoute(
           builder: (_) => const AddCardScreen(),
           settings: settings,
-        );      case cardDetails:
+        );
+      case cardDetails:
         final String? cardId = settings.arguments as String?;
         return MaterialPageRoute(
           builder: (_) => CardDetailsScreen(cardId: cardId ?? '1'),
@@ -76,7 +124,8 @@ class AppRoutes {
         return MaterialPageRoute(
           builder: (_) => const TransactionsScreen(),
           settings: settings,
-        );      case transactionAdvisor:
+        );
+      case transactionAdvisor:
         return MaterialPageRoute(
           builder: (_) => const TransactionAdvisorScreen(),
           settings: settings,
@@ -98,15 +147,18 @@ class AppRoutes {
         return MaterialPageRoute(
           builder: (_) => const RecommendationsScreen(),
           settings: settings,
-        );      case statements:
+        );
+      case statements:
         return MaterialPageRoute(
           builder: (_) => const StatementsScreen(),
           settings: settings,
-        );      case profile:
+        );
+      case profile:
         return MaterialPageRoute(
           builder: (_) => const ProfileScreen(),
           settings: settings,
-        );      case '/settings':
+        );
+      case '/settings':
         return MaterialPageRoute(
           builder: (_) => const SettingsScreen(),
           settings: settings,
@@ -118,8 +170,10 @@ class AppRoutes {
         );
       case '/benefits':
         return MaterialPageRoute(
-          builder: (_) => const BenefitsScreen(),          settings: settings,
-        );      case '/notifications':
+          builder: (_) => const BenefitsScreen(),
+          settings: settings,
+        );
+      case '/notifications':
         return MaterialPageRoute(
           builder: (_) => const NotificationsScreen(),
           settings: settings,

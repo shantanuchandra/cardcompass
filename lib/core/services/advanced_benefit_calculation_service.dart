@@ -6,6 +6,7 @@ import 'parsing_logger.dart';
 import 'benefit_extraction_validator.dart';
 import 'benefit_staging_policy.dart';
 import 'benefit_deduplication_service.dart';
+import 'benefit_category_normalizer.dart';
 
 /// Advanced benefit calculation service with tier-based rewards
 class AdvancedBenefitCalculationService {
@@ -58,8 +59,13 @@ class AdvancedBenefitCalculationService {
               : <String, dynamic>{};
 
           // Check if benefit applies to this category
-          final spendingCategories =
-              configuration['spending_categories'] as List<dynamic>? ??
+          final mappedCategories =
+              (cardBenefit['category_codes'] as List? ?? const [])
+                  .whereType<String>()
+                  .toList();
+          final spendingCategories = mappedCategories.isNotEmpty
+              ? mappedCategories
+              : configuration['spending_categories'] as List<dynamic>? ??
                   [benefit['benefit_category']];
           bool categoryMatches = false;
 
@@ -133,7 +139,7 @@ class AdvancedBenefitCalculationService {
           totalReward += reward;
           applicableBenefits.add({
             'benefit_name': benefit['title'],
-            'category': benefit['benefit_category'],
+            'category': spendingCategories.join(', '),
             'reward': reward,
             'calculation_method': calculationMethod,
             'description': benefit['description'],
@@ -945,27 +951,34 @@ class AdvancedBenefitCalculationService {
     required List<Map<String, dynamic>> acceptedCandidates,
     required String sourceUrl,
   }) async {
-    final benefitIds = <String>{};
+    final categoryCodesByBenefit = <String, Set<String>>{};
     for (final candidate in acceptedCandidates) {
       final source = candidate['source'];
       if (source is! Map) continue;
-      benefitIds.add(await _findOrCreateCanonicalBenefit(
-        source: Map<String, dynamic>.from(source),
+      final normalizedSource = Map<String, dynamic>.from(source);
+      final benefitId = await _findOrCreateCanonicalBenefit(
+        source: normalizedSource,
         sourceUrl: sourceUrl,
-      ));
+      );
+      categoryCodesByBenefit
+          .putIfAbsent(benefitId, () => <String>{})
+          .addAll(BenefitCategoryNormalizer.idsFor(normalizedSource));
     }
 
     // A fully reviewed candidate set is the desired state for this one card.
     await _supabase.from('card_benefit_mapping').delete().eq('card_id', cardId);
-    for (var index = 0; index < benefitIds.length; index++) {
+    final mappings = categoryCodesByBenefit.entries.toList();
+    for (var index = 0; index < mappings.length; index++) {
+      final mapping = mappings[index];
       await _supabase.from('card_benefit_mapping').upsert({
         'card_id': cardId,
-        'benefit_id': benefitIds.elementAt(index),
+        'benefit_id': mapping.key,
+        'category_codes': mapping.value.toList()..sort(),
         'display_priority': index + 1,
         'is_primary': index == 0,
       }, onConflict: 'card_id,benefit_id');
     }
-    return benefitIds.length;
+    return mappings.length;
   }
 
   Future<String> _findOrCreateCanonicalBenefit({
@@ -976,9 +989,8 @@ class AdvancedBenefitCalculationService {
     if (title == null || title.isEmpty) {
       throw ArgumentError('An accepted benefit needs a description.');
     }
-    final category = (source['category'] ?? source['type'] ?? 'general')
-        .toString()
-        .toLowerCase();
+    final categoryIds = BenefitCategoryNormalizer.idsFor(source);
+    final category = categoryIds.first.toLowerCase();
     final type = (source['rate_type'] ?? source['type'] ?? 'general')
         .toString()
         .toLowerCase();
