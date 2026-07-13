@@ -47,6 +47,8 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
   final TextEditingController _customUrlController = TextEditingController();
   bool _isExtracting = false;
   Map<String, dynamic>? _selectedCardBenefits;
+  String? _selectedCatalogCardId;
+  String? _selectedStagingId;
   String? _selectedCardName;
   String? _selectedValidationStatus;
   num? _selectedValidationConfidence;
@@ -668,6 +670,8 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
                                   '🤖 User selected: $bankName - $cardName');
                               _safeSetState(() {
                                 _selectedCardName = '$bankName - $cardName';
+                                _selectedCatalogCardId = cardId;
+                                _selectedStagingId = null;
                                 _selectedCardBenefits = null; // reset
                                 _selectedValidationStatus = null;
                                 _selectedValidationConfidence = null;
@@ -682,7 +686,7 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
                                   final stagingData = await _supabase
                                       .from('card_benefits_staging')
                                       .select(
-                                          'extracted_data, status, created_at, calculated_confidence, validation_reasons')
+                                          'id, extracted_data, status, created_at, calculated_confidence, validation_reasons')
                                       .eq('card_id', cardId)
                                       .order('created_at', ascending: false)
                                       .limit(1)
@@ -695,6 +699,8 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
                                       _selectedCardBenefits =
                                           stagingData['extracted_data']
                                               as Map<String, dynamic>;
+                                      _selectedStagingId =
+                                          stagingData['id']?.toString();
                                       _selectedValidationStatus =
                                           stagingData['status']?.toString();
                                       _selectedValidationConfidence =
@@ -830,6 +836,11 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
     }
 
     final b = _selectedCardBenefits!;
+    final reviewAccess = StagingReviewAccess(
+      stagingId: _selectedStagingId,
+      status: _selectedValidationStatus,
+      candidateData: b,
+    );
 
     return Container(
       decoration: const BoxDecoration(
@@ -916,37 +927,72 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
                     ),
                   ],
                 ),
-                // Toggle Button
-                InkWell(
-                  onTap: () =>
-                      _safeSetState(() => _showRawJson = !_showRawJson),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: _showRawJson
-                          ? const Color(0xFF00F5FF).withValues(alpha: 0.1)
-                          : Colors.transparent,
-                      border: Border.all(
-                          color:
-                              const Color(0xFF00F5FF).withValues(alpha: 0.5)),
-                      borderRadius: BorderRadius.circular(30),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(_showRawJson ? Icons.code_off : Icons.code,
-                            size: 16, color: const Color(0xFF00F5FF)),
-                        const SizedBox(width: 8),
-                        Text(
-                          _showRawJson ? 'VIEW UI' : 'VIEW JSON',
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Semantics(
+                      button: true,
+                      label: reviewAccess.canOpen
+                          ? 'Review pending benefit candidate'
+                          : 'No pending benefit candidate to review',
+                      child: ElevatedButton.icon(
+                        onPressed: reviewAccess.canOpen
+                            ? _openSelectedPendingReview
+                            : null,
+                        icon: const Icon(Icons.rate_review_outlined, size: 16),
+                        label: Text(
+                          reviewAccess.canOpen
+                              ? 'REVIEW PENDING CANDIDATE'
+                              : 'NO PENDING CANDIDATE',
                           style: GoogleFonts.shareTechMono(
-                              color: const Color(0xFF00F5FF),
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold),
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                      ],
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF10B981),
+                          foregroundColor: Colors.black,
+                          minimumSize: const Size(44, 44),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 12),
+                        ),
+                      ),
                     ),
-                  ),
+                    InkWell(
+                      onTap: () =>
+                          _safeSetState(() => _showRawJson = !_showRawJson),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: _showRawJson
+                              ? const Color(0xFF00F5FF).withValues(alpha: 0.1)
+                              : Colors.transparent,
+                          border: Border.all(
+                              color: const Color(0xFF00F5FF)
+                                  .withValues(alpha: 0.5)),
+                          borderRadius: BorderRadius.circular(30),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(_showRawJson ? Icons.code_off : Icons.code,
+                                size: 16, color: const Color(0xFF00F5FF)),
+                            const SizedBox(width: 8),
+                            Text(
+                              _showRawJson ? 'VIEW UI' : 'VIEW JSON',
+                              style: GoogleFonts.shareTechMono(
+                                  color: const Color(0xFF00F5FF),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -1850,6 +1896,41 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
       // Reload catalog so the right panel can fetch fresh data
       _loadCatalogCards();
     }
+  }
+
+  void _openSelectedPendingReview() {
+    final candidateData = _selectedCardBenefits;
+    final access = StagingReviewAccess(
+      stagingId: _selectedStagingId,
+      status: _selectedValidationStatus,
+      candidateData: candidateData,
+    );
+    if (!access.canOpen || candidateData == null) return;
+
+    Map<String, dynamic>? catalogCard;
+    for (final card in _catalogCards) {
+      if (card['id']?.toString() == _selectedCatalogCardId) {
+        catalogCard = card;
+        break;
+      }
+    }
+    if (catalogCard == null) {
+      _onLogReceived(
+          '⚠️ Cannot open review: selected catalog card is unavailable.');
+      return;
+    }
+
+    final cardName = catalogCard['card_name']?.toString();
+    final bankName = catalogCard['bank']?.toString();
+    if (cardName == null || bankName == null) {
+      _onLogReceived(
+          '⚠️ Cannot open review: selected card identity is incomplete.');
+      return;
+    }
+
+    _onLogReceived(
+        '📋 Opening pending candidate review for $bankName $cardName.');
+    _showReviewDialog(access.stagingId!, cardName, bankName, candidateData);
   }
 
   Future<void> _showReviewDialog(

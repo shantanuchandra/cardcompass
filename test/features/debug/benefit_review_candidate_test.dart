@@ -42,4 +42,35 @@ void main() {
       isTrue,
     );
   });
+
+  test('a pending staging record with candidate data can be opened for review',
+      () {
+    final access = StagingReviewAccess(
+      stagingId: 'stage-123',
+      status: 'pending',
+      candidateData: const {'benefits': []},
+    );
+
+    expect(access.canOpen, isTrue);
+  });
+
+  test('rejected or incomplete staging records cannot be opened for review',
+      () {
+    expect(
+      const StagingReviewAccess(
+        stagingId: 'stage-123',
+        status: 'rejected',
+        candidateData: {'benefits': []},
+      ).canOpen,
+      isFalse,
+    );
+    expect(
+      const StagingReviewAccess(
+        stagingId: null,
+        status: 'pending',
+        candidateData: {'benefits': []},
+      ).canOpen,
+      isFalse,
+    );
+  });
 }

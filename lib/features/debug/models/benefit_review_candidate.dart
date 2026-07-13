@@ -1,5 +1,25 @@
 enum BenefitDecision { unresolved, accepted, rejected }
 
+/// Describes whether the currently selected staging record is eligible for the
+/// PM comparison and decision flow.
+class StagingReviewAccess {
+  const StagingReviewAccess({
+    required this.stagingId,
+    required this.status,
+    required this.candidateData,
+  });
+
+  final String? stagingId;
+  final String? status;
+  final Map<String, dynamic>? candidateData;
+
+  bool get canOpen =>
+      stagingId != null &&
+      stagingId!.isNotEmpty &&
+      status == 'pending' &&
+      candidateData != null;
+}
+
 class BenefitReviewCandidate {
   const BenefitReviewCandidate({
     required this.id,
