@@ -314,87 +314,75 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     return state.filteredTransactions.fold<double>(0, (sum, t) => sum + (t.rewardEarned ?? 0));
   }
 
-  Widget _statTile(String label, String value, IconData icon, Color color, {String? subtitle}) {
+  Widget _tileShell({
+    required Color borderColor,
+    required List<Widget> children,
+    double width = 150,
+  }) {
     return Container(
-      width: 150,
+      width: width,
       margin: const EdgeInsets.only(right: AppSpacing.sm),
       padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
         color: const Color(0xFF0C152B),
         borderRadius: BorderRadius.circular(AppBorderRadius.xl),
-        border: Border.all(color: color.withValues(alpha: 0.25), width: 1),
+        border: Border.all(color: borderColor, width: 1),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, color: color, size: 18),
-          const SizedBox(height: AppSpacing.sm),
-          Text(value, style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16), overflow: TextOverflow.ellipsis),
-          if (subtitle != null)
-            Text(subtitle, style: GoogleFonts.spaceGrotesk(color: Colors.white54, fontSize: 11)),
-          const SizedBox(height: 2),
-          Text(label, style: GoogleFonts.spaceGrotesk(color: Colors.white38, fontSize: 10, letterSpacing: 0.5)),
-        ],
+        children: children,
       ),
+    );
+  }
+
+  Widget _statTile(String label, String value, IconData icon, Color color, {String? subtitle}) {
+    return _tileShell(
+      borderColor: color.withValues(alpha: 0.25),
+      width: 150,
+      children: [
+        Icon(icon, color: color, size: 18),
+        const SizedBox(height: AppSpacing.sm),
+        Text(value, style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16), overflow: TextOverflow.ellipsis),
+        if (subtitle != null)
+          Text(subtitle, style: GoogleFonts.spaceGrotesk(color: Colors.white54, fontSize: 11)),
+        const SizedBox(height: 2),
+        Text(label, style: GoogleFonts.spaceGrotesk(color: Colors.white38, fontSize: 10, letterSpacing: 0.5)),
+      ],
     );
   }
 
   Widget _cardTile(CreditCard card, CardSpendSummary? summary) {
-    return Container(
+    return _tileShell(
+      borderColor: card.networkColor.withValues(alpha: 0.4),
       width: 160,
-      margin: const EdgeInsets.only(right: AppSpacing.sm),
-      padding: const EdgeInsets.all(AppSpacing.md),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0C152B),
-        borderRadius: BorderRadius.circular(AppBorderRadius.xl),
-        border: Border.all(color: card.networkColor.withValues(alpha: 0.4), width: 1),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.credit_card, color: card.networkColor, size: 18),
-          const SizedBox(height: AppSpacing.sm),
-          Text('₹${(summary?.totalSpend ?? 0).toStringAsFixed(0)}', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
-          Text('+₹${(summary?.totalRewards ?? 0).toStringAsFixed(0)} rewards', style: GoogleFonts.spaceGrotesk(color: AppTheme.rewardGold, fontSize: 11)),
-          const SizedBox(height: 2),
-          Text(card.cardName.toUpperCase(), style: GoogleFonts.spaceGrotesk(color: Colors.white38, fontSize: 10, letterSpacing: 0.5), overflow: TextOverflow.ellipsis),
-        ],
-      ),
+      children: [
+        Icon(Icons.credit_card, color: card.networkColor, size: 18),
+        const SizedBox(height: AppSpacing.sm),
+        Text('₹${(summary?.totalSpend ?? 0).toStringAsFixed(0)}', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+        Text('+₹${(summary?.totalRewards ?? 0).toStringAsFixed(0)} rewards', style: GoogleFonts.spaceGrotesk(color: AppTheme.rewardGold, fontSize: 11)),
+        const SizedBox(height: 2),
+        Text(card.cardName.toUpperCase(), style: GoogleFonts.spaceGrotesk(color: Colors.white38, fontSize: 10, letterSpacing: 0.5), overflow: TextOverflow.ellipsis),
+      ],
     );
   }
 
   Widget _cardBenefitsTile(String cardId) {
-    return Consumer(
-      builder: (context, ref, _) {
-        final benefitsState = ref.watch(benefitsViewModelProvider);
-        final cardBenefits = benefitsState.userCardBenefits.where((cb) => cb.cardId == cardId).toList();
-        final activeCount = cardBenefits.where((cb) => cb.isActive).length;
+    final benefitsState = ref.watch(benefitsViewModelProvider);
+    final cardBenefits = benefitsState.userCardBenefits.where((cb) => cb.cardId == cardId).toList();
+    final activeCount = cardBenefits.where((cb) => cb.isActive).length;
 
-        return Container(
-          width: 160,
-          margin: const EdgeInsets.only(right: AppSpacing.sm),
-          padding: const EdgeInsets.all(AppSpacing.md),
-          decoration: BoxDecoration(
-            color: const Color(0xFF0C152B),
-            borderRadius: BorderRadius.circular(AppBorderRadius.xl),
-            border: Border.all(color: AppTheme.successColor.withValues(alpha: 0.25), width: 1),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.verified_outlined, color: AppTheme.successColor, size: 18),
-              const SizedBox(height: AppSpacing.sm),
-              Text('${cardBenefits.length} available', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
-              Text('$activeCount active', style: GoogleFonts.spaceGrotesk(color: Colors.white54, fontSize: 11)),
-              const SizedBox(height: 2),
-              Text('CARD BENEFITS', style: GoogleFonts.spaceGrotesk(color: Colors.white38, fontSize: 10, letterSpacing: 0.5)),
-            ],
-          ),
-        );
-      },
+    return _tileShell(
+      borderColor: AppTheme.successColor.withValues(alpha: 0.25),
+      width: 160,
+      children: [
+        const Icon(Icons.verified_outlined, color: AppTheme.successColor, size: 18),
+        const SizedBox(height: AppSpacing.sm),
+        Text('${cardBenefits.length} available', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+        Text('$activeCount active', style: GoogleFonts.spaceGrotesk(color: Colors.white54, fontSize: 11)),
+        const SizedBox(height: 2),
+        Text('CARD BENEFITS', style: GoogleFonts.spaceGrotesk(color: Colors.white38, fontSize: 10, letterSpacing: 0.5)),
+      ],
     );
   }
 }
