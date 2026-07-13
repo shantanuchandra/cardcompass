@@ -113,6 +113,80 @@ double pointValueFor(String cardName) {
   return _bankPointValueINR['default']!;
 }
 
+// ---------------------------------------------------------------------------
+// Per-bank reward point expiry windows (months after the point is earned).
+//
+// Cashback cards credit directly to the statement and don't expire; those
+// entries use a very long window as a practical "doesn't expire" stand-in.
+// Source: publicly available bank reward programme documents, mid-2025.
+// ---------------------------------------------------------------------------
+const Map<String, int> _bankPointExpiryMonths = {
+  'hdfc diners black': 24,
+  'hdfc infinia': 24,
+  'hdfc regalia gold': 24,
+  'hdfc regalia': 24,
+  'hdfc millennia': 999, // cashback, doesn't expire
+  'hdfc moneyback': 999,
+  'hdfc': 24,
+
+  'icici emeralde': 24,
+  'icici sapphiro': 24,
+  'icici coral': 24,
+  'icici': 24,
+
+  'sbi cashback': 999,
+  'sbi elite': 36,
+  'sbi prime': 36,
+  'sbi simplysave': 36,
+  'sbi': 36,
+
+  'axis atlas': 36,
+  'axis magnus': 36,
+  'axis ace': 999, // cashback
+  'axis flipkart': 999, // cashback
+  'axis': 36,
+
+  'kotak league': 36,
+  'kotak white': 36,
+  'kotak': 36,
+
+  'indusind legend': 36,
+  'indusind pinnacle': 36,
+  'indusind': 36,
+
+  'american express platinum': 999, // Membership Rewards don't expire
+  'american express gold': 999,
+  'amex': 999,
+
+  'idfc first wealth': 999, // don't expire while account is active
+  'idfc first select': 999,
+  'idfc': 999,
+
+  'yes first exclusive': 36,
+  'yes': 36,
+
+  'rbl fun plus': 24,
+  'rbl': 24,
+
+  'au zenith': 24,
+  'au': 24,
+
+  'hsbc premier': 36,
+  'hsbc': 36,
+
+  'default': 24,
+};
+
+/// Returns how many months after being earned a point/mile expires for
+/// [cardName]. A large value (999) signals "does not expire in practice".
+int pointExpiryMonthsFor(String cardName) {
+  final lower = cardName.toLowerCase();
+  for (final entry in _bankPointExpiryMonths.entries) {
+    if (lower.contains(entry.key)) return entry.value;
+  }
+  return _bankPointExpiryMonths['default']!;
+}
+
 /// Analyses [RewardBalance] objects and produces ranked [RewardInsight]s.
 ///
 /// Detects:

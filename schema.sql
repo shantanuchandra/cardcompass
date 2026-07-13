@@ -220,10 +220,34 @@ CREATE TABLE IF NOT EXISTS emails (
 );
 
 -- ============================================================================
--- REWARDS & POINTS (Future Implementation)
+-- REWARDS & POINTS
 -- ============================================================================
--- Note: reward_balances table not yet implemented in database
--- Will be added in future release for tracking points/cashback/miles
+-- reward_balances is a read-only view derived from transactions
+-- (reward_earned, reward_type); see
+-- supabase/migrations/20260714030000_reward_balances_view.sql for the
+-- definition and rationale. No redemption tracking exists yet — nothing in
+-- the product writes redemption data, so total_redeemed is always 0.
+CREATE OR REPLACE VIEW reward_balances AS
+SELECT
+  encode(sha256((t.user_card_id::text || ':' || t.reward_type)::bytea), 'hex') AS id,
+  t.user_id,
+  t.user_card_id,
+  t.reward_type,
+  SUM(t.reward_earned) AS available_balance,
+  SUM(t.reward_earned) AS total_earned,
+  0::decimal(12,2) AS total_redeemed,
+  0::decimal(12,2) AS pending_balance,
+  MAX(t.transaction_date) AS last_earned_at,
+  MAX(t.updated_at) AS last_updated,
+  MIN(t.created_at) AS created_at
+FROM transactions t
+WHERE t.reward_earned IS NOT NULL
+  AND t.reward_earned > 0
+  AND t.reward_type IS NOT NULL
+GROUP BY t.user_id, t.user_card_id, t.reward_type;
+
+ALTER VIEW reward_balances SET (security_invoker = true);
+GRANT SELECT ON reward_balances TO authenticated;
 
 -- ============================================================================
 -- USER PREFERENCES & DATA (Future Implementation)
