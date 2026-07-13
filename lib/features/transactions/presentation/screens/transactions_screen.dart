@@ -227,21 +227,21 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
               ),
               const Divider(height: 1),
               ListTile(
-                title: const Text('All Time', style: TextStyle(color: Colors.white)),
+                title: Text('All Time', style: GoogleFonts.spaceGrotesk(color: Colors.white)),
                 onTap: () {
                   notifier.setDateRange(null);
                   Navigator.pop(context);
                 },
               ),
               ListTile(
-                title: const Text('This Month', style: TextStyle(color: Colors.white)),
+                title: Text('This Month', style: GoogleFonts.spaceGrotesk(color: Colors.white)),
                 onTap: () {
                   notifier.setDateRange(DateRange(start: DateTime(now.year, now.month, 1), end: now));
                   Navigator.pop(context);
                 },
               ),
               ListTile(
-                title: const Text('Last Month', style: TextStyle(color: Colors.white)),
+                title: Text('Last Month', style: GoogleFonts.spaceGrotesk(color: Colors.white)),
                 onTap: () {
                   final lastMonth = DateTime(now.year, now.month - 1, 1);
                   final endOfLastMonth = DateTime(now.year, now.month, 1).subtract(const Duration(days: 1));
@@ -250,14 +250,14 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                 },
               ),
               ListTile(
-                title: const Text('Last 3 Months', style: TextStyle(color: Colors.white)),
+                title: Text('Last 3 Months', style: GoogleFonts.spaceGrotesk(color: Colors.white)),
                 onTap: () {
                   notifier.setDateRange(DateRange(start: DateTime(now.year, now.month - 3, now.day), end: now));
                   Navigator.pop(context);
                 },
               ),
               ListTile(
-                title: const Text('Custom Range', style: TextStyle(color: Colors.white)),
+                title: Text('Custom Range', style: GoogleFonts.spaceGrotesk(color: Colors.white)),
                 onTap: () async {
                   Navigator.pop(context);
                   final picked = await showDateRangePicker(
