@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:googleapis_auth/auth_io.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
@@ -12,6 +13,7 @@ import 'package:cardcompass/core/repositories/supabase_transaction_repository.da
 import 'package:cardcompass/core/repositories/supabase_card_repository.dart';
 import 'package:cardcompass/core/repositories/supabase_statement_repository.dart';
 import 'package:cardcompass/core/repositories/email_repository.dart';
+import 'package:cardcompass/shared/models/credit_card.dart';
 import 'package:cardcompass/shared/models/transaction.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cardcompass/debug/sync_flow_debugger.dart';
@@ -24,6 +26,20 @@ class CardInfo {
   final String userCardId;
 
   CardInfo({required this.catalogCardId, required this.userCardId});
+}
+
+/// Result of matching a statement to an existing user card, identifying which
+/// pass produced the match (for logging/testing).
+class CardMatchResult {
+  final String catalogCardId;
+  final String userCardId;
+  final String matchPass;
+
+  CardMatchResult({
+    required this.catalogCardId,
+    required this.userCardId,
+    required this.matchPass,
+  });
 }
 
 /**
@@ -985,6 +1001,66 @@ class DataPipelineDebugService {
     }
   }
 
+  /// Finds an existing user card to attach a statement to, or `null` if none
+  /// is a safe match (the caller should then fall through to catalog
+  /// lookup/creation).
+  ///
+  /// Pass 1 matches on both bank and card name. Pass 2 is a same-bank
+  /// fallback, but only when [expectedCardName] carries no real card-variant
+  /// information beyond the bank name itself (Gemini/regex couldn't detect a
+  /// specific variant) AND exactly one card from that bank exists — merging
+  /// into "whichever card happens to be first" when a real, distinct variant
+  /// name (e.g. "Diners Black") doesn't match any existing card would
+  /// silently misattribute that statement's transactions to the wrong card.
+  @visibleForTesting
+  static CardMatchResult? findMatchingUserCard({
+    required List<CreditCard> existingUserCards,
+    required String bankName,
+    required String expectedCardName,
+  }) {
+    bool bankMatches(CreditCard card) =>
+        card.bankName.toLowerCase().contains(bankName.toLowerCase()) ||
+        bankName.toLowerCase().contains(card.bankName.toLowerCase());
+
+    // ── Pass 1: exact bank + card match ──────────────────────────────
+    for (final creditCard in existingUserCards) {
+      final cardMatches = creditCard.cardName
+              .toLowerCase()
+              .contains(expectedCardName.toLowerCase()) ||
+          expectedCardName
+              .toLowerCase()
+              .contains(creditCard.cardName.toLowerCase());
+      if (bankMatches(creditCard) && cardMatches) {
+        return CardMatchResult(
+          catalogCardId: creditCard.catalogCardId ?? '',
+          userCardId: creditCard.id,
+          matchPass: 'Pass-1 (bank + card)',
+        );
+      }
+    }
+
+    // ── Pass 2: bank-only fallback — only when no real variant was detected ──
+    // The variant returned by Gemini may just be the bank name ("SBI Card")
+    // because the statement layout gave no specific card name. If the user
+    // owns exactly one card from that bank, it's safe to attach the
+    // statement there without demanding a URL.
+    final expectedCardNameIsJustBankName =
+        expectedCardName.toLowerCase().trim() == bankName.toLowerCase().trim();
+    if (expectedCardNameIsJustBankName) {
+      final bankCards = existingUserCards.where(bankMatches).toList();
+      if (bankCards.length == 1) {
+        final creditCard = bankCards.single;
+        return CardMatchResult(
+          catalogCardId: creditCard.catalogCardId ?? '',
+          userCardId: creditCard.id,
+          matchPass: 'Pass-2 (bank-only, unambiguous)',
+        );
+      }
+    }
+
+    return null;
+  }
+
   Future<CardInfo> _ensureCreditCardExistsWithUserCard({
     required String userId,
     required String bankName,
@@ -997,46 +1073,17 @@ class DataPipelineDebugService {
       print(
           '   🔍 Looking for existing user card: Bank="$bankName", Card="$expectedCardName"');
 
-      // ── Pass 1: exact bank + card match ──────────────────────────────
-      for (final creditCard in existingUserCards) {
-        final bankMatches = creditCard.bankName
-                .toLowerCase()
-                .contains(bankName.toLowerCase()) ||
-            bankName.toLowerCase().contains(creditCard.bankName.toLowerCase());
-        final cardMatches = creditCard.cardName
-                .toLowerCase()
-                .contains(expectedCardName.toLowerCase()) ||
-            expectedCardName
-                .toLowerCase()
-                .contains(creditCard.cardName.toLowerCase());
-        if (bankMatches && cardMatches) {
-          print(
-              '   ✅ Pass-1 match: ${creditCard.cardName} (${creditCard.bankName})');
-          return CardInfo(
-            catalogCardId: creditCard.catalogCardId ?? '',
-            userCardId: creditCard.id,
-          );
-        }
-      }
-
-      // ── Pass 2: bank-only match against existing user_cards ──────────
-      // The variant returned by Gemini may just be the bank name ("SBI Card")
-      // but the user already owns a card from that bank (e.g. SBI BPCL).
-      // In that case, attach the statement to whichever card from that bank
-      // the user has — avoids demanding a URL when we already know the bank.
-      for (final creditCard in existingUserCards) {
-        final bankMatches = creditCard.bankName
-                .toLowerCase()
-                .contains(bankName.toLowerCase()) ||
-            bankName.toLowerCase().contains(creditCard.bankName.toLowerCase());
-        if (bankMatches) {
-          print(
-              '   ✅ Pass-2 bank-only match: ${creditCard.cardName} (${creditCard.bankName})');
-          return CardInfo(
-            catalogCardId: creditCard.catalogCardId ?? '',
-            userCardId: creditCard.id,
-          );
-        }
+      final match = findMatchingUserCard(
+        existingUserCards: existingUserCards,
+        bankName: bankName,
+        expectedCardName: expectedCardName,
+      );
+      if (match != null) {
+        print('   ✅ ${match.matchPass} match: userCardId=${match.userCardId}');
+        return CardInfo(
+          catalogCardId: match.catalogCardId,
+          userCardId: match.userCardId,
+        );
       }
 
       // ── Pass 3: catalog lookup — exact bank + card ───────────────────
