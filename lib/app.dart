@@ -32,6 +32,7 @@ class CardCompassApp extends ConsumerWidget {
             WidgetsBinding.instance.platformDispatcher.defaultRouteName,
         webHash: Uri.base.fragment,
       ),
+      onGenerateInitialRoutes: AppRoutes.generateInitialRoutes,
 
       // Global Route Configuration
       onGenerateRoute: AppRoutes.generateRoute,

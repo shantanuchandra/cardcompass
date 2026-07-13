@@ -126,11 +126,14 @@ class BenefitReviewState {
           final raw = accelerated[index];
           if (raw is! Map) continue;
           final source = Map<String, dynamic>.from(raw);
+          final description = source['description']?.toString().trim();
+          if (description == null || description.isEmpty) {
+            source['description'] = _acceleratedRewardDescription(source);
+          }
           items.add(BenefitReviewCandidate(
             id: 'reward_points:accelerated:$index',
             kind: source['category']?.toString().toUpperCase() ?? 'REWARDS',
-            description: source['description']?.toString() ??
-                'Accelerated reward points',
+            description: source['description']!.toString(),
             source: source,
           ));
         }
@@ -138,6 +141,20 @@ class BenefitReviewState {
     }
 
     return BenefitReviewState(List.unmodifiable(items));
+  }
+
+  static String _acceleratedRewardDescription(Map<String, dynamic> reward) {
+    final rate = reward['rate']?.toString().trim();
+    final category = reward['category']?.toString().trim();
+    final conditions = reward['conditions']?.toString().trim();
+    final rateLabel = rate == null || rate.isEmpty
+        ? 'Accelerated reward points'
+        : '$rate reward points';
+    final conditionSuffix =
+        conditions == null || conditions.isEmpty ? '' : ' $conditions';
+    final categorySuffix =
+        category == null || category.isEmpty ? '' : ' on $category';
+    return '$rateLabel$conditionSuffix$categorySuffix';
   }
 
   BenefitReviewState setDecision(int index, BenefitDecision decision) {

@@ -14,6 +14,14 @@ void main() {
     );
   });
 
+  test('admin startup creates only the PM route, never a splash prefix route',
+      () {
+    final routes = AppRoutes.generateInitialRoutes(AppRoutes.adminPm);
+
+    expect(routes, hasLength(1));
+    expect(routes.single.settings.name, AppRoutes.adminPm);
+  });
+
   test('an unknown hash deep link falls back to the customer splash route', () {
     expect(
       AppRoutes.startupRoute(defaultRouteName: '/', webHash: '#/unknown'),

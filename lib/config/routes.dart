@@ -74,6 +74,13 @@ class AppRoutes {
     return splash;
   }
 
+  /// Builds exactly one initial route. Flutter's default implementation
+  /// expands `/admin/pm` into `/`, `/admin`, and `/admin/pm`; the splash route
+  /// on that prefix stack can later replace the intended admin route.
+  static List<Route<dynamic>> generateInitialRoutes(String initialRouteName) {
+    return [generateRoute(RouteSettings(name: initialRouteName))];
+  }
+
   static String? _normalizeStartupRoute(String? candidate) {
     if (candidate == null || candidate.trim().isEmpty) return null;
     var route = candidate.trim();

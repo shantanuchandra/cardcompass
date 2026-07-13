@@ -59,6 +59,28 @@ void main() {
     );
   });
 
+  test('accelerated reward candidates retain a canonical source description',
+      () {
+    final state = BenefitReviewState.fromExtractedData({
+      'reward_points': {
+        'accelerated_categories': [
+          {
+            'rate': 5,
+            'category': 'Dining and Grocery',
+            'conditions': 'per Rs.100 spent',
+          },
+        ],
+      },
+    });
+
+    final candidate = state.items.single;
+    expect(
+      candidate.description,
+      '5 reward points per Rs.100 spent on Dining and Grocery',
+    );
+    expect(candidate.source['description'], candidate.description);
+  });
+
   test('a pending staging record with candidate data can be opened for review',
       () {
     final access = StagingReviewAccess(
