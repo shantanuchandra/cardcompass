@@ -43,6 +43,22 @@ void main() {
     );
   });
 
+  test('accepting all resolves every unresolved candidate', () {
+    final accepted = BenefitReviewState.fromExtractedData({
+      'cashback_benefits': [
+        {'category': 'FUEL', 'description': 'Fuel waiver'},
+        {'category': 'DINING', 'description': 'Dining reward'},
+      ],
+    }).acceptAll();
+
+    expect(accepted.unresolvedCount, 0);
+    expect(accepted.acceptedCount, 2);
+    expect(
+      accepted.items.every((item) => item.decision == BenefitDecision.accepted),
+      isTrue,
+    );
+  });
+
   test('a pending staging record with candidate data can be opened for review',
       () {
     final access = StagingReviewAccess(

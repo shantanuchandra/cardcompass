@@ -27,4 +27,27 @@ void main() {
     expect(state.items[0].decision, BenefitDecision.accepted);
     expect(state.items[1].decision, BenefitDecision.unresolved);
   });
+
+  testWidgets('accept all resolves every displayed candidate', (tester) async {
+    var state = BenefitReviewState.fromExtractedData({
+      'cashback_benefits': [
+        {'category': 'FUEL', 'description': 'Fuel waiver'},
+        {'category': 'DINING', 'description': 'Dining reward'},
+      ],
+    });
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: BenefitCandidateReview(
+          state: state,
+          onChanged: (next) => state = next,
+        ),
+      ),
+    ));
+
+    await tester.tap(find.text('Accept all (2)'));
+
+    expect(state.acceptedCount, 2);
+    expect(state.unresolvedCount, 0);
+  });
 }

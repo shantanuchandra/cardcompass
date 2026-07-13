@@ -70,6 +70,17 @@ class BenefitReviewState {
   bool get hasUnresolved =>
       items.any((item) => item.decision == BenefitDecision.unresolved);
 
+  int get unresolvedCount =>
+      items.where((item) => item.decision == BenefitDecision.unresolved).length;
+
+  int get acceptedCount =>
+      items.where((item) => item.decision == BenefitDecision.accepted).length;
+
+  int get rejectedCount =>
+      items.where((item) => item.decision == BenefitDecision.rejected).length;
+
+  bool get allRejected => items.isNotEmpty && rejectedCount == items.length;
+
   factory BenefitReviewState.fromExtractedData(Map<String, dynamic> data) {
     final items = <BenefitReviewCandidate>[];
 
@@ -143,20 +154,25 @@ class BenefitReviewState {
   BenefitReviewState rejectSelected() =>
       _applyToSelected(BenefitDecision.rejected);
 
+  BenefitReviewState acceptAll() =>
+      _applyToUnresolved(BenefitDecision.accepted);
+
   /// Discarding a whole candidate set is an explicit rejection for every item.
-  BenefitReviewState rejectAll() => BenefitReviewState(List.unmodifiable(
-        items
-            .map((item) => item.decision == BenefitDecision.unresolved
-                ? item.copyWith(decision: BenefitDecision.rejected)
-                : item)
-            .toList(),
-      ));
+  BenefitReviewState rejectAll() =>
+      _applyToUnresolved(BenefitDecision.rejected);
 
   BenefitReviewState _applyToSelected(BenefitDecision decision) {
     return BenefitReviewState(List.unmodifiable(items.map((item) {
       if (!item.selected || item.decision != BenefitDecision.unresolved) {
         return item;
       }
+      return item.copyWith(decision: decision, selected: false);
+    }).toList()));
+  }
+
+  BenefitReviewState _applyToUnresolved(BenefitDecision decision) {
+    return BenefitReviewState(List.unmodifiable(items.map((item) {
+      if (item.decision != BenefitDecision.unresolved) return item;
       return item.copyWith(decision: decision, selected: false);
     }).toList()));
   }

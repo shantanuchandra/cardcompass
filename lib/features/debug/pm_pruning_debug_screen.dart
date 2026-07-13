@@ -2054,6 +2054,9 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
                         onPressed: applying
                             ? null
                             : () async {
+                                final confirmed =
+                                    await _confirmCandidateRejection(context);
+                                if (!confirmed) return;
                                 setDialogState(() => applying = true);
                                 final discarded = reviewState.rejectAll();
                                 await AdvancedBenefitCalculationService()
@@ -2067,18 +2070,22 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
                                     '❌ REJECTED: Candidate benefits discarded; active mappings unchanged.');
                                 _loadCatalogCards();
                               },
-                        child: Text('DISCARD CHANGES',
+                        child: Text('REJECT ALL & CLOSE',
                             style: GoogleFonts.shareTechMono(
                                 color: AppTheme.errorColor,
                                 fontWeight: FontWeight.bold)),
                       ),
                       const SizedBox(width: 16),
                       ElevatedButton.icon(
-                        icon: const Icon(Icons.check, size: 14),
+                        icon: Icon(
+                            reviewState.allRejected ? Icons.close : Icons.check,
+                            size: 14),
                         label: Text(
                             reviewState.hasUnresolved
                                 ? 'RESOLVE ALL CANDIDATES'
-                                : 'APPLY ACCEPTED BENEFITS',
+                                : reviewState.allRejected
+                                    ? 'CONFIRM REJECTION'
+                                    : 'APPLY ACCEPTED BENEFITS',
                             style: GoogleFonts.shareTechMono(
                                 fontWeight: FontWeight.bold)),
                         style: ElevatedButton.styleFrom(
@@ -2092,9 +2099,16 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
                         onPressed: applying || reviewState.hasUnresolved
                             ? null
                             : () async {
+                                final allRejected = reviewState.allRejected;
+                                if (allRejected &&
+                                    !await _confirmCandidateRejection(
+                                        context)) {
+                                  return;
+                                }
                                 setDialogState(() => applying = true);
-                                _onLogReceived(
-                                    '⚡ Applying approved benefits from staging...');
+                                _onLogReceived(allRejected
+                                    ? '❌ Confirming candidate benefit rejection...'
+                                    : '⚡ Applying approved benefits from staging...');
                                 final applyRes =
                                     await AdvancedBenefitCalculationService()
                                         .applyApprovedBenefits(
@@ -2104,16 +2118,21 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
                                 if (applyRes['success'] == true) {
                                   if (context.mounted)
                                     Navigator.of(context).pop();
-                                  _onLogReceived(
-                                      '✅ SUCCESS: ${applyRes['benefits_mapped'] ?? 0} benefit mappings applied.');
+                                  _onLogReceived(allRejected
+                                      ? '❌ REJECTED: Candidate benefits rejected; active mappings unchanged.'
+                                      : '✅ SUCCESS: ${applyRes['benefits_mapped'] ?? 0} benefit mappings applied.');
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(
                                       content: Text(
-                                          'BENEFITS SYNCED AND APPLIED SUCCESSFULLY',
+                                          allRejected
+                                              ? 'CANDIDATE BENEFITS REJECTED; ACTIVE MAPPINGS UNCHANGED'
+                                              : 'BENEFITS SYNCED AND APPLIED SUCCESSFULLY',
                                           style: GoogleFonts.shareTechMono(
                                               color: Colors.black,
                                               fontWeight: FontWeight.bold)),
-                                      backgroundColor: const Color(0xFF10B981),
+                                      backgroundColor: allRejected
+                                          ? AppTheme.errorColor
+                                          : const Color(0xFF10B981),
                                     ),
                                   );
                                   _loadCatalogCards();
@@ -2133,6 +2152,51 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
         });
       },
     );
+  }
+
+  Future<bool> _confirmCandidateRejection(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF0C152B),
+        title: Text(
+          'CONFIRM CANDIDATE REJECTION',
+          style: GoogleFonts.shareTechMono(
+            color: AppTheme.errorColor,
+            fontWeight: FontWeight.bold,
+            fontSize: 14,
+          ),
+        ),
+        content: Text(
+          'This records every candidate as rejected and leaves the active card-benefit mappings unchanged.',
+          style: GoogleFonts.plusJakartaSans(
+            color: Colors.white70,
+            fontSize: 12,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(
+              'CANCEL',
+              style: GoogleFonts.shareTechMono(color: Colors.white60),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.errorColor,
+              foregroundColor: Colors.white,
+            ),
+            child: Text(
+              'REJECT ALL',
+              style: GoogleFonts.shareTechMono(fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
+      ),
+    );
+    return confirmed == true;
   }
 
   Widget _buildReviewColumn({
