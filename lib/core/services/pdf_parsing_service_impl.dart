@@ -11,7 +11,56 @@ import 'parsing_logger.dart';
 /// Enhanced service for parsing credit card statements from PDF files
 class PdfParsingServiceImpl implements PdfParsingService {
   final PdfPasswordDetectionService _passwordService = PdfPasswordDetectionService();
-  
+
+  /// For SBI, filter out everything after "Schedule of Charges".
+  ///
+  /// Matches [bankName] by substring rather than exact equality: the real
+  /// bank name flowing through production (from `_getBankNameFromSender`) is
+  /// "SBI Card", not the bare "sbi" an exact-equality check would require.
+  @visibleForTesting
+  static String filterSbiTrailer(String extractedText, String bankName) {
+    if (!bankName.toLowerCase().contains('sbi')) return extractedText;
+
+    final scheduleIndex = extractedText.toLowerCase().indexOf('schedule of charges');
+    if (scheduleIndex == -1) return extractedText;
+
+    final filteredText = extractedText.substring(0, scheduleIndex);
+    ParsingLogger.summary(
+        'SBI PDF: Filtered out content after "Schedule of Charges" (removed ${extractedText.length - filteredText.length} characters)');
+    return filteredText;
+  }
+
+  /// For HDFC, filter out everything after "Important Information" — but
+  /// only if it comes after the transaction data, so a mid-statement
+  /// "Important Information" footer (which some HDFC layouts, e.g. Tata Neu
+  /// Infinity, place before the transaction table) doesn't cut off real
+  /// transactions.
+  ///
+  /// Matches [bankName] by substring rather than exact equality: the real
+  /// bank name flowing through production (from `_getBankNameFromSender`) is
+  /// "HDFC Bank", not the bare "hdfc" an exact-equality check would require.
+  @visibleForTesting
+  static String filterHdfcTrailer(String extractedText, String bankName) {
+    if (!bankName.toLowerCase().contains('hdfc')) return extractedText;
+
+    // First check if we have transaction data (look for "Domestic Transactions" section)
+    final domesticTransIndex = extractedText.toLowerCase().indexOf('domestic transactions');
+    final importantInfoIndex = extractedText.toLowerCase().indexOf('important information');
+
+    if (importantInfoIndex != -1 && domesticTransIndex != -1 && importantInfoIndex > domesticTransIndex) {
+      // Only filter if "Important Information" comes after "Domestic Transactions"
+      final filteredText = extractedText.substring(0, importantInfoIndex);
+      ParsingLogger.summary(
+          'HDFC PDF: Filtered out content after "Important Information" (removed ${extractedText.length - filteredText.length} characters)');
+      return filteredText;
+    } else if (importantInfoIndex != -1 && domesticTransIndex == -1) {
+      // If no "Domestic Transactions" found but "Important Information" is there, might be cutting off too early
+      ParsingLogger.warning('HDFC PDF: "Important Information" found but no "Domestic Transactions" section detected. Keeping full text.');
+    }
+
+    return extractedText;
+  }
+
   @override
   Future<String> extractTextFromPdfBytes(Uint8List bytes) async {
     try {
@@ -74,35 +123,10 @@ class PdfParsingServiceImpl implements PdfParsingService {
       );
       
       if (extractedText == null) return '';
-      
-      // For SBI, filter out everything after "Schedule of Charges"
-      if (bankName.toLowerCase() == 'sbi') {
-        final scheduleIndex = extractedText.toLowerCase().indexOf('schedule of charges');
-        if (scheduleIndex != -1) {
-          final filteredText = extractedText.substring(0, scheduleIndex);
-          ParsingLogger.summary('SBI PDF: Filtered out content after "Schedule of Charges" (removed ${extractedText.length - filteredText.length} characters)');
-          return filteredText;
-        }
-      }
-      
-      // For HDFC, filter out everything after "Important Information" but only if it comes after transaction data
-      if (bankName.toLowerCase() == 'hdfc') {
-        // First check if we have transaction data (look for "Domestic Transactions" section)
-        final domesticTransIndex = extractedText.toLowerCase().indexOf('domestic transactions');
-        final importantInfoIndex = extractedText.toLowerCase().indexOf('important information');
-        
-        if (importantInfoIndex != -1 && domesticTransIndex != -1 && importantInfoIndex > domesticTransIndex) {
-          // Only filter if "Important Information" comes after "Domestic Transactions"
-          final filteredText = extractedText.substring(0, importantInfoIndex);
-          ParsingLogger.summary('HDFC PDF: Filtered out content after "Important Information" (removed ${extractedText.length - filteredText.length} characters)');
-          return filteredText;
-        } else if (importantInfoIndex != -1 && domesticTransIndex == -1) {
-          // If no "Domestic Transactions" found but "Important Information" is there, might be cutting off too early
-          ParsingLogger.warning('HDFC PDF: "Important Information" found but no "Domestic Transactions" section detected. Keeping full text.');
-        }
-      }
-      
-      return extractedText;
+
+      var filtered = filterSbiTrailer(extractedText, bankName);
+      filtered = filterHdfcTrailer(filtered, bankName);
+      return filtered;
     } catch (error, stackTrace) {
       ErrorHandlingService.logError(
         'PDF Text Extraction with Password Detection',

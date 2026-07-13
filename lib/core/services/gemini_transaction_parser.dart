@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../config/ai_config.dart';
 import 'package:uuid/uuid.dart';
@@ -10,6 +11,11 @@ import 'benefit_repair_service.dart';
 
 /// Gemini AI Transaction Parser service
 class GeminiTransactionParser {
+  /// Test-only seam for [_pruneAndCleanText], which is otherwise private to this library.
+  @visibleForTesting
+  static String pruneAndCleanTextForTesting(String text, [String? bankName]) =>
+      _pruneAndCleanText(text, bankName);
+
   /// Parse statement-level information using Gemini AI
   static Future<Map<String, dynamic>> parseStatementInfo({
     required String pdfText,
@@ -954,13 +960,35 @@ CONTENT TO ANALYZE:
       'list of branches',
     ];
 
-    int bestCutIndex = -1;
+    // Collect every marker occurrence and consider them in document order
+    // (earliest first), not "whichever marker's first hit has the smallest
+    // index" — some statement layouts (e.g. HDFC Tata Neu Infinity) repeat a
+    // marker like "important information" in a rewards/summary section
+    // *before* the itemized transaction table, so the very first hit isn't
+    // always a safe cut point.
+    final candidateIndexes = <int>[];
     for (final marker in markers) {
-      final idx = lowerText.indexOf(marker);
-      if (idx != -1) {
-        if (bestCutIndex == -1 || idx < bestCutIndex) {
-          bestCutIndex = idx;
-        }
+      var searchFrom = 0;
+      while (true) {
+        final idx = lowerText.indexOf(marker, searchFrom);
+        if (idx == -1) break;
+        candidateIndexes.add(idx);
+        searchFrom = idx + marker.length;
+      }
+    }
+    candidateIndexes.sort();
+
+    // Pick the earliest candidate that has no transaction-shaped content
+    // (date+amount / merchant+amount lines) after it — i.e. genuinely
+    // trailing boilerplate rather than a mid-statement footer.
+    int bestCutIndex = -1;
+    for (final idx in candidateIndexes) {
+      if (idx <= 3500) continue;
+      final tail = cleaned.substring(idx);
+      final leaks = PruningAuditService().detectPotentialLeaks(tail);
+      if (leaks.isEmpty) {
+        bestCutIndex = idx;
+        break;
       }
     }
 
