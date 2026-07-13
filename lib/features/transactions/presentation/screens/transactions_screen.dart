@@ -6,8 +6,9 @@ import '../../../../core/theme.dart';
 import '../../../../shared/widgets/app_scaffold.dart';
 import '../../../../shared/widgets/state_widgets.dart';
 import '../../../auth/providers/auth_provider.dart';
-import '../../../transactions/providers/transactions_provider.dart';
 import '../../../../shared/models/transaction.dart';
+import '../../../../shared/models/credit_card.dart';
+import '../../viewmodels/transactions_viewmodel.dart';
 
 class TransactionsScreen extends ConsumerStatefulWidget {
   const TransactionsScreen({super.key});
@@ -17,7 +18,7 @@ class TransactionsScreen extends ConsumerStatefulWidget {
 }
 
 class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
-  TransactionCategory? _categoryFilter;
+  TransactionGrouping _grouping = TransactionGrouping.flat;
 
   @override
   void initState() {
@@ -28,31 +29,20 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
   void _load() {
     final user = ref.read(authStateProvider).user;
     if (user == null) return;
-    ref.read(transactionsProvider.notifier).loadUserTransactions(user.id);
+    ref.read(transactionsViewModelProvider.notifier).loadTransactions(user.id);
   }
 
   @override
   Widget build(BuildContext context) {
-    final allTransactions = ref.watch(transactionsProvider);
-    final transactions = _categoryFilter == null
-        ? allTransactions
-        : allTransactions.where((t) => t.category == _categoryFilter).toList();
+    final state = ref.watch(transactionsViewModelProvider);
+    final notifier = ref.read(transactionsViewModelProvider.notifier);
 
     return CardCompassScaffold(
       title: 'Transactions',
-      actions: [
-        IconButton(
-          onPressed: () => _showFilterSheet(context),
-          icon: Icon(
-            _categoryFilter == null ? Icons.filter_list : Icons.filter_alt,
-            color: AppTheme.primaryColor,
-          ),
-        ),
-      ],
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 800),
-          child: allTransactions.isEmpty
+          child: state.transactions.isEmpty
               ? const EmptyState(
                   icon: Icons.receipt_long_outlined,
                   title: 'No transactions yet',
@@ -62,101 +52,21 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                   onRefresh: () async => _load(),
                   color: AppTheme.primaryColor,
                   backgroundColor: const Color(0xFF0C152B),
-                  child: ListView.builder(
+                  child: ListView(
                     padding: const EdgeInsets.fromLTRB(
                       AppSpacing.md,
                       AppSpacing.sm + 4,
                       AppSpacing.md,
                       80,
                     ),
-                    itemCount: transactions.length,
-                    itemBuilder: (context, index) {
-                      final t = transactions[index];
-                      final isCredit = t.type == TransactionType.credit || t.type == TransactionType.refund;
-                      final categoryColor = _getCategoryColor(t.categoryString);
-
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: AppSpacing.sm + 4),
-                        padding: const EdgeInsets.all(AppSpacing.md),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF0C152B),
-                          borderRadius: BorderRadius.circular(AppBorderRadius.xl),
-                          border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.06),
-                            width: 1,
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            // category icon in neon ring
-                            Container(
-                              width: 40,
-                              height: 40,
-                              decoration: BoxDecoration(
-                                color: categoryColor.withValues(alpha: 0.12),
-                                shape: BoxShape.circle,
-                                border: Border.all(color: categoryColor.withValues(alpha: 0.3), width: 1),
-                              ),
-                              child: Icon(
-                                _categoryIcon(t.category),
-                                color: categoryColor,
-                                size: 16,
-                              ),
-                            ),
-                            const SizedBox(width: 14),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    t.merchantName ?? t.description,
-                                    style: AppTextStyles.body2.copyWith(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  const SizedBox(height: AppSpacing.xs),
-                                  Text(
-                                    '${_formatDate(t.transactionDate)} · ${t.categoryString.toUpperCase()}',
-                                    style: GoogleFonts.spaceGrotesk(
-                                      color: Colors.white38,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w500,
-                                      letterSpacing: 0.5,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                Text(
-                                  '${isCredit ? '+' : '-'}₹${t.amount.toStringAsFixed(0)}',
-                                  style: GoogleFonts.spaceGrotesk(
-                                    color: isCredit ? AppTheme.successColor : Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 15,
-                                  ),
-                                ),
-                                if (t.rewardEarned != null && t.rewardEarned! > 0) ...[
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    '+₹${t.rewardEarned!.toStringAsFixed(0)}',
-                                    style: GoogleFonts.spaceGrotesk(
-                                      color: AppTheme.rewardGold,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 11,
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ],
-                        ),
-                      );
-                    },
+                    children: [
+                      _buildFilterBar(state, notifier),
+                      const SizedBox(height: AppSpacing.md),
+                      if (state.filteredTransactions.isEmpty)
+                        _buildNoResultsState(notifier)
+                      else
+                        ..._buildTransactionSections(state),
+                    ],
                   ),
                 ).animate().fadeIn(duration: 250.ms, curve: Curves.easeOut).slideY(
                     begin: 0.05,
@@ -169,7 +79,134 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     );
   }
 
-  void _showFilterSheet(BuildContext context) {
+  Widget _buildNoResultsState(TransactionsViewModelController notifier) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xl),
+      child: EmptyState(
+        icon: Icons.filter_alt_off_outlined,
+        title: 'No matching transactions',
+        message: 'Try widening your filters.',
+        buttonText: 'Clear filters',
+        onButtonPressed: notifier.clearFilters,
+      ),
+    );
+  }
+
+  Widget _buildFilterBar(TransactionsViewState state, TransactionsViewModelController notifier) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildCardFilterRow(state, notifier),
+        const SizedBox(height: AppSpacing.sm),
+        _buildDateRangeControl(state, notifier),
+        const SizedBox(height: AppSpacing.sm),
+        _buildCategoryFilterRow(state, notifier),
+      ],
+    );
+  }
+
+  Widget _buildCardFilterRow(TransactionsViewState state, TransactionsViewModelController notifier) {
+    return SizedBox(
+      height: 36,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        children: [
+          _filterChip(
+            label: 'All Cards',
+            selected: state.selectedCardId.isEmpty,
+            onTap: () => notifier.setSelectedCard(''),
+          ),
+          for (final card in state.userCards)
+            Padding(
+              padding: const EdgeInsets.only(left: AppSpacing.sm),
+              child: _filterChip(
+                label: '${card.cardName} •••${card.cardNumberLast4 ?? ''}',
+                selected: state.selectedCardId == card.id,
+                onTap: () => notifier.setSelectedCard(card.id),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCategoryFilterRow(TransactionsViewState state, TransactionsViewModelController notifier) {
+    return SizedBox(
+      height: 36,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        children: [
+          _filterChip(
+            label: 'All Categories',
+            selected: state.selectedCategory == 'All',
+            onTap: () => notifier.setSelectedCategory('All'),
+          ),
+          for (final category in TransactionCategory.values)
+            Padding(
+              padding: const EdgeInsets.only(left: AppSpacing.sm),
+              child: _filterChip(
+                label: category.name.toUpperCase(),
+                selected: state.selectedCategory == category.name,
+                onTap: () => notifier.setSelectedCategory(category.name),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _filterChip({required String label, required bool selected, required VoidCallback onTap}) {
+    return ChoiceChip(
+      label: Text(
+        label,
+        style: GoogleFonts.spaceGrotesk(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          color: selected ? Colors.black : Colors.white70,
+        ),
+      ),
+      selected: selected,
+      onSelected: (_) => onTap(),
+      selectedColor: AppTheme.primaryColor,
+      backgroundColor: const Color(0xFF0C152B),
+      side: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
+    );
+  }
+
+  Widget _buildDateRangeControl(TransactionsViewState state, TransactionsViewModelController notifier) {
+    final label = state.dateRange == null
+        ? 'All Time'
+        : '${_shortDate(state.dateRange!.start)} - ${_shortDate(state.dateRange!.end)}';
+
+    return InkWell(
+      onTap: () => _showDateRangeSheet(context, notifier),
+      borderRadius: BorderRadius.circular(AppBorderRadius.md),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0C152B),
+          borderRadius: BorderRadius.circular(AppBorderRadius.md),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.calendar_today_outlined, color: AppTheme.primaryColor, size: 14),
+            const SizedBox(width: AppSpacing.sm),
+            Text(
+              label,
+              style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _shortDate(DateTime date) => '${date.day}/${date.month}/${date.year}';
+
+  void _showDateRangeSheet(BuildContext context, TransactionsViewModelController notifier) {
+    final now = DateTime.now();
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF0C152B),
@@ -178,107 +215,70 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
       ),
       builder: (context) {
         return SafeArea(
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(bottom: AppSpacing.sm + 4),
-                  child: Text(
-                    'FILTER BY CATEGORY',
-                    style: GoogleFonts.spaceGrotesk(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 14,
-                      letterSpacing: 1.0,
-                    ),
-                  ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
+                child: Text(
+                  'FILTER BY DATE',
+                  style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14, letterSpacing: 1.0),
                 ),
-                const Divider(),
-                ListTile(
-                  title: Text(
-                    'ALL CATEGORIES',
-                    style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-                  ),
-                  trailing: _categoryFilter == null ? const Icon(Icons.check, color: AppTheme.primaryColor) : null,
-                  onTap: () {
-                    setState(() => _categoryFilter = null);
-                    Navigator.pop(context);
-                  },
-                ),
-                ...TransactionCategory.values.map((category) {
-                  return ListTile(
-                    title: Text(
-                      category.name.toUpperCase(),
-                      style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13),
-                    ),
-                    trailing: _categoryFilter == category ? const Icon(Icons.check, color: AppTheme.primaryColor) : null,
-                    onTap: () {
-                      setState(() => _categoryFilter = category);
-                      Navigator.pop(context);
-                    },
+              ),
+              const Divider(height: 1),
+              ListTile(
+                title: const Text('All Time', style: TextStyle(color: Colors.white)),
+                onTap: () {
+                  notifier.setDateRange(null);
+                  Navigator.pop(context);
+                },
+              ),
+              ListTile(
+                title: const Text('This Month', style: TextStyle(color: Colors.white)),
+                onTap: () {
+                  notifier.setDateRange(DateRange(start: DateTime(now.year, now.month, 1), end: now));
+                  Navigator.pop(context);
+                },
+              ),
+              ListTile(
+                title: const Text('Last Month', style: TextStyle(color: Colors.white)),
+                onTap: () {
+                  final lastMonth = DateTime(now.year, now.month - 1, 1);
+                  final endOfLastMonth = DateTime(now.year, now.month, 1).subtract(const Duration(days: 1));
+                  notifier.setDateRange(DateRange(start: lastMonth, end: endOfLastMonth));
+                  Navigator.pop(context);
+                },
+              ),
+              ListTile(
+                title: const Text('Last 3 Months', style: TextStyle(color: Colors.white)),
+                onTap: () {
+                  notifier.setDateRange(DateRange(start: DateTime(now.year, now.month - 3, now.day), end: now));
+                  Navigator.pop(context);
+                },
+              ),
+              ListTile(
+                title: const Text('Custom Range', style: TextStyle(color: Colors.white)),
+                onTap: () async {
+                  Navigator.pop(context);
+                  final picked = await showDateRangePicker(
+                    context: context,
+                    firstDate: DateTime(2020),
+                    lastDate: now,
                   );
-                }),
-              ],
-            ),
+                  if (picked != null) {
+                    notifier.setDateRange(DateRange(start: picked.start, end: picked.end));
+                  }
+                },
+              ),
+              const SizedBox(height: AppSpacing.md),
+            ],
           ),
         );
       },
     );
   }
 
-  IconData _categoryIcon(TransactionCategory category) {
-    switch (category) {
-      case TransactionCategory.food:
-        return Icons.restaurant;
-      case TransactionCategory.fuel:
-        return Icons.local_gas_station;
-      case TransactionCategory.grocery:
-        return Icons.shopping_basket;
-      case TransactionCategory.entertainment:
-        return Icons.movie;
-      case TransactionCategory.travel:
-        return Icons.flight;
-      case TransactionCategory.shopping:
-        return Icons.shopping_bag;
-      default:
-        return Icons.payment;
-    }
-  }
-
-  Color _getCategoryColor(String? category) {
-    switch (category?.toLowerCase()) {
-      case 'food':
-        return Colors.orange;
-      case 'shopping':
-        return AppTheme.primaryColor;
-      case 'fuel':
-        return AppTheme.errorColor;
-      case 'entertainment':
-        return Colors.purpleAccent;
-      case 'travel':
-        return Colors.green;
-      case 'grocery':
-      case 'groceries':
-        return Colors.tealAccent;
-      default:
-        return Colors.grey;
-    }
-  }
-
-  String _formatDate(DateTime date) {
-    final now = DateTime.now();
-    final difference = now.difference(date).inDays;
-
-    if (difference == 0) {
-      return 'Today';
-    } else if (difference == 1) {
-      return 'Yesterday';
-    } else if (difference < 7) {
-      return '$difference days ago';
-    } else {
-      return '${date.day}/${date.month}/${date.year}';
-    }
+  List<Widget> _buildTransactionSections(TransactionsViewState state) {
+    return [const SizedBox.shrink()]; // replaced in Task 5
   }
 }
