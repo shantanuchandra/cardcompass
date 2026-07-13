@@ -34,10 +34,14 @@ class TransactionGroup {
   });
 }
 
+/// The single authoritative definition of "debit spend" for a transaction:
+/// its absolute amount if it's a debit, otherwise zero.
+double _debitAmount(Transaction t) {
+  return t.type == TransactionType.debit ? t.amount.abs() : 0;
+}
+
 double _debitTotal(List<Transaction> transactions) {
-  return transactions
-      .where((t) => t.type == TransactionType.debit)
-      .fold<double>(0, (sum, t) => sum + t.amount.abs());
+  return transactions.fold<double>(0, (sum, t) => sum + _debitAmount(t));
 }
 
 List<Transaction> _sortedNewestFirst(List<Transaction> transactions) {
@@ -93,25 +97,30 @@ class TransactionsViewState {
   /// Per-card spend + reward totals, computed from [filteredTransactions].
   /// Transactions with a null/empty userCardId are excluded.
   Map<String, CardSpendSummary> perCardSummary() {
-    final summaryByCard = <String, CardSpendSummary>{};
-
+    // Every card that has at least one transaction gets an entry, even if
+    // its only transactions are non-debit (e.g. credit/refund) — such a
+    // card still appears in the summary with totalSpend: 0.
+    final transactionsByCard = <String, List<Transaction>>{};
     for (final t in filteredTransactions) {
       final cardId = t.userCardId;
       if (cardId == null || cardId.isEmpty) continue;
-
-      final existing = summaryByCard[cardId];
-      // Every card that has at least one transaction gets an entry, even if
-      // its only transactions are non-debit (e.g. credit/refund) — such a
-      // card still appears in the summary with totalSpend: 0.
-      final spendDelta = t.type == TransactionType.debit ? t.amount.abs() : 0;
-      summaryByCard[cardId] = CardSpendSummary(
-        cardId: cardId,
-        totalSpend: (existing?.totalSpend ?? 0) + spendDelta,
-        totalRewards: (existing?.totalRewards ?? 0) + (t.rewardEarned ?? 0),
-      );
+      transactionsByCard.putIfAbsent(cardId, () => []).add(t);
     }
 
-    return summaryByCard;
+    return transactionsByCard.map((cardId, transactions) {
+      final totalRewards = transactions.fold<double>(
+        0,
+        (sum, t) => sum + (t.rewardEarned ?? 0),
+      );
+      return MapEntry(
+        cardId,
+        CardSpendSummary(
+          cardId: cardId,
+          totalSpend: _debitTotal(transactions),
+          totalRewards: totalRewards,
+        ),
+      );
+    });
   }
 
   /// Sections [filteredTransactions] per [grouping], each section newest-first,
