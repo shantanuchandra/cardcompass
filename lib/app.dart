@@ -9,6 +9,9 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 /// Main application widget that provides theming, routing, and global configuration
 class CardCompassApp extends ConsumerWidget {
   const CardCompassApp({super.key});
+
+  static const String initialRoute = AppRoutes.splash;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return MaterialApp(
@@ -24,7 +27,7 @@ class CardCompassApp extends ConsumerWidget {
       themeMode: ThemeMode.system,
       
       // Initial Route
-      initialRoute: AppRoutes.adminPm,
+      initialRoute: initialRoute,
       
       // Global Route Configuration
       onGenerateRoute: AppRoutes.generateRoute,
