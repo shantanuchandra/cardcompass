@@ -1,0 +1,31 @@
+<div id="wise-pipeline-layout" style="max-width:1200px;margin:0 auto;font-family:system-ui,sans-serif;color:#e5edf7">
+  <style>
+    #wise-pipeline-layout{--cyan:#00f5ff;--green:#2dd4bf;--ink:#071225;--panel:#0b1729;--line:#334155;--muted:#94a3b8}
+    #wise-pipeline-layout .eyebrow{font:700 12px ui-monospace,monospace;letter-spacing:.12em;color:var(--cyan)}
+    #wise-pipeline-layout h2{margin:8px 0 5px;color:#fff}#wise-pipeline-layout .sub{margin:0 0 18px;color:var(--muted)}
+    #wise-pipeline-layout .shell{display:grid;grid-template-columns:330px minmax(0,1fr);gap:16px}
+    #wise-pipeline-layout .panel{background:var(--ink);border:1px solid var(--line);border-radius:12px;padding:16px}
+    #wise-pipeline-layout h3{margin:0;color:#fff;font-size:15px}.run{margin:5px 0 14px;color:var(--muted);font-size:12px}
+    #wise-pipeline-layout .checkpoint{display:flex;gap:11px;position:relative;padding:0 0 14px}.checkpoint:not(:last-child):before{content:'';position:absolute;left:8px;top:18px;bottom:0;border-left:1px solid #42536b}.dot{position:relative;width:17px;height:17px;border-radius:50%;border:1px solid #64748b;background:#0b1729;flex:0 0 17px}.done .dot{border-color:var(--green);background:#0f766e}.active .dot{border:2px solid var(--cyan);box-shadow:0 0 12px #00f5ff70;background:#0b1729}.future .dot{opacity:.55}.checkpoint b{font-size:12px}.checkpoint span{display:block;margin-top:3px;font-size:11px;color:var(--muted);line-height:1.3}.active b{color:var(--cyan)}
+    #wise-pipeline-layout .branch{margin:3px 0 12px 28px;border-left:1px dashed #42536b;padding-left:11px}.branch span{display:block;font-size:10px;color:#a5b4fc;margin:4px 0}.branch .branch-stop{color:#fb7185}.branch .branch-go{color:var(--green)}
+    #wise-pipeline-layout .content-title{display:flex;justify-content:space-between;align-items:center;gap:12px}.badge{padding:5px 8px;border:1px solid var(--cyan);color:var(--cyan);border-radius:999px;font:700 10px ui-monospace,monospace}
+    #wise-pipeline-layout .candidate-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:14px 0}.benefit{border:1px solid var(--line);background:var(--panel);border-radius:9px;padding:13px}.kind{font:700 10px ui-monospace,monospace;color:var(--cyan);letter-spacing:.08em}.benefit p{font-size:12px;line-height:1.4;min-height:34px;margin:7px 0 12px;color:#e2e8f0}.benefit button{border-radius:6px;padding:7px 9px;font:700 11px ui-monospace,monospace}.yes{border:1px solid var(--green);background:#0b372e;color:#5eead4}.no{border:1px solid #fb7185;background:#37111a;color:#fda4af;margin-left:7px}.bulk{display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--line);padding-top:13px;gap:12px}.bulk button{padding:9px 11px;border-radius:6px;font:700 11px ui-monospace,monospace}.bulk .approve{background:var(--cyan);border:1px solid var(--cyan);color:#03151a}.bulk .reject{background:transparent;border:1px solid #fb7185;color:#fda4af}
+    #wise-pipeline-layout .trace{margin-top:16px;text-align:center;color:#a5b4fc;font:700 11px ui-monospace,monospace;letter-spacing:.05em}
+    @media(max-width:800px){#wise-pipeline-layout .shell{grid-template-columns:1fr}.candidate-grid{grid-template-columns:1fr}}
+  </style>
+  <div class="eyebrow">AU ZENITH · BENEFIT REFRESH</div><h2>Review only after evidence is grounded</h2><p class="sub">The left rail preserves the exact checkpoint diagram as a live run trace; the right side is reserved for the decision that is currently allowed.</p>
+  <div class="shell">
+    <aside class="panel"><h3>Pipeline trace</h3><p class="run">Run status · 3 of 7 checkpoints complete</p>
+      <div class="checkpoint done"><i class="dot"></i><div><b>Select only AU Zenith</b><span>Card identity locked</span></div></div>
+      <div class="checkpoint done"><i class="dot"></i><div><b>Load official URL from card_catalog</b><span>Official AU Bank URL found</span></div></div>
+      <div class="checkpoint done"><i class="dot"></i><div><b>Scrape AU Bank product page</b><span>Source content captured</span></div></div>
+      <div class="checkpoint done"><i class="dot"></i><div><b>Validate page identity: bank + card</b></div></div>
+      <div class="branch"><span class="branch-stop">Invalid → Stop; record failure</span><span class="branch-go">Valid → Gemini extracts fees, rewards, cashback and special benefits</span></div>
+      <div class="checkpoint done"><i class="dot"></i><div><b>Ground every extracted claim against scraped evidence</b></div></div>
+      <div class="branch"><span class="branch-stop">Rejected → Save rejected staging record; do not modify active benefits</span><span class="branch-go">Accepted → Save pending record in card_benefits_staging</span></div>
+      <div class="checkpoint active"><i class="dot"></i><div><b>Show current active data versus candidate data</b><span>Your review is now required</span></div></div>
+      <div class="checkpoint future"><i class="dot"></i><div><b>Your review</b><span>Discard → unchanged · Approve → revalidate stored evidence → replace AU Zenith AI-extracted benefits only → mark staging record approved</span></div></div>
+    </aside>
+    <main class="panel"><div class="content-title"><h3>Candidate benefits</h3><span class="badge">6 PROPOSED · 0 DECIDED</span></div><div class="candidate-grid"><article class="benefit"><div class="kind">FUEL</div><p>1% fuel surcharge waiver, cap ₹1,000.</p><button class="yes">Accept</button><button class="no">Reject</button></article><article class="benefit"><div class="kind">LOUNGE</div><p>8 domestic visits yearly; eligibility conditions attached.</p><button class="yes">Accept</button><button class="no">Reject</button></article><article class="benefit"><div class="kind">REWARDS</div><p>5 points per ₹100 at dining, international and grocery stores.</p><button class="yes">Accept</button><button class="no">Reject</button></article><article class="benefit"><div class="kind">CONCIERGE</div><p>Global concierge assistance, 24×7.</p><button class="yes">Accept</button><button class="no">Reject</button></article></div><div class="bulk"><span class="badge">SELECT 4 UNRESOLVED</span><div><button class="reject">Reject selected</button><button class="approve">Accept selected</button></div></div><div class="trace">VIEW FULL PIPELINE TRACE ↗</div></main>
+  </div>
+</div>

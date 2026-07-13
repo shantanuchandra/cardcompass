@@ -1,0 +1,64 @@
+<div class="review-flow" id="benefit-review-flow">
+  <style>
+    .review-flow { color:#e5f7ff; font-family:system-ui,sans-serif; max-width:1180px; margin:0 auto; }
+    .review-flow .eyebrow { color:#00f5ff; font:700 12px ui-monospace,monospace; letter-spacing:.12em; }
+    .review-flow h2 { margin:8px 0 4px; color:#fff; }
+    .review-flow .sub { color:#94a3b8; margin:0 0 24px; }
+    .pipeline { display:grid; grid-template-columns:repeat(5,minmax(130px,1fr)); gap:10px; align-items:center; }
+    .step { min-height:86px; box-sizing:border-box; border:1px solid #26364e; border-radius:10px; background:#091323; padding:13px; position:relative; }
+    .step::after { content:'›'; color:#51657f; font-size:24px; position:absolute; right:-9px; top:27px; z-index:2; }
+    .step:last-child::after { content:''; }
+    .step.complete { border-color:#14b8a6; background:#09201f; }
+    .step.current { border:2px solid #00f5ff; box-shadow:0 0 20px #00f5ff38; }
+    .step.future { opacity:.55; }
+    .status { display:block; color:#00f5ff; font:700 10px ui-monospace,monospace; letter-spacing:.08em; margin-bottom:8px; }
+    .step.complete .status { color:#5eead4; }
+    .step h3 { margin:0; font-size:14px; color:#f8fafc; }
+    .step p { margin:5px 0 0; color:#94a3b8; font-size:12px; line-height:1.35; }
+    .outcomes { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:22px 0; }
+    .outcome { border-radius:10px; border:1px solid #334155; padding:13px 16px; background:#0b1426; }
+    .outcome strong { display:block; font:700 11px ui-monospace,monospace; letter-spacing:.08em; }
+    .outcome.approve strong { color:#34d399; }
+    .outcome.reject strong { color:#fb7185; }
+    .approval { border:1px solid #00f5ff; border-radius:12px; background:#071225; padding:18px; }
+    .approval-header { display:flex; justify-content:space-between; align-items:baseline; gap:16px; }
+    .approval h3 { margin:0; color:#fff; }
+    .count { color:#5eead4; font:700 12px ui-monospace,monospace; }
+    .benefits { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:15px 0; }
+    .benefit { border:1px solid #26364e; border-radius:8px; padding:12px; background:#0b1729; }
+    .benefit .kind { color:#00f5ff; font:700 10px ui-monospace,monospace; letter-spacing:.08em; }
+    .benefit p { font-size:12px; margin:8px 0 12px; color:#e2e8f0; min-height:32px; }
+    .actions { display:flex; gap:8px; }
+    .actions button, .bulk button { border-radius:6px; padding:8px 10px; font:700 11px ui-monospace,monospace; cursor:pointer; }
+    .accept { background:#0b372e; color:#5eead4; border:1px solid #14b8a6; }
+    .reject { background:#37111a; color:#fda4af; border:1px solid #fb7185; }
+    .bulk { display:flex; justify-content:space-between; align-items:center; border-top:1px solid #26364e; padding-top:14px; }
+    .bulk .right { display:flex; gap:8px; }
+    .bulk .primary { background:#00d9e9; color:#02131a; border:1px solid #00f5ff; }
+    .bulk .secondary { background:transparent; color:#dbeafe; border:1px solid #5b708a; }
+    @media (max-width:760px) { .pipeline { grid-template-columns:1fr; } .step::after { content:'↓'; right:50%; top:auto; bottom:-27px; } .outcomes,.benefits { grid-template-columns:1fr; } }
+  </style>
+  <div class="eyebrow">AU ZENITH · LIVE REFRESH REVIEW</div>
+  <h2>Benefit refresh pipeline</h2>
+  <p class="sub">Each refresh advances one card through these evidence and approval gates.</p>
+  <div class="pipeline" aria-label="Benefit refresh pipeline">
+    <div class="step complete"><span class="status">COMPLETE</span><h3>Official source</h3><p>Catalog URL loaded</p></div>
+    <div class="step complete"><span class="status">COMPLETE</span><h3>Scrape &amp; identity</h3><p>AU Zenith confirmed</p></div>
+    <div class="step complete"><span class="status">COMPLETE</span><h3>Extract &amp; ground</h3><p>Evidence-backed candidate</p></div>
+    <div class="step current"><span class="status">CURRENT · REVIEW</span><h3>Benefit decisions</h3><p>Choose each proposed benefit</p></div>
+    <div class="step future"><span class="status">LOCKED</span><h3>Apply mapping</h3><p>Write approved mappings only</p></div>
+  </div>
+  <div class="outcomes">
+    <div class="outcome approve"><strong>ACCEPTED ITEMS</strong>Mapped to AU Zenith and retained as active benefits.</div>
+    <div class="outcome reject"><strong>REJECTED ITEMS</strong>Kept in the audit record, never applied to the card.</div>
+  </div>
+  <section class="approval">
+    <div class="approval-header"><h3>Candidate benefits</h3><span class="count">6 proposed · 0 decided</span></div>
+    <div class="benefits">
+      <article class="benefit"><div class="kind">FUEL</div><p>1% fuel surcharge waiver, cap ₹1,000.</p><div class="actions"><button class="accept">Accept</button><button class="reject">Reject</button></div></article>
+      <article class="benefit"><div class="kind">LOUNGE</div><p>8 domestic visits yearly, eligibility conditions attached.</p><div class="actions"><button class="accept">Accept</button><button class="reject">Reject</button></div></article>
+      <article class="benefit"><div class="kind">CONCIERGE</div><p>Global concierge assistance, 24×7.</p><div class="actions"><button class="accept">Accept</button><button class="reject">Reject</button></div></article>
+    </div>
+    <div class="bulk"><span class="count">Select all unresolved items</span><div class="right"><button class="secondary">Reject selected</button><button class="primary">Accept selected</button></div></div>
+  </section>
+</div>

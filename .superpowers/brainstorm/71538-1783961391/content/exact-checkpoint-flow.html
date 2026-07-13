@@ -1,0 +1,39 @@
+<div id="exact-checkpoint-flow" style="max-width:1120px;margin:0 auto;color:#e5e7eb;font-family:system-ui,sans-serif">
+  <style>
+    #exact-checkpoint-flow .eyebrow{color:#00f5ff;font:700 12px ui-monospace,monospace;letter-spacing:.12em}
+    #exact-checkpoint-flow h2{margin:8px 0 4px;color:#fff}
+    #exact-checkpoint-flow .sub{color:#94a3b8;margin:0 0 24px}
+    #exact-checkpoint-flow .flow{display:flex;flex-direction:column;align-items:center;gap:0;padding:18px 0}
+    #exact-checkpoint-flow .node{width:226px;min-height:48px;box-sizing:border-box;display:grid;place-items:center;text-align:center;padding:10px 14px;border:1px solid #3c506b;background:#0b1729;color:#e2e8f0;font-size:13px;line-height:1.25}
+    #exact-checkpoint-flow .node.live{border:2px solid #00f5ff;background:#092033;box-shadow:0 0 18px #00f5ff38;color:#fff}
+    #exact-checkpoint-flow .node.done{border-color:#2dd4bf;background:#09231f}
+    #exact-checkpoint-flow .node.future{opacity:.58}
+    #exact-checkpoint-flow .decision{transform:rotate(45deg);width:86px;height:86px;margin:8px 0;display:grid;place-items:center;border:1px solid #576b85;background:#0b1729}
+    #exact-checkpoint-flow .decision span{transform:rotate(-45deg);font-size:12px;text-align:center;line-height:1.15}
+    #exact-checkpoint-flow .arrow{height:30px;color:#73849a;font-size:24px;line-height:30px}
+    #exact-checkpoint-flow .branch{width:650px;display:grid;grid-template-columns:1fr 1fr;gap:44px;position:relative;margin:0 0 2px}
+    #exact-checkpoint-flow .branch:before{content:'';position:absolute;left:50%;top:-20px;width:1px;height:20px;background:#73849a}
+    #exact-checkpoint-flow .branch .lane{display:flex;flex-direction:column;align-items:center;gap:10px}
+    #exact-checkpoint-flow .label{color:#a5b4fc;font:11px ui-monospace,monospace;margin-bottom:0}
+    #exact-checkpoint-flow .candidate{margin-top:26px;border:1px solid #00f5ff;border-radius:10px;background:#071225;padding:16px}
+    #exact-checkpoint-flow .candidate h3{margin:0;color:#fff}.candidate p{margin:5px 0 14px;color:#94a3b8;font-size:13px}
+    #exact-checkpoint-flow .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.candidate-card{border:1px solid #334155;border-radius:8px;padding:12px;background:#0b1729}.candidate-card b{font:700 11px ui-monospace,monospace;color:#00f5ff}.candidate-card div{margin:8px 0 12px;font-size:12px}.candidate-card button{padding:7px 9px;border-radius:5px;background:#0b372e;border:1px solid #2dd4bf;color:#5eead4;font:700 11px ui-monospace,monospace}.candidate-card button+button{margin-left:7px;background:#37111a;border-color:#fb7185;color:#fda4af}
+    @media(max-width:760px){#exact-checkpoint-flow .branch{width:100%;grid-template-columns:1fr;gap:20px}.cards{grid-template-columns:1fr}}
+  </style>
+  <div class="eyebrow">AU ZENITH · REFRESH REVIEW</div>
+  <h2>Exact pipeline checkpoints</h2>
+  <p class="sub">The highlighted checkpoint updates as the current card refresh advances.</p>
+  <section class="flow" aria-label="Benefit refresh checkpoints">
+    <div class="node done">Select only AU Zenith</div><div class="arrow">↓</div>
+    <div class="node done">Load official URL from card_catalog</div><div class="arrow">↓</div>
+    <div class="node done">Scrape AU Bank product page</div><div class="arrow">↓</div>
+    <div class="node done">Validate page identity:<br>bank + card</div><div class="arrow">↓</div>
+    <div class="branch"><div class="lane"><span class="label">Invalid</span><div class="node future">Stop; record failure</div></div><div class="lane"><span class="label">Valid</span><div class="node done">Gemini extracts fees,<br>rewards, cashback and<br>special benefits</div><div class="arrow">↓</div></div></div>
+    <div class="node done">Ground every extracted<br>claim against scraped<br>evidence</div><div class="arrow">↓</div>
+    <div class="branch"><div class="lane"><span class="label">Rejected</span><div class="node future">Save rejected staging<br>record; do not modify<br>active benefits</div></div><div class="lane"><span class="label">Accepted</span><div class="node done">Save pending record in<br>card_benefits_staging</div><div class="arrow">↓</div></div></div>
+    <div class="node live">Show current active data<br>versus candidate data</div><div class="arrow">↓</div>
+    <div class="decision"><span>Your<br>review</span></div>
+    <div class="branch"><div class="lane"><span class="label">Discard</span><div class="node future">Candidate rejected; active<br>data unchanged</div></div><div class="lane"><span class="label">Approve</span><div class="node future">Revalidate using stored<br>source evidence</div><div class="arrow">↓</div><div class="node future">Replace AU Zenith<br>AI-extracted card_benefits<br>only</div><div class="arrow">↓</div><div class="node future">Mark staging record<br>approved</div></div></div>
+  </section>
+  <section class="candidate"><h3>Candidate benefits</h3><p>Individual choices and bulk actions stay in this review checkpoint.</p><div class="cards"><article class="candidate-card"><b>FUEL</b><div>1% fuel surcharge waiver, cap ₹1,000.</div><button>Accept</button><button>Reject</button></article><article class="candidate-card"><b>LOUNGE</b><div>8 domestic visits yearly, with eligibility conditions.</div><button>Accept</button><button>Reject</button></article><article class="candidate-card"><b>CONCIERGE</b><div>Global concierge assistance, 24×7.</div><button>Accept</button><button>Reject</button></article></div></section>
+</div>
