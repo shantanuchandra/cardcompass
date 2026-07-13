@@ -12,7 +12,7 @@ const allowedModels = new Set([
   "gemini-3.5-flash",
   "gemini-3.1-flash-lite",
   "gemini-2.5-flash",
-  "gemini-3.1-pro",
+  "gemini-2.5-pro",
 ]);
 
 serve(async (request) => {
@@ -91,12 +91,16 @@ serve(async (request) => {
     const apiKey = Deno.env.get("GEMINI_API_KEY");
     if (!apiKey) throw new Error("GEMINI_API_KEY is not configured");
 
+    // Some models (observed: gemini-3.5-flash) can hang with no response for
+    // well over a minute. Bound the upstream call so the client's fallback
+    // chain gets a timely error instead of stalling on a dead connection.
     const upstream = await fetch(
-      `https://generativelanguage.googleapis.com/v1/models/${model}:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(25_000),
       },
     );
 

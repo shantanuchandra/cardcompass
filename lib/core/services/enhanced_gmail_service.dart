@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:intl/intl.dart';
 import 'package:flutter/material.dart';
 import 'package:googleapis/gmail/v1.dart' as gmail;
 import 'package:google_sign_in/google_sign_in.dart';
@@ -353,7 +354,13 @@ class EnhancedGmailService {
             break;
           case 'date':
             try {
-              date = DateTime.parse(header.value ?? '');
+              // RFC 2822 format: "Mon, 14 Jul 2025 12:00:00 +0530"
+              // DateTime.parse() doesn't handle this — use intl or manual strip.
+              final raw = (header.value ?? '').trim();
+              // Try standard ISO first (unlikely in email headers but safe)
+              date = DateTime.tryParse(raw) ??
+                  _parseRfc2822Date(raw) ??
+                  DateTime.now();
             } catch (e) {
               date = DateTime.now();
             }
@@ -383,6 +390,17 @@ class EnhancedGmailService {
       );
     } catch (error) {
       print('Error parsing Gmail message: $error');
+      return null;
+    }
+  }
+
+  /// Parse RFC 2822 email date strings like "Mon, 14 Jul 2025 12:00:00 +0530".
+  DateTime? _parseRfc2822Date(String raw) {
+    try {
+      // Strip leading weekday "Mon, " if present
+      final stripped = raw.contains(',') ? raw.substring(raw.indexOf(',') + 1).trim() : raw.trim();
+      return DateFormat('dd MMM yyyy HH:mm:ss Z').parseUtc(stripped);
+    } catch (_) {
       return null;
     }
   }

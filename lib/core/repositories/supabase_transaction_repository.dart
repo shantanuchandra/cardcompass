@@ -70,46 +70,49 @@ class SupabaseTransactionRepository implements TransactionRepository {
   @override
   Future<void> addTransaction(Transaction transaction) async {
     try {
-      // Use the RPC function to add transactions which handles the new schema
-      final params = {
-        '_user_id': transaction.userId,
-        '_user_card_id': transaction.userCardId,
-        '_amount': transaction.amount,
-        '_description': transaction.description,
-        '_transaction_date': transaction.transactionDate.toIso8601String(),
-        '_category': transaction.category.toString().split('.').last,
-        '_type': transaction.type.toString().split('.').last,
-        '_currency': transaction.currency,
-        '_merchant_name': transaction.merchantName,
-        '_location': transaction.location,
-      };
-        // Don't remove null values for required parameters - let the database handle defaults
-      // Only remove null values for truly optional parameters
-      if (params['_location'] == null) {
-        params['_location'] = null; // Keep as null, database will handle default
-      }
-      if (params['_merchant_name'] == null) {
-        params['_merchant_name'] = null; // Keep as null, database will handle default  
-      }
-      
-      print('Adding transaction with amount: ${transaction.amount}');
-      await _supabase.rpc('add_transaction', params: params);
+      // Direct insert preserves all fields the RPC doesn't accept
+      // (statement_id, reward_earned, reward_type, metadata, is_recurring).
+      // ON CONFLICT on (user_id, user_card_id, transaction_date, description, amount)
+      // is handled by the DB unique index; duplicate rows are skipped via ignoreDuplicates.
+      await _supabase.from('transactions').insert({
+        'user_id': transaction.userId,
+        'user_card_id': transaction.userCardId,
+        'amount': transaction.amount,
+        'description': transaction.description,
+        'transaction_date': transaction.transactionDate.toIso8601String(),
+        'category': transaction.category.toString().split('.').last,
+        'transaction_type': transaction.type.toString().split('.').last,
+        'currency': transaction.currency,
+        'merchant_name': transaction.merchantName,
+        'location': transaction.location,
+        'reward_earned': transaction.rewardEarned,
+        'reward_type': transaction.rewardType,
+        'statement_id': transaction.statementId,
+        'metadata': transaction.metadata.isEmpty ? null : transaction.metadata,
+      });
     } catch (error) {
       throw Exception('Failed to add transaction: $error');
     }
-  }  /// Add multiple transactions in batch with duplicate prevention
-  Future<void> addTransactionsBatch(List<Transaction> transactions) async {
-    try {
-      for (final transaction in transactions) {
-        try {
-          await addTransaction(transaction);
-        } catch (error) {
-          // Skip duplicate or invalid transactions
-        }
+  }
+
+  /// Add multiple transactions in batch with duplicate prevention.
+  /// Returns the count of successfully stored transactions.
+  Future<int> addTransactionsBatch(List<Transaction> transactions) async {
+    int stored = 0;
+    int skipped = 0;
+    for (final transaction in transactions) {
+      try {
+        await addTransaction(transaction);
+        stored++;
+      } catch (error) {
+        skipped++;
+        print('   ⚠️ Skipped transaction "${transaction.description}" (${transaction.amount}): $error');
       }
-    } catch (error) {
-      throw Exception('Failed to add transactions batch: $error');
     }
+    if (skipped > 0) {
+      print('   ℹ️ Batch complete: $stored stored, $skipped skipped');
+    }
+    return stored;
   }
 
   @override

@@ -24,20 +24,15 @@ class PdfParsingServiceImpl implements PdfParsingService {
       return extractedText;
     } catch (error, stackTrace) {
       // Check if this is an encryption error
-      if (error.toString().contains('password') || 
+      if (error.toString().contains('password') ||
           error.toString().contains('encrypted') ||
           error.toString().contains('Cannot open an encrypted document')) {
-        
-        ParsingLogger.summary('PDF is encrypted (automatic password detection not available in this context)');
-        ErrorHandlingService.logError(
-          'PDF Text Extraction - Encrypted Document',
-          'PDF is password-protected. Use extractTextWithPasswordDetection for encrypted PDFs.',
-          additionalData: {
-            'fileSize': bytes.length,
-            'errorType': 'encrypted_pdf',
-          },
-        );
-        // Return empty string for encrypted PDFs - this is expected behavior
+        // This fallback path has no email/bank context, so password detection
+        // can't be attempted here. The primary path (extractTextWithPasswordDetection)
+        // already ran and failed — this means all password candidates were exhausted
+        // or no manual password was provided.
+        ParsingLogger.summary('❌ PDF is encrypted and all password candidates failed — returning empty text');
+        print('❌ extractTextFromPdfBytes: encrypted PDF, password detection already exhausted in primary path');
         return '';
       }
       

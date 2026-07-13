@@ -957,19 +957,21 @@ class DataPipelineDebugService {
         transactions: statement.transactions,
         userCardId: cardInfo.userCardId,
         userId: userId,
+        statementId: statementRecordId,
       );
       SyncFlowDebugger.logStep('TRANSACTION_STORED', 'Transactions stored',
           data: {
             'count': statement.transactions.length,
           });
-      // Step 6: Update email status if we have email record
-      if (emailRecordId != null && statementRecordId != null) {
+      // Step 6: Update email status if we have email record — mark processed
+      // regardless of whether statement storage succeeded, to prevent re-processing
+      if (emailRecordId != null) {
         try {
           await _emailRepo.updateEmailStatus(
             userId: userId,
             emailId: statement.emailMessageId,
             processed: true,
-            statementId: statementRecordId,
+            statementId: statementRecordId, // may be null if statement failed
           );
           print('   ✅ Email status updated');
         } catch (e) {
@@ -1296,17 +1298,16 @@ class DataPipelineDebugService {
   /// Ensure credit card exists, create if not found  /// Store transactions with deduplication
   Future<void> _storeTransactionsWithDeduplication({
     required List<Transaction> transactions,
-    required String userCardId, // Only user card ID is needed now
+    required String userCardId,
     required String userId,
+    String? statementId,
   }) async {
     try {
-      // Update userCardId and user_id for all transactions
-      // Note: cardId column has been removed, only userCardId is used now
       final updatedTransactions = transactions
           .map((tx) => Transaction(
                 id: tx.id,
                 userId: userId,
-                userCardId: userCardId, // Use the actual user card ID
+                userCardId: userCardId,
                 amount: tx.amount,
                 description: tx.description,
                 merchantName: tx.merchantName,
@@ -1317,8 +1318,7 @@ class DataPipelineDebugService {
                 rewardEarned: tx.rewardEarned,
                 rewardType: tx.rewardType,
                 metadata: tx.metadata,
-                statementId:
-                    null, // Will be set when statement record is created
+                statementId: statementId,
                 createdAt: tx.createdAt,
               ))
           .toList();

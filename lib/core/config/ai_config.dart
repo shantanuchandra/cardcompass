@@ -106,11 +106,16 @@ class AIConfig {
   // ──────────────────────────────────────────────────────────────────────────
   // Model Fallback Chain
   // ──────────────────────────────────────────────────────────────────────────
+  // Verified against live API (2026-07-14): each ID below responded 200 with
+  // a real completion on this key. gemini-3.5-flash is Google's current
+  // flagship stable model per docs, but consistently timed out (curl exit 28,
+  // no response within 15s) during verification — kept as a last resort
+  // rather than primary so a bad day for that model doesn't stall every sync.
   static const List<String> geminiModelFallbackChain = [
-    'gemini-3.5-flash',       // Primary
-    'gemini-3.1-flash-lite',  // Fallback 1 (fast, cheap)
-    'gemini-2.5-flash',       // Fallback 2 (stable)
-    'gemini-3.1-pro',         // Fallback 3 (last resort reasoning)
+    'gemini-3.1-flash-lite',  // Primary (stable, verified fast + responsive)
+    'gemini-2.5-flash',       // Fallback 1 (previous-gen stable, verified responsive)
+    'gemini-2.5-pro',         // Fallback 2 (reasoning, verified responsive)
+    'gemini-3.5-flash',       // Fallback 3 (flagship stable, but slow/unresponsive on this key at test time)
   ];
 
 
