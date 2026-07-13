@@ -173,6 +173,47 @@ The annual fee is ₹500. Annual fee waived on annual spends of ₹2,00,000.
     expect(result.reasonCodes, contains('duplicate_benefit'));
   });
 
+  test('warns when a source-backed hotel offer has no extracted claim', () {
+    const hotelEvidence =
+        'Experience luxury stay at ITC Hotels. Stay for 3, Pay for 2.';
+    final result = BenefitExtractionValidator.validate(
+      extractedData: extraction(),
+      evidenceText: '$evidence\n$hotelEvidence',
+      cardName: 'Airtel',
+      bankName: 'Axis Bank',
+    );
+
+    expect(
+      result.warnings.map((warning) => warning.code),
+      contains('unextracted_source_claim'),
+    );
+    expect(
+      result.warnings.map((warning) => warning.message).join(' '),
+      contains('ITC Hotels'),
+    );
+  });
+
+  test('does not warn when an evidence excerpt covers the source claim', () {
+    const lounge =
+        '8 complimentary domestic lounge access annually, subject to ₹50,000 prior-quarter spend.';
+    final data = extraction(benefits: [
+      {
+        'category': 'LOUNGE',
+        'description': '8 complimentary domestic lounge access annually',
+        'conditions': 'subject to ₹50,000 prior-quarter spend',
+        'evidence_excerpt': lounge,
+      },
+    ]);
+    final result = BenefitExtractionValidator.validate(
+      extractedData: data,
+      evidenceText: '$evidence\n$lounge',
+      cardName: 'Airtel',
+      bankName: 'Axis Bank',
+    );
+
+    expect(result.warnings, isEmpty);
+  });
+
   test('keeps distinct accelerated reward categories with shared conditions',
       () {
     const rewardEvidence = '''

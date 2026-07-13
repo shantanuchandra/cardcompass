@@ -2,13 +2,23 @@ class BenefitValidationIssue {
   final String code;
   final String message;
   final int? benefitIndex;
+  final String? sourceExcerpt;
+  final String? suggestedKind;
 
-  const BenefitValidationIssue(this.code, this.message, {this.benefitIndex});
+  const BenefitValidationIssue(
+    this.code,
+    this.message, {
+    this.benefitIndex,
+    this.sourceExcerpt,
+    this.suggestedKind,
+  });
 
   Map<String, dynamic> toJson() => {
         'code': code,
         'message': message,
         if (benefitIndex != null) 'benefit_index': benefitIndex,
+        if (sourceExcerpt != null) 'source_excerpt': sourceExcerpt,
+        if (suggestedKind != null) 'suggested_kind': suggestedKind,
       };
 }
 
@@ -145,6 +155,7 @@ class BenefitExtractionValidator {
     }
 
     final seenDescriptions = <String, int>{};
+    final extractedEvidence = <String>[];
     var groundedClaims = 0;
     for (var index = 0; index < claims.length; index++) {
       final benefit = claims[index];
@@ -168,6 +179,7 @@ class BenefitExtractionValidator {
         ));
       } else {
         groundedClaims++;
+        extractedEvidence.add(_normalizeText(excerpt));
       }
 
       if (description.isEmpty ||
@@ -219,6 +231,11 @@ class BenefitExtractionValidator {
         }
       }
     }
+
+    warnings.addAll(_findUnextractedSourceClaims(
+      evidenceText: evidenceText,
+      extractedEvidence: extractedEvidence,
+    ));
 
     _validateAnnualFee(
         extractedData['annual_fee'], normalizedEvidence, reasons);
@@ -290,6 +307,65 @@ class BenefitExtractionValidator {
         ? 'Accelerated reward points'
         : '$rate reward points';
     return '$rateLabel${conditions == null || conditions.isEmpty ? '' : ' $conditions'} on $category';
+  }
+
+  /// Finds source-backed benefit sentences that were never represented by an
+  /// extracted evidence excerpt. These are review warnings, not validation
+  /// failures: a human may accept or reject the exact source-backed claim.
+  static List<BenefitValidationIssue> _findUnextractedSourceClaims({
+    required String evidenceText,
+    required List<String> extractedEvidence,
+  }) {
+    const markers = <String, String>{
+      'foreign mark-up': 'FOREX',
+      'foreign markup': 'FOREX',
+      'concierge': 'CONCIERGE',
+      'lounge': 'LOUNGE',
+      'reward point': 'REWARDS',
+      'fuel surcharge waiver': 'FUEL',
+      'air accident': 'INSURANCE',
+      'credit shield': 'INSURANCE',
+      'purchase protection': 'INSURANCE',
+      'itc hotels': 'TRAVEL',
+      'elivaas': 'TRAVEL',
+      'meet & greet': 'TRAVEL',
+      'dine with visa': 'DINING',
+    };
+    final warnings = <BenefitValidationIssue>[];
+    final seen = <String>{};
+    final sentences = evidenceText
+        .split(RegExp(r'(?<=[.!?])\s+|[\r\n]+'))
+        .map((sentence) => sentence.trim())
+        .where((sentence) => sentence.isNotEmpty);
+
+    for (final sentence in sentences) {
+      final normalizedSentence = _normalizeText(sentence);
+      if (normalizedSentence.isEmpty ||
+          _nonBenefitPattern.hasMatch(sentence) ||
+          !seen.add(normalizedSentence)) {
+        continue;
+      }
+      final matchedMarker =
+          markers.entries.cast<MapEntry<String, String>?>().firstWhere(
+                (entry) =>
+                    entry != null &&
+                    normalizedSentence.contains(_normalizeText(entry.key)),
+                orElse: () => null,
+              );
+      if (matchedMarker == null ||
+          extractedEvidence.any(
+            (excerpt) => excerpt.contains(normalizedSentence),
+          )) {
+        continue;
+      }
+      warnings.add(BenefitValidationIssue(
+        'unextracted_source_claim',
+        'Source-backed ${matchedMarker.value.toLowerCase()} benefit was not extracted: $sentence',
+        sourceExcerpt: sentence,
+        suggestedKind: matchedMarker.value,
+      ));
+    }
+    return warnings;
   }
 
   /// Recovers an omitted model excerpt only when the scraped source contains
