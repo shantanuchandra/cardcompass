@@ -483,7 +483,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
         : state.userCards.where((c) => c.id == state.selectedCardId).toList();
 
     return SizedBox(
-      height: 108,
+      height: 124,
       child: ListView(
         scrollDirection: Axis.horizontal,
         children: [
