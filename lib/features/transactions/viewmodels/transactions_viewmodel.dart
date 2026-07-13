@@ -5,6 +5,19 @@ import 'package:cardcompass/features/transactions/data/transactions_repository.d
 
 part 'transactions_viewmodel.g.dart';
 
+/// Aggregated spend/reward totals for one card within the current filter.
+class CardSpendSummary {
+  final String cardId;
+  final double totalSpend;
+  final double totalRewards;
+
+  const CardSpendSummary({
+    required this.cardId,
+    required this.totalSpend,
+    required this.totalRewards,
+  });
+}
+
 /// Transactions view state
 class TransactionsViewState {
   final List<Transaction> transactions;
@@ -47,6 +60,34 @@ class TransactionsViewState {
       selectedCategory: selectedCategory ?? this.selectedCategory,
       dateRange: dateRange ?? this.dateRange,
     );
+  }
+
+  /// Per-card spend + reward totals, computed from [filteredTransactions].
+  /// Transactions with a null/empty userCardId are excluded.
+  Map<String, CardSpendSummary> perCardSummary() {
+    final spendByCard = <String, double>{};
+    final rewardsByCard = <String, double>{};
+
+    for (final t in filteredTransactions) {
+      final cardId = t.userCardId;
+      if (cardId == null || cardId.isEmpty) continue;
+
+      if (t.type == TransactionType.debit) {
+        spendByCard[cardId] = (spendByCard[cardId] ?? 0) + t.amount.abs();
+      } else {
+        spendByCard.putIfAbsent(cardId, () => 0);
+      }
+      rewardsByCard[cardId] = (rewardsByCard[cardId] ?? 0) + (t.rewardEarned ?? 0);
+    }
+
+    return {
+      for (final cardId in spendByCard.keys)
+        cardId: CardSpendSummary(
+          cardId: cardId,
+          totalSpend: spendByCard[cardId] ?? 0,
+          totalRewards: rewardsByCard[cardId] ?? 0,
+        ),
+    };
   }
 }
 
