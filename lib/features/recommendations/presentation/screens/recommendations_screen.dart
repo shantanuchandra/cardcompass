@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:cardcompass/shared/widgets/empty_state.dart' as empty_widgets;
+import 'package:cardcompass/shared/widgets/state_widgets.dart';
 import 'package:cardcompass/features/auth/providers/auth_provider.dart';
 import 'package:cardcompass/core/providers/service_providers.dart';
 import 'package:cardcompass/core/services/recommendation_service.dart';
@@ -102,7 +102,7 @@ class _RecommendationsScreenState extends ConsumerState<RecommendationsScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 16),
         children: [
           const SizedBox(height: 80),
-          empty_widgets.EmptyState(
+          EmptyState(
             icon: Icons.recommend,
             title: 'NO RECOMMENDATIONS YET',
             message: _error!,
@@ -116,7 +116,7 @@ class _RecommendationsScreenState extends ConsumerState<RecommendationsScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 16),
         children: [
           const SizedBox(height: 80),
-          empty_widgets.EmptyState(
+          EmptyState(
             icon: Icons.recommend,
             title: 'YOU ARE FULLY OPTIMIZED',
             message: 'We don\'t see any better card matches for your recent spending patterns right now.',
