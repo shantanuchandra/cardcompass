@@ -101,6 +101,23 @@ void main() {
       expect(byKey['cardB']!.subtotal, 20);
     });
 
+    test('byCard grouping buckets null/empty userCardId under Unknown Card', () {
+      final state = const TransactionsViewState().copyWith(
+        filteredTransactions: [
+          _tx(id: '1', userCardId: null, amount: 10),
+          _tx(id: '2', userCardId: '', amount: 5),
+          _tx(id: '3', userCardId: 'cardA', amount: 20),
+        ],
+      );
+
+      final groups = state.groupedTransactions(TransactionGrouping.byCard);
+      final byKey = {for (final g in groups) g.key: g};
+
+      expect(byKey.containsKey('Unknown Card'), isTrue);
+      expect(byKey['Unknown Card']!.transactions.length, 2);
+      expect(byKey.containsKey('cardA'), isTrue);
+    });
+
     test('byCategory grouping buckets by category name', () {
       final state = const TransactionsViewState().copyWith(
         filteredTransactions: [
