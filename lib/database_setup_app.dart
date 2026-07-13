@@ -70,17 +70,20 @@ class _DatabaseSetupScreenState extends State<DatabaseSetupScreen> {
                   children: [
                     const Text(
                       'Database Setup Status',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      style:
+                          TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 8),
                     Text(
                       _status,
                       style: TextStyle(
-                        color: _status.contains('Error') || _status.contains('failed')
+                        color: _status.contains('Error') ||
+                                _status.contains('failed')
                             ? Colors.red
-                            : _status.contains('success') || _status.contains('completed')
-                            ? Colors.green
-                            : Colors.blue,
+                            : _status.contains('success') ||
+                                    _status.contains('completed')
+                                ? Colors.green
+                                : Colors.blue,
                       ),
                     ),
                   ],
@@ -129,16 +132,19 @@ class _DatabaseSetupScreenState extends State<DatabaseSetupScreen> {
                     padding: const EdgeInsets.all(16),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
-                      children: _logs.map((log) => Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 2),
-                        child: Text(
-                          log,
-                          style: const TextStyle(
-                            fontFamily: 'monospace',
-                            fontSize: 12,
-                          ),
-                        ),
-                      )).toList(),
+                      children: _logs
+                          .map((log) => Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 2),
+                                child: Text(
+                                  log,
+                                  style: const TextStyle(
+                                    fontFamily: 'monospace',
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ))
+                          .toList(),
                     ),
                   ),
                 ),
@@ -159,9 +165,9 @@ class _DatabaseSetupScreenState extends State<DatabaseSetupScreen> {
 
     try {
       final supabase = Supabase.instance.client;
-      
+
       _addLog('🔄 Starting database setup...');
-      
+
       // Create benefit_categories table
       _addLog('📊 Creating benefit_categories table...');
       await supabase.rpc('sql', params: {
@@ -217,13 +223,13 @@ class _DatabaseSetupScreenState extends State<DatabaseSetupScreen> {
       });
       _addLog('✅ card_catalog table created');
 
-      // Create card_benefits table
+      // Historical generic benefit values only. Card ownership is represented
+      // through card_benefit_mapping.
       _addLog('📊 Creating card_benefits table...');
       await supabase.rpc('sql', params: {
         'query': '''
           CREATE TABLE IF NOT EXISTS card_benefits (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            card_id UUID,
             benefit_id UUID REFERENCES benefits(id) NOT NULL,
             value DECIMAL(10, 2),
             spending_categories TEXT[],
@@ -239,6 +245,21 @@ class _DatabaseSetupScreenState extends State<DatabaseSetupScreen> {
         '''
       });
       _addLog('✅ card_benefits table created');
+
+      await supabase.rpc('sql', params: {
+        'query': '''
+          CREATE TABLE IF NOT EXISTS card_benefit_mapping (
+            mapping_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            card_id UUID NOT NULL REFERENCES card_catalog(id) ON DELETE CASCADE,
+            benefit_id UUID NOT NULL REFERENCES benefits(id) ON DELETE CASCADE,
+            display_priority INTEGER DEFAULT 1,
+            is_primary BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            UNIQUE(card_id, benefit_id)
+          );
+        '''
+      });
+      _addLog('✅ card_benefit_mapping table created');
 
       // Insert sample cards
       _addLog('📊 Inserting sample cards...');
@@ -271,11 +292,11 @@ class _DatabaseSetupScreenState extends State<DatabaseSetupScreen> {
       _addLog('✅ Sample cards inserted');
 
       _addLog('🎉 Database setup completed successfully!');
-      
+
       setState(() {
-        _status = 'Database setup completed! You can now run the benefit import.';
+        _status =
+            'Database setup completed! You can now run the benefit import.';
       });
-      
     } catch (e) {
       _addLog('❌ Error during setup: $e');
       setState(() {
@@ -290,7 +311,8 @@ class _DatabaseSetupScreenState extends State<DatabaseSetupScreen> {
 
   void _addLog(String message) {
     setState(() {
-      _logs.add('${DateTime.now().toLocal().toString().substring(11, 19)} - $message');
+      _logs.add(
+          '${DateTime.now().toLocal().toString().substring(11, 19)} - $message');
     });
   }
 }

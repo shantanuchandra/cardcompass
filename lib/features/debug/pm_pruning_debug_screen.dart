@@ -5,6 +5,9 @@ import 'package:cardcompass/core/services/pruning_audit_service.dart';
 import 'package:cardcompass/core/services/pm_feedback_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cardcompass/core/services/advanced_benefit_calculation_service.dart';
+import 'package:cardcompass/features/debug/models/benefit_review_candidate.dart';
+import 'package:cardcompass/features/debug/widgets/benefit_candidate_review.dart';
+import 'package:cardcompass/features/debug/widgets/benefit_refresh_pipeline.dart';
 import 'dart:convert';
 import 'package:cardcompass/core/services/parsing_logger.dart';
 
@@ -89,8 +92,8 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
     _safeSetState(() => _isExtracting = true);
     for (final card in _catalogCards) {
       bool hasBenefits = false;
-      if (card['card_benefits'] is List &&
-          (card['card_benefits'] as List).isNotEmpty) {
+      if (card['card_benefit_mapping'] is List &&
+          (card['card_benefit_mapping'] as List).isNotEmpty) {
         hasBenefits = true;
       }
       if (hasBenefits) continue;
@@ -132,7 +135,7 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
       final response = await _supabase
           .from('card_catalog')
           .select(
-              '*, card_benefits(*), card_benefits_staging(id, status, created_at, calculated_confidence, validation_reasons, validation_warnings)')
+              '*, card_benefit_mapping(*), card_benefits_staging(id, status, created_at, calculated_confidence, validation_reasons, validation_warnings)')
           .order('bank', ascending: true);
 
       _safeSetState(() {
@@ -144,7 +147,7 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
       try {
         final response = await _supabase
             .from('card_catalog')
-            .select('*, card_benefits(*)')
+            .select('*, card_benefit_mapping(*)')
             .order('bank', ascending: true);
         _safeSetState(() {
           _catalogCards = List<Map<String, dynamic>>.from(response);
@@ -382,8 +385,8 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
                   // Skip if recently scraped (e.g., has benefits) to save time, or we can force it.
                   // Since goal is to populate ALL, we process those without benefits.
                   bool hasBenefits = false;
-                  if (card['card_benefits'] is List &&
-                      (card['card_benefits'] as List).isNotEmpty) {
+                  if (card['card_benefit_mapping'] is List &&
+                      (card['card_benefit_mapping'] as List).isNotEmpty) {
                     hasBenefits = true;
                   }
                   if (hasBenefits) continue;
@@ -632,16 +635,8 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
                           dynamic lastScraped;
                           dynamic confidence;
                           bool hasStagingData = false;
-                          if (card['card_benefits'] is List &&
-                              (card['card_benefits'] as List).isNotEmpty) {
-                            final benefitMeta =
-                                (card['card_benefits'] as List).first;
-                            lastScraped = benefitMeta['last_scraped_at'];
-                            confidence = benefitMeta['extraction_confidence'];
-                          }
                           // Also check staging data
-                          if (lastScraped == null &&
-                              card['card_benefits_staging'] is List &&
+                          if (card['card_benefits_staging'] is List &&
                               (card['card_benefits_staging'] as List)
                                   .isNotEmpty) {
                             final stagingMeta =
@@ -678,27 +673,9 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
                                 _selectedValidationConfidence = null;
                                 _selectedValidationReasons = [];
                               });
-                              if (card['card_benefits'] is List &&
-                                  (card['card_benefits'] as List).isNotEmpty) {
-                                final benefitMeta =
-                                    (card['card_benefits'] as List).first;
-                                final benefitsJson =
-                                    benefitMeta['json_configuration'];
-                                if (benefitsJson != null) {
-                                  _onLogReceived(
-                                      '✅ Benefits found for $cardName');
-                                  _safeSetState(() {
-                                    _selectedCardBenefits = benefitsJson;
-                                    _selectedValidationStatus = 'active';
-                                    _selectedValidationConfidence =
-                                        benefitMeta['extraction_confidence'];
-                                  });
-                                } else {
-                                  _onLogReceived(
-                                      '⚠️ No json_configuration found in DB for $cardName');
-                                }
-                              } else {
-                                // Fallback: Check staging table for recently extracted benefits
+                              {
+                                // Staging is the only extraction/audit record. Active data is
+                                // read through card_benefit_mapping in the review dialog.
                                 _onLogReceived(
                                     '🔍 Checking staging table for $cardName...');
                                 try {
@@ -734,7 +711,7 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
                                   }
                                 } catch (e) {
                                   _onLogReceived(
-                                      '⚠️ No card_benefits records found for $cardName');
+                                      '⚠️ No active mappings or staging record found for $cardName');
                                 }
                               }
                             },
@@ -1901,10 +1878,12 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
       );
 
       if (catalogCard.isNotEmpty) {
-        final benefitsRes = await _supabase
-            .from('card_benefits')
-            .select('*, benefits(category_code, name, description)')
-            .eq('card_id', catalogCard['id']);
+        final benefitsRes =
+            await _supabase.from('card_benefit_mapping').select('''
+              mapping_id, card_id, benefit_id, display_priority, is_primary,
+              benefits!inner(benefit_id, title, description, benefit_category,
+                benefit_type, value_config, is_active)
+            ''').eq('card_id', catalogCard['id']);
         activeBenefits = benefitsRes as List;
       }
     } catch (e) {
@@ -1913,139 +1892,164 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
 
     if (!mounted) return;
 
+    var reviewState = BenefitReviewState.fromExtractedData(candidateData);
+    var applying = false;
+
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) {
-        return Dialog(
-          backgroundColor: const Color(0xFF0C152B),
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-              side: const BorderSide(color: Color(0xFF00F5FF), width: 1)),
-          child: Container(
-            width: 950,
-            height: 650,
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'AI_BENEFITS_REVIEW_DIFF_FLOW // ${bankName.toUpperCase()} ${cardName.toUpperCase()}',
-                      style: GoogleFonts.shareTechMono(
-                          color: const Color(0xFF00F5FF),
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close,
-                          color: Colors.white30, size: 18),
-                      onPressed: () => Navigator.of(context).pop(),
-                    ),
-                  ],
-                ),
-                const Divider(color: Color(0xFF1E293B), height: 16),
-                Expanded(
-                  child: Row(
+        return StatefulBuilder(builder: (context, setDialogState) {
+          return Dialog(
+            backgroundColor: const Color(0xFF0C152B),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+                side: const BorderSide(color: Color(0xFF00F5FF), width: 1)),
+            child: Container(
+              width: 1120,
+              height: 720,
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Expanded(
-                        child: _buildReviewColumn(
-                          title: 'ACTIVE BENEFITS (CURRENT DATABASE)',
-                          headerColor: Colors.white54,
-                          fees: activeFees,
-                          benefits: activeBenefits.map((b) {
-                            final bName = b['benefits'] != null
-                                ? b['benefits']['name'] ?? ''
-                                : 'Benefit';
-                            final bCat = b['benefits'] != null
-                                ? b['benefits']['category_code'] ?? 'GENERAL'
-                                : 'GENERAL';
-                            final bVal = b['value'] != null
-                                ? '${b['value']}%'
-                                : 'Active';
-                            return '$bCat: $bName ($bVal)';
-                          }).toList(),
-                          isCandidate: false,
-                        ),
+                      Text(
+                        'AI_BENEFITS_REVIEW_DIFF_FLOW // ${bankName.toUpperCase()} ${cardName.toUpperCase()}',
+                        style: GoogleFonts.shareTechMono(
+                            color: const Color(0xFF00F5FF),
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold),
                       ),
-                      const VerticalDivider(
-                          color: Color(0xFF1E293B), width: 24),
-                      Expanded(
-                        child: _buildReviewColumn(
-                          title: 'CANDIDATE BENEFITS (SCRAPED / AI PARSED)',
-                          headerColor: const Color(0xFF00F5FF),
-                          fees: candidateData['annual_fee'],
-                          benefits:
-                              _getCandidateBenefitSummaryList(candidateData),
-                          isCandidate: true,
-                        ),
+                      IconButton(
+                        icon: const Icon(Icons.close,
+                            color: Colors.white30, size: 18),
+                        onPressed: () => Navigator.of(context).pop(),
                       ),
                     ],
                   ),
-                ),
-                const Divider(color: Color(0xFF1E293B), height: 24),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    TextButton(
-                      onPressed: () {
-                        Navigator.of(context).pop();
-                        _onLogReceived(
-                            '❌ REJECTED: Candidate benefits discarded.');
-                      },
-                      child: Text('DISCARD CHANGES',
-                          style: GoogleFonts.shareTechMono(
-                              color: AppTheme.errorColor,
-                              fontWeight: FontWeight.bold)),
-                    ),
-                    const SizedBox(width: 16),
-                    ElevatedButton.icon(
-                      icon: const Icon(Icons.check, size: 14),
-                      label: Text('APPROVE & APPLY',
-                          style: GoogleFonts.shareTechMono(
-                              fontWeight: FontWeight.bold)),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF10B981),
-                        foregroundColor: Colors.black,
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 20, vertical: 12),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(4)),
+                  const Divider(color: Color(0xFF1E293B), height: 16),
+                  Expanded(
+                      child: Row(children: [
+                    const Expanded(
+                      flex: 3,
+                      child: BenefitRefreshPipeline(
+                        stage: BenefitRefreshStage.pendingReview,
                       ),
-                      onPressed: () async {
-                        Navigator.of(context).pop();
-                        _onLogReceived(
-                            '⚡ Applying approved benefits from staging...');
-                        final applyRes =
-                            await AdvancedBenefitCalculationService()
-                                .applyApprovedBenefits(stagingId);
-                        if (applyRes['success'] == true) {
-                          _onLogReceived(
-                              '✅ SUCCESS: Benefits applied successfully!');
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                  'BENEFITS SYNCED AND APPLIED SUCCESSFULLY',
-                                  style: GoogleFonts.shareTechMono(
-                                      color: Colors.black,
-                                      fontWeight: FontWeight.bold)),
-                              backgroundColor: const Color(0xFF10B981),
-                            ),
-                          );
-                          _loadCatalogCards();
-                        } else {
-                          _onLogReceived('❌ FAILED: ${applyRes['error']}');
-                        }
-                      },
                     ),
-                  ],
-                ),
-              ],
+                    const VerticalDivider(color: Color(0xFF1E293B), width: 24),
+                    Expanded(
+                      flex: 4,
+                      child: _buildReviewColumn(
+                        title: 'ACTIVE BENEFITS (CURRENT MAPPINGS)',
+                        headerColor: Colors.white54,
+                        fees: activeFees,
+                        benefits: activeBenefits.map((b) {
+                          final benefit = b['benefits'] as Map?;
+                          final category =
+                              benefit?['benefit_category'] ?? 'GENERAL';
+                          final title = benefit?['title'] ?? 'Benefit';
+                          return '$category: $title';
+                        }).toList(),
+                        isCandidate: false,
+                      ),
+                    ),
+                    const VerticalDivider(color: Color(0xFF1E293B), width: 24),
+                    Expanded(
+                      flex: 5,
+                      child: BenefitCandidateReview(
+                        state: reviewState,
+                        onChanged: (next) =>
+                            setDialogState(() => reviewState = next),
+                      ),
+                    ),
+                  ])),
+                  const Divider(color: Color(0xFF1E293B), height: 24),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(
+                        onPressed: applying
+                            ? null
+                            : () async {
+                                setDialogState(() => applying = true);
+                                final discarded = reviewState.rejectAll();
+                                await AdvancedBenefitCalculationService()
+                                    .rejectStagedReview(
+                                  stagingId,
+                                  reviewDecisions: discarded.toStagingJson(),
+                                );
+                                if (context.mounted)
+                                  Navigator.of(context).pop();
+                                _onLogReceived(
+                                    '❌ REJECTED: Candidate benefits discarded; active mappings unchanged.');
+                                _loadCatalogCards();
+                              },
+                        child: Text('DISCARD CHANGES',
+                            style: GoogleFonts.shareTechMono(
+                                color: AppTheme.errorColor,
+                                fontWeight: FontWeight.bold)),
+                      ),
+                      const SizedBox(width: 16),
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.check, size: 14),
+                        label: Text(
+                            reviewState.hasUnresolved
+                                ? 'RESOLVE ALL CANDIDATES'
+                                : 'APPLY ACCEPTED BENEFITS',
+                            style: GoogleFonts.shareTechMono(
+                                fontWeight: FontWeight.bold)),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF10B981),
+                          foregroundColor: Colors.black,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 20, vertical: 12),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(4)),
+                        ),
+                        onPressed: applying || reviewState.hasUnresolved
+                            ? null
+                            : () async {
+                                setDialogState(() => applying = true);
+                                _onLogReceived(
+                                    '⚡ Applying approved benefits from staging...');
+                                final applyRes =
+                                    await AdvancedBenefitCalculationService()
+                                        .applyApprovedBenefits(
+                                  stagingId,
+                                  reviewDecisions: reviewState.toStagingJson(),
+                                );
+                                if (applyRes['success'] == true) {
+                                  if (context.mounted)
+                                    Navigator.of(context).pop();
+                                  _onLogReceived(
+                                      '✅ SUCCESS: ${applyRes['benefits_mapped'] ?? 0} benefit mappings applied.');
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                          'BENEFITS SYNCED AND APPLIED SUCCESSFULLY',
+                                          style: GoogleFonts.shareTechMono(
+                                              color: Colors.black,
+                                              fontWeight: FontWeight.bold)),
+                                      backgroundColor: const Color(0xFF10B981),
+                                    ),
+                                  );
+                                  _loadCatalogCards();
+                                } else {
+                                  _onLogReceived(
+                                      '❌ FAILED: ${applyRes['error']}');
+                                  setDialogState(() => applying = false);
+                                }
+                              },
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
-        );
+          );
+        });
       },
     );
   }

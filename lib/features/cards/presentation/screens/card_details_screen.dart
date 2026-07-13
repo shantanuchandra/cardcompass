@@ -927,20 +927,26 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
 
     try {
       final response = await Supabase.instance.client
-          .from('card_benefits')
-          .select('*')
-          .eq('card_id', widget.cardId);
+          .from('card_benefit_mapping')
+          .select(
+              'benefits!inner(title, description, benefit_category, value_config)')
+          .eq('card_id', widget.cardId)
+          .eq('benefits.is_active', true);
 
       if (response.isNotEmpty) {
-        _benefits = response
-            .map((benefit) => {
-                  'category': benefit['category'] ?? 'General',
-                  'reward_rate': benefit['value']?.toString() ?? 'N/A',
-                  'description': benefit['description'] ?? 'No description',
-                  'icon':
-                      _getIconFromCategory(benefit['category'] ?? 'General'),
-                })
-            .toList();
+        _benefits = response.map((mapping) {
+          final benefit = mapping['benefits'] as Map;
+          final config = benefit['value_config'] as Map? ?? {};
+          return {
+            'category': benefit['benefit_category'] ?? 'General',
+            'reward_rate':
+                (config['rate'] ?? config['value'])?.toString() ?? 'N/A',
+            'description':
+                benefit['description'] ?? benefit['title'] ?? 'No description',
+            'icon':
+                _getIconFromCategory(benefit['benefit_category'] ?? 'General'),
+          };
+        }).toList();
       } else {
         _benefits = []; // No benefits found
       }

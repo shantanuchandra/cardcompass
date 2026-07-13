@@ -163,6 +163,35 @@ class CardBenefit {
     );
   }
 
+  /// Converts the mapping-only relationship returned by
+  /// `card_benefit_mapping -> benefits` into the legacy presentation model.
+  factory CardBenefit.fromMappingJson(Map<String, dynamic> json) {
+    final benefit = Map<String, dynamic>.from(json['benefits'] as Map);
+    final valueConfig = benefit['value_config'] is Map
+        ? Map<String, dynamic>.from(benefit['value_config'] as Map)
+        : <String, dynamic>{};
+    final category = benefit['benefit_category']?.toString();
+    final rate = valueConfig['rate'] ?? valueConfig['value'];
+    final rawCategories = valueConfig['spending_categories'] ??
+        valueConfig['categories'] ??
+        (category == null ? null : [category]);
+    return CardBenefit(
+      id: json['mapping_id'] as String,
+      cardId: json['card_id'] as String,
+      benefitId: json['benefit_id'] as String,
+      value: rate is num ? rate.toDouble() : double.tryParse('$rate'),
+      spendingCategories:
+          rawCategories is List ? List<String>.from(rawCategories) : null,
+      monthlyCap: _asDouble(valueConfig['monthly_cap']),
+      annualCap: _asDouble(valueConfig['annual_cap']),
+      configuration: valueConfig,
+      isActive: benefit['is_active'] as bool? ?? true,
+    );
+  }
+
+  static double? _asDouble(dynamic value) =>
+      value is num ? value.toDouble() : double.tryParse('$value');
+
   Map<String, dynamic> toJson() {
     return {
       'id': id,

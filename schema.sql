@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS benefits (
   exclusions JSONB DEFAULT '{}', -- Exclusion conditions, e.g. {"mcc_codes": [...], "merchants": [...], "additional": {...}} (JSONB, not TEXT[] - matches production data shape)
   regions JSONB DEFAULT '[]', -- Geographic regions where benefit is valid (JSONB, not TEXT[] - matches production data shape)
   source_url TEXT, -- URL to official benefit documentation
+  dedupe_key TEXT NOT NULL UNIQUE, -- normalized category/type/title identity
   valid_from DATE, -- Benefit validity start date
   valid_until DATE, -- Benefit validity end date
   is_active BOOLEAN DEFAULT true,
@@ -81,30 +82,17 @@ CREATE TABLE IF NOT EXISTS benefits (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Card Benefits Table (Detailed card-specific benefit configuration)
+-- Historical Benefit Values Table (not a card relationship)
 CREATE TABLE IF NOT EXISTS card_benefits (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  -- Nullable, not NOT NULL: in production every card_benefits row has card_id = NULL.
-  -- Actual card<->benefit linkage happens via card_benefit_mapping instead; this table
-  -- appears to hold benefit-value configs that aren't directly tied to one card row.
-  card_id UUID REFERENCES card_catalog(id) ON DELETE CASCADE,
   benefit_id UUID REFERENCES benefits(benefit_id) ON DELETE SET NULL,
   value DECIMAL(12,2),
   configuration JSONB,
-  json_configuration JSONB,
   spending_categories TEXT[],
-  usage_period TEXT, -- 'monthly', 'quarterly', 'annual', 'statement'
   monthly_cap DECIMAL(12,2),
   annual_cap DECIMAL(12,2),
-  priority_score INTEGER DEFAULT 0,
-  efficiency_threshold DECIMAL(12,2),
   valid_from DATE,
   valid_to DATE,
-  source_url TEXT,
-  ai_extracted BOOLEAN DEFAULT false,
-  extraction_confidence DECIMAL(5,2),
-  last_scraped_at TIMESTAMP WITH TIME ZONE,
-  last_usage_update TIMESTAMP WITH TIME ZONE,
   is_active BOOLEAN DEFAULT true,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -119,6 +107,30 @@ CREATE TABLE IF NOT EXISTS card_benefit_mapping (
   is_primary BOOLEAN DEFAULT true,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   UNIQUE(card_id, benefit_id)
+);
+
+-- Benefit extraction review/audit table. This is deliberately separate from
+-- the canonical benefits catalog and from the card-benefit mapping table.
+CREATE TABLE IF NOT EXISTS card_benefits_staging (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  card_id UUID REFERENCES card_catalog(id) ON DELETE CASCADE,
+  source_url TEXT,
+  extracted_data JSONB NOT NULL,
+  source_evidence JSONB,
+  validation_version TEXT,
+  calculated_confidence NUMERIC(5,4),
+  validation_reasons JSONB NOT NULL DEFAULT '[]'::jsonb,
+  validation_warnings JSONB NOT NULL DEFAULT '[]'::jsonb,
+  benefit_decisions JSONB NOT NULL DEFAULT '[]'::jsonb,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'approved', 'rejected')),
+  requested_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  reviewed_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  validated_at TIMESTAMP WITH TIME ZONE,
+  reviewed_at TIMESTAMP WITH TIME ZONE,
+  rejected_at TIMESTAMP WITH TIME ZONE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- ============================================================================
@@ -418,4 +430,3 @@ END $$;
 --
 -- Legacy format auto-conversion is handled in application code
 -- (MovieBenefitConfig.fromJson() converts rate/unit to offer_type/discount_percent)
-

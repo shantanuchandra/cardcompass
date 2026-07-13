@@ -64,16 +64,18 @@ The stored staging record must retain per-item decisions and decision timestamps
 
 The migration removes `card_id` and all AI/extraction/source-tracking fields from `card_benefits`. Any display or recommendation query that needs a card association must join through `card_benefit_mapping`, not `card_benefits`.
 
-## Historical benefit ID recovery
+## Confirmed reset boundary
 
-The historical restore snapshot contains the original `benefit_id` for every `card_benefits.id`. Before columns are removed, the migration restores each missing `benefit_id` by matching its stable `card_benefits.id` to that snapshot. It verifies that every restored ID exists in `benefits` and aborts if any row cannot be safely reconciled. No inferred category/name matching is permitted.
+The migration deletes every row from `card_benefit_mapping` and `card_benefits`, in that order. It does **not** delete, rewrite, or attempt to infer historical rows in `benefits`. This is the approved clean start for the single AU Zenith workflow.
+
+`benefits` receives a non-null unique `dedupe_key`, calculated from normalized `benefit_category | benefit_type | title`. Existing duplicate catalog rows are retained: the oldest row receives the canonical key and later duplicate rows receive a unique `legacy:<benefit_id>` key. New approvals look up the canonical key first; the unique index is the final concurrency guard against duplicate creation.
 
 ## Approval persistence
 
 For each accepted candidate item:
 
 1. Revalidate its evidence against the stored source evidence.
-2. Find or create the canonical `benefits` row using the normalized category, title, description, and configuration.
+2. Find or create the canonical `benefits` row using its normalized category, type, and title dedupe key.
 3. Upsert `card_benefit_mapping(card_id, benefit_id)` for the selected catalog card.
 4. Store card-specific calculation limits in the canonical benefit configuration only when they are part of the accepted benefit definition; do not create a card-linked `card_benefits` row.
 
@@ -83,14 +85,13 @@ For rejected candidate items, persist only the review decision in staging. Do no
 
 Before applying the migration:
 
-1. Verify every legacy `card_benefits` row has a recoverable historical `benefit_id`.
-2. Verify all affected code paths use `card_benefit_mapping` for card associations.
-3. Back up the pre-migration row counts and relationship counts.
+1. Verify all affected code paths use `card_benefit_mapping` for card associations.
+2. Back up the pre-migration row counts and relationship counts.
 
 After applying it:
 
 1. Confirm the retained `card_benefits` columns match this specification exactly.
-2. Confirm every retained `benefit_id` references an existing canonical benefit.
-3. Confirm active card benefits resolve through `card_benefit_mapping`.
+2. Confirm active card benefits resolve through `card_benefit_mapping`.
+3. Confirm a duplicate accepted candidate reuses the canonical `benefits` row.
 4. Exercise per-item accept, per-item reject, bulk acceptance, bulk rejection, and approval-time validation failure without rerunning AU Zenith.
 5. Run focused Flutter tests and static analysis for changed code.

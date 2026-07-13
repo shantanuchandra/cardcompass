@@ -123,6 +123,15 @@ class BenefitReviewState {
   BenefitReviewState rejectSelected() =>
       _applyToSelected(BenefitDecision.rejected);
 
+  /// Discarding a whole candidate set is an explicit rejection for every item.
+  BenefitReviewState rejectAll() => BenefitReviewState(List.unmodifiable(
+        items
+            .map((item) => item.decision == BenefitDecision.unresolved
+                ? item.copyWith(decision: BenefitDecision.rejected)
+                : item)
+            .toList(),
+      ));
+
   BenefitReviewState _applyToSelected(BenefitDecision decision) {
     return BenefitReviewState(List.unmodifiable(items.map((item) {
       if (!item.selected || item.decision != BenefitDecision.unresolved) {

@@ -25,4 +25,21 @@ void main() {
 
     expect(state.toStagingJson()['items'][0]['decision'], 'rejected');
   });
+
+  test('discarding rejects every unresolved candidate', () {
+    final discarded = BenefitReviewState.fromExtractedData({
+      'cashback_benefits': [
+        {'category': 'FUEL', 'description': 'Fuel waiver'},
+      ],
+      'special_benefits': [
+        {'type': 'LOUNGE', 'description': 'Lounge access'},
+      ],
+    }).rejectAll();
+
+    expect(
+      discarded.items
+          .every((item) => item.decision == BenefitDecision.rejected),
+      isTrue,
+    );
+  });
 }

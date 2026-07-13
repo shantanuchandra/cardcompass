@@ -248,13 +248,10 @@ class SupabaseCardRepository implements CardRepository {
     required double amount,
   }) async {
     try {
-      // Get card benefits for the specific card and category
-      final response = await _supabase.from('card_benefits').select('''
-            value,
-            spending_categories,
-            monthly_cap,
-            annual_cap
-          ''').eq('card_id', cardId).eq('is_active', true);
+      // Get canonical benefit configurations through the mapping relationship.
+      final response = await _supabase.from('card_benefit_mapping').select('''
+            benefits!inner(benefit_category, value_config, is_active)
+          ''').eq('card_id', cardId).eq('benefits.is_active', true);
 
       if (response.isEmpty) {
         return amount * (AppConstants.defaultRewardRate / 100);
@@ -262,21 +259,24 @@ class SupabaseCardRepository implements CardRepository {
 
       double bestReward = 0.0;
 
-      for (final benefit in response) {
-        final categories =
-            List<String>.from(benefit['spending_categories'] ?? []);
+      for (final mapping in response) {
+        final benefit = mapping['benefits'] as Map;
+        final config = benefit['value_config'] as Map? ?? {};
+        final categories = List<String>.from(
+            config['spending_categories'] ?? [benefit['benefit_category']]);
 
         // Check if category matches or if it's a general benefit
         if (categories.contains('all') ||
             categories.contains(category.toLowerCase())) {
-          final rewardRate = (benefit['value'] as num).toDouble();
+          final rawRate = config['rate'] ?? config['value'] ?? 0;
+          final rewardRate = rawRate is num ? rawRate.toDouble() : 0.0;
           final reward = amount * (rewardRate / 100);
 
           // Apply caps if they exist
           double finalReward = reward;
-          if (benefit['monthly_cap'] != null) {
-            finalReward = finalReward.clamp(
-                0, (benefit['monthly_cap'] as num).toDouble());
+          if (config['monthly_cap'] != null) {
+            finalReward =
+                finalReward.clamp(0, (config['monthly_cap'] as num).toDouble());
           }
 
           bestReward = finalReward > bestReward ? finalReward : bestReward;

@@ -5,6 +5,7 @@ import 'enhanced_web_scraper.dart';
 import 'parsing_logger.dart';
 import 'benefit_extraction_validator.dart';
 import 'benefit_staging_policy.dart';
+import 'benefit_deduplication_service.dart';
 
 /// Advanced benefit calculation service with tier-based rewards
 class AdvancedBenefitCalculationService {
@@ -21,14 +22,10 @@ class AdvancedBenefitCalculationService {
     try {
       // Get user's cards
       // Fetch user cards joined to card_catalog for benefits
-      final userCardsResponse = await _supabase
-          .from('user_cards')
-          .select('''
+      final userCardsResponse = await _supabase.from('user_cards').select('''
             *,
             card:card_catalog!inner(*)
-          ''')
-          .eq('user_id', userId)
-          .eq('is_active', true);
+          ''').eq('user_id', userId).eq('is_active', true);
 
       if (userCardsResponse.isEmpty) {
         return {
@@ -42,99 +39,86 @@ class AdvancedBenefitCalculationService {
 
       for (final userCard in userCardsResponse) {
         final card = userCard['card'];
-        
-        // Get card benefits separately to avoid join issues
-        final cardBenefitsResponse = await _supabase
-            .from('card_benefits')
-            .select('''
+
+        // Read card relationships from the mapping table only.
+        final cardBenefitsResponse =
+            await _supabase.from('card_benefit_mapping').select('''
               *,
-              benefit:benefits!inner(*),
-              benefit_tiers(*),
-              benefit_configurations(*)
-            ''')
-            .eq('card_id', card['id']);
+              benefit:benefits!inner(*)
+            ''').eq('card_id', card['id']).eq('benefit.is_active', true);
 
         final cardBenefits = cardBenefitsResponse;
         double totalReward = 0.0;
         List<Map<String, dynamic>> applicableBenefits = [];
 
         for (final cardBenefit in cardBenefits) {
-          final benefit = cardBenefit['benefit'];
-          final benefitTiers = cardBenefit['benefit_tiers'] as List<dynamic>?;
-          final benefitConfigs = cardBenefit['benefit_configurations'] as List<dynamic>?;
+          final benefit = Map<String, dynamic>.from(cardBenefit['benefit']);
+          final configuration = benefit['value_config'] is Map
+              ? Map<String, dynamic>.from(benefit['value_config'])
+              : <String, dynamic>{};
 
           // Check if benefit applies to this category
-          final spendingCategories = cardBenefit['spending_categories'] as List<dynamic>?;
+          final spendingCategories =
+              configuration['spending_categories'] as List<dynamic>? ??
+                  [benefit['benefit_category']];
           bool categoryMatches = false;
 
-          if (spendingCategories == null || spendingCategories.isEmpty) {
+          if (spendingCategories.isEmpty) {
             categoryMatches = true; // Applies to all categories
           } else {
-            categoryMatches = spendingCategories.any((cat) => 
-              cat.toString().toLowerCase() == category.toLowerCase() ||
-              cat.toString().toLowerCase() == 'all'
-            );
+            categoryMatches = spendingCategories.any((cat) =>
+                cat.toString().toLowerCase() == category.toLowerCase() ||
+                cat.toString().toLowerCase() == 'all');
           }
 
           if (!categoryMatches) continue;
 
-          // Check merchant-specific benefits
-          bool merchantMatches = true;
-          if (benefitConfigs != null) {
-            final merchantConfig = benefitConfigs.firstWhere(
-              (config) => config['config_key'] == 'merchant_name',
-              orElse: () => null,
-            );
-            if (merchantConfig != null) {
-              merchantMatches = merchantConfig['config_value']
-                  .toString()
-                  .toLowerCase()
-                  .contains(merchantName.toLowerCase());
+          // Check exclusions and thresholds from canonical JSONB configuration.
+          {
+            final excludedCategories =
+                configuration['excluded_categories'] as List<dynamic>?;
+            if (excludedCategories != null &&
+                excludedCategories.any((cat) =>
+                    cat.toString().toLowerCase() == category.toLowerCase())) {
+              continue;
             }
-          }
 
-          if (!merchantMatches) continue;
+            final excludedMerchants =
+                configuration['excluded_merchants'] as List<dynamic>?;
+            if (excludedMerchants != null &&
+                excludedMerchants.any((m) => merchantName
+                    .toLowerCase()
+                    .contains(m.toString().toLowerCase()))) {
+              continue;
+            }
 
-          // Check exclusions and thresholds from JSONB configuration
-          final configuration = cardBenefit['configuration'] as Map<String, dynamic>?;
-          if (configuration != null) {
-            final excludedCategories = configuration['excluded_categories'] as List<dynamic>?;
-            if (excludedCategories != null && excludedCategories.any((cat) => cat.toString().toLowerCase() == category.toLowerCase())) {
-              continue; 
-            }
-            
-            final excludedMerchants = configuration['excluded_merchants'] as List<dynamic>?;
-            if (excludedMerchants != null && excludedMerchants.any((m) => merchantName.toLowerCase().contains(m.toString().toLowerCase()))) {
-              continue; 
-            }
-            
             final minSpend = configuration['min_spend_threshold'];
             if (minSpend != null) {
-              final minSpendVal = minSpend is num ? minSpend.toDouble() : double.tryParse(minSpend.toString());
+              final minSpendVal = minSpend is num
+                  ? minSpend.toDouble()
+                  : double.tryParse(minSpend.toString());
               if (minSpendVal != null && amount < minSpendVal) {
-                continue; 
+                continue;
               }
             }
           }
 
-          // Calculate reward based on benefit type and tiers
-          double reward = 0.0;
-          String calculationMethod = benefit['calculation_method'] ?? 'percentage';
-
-          if (benefitTiers != null && benefitTiers.isNotEmpty) {
-            reward = _calculateTierBasedReward(amount, benefitTiers, calculationMethod);
-          } else {
-            double defaultValue = (cardBenefit['value'] ?? benefit['default_value'] ?? 0.0).toDouble();
-            reward = _calculateSimpleReward(amount, defaultValue, calculationMethod);
-          }
+          final calculationMethod =
+              configuration['rate_type']?.toString() ?? 'percentage';
+          final rawRate = configuration['rate'] ?? configuration['value'] ?? 0;
+          final rate = rawRate is num ? rawRate.toDouble() : 0.0;
+          double reward =
+              _calculateSimpleReward(amount, rate, calculationMethod);
 
           // Apply monthly/annual caps and max cap limits
-          final monthlyCap = cardBenefit['monthly_cap']?.toDouble();
-          final annualCap = cardBenefit['annual_cap']?.toDouble();
-          final maxCapLimit = configuration?['max_cap_limit'];
-          
+          final monthlyCap = (configuration['monthly_cap'] as num?)?.toDouble();
+          final annualCap = (configuration['annual_cap'] as num?)?.toDouble();
+          final maxCapLimit = configuration['max_cap_limit'];
+
           if (maxCapLimit != null) {
-            final maxCapLimitVal = maxCapLimit is num ? maxCapLimit.toDouble() : double.tryParse(maxCapLimit.toString());
+            final maxCapLimitVal = maxCapLimit is num
+                ? maxCapLimit.toDouble()
+                : double.tryParse(maxCapLimit.toString());
             if (maxCapLimitVal != null && reward > maxCapLimitVal) {
               reward = maxCapLimitVal;
             }
@@ -148,8 +132,8 @@ class AdvancedBenefitCalculationService {
 
           totalReward += reward;
           applicableBenefits.add({
-            'benefit_name': benefit['name'],
-            'category': benefit['category_code'],
+            'benefit_name': benefit['title'],
+            'category': benefit['benefit_category'],
             'reward': reward,
             'calculation_method': calculationMethod,
             'description': benefit['description'],
@@ -166,16 +150,17 @@ class AdvancedBenefitCalculationService {
       }
 
       // Sort by reward amount (descending)
-      cardRecommendations.sort((a, b) => 
-        b['total_reward'].compareTo(a['total_reward'])
-      );
+      cardRecommendations
+          .sort((a, b) => b['total_reward'].compareTo(a['total_reward']));
 
       return {
-        'bestCard': cardRecommendations.isNotEmpty ? cardRecommendations.first : null,
-        'maxReward': cardRecommendations.isNotEmpty ? cardRecommendations.first['total_reward'] : 0.0,
+        'bestCard':
+            cardRecommendations.isNotEmpty ? cardRecommendations.first : null,
+        'maxReward': cardRecommendations.isNotEmpty
+            ? cardRecommendations.first['total_reward']
+            : 0.0,
         'recommendations': cardRecommendations,
       };
-
     } catch (e) {
       print('Error calculating best card: $e');
       return {
@@ -189,10 +174,7 @@ class AdvancedBenefitCalculationService {
 
   /// Calculate tier-based reward
   double _calculateTierBasedReward(
-    double amount, 
-    List<dynamic> tiers, 
-    String calculationMethod
-  ) {
+      double amount, List<dynamic> tiers, String calculationMethod) {
     // Sort tiers by minimum value
     final sortedTiers = List<Map<String, dynamic>>.from(tiers)
       ..sort((a, b) => a['tier_min_value'].compareTo(b['tier_min_value']));
@@ -200,10 +182,11 @@ class AdvancedBenefitCalculationService {
     for (final tier in sortedTiers.reversed) {
       final minValue = tier['tier_min_value']?.toDouble() ?? 0.0;
       final maxValue = tier['tier_max_value']?.toDouble();
-      
+
       if (amount >= minValue && (maxValue == null || amount <= maxValue)) {
         final tierBenefitValue = tier['tier_benefit_value']?.toDouble() ?? 0.0;
-        return _calculateSimpleReward(amount, tierBenefitValue, calculationMethod);
+        return _calculateSimpleReward(
+            amount, tierBenefitValue, calculationMethod);
       }
     }
 
@@ -211,7 +194,8 @@ class AdvancedBenefitCalculationService {
   }
 
   /// Calculate simple reward based on calculation method
-  double _calculateSimpleReward(double amount, double value, String calculationMethod) {
+  double _calculateSimpleReward(
+      double amount, double value, String calculationMethod) {
     switch (calculationMethod.toLowerCase()) {
       case 'percentage':
         return amount * (value / 100);
@@ -227,14 +211,19 @@ class AdvancedBenefitCalculationService {
   }
 
   /// Get spending optimization suggestions
-  Future<List<Map<String, dynamic>>> getSpendingOptimizations(String userId) async {
+  Future<List<Map<String, dynamic>>> getSpendingOptimizations(
+      String userId) async {
     try {
       // Get user's recent transactions
       final transactionsResponse = await _supabase
           .from('transactions')
           .select('*')
           .eq('user_id', userId)
-          .gte('transaction_date', DateTime.now().subtract(const Duration(days: 30)).toIso8601String())
+          .gte(
+              'transaction_date',
+              DateTime.now()
+                  .subtract(const Duration(days: 30))
+                  .toIso8601String())
           .order('transaction_date', ascending: false);
 
       List<Map<String, dynamic>> optimizations = [];
@@ -257,25 +246,26 @@ class AdvancedBenefitCalculationService {
         final actualReward = transaction['reward_earned']?.toDouble() ?? 0.0;
         final potentialSavings = maxReward - actualReward;
 
-        if (potentialSavings > 0.1) { // Only show if savings > 10 paise
+        if (potentialSavings > 0.1) {
+          // Only show if savings > 10 paise
           optimizations.add({
             'transaction': transaction,
             'best_card': bestCard,
             'potential_savings': potentialSavings,
             'actual_reward': actualReward,
             'optimal_reward': maxReward,
-            'improvement_percentage': actualReward > 0 ? (potentialSavings / actualReward * 100) : 0.0,
+            'improvement_percentage': actualReward > 0
+                ? (potentialSavings / actualReward * 100)
+                : 0.0,
           });
         }
       }
 
       // Sort by potential savings (descending)
-      optimizations.sort((a, b) => 
-        b['potential_savings'].compareTo(a['potential_savings'])
-      );
+      optimizations.sort(
+          (a, b) => b['potential_savings'].compareTo(a['potential_savings']));
 
       return optimizations.take(10).toList(); // Return top 10 optimizations
-
     } catch (e) {
       print('Error getting spending optimizations: $e');
       return [];
@@ -287,7 +277,7 @@ class AdvancedBenefitCalculationService {
     try {
       final now = DateTime.now();
       final startOfMonth = DateTime(now.year, now.month, 1);
-      
+
       final transactionsResponse = await _supabase
           .from('transactions')
           .select('*')
@@ -312,7 +302,8 @@ class AdvancedBenefitCalculationService {
         totalRewardsEarned += actualReward;
 
         // Calculate category breakdown
-        categoryBreakdown[category] = (categoryBreakdown[category] ?? 0.0) + actualReward;
+        categoryBreakdown[category] =
+            (categoryBreakdown[category] ?? 0.0) + actualReward;
 
         // Calculate card breakdown
         if (cardId.isNotEmpty) {
@@ -330,8 +321,8 @@ class AdvancedBenefitCalculationService {
         totalPotentialRewards += optimalReward;
       }
 
-      final optimizationScore = totalPotentialRewards > 0 
-          ? (totalRewardsEarned / totalPotentialRewards * 100) 
+      final optimizationScore = totalPotentialRewards > 0
+          ? (totalRewardsEarned / totalPotentialRewards * 100)
           : 0.0;
 
       return {
@@ -340,12 +331,13 @@ class AdvancedBenefitCalculationService {
         'total_potential_rewards': totalPotentialRewards,
         'missed_rewards': totalPotentialRewards - totalRewardsEarned,
         'optimization_score': optimizationScore,
-        'reward_rate': totalSpending > 0 ? (totalRewardsEarned / totalSpending * 100) : 0.0,
+        'reward_rate': totalSpending > 0
+            ? (totalRewardsEarned / totalSpending * 100)
+            : 0.0,
         'category_breakdown': categoryBreakdown,
         'card_breakdown': cardBreakdown,
         'transactions_count': transactionsResponse.length,
       };
-
     } catch (e) {
       print('Error getting monthly reward summary: $e');
       return {};
@@ -353,11 +345,12 @@ class AdvancedBenefitCalculationService {
   }
 
   /// Get personalized card recommendations based on spending patterns
-  Future<List<Map<String, dynamic>>> getPersonalizedCardRecommendations(String userId) async {
+  Future<List<Map<String, dynamic>>> getPersonalizedCardRecommendations(
+      String userId) async {
     try {
       // Analyze spending patterns
       final spendingPatterns = await _analyzeSpendingPatterns(userId);
-      
+
       // Get all available cards
       final availableCardsResponse = await _supabase
           .from('card_catalog')
@@ -370,17 +363,13 @@ class AdvancedBenefitCalculationService {
         double projectedMonthlyReward = 0.0;
         List<String> matchingCategories = [];
 
-        // Fetch card benefits separately
-        final cardBenefitsResponse = await _supabase
-          .from('card_benefits')
-          .select('''
+        // Read canonical benefits through their card mapping.
+        final cardBenefitsResponse =
+            await _supabase.from('card_benefit_mapping').select('''
             *,
-            benefit:benefits!inner(*),
-            benefit_tiers(*),
-            benefit_configurations(*)
-          ''')
-          .eq('card_id', card['id']);
-        
+            benefit:benefits!inner(*)
+          ''').eq('card_id', card['id']).eq('benefit.is_active', true);
+
         final cardBenefits = cardBenefitsResponse;
 
         for (final entry in spendingPatterns.entries) {
@@ -392,52 +381,61 @@ class AdvancedBenefitCalculationService {
           String bestBenefitName = '';
 
           for (final cardBenefit in cardBenefits) {
-            final benefit = cardBenefit['benefit'];
-            final spendingCategories = cardBenefit['spending_categories'] as List<dynamic>?;
-            
+            final benefit = Map<String, dynamic>.from(cardBenefit['benefit']);
+            final configuration = benefit['value_config'] is Map
+                ? Map<String, dynamic>.from(benefit['value_config'])
+                : <String, dynamic>{};
+            final spendingCategories =
+                configuration['spending_categories'] as List<dynamic>? ??
+                    [benefit['benefit_category']];
+
             bool categoryMatches = false;
-            if (spendingCategories == null || spendingCategories.isEmpty) {
+            if (spendingCategories.isEmpty) {
               categoryMatches = true;
             } else {
-              categoryMatches = spendingCategories.any((cat) => 
-                cat.toString().toLowerCase() == category.toLowerCase() ||
-                cat.toString().toLowerCase() == 'all'
-              );
+              categoryMatches = spendingCategories.any((cat) =>
+                  cat.toString().toLowerCase() == category.toLowerCase() ||
+                  cat.toString().toLowerCase() == 'all');
             }
 
             if (categoryMatches) {
-              final configuration = cardBenefit['configuration'] as Map<String, dynamic>?;
-              if (configuration != null) {
-                final excludedCategories = configuration['excluded_categories'] as List<dynamic>?;
-                if (excludedCategories != null && excludedCategories.any((cat) => cat.toString().toLowerCase() == category.toLowerCase())) {
-                  continue; 
+              {
+                final excludedCategories =
+                    configuration['excluded_categories'] as List<dynamic>?;
+                if (excludedCategories != null &&
+                    excludedCategories.any((cat) =>
+                        cat.toString().toLowerCase() ==
+                        category.toLowerCase())) {
+                  continue;
                 }
-                
+
                 final minSpend = configuration['min_spend_threshold'];
                 if (minSpend != null) {
-                  final minSpendVal = minSpend is num ? minSpend.toDouble() : double.tryParse(minSpend.toString());
+                  final minSpendVal = minSpend is num
+                      ? minSpend.toDouble()
+                      : double.tryParse(minSpend.toString());
                   if (minSpendVal != null && monthlySpending < minSpendVal) {
-                    continue; 
+                    continue;
                   }
                 }
               }
 
-              final benefitTiers = cardBenefit['benefit_tiers'] as List<dynamic>?;
-              String calculationMethod = benefit['calculation_method'] ?? 'percentage';
-              double rewardRate = 0.0;
+              final calculationMethod =
+                  configuration['rate_type']?.toString() ?? 'percentage';
+              final rawRate =
+                  configuration['rate'] ?? configuration['value'] ?? 0;
+              final rate = rawRate is num ? rawRate.toDouble() : 0.0;
+              double rewardRate = _calculateSimpleReward(
+                  monthlySpending, rate, calculationMethod);
 
-              if (benefitTiers != null && benefitTiers.isNotEmpty) {
-                rewardRate = _calculateTierBasedReward(monthlySpending, benefitTiers, calculationMethod);
-              } else {
-                double defaultValue = (cardBenefit['value'] ?? benefit['default_value'] ?? 0.0).toDouble();
-                rewardRate = _calculateSimpleReward(monthlySpending, defaultValue, calculationMethod);
-              }
+              final monthlyCap =
+                  (configuration['monthly_cap'] as num?)?.toDouble();
+              final maxCapLimit = configuration['max_cap_limit'];
 
-              final monthlyCap = cardBenefit['monthly_cap']?.toDouble();
-              final maxCapLimit = configuration?['max_cap_limit'];
-              
               if (maxCapLimit != null) {
-                final maxCapLimitVal = maxCapLimit is num ? maxCapLimit.toDouble() : double.tryParse(maxCapLimit.toString());
+                final maxCapLimitVal = maxCapLimit is num
+                    ? maxCapLimit.toDouble()
+                    : double.tryParse(maxCapLimit.toString());
                 if (maxCapLimitVal != null && rewardRate > maxCapLimitVal) {
                   rewardRate = maxCapLimitVal;
                 }
@@ -448,7 +446,7 @@ class AdvancedBenefitCalculationService {
 
               if (rewardRate > bestRewardRate) {
                 bestRewardRate = rewardRate;
-                bestBenefitName = benefit['name'];
+                bestBenefitName = benefit['title']?.toString() ?? 'Benefit';
               }
             }
           }
@@ -465,19 +463,19 @@ class AdvancedBenefitCalculationService {
             'projected_monthly_reward': projectedMonthlyReward,
             'matching_categories': matchingCategories,
             'annual_fee': card['annual_fee'] ?? 0.0,
-            'net_annual_benefit': (projectedMonthlyReward * 12) - (card['annual_fee'] ?? 0.0),
-            'recommendation_score': _calculateRecommendationScore(card, projectedMonthlyReward),
+            'net_annual_benefit':
+                (projectedMonthlyReward * 12) - (card['annual_fee'] ?? 0.0),
+            'recommendation_score':
+                _calculateRecommendationScore(card, projectedMonthlyReward),
           });
         }
       }
 
       // Sort by recommendation score
-      recommendations.sort((a, b) => 
-        b['recommendation_score'].compareTo(a['recommendation_score'])
-      );
+      recommendations.sort((a, b) =>
+          b['recommendation_score'].compareTo(a['recommendation_score']));
 
       return recommendations.take(5).toList(); // Return top 5 recommendations
-
     } catch (e) {
       print('Error getting personalized recommendations: $e');
       return [];
@@ -487,7 +485,7 @@ class AdvancedBenefitCalculationService {
   /// Analyze user's spending patterns
   Future<Map<String, double>> _analyzeSpendingPatterns(String userId) async {
     final threeMonthsAgo = DateTime.now().subtract(const Duration(days: 90));
-    
+
     final transactionsResponse = await _supabase
         .from('transactions')
         .select('category, amount')
@@ -499,7 +497,7 @@ class AdvancedBenefitCalculationService {
     for (final transaction in transactionsResponse) {
       final category = transaction['category'] ?? 'general';
       final amount = transaction['amount']?.toDouble() ?? 0.0;
-      
+
       categorySpending[category] = (categorySpending[category] ?? 0.0) + amount;
     }
 
@@ -513,25 +511,26 @@ class AdvancedBenefitCalculationService {
   }
 
   /// Calculate recommendation score for a card
-  double _calculateRecommendationScore(Map<String, dynamic> card, double projectedReward) {
+  double _calculateRecommendationScore(
+      Map<String, dynamic> card, double projectedReward) {
     final annualFee = card['annual_fee']?.toDouble() ?? 0.0;
     final netBenefit = (projectedReward * 12) - annualFee;
-    
+
     // Score based on net benefit, with bonus for premium features
     double score = netBenefit;
-    
+
     final features = card['features'] as Map<String, dynamic>?;
     if (features != null) {
       if (features['airport_lounge'] == true) score += 500;
       if (features['travel_benefits'] == true) score += 300;
       if (features['cashback'] == true) score += 200;
     }
-    
+
     return score;
   }
 
   /// NEW: AI-powered benefit extraction and update
-  /// 
+  ///
   /// This method leverages existing Gemini integration to extract real benefit data
   /// from bank websites and update the database with confidence scoring.
   Future<Map<String, dynamic>> extractAndUpdateBenefits({
@@ -541,31 +540,36 @@ class AdvancedBenefitCalculationService {
     String? customUrl,
   }) async {
     try {
-      ParsingLogger.summary('🤖 EXTRACTING BENEFITS: Starting extraction for $bankName $cardName');
-      
+      ParsingLogger.summary(
+          '🤖 EXTRACTING BENEFITS: Starting extraction for $bankName $cardName');
+
       // 1. Normalize card and bank names using existing service
       final normalizedBank = CardNormalizerService.normalizeBankName(bankName);
-      final normalizedCard = CardNormalizerService.normalizeCardName(cardName, normalizedBank);
-      
+      final normalizedCard =
+          CardNormalizerService.normalizeCardName(cardName, normalizedBank);
+
       // 2. Fetch card web content
       String htmlContent = '';
       String sourceUrl = customUrl ?? '';
-      
+
       if (customUrl != null && customUrl.isNotEmpty) {
         ParsingLogger.summary('🌐 FETCHING: Scraping custom URL: $customUrl');
         final scrapedContent = await EnhancedWebScraper.scrapeUrl(customUrl);
         if (scrapedContent.isSuccess) {
-          htmlContent = scrapedContent.benefitContent.isNotEmpty 
-              ? scrapedContent.benefitContent 
+          htmlContent = scrapedContent.benefitContent.isNotEmpty
+              ? scrapedContent.benefitContent
               : scrapedContent.html;
-          ParsingLogger.summary('✅ FETCHED: Successfully scraped ${htmlContent.length} chars from $customUrl');
+          ParsingLogger.summary(
+              '✅ FETCHED: Successfully scraped ${htmlContent.length} chars from $customUrl');
         } else {
-          ParsingLogger.error('SCRAPING FAILED for custom URL: ${scrapedContent.error}');
+          ParsingLogger.error(
+              'SCRAPING FAILED for custom URL: ${scrapedContent.error}');
         }
       } else {
-        htmlContent = await _fetchCardWebContent(normalizedCard, normalizedBank);
+        htmlContent =
+            await _fetchCardWebContent(normalizedCard, normalizedBank);
       }
-      
+
       if (htmlContent.isEmpty) {
         return {
           'success': false,
@@ -577,7 +581,8 @@ class AdvancedBenefitCalculationService {
       if (sourceUrl.isEmpty) {
         return {
           'success': false,
-          'error': 'Extraction requires a persisted official card product URL for source validation.',
+          'error':
+              'Extraction requires a persisted official card product URL for source validation.',
           'card_id': cardId,
         };
       }
@@ -592,17 +597,20 @@ class AdvancedBenefitCalculationService {
           'success': false,
           'error': 'Source page failed card identity validation.',
           'card_id': cardId,
-          'validation_reasons': sourceValidation.reasons.map((reason) => reason.toJson()).toList(),
+          'validation_reasons': sourceValidation.reasons
+              .map((reason) => reason.toJson())
+              .toList(),
         };
       }
-      
+
       // 3. Use existing Gemini AI integration to extract benefits
-      final extractionResult = await GeminiTransactionParser.extractCardBenefits(
+      final extractionResult =
+          await GeminiTransactionParser.extractCardBenefits(
         cardName: normalizedCard,
         bankName: normalizedBank,
         htmlContent: htmlContent,
       );
-      
+
       if (!extractionResult['success']) {
         return {
           'success': false,
@@ -611,7 +619,8 @@ class AdvancedBenefitCalculationService {
         };
       }
 
-      final extractedData = Map<String, dynamic>.from(extractionResult['data'] as Map);
+      final extractedData =
+          Map<String, dynamic>.from(extractionResult['data'] as Map);
       final validation = BenefitExtractionValidator.validate(
         extractedData: extractedData,
         evidenceText: htmlContent,
@@ -619,22 +628,29 @@ class AdvancedBenefitCalculationService {
         bankName: normalizedBank,
         sourceUrl: sourceUrl,
       );
-      
+
       // 4. Save to staging table for review before committing
       String? stagingId;
       try {
-        final effectiveSource = sourceUrl.isNotEmpty ? sourceUrl : 'Official Bank Website';
-        ParsingLogger.summary('💾 STAGING: Saving ${validation.accepted ? "validated" : "rejected"} extraction...');
+        final effectiveSource =
+            sourceUrl.isNotEmpty ? sourceUrl : 'Official Bank Website';
+        ParsingLogger.summary(
+            '💾 STAGING: Saving ${validation.accepted ? "validated" : "rejected"} extraction...');
         final payload = BenefitStagingPolicy.buildInsertPayload(
           cardId: cardId,
           sourceUrl: effectiveSource,
           sourceEvidence: htmlContent,
           validation: validation,
         );
-        final insertResult = await _supabase.from('card_benefits_staging').insert(payload).select('id').single();
+        final insertResult = await _supabase
+            .from('card_benefits_staging')
+            .insert(payload)
+            .select('id')
+            .single();
         stagingId = insertResult['id'] as String;
-        ParsingLogger.summary('${validation.accepted ? "✅" : "⛔"} STAGING: Saved ${payload['status']} record ID: $stagingId');
-        
+        ParsingLogger.summary(
+            '${validation.accepted ? "✅" : "⛔"} STAGING: Saved ${payload['status']} record ID: $stagingId');
+
         return {
           'success': validation.accepted,
           'card_id': cardId,
@@ -642,19 +658,21 @@ class AdvancedBenefitCalculationService {
           'status': payload['status'],
           'extracted_data': validation.normalizedData,
           'confidence_score': validation.confidence,
-          'validation_reasons': validation.reasons.map((reason) => reason.toJson()).toList(),
+          'validation_reasons':
+              validation.reasons.map((reason) => reason.toJson()).toList(),
           'source_url': effectiveSource,
-          if (!validation.accepted) 'error': 'Extraction rejected by source-grounding validation',
+          if (!validation.accepted)
+            'error': 'Extraction rejected by source-grounding validation',
         };
       } catch (e) {
-        ParsingLogger.error('STAGING FAILED: Refusing unsafe direct application: $e');
+        ParsingLogger.error(
+            'STAGING FAILED: Refusing unsafe direct application: $e');
         return {
           'success': false,
           'card_id': cardId,
           'error': 'Could not persist validated staging result: $e',
         };
       }
-      
     } catch (e) {
       ParsingLogger.error('BENEFIT EXTRACTION ERROR: $e');
       return {
@@ -665,11 +683,31 @@ class AdvancedBenefitCalculationService {
     }
   }
 
-  /// Apply approved card benefits and update catalog metadata
-  Future<Map<String, dynamic>> applyApprovedBenefits(String stagingId) async {
+  /// Records an explicit discard without changing active card mappings.
+  Future<void> rejectStagedReview(
+    String stagingId, {
+    required Map<String, dynamic> reviewDecisions,
+  }) async {
+    await _supabase.from('card_benefits_staging').update({
+      'status': 'rejected',
+      'benefit_decisions': reviewDecisions['items'],
+      'reviewed_at': DateTime.now().toUtc().toIso8601String(),
+      'reviewed_by': _supabase.auth.currentUser?.id,
+      'rejected_at': DateTime.now().toUtc().toIso8601String(),
+    }).eq('id', stagingId);
+  }
+
+  /// Applies only the reviewer's accepted candidates. The canonical benefit is
+  /// deduplicated in [benefits]; the selected card is related through
+  /// [card_benefit_mapping]. [card_benefits] is deliberately not written.
+  Future<Map<String, dynamic>> applyApprovedBenefits(
+    String stagingId, {
+    required Map<String, dynamic> reviewDecisions,
+  }) async {
     try {
-      ParsingLogger.summary('💾 APPLYING APPROVED BENEFITS: Staging ID = $stagingId');
-      
+      ParsingLogger.summary(
+          '💾 APPLYING APPROVED BENEFITS: Staging ID = $stagingId');
+
       final stagingRecord = await _supabase
           .from('card_benefits_staging')
           .select('*')
@@ -682,7 +720,23 @@ class AdvancedBenefitCalculationService {
           'error': 'Staging record is rejected, obsolete, or lacks evidence.',
         };
       }
-      
+
+      final decisions = reviewDecisions['items'];
+      if (decisions is! List) {
+        return {
+          'success': false,
+          'error': 'Benefit review decisions are required before approval.',
+        };
+      }
+      final unresolved = decisions.any((item) =>
+          item is Map && item['decision']?.toString() == 'unresolved');
+      if (unresolved) {
+        return {
+          'success': false,
+          'error': 'Resolve every candidate before applying the review.',
+        };
+      }
+
       final cardId = stagingRecord['card_id'] as String;
       final sourceUrl = stagingRecord['source_url'] as String;
       final aiData = stagingRecord['extracted_data'] as Map<String, dynamic>;
@@ -702,49 +756,63 @@ class AdvancedBenefitCalculationService {
       if (!validation.accepted) {
         await _supabase.from('card_benefits_staging').update({
           'status': 'rejected',
+          'benefit_decisions': decisions,
+          'reviewed_at': DateTime.now().toUtc().toIso8601String(),
+          'reviewed_by': _supabase.auth.currentUser?.id,
           'calculated_confidence': validation.confidence,
-          'validation_reasons': validation.reasons.map((reason) => reason.toJson()).toList(),
-          'validation_warnings': validation.warnings.map((warning) => warning.toJson()).toList(),
+          'validation_reasons':
+              validation.reasons.map((reason) => reason.toJson()).toList(),
+          'validation_warnings':
+              validation.warnings.map((warning) => warning.toJson()).toList(),
           'rejected_at': DateTime.now().toUtc().toIso8601String(),
         }).eq('id', stagingId);
         return {
           'success': false,
           'error': 'Staging record failed approval-time validation.',
-          'validation_reasons': validation.reasons.map((reason) => reason.toJson()).toList(),
+          'validation_reasons':
+              validation.reasons.map((reason) => reason.toJson()).toList(),
         };
       }
-      
-      // Update catalog fees & waivers
-      final annualFee = aiData['annual_fee'] as Map<String, dynamic>?;
-      if (annualFee != null) {
-        final catalogUpdates = <String, dynamic>{};
-        if (annualFee['first_year'] is num) {
-          catalogUpdates['joining_fee'] = (annualFee['first_year'] as num).toDouble();
-        }
-        if (annualFee['renewal'] is num) {
-          catalogUpdates['annual_fee'] = (annualFee['renewal'] as num).toDouble();
-        }
-        if (annualFee['waiver_conditions'] is String &&
-            (annualFee['waiver_conditions'] as String).trim().isNotEmpty) {
-          catalogUpdates['rewards_summary'] = annualFee['waiver_conditions'];
-        }
-        if (catalogUpdates.isNotEmpty) {
-          await _supabase.from('card_catalog').update(catalogUpdates).eq('id', cardId);
-        }
+      final accepted = decisions
+          .whereType<Map>()
+          .where(
+            (item) => item['decision']?.toString() == 'accepted',
+          )
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList();
+
+      // Rejecting every candidate leaves currently active mappings untouched.
+      if (accepted.isEmpty) {
+        await _supabase.from('card_benefits_staging').update({
+          'status': 'rejected',
+          'benefit_decisions': decisions,
+          'reviewed_at': DateTime.now().toUtc().toIso8601String(),
+          'reviewed_by': _supabase.auth.currentUser?.id,
+          'rejected_at': DateTime.now().toUtc().toIso8601String(),
+        }).eq('id', stagingId);
+        return {'success': true, 'card_id': cardId, 'benefits_mapped': 0};
       }
-      
-      final updateResult = await _updateCardBenefitsFromAI(cardId, aiData, sourceUrl);
-      
+
+      final mappedCount = await _replaceCardBenefitMappings(
+        cardId: cardId,
+        acceptedCandidates: accepted,
+        sourceUrl: sourceUrl,
+      );
+
       await _supabase.from('card_benefits_staging').update({
         'status': 'approved',
+        'benefit_decisions': decisions,
+        'reviewed_at': DateTime.now().toUtc().toIso8601String(),
+        'reviewed_by': _supabase.auth.currentUser?.id,
       }).eq('id', stagingId);
-      
-      ParsingLogger.summary('✅ APPLIED: Successfully synced approved benefits to card');
+
+      ParsingLogger.summary(
+          '✅ APPLIED: Successfully synced approved benefits to card');
       return {
         'success': true,
         'card_id': cardId,
-        'benefits_extracted': updateResult['benefits_count'],
-        'confidence_score': updateResult['avg_confidence'],
+        'benefits_mapped': mappedCount,
+        'confidence_score': validation.confidence,
       };
     } catch (e) {
       ParsingLogger.error('❌ APPLY FAILED: $e');
@@ -754,38 +822,42 @@ class AdvancedBenefitCalculationService {
       };
     }
   }
-    /// Fetch card web content using enhanced web scraper
-  /// 
+
+  /// Fetch card web content using enhanced web scraper
+  ///
   /// This method uses the new EnhancedWebScraper service for robust
   /// web content extraction with multiple fallback strategies.
   Future<String> _fetchCardWebContent(String cardName, String bankName) async {
     try {
-      ParsingLogger.summary('🌐 FETCHING: Starting web scraping for $bankName $cardName');
-      
+      ParsingLogger.summary(
+          '🌐 FETCHING: Starting web scraping for $bankName $cardName');
+
       // Use the enhanced web scraper with multiple strategies
       final scrapedContent = await EnhancedWebScraper.scrapeCardPage(
         bankName: bankName,
         cardName: cardName,
       );
-      
+
       if (scrapedContent.isSuccess) {
-        ParsingLogger.summary('✅ FETCHED: Successfully scraped ${scrapedContent.html.length} chars from ${scrapedContent.url}');
-        
+        ParsingLogger.summary(
+            '✅ FETCHED: Successfully scraped ${scrapedContent.html.length} chars from ${scrapedContent.url}');
+
         // Extract benefit-specific content
         final benefitContent = scrapedContent.benefitContent;
-        
+
         if (EnhancedWebScraper.isValidBenefitContent(benefitContent)) {
-          ParsingLogger.summary('✅ BENEFIT CONTENT: Found ${benefitContent.length} chars of benefit information');
+          ParsingLogger.summary(
+              '✅ BENEFIT CONTENT: Found ${benefitContent.length} chars of benefit information');
           return benefitContent;
         } else {
-          ParsingLogger.warning('BENEFIT CONTENT: No valid benefit content found, using full HTML');
+          ParsingLogger.warning(
+              'BENEFIT CONTENT: No valid benefit content found, using full HTML');
           return scrapedContent.html;
         }
       } else {
         ParsingLogger.error('SCRAPING FAILED: ${scrapedContent.error}');
         return '';
       }
-      
     } catch (e) {
       ParsingLogger.error('SCRAPING ERROR: $e');
       // Fallback to simple HTTP if enhanced scraper fails
@@ -796,44 +868,44 @@ class AdvancedBenefitCalculationService {
   /// Fallback method using EnhancedWebScraper (handles CORS proxy on web)
   Future<String> _fallbackSimpleHttp(String cardName, String bankName) async {
     try {
-      ParsingLogger.summary('🔄 FALLBACK: Using EnhancedWebScraper for $bankName $cardName');
-      
+      ParsingLogger.summary(
+          '🔄 FALLBACK: Using EnhancedWebScraper for $bankName $cardName');
+
       // Generate potential URLs based on bank and card name
       final urls = _generateCardUrls(cardName, bankName);
-      
+
       for (final url in urls) {
         try {
           ParsingLogger.summary('🌐 FALLBACK: Trying $url');
-          
+
           final scraped = await EnhancedWebScraper.scrapeUrl(url);
-          
+
           if (scraped.isSuccess && scraped.html.isNotEmpty) {
-            ParsingLogger.summary('✅ FALLBACK: Successfully retrieved content (${scraped.html.length} chars)');
+            ParsingLogger.summary(
+                '✅ FALLBACK: Successfully retrieved content (${scraped.html.length} chars)');
             return scraped.html;
           }
-          
         } catch (e) {
           ParsingLogger.warning('FALLBACK ERROR: $url - $e');
           continue; // Try next URL
         }
       }
-      
+
       ParsingLogger.error('FALLBACK FAILED: No URLs returned valid content');
       return '';
-      
     } catch (e) {
       ParsingLogger.error('FALLBACK ERROR: $e');
       return '';
     }
   }
-  
+
   /// Generate potential URLs for card information
   List<String> _generateCardUrls(String cardName, String bankName) {
     final bank = bankName.toLowerCase();
     final card = cardName.toLowerCase().replaceAll(' ', '-');
-    
+
     List<String> urls = [];
-    
+
     // Bank-specific URL patterns
     if (bank.contains('hdfc')) {
       urls.addAll([
@@ -859,215 +931,125 @@ class AdvancedBenefitCalculationService {
         'https://www.axisbank.com/personal/cards/credit-cards',
       ]);
     }
-    
+
     // Generic fallback URLs
     urls.addAll([
       'https://www.google.com/search?q=$bankName+$cardName+credit+card+benefits',
     ]);
-    
+
     return urls;
   }
-  
-  /// Update card benefits in database using AI-extracted data
-  /// 
-  /// This method reuses existing database patterns to store AI-extracted benefits
-  /// with proper confidence scoring and source tracking.
-  Future<Map<String, dynamic>> _updateCardBenefitsFromAI(
-    String cardId, 
-    Map<String, dynamic> aiData,
-    String sourceUrl,
-  ) async {
-    try {
-      int benefitsCount = 0;
-      double totalConfidence = 0.0;
-      
-      // Get existing benefits to avoid duplicates
-      final existingBenefits = await _supabase
-          .from('card_benefits')
-          .select('*')
-          .eq('card_id', cardId)
-          .eq('ai_extracted', true);
-      
-      // Clear existing AI-extracted benefits for this card
-      if (existingBenefits.isNotEmpty) {
-        await _supabase
-            .from('card_benefits')
-            .delete()
-            .eq('card_id', cardId)
-            .eq('ai_extracted', true);
-      }
-      
-      final validCategories = [
-        'DINING',
-        'TRAVEL',
-        'FUEL',
-        'SHOPPING',
-        'GROCERY',
-        'ENTERTAINMENT',
-        'UTILITIES',
-        'HEALTHCARE',
-        'GENERAL'
-      ];
 
-      // Process cashback benefits
-      if (aiData['cashback_benefits'] is List) {
-        final cashbackBenefits = aiData['cashback_benefits'] as List;
-        
-        for (final benefit in cashbackBenefits) {
-          if (benefit is Map<String, dynamic>) {
-            final category = (benefit['category'] as String? ?? 'GENERAL').toUpperCase();
-            final categoryCode = validCategories.contains(category) ? category : 'GENERAL';
-            
-            await _insertAIBenefit(cardId, benefit, categoryCode, sourceUrl);
-            benefitsCount++;
-            totalConfidence += (benefit['confidence'] ?? 0.8);
-          }
-        }
-      }
-      
-      // Process reward points
-      if (aiData['reward_points'] is Map) {
-        final rewardData = aiData['reward_points'] as Map<String, dynamic>;
-        
-        await _insertAIBenefit(cardId, {
-          'category': 'GENERAL',
-          'rate': rewardData['base_rate'] ?? 1.0,
-          'description': 'Base reward points',
-          'rate_type': 'points',
-        }, 'GENERAL', sourceUrl);
-        
-        benefitsCount++;
-        totalConfidence += 0.8;
-      }
-      
-      // Process special benefits
-      if (aiData['special_benefits'] is List) {
-        final specialBenefits = aiData['special_benefits'] as List;
-        
-        for (final benefit in specialBenefits) {
-          if (benefit is Map<String, dynamic>) {
-            final type = (benefit['type'] as String? ?? 'GENERAL').toUpperCase();
-            final categoryCode = validCategories.contains(type) ? type : 'GENERAL';
-            
-            await _insertAIBenefit(cardId, benefit, categoryCode, sourceUrl);
-            benefitsCount++;
-            totalConfidence += 0.7;
-          }
-        }
-      }
-      
-      final avgConfidence = benefitsCount > 0 ? totalConfidence / benefitsCount : 0.0;
-      
-      return {
-        'benefits_count': benefitsCount,
-        'avg_confidence': avgConfidence,
-        'source_url': sourceUrl,
-      };
-      
-    } catch (e) {
-      ParsingLogger.error('DATABASE UPDATE ERROR: $e');
-      return {
-        'benefits_count': 0,
-        'avg_confidence': 0.0,
-        'error': e.toString(),
-      };
+  Future<int> _replaceCardBenefitMappings({
+    required String cardId,
+    required List<Map<String, dynamic>> acceptedCandidates,
+    required String sourceUrl,
+  }) async {
+    final benefitIds = <String>{};
+    for (final candidate in acceptedCandidates) {
+      final source = candidate['source'];
+      if (source is! Map) continue;
+      benefitIds.add(await _findOrCreateCanonicalBenefit(
+        source: Map<String, dynamic>.from(source),
+        sourceUrl: sourceUrl,
+      ));
     }
-  }
-  
-  /// Insert AI-extracted benefit into database
-  Future<void> _insertAIBenefit(
-    String cardId,
-    Map<String, dynamic> benefitData,
-    String categoryCode,
-    String sourceUrl,
-  ) async {
-    try {
-      // Find or create benefit in benefits table
-      final benefitResponse = await _supabase
-          .from('benefits')
-          .select('id')
-          .eq('category_code', categoryCode)
-          .eq('name', benefitData['description'] ?? 'AI Extracted Benefit')
-          .maybeSingle();
-      
-      String benefitId;
-      
-      if (benefitResponse == null) {
-        // Create new benefit
-        final newBenefit = await _supabase
-            .from('benefits')
-            .insert({
-              'category_code': categoryCode,
-              'name': benefitData['description'] ?? 'AI Extracted Benefit',
-              'calculation_method': benefitData['rate_type'] ?? 'percentage',
-              'default_value': benefitData['rate'] ?? 1.0,
-              'is_active': true,
-            })
-            .select('id')
-            .single();
-        
-        benefitId = newBenefit['id'];
-      } else {
-        benefitId = benefitResponse['id'];
-      }
-      
-      // Insert card benefit with AI tracking
-      await _supabase.from('card_benefits').insert({
+
+    // A fully reviewed candidate set is the desired state for this one card.
+    await _supabase.from('card_benefit_mapping').delete().eq('card_id', cardId);
+    for (var index = 0; index < benefitIds.length; index++) {
+      await _supabase.from('card_benefit_mapping').upsert({
         'card_id': cardId,
-        'benefit_id': benefitId,
-        'value': benefitData['rate'] ?? 1.0,
-        'spending_categories': benefitData['merchants'] ?? [],
-        'monthly_cap': benefitData['monthly_cap'],
-        'annual_cap': benefitData['annual_cap'],
-        'configuration': {
-          'ai_extracted_data': benefitData,
-          'conditions': benefitData['conditions'],
-          // NEW: structured calculation limits
-          'min_spend_threshold': benefitData['min_spend_threshold'],
-          'max_cap_limit': benefitData['max_cap_limit'],
-          'excluded_categories': benefitData['excluded_categories'],
-          'excluded_merchants': benefitData['excluded_merchants'],
-          'is_accelerated': benefitData['is_accelerated'] ?? false,
-        },
-        // NEW: AI tracking fields
-        'ai_extracted': true,
-        'extraction_confidence': benefitData['confidence'] ?? 0.8,
-        'source_url': sourceUrl,
-        'last_scraped_at': DateTime.now().toIso8601String(),
-        'is_active': true,
-      });
-      
-    } catch (e) {
-      ParsingLogger.error('INSERT BENEFIT ERROR: $e');
+        'benefit_id': benefitIds.elementAt(index),
+        'display_priority': index + 1,
+        'is_primary': index == 0,
+      }, onConflict: 'card_id,benefit_id');
+    }
+    return benefitIds.length;
+  }
+
+  Future<String> _findOrCreateCanonicalBenefit({
+    required Map<String, dynamic> source,
+    required String sourceUrl,
+  }) async {
+    final title = source['description']?.toString().trim();
+    if (title == null || title.isEmpty) {
+      throw ArgumentError('An accepted benefit needs a description.');
+    }
+    final category = (source['category'] ?? source['type'] ?? 'general')
+        .toString()
+        .toLowerCase();
+    final type = (source['rate_type'] ?? source['type'] ?? 'general')
+        .toString()
+        .toLowerCase();
+    final dedupeKey = BenefitDeduplicationService.keyFor(
+      category: category,
+      type: type,
+      title: title,
+    );
+    final existing = await _supabase
+        .from('benefits')
+        .select('benefit_id')
+        .eq('dedupe_key', dedupeKey)
+        .maybeSingle();
+    if (existing != null) return existing['benefit_id'] as String;
+
+    try {
+      final created = await _supabase
+          .from('benefits')
+          .insert({
+            'title': title,
+            'description': source['conditions']?.toString(),
+            'benefit_category': category,
+            'benefit_type': type,
+            'value_config': source,
+            'source_url': sourceUrl,
+            'dedupe_key': dedupeKey,
+            'is_active': true,
+          })
+          .select('benefit_id')
+          .single();
+      return created['benefit_id'] as String;
+    } catch (_) {
+      // The unique index resolves concurrent approval attempts. Re-read the
+      // winner instead of creating a second canonical benefit.
+      final winner = await _supabase
+          .from('benefits')
+          .select('benefit_id')
+          .eq('dedupe_key', dedupeKey)
+          .single();
+      return winner['benefit_id'] as String;
     }
   }
+
   /// Classify URLs using AI for better credit card page detection
   Future<String> classifyUrlsWithAI(String prompt) async {
     try {
       // For now, use a simple pattern-based classification as fallback
       // This can be enhanced with proper AI integration later
-      
+
       final lines = prompt.split('\n');
       final classifications = <String>[];
-      
+
       for (final line in lines) {
         if (line.trim().isEmpty || !line.contains('http')) continue;
-        
+
         final url = line.trim();
         String classification = 'OTHER';
-        
+
         // Simple pattern matching for classification
-        if (url.contains('credit-card') && (url.endsWith('.html') || url.split('/').length > 5)) {
+        if (url.contains('credit-card') &&
+            (url.endsWith('.html') || url.split('/').length > 5)) {
           classification = 'PRODUCT';
-        } else if (url.contains('credit-card') || url.contains('cards/credit')) {
+        } else if (url.contains('credit-card') ||
+            url.contains('cards/credit')) {
           classification = 'CATEGORY';
         }
-        
+
         classifications.add(classification);
       }
-      
+
       return classifications.join('\n');
-      
     } catch (e) {
       print('AI URL classification failed: $e');
       return 'OTHER\nOTHER\nOTHER'; // Safe fallback

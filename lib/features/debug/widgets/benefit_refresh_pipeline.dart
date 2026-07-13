@@ -52,7 +52,7 @@ class BenefitRefreshPipeline extends StatelessWidget {
         _StepState.future,
       ),
       const _PipelineStep(
-        'Replace selected card benefits only',
+        'Replace selected card-benefit mappings only',
         _StepState.future,
       ),
       const _PipelineStep('Mark staging record approved', _StepState.future),
