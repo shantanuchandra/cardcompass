@@ -66,4 +66,67 @@ void main() {
       expect(summary.isEmpty, isTrue);
     });
   });
+
+  group('TransactionsViewState.groupedTransactions', () {
+    test('flat grouping returns a single group with all filtered transactions, newest first', () {
+      final state = const TransactionsViewState().copyWith(
+        filteredTransactions: [
+          _tx(id: '1', userCardId: 'cardA', amount: 10, date: DateTime(2026, 7, 1)),
+          _tx(id: '2', userCardId: 'cardA', amount: 20, date: DateTime(2026, 7, 10)),
+        ],
+      );
+
+      final groups = state.groupedTransactions(TransactionGrouping.flat);
+
+      expect(groups.length, 1);
+      expect(groups.first.key, 'All Transactions');
+      expect(groups.first.transactions.map((t) => t.id).toList(), ['2', '1']);
+    });
+
+    test('byCard grouping buckets by userCardId with per-group subtotal', () {
+      final state = const TransactionsViewState().copyWith(
+        filteredTransactions: [
+          _tx(id: '1', userCardId: 'cardA', amount: 10),
+          _tx(id: '2', userCardId: 'cardB', amount: 20),
+          _tx(id: '3', userCardId: 'cardA', amount: 5),
+        ],
+      );
+
+      final groups = state.groupedTransactions(TransactionGrouping.byCard);
+      final byKey = {for (final g in groups) g.key: g};
+
+      expect(byKey.keys.toSet(), {'cardA', 'cardB'});
+      expect(byKey['cardA']!.transactions.length, 2);
+      expect(byKey['cardA']!.subtotal, 15);
+      expect(byKey['cardB']!.subtotal, 20);
+    });
+
+    test('byCategory grouping buckets by category name', () {
+      final state = const TransactionsViewState().copyWith(
+        filteredTransactions: [
+          _tx(id: '1', userCardId: 'cardA', amount: 10, category: TransactionCategory.food),
+          _tx(id: '2', userCardId: 'cardA', amount: 20, category: TransactionCategory.fuel),
+        ],
+      );
+
+      final groups = state.groupedTransactions(TransactionGrouping.byCategory);
+      final keys = groups.map((g) => g.key).toSet();
+
+      expect(keys, {'food', 'fuel'});
+    });
+
+    test('byDate grouping buckets by year-month', () {
+      final state = const TransactionsViewState().copyWith(
+        filteredTransactions: [
+          _tx(id: '1', userCardId: 'cardA', amount: 10, date: DateTime(2026, 6, 15)),
+          _tx(id: '2', userCardId: 'cardA', amount: 20, date: DateTime(2026, 7, 1)),
+        ],
+      );
+
+      final groups = state.groupedTransactions(TransactionGrouping.byDate);
+      final keys = groups.map((g) => g.key).toSet();
+
+      expect(keys, {'2026-06', '2026-07'});
+    });
+  });
 }

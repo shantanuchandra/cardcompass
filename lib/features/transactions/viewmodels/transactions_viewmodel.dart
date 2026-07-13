@@ -18,6 +18,34 @@ class CardSpendSummary {
   });
 }
 
+/// How the transaction list should be sectioned in the UI.
+enum TransactionGrouping { flat, byCard, byCategory, byDate }
+
+/// One section of grouped transactions with a display key and subtotal.
+class TransactionGroup {
+  final String key;
+  final List<Transaction> transactions;
+  final double subtotal;
+
+  const TransactionGroup({
+    required this.key,
+    required this.transactions,
+    required this.subtotal,
+  });
+}
+
+double _debitTotal(List<Transaction> transactions) {
+  return transactions
+      .where((t) => t.type == TransactionType.debit)
+      .fold<double>(0, (sum, t) => sum + t.amount.abs());
+}
+
+List<Transaction> _sortedNewestFirst(List<Transaction> transactions) {
+  final sorted = List<Transaction>.from(transactions);
+  sorted.sort((a, b) => b.transactionDate.compareTo(a.transactionDate));
+  return sorted;
+}
+
 /// Transactions view state
 class TransactionsViewState {
   final List<Transaction> transactions;
@@ -84,6 +112,48 @@ class TransactionsViewState {
     }
 
     return summaryByCard;
+  }
+
+  /// Sections [filteredTransactions] per [grouping], each section newest-first,
+  /// sections ordered by first-seen key.
+  List<TransactionGroup> groupedTransactions(TransactionGrouping grouping) {
+    if (grouping == TransactionGrouping.flat) {
+      final sorted = _sortedNewestFirst(filteredTransactions);
+      return [
+        TransactionGroup(
+          key: 'All Transactions',
+          transactions: sorted,
+          subtotal: _debitTotal(sorted),
+        ),
+      ];
+    }
+
+    String keyFor(Transaction t) {
+      switch (grouping) {
+        case TransactionGrouping.byCard:
+          return (t.userCardId == null || t.userCardId!.isEmpty) ? 'Unknown Card' : t.userCardId!;
+        case TransactionGrouping.byCategory:
+          return t.categoryString;
+        case TransactionGrouping.byDate:
+          return '${t.transactionDate.year}-${t.transactionDate.month.toString().padLeft(2, '0')}';
+        case TransactionGrouping.flat:
+          return 'All Transactions';
+      }
+    }
+
+    final buckets = <String, List<Transaction>>{};
+    for (final t in filteredTransactions) {
+      buckets.putIfAbsent(keyFor(t), () => []).add(t);
+    }
+
+    return buckets.entries.map((entry) {
+      final sorted = _sortedNewestFirst(entry.value);
+      return TransactionGroup(
+        key: entry.key,
+        transactions: sorted,
+        subtotal: _debitTotal(sorted),
+      );
+    }).toList();
   }
 }
 
