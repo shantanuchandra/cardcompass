@@ -104,11 +104,24 @@ const Map<String, double> _bankPointValueINR = {
   'default': 0.25,
 };
 
+/// Strips generic issuer-type words ("bank", "card") so lookups match
+/// regardless of whether the caller passed "HDFC Millennia" or the
+/// catalog's fuller "HDFC Bank Millennia Cc New" — card_catalog.bank always
+/// includes a suffix like "Bank"/"Card" (e.g. "HDFC Bank", "SBI Card"),
+/// which otherwise breaks the adjacency `.contains()` relies on.
+String _normalizeForLookup(String cardName) {
+  return cardName
+      .toLowerCase()
+      .replaceAll(RegExp(r'\b(bank|card)\b'), '')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+}
+
 /// Returns the INR value of 1 reward point / mile / cashback unit for [cardName].
 double pointValueFor(String cardName) {
-  final lower = cardName.toLowerCase();
+  final normalized = _normalizeForLookup(cardName);
   for (final entry in _bankPointValueINR.entries) {
-    if (lower.contains(entry.key)) return entry.value;
+    if (normalized.contains(entry.key)) return entry.value;
   }
   return _bankPointValueINR['default']!;
 }
@@ -180,9 +193,9 @@ const Map<String, int> _bankPointExpiryMonths = {
 /// Returns how many months after being earned a point/mile expires for
 /// [cardName]. A large value (999) signals "does not expire in practice".
 int pointExpiryMonthsFor(String cardName) {
-  final lower = cardName.toLowerCase();
+  final normalized = _normalizeForLookup(cardName);
   for (final entry in _bankPointExpiryMonths.entries) {
-    if (lower.contains(entry.key)) return entry.value;
+    if (normalized.contains(entry.key)) return entry.value;
   }
   return _bankPointExpiryMonths['default']!;
 }

@@ -22,5 +22,28 @@ void main() {
     test('is case-insensitive', () {
       expect(pointExpiryMonthsFor('axis atlas'), pointExpiryMonthsFor('AXIS ATLAS'));
     });
+
+    test(
+      'matches the real "bank cardName" shape from card_catalog, '
+      'where bank always includes a suffix word like "Bank"/"Card"',
+      () {
+        // card_catalog.bank is "HDFC Bank", never bare "HDFC" — callers
+        // building "$bank $cardName" (e.g. SupabaseRewardBalanceRepository,
+        // RewardsNudgeService) produce "HDFC Bank Millennia Cc New", not
+        // "HDFC Millennia". Caught by a real-database integration test;
+        // regressed here so it can't silently reappear.
+        expect(pointExpiryMonthsFor('HDFC Bank Millennia Cc New'), 999);
+        expect(pointExpiryMonthsFor('SBI Card Cashback'), 999);
+      },
+    );
+  });
+
+  group('pointValueFor', () {
+    test(
+      'matches the real "bank cardName" shape from card_catalog',
+      () {
+        expect(pointValueFor('HDFC Bank Millennia Cc New'), 0.20);
+      },
+    );
   });
 }
