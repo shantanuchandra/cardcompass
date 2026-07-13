@@ -289,7 +289,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
       _buildGroupingToggle(),
       const SizedBox(height: AppSpacing.md),
       for (final group in groups) ...[
-        if (_grouping != TransactionGrouping.flat) _buildGroupHeader(group, state.selectedCardId, cardsById),
+        if (_grouping != TransactionGrouping.flat) _buildGroupHeader(group, cardsById),
         for (final t in group.transactions) _buildTransactionRow(t, cardsById),
         const SizedBox(height: AppSpacing.sm),
       ],
@@ -326,7 +326,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     );
   }
 
-  Widget _buildGroupHeader(TransactionGroup group, String selectedCardId, Map<String, CreditCard> cardsById) {
+  Widget _buildGroupHeader(TransactionGroup group, Map<String, CreditCard> cardsById) {
     String title = group.key;
     if (_grouping == TransactionGrouping.byCard) {
       title = cardsById[group.key]?.cardName ?? 'Unknown Card';
@@ -348,7 +348,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
 
   Widget _buildTransactionRow(Transaction t, Map<String, CreditCard> cardsById) {
     final isCredit = t.type == TransactionType.credit || t.type == TransactionType.refund;
-    final categoryColor = _getCategoryColor(t.categoryString);
+    final categoryColor = _getCategoryColor(t.category);
     final card = cardsById[t.userCardId];
 
     return Container(
@@ -447,20 +447,19 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     }
   }
 
-  Color _getCategoryColor(String? category) {
-    switch (category?.toLowerCase()) {
-      case 'food':
+  Color _getCategoryColor(TransactionCategory category) {
+    switch (category) {
+      case TransactionCategory.food:
         return Colors.orange;
-      case 'shopping':
+      case TransactionCategory.shopping:
         return AppTheme.primaryColor;
-      case 'fuel':
+      case TransactionCategory.fuel:
         return AppTheme.errorColor;
-      case 'entertainment':
+      case TransactionCategory.entertainment:
         return Colors.purpleAccent;
-      case 'travel':
+      case TransactionCategory.travel:
         return Colors.green;
-      case 'grocery':
-      case 'groceries':
+      case TransactionCategory.grocery:
         return Colors.tealAccent;
       default:
         return Colors.grey;
