@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_animate/flutter_animate.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../core/app_config.dart';
 import '../../../../core/theme.dart';
@@ -57,14 +56,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             constraints: const BoxConstraints(maxWidth: 450),
             child: SafeArea(
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 20),
+                padding: const EdgeInsets.symmetric(horizontal: 30, vertical: AppSpacing.md),
                 child: Column(
                   children: [
                     const Spacer(),
-                    
+
                     // Glowing Glass Card Container for Branding
                     Container(
-                      padding: const EdgeInsets.all(28),
+                      padding: const EdgeInsets.all(AppSpacing.lg),
                       decoration: BoxDecoration(
                         color: const Color(0xFF0C152B).withValues(alpha: 0.8),
                         borderRadius: BorderRadius.circular(24),
@@ -95,14 +94,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           )
                           .animate()
                           .scale(duration: 600.ms, curve: Curves.elasticOut),
-                          
-                          const SizedBox(height: 24),
-                          
+
+                          const SizedBox(height: AppSpacing.lg),
+
                           Text(
                             AppConfig.appName.toUpperCase(),
                             textAlign: TextAlign.center,
-                            style: GoogleFonts.spaceGrotesk(
-                              fontSize: 32,
+                            style: AppTextStyles.heading1.copyWith(
                               fontWeight: FontWeight.w800,
                               letterSpacing: 2.0,
                               color: Colors.white,
@@ -111,14 +109,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           .animate()
                           .fadeIn(delay: 200.ms, duration: 600.ms)
                           .slideY(begin: 0.2, end: 0),
-                          
+
                           const SizedBox(height: 12),
-                          
+
                           Text(
                             'Maximize your rewards. Hyper-optimize your card choices in real-time.',
                             textAlign: TextAlign.center,
-                            style: GoogleFonts.plusJakartaSans(
-                              fontSize: 14,
+                            style: AppTextStyles.body2.copyWith(
                               color: Colors.white70,
                               height: 1.5,
                             ),
@@ -129,7 +126,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         ],
                       ),
                     ),
-                    
+
                     const Spacer(),
                     
                     // Login Buttons
@@ -147,22 +144,25 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             onPressed: authState.isLoading 
                               ? null 
                               : () => ref.read(authStateProvider.notifier).signInWithGoogle(),
-                            icon: authState.isLoading 
-                              ? const SizedBox(
+                            icon: authState.isLoading
+                              ? SizedBox(
                                   width: 20,
                                   height: 20,
-                                  child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(Color(0xFF050B18))),
+                                  child: const CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    valueColor: AlwaysStoppedAnimation(Color(0xFF050B18)),
+                                  ),
                                 )
                               : Image.asset(
                                   'assets/icons/google.png',
                                   width: 24,
                                   height: 24,
-                                  errorBuilder: (context, error, stackTrace) => 
+                                  errorBuilder: (context, error, stackTrace) =>
                                     const Icon(Icons.login, size: 24),
                                 ),
                             label: Text(
                               authState.isLoading ? 'AUTHENTICATING...' : 'SIGN IN WITH GOOGLE',
-                              style: GoogleFonts.spaceGrotesk(
+                              style: AppTextStyles.button.copyWith(
                                 fontSize: 14,
                                 fontWeight: FontWeight.bold,
                                 letterSpacing: 1.5,
@@ -180,8 +180,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         .animate()
                         .fadeIn(delay: 600.ms, duration: 600.ms)
                         .slideY(begin: 0.3, end: 0),
-                        
-                        const SizedBox(height: 16),
+
+                        const SizedBox(height: AppSpacing.md),
                         
                         // Continue as Guest (Neon Outlined style)
                         SizedBox(
@@ -194,7 +194,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             icon: const Icon(Icons.person_outline, color: AppTheme.secondaryColor),
                             label: Text(
                               'CONTINUE AS GUEST',
-                              style: GoogleFonts.spaceGrotesk(
+                              style: AppTextStyles.button.copyWith(
                                 fontSize: 14,
                                 fontWeight: FontWeight.bold,
                                 letterSpacing: 1.5,
@@ -215,13 +215,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       ],
                     ),
                     
-                    const SizedBox(height: 40),
-                    
+                    const SizedBox(height: AppSpacing.xl),
+
                     // Terms and Privacy
                     Text(
                       'By continuing, you agree to our Terms of Service and Privacy Policy.',
                       textAlign: TextAlign.center,
-                      style: GoogleFonts.plusJakartaSans(
+                      style: AppTextStyles.caption.copyWith(
                         fontSize: 11,
                         color: Colors.white30,
                         letterSpacing: 0.2,
@@ -229,7 +229,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     )
                     .animate()
                     .fadeIn(delay: 1000.ms, duration: 600.ms),
-                    
+
                     const SizedBox(height: 10),
                   ],
                 ),

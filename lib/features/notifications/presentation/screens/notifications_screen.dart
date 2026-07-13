@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cardcompass/shared/models/notification.dart';
 import 'package:cardcompass/features/notifications/viewmodels/notifications_viewmodel.dart';
 import 'package:cardcompass/features/auth/providers/auth_provider.dart';
 import 'package:cardcompass/core/theme.dart';
+import 'package:cardcompass/shared/widgets/app_scaffold.dart';
+import 'package:cardcompass/shared/widgets/state_widgets.dart';
 
 class NotificationsScreen extends ConsumerStatefulWidget {
   const NotificationsScreen({super.key});
@@ -41,68 +44,44 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen>
   Widget build(BuildContext context) {
     final state = ref.watch(notificationsViewModelProvider);
     
-    return Scaffold(
-      backgroundColor: const Color(0xFF050B18),
-      appBar: AppBar(
-        title: Text(
-          'NOTIFICATIONS',
-          style: GoogleFonts.spaceGrotesk(
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1.5,
-            fontSize: 16,
-          ),
+    return CardCompassScaffold(
+      title: 'Notifications',
+      bottom: TabBar(
+        controller: _tabController,
+        labelColor: AppTheme.primaryColor,
+        unselectedLabelColor: Colors.white38,
+        indicatorColor: AppTheme.primaryColor,
+        indicatorSize: TabBarIndicatorSize.tab,
+        labelStyle: GoogleFonts.spaceGrotesk(
+          fontWeight: FontWeight.bold,
+          fontSize: 10,
+          letterSpacing: 0.5,
         ),
-        bottom: TabBar(
-          controller: _tabController,
-          labelColor: AppTheme.primaryColor,
-          unselectedLabelColor: Colors.white38,
-          indicatorColor: AppTheme.primaryColor,
-          indicatorSize: TabBarIndicatorSize.tab,
-          labelStyle: GoogleFonts.spaceGrotesk(
-            fontWeight: FontWeight.bold,
-            fontSize: 10,
-            letterSpacing: 0.5,
-          ),
-          tabs: const [
-            Tab(text: 'ALL'),
-            Tab(text: 'BENEFITS'),
-            Tab(text: 'SUGGESTIONS'),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.mark_email_read_outlined, color: AppTheme.primaryColor),
-            onPressed: () => _markAllAsRead(),
-            tooltip: 'Mark all as read',
-          ),
-          IconButton(
-            icon: const Icon(Icons.tune, color: AppTheme.primaryColor),
-            onPressed: () => _showNotificationSettings(),
-            tooltip: 'Settings',
-          ),
+        tabs: const [
+          Tab(text: 'ALL'),
+          Tab(text: 'BENEFITS'),
+          Tab(text: 'SUGGESTIONS'),
         ],
       ),
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.mark_email_read_outlined, color: AppTheme.primaryColor),
+          onPressed: () => _markAllAsRead(),
+          tooltip: 'Mark all as read',
+        ),
+        IconButton(
+          icon: const Icon(Icons.tune, color: AppTheme.primaryColor),
+          onPressed: () => _showNotificationSettings(),
+          tooltip: 'Settings',
+        ),
+      ],
       body: state.isLoading
-          ? const Center(child: CircularProgressIndicator(valueColor: AlwaysStoppedAnimation(AppTheme.primaryColor)))
+          ? const LoadingState()
           : state.error != null
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.error_outline, size: 48, color: AppTheme.errorColor),
-                      const SizedBox(height: 16),
-                      Text(
-                        state.error!.toUpperCase(),
-                        style: GoogleFonts.spaceGrotesk(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 16),
-                      OutlinedButton(
-                        onPressed: _loadNotifications,
-                        style: OutlinedButton.styleFrom(side: const BorderSide(color: AppTheme.primaryColor)),
-                        child: Text('RETRY', style: GoogleFonts.spaceGrotesk(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
-                      ),
-                    ],
-                  ),
+              ? ErrorState(
+                  error: state.error!,
+                  onRetry: _loadNotifications,
+                  retryText: 'RETRY',
                 )
               : TabBarView(
                   controller: _tabController,
@@ -117,35 +96,10 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen>
 
   Widget _buildNotificationsList(List<AppNotification> notifications) {
     if (notifications.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.notifications_none_outlined, size: 48, color: Colors.white24),
-              const SizedBox(height: 16),
-              Text(
-                'NO ALERTS FOUND',
-                style: GoogleFonts.spaceGrotesk(
-                  color: Colors.white60,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 0.5,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'New optimization opportunities and rule updates will log here.',
-                style: GoogleFonts.plusJakartaSans(
-                  color: Colors.white30,
-                  fontSize: 11,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-        ),
+      return const EmptyState(
+        title: 'No Alerts Found',
+        message: 'New optimization opportunities and rule updates will log here.',
+        icon: Icons.notifications_none_outlined,
       );
     }
 
@@ -154,13 +108,13 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen>
       backgroundColor: const Color(0xFF0C152B),
       onRefresh: () async => _loadNotifications(),
       child: ListView.builder(
-        padding: const EdgeInsets.fromLTRB(16, 20, 16, 80),
+        padding: const EdgeInsets.fromLTRB(AppSpacing.md, 20, AppSpacing.md, 80),
         itemCount: notifications.length,
         itemBuilder: (context, index) {
           final notification = notifications[index];
           return _buildNotificationCard(notification);
         },
-      ),
+      ).animate().fadeIn(duration: 250.ms).slideY(begin: 0.05, end: 0),
     );
   }
 
@@ -184,7 +138,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen>
         onTap: () => _handleNotificationTap(notification),
         borderRadius: BorderRadius.circular(16),
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppSpacing.md),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -433,7 +387,7 @@ class NotificationSettingsSheet extends ConsumerWidget {
 
     return SafeArea(
       child: Container(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(AppSpacing.lg),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -447,7 +401,7 @@ class NotificationSettingsSheet extends ConsumerWidget {
                 letterSpacing: 1.0,
               ),
             ),
-            const Divider(color: Color(0xFF1E293B), height: 24),
+            const Divider(color: Color(0xFF1E293B), height: AppSpacing.lg),
             SwitchListTile(
               title: Text('BENEFIT ALERTS', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
               subtitle: Text('Get notified about card perks', style: GoogleFonts.plusJakartaSans(color: Colors.white30, fontSize: 10)),
@@ -469,7 +423,7 @@ class NotificationSettingsSheet extends ConsumerWidget {
               activeColor: AppTheme.primaryColor,
               onChanged: (value) => _updatePreference(ref, 'spending_insights', value),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: AppSpacing.lg),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(

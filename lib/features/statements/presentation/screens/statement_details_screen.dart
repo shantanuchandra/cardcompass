@@ -1,6 +1,8 @@
 import 'package:cardcompass/shared/models/statement.dart';
 import 'package:cardcompass/shared/widgets/state_widgets.dart';
+import 'package:cardcompass/shared/widgets/app_scaffold.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cardcompass/core/theme.dart';
@@ -13,44 +15,33 @@ class StatementDetailsScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF050B18),
-      appBar: AppBar(
-        title: Text(
-          statement.fileName.toUpperCase(),
-          style: GoogleFonts.spaceGrotesk(
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1.0,
-            fontSize: 14,
-          ),
+    return CardCompassScaffold(
+      title: statement.fileName,
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.refresh, color: AppTheme.primaryColor),
+          onPressed: () {
+            // Refresh statement logic if needed
+          },
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh, color: AppTheme.primaryColor),
-            onPressed: () {
-              // Refresh statement logic if needed
-            },
-          ),
-        ],
-      ),
+      ],
       body: _buildBody(context),
     );
   }
 
   Widget _buildBody(BuildContext context) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.lg),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildStatementInfo(context),
-          const SizedBox(height: 28),
+          const SizedBox(height: AppSpacing.lg),
           Text(
             'STATEMENT TRANSACTIONS',
-            style: GoogleFonts.spaceGrotesk(
+            style: AppTextStyles.caption.copyWith(
               color: Colors.white,
               fontWeight: FontWeight.bold,
-              fontSize: 12,
               letterSpacing: 1.0,
             ),
           ),
@@ -61,16 +52,16 @@ class StatementDetailsScreen extends ConsumerWidget {
             icon: Icons.receipt_long_outlined,
           ),
         ],
-      ),
+      ).animate().fadeIn(duration: 250.ms).slideY(begin: 0.05, end: 0, curve: Curves.easeOut),
     );
   }
 
   Widget _buildStatementInfo(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
         color: const Color(0xFF0C152B),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(AppBorderRadius.xl),
         border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
       ),
       child: Column(
@@ -79,19 +70,18 @@ class StatementDetailsScreen extends ConsumerWidget {
           Row(
             children: [
               const Icon(Icons.analytics_outlined, color: AppTheme.primaryColor, size: 20),
-              const SizedBox(width: 8),
+              const SizedBox(width: AppSpacing.sm),
               Text(
                 'STATEMENT DATA SUMMARY',
-                style: GoogleFonts.spaceGrotesk(
+                style: AppTextStyles.caption.copyWith(
                   color: Colors.white,
                   fontWeight: FontWeight.bold,
-                  fontSize: 11,
                   letterSpacing: 0.5,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.md),
           _buildInfoRow('FILE SOURCE', statement.fileName),
           _buildInfoRow('TOTAL DUE', '₹${statement.totalAmount.toStringAsFixed(2)}', valueColor: AppTheme.primaryColor),
           _buildInfoRow('MINIMUM PAY', '₹${statement.minimumPayment.toStringAsFixed(2)}'),
@@ -125,7 +115,7 @@ class StatementDetailsScreen extends ConsumerWidget {
           Expanded(
             child: Text(
               value,
-              style: GoogleFonts.spaceGrotesk(
+              style: AppTextStyles.caption.copyWith(
                 color: valueColor ?? Colors.white70,
                 fontSize: 11,
                 fontWeight: FontWeight.bold,

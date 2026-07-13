@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cardcompass/core/theme.dart';
@@ -6,6 +7,7 @@ import 'package:cardcompass/core/mock/mock_data.dart';
 import 'package:cardcompass/core/providers/service_providers.dart';
 import 'package:cardcompass/shared/models/credit_card.dart';
 import 'package:cardcompass/shared/models/transaction.dart';
+import 'package:cardcompass/shared/widgets/app_scaffold.dart';
 import 'package:cardcompass/shared/widgets/credit_card_widget.dart';
 import 'package:cardcompass/shared/widgets/state_widgets.dart';
 import 'package:cardcompass/features/auth/providers/auth_provider.dart';
@@ -35,6 +37,7 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
   List<Map<String, dynamic>> _benefits = [];
   Map<String, dynamic>? _latestStatement;
   bool _isLoading = true;
+  String? _errorMessage;
 
   @override
   void initState() {
@@ -51,6 +54,7 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
   Future<void> _loadCardDetails() async {
     setState(() {
       _isLoading = true;
+      _errorMessage = null;
     });
 
     try {
@@ -84,9 +88,10 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
       // Load benefits data (mock in guest mode, Supabase otherwise)
       await _fetchCardBenefits();
     } catch (e) {
-      if (mounted) {
+      _errorMessage = 'Failed to load card details: $e';
+      if (_card != null && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to load card details: $e')),
+          SnackBar(content: Text('Failed to refresh card details: $e')),
         );
       }
     } finally {
@@ -101,65 +106,59 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('Card Details')),
-        body: const Center(child: CircularProgressIndicator()),
+      return const CardCompassScaffold(
+        title: 'Card Details',
+        body: LoadingState(message: 'Loading card details'),
       );
     }
     if (_card == null) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('Card Details')),
-        body: Center(
-          child: Text(
-            'This card could not be found.',
-            style: AppTextStyles.body1,
-          ),
-        ),
+      return CardCompassScaffold(
+        title: 'Card Details',
+        body: _errorMessage != null
+            ? ErrorState(
+                error: _errorMessage!,
+                onRetry: _loadCardDetails,
+              )
+            : Center(
+                child: Text(
+                  'This card could not be found.',
+                  style: AppTextStyles.body1,
+                ),
+              ),
       );
     }
 
-    return Scaffold(
-      backgroundColor: const Color(0xFF050B18),
-      appBar: AppBar(
-        title: Text(
-          _card!.cardName.toUpperCase(),
-          style: GoogleFonts.spaceGrotesk(
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1.0,
-            fontSize: 16,
+    return CardCompassScaffold(
+      title: _card!.cardName,
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.edit, color: AppTheme.primaryColor),
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (context) => const AddCardScreen()),
           ),
         ),
-        elevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.edit, color: AppTheme.primaryColor),
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (context) => const AddCardScreen()),
-            ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.more_vert, color: Colors.white70),
-            onPressed: () => _showCardOptions(),
-          ),
+        IconButton(
+          icon: const Icon(Icons.more_vert, color: Colors.white70),
+          onPressed: () => _showCardOptions(),
+        ),
+      ],
+      bottom: TabBar(
+        controller: _tabController,
+        labelColor: AppTheme.primaryColor,
+        unselectedLabelColor: Colors.white38,
+        indicatorColor: AppTheme.primaryColor,
+        indicatorSize: TabBarIndicatorSize.tab,
+        labelStyle: GoogleFonts.spaceGrotesk(
+          fontWeight: FontWeight.bold,
+          fontSize: 10,
+          letterSpacing: 0.5,
+        ),
+        tabs: const [
+          Tab(icon: Icon(Icons.info_outline, size: 18), text: 'OVERVIEW'),
+          Tab(icon: Icon(Icons.list_alt, size: 18), text: 'TXNS'),
+          Tab(icon: Icon(Icons.bolt, size: 18), text: 'BENEFITS'),
+          Tab(icon: Icon(Icons.analytics_outlined, size: 18), text: 'CHARTS'),
         ],
-        bottom: TabBar(
-          controller: _tabController,
-          labelColor: AppTheme.primaryColor,
-          unselectedLabelColor: Colors.white38,
-          indicatorColor: AppTheme.primaryColor,
-          indicatorSize: TabBarIndicatorSize.tab,
-          labelStyle: GoogleFonts.spaceGrotesk(
-            fontWeight: FontWeight.bold,
-            fontSize: 10,
-            letterSpacing: 0.5,
-          ),
-          tabs: const [
-            Tab(icon: Icon(Icons.info_outline, size: 18), text: 'OVERVIEW'),
-            Tab(icon: Icon(Icons.list_alt, size: 18), text: 'TXNS'),
-            Tab(icon: Icon(Icons.bolt, size: 18), text: 'BENEFITS'),
-            Tab(icon: Icon(Icons.analytics_outlined, size: 18), text: 'CHARTS'),
-          ],
-        ),
       ),
       body: TabBarView(
         controller: _tabController,
@@ -174,135 +173,140 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
   }
 
   Widget _buildOverviewTab() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [          // Card Display
-          CreditCardWidget(
-            cardName: _card!.cardName,
-            bankName: _card!.bankName,
-            lastFourDigits: _card!.cardNumber ?? '****',
-            expiryDate: _card!.expiryDate?.toString().substring(0, 7) ?? 'MM/YY',
-            cardType: _card!.type.name,
-            gradientColors: [_card!.networkColor, _card!.networkColor.withValues(alpha: 0.7)],
-          ),
-          const SizedBox(height: 24),          // Quick Stats
-          Row(
-            children: [
-              Expanded(
-                child: _buildStatCard(
-                  'Outstanding Amount',
-                  _latestStatement != null 
-                      ? '₹${(_latestStatement!['outstanding_amount'] ?? 0).toStringAsFixed(0)}'
-                      : '₹0',
-                  Icons.account_balance_wallet,
-                  Colors.red,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: _buildStatCard(
-                  'Available Limit',
-                  _latestStatement != null && _card!.creditLimit != null
-                      ? '₹${((_card!.creditLimit! - (_latestStatement!['outstanding_amount'] ?? 0))).toStringAsFixed(0)}'
-                      : '₹${(_card!.creditLimit ?? 100000).toStringAsFixed(0)}',
-                  Icons.trending_up,
-                  Colors.green,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-
-          Row(
-            children: [
-              Expanded(
-                child: _buildStatCard(
-                  'Due Date',
-                  _latestStatement != null 
-                      ? _formatDate(_latestStatement!['due_date']?.toString() ?? '')
-                      : 'N/A',
-                  Icons.schedule,
-                  Colors.orange,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: _buildStatCard(
-                  'Minimum Due',
-                  _latestStatement != null 
-                      ? '₹${(_latestStatement!['minimum_amount_due'] ?? 0).toStringAsFixed(0)}'
-                      : '₹0',
-                  Icons.payment,
-                  Colors.purple,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-
-          Row(
-            children: [
-              Expanded(
-                child: _buildStatCard(
-                  'Credit Limit',
-                  '₹${(_card!.creditLimit ?? 100000).toStringAsFixed(0)}',
-                  Icons.credit_card,
-                  Colors.blue,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: _buildStatCard(
-                  'Utilization',
-                  _latestStatement != null && _card!.creditLimit != null
-                      ? '${(((_latestStatement!['outstanding_amount'] ?? 0) / _card!.creditLimit!) * 100).toStringAsFixed(1)}%'
-                      : '0%',
-                  Icons.pie_chart,
-                  Colors.teal,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
-
-          // Card Details
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Card Information',
-                    style: Theme.of(context).textTheme.headlineSmall,
+    return RefreshIndicator(
+      onRefresh: _loadCardDetails,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Card Display
+            CreditCardWidget(
+              cardName: _card!.cardName,
+              bankName: _card!.bankName,
+              lastFourDigits: _card!.cardNumber ?? '****',
+              expiryDate: _card!.expiryDate?.toString().substring(0, 7) ?? 'MM/YY',
+              cardType: _card!.type.name,
+              gradientColors: [_card!.networkColor, _card!.networkColor.withValues(alpha: 0.7)],
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            // Quick Stats
+            Row(
+              children: [
+                Expanded(
+                  child: _buildStatCard(
+                    'Outstanding Amount',
+                    _latestStatement != null
+                        ? '₹${(_latestStatement!['outstanding_amount'] ?? 0).toStringAsFixed(0)}'
+                        : '₹0',
+                    Icons.account_balance_wallet,
+                    AppTheme.errorColor,
                   ),
-                  const SizedBox(height: 16),                  _buildDetailRow('Bank', _card!.bankName),
-                  _buildDetailRow('Card Type', _card!.type.name),
-                  _buildDetailRow('Network', _card!.network.name),
-                  _buildDetailRow('Annual Fee', '₹${_card!.annualFee ?? 0}'),
-                  _buildDetailRow('Issued Date', _formatDate(_card!.issuedDate.toString())),
-                  if (_latestStatement != null) ...[
-                    const Divider(),
+                ),
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: _buildStatCard(
+                    'Available Limit',
+                    _latestStatement != null && _card!.creditLimit != null
+                        ? '₹${((_card!.creditLimit! - (_latestStatement!['outstanding_amount'] ?? 0))).toStringAsFixed(0)}'
+                        : '₹${(_card!.creditLimit ?? 100000).toStringAsFixed(0)}',
+                    Icons.trending_up,
+                    AppTheme.successColor,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.md),
+
+            Row(
+              children: [
+                Expanded(
+                  child: _buildStatCard(
+                    'Due Date',
+                    _latestStatement != null
+                        ? _formatDate(_latestStatement!['due_date']?.toString() ?? '')
+                        : 'N/A',
+                    Icons.schedule,
+                    AppTheme.warningColor,
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: _buildStatCard(
+                    'Minimum Due',
+                    _latestStatement != null
+                        ? '₹${(_latestStatement!['minimum_amount_due'] ?? 0).toStringAsFixed(0)}'
+                        : '₹0',
+                    Icons.payment,
+                    AppTheme.secondaryColor,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.md),
+
+            Row(
+              children: [
+                Expanded(
+                  child: _buildStatCard(
+                    'Credit Limit',
+                    '₹${(_card!.creditLimit ?? 100000).toStringAsFixed(0)}',
+                    Icons.credit_card,
+                    AppTheme.primaryColor,
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: _buildStatCard(
+                    'Utilization',
+                    _latestStatement != null && _card!.creditLimit != null
+                        ? '${(((_latestStatement!['outstanding_amount'] ?? 0) / _card!.creditLimit!) * 100).toStringAsFixed(1)}%'
+                        : '0%',
+                    Icons.pie_chart,
+                    AppTheme.accentColor,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.lg),
+
+            // Card Details
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(AppSpacing.md),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                     Text(
-                      'Statement Information',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                      'Card Information',
+                      style: AppTextStyles.heading3,
                     ),
-                    const SizedBox(height: 8),
-                    _buildDetailRow('Statement Date', _formatDate(_latestStatement!['statement_date']?.toString() ?? '')),
-                    _buildDetailRow('Due Date', _formatDate(_latestStatement!['due_date']?.toString() ?? '')),
-                    _buildDetailRow('Outstanding Amount', '₹${(_latestStatement!['outstanding_amount'] ?? 0).toStringAsFixed(2)}'),
-                    _buildDetailRow('Minimum Due', '₹${(_latestStatement!['minimum_amount_due'] ?? 0).toStringAsFixed(2)}'),
-                    _buildDetailRow('Previous Balance', '₹${(_latestStatement!['previous_balance'] ?? 0).toStringAsFixed(2)}'),
+                    const SizedBox(height: AppSpacing.md),
+                    _buildDetailRow('Bank', _card!.bankName),
+                    _buildDetailRow('Card Type', _card!.type.name),
+                    _buildDetailRow('Network', _card!.network.name),
+                    _buildDetailRow('Annual Fee', '₹${_card!.annualFee ?? 0}'),
+                    _buildDetailRow('Issued Date', _formatDate(_card!.issuedDate.toString())),
+                    if (_latestStatement != null) ...[
+                      const Divider(),
+                      Text(
+                        'Statement Information',
+                        style: AppTextStyles.body1.copyWith(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      _buildDetailRow('Statement Date', _formatDate(_latestStatement!['statement_date']?.toString() ?? '')),
+                      _buildDetailRow('Due Date', _formatDate(_latestStatement!['due_date']?.toString() ?? '')),
+                      _buildDetailRow('Outstanding Amount', '₹${(_latestStatement!['outstanding_amount'] ?? 0).toStringAsFixed(2)}'),
+                      _buildDetailRow('Minimum Due', '₹${(_latestStatement!['minimum_amount_due'] ?? 0).toStringAsFixed(2)}'),
+                      _buildDetailRow('Previous Balance', '₹${(_latestStatement!['previous_balance'] ?? 0).toStringAsFixed(2)}'),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ).animate().fadeIn(duration: 250.ms, curve: Curves.easeOut).slideY(begin: 0.05, end: 0, duration: 250.ms, curve: Curves.easeOut),
       ),
     );
   }
@@ -316,35 +320,40 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
       );
     }
 
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: _transactions.length,
-      itemBuilder: (context, index) {
-        final transaction = _transactions[index];        return Card(
-          margin: const EdgeInsets.only(bottom: 8),
-          child: ListTile(
-            leading: CircleAvatar(
-              backgroundColor: _getCategoryColor(transaction.category),
-              child: Icon(
-                _getCategoryIcon(transaction.category),
-                color: Colors.white,
+    return RefreshIndicator(
+      onRefresh: _loadCardDetails,
+      child: ListView.builder(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(AppSpacing.md),
+        itemCount: _transactions.length,
+        itemBuilder: (context, index) {
+          final transaction = _transactions[index];
+          return Card(
+            margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+            child: ListTile(
+              leading: CircleAvatar(
+                backgroundColor: _getCategoryColor(transaction.category),
+                child: Icon(
+                  _getCategoryIcon(transaction.category),
+                  color: Colors.white,
+                ),
+              ),
+              title: Text(transaction.description),
+              subtitle: Text(
+                '${transaction.categoryString} • ${_formatDate(transaction.transactionDate.toString())}',
+              ),
+              trailing: Text(
+                '₹${transaction.amount.toStringAsFixed(2)}',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: transaction.amount > 0 ? AppTheme.errorColor : AppTheme.successColor,
+                ),
               ),
             ),
-            title: Text(transaction.description),
-            subtitle: Text(
-              '${transaction.categoryString} • ${_formatDate(transaction.transactionDate.toString())}',
-            ),
-            trailing: Text(
-              '₹${transaction.amount.toStringAsFixed(2)}',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                color: transaction.amount > 0 ? Colors.red : Colors.green,
-              ),
-            ),
-          ),
-        );
-      },
-    );
+          );
+        },
+      ),
+    ).animate().fadeIn(duration: 250.ms, curve: Curves.easeOut);
   }
 
   Widget _buildBenefitsTab() {
@@ -356,172 +365,172 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
       );
     }
 
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-      itemCount: _benefits.length,
-      itemBuilder: (context, index) {
-        final benefit = _benefits[index];
-        final rate = benefit['reward_rate']?.toString() ?? 'N/A';
-        return Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          decoration: BoxDecoration(
-            color: const Color(0xFF0C152B),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: Colors.white.withValues(alpha: 0.06),
-              width: 1,
-            ),
-          ),
-          child: ListTile(
-            leading: Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: AppTheme.primaryColor.withValues(alpha: 0.12),
-                shape: BoxShape.circle,
-                border: Border.all(color: AppTheme.primaryColor.withValues(alpha: 0.2), width: 1),
+    return RefreshIndicator(
+      onRefresh: _loadCardDetails,
+      child: ListView.builder(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.lg - AppSpacing.xs),
+        itemCount: _benefits.length,
+        itemBuilder: (context, index) {
+          final benefit = _benefits[index];
+          final rate = benefit['reward_rate']?.toString() ?? 'N/A';
+          return _buildGlassListCard(
+            margin: const EdgeInsets.only(bottom: AppSpacing.md),
+            child: ListTile(
+              leading: Container(
+                padding: const EdgeInsets.all(AppSpacing.sm),
+                decoration: BoxDecoration(
+                  color: AppTheme.primaryColor.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: AppTheme.primaryColor.withValues(alpha: 0.2), width: 1),
+                ),
+                child: Icon(
+                  benefit['icon'],
+                  color: AppTheme.primaryColor,
+                  size: 18,
+                ),
               ),
-              child: Icon(
-                benefit['icon'],
-                color: AppTheme.primaryColor,
-                size: 18,
-              ),
-            ),
-            title: Text(
-              benefit['category'].toString().toUpperCase(),
-              style: GoogleFonts.spaceGrotesk(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 13,
-                letterSpacing: 0.5,
-              ),
-            ),
-            subtitle: Text(
-              benefit['description'],
-              style: GoogleFonts.plusJakartaSans(
-                color: Colors.white60,
-                fontSize: 11,
-              ),
-            ),
-            trailing: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: AppTheme.successColor.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: AppTheme.successColor.withValues(alpha: 0.3), width: 1),
-              ),
-              child: Text(
-                rate,
+              title: Text(
+                benefit['category'].toString().toUpperCase(),
                 style: GoogleFonts.spaceGrotesk(
-                  color: AppTheme.successColor,
+                  color: Colors.white,
                   fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                  letterSpacing: 0.5,
+                ),
+              ),
+              subtitle: Text(
+                benefit['description'],
+                style: GoogleFonts.plusJakartaSans(
+                  color: Colors.white60,
                   fontSize: 11,
                 ),
               ),
+              trailing: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: AppTheme.successColor.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(AppBorderRadius.md),
+                  border: Border.all(color: AppTheme.successColor.withValues(alpha: 0.3), width: 1),
+                ),
+                child: Text(
+                  rate,
+                  style: GoogleFonts.spaceGrotesk(
+                    color: AppTheme.successColor,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
             ),
-          ),
-        );
-      },
-    );
+          );
+        },
+      ),
+    ).animate().fadeIn(duration: 250.ms, curve: Curves.easeOut);
   }
 
   Widget _buildAnalyticsTab() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 80),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'SPENDING ANALYTICS',
-            style: GoogleFonts.spaceGrotesk(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-              fontSize: 16,
-              letterSpacing: 1.0,
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // Monthly spending card
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: const Color(0xFF0C152B),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: AppTheme.primaryColor.withValues(alpha: 0.2),
-                width: 1,
+    return RefreshIndicator(
+      onRefresh: _loadCardDetails,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.lg - AppSpacing.xs, AppSpacing.md, 80),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'SPENDING ANALYTICS',
+              style: GoogleFonts.spaceGrotesk(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+                letterSpacing: 1.0,
               ),
-              boxShadow: AppTheme.neonGlow(color: AppTheme.primaryColor, opacity: 0.1, blurRadius: 10),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'CURRENT BILLING CYCLE',
-                  style: GoogleFonts.spaceGrotesk(
-                    color: Colors.white70,
-                    fontSize: 9,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1.0,
-                  ),
+            const SizedBox(height: AppSpacing.md),
+
+            // Monthly spending card
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(AppSpacing.lg - AppSpacing.xs),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0C152B),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: AppTheme.primaryColor.withValues(alpha: 0.2),
+                  width: 1,
                 ),
-                const SizedBox(height: 10),
-                Text(
-                  '₹${_calculateMonthlySpending().toStringAsFixed(0)}',
-                  style: GoogleFonts.spaceGrotesk(
-                    color: AppTheme.primaryColor,
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
-
-          // Category breakdown
-          Text(
-            'SPENDING BY CATEGORY',
-            style: GoogleFonts.spaceGrotesk(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-              fontSize: 12,
-              letterSpacing: 1.0,
-            ),
-          ),
-          const SizedBox(height: 8),
-          ..._buildCategoryBreakdown(),
-
-          const SizedBox(height: 24),
-
-          // Usage tips
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
+                boxShadow: AppTheme.neonGlow(color: AppTheme.primaryColor, opacity: 0.1, blurRadius: 10),
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Optimization Tips',
-                    style: Theme.of(context).textTheme.titleMedium,
+                    'CURRENT BILLING CYCLE',
+                    style: GoogleFonts.spaceGrotesk(
+                      color: Colors.white70,
+                      fontSize: 9,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.0,
+                    ),
                   ),
-                  const SizedBox(height: 8),
-                  _buildTip('Use this card for dining to maximize 5% cashback'),
-                  _buildTip('Consider paying down balance to improve utilization ratio'),
-                  _buildTip('Set up auto-pay to avoid late fees'),
+                  const SizedBox(height: 10),
+                  Text(
+                    '₹${_calculateMonthlySpending().toStringAsFixed(0)}',
+                    style: GoogleFonts.spaceGrotesk(
+                      color: AppTheme.primaryColor,
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ],
               ),
             ),
-          ),
-        ],
+            const SizedBox(height: AppSpacing.lg),
+
+            // Category breakdown
+            Text(
+              'SPENDING BY CATEGORY',
+              style: GoogleFonts.spaceGrotesk(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 12,
+                letterSpacing: 1.0,
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            ..._buildCategoryBreakdown(),
+
+            const SizedBox(height: AppSpacing.lg),
+
+            // Usage tips
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(AppSpacing.md),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Optimization Tips',
+                      style: AppTextStyles.heading3,
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    _buildTip('Use this card for dining to maximize 5% cashback'),
+                    _buildTip('Consider paying down balance to improve utilization ratio'),
+                    _buildTip('Set up auto-pay to avoid late fees'),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
-    );
+    ).animate().fadeIn(duration: 250.ms, curve: Curves.easeOut);
   }
 
   Widget _buildStatCard(String title, String value, IconData icon, Color color) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
         color: const Color(0xFF0C152B),
         borderRadius: BorderRadius.circular(16),
@@ -537,7 +546,7 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
           Row(
             children: [
               Icon(icon, color: color, size: 16),
-              const SizedBox(width: 8),
+              const SizedBox(width: AppSpacing.sm),
               Expanded(
                 child: Text(
                   title.toUpperCase(),
@@ -552,7 +561,7 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: AppSpacing.sm),
           Text(
             value,
             style: GoogleFonts.spaceGrotesk(
@@ -566,9 +575,28 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
     );
   }
 
+  /// Shared "glass card" list-row container used by the Benefits tab and the
+  /// category-breakdown list on the Charts tab — same translucent surface,
+  /// rounded corners, and hairline border, just wrapping a different
+  /// [ListTile] per call site.
+  Widget _buildGlassListCard({required Widget child, EdgeInsetsGeometry? margin}) {
+    return Container(
+      margin: margin,
+      decoration: BoxDecoration(
+        color: const Color(0xFF0C152B),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.06),
+          width: 1,
+        ),
+      ),
+      child: child,
+    );
+  }
+
   Widget _buildDetailRow(String label, String value) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -591,19 +619,11 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
 
     return categoryTotals.entries.map((entry) {
       final categoryColor = _getCategoryColor(entry.key);
-      return Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        decoration: BoxDecoration(
-          color: const Color(0xFF0C152B),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: Colors.white.withValues(alpha: 0.06),
-            width: 1,
-          ),
-        ),
+      return _buildGlassListCard(
+        margin: const EdgeInsets.only(bottom: AppSpacing.sm),
         child: ListTile(
           leading: Container(
-            padding: const EdgeInsets.all(8),
+            padding: const EdgeInsets.all(AppSpacing.sm),
             decoration: BoxDecoration(
               color: categoryColor.withValues(alpha: 0.12),
               shape: BoxShape.circle,
@@ -638,12 +658,12 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
 
   Widget _buildTip(String tip) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.lightbulb, size: 16, color: Colors.amber),
-          const SizedBox(width: 8),
+          const Icon(Icons.lightbulb, size: 16, color: AppTheme.warningColor),
+          const SizedBox(width: AppSpacing.sm),
           Expanded(child: Text(tip)),
         ],
       ),
@@ -741,8 +761,8 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.delete, color: Colors.red),
-                title: const Text('Remove Card', style: TextStyle(color: Colors.red)),
+                leading: const Icon(Icons.delete, color: AppTheme.errorColor),
+                title: const Text('Remove Card', style: TextStyle(color: AppTheme.errorColor)),
                 onTap: () {
                   Navigator.pop(context);
                   _showDeleteConfirmation();
@@ -786,7 +806,7 @@ class _CardDetailsScreenState extends ConsumerState<CardDetailsScreen>
                   );
                 }
               },
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.errorColor),
               child: const Text('Remove'),
             ),
           ],

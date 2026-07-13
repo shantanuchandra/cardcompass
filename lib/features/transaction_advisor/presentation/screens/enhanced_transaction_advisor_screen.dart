@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:cardcompass/features/auth/providers/auth_provider.dart';
 import 'package:cardcompass/core/services/advanced_benefit_calculation_service.dart';
 import 'package:cardcompass/shared/widgets/state_widgets.dart';
+import 'package:cardcompass/shared/widgets/app_scaffold.dart';
 import 'package:cardcompass/features/movie_rule_engine/presentation/movie_analyzer_tab.dart';
 import 'package:intl/intl.dart';
 import 'package:cardcompass/core/theme.dart';
@@ -78,7 +80,7 @@ class _EnhancedTransactionAdvisorScreenState
     if (_amountController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Please enter an amount.', style: GoogleFonts.spaceGrotesk(fontSize: 12)),
+          content: Text('Please enter an amount.', style: AppTextStyles.caption),
           backgroundColor: AppTheme.errorColor,
         ),
       );
@@ -111,7 +113,7 @@ class _EnhancedTransactionAdvisorScreenState
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error calculating: $e', style: GoogleFonts.spaceGrotesk(fontSize: 12)),
+            content: Text('Error calculating: $e', style: AppTextStyles.caption),
             backgroundColor: AppTheme.errorColor,
           ),
         );
@@ -191,37 +193,27 @@ class _EnhancedTransactionAdvisorScreenState
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF050B18),
-      appBar: AppBar(
-        title: Text(
-          'SMART CARD ADVISOR',
-          style: GoogleFonts.spaceGrotesk(
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1.5,
-            fontSize: 16,
-          ),
+    return CardCompassScaffold(
+      title: 'Smart Card Advisor',
+      bottom: TabBar(
+        controller: _tabController,
+        labelColor: AppTheme.primaryColor,
+        unselectedLabelColor: Colors.white38,
+        indicatorColor: AppTheme.primaryColor,
+        indicatorSize: TabBarIndicatorSize.tab,
+        isScrollable: true,
+        labelStyle: GoogleFonts.spaceGrotesk(
+          fontWeight: FontWeight.bold,
+          fontSize: 10,
+          letterSpacing: 0.5,
         ),
-        bottom: TabBar(
-          controller: _tabController,
-          labelColor: AppTheme.primaryColor,
-          unselectedLabelColor: Colors.white38,
-          indicatorColor: AppTheme.primaryColor,
-          indicatorSize: TabBarIndicatorSize.tab,
-          isScrollable: true,
-          labelStyle: GoogleFonts.spaceGrotesk(
-            fontWeight: FontWeight.bold,
-            fontSize: 10,
-            letterSpacing: 0.5,
-          ),
-          tabs: const [
-            Tab(icon: Icon(Icons.calculate_outlined, size: 18), text: 'CALCULATE'),
-            Tab(icon: Icon(Icons.local_movies_outlined, size: 18), text: 'SHOWTIMES'),
-            Tab(icon: Icon(Icons.trending_up, size: 18), text: 'OPTIMIZE'),
-            Tab(icon: Icon(Icons.analytics_outlined, size: 18), text: 'SUMMARY'),
-            Tab(icon: Icon(Icons.recommend_outlined, size: 18), text: 'SUGGESTIONS'),
-          ],
-        ),
+        tabs: const [
+          Tab(icon: Icon(Icons.calculate_outlined, size: 18), text: 'CALCULATE'),
+          Tab(icon: Icon(Icons.local_movies_outlined, size: 18), text: 'SHOWTIMES'),
+          Tab(icon: Icon(Icons.trending_up, size: 18), text: 'OPTIMIZE'),
+          Tab(icon: Icon(Icons.analytics_outlined, size: 18), text: 'SUMMARY'),
+          Tab(icon: Icon(Icons.recommend_outlined, size: 18), text: 'SUGGESTIONS'),
+        ],
       ),
       body: TabBarView(
         controller: _tabController,
@@ -238,7 +230,7 @@ class _EnhancedTransactionAdvisorScreenState
 
   Widget _buildCalculatorTab() {
     return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: AppSpacing.lg),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -246,7 +238,7 @@ class _EnhancedTransactionAdvisorScreenState
             padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
               color: const Color(0xFF0C152B),
-              borderRadius: BorderRadius.circular(20),
+              borderRadius: BorderRadius.circular(AppBorderRadius.xl),
               border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
             ),
             child: Column(
@@ -264,24 +256,24 @@ class _EnhancedTransactionAdvisorScreenState
                 const SizedBox(height: 18),
                 TextField(
                   controller: _amountController,
-                  style: GoogleFonts.plusJakartaSans(color: Colors.white),
+                  style: AppTextStyles.body1.copyWith(color: Colors.white),
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(
                     labelText: 'Amount (₹)',
                     prefixIcon: Icon(Icons.currency_rupee, color: AppTheme.primaryColor),
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: AppSpacing.md),
                 TextField(
                   controller: _merchantController,
-                  style: GoogleFonts.plusJakartaSans(color: Colors.white),
+                  style: AppTextStyles.body1.copyWith(color: Colors.white),
                   decoration: const InputDecoration(
                     labelText: 'Merchant Name (Optional)',
                     prefixIcon: Icon(Icons.store_outlined, color: AppTheme.primaryColor),
                     hintText: 'e.g., Amazon, Swiggy, BPCL',
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: AppSpacing.md),
                 DropdownButtonFormField<String>(
                   dropdownColor: const Color(0xFF0C152B),
                   initialValue: _selectedCategory,
@@ -309,7 +301,7 @@ class _EnhancedTransactionAdvisorScreenState
                   width: double.infinity,
                   child: ElevatedButton.icon(
                     onPressed: _isCalculating ? null : _calculateBestCard,
-                    icon: _isCalculating 
+                    icon: _isCalculating
                         ? const SizedBox(
                             width: 16,
                             height: 16,
@@ -324,22 +316,22 @@ class _EnhancedTransactionAdvisorScreenState
                       backgroundColor: AppTheme.primaryColor,
                       disabledBackgroundColor: Colors.white10,
                       padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppBorderRadius.lg)),
                     ),
                   ),
                 ),
               ],
             ),
           ),
-          
+
           if (_recommendation != null) ...[
-            const SizedBox(height: 20),
+            const SizedBox(height: AppSpacing.lg),
             _buildRecommendationResult(),
           ],
           const SizedBox(height: 80),
         ],
       ),
-    );
+    ).animate().fadeIn(duration: 250.ms, curve: Curves.easeOut).slideY(begin: 0.05, end: 0, duration: 250.ms, curve: Curves.easeOut);
   }
 
   Widget _buildRecommendationResult() {
@@ -381,7 +373,7 @@ class _EnhancedTransactionAdvisorScreenState
           padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
             color: const Color(0xFF0C152B),
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(AppBorderRadius.xl),
             border: Border.all(color: AppTheme.successColor.withValues(alpha: 0.3), width: 1.5),
             boxShadow: AppTheme.neonGlow(color: AppTheme.successColor, opacity: 0.08, blurRadius: 12),
           ),
@@ -391,7 +383,7 @@ class _EnhancedTransactionAdvisorScreenState
               Row(
                 children: [
                   const Icon(Icons.verified_outlined, color: AppTheme.successColor, size: 20),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: AppSpacing.sm),
                   Text(
                     'BEST ROUTING MATCH',
                     style: GoogleFonts.spaceGrotesk(
@@ -424,7 +416,7 @@ class _EnhancedTransactionAdvisorScreenState
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: const Color(0xFF050B18),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(AppBorderRadius.lg),
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -451,14 +443,14 @@ class _EnhancedTransactionAdvisorScreenState
                 'APPLICABLE SAVINGS RULES:',
                 style: GoogleFonts.spaceGrotesk(color: Colors.white70, fontSize: 9, fontWeight: FontWeight.bold, letterSpacing: 0.5),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               ...bestCard['applicable_benefits'].map<Widget>((benefit) {
                 return Padding(
                   padding: const EdgeInsets.only(top: 4),
                   child: Row(
                     children: [
                       const Icon(Icons.check_circle_outline, size: 14, color: AppTheme.successColor),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: AppSpacing.sm),
                       Expanded(
                         child: Text(
                           '${benefit['benefit_name'].toString().toUpperCase()}: ₹${benefit['reward'].toStringAsFixed(2)}',
@@ -475,7 +467,7 @@ class _EnhancedTransactionAdvisorScreenState
 
         // Alternative Options list
         if (recommendations.length > 1) ...[
-          const SizedBox(height: 24),
+          const SizedBox(height: AppSpacing.lg),
           Text(
             'ALTERNATIVE INTEGRATIONS',
             style: GoogleFonts.spaceGrotesk(
@@ -576,7 +568,7 @@ class _EnhancedTransactionAdvisorScreenState
               padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(
                 color: const Color(0xFF0C152B),
-                borderRadius: BorderRadius.circular(20),
+                borderRadius: BorderRadius.circular(AppBorderRadius.xl),
                 border: Border.all(color: AppTheme.secondaryColor.withValues(alpha: 0.3), width: 1.5),
                 boxShadow: AppTheme.neonGlow(color: AppTheme.secondaryColor, opacity: 0.08, blurRadius: 10),
               ),
@@ -636,7 +628,7 @@ class _EnhancedTransactionAdvisorScreenState
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
                         color: AppTheme.errorColor.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(AppBorderRadius.md),
                         border: Border.all(color: AppTheme.errorColor.withValues(alpha: 0.2)),
                       ),
                       child: Text(
@@ -665,7 +657,7 @@ class _EnhancedTransactionAdvisorScreenState
                 Row(
                   children: [
                     const Icon(Icons.lightbulb_outline, size: 14, color: AppTheme.primaryColor),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: AppSpacing.sm),
                     Expanded(
                       child: Text(
                         'BEST CARD: ${bestCard['card']['card_name'].toString().toUpperCase()}',
@@ -722,7 +714,7 @@ class _EnhancedTransactionAdvisorScreenState
               padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(
                 color: const Color(0xFF0C152B),
-                borderRadius: BorderRadius.circular(20),
+                borderRadius: BorderRadius.circular(AppBorderRadius.xl),
                 border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
               ),
               child: Column(
@@ -792,7 +784,7 @@ class _EnhancedTransactionAdvisorScreenState
                 padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
                   color: const Color(0xFF0C152B),
-                  borderRadius: BorderRadius.circular(20),
+                  borderRadius: BorderRadius.circular(AppBorderRadius.xl),
                   border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
                 ),
                 child: Column(
@@ -848,13 +840,13 @@ class _EnhancedTransactionAdvisorScreenState
       padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
       decoration: BoxDecoration(
         color: const Color(0xFF050B18),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(AppBorderRadius.lg),
         border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
       ),
       child: Column(
         children: [
           Icon(icon, color: color, size: 20),
-          const SizedBox(height: 8),
+          const SizedBox(height: AppSpacing.sm),
           Text(
             value,
             style: GoogleFonts.spaceGrotesk(
@@ -901,7 +893,7 @@ class _EnhancedTransactionAdvisorScreenState
               padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(
                 color: const Color(0xFF0C152B),
-                borderRadius: BorderRadius.circular(20),
+                borderRadius: BorderRadius.circular(AppBorderRadius.xl),
                 border: Border.all(color: AppTheme.primaryColor.withValues(alpha: 0.2), width: 1.5),
                 boxShadow: AppTheme.neonGlow(color: AppTheme.primaryColor, opacity: 0.06, blurRadius: 10),
               ),
@@ -970,12 +962,12 @@ class _EnhancedTransactionAdvisorScreenState
                         ],
                       ),
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: AppSpacing.sm),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                       decoration: BoxDecoration(
                         color: AppTheme.successColor.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(AppBorderRadius.md),
                         border: Border.all(color: AppTheme.successColor.withValues(alpha: 0.2)),
                       ),
                       child: Text(
@@ -1011,7 +1003,7 @@ class _EnhancedTransactionAdvisorScreenState
                   'COMPATIBLE BENEFITS PATH:',
                   style: GoogleFonts.spaceGrotesk(color: Colors.white70, fontSize: 8, fontWeight: FontWeight.bold, letterSpacing: 0.5),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: AppSpacing.sm),
                 ...recommendation['matching_categories'].take(3).map<Widget>((category) {
                   return Padding(
                     padding: const EdgeInsets.only(top: 4),

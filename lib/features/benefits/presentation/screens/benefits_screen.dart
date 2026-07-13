@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cardcompass/features/auth/providers/auth_provider.dart';
 import 'package:cardcompass/features/benefits/viewmodels/benefits_viewmodel.dart';
 import 'package:cardcompass/shared/models/credit_card.dart';
+import 'package:cardcompass/shared/widgets/app_scaffold.dart';
 import 'package:cardcompass/shared/widgets/state_widgets.dart';
 import 'package:cardcompass/core/theme.dart';
 
@@ -35,9 +37,15 @@ class _BenefitsScreenState extends ConsumerState<BenefitsScreen>
   }
   
   void _loadBenefits() {
+    _refreshBenefits();
+  }
+
+  /// Reloads benefits data. Awaited by [RefreshIndicator]; called
+  /// fire-and-forget from [initState] via [_loadBenefits].
+  Future<void> _refreshBenefits() async {
     final user = ref.read(authStateProvider).user;
     if (user != null) {
-      ref.read(benefitsViewModelProvider.notifier).loadBenefitsData(user.id);
+      await ref.read(benefitsViewModelProvider.notifier).loadBenefitsData(user.id);
     }
   }
 
@@ -46,15 +54,15 @@ class _BenefitsScreenState extends ConsumerState<BenefitsScreen>
     final benefitsState = ref.watch(benefitsViewModelProvider);
 
     if (benefitsState.isLoading) {
-      return const Scaffold(
-        backgroundColor: Color(0xFF050B18),
+      return const CardCompassScaffold(
+        showAppBar: false,
         body: LoadingState(message: 'DECRYPTING BENEFITS DATA...'),
       );
     }
 
     if (benefitsState.error != null) {
-      return Scaffold(
-        backgroundColor: const Color(0xFF050B18),
+      return CardCompassScaffold(
+        showAppBar: false,
         body: ErrorState(
           error: benefitsState.error!,
           onRetry: _loadBenefits,
@@ -62,34 +70,24 @@ class _BenefitsScreenState extends ConsumerState<BenefitsScreen>
       );
     }
 
-    return Scaffold(
-      backgroundColor: const Color(0xFF050B18),
-      appBar: AppBar(
-        title: Text(
-          'BENEFITS CENTER',
-          style: GoogleFonts.spaceGrotesk(
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1.5,
-            fontSize: 16,
-          ),
+    return CardCompassScaffold(
+      title: 'Benefits Center',
+      bottom: TabBar(
+        controller: _tabController,
+        labelColor: AppTheme.primaryColor,
+        unselectedLabelColor: Colors.white38,
+        indicatorColor: AppTheme.primaryColor,
+        indicatorSize: TabBarIndicatorSize.tab,
+        labelStyle: GoogleFonts.spaceGrotesk(
+          fontWeight: FontWeight.bold,
+          fontSize: 10,
+          letterSpacing: 0.5,
         ),
-        bottom: TabBar(
-          controller: _tabController,
-          labelColor: AppTheme.primaryColor,
-          unselectedLabelColor: Colors.white38,
-          indicatorColor: AppTheme.primaryColor,
-          indicatorSize: TabBarIndicatorSize.tab,
-          labelStyle: GoogleFonts.spaceGrotesk(
-            fontWeight: FontWeight.bold,
-            fontSize: 10,
-            letterSpacing: 0.5,
-          ),
-          tabs: const [
-            Tab(icon: Icon(Icons.card_giftcard, size: 18), text: 'ACTIVE'),
-            Tab(icon: Icon(Icons.trending_up, size: 18), text: 'USAGE'),
-            Tab(icon: Icon(Icons.compare_arrows, size: 18), text: 'COMPARE'),
-          ],
-        ),
+        tabs: const [
+          Tab(icon: Icon(Icons.card_giftcard, size: 18), text: 'ACTIVE'),
+          Tab(icon: Icon(Icons.trending_up, size: 18), text: 'USAGE'),
+          Tab(icon: Icon(Icons.compare_arrows, size: 18), text: 'COMPARE'),
+        ],
       ),
       body: TabBarView(
         controller: _tabController,
@@ -104,24 +102,43 @@ class _BenefitsScreenState extends ConsumerState<BenefitsScreen>
 
   Widget _buildActiveBenefitsTab(BenefitsViewState state) {
     if (state.userCards.isEmpty) {
-      return const EmptyState(
-        title: 'NO ACTIVE CARDS',
-        message: 'Integrate credit cards to track active benefits.',
-        icon: Icons.credit_card_off,
+      return RefreshIndicator(
+        onRefresh: _refreshBenefits,
+        child: LayoutBuilder(
+          builder: (context, constraints) => SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+              child: const Center(
+                child: EmptyState(
+                  title: 'NO ACTIVE CARDS',
+                  message: 'Integrate credit cards to track active benefits.',
+                  icon: Icons.credit_card_off,
+                ),
+              ),
+            ),
+          ),
+        ),
       );
     }
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 80),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildBenefitsSummaryCard(state.userCards),
-          const SizedBox(height: 20),
-          _buildCardSelector(state.userCards),
-          const SizedBox(height: 24),
-          _buildBenefitsList(state.userCards),
-        ],
+    return RefreshIndicator(
+      onRefresh: _refreshBenefits,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(
+          AppSpacing.md, 20, AppSpacing.md, 80,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildBenefitsSummaryCard(state.userCards),
+            const SizedBox(height: 20),
+            _buildCardSelector(state.userCards),
+            const SizedBox(height: AppSpacing.lg),
+            _buildBenefitsList(state.userCards),
+          ],
+        ).animate().fadeIn(duration: 250.ms).slideY(begin: 0.05, end: 0),
       ),
     );
   }
@@ -135,7 +152,7 @@ class _BenefitsScreenState extends ConsumerState<BenefitsScreen>
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: const Color(0xFF0C152B),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(AppBorderRadius.xl),
         border: Border.all(
           color: AppTheme.primaryColor.withValues(alpha: 0.2),
           width: 1.5,
@@ -148,7 +165,7 @@ class _BenefitsScreenState extends ConsumerState<BenefitsScreen>
           Row(
             children: [
               const Icon(Icons.bolt, color: AppTheme.primaryColor, size: 22),
-              const SizedBox(width: 8),
+              const SizedBox(width: AppSpacing.sm),
               Text(
                 'BENEFITS METRICS',
                 style: GoogleFonts.spaceGrotesk(
@@ -198,7 +215,7 @@ class _BenefitsScreenState extends ConsumerState<BenefitsScreen>
     return Column(
       children: [
         Icon(icon, color: color, size: 20),
-        const SizedBox(height: 8),
+        const SizedBox(height: AppSpacing.sm),
         Text(
           value,
           style: GoogleFonts.spaceGrotesk(
@@ -390,8 +407,8 @@ class _BenefitsScreenState extends ConsumerState<BenefitsScreen>
 
     if (realBenefits.isEmpty) {
       return Container(
-        margin: const EdgeInsets.only(bottom: 16),
-        padding: const EdgeInsets.all(16),
+        margin: const EdgeInsets.only(bottom: AppSpacing.md),
+        padding: const EdgeInsets.all(AppSpacing.md),
         decoration: BoxDecoration(
           color: const Color(0xFF0C152B),
           borderRadius: BorderRadius.circular(16),
@@ -401,21 +418,21 @@ class _BenefitsScreenState extends ConsumerState<BenefitsScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             headerWidget,
-            const SizedBox(height: 16),
+            const SizedBox(height: AppSpacing.md),
             Center(
               child: Text(
                 'No rules configured for this model.',
-                style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 12),
+                style: AppTextStyles.caption.copyWith(color: Colors.white38),
               ),
             ),
           ],
         ),
       );
     }
-    
+
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.only(bottom: AppSpacing.md),
+      padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
         color: const Color(0xFF0C152B),
         borderRadius: BorderRadius.circular(16),
@@ -425,7 +442,7 @@ class _BenefitsScreenState extends ConsumerState<BenefitsScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           headerWidget,
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.md),
           ...realBenefits.map((benefit) => _buildRealBenefitItem(benefit)),
         ],
       ),
@@ -444,7 +461,7 @@ class _BenefitsScreenState extends ConsumerState<BenefitsScreen>
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: const Color(0xFF050B18),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(AppBorderRadius.lg),
         border: Border.all(
           color: activeColor.withValues(alpha: 0.15),
         ),
@@ -474,10 +491,10 @@ class _BenefitsScreenState extends ConsumerState<BenefitsScreen>
                       ),
                     ),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
                       decoration: BoxDecoration(
                         color: activeColor.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(AppBorderRadius.md),
                         border: Border.all(color: activeColor.withValues(alpha: 0.2)),
                       ),
                       child: Text(
@@ -508,110 +525,104 @@ class _BenefitsScreenState extends ConsumerState<BenefitsScreen>
   }
 
   Widget _buildUsageTab(BenefitsViewState state) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 80),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'SAVINGS PROFILE MONITOR',
-            style: GoogleFonts.spaceGrotesk(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-              fontSize: 14,
-              letterSpacing: 1.0,
+    return RefreshIndicator(
+      onRefresh: _refreshBenefits,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(
+          AppSpacing.md, 20, AppSpacing.md, 80,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'SAVINGS PROFILE MONITOR',
+              style: GoogleFonts.spaceGrotesk(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+                letterSpacing: 1.0,
+              ),
             ),
-          ),
-          const SizedBox(height: 16),
-          
-          // Period Card
-          Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: const Color(0xFF0C152B),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'SELECT EVALUATION TIMELINE',
-                  style: GoogleFonts.spaceGrotesk(
-                    color: Colors.white70,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 10,
-                    letterSpacing: 0.5,
+            const SizedBox(height: AppSpacing.md),
+
+            // Period Card
+            Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0C152B),
+                borderRadius: BorderRadius.circular(AppBorderRadius.xl),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'SELECT EVALUATION TIMELINE',
+                    style: GoogleFonts.spaceGrotesk(
+                      color: Colors.white70,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 10,
+                      letterSpacing: 0.5,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () {
-                          ref.read(benefitsViewModelProvider.notifier).setSelectedPeriod('current_month');
-                        },
-                        style: OutlinedButton.styleFrom(
-                          side: BorderSide(
-                            color: state.selectedPeriod == 'current_month' 
-                                ? AppTheme.primaryColor 
-                                : Colors.white.withValues(alpha: 0.1),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () {
+                            ref.read(benefitsViewModelProvider.notifier).setSelectedPeriod('current_month');
+                          },
+                          style: OutlinedButton.styleFrom(
+                            side: BorderSide(
+                              color: state.selectedPeriod == 'current_month'
+                                  ? AppTheme.primaryColor
+                                  : Colors.white.withValues(alpha: 0.1),
+                            ),
                           ),
+                          child: Text('THIS MONTH', style: GoogleFonts.spaceGrotesk(fontSize: 11, fontWeight: FontWeight.bold)),
                         ),
-                        child: Text('THIS MONTH', style: GoogleFonts.spaceGrotesk(fontSize: 11, fontWeight: FontWeight.bold)),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () {
-                          ref.read(benefitsViewModelProvider.notifier).setSelectedPeriod('previous_month');
-                        },
-                        style: OutlinedButton.styleFrom(
-                          side: BorderSide(
-                            color: state.selectedPeriod == 'previous_month' 
-                                ? AppTheme.primaryColor 
-                                : Colors.white.withValues(alpha: 0.1),
+                      const SizedBox(width: AppSpacing.sm),
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () {
+                            ref.read(benefitsViewModelProvider.notifier).setSelectedPeriod('previous_month');
+                          },
+                          style: OutlinedButton.styleFrom(
+                            side: BorderSide(
+                              color: state.selectedPeriod == 'previous_month'
+                                  ? AppTheme.primaryColor
+                                  : Colors.white.withValues(alpha: 0.1),
+                            ),
                           ),
+                          child: Text('PREVIOUS MONTH', style: GoogleFonts.spaceGrotesk(fontSize: 11, fontWeight: FontWeight.bold)),
                         ),
-                        child: Text('PREVIOUS MONTH', style: GoogleFonts.spaceGrotesk(fontSize: 11, fontWeight: FontWeight.bold)),
                       ),
-                    ),
-                  ],
-                ),
-              ],
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
-          
-          const SizedBox(height: 20),
-          _buildUsageMetrics(state),
-          const SizedBox(height: 20),
-          _buildUsageHistory(state),
-        ],
+
+            const SizedBox(height: 20),
+            _buildUsageMetrics(state),
+            const SizedBox(height: 20),
+            _buildUsageHistory(state),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildCompareTab(List<CreditCard> userCards) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 80),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'CROSS-CARD RULE EVALUATIONS',
-            style: GoogleFonts.spaceGrotesk(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-              fontSize: 14,
-              letterSpacing: 1.0,
-            ),
-          ),
-          const SizedBox(height: 16),
-          _buildComparisonTable(userCards),
-        ],
-      ),
+    // Cross-card benefit comparison is not implemented yet; show a clear
+    // "coming soon" state instead of a dead-end empty DataTable.
+    return const EmptyState(
+      title: 'COMING SOON',
+      message: 'Side-by-side benefit comparison is on its way.',
+      icon: Icons.compare_arrows,
     );
   }
 
@@ -666,7 +677,7 @@ class _BenefitsScreenState extends ConsumerState<BenefitsScreen>
     return Column(
       children: [
         Icon(icon, color: color, size: 20),
-        const SizedBox(height: 8),
+        const SizedBox(height: AppSpacing.sm),
         Text(
           value,
           style: GoogleFonts.spaceGrotesk(
@@ -780,62 +791,6 @@ class _BenefitsScreenState extends ConsumerState<BenefitsScreen>
         ],
       ),
     );
-  }
-
-  Widget _buildComparisonTable(List<CreditCard> userCards) {
-    if (userCards.isEmpty) {
-      return const EmptyState(
-        title: 'NO INTEL TO COMPARE',
-        message: 'Add card integration credentials to verify benefits routing.',
-        icon: Icons.compare_arrows,
-      );
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0C152B),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'FEATURE CROSS-TAB',
-            style: GoogleFonts.spaceGrotesk(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-              fontSize: 11,
-              letterSpacing: 0.5,
-            ),
-          ),
-          const SizedBox(height: 16),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: DataTable(
-              headingRowColor: WidgetStateProperty.all(const Color(0xFF050B18)),
-              columns: [
-                DataColumn(
-                  label: Text('FEATURE', style: GoogleFonts.spaceGrotesk(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 10)),
-                ),
-                ...userCards.take(3).map((card) => DataColumn(
-                  label: Text(
-                    card.cardName.toUpperCase(),
-                    style: GoogleFonts.spaceGrotesk(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 9),
-                  ),
-                )),
-              ],
-              rows: _buildComparisonRows(userCards),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  List<DataRow> _buildComparisonRows(List<CreditCard> userCards) {
-    return [];
   }
 
   IconData _getIconFromString(String iconName) {

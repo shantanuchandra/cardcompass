@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -24,14 +26,39 @@ class DashboardLoadingWrapper extends ConsumerStatefulWidget {
 }
 
 class _DashboardLoadingWrapperState extends ConsumerState<DashboardLoadingWrapper> {
+  // The dashboard load below is bounded by _dashboardLoadTimeout; the fixed
+  // status delays (500+700+500ms) add a small, known amount on top. The
+  // fallback Timer's duration is derived from these instead of being an
+  // independent guess, so the two can't silently drift out of sync if
+  // either changes.
+  static const _dashboardLoadTimeout = Duration(seconds: 8);
+  static const _fixedDelaysBudget = Duration(milliseconds: 500 + 700 + 500);
+  static const _fallbackHeadroom = Duration(seconds: 2);
+  static final _fallbackTimeout = _dashboardLoadTimeout + _fixedDelaysBudget + _fallbackHeadroom;
+
   String _currentStatus = 'Loading your dashboard...';
   bool _dashboardReady = false;
+  bool _showTimeoutFallback = false;
   double _progressValue = 0.1;
+  Timer? _timeoutTimer;
 
   @override
   void initState() {
     super.initState();
     _initializeDashboard();
+    _timeoutTimer = Timer(_fallbackTimeout, () {
+      if (mounted && !_dashboardReady) {
+        setState(() {
+          _showTimeoutFallback = true;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timeoutTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _initializeDashboard() async {
@@ -40,27 +67,33 @@ class _DashboardLoadingWrapperState extends ConsumerState<DashboardLoadingWrappe
       if (authState.user != null) {
         await _updateStatus('Loading your cards...', 0.3);
         await Future.delayed(const Duration(milliseconds: 500));
-        
-        // Load dashboard data
-        await ref.read(dashboardViewModelProvider.notifier).loadDashboardData(authState.user!.id);
-        
+
+        // Load dashboard data — bounded so a hung dependency can't block
+        // navigation indefinitely (the timeout Timer below only toggles the
+        // fallback UI, it doesn't cancel this call on its own).
+        await ref
+            .read(dashboardViewModelProvider.notifier)
+            .loadDashboardData(authState.user!.id)
+            .timeout(_dashboardLoadTimeout);
+
         await _updateStatus('Setting up your experience...', 0.6);
         await Future.delayed(const Duration(milliseconds: 700));
-        
+
         await _updateStatus('Almost ready...', 0.9);
         await Future.delayed(const Duration(milliseconds: 500));
-        
+
         widget.onDashboardReady?.call();
-        
+
         if (mounted) {
           setState(() {
             _dashboardReady = true;
             _progressValue = 1.0;
           });
-          
+
           await Future.delayed(const Duration(milliseconds: 400));
-          
+
           if (mounted) {
+            _timeoutTimer?.cancel();
             Navigator.of(context).pushReplacement(
               MaterialPageRoute(
                 builder: (context) => const HomeScreen(),
@@ -72,8 +105,9 @@ class _DashboardLoadingWrapperState extends ConsumerState<DashboardLoadingWrappe
     } catch (e) {
       await _updateStatus('Loading dashboard...', 0.8);
       await Future.delayed(const Duration(milliseconds: 1000));
-      
+
       if (mounted) {
+        _timeoutTimer?.cancel();
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
             builder: (context) => const HomeScreen(),
@@ -95,7 +129,6 @@ class _DashboardLoadingWrapperState extends ConsumerState<DashboardLoadingWrappe
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF050B18),
       body: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
@@ -149,7 +182,7 @@ class _DashboardLoadingWrapperState extends ConsumerState<DashboardLoadingWrappe
                               bottom: 18,
                               right: 18,
                               child: Container(
-                                padding: const EdgeInsets.all(4),
+                                padding: const EdgeInsets.all(AppSpacing.xs),
                                 decoration: const BoxDecoration(
                                   color: AppTheme.accentColor,
                                   shape: BoxShape.circle,
@@ -167,9 +200,9 @@ class _DashboardLoadingWrapperState extends ConsumerState<DashboardLoadingWrappe
                       .animate()
                       .scale(duration: 1000.ms, curve: Curves.elasticOut)
                       .shimmer(delay: 500.ms, duration: 1500.ms),
-                      
-                      const SizedBox(height: 32),
-                      
+
+                      const SizedBox(height: AppSpacing.xl),
+
                       // App Name
                       Text(
                         AppConfig.appName.toUpperCase(),
@@ -189,9 +222,9 @@ class _DashboardLoadingWrapperState extends ConsumerState<DashboardLoadingWrappe
                       .animate()
                       .slideY(begin: 0.3, duration: 800.ms, curve: Curves.easeOut)
                       .fadeIn(duration: 800.ms),
-                      
+
                       const SizedBox(height: 12),
-                      
+
                       // Tagline
                       Text(
                         'NEXT-GEN CARD INTELLIGENCE',
@@ -247,23 +280,22 @@ class _DashboardLoadingWrapperState extends ConsumerState<DashboardLoadingWrappe
                         ),
                       ),
                       
-                      const SizedBox(height: 24),
-                      
+                      const SizedBox(height: AppSpacing.lg),
+
                       // Status text
                       AnimatedSwitcher(
                         duration: const Duration(milliseconds: 300),
                         child: Text(
                           _currentStatus,
                           key: ValueKey(_currentStatus),
-                          style: GoogleFonts.plusJakartaSans(
+                          style: AppTextStyles.body2.copyWith(
                             color: Colors.white70,
-                            fontSize: 14,
                             fontWeight: FontWeight.w500,
                           ),
                           textAlign: TextAlign.center,
                         ),
                       ),
-                      
+
                       if (_dashboardReady) ...[
                         const SizedBox(height: 12),
                         Text(
@@ -278,6 +310,35 @@ class _DashboardLoadingWrapperState extends ConsumerState<DashboardLoadingWrappe
                         .animate()
                         .scale(duration: 400.ms, curve: Curves.elasticOut)
                         .fadeIn(duration: 300.ms),
+                      ],
+
+                      if (_showTimeoutFallback && !_dashboardReady) ...[
+                        const SizedBox(height: AppSpacing.lg),
+                        Text(
+                          'This is taking longer than expected.',
+                          style: AppTextStyles.caption.copyWith(
+                            color: Colors.white54,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                        TextButton(
+                          onPressed: () {
+                            _timeoutTimer?.cancel();
+                            Navigator.of(context).pushReplacement(
+                              MaterialPageRoute(
+                                builder: (context) => const HomeScreen(),
+                              ),
+                            );
+                          },
+                          child: Text(
+                            'Continue anyway',
+                            style: AppTextStyles.body2.copyWith(
+                              color: AppTheme.primaryColor,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
                       ],
                     ],
                   ),
@@ -299,12 +360,39 @@ class SplashScreen extends ConsumerStatefulWidget {
 }
 
 class _SplashScreenState extends ConsumerState<SplashScreen> {
+  // The auth check below is bounded by _authCheckTimeout; the fixed status
+  // delays (800+600+400+500ms) add a small, known amount on top. The
+  // fallback Timer's duration is derived from these instead of being an
+  // independent guess, so the two can't silently drift out of sync if
+  // either changes.
+  static const _authCheckTimeout = Duration(seconds: 8);
+  static const _fixedDelaysBudget = Duration(milliseconds: 800 + 600 + 400 + 500);
+  static const _fallbackHeadroom = Duration(seconds: 2);
+  static final _fallbackTimeout = _authCheckTimeout + _fixedDelaysBudget + _fallbackHeadroom;
+
   String _currentStatus = 'INITIALIZING SYSTEM...';
-  
+  bool _showTimeoutFallback = false;
+  bool _navigated = false;
+  bool _isAdminDeepLink = false;
+  Timer? _timeoutTimer;
+
   @override
   void initState() {
     super.initState();
     _initializeApp();
+    _timeoutTimer = Timer(_fallbackTimeout, () {
+      if (mounted && !_navigated && !_isAdminDeepLink) {
+        setState(() {
+          _showTimeoutFallback = true;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timeoutTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _initializeApp() async {
@@ -312,6 +400,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
     final initialRoute = WidgetsBinding.instance.platformDispatcher.defaultRouteName.toLowerCase();
     if (initialRoute.contains('/admin/')) {
       print('🚪 SplashScreen: Admin initial route detected ($initialRoute). Skipping home redirect.');
+      _isAdminDeepLink = true;
       return;
     }
 
@@ -324,11 +413,11 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
     if (mounted) {
       await _updateStatus('AUTHENTICATING IDENTITY...');
 
-      // Wait for auth check with a hard 8-second safety timeout
+      // Wait for auth check with a hard safety timeout
       try {
         await ref.read(authStateProvider.notifier).refreshAuthState()
-            .timeout(const Duration(seconds: 8), onTimeout: () {
-          print('⚠️ SplashScreen: Auth check timed out after 8s, proceeding to login');
+            .timeout(_authCheckTimeout, onTimeout: () {
+          print('⚠️ SplashScreen: Auth check timed out after ${_authCheckTimeout.inSeconds}s, proceeding to login');
         });
       } catch (e) {
         print('⚠️ SplashScreen: Auth error: $e, proceeding to login');
@@ -342,7 +431,9 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
         if (authState.isAuthenticated) {
           await _updateStatus('LOADING PORTFOLIO...');
           await Future.delayed(const Duration(milliseconds: 500));
-          
+
+          _navigated = true;
+          _timeoutTimer?.cancel();
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(
               builder: (context) => DashboardLoadingWrapper(
@@ -356,7 +447,9 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
           // Any non-authenticated state (unauthenticated, error, loading) → go to login
           await _updateStatus('SIGN IN REQUIRED');
           await Future.delayed(const Duration(milliseconds: 300));
-          
+
+          _navigated = true;
+          _timeoutTimer?.cancel();
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(
               builder: (context) => const LoginScreen(),
@@ -365,6 +458,17 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
         }
       }
     }
+  }
+
+  void _continueToLogin() {
+    if (_navigated) return;
+    _navigated = true;
+    _timeoutTimer?.cancel();
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (context) => const LoginScreen(),
+      ),
+    );
   }
 
   Future<void> _updateStatus(String status) async {
@@ -378,7 +482,6 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF050B18),
       body: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
@@ -433,7 +536,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                               bottom: 18,
                               right: 18,
                               child: Container(
-                                padding: const EdgeInsets.all(4),
+                                padding: const EdgeInsets.all(AppSpacing.xs),
                                 decoration: const BoxDecoration(
                                   color: AppTheme.accentColor,
                                   shape: BoxShape.circle,
@@ -451,9 +554,9 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                       .animate()
                       .scale(duration: 1000.ms, curve: Curves.elasticOut)
                       .shimmer(delay: 500.ms, duration: 1500.ms),
-                      
-                      const SizedBox(height: 32),
-                      
+
+                      const SizedBox(height: AppSpacing.xl),
+
                       // App Name
                       Text(
                         AppConfig.appName.toUpperCase(),
@@ -490,14 +593,14 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                       .fadeIn(delay: 700.ms, duration: 800.ms)
                       .slideY(begin: 0.3, end: 0),
                       
-                      const SizedBox(height: 24),
-                      
+                      const SizedBox(height: AppSpacing.lg),
+
                       // Cyber Chips
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           _buildFeatureChip(context, 'INTELLIGENT TRACK', Icons.analytics),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: AppSpacing.sm),
                           _buildFeatureChip(context, 'NEON OPTIMIZE', Icons.trending_up),
                         ],
                       )
@@ -562,13 +665,35 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                     )
                     .animate()
                     .fadeIn(delay: 1300.ms, duration: 600.ms),
+
+                    if (_showTimeoutFallback && !_navigated) ...[
+                      const SizedBox(height: AppSpacing.md),
+                      Text(
+                        'This is taking longer than expected.',
+                        style: AppTextStyles.caption.copyWith(
+                          color: Colors.white54,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      TextButton(
+                        onPressed: _continueToLogin,
+                        child: Text(
+                          'Continue to Login',
+                          style: AppTextStyles.body2.copyWith(
+                            color: AppTheme.primaryColor,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
-              
+
               // Bottom branding
               Padding(
-                padding: const EdgeInsets.only(bottom: 24),
+                padding: const EdgeInsets.only(bottom: AppSpacing.lg),
                 child: Text(
                   'POWERED BY AI • CARDCOMPASS CORE v2026',
                   style: GoogleFonts.spaceGrotesk(
@@ -592,7 +717,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
         color: AppTheme.primaryColor.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(AppBorderRadius.lg),
         border: Border.all(
           color: AppTheme.primaryColor.withValues(alpha: 0.2),
           width: 1,

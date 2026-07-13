@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:cardcompass/features/cards/providers/cards_provider.dart';
 import 'package:cardcompass/features/transactions/providers/transactions_provider.dart';
 import 'package:cardcompass/shared/widgets/state_widgets.dart';
+import 'package:cardcompass/shared/widgets/app_scaffold.dart';
 import 'package:cardcompass/shared/models/transaction.dart';
 import 'package:cardcompass/shared/models/credit_card.dart';
 import 'package:cardcompass/core/theme.dart';
@@ -36,34 +38,24 @@ class _TransactionAdvisorScreenState extends ConsumerState<TransactionAdvisorScr
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF050B18),
-      appBar: AppBar(
-        title: Text(
-          'TRANSACTION ADVISOR',
-          style: GoogleFonts.spaceGrotesk(
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1.5,
-            fontSize: 16,
-          ),
+    return CardCompassScaffold(
+      title: 'Transaction Advisor',
+      bottom: TabBar(
+        controller: _tabController,
+        labelColor: AppTheme.primaryColor,
+        unselectedLabelColor: Colors.white38,
+        indicatorColor: AppTheme.primaryColor,
+        indicatorSize: TabBarIndicatorSize.tab,
+        labelStyle: GoogleFonts.spaceGrotesk(
+          fontWeight: FontWeight.bold,
+          fontSize: 10,
+          letterSpacing: 0.5,
         ),
-        bottom: TabBar(
-          controller: _tabController,
-          labelColor: AppTheme.primaryColor,
-          unselectedLabelColor: Colors.white38,
-          indicatorColor: AppTheme.primaryColor,
-          indicatorSize: TabBarIndicatorSize.tab,
-          labelStyle: GoogleFonts.spaceGrotesk(
-            fontWeight: FontWeight.bold,
-            fontSize: 10,
-            letterSpacing: 0.5,
-          ),
-          tabs: const [
-            Tab(icon: Icon(Icons.lightbulb_outline, size: 18), text: 'BEST CARD'),
-            Tab(icon: Icon(Icons.analytics_outlined, size: 18), text: 'INSIGHTS'),
-            Tab(icon: Icon(Icons.trending_up, size: 18), text: 'OPTIMIZE'),
-          ],
-        ),
+        tabs: const [
+          Tab(icon: Icon(Icons.lightbulb_outline, size: 18), text: 'BEST CARD'),
+          Tab(icon: Icon(Icons.analytics_outlined, size: 18), text: 'INSIGHTS'),
+          Tab(icon: Icon(Icons.trending_up, size: 18), text: 'OPTIMIZE'),
+        ],
       ),
       body: TabBarView(
         controller: _tabController,
@@ -78,9 +70,9 @@ class _TransactionAdvisorScreenState extends ConsumerState<TransactionAdvisorScr
 
   Widget _buildBestCardTab() {
     final cards = ref.watch(cardsProvider);
-    
+
     return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: AppSpacing.lg),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -89,7 +81,7 @@ class _TransactionAdvisorScreenState extends ConsumerState<TransactionAdvisorScr
             padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
               color: const Color(0xFF0C152B),
-              borderRadius: BorderRadius.circular(20),
+              borderRadius: BorderRadius.circular(AppBorderRadius.xl),
               border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
             ),
             child: Column(
@@ -105,10 +97,10 @@ class _TransactionAdvisorScreenState extends ConsumerState<TransactionAdvisorScr
                   ),
                 ),
                 const SizedBox(height: 18),
-                
+
                 // Amount Input
                 TextField(
-                  style: GoogleFonts.plusJakartaSans(color: Colors.white),
+                  style: AppTextStyles.body1.copyWith(color: Colors.white),
                   decoration: const InputDecoration(
                     labelText: 'Transaction Amount (₹)',
                     prefixIcon: Icon(Icons.currency_rupee, color: AppTheme.primaryColor),
@@ -120,9 +112,9 @@ class _TransactionAdvisorScreenState extends ConsumerState<TransactionAdvisorScr
                     });
                   },
                 ),
-                
-                const SizedBox(height: 16),
-                
+
+                const SizedBox(height: AppSpacing.md),
+
                 // Category Dropdown
                 DropdownButtonFormField<String>(
                   dropdownColor: const Color(0xFF0C152B),
@@ -155,17 +147,17 @@ class _TransactionAdvisorScreenState extends ConsumerState<TransactionAdvisorScr
               ],
             ),
           ),
-          
-          const SizedBox(height: 24),
-          
+
+          const SizedBox(height: AppSpacing.lg),
+
           // Recommendations
           if (_transactionAmount > 0 && _selectedCategory != 'All')
             _buildRecommendations(cards),
-          
+
           // Quick Categories
           _buildQuickCategories(),
         ],
-      ),
+      ).animate().fadeIn(duration: 250.ms, curve: Curves.easeOut).slideY(begin: 0.05, end: 0, duration: 250.ms, curve: Curves.easeOut),
     );
   }
 
@@ -192,9 +184,9 @@ class _TransactionAdvisorScreenState extends ConsumerState<TransactionAdvisorScr
             letterSpacing: 0.5,
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: AppSpacing.sm),
         ...recommendations.map((rec) => _buildRecommendationCard(rec)),
-        const SizedBox(height: 20),
+        const SizedBox(height: AppSpacing.lg),
       ],
     );
   }
@@ -202,14 +194,14 @@ class _TransactionAdvisorScreenState extends ConsumerState<TransactionAdvisorScr
   Widget _buildRecommendationCard(CardRecommendation recommendation) {
     final rankColor = _getRankColor(recommendation.rank);
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+      padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
         color: const Color(0xFF0C152B),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(AppBorderRadius.lg),
         border: Border.all(
-          color: recommendation.rank == 1 
-              ? AppTheme.primaryColor.withValues(alpha: 0.25) 
+          color: recommendation.rank == 1
+              ? AppTheme.primaryColor.withValues(alpha: 0.25)
               : Colors.white.withValues(alpha: 0.06),
           width: 1.2,
         ),
@@ -220,10 +212,10 @@ class _TransactionAdvisorScreenState extends ConsumerState<TransactionAdvisorScr
           Row(
             children: [
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
                 decoration: BoxDecoration(
                   color: rankColor.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(AppBorderRadius.md),
                   border: Border.all(color: rankColor.withValues(alpha: 0.25)),
                 ),
                 child: Text(
@@ -235,7 +227,7 @@ class _TransactionAdvisorScreenState extends ConsumerState<TransactionAdvisorScr
                   ),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: AppSpacing.sm),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -262,13 +254,13 @@ class _TransactionAdvisorScreenState extends ConsumerState<TransactionAdvisorScr
           ),
           
           const SizedBox(height: 14),
-          
+
           // Rewards Calculation
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: const Color(0xFF050B18),
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(AppBorderRadius.lg),
               border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
             ),
             child: Column(
@@ -338,7 +330,7 @@ class _TransactionAdvisorScreenState extends ConsumerState<TransactionAdvisorScr
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 24),
+        const SizedBox(height: AppSpacing.lg),
         Text(
           'QUICK CATEGORY GRID',
           style: GoogleFonts.spaceGrotesk(
@@ -348,15 +340,15 @@ class _TransactionAdvisorScreenState extends ConsumerState<TransactionAdvisorScr
             letterSpacing: 0.5,
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: AppSpacing.sm),
         GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 3,
             childAspectRatio: 1.1,
-            crossAxisSpacing: 8,
-            mainAxisSpacing: 8,
+            crossAxisSpacing: AppSpacing.sm,
+            mainAxisSpacing: AppSpacing.sm,
           ),
           itemCount: categories.length,
           itemBuilder: (context, index) {
@@ -407,9 +399,9 @@ class _TransactionAdvisorScreenState extends ConsumerState<TransactionAdvisorScr
 
   Widget _buildInsightsTab() {
     final transactions = ref.watch(transactionsProvider);
-    
+
     return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: AppSpacing.lg),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -422,20 +414,20 @@ class _TransactionAdvisorScreenState extends ConsumerState<TransactionAdvisorScr
               letterSpacing: 1.0,
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.md),
           _buildSpendingByCategory(transactions),
           const SizedBox(height: 20),
           _buildMonthlyTrends(),
           const SizedBox(height: 20),
           _buildRewardOptimization(),
         ],
-      ),
+      ).animate().fadeIn(duration: 250.ms, curve: Curves.easeOut).slideY(begin: 0.05, end: 0, duration: 250.ms, curve: Curves.easeOut),
     );
   }
 
   Widget _buildOptimizeTab() {
     return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: AppSpacing.lg),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -474,7 +466,7 @@ class _TransactionAdvisorScreenState extends ConsumerState<TransactionAdvisorScr
             savings: '₹300/month',
           ),
         ],
-      ),
+      ).animate().fadeIn(duration: 250.ms, curve: Curves.easeOut).slideY(begin: 0.05, end: 0, duration: 250.ms, curve: Curves.easeOut),
     );
   }
 
@@ -489,7 +481,7 @@ class _TransactionAdvisorScreenState extends ConsumerState<TransactionAdvisorScr
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: const Color(0xFF0C152B),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(AppBorderRadius.xl),
         border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
       ),
       child: Column(
@@ -504,7 +496,7 @@ class _TransactionAdvisorScreenState extends ConsumerState<TransactionAdvisorScr
               letterSpacing: 0.5,
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.md),
           if (transactions.isEmpty)
             Center(
               child: Text(
@@ -549,7 +541,7 @@ class _TransactionAdvisorScreenState extends ConsumerState<TransactionAdvisorScr
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: const Color(0xFF0C152B),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(AppBorderRadius.xl),
         border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
       ),
       child: Column(
@@ -564,12 +556,12 @@ class _TransactionAdvisorScreenState extends ConsumerState<TransactionAdvisorScr
               letterSpacing: 0.5,
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.md),
           Container(
             height: 140,
             decoration: BoxDecoration(
               color: const Color(0xFF050B18),
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(AppBorderRadius.lg),
               border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
             ),
             child: Center(
@@ -589,7 +581,7 @@ class _TransactionAdvisorScreenState extends ConsumerState<TransactionAdvisorScr
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: const Color(0xFF0C152B),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(AppBorderRadius.xl),
         border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
       ),
       child: Column(
@@ -626,8 +618,8 @@ class _TransactionAdvisorScreenState extends ConsumerState<TransactionAdvisorScr
     required String savings,
   }) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+      padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
         color: const Color(0xFF0C152B),
         borderRadius: BorderRadius.circular(16),

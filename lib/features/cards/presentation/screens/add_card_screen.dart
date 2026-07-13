@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../core/theme.dart';
 import '../../../../core/providers/service_providers.dart';
 import '../../../../shared/models/credit_card.dart';
+import '../../../../shared/widgets/app_scaffold.dart';
 import '../../../auth/providers/auth_provider.dart';
 import '../../providers/cards_provider.dart';
 
@@ -26,6 +28,7 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
   DateTime? _expiryDate;
   List<Map<String, dynamic>> _identifiedCards = [];
   bool _isLoadingIdentifiedCards = false;
+  bool _isSaving = false;
 
   @override
   void initState() {
@@ -73,35 +76,34 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
   Widget build(BuildContext context) {
     final networkColor = _getNetworkColor(_selectedNetwork);
     
-    return Scaffold(
-      backgroundColor: const Color(0xFF050B18),
-      appBar: AppBar(
-        title: Text(
-          'ADD CREDIT CARD',
-          style: GoogleFonts.spaceGrotesk(
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1.5,
-            fontSize: 16,
-          ),
+    return CardCompassScaffold(
+      title: 'Add Credit Card',
+      actions: [
+        TextButton(
+          onPressed: _isSaving ? null : _saveCard,
+          child: _isSaving
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation(AppTheme.primaryColor),
+                  ),
+                )
+              : Text(
+                  'SAVE',
+                  style: GoogleFonts.spaceGrotesk(
+                    color: AppTheme.primaryColor,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1.0,
+                  ),
+                ),
         ),
-        actions: [
-          TextButton(
-            onPressed: _saveCard,
-            child: Text(
-              'SAVE',
-              style: GoogleFonts.spaceGrotesk(
-                color: AppTheme.primaryColor,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 1.0,
-              ),
-            ),
-          ),
-        ],
-      ),
+      ],
       body: Form(
         key: _formKey,
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.lg),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -109,7 +111,7 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
               Container(
                 height: 200,
                 width: double.infinity,
-                margin: const EdgeInsets.only(bottom: 32),
+                margin: const EdgeInsets.only(bottom: AppSpacing.xl),
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     colors: [
@@ -119,7 +121,7 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                   ),
-                  borderRadius: BorderRadius.circular(20),
+                  borderRadius: BorderRadius.circular(AppBorderRadius.xl),
                   border: Border.all(
                     color: Colors.white.withValues(alpha: 0.15),
                     width: 1.5,
@@ -131,7 +133,7 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
                     // Holographic diagonal sheen overlay
                     Positioned.fill(
                       child: ClipRRect(
-                        borderRadius: BorderRadius.circular(20),
+                        borderRadius: BorderRadius.circular(AppBorderRadius.xl),
                         child: Container(
                           decoration: BoxDecoration(
                             gradient: LinearGradient(
@@ -155,7 +157,7 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
                     
                     // Card Details Overlay
                     Padding(
-                      padding: const EdgeInsets.all(24),
+                      padding: const EdgeInsets.all(AppSpacing.lg),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -253,7 +255,7 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
                 'Card Details',
                 style: AppTextStyles.heading3,
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: AppSpacing.md),
 
               // Quick Add Suggestions (for identified cards)
               _buildQuickAddSuggestions(),
@@ -263,7 +265,6 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
                 decoration: const InputDecoration(
                   labelText: 'Card Name',
                   hintText: 'e.g., HDFC Regalia Credit Card',
-                  border: OutlineInputBorder(),
                 ),
                 validator: (value) {
                   if (value == null || value.isEmpty) {
@@ -273,14 +274,13 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
                 },
                 onChanged: (_) => setState(() {}),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: AppSpacing.md),
 
               TextFormField(
                 controller: _bankNameController,
                 decoration: const InputDecoration(
                   labelText: 'Bank Name',
                   hintText: 'e.g., HDFC Bank',
-                  border: OutlineInputBorder(),
                 ),
                 validator: (value) {
                   if (value == null || value.isEmpty) {
@@ -290,14 +290,13 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
                 },
                 onChanged: (_) => setState(() {}),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: AppSpacing.md),
 
               TextFormField(
                 controller: _lastFourDigitsController,
                 decoration: const InputDecoration(
                   labelText: 'Last 4 Digits',
                   hintText: '1234',
-                  border: OutlineInputBorder(),
                 ),
                 keyboardType: TextInputType.number,
                 maxLength: 4,
@@ -312,14 +311,13 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
                 },
                 onChanged: (_) => setState(() {}),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: AppSpacing.md),
 
               DropdownButtonFormField<CardNetwork>(
                 initialValue: _selectedNetwork,
                 dropdownColor: const Color(0xFF0C152B),
                 decoration: const InputDecoration(
                   labelText: 'Card Network',
-                  border: OutlineInputBorder(),
                 ),
                 items: CardNetwork.values.map((network) {
                   return DropdownMenuItem(
@@ -333,14 +331,13 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
                   });
                 },
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: AppSpacing.md),
 
               TextFormField(
                 controller: _creditLimitController,
                 decoration: const InputDecoration(
                   labelText: 'Credit Limit (₹)',
                   hintText: '500000',
-                  border: OutlineInputBorder(),
                 ),
                 keyboardType: TextInputType.number,
                 validator: (value) {
@@ -354,30 +351,29 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
                   return null;
                 },
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: AppSpacing.md),
 
               InkWell(
                 onTap: _selectExpiryDate,
                 child: InputDecorator(
                   decoration: const InputDecoration(
                     labelText: 'Expiry Date',
-                    border: OutlineInputBorder(),
                   ),
                   child: Text(
-                    _expiryDate != null 
+                    _expiryDate != null
                       ? '${_expiryDate!.month.toString().padLeft(2, '0')}/${_expiryDate!.year}'
                       : 'Select expiry date',
-                    style: TextStyle(                      color: _expiryDate != null 
+                    style: TextStyle(                      color: _expiryDate != null
                         ? Theme.of(context).colorScheme.onSurface
                         : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
                     ),
                   ),
                 ),
               ),
-              
-              const SizedBox(height: 32),
+
+              const SizedBox(height: AppSpacing.xl),
             ],
-          ),
+          ).animate().fadeIn(duration: 250.ms).slideY(begin: 0.05, end: 0),
         ),
       ),
     );
@@ -428,6 +424,10 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
         return;
       }
 
+      setState(() {
+        _isSaving = true;
+      });
+
       try {
         // In a real app, this would involve selecting from existing cards in the catalog
         // For now, we'll need to implement proper card addition through the repository
@@ -436,9 +436,11 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
           cardId: 'temp_card_id', // This should come from card catalog selection
           lastFourDigits: _lastFourDigitsController.text,
         );
-        
+
+        if (!mounted) return;
+
         Navigator.of(context).pop();
-        
+
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Card added successfully!'),
@@ -446,6 +448,10 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
           ),
         );
       } catch (e) {
+        if (!mounted) return;
+        setState(() {
+          _isSaving = false;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error adding card: $e'),
@@ -465,7 +471,7 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
   Widget _buildQuickAddSuggestions() {
     if (_isLoadingIdentifiedCards) {
       return Container(
-        margin: const EdgeInsets.only(bottom: 24),
+        margin: const EdgeInsets.only(bottom: AppSpacing.lg),
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
           color: const Color(0xFF0C152B),
@@ -477,7 +483,7 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
             Row(
               children: [
                 const Icon(Icons.bolt, color: AppTheme.primaryColor, size: 20),
-                const SizedBox(width: 8),
+                const SizedBox(width: AppSpacing.sm),
                 Text(
                   'DETECTING CREDENTIALS...',
                   style: GoogleFonts.spaceGrotesk(
@@ -489,7 +495,7 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
                 ),
               ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: AppSpacing.md),
             const CircularProgressIndicator(
               valueColor: AlwaysStoppedAnimation(AppTheme.primaryColor),
             ),
@@ -503,7 +509,7 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
     }
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 24),
+      margin: const EdgeInsets.only(bottom: AppSpacing.lg),
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: const Color(0xFF0C152B),
@@ -517,7 +523,7 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
           Row(
             children: [
               const Icon(Icons.bolt, color: AppTheme.primaryColor, size: 20),
-              const SizedBox(width: 8),
+              const SizedBox(width: AppSpacing.sm),
               Text(
                 'AUTO-DETECTED PORTFOLIO',
                 style: GoogleFonts.spaceGrotesk(

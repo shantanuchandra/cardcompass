@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:cardcompass/shared/widgets/state_widgets.dart';
+import 'package:cardcompass/shared/widgets/app_scaffold.dart';
 import 'package:cardcompass/features/auth/providers/auth_provider.dart';
 import 'package:cardcompass/core/providers/service_providers.dart';
 import 'package:cardcompass/core/services/recommendation_service.dart';
@@ -67,18 +68,8 @@ class _RecommendationsScreenState extends ConsumerState<RecommendationsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF050B18),
-      appBar: AppBar(
-        title: Text(
-          'RECOMMENDATIONS',
-          style: GoogleFonts.spaceGrotesk(
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1.5,
-            fontSize: 18,
-          ),
-        ),
-      ),
+    return CardCompassScaffold(
+      title: 'Recommendations',
       body: RefreshIndicator(
         onRefresh: _loadRecommendations,
         color: AppTheme.primaryColor,
@@ -99,7 +90,7 @@ class _RecommendationsScreenState extends ConsumerState<RecommendationsScreen> {
 
     if (_error != null) {
       return ListView(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
         children: [
           const SizedBox(height: 80),
           EmptyState(
@@ -113,7 +104,7 @@ class _RecommendationsScreenState extends ConsumerState<RecommendationsScreen> {
 
     if (_optimizations.isEmpty && _rewardOptimizations.isEmpty) {
       return ListView(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
         children: [
           const SizedBox(height: 80),
           EmptyState(
@@ -126,46 +117,44 @@ class _RecommendationsScreenState extends ConsumerState<RecommendationsScreen> {
     }
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 80),
+      padding: const EdgeInsets.fromLTRB(AppSpacing.md, 20, AppSpacing.md, 80),
       children: [
         if (_rewardOptimizations.isNotEmpty) ...[
           Text(
             'REWARD OPPORTUNITIES',
-            style: GoogleFonts.spaceGrotesk(
+            style: AppTextStyles.body2.copyWith(
               color: Colors.white,
               fontWeight: FontWeight.bold,
-              fontSize: 14,
               letterSpacing: 1.0,
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: AppSpacing.sm + 4),
           ..._rewardOptimizations.map((r) => _buildRewardCard(context, r)),
-          const SizedBox(height: 24),
+          const SizedBox(height: AppSpacing.lg),
         ],
         if (_optimizations.isNotEmpty) ...[
           Text(
             'SPENDING OPTIMIZATIONS',
-            style: GoogleFonts.spaceGrotesk(
+            style: AppTextStyles.body2.copyWith(
               color: Colors.white,
               fontWeight: FontWeight.bold,
-              fontSize: 14,
               letterSpacing: 1.0,
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: AppSpacing.sm + 4),
           ..._optimizations.map((o) => _buildOptimizationCard(context, o)),
         ],
       ],
-    );
+    ).animate().fadeIn(duration: 250.ms).slideY(begin: 0.05, end: 0);
   }
 
   Widget _buildRewardCard(BuildContext context, RewardOptimization r) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.only(bottom: AppSpacing.sm + 4),
+      padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
         color: const Color(0xFF0C152B),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(AppBorderRadius.xl - 4),
         border: Border.all(
           color: AppTheme.accentColor.withValues(alpha: 0.2),
           width: 1,
@@ -194,16 +183,15 @@ class _RecommendationsScreenState extends ConsumerState<RecommendationsScreen> {
               children: [
                 Text(
                   r.title,
-                  style: GoogleFonts.plusJakartaSans(
+                  style: AppTextStyles.body2.copyWith(
                     color: Colors.white,
                     fontWeight: FontWeight.w600,
-                    fontSize: 14,
                   ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: AppSpacing.xs),
                 Text(
                   r.description,
-                  style: GoogleFonts.plusJakartaSans(
+                  style: AppTextStyles.caption.copyWith(
                     color: Colors.white60,
                     fontSize: 11,
                   ),
@@ -211,10 +199,10 @@ class _RecommendationsScreenState extends ConsumerState<RecommendationsScreen> {
               ],
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: AppSpacing.sm + 4),
           Text(
             '+₹${r.potentialReward.toStringAsFixed(0)}',
-            style: GoogleFonts.spaceGrotesk(
+            style: AppTextStyles.heading3.copyWith(
               color: AppTheme.successColor,
               fontWeight: FontWeight.bold,
               fontSize: 15,
@@ -227,11 +215,11 @@ class _RecommendationsScreenState extends ConsumerState<RecommendationsScreen> {
 
   Widget _buildOptimizationCard(BuildContext context, SpendingOptimization o) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.only(bottom: AppSpacing.sm + 4),
+      padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
         color: const Color(0xFF0C152B),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(AppBorderRadius.xl - 4),
         border: Border.all(
           color: AppTheme.primaryColor.withValues(alpha: 0.2),
           width: 1,
@@ -260,17 +248,17 @@ class _RecommendationsScreenState extends ConsumerState<RecommendationsScreen> {
               children: [
                 Text(
                   '${o.category.toUpperCase()} OPTIMIZATION',
-                  style: GoogleFonts.spaceGrotesk(
+                  style: AppTextStyles.caption.copyWith(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
                     fontSize: 12,
                     letterSpacing: 0.5,
                   ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: AppSpacing.xs),
                 Text(
                   o.suggestion,
-                  style: GoogleFonts.plusJakartaSans(
+                  style: AppTextStyles.caption.copyWith(
                     color: Colors.white60,
                     fontSize: 11,
                   ),
@@ -278,10 +266,10 @@ class _RecommendationsScreenState extends ConsumerState<RecommendationsScreen> {
               ],
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: AppSpacing.sm + 4),
           Text(
             '+₹${o.potentialSavings.toStringAsFixed(0)}',
-            style: GoogleFonts.spaceGrotesk(
+            style: AppTextStyles.heading3.copyWith(
               color: AppTheme.successColor,
               fontWeight: FontWeight.bold,
               fontSize: 15,

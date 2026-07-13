@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cardcompass/shared/widgets/credit_card_widget.dart';
 import 'package:cardcompass/features/cards/providers/cards_provider.dart';
 import 'package:cardcompass/shared/widgets/state_widgets.dart';
+import 'package:cardcompass/shared/widgets/app_scaffold.dart';
 import 'package:cardcompass/config/routes.dart';
 import 'package:cardcompass/core/services/card_identification_service.dart';
 import 'package:cardcompass/features/auth/providers/auth_provider.dart';
@@ -60,30 +62,20 @@ class _CardsListScreenState extends ConsumerState<CardsListScreen> {
   Widget build(BuildContext context) {
     final cards = ref.watch(cardsProvider);
 
-    return Scaffold(
-      backgroundColor: const Color(0xFF050B18),
-      appBar: AppBar(
-        title: Text(
-          'MY PORTFOLIO',
-          style: GoogleFonts.spaceGrotesk(
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1.5,
-            fontSize: 18,
-          ),
+    return CardCompassScaffold(
+      title: 'My Portfolio',
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.add_circle_outline, color: AppTheme.primaryColor),
+          onPressed: () {
+            Navigator.pushNamed(context, AppRoutes.addCard);
+          },
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add_circle_outline, color: AppTheme.primaryColor),
-            onPressed: () {
-              Navigator.pushNamed(context, AppRoutes.addCard);
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.search, color: Colors.white70),
-            onPressed: _showSearchDialog,
-          ),
-        ],
-      ),
+        IconButton(
+          icon: const Icon(Icons.search, color: Colors.white70),
+          onPressed: _showSearchDialog,
+        ),
+      ],
       body: Column(
         children: [
           // Filters
@@ -128,38 +120,53 @@ class _CardsListScreenState extends ConsumerState<CardsListScreen> {
                         );
                       }
 
-                      return ListView.builder(
-                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
-                        itemCount: filteredCards.length,
-                        itemBuilder: (context, index) {
-                          final card = filteredCards[index];
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 20),
-                            child: GestureDetector(
-                              onTap: () {
-                                Navigator.pushNamed(
-                                  context,
-                                  AppRoutes.cardDetails,
-                                  arguments: card.id,
-                                );
-                              },
-                              child: Hero(
-                                tag: 'card_${card.id}',
-                                child: CreditCardWidget(
-                                  cardName: card.cardName,
-                                  bankName: card.bankName,
-                                  lastFourDigits: card.cardNumber ?? '****',
-                                  expiryDate: card.expiryDate != null 
-                                      ? '${card.expiryDate!.month.toString().padLeft(2, '0')}/${card.expiryDate!.year.toString().substring(2)}'
-                                      : 'XX/XX',
-                                  cardType: card.network.name.toUpperCase(),
-                                  gradientColors: _getCardGradient(card.network.name),
+                      return RefreshIndicator(
+                        onRefresh: _loadUserCards,
+                        color: AppTheme.primaryColor,
+                        backgroundColor: const Color(0xFF0C152B),
+                        child: ListView.builder(
+                          padding: const EdgeInsets.fromLTRB(
+                            AppSpacing.md,
+                            AppSpacing.md,
+                            AppSpacing.md,
+                            80,
+                          ),
+                          itemCount: filteredCards.length,
+                          itemBuilder: (context, index) {
+                            final card = filteredCards[index];
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: AppSpacing.lg),
+                              child: GestureDetector(
+                                onTap: () {
+                                  Navigator.pushNamed(
+                                    context,
+                                    AppRoutes.cardDetails,
+                                    arguments: card.id,
+                                  );
+                                },
+                                child: Hero(
+                                  tag: 'card_${card.id}',
+                                  child: CreditCardWidget(
+                                    cardName: card.cardName,
+                                    bankName: card.bankName,
+                                    lastFourDigits: card.cardNumber ?? '****',
+                                    expiryDate: card.expiryDate != null
+                                        ? '${card.expiryDate!.month.toString().padLeft(2, '0')}/${card.expiryDate!.year.toString().substring(2)}'
+                                        : 'XX/XX',
+                                    cardType: card.network.name.toUpperCase(),
+                                    gradientColors: _getCardGradient(card.network.name),
+                                  ),
                                 ),
                               ),
-                            ),
+                            );
+                          },
+                        ),
+                      ).animate().fadeIn(duration: 250.ms, curve: Curves.easeOut).slideY(
+                            begin: 0.05,
+                            end: 0,
+                            duration: 250.ms,
+                            curve: Curves.easeOut,
                           );
-                        },
-                      );
                     },
                   ),
           ),
@@ -189,7 +196,7 @@ class _CardsListScreenState extends ConsumerState<CardsListScreen> {
     final types = {'All', ...cards.map((c) => c.type.name.toUpperCase()).toSet()};
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
       decoration: BoxDecoration(
         color: const Color(0xFF0C152B).withValues(alpha: 0.5),
         border: const Border(bottom: BorderSide(color: Color(0xFF1E293B), width: 1)),
@@ -200,20 +207,20 @@ class _CardsListScreenState extends ConsumerState<CardsListScreen> {
           if (_searchQuery.isNotEmpty)
             Container(
               margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: 6),
               decoration: BoxDecoration(
                 color: AppTheme.primaryColor.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(AppBorderRadius.md),
                 border: Border.all(color: AppTheme.primaryColor.withValues(alpha: 0.2)),
               ),
               child: Row(
                 children: [
                   const Icon(Icons.search, size: 14, color: AppTheme.primaryColor),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: AppSpacing.sm),
                   Expanded(
                     child: Text(
                       'Search: $_searchQuery',
-                      style: GoogleFonts.plusJakartaSans(color: Colors.white70, fontSize: 12),
+                      style: AppTextStyles.caption.copyWith(color: Colors.white70),
                     ),
                   ),
                   GestureDetector(
@@ -256,7 +263,7 @@ class _CardsListScreenState extends ConsumerState<CardsListScreen> {
                       ),
                       
                       const SizedBox(width: 12),
-                      
+
                       // Type Dropdown
                       _buildDropdownWrapper(
                         icon: Icons.credit_card,
@@ -285,7 +292,7 @@ class _CardsListScreenState extends ConsumerState<CardsListScreen> {
               ),
               
               if (_selectedBankFilter != 'All' || _selectedTypeFilter != 'All') ...[
-                const SizedBox(width: 8),
+                const SizedBox(width: AppSpacing.sm),
                 TextButton(
                   onPressed: () {
                     setState(() {
@@ -337,7 +344,7 @@ class _CardsListScreenState extends ConsumerState<CardsListScreen> {
         return AlertDialog(
           backgroundColor: const Color(0xFF0C152B),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(AppBorderRadius.xl),
             side: const BorderSide(color: Color(0xFF1E293B)),
           ),
           title: Text(
@@ -379,7 +386,7 @@ class _CardsListScreenState extends ConsumerState<CardsListScreen> {
 
   Widget _buildCardSuggestions() {
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      margin: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, 0),
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: const Color(0xFF0C152B),
@@ -393,7 +400,7 @@ class _CardsListScreenState extends ConsumerState<CardsListScreen> {
           Row(
             children: [
               const Icon(Icons.bolt, color: AppTheme.primaryColor, size: 20),
-              const SizedBox(width: 8),
+              const SizedBox(width: AppSpacing.sm),
               Text(
                 'AUTO-DETECTED PORTFOLIO',
                 style: GoogleFonts.spaceGrotesk(
@@ -408,16 +415,12 @@ class _CardsListScreenState extends ConsumerState<CardsListScreen> {
           const SizedBox(height: 10),
           Text(
             'We identified credit cards from your bank statements. Tap to add them to your tracking center:',
-            style: GoogleFonts.plusJakartaSans(
-              color: Colors.white70,
-              fontSize: 12,
-              height: 1.4,
-            ),
+            style: AppTextStyles.caption.copyWith(color: Colors.white70, height: 1.4),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: AppSpacing.sm),
           Wrap(
-            spacing: 8,
-            runSpacing: 8,
+            spacing: AppSpacing.sm,
+            runSpacing: AppSpacing.sm,
             children: _suggestedCardNames.map((cardName) => _buildSuggestionChip(cardName)).toList(),
           ),
         ],
@@ -448,7 +451,7 @@ class _CardsListScreenState extends ConsumerState<CardsListScreen> {
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF0C152B),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(AppBorderRadius.xl),
           side: const BorderSide(color: Color(0xFF1E293B)),
         ),
         title: Text(

@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cardcompass/features/auth/providers/auth_provider.dart';
 import 'package:cardcompass/core/providers/service_providers.dart';
 import 'package:cardcompass/core/theme.dart';
+import 'package:cardcompass/shared/widgets/app_scaffold.dart';
+import 'package:cardcompass/shared/widgets/state_widgets.dart';
 
 /// Profile screen for user information and settings in cyber-fintech style
 class ProfileScreen extends ConsumerStatefulWidget {
@@ -68,28 +71,18 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   @override
   Widget build(BuildContext context) {
     final authState = ref.watch(authStateProvider);
-    return Scaffold(
-      backgroundColor: const Color(0xFF050B18),
-      appBar: AppBar(
-        title: Text(
-          'USER PROFILE',
-          style: GoogleFonts.spaceGrotesk(
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1.5,
-            fontSize: 16,
-          ),
+    return CardCompassScaffold(
+      title: 'User Profile',
+      actions: [
+        IconButton(
+          icon: Icon(_isEditing ? Icons.check : Icons.edit_outlined, color: AppTheme.primaryColor),
+          onPressed: _isEditing ? _saveProfile : _toggleEdit,
         ),
-        actions: [
-          IconButton(
-            icon: Icon(_isEditing ? Icons.check : Icons.edit_outlined, color: AppTheme.primaryColor),
-            onPressed: _isEditing ? _saveProfile : _toggleEdit,
-          ),
-        ],
-      ),
+      ],
       body: authState.isLoading
-          ? const Center(child: CircularProgressIndicator(valueColor: AlwaysStoppedAnimation(AppTheme.primaryColor)))
+          ? const LoadingState()
           : SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: AppSpacing.lg),
               child: Form(
                 key: _formKey,
                 child: Column(
@@ -99,7 +92,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       child: Stack(
                         children: [
                           Container(
-                            padding: const EdgeInsets.all(4),
+                            padding: const EdgeInsets.all(AppSpacing.xs),
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
                               border: Border.all(color: AppTheme.primaryColor.withValues(alpha: 0.3), width: 2),
@@ -133,7 +126,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         ],
                       ),
                     ),
-                    const SizedBox(height: 32),
+                    const SizedBox(height: AppSpacing.xl),
 
                     // Personal Information Section
                     _buildSectionWrapper(
@@ -144,7 +137,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                           TextFormField(
                             controller: _nameController,
                             enabled: _isEditing,
-                            style: GoogleFonts.plusJakartaSans(color: Colors.white),
+                            style: AppTextStyles.body1.copyWith(color: Colors.white),
                             decoration: const InputDecoration(
                               labelText: 'Full Name',
                               prefixIcon: Icon(Icons.person_outline, color: AppTheme.primaryColor),
@@ -156,11 +149,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                               return null;
                             },
                           ),
-                          const SizedBox(height: 16),
+                          const SizedBox(height: AppSpacing.md),
                           TextFormField(
                             controller: _emailController,
                             enabled: _isEditing,
-                            style: GoogleFonts.plusJakartaSans(color: Colors.white),
+                            style: AppTextStyles.body1.copyWith(color: Colors.white),
                             decoration: const InputDecoration(
                               labelText: 'Email Address',
                               prefixIcon: Icon(Icons.email_outlined, color: AppTheme.primaryColor),
@@ -175,11 +168,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                               return null;
                             },
                           ),
-                          const SizedBox(height: 16),
+                          const SizedBox(height: AppSpacing.md),
                           TextFormField(
                             controller: _phoneController,
                             enabled: _isEditing,
-                            style: GoogleFonts.plusJakartaSans(color: Colors.white),
+                            style: AppTextStyles.body1.copyWith(color: Colors.white),
                             decoration: const InputDecoration(
                               labelText: 'Phone Number',
                               prefixIcon: Icon(Icons.phone_outlined, color: AppTheme.primaryColor),
@@ -214,7 +207,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                               } : null,
                             ),
                           ),
-                          const Divider(color: Color(0xFF1E293B), height: 1),
+                          const Divider(height: 1),
                           ListTile(
                             leading: const Icon(Icons.fingerprint, color: AppTheme.primaryColor),
                             title: Text('BIOMETRIC CREDENTIALS', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
@@ -227,7 +220,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                               } : null,
                             ),
                           ),
-                          const Divider(color: Color(0xFF1E293B), height: 1),
+                          const Divider(height: 1),
                           ListTile(
                             leading: const Icon(Icons.dark_mode_outlined, color: AppTheme.primaryColor),
                             title: Text('DARK MODE ALWAYS', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
@@ -256,28 +249,12 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                               _getAppVersion(),
                               style: GoogleFonts.spaceGrotesk(color: Colors.white60, fontSize: 11, fontWeight: FontWeight.bold),
                             ),
-                            onTap: () {
-                              showDialog(
-                                context: context,
-                                builder: (context) => AlertDialog(
-                                  backgroundColor: const Color(0xFF0C152B),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(20),
-                                    side: const BorderSide(color: Color(0xFF1E293B)),
-                                  ),
-                                  title: Text('CARDCOMPASS ENGINE', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
-                                  content: Text('Terminal Version: ${_getAppVersion()}', style: GoogleFonts.plusJakartaSans(color: Colors.white70)),
-                                  actions: [
-                                    TextButton(
-                                      onPressed: () => Navigator.pop(context),
-                                      child: Text('OK', style: GoogleFonts.spaceGrotesk(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            },
+                            onTap: () => _showInfoDialog(
+                              'CARDCOMPASS ENGINE',
+                              'Terminal Version: ${_getAppVersion()}',
+                            ),
                           ),
-                          const Divider(color: Color(0xFF1E293B), height: 1),
+                          const Divider(height: 1),
                           ListTile(
                             leading: const Icon(Icons.privacy_tip_outlined, color: AppTheme.primaryColor),
                             title: Text('PRIVACY REGISTRY', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
@@ -287,7 +264,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                               'CardCompass stores your credit card details locally on your physical device. We do not transmit or sell account numbers. Signed-in sessions utilize encrypted database records, while guest mode remains permanently sandboxed on this client.',
                             ),
                           ),
-                          const Divider(color: Color(0xFF1E293B), height: 1),
+                          const Divider(height: 1),
                           ListTile(
                             leading: const Icon(Icons.description_outlined, color: AppTheme.primaryColor),
                             title: Text('TERMS OF PROTOCOL', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
@@ -297,7 +274,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                               'CardCompass is provided as-is without warranties. Optimization levels, reward calculations, and interest rates are local simulations based on document parsing parameters and may differ from your exact credit card statement.',
                             ),
                           ),
-                          const Divider(color: Color(0xFF1E293B), height: 1),
+                          const Divider(height: 1),
                           ListTile(
                             leading: const Icon(Icons.help_outline, color: AppTheme.primaryColor),
                             title: Text('HELP & SUPPORT TERMINAL', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
@@ -325,7 +302,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                             trailing: const Icon(Icons.arrow_forward_ios, size: 12, color: AppTheme.errorColor),
                             onTap: _showDeleteAccountDialog,
                           ),
-                          const Divider(color: Color(0xFF1E293B), height: 1),
+                          const Divider(height: 1),
                           ListTile(
                             leading: const Icon(Icons.logout_outlined, color: AppTheme.errorColor),
                             title: Text('DESTROY ACTIVE SESSION', style: GoogleFonts.spaceGrotesk(color: AppTheme.errorColor, fontSize: 12, fontWeight: FontWeight.bold)),
@@ -337,7 +314,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     ),
                     const SizedBox(height: 80), // space above bottom dock
                   ],
-                ),
+                ).animate().fadeIn(duration: 250.ms, curve: Curves.easeOut).slideY(begin: 0.05, end: 0, duration: 250.ms, curve: Curves.easeOut),
               ),
             ),
     );
@@ -346,14 +323,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   Widget _buildSectionWrapper({
     required String title,
     required Widget child,
-    EdgeInsetsGeometry padding = const EdgeInsets.all(16),
+    EdgeInsetsGeometry padding = const EdgeInsets.all(AppSpacing.md),
     Color? borderColor,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.only(left: 4, bottom: 8),
+          padding: const EdgeInsets.only(left: AppSpacing.xs, bottom: AppSpacing.sm),
           child: Text(
             title,
             style: GoogleFonts.spaceGrotesk(
@@ -414,30 +391,47 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     }
   }
 
-  void _showInfoDialog(String title, String message) {
-    showDialog(
+  /// Shared cyber-fintech AlertDialog chrome (background/shape/title/content
+  /// styling) used by every confirmation and info dialog on this screen.
+  /// [actions] lets callers supply their own button row (OK-only, or
+  /// Cancel + destructive action) while keeping the frame identical.
+  Future<void> _showAppDialog({
+    required String title,
+    required String message,
+    required List<Widget> actions,
+    Color titleColor = Colors.white,
+  }) {
+    return showDialog(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF0C152B),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(AppBorderRadius.xl),
           side: const BorderSide(color: Color(0xFF1E293B)),
         ),
         title: Text(
           title,
-          style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+          style: GoogleFonts.spaceGrotesk(color: titleColor, fontWeight: FontWeight.bold, fontSize: 16),
         ),
         content: Text(
           message,
           style: GoogleFonts.plusJakartaSans(color: Colors.white70, height: 1.4),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('OK', style: GoogleFonts.spaceGrotesk(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
-          ),
-        ],
+        actions: actions,
       ),
+    );
+  }
+
+  void _showInfoDialog(String title, String message) {
+    _showAppDialog(
+      title: title,
+      message: message,
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text('OK', style: GoogleFonts.spaceGrotesk(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
+        ),
+      ],
     );
   }
 
@@ -467,7 +461,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     ),
                   ),
                 ),
-                const Divider(color: Color(0xFF1E293B)),
+                const Divider(),
                 ListTile(
                   leading: const Icon(Icons.camera_alt_outlined, color: AppTheme.primaryColor),
                   title: Text('CAMERA CAPTURE', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
@@ -520,108 +514,63 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   void _showDeleteAccountDialog() {
     final isGuest = ref.read(authStateProvider).user?.id == 'guest';
     if (isGuest) {
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          backgroundColor: const Color(0xFF0C152B),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-            side: const BorderSide(color: Color(0xFF1E293B)),
+      _showAppDialog(
+        title: 'RESTRICTED OPERATION',
+        message: 'Guest sessions are temporary and cannot trigger account termination requests. Sign in with Google to configure account parameters.',
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('OK', style: GoogleFonts.spaceGrotesk(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
           ),
-          title: Text(
-            'RESTRICTED OPERATION',
-            style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
-          ),
-          content: Text(
-            'Guest sessions are temporary and cannot trigger account termination requests. Sign in with Google to configure account parameters.',
-            style: GoogleFonts.plusJakartaSans(color: Colors.white70, height: 1.4),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: Text('OK', style: GoogleFonts.spaceGrotesk(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
-            ),
-          ],
-        ),
+        ],
       );
       return;
     }
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF0C152B),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-            side: const BorderSide(color: Color(0xFF1E293B)),
-          ),
-          title: Text(
-            'DELETE ACCOUNT',
-            style: GoogleFonts.spaceGrotesk(color: AppTheme.errorColor, fontWeight: FontWeight.bold, fontSize: 16),
-          ),
-          content: Text(
-            'Are you sure you want to permanently delete your account? All encrypted cards, ledgers, and statement data will be unrecoverably erased from the server.',
-            style: GoogleFonts.plusJakartaSans(color: Colors.white70, height: 1.4),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: Text('CANCEL', style: GoogleFonts.spaceGrotesk(color: Colors.white70)),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Termination request logged.'),
-                    backgroundColor: AppTheme.successColor,
-                  ),
-                );
-              },
-              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.errorColor),
-              child: Text('TERMINATE', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold)),
-            ),
-          ],
-        );
-      },
+    _showAppDialog(
+      title: 'DELETE ACCOUNT',
+      titleColor: AppTheme.errorColor,
+      message: 'Are you sure you want to permanently delete your account? All encrypted cards, ledgers, and statement data will be unrecoverably erased from the server.',
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text('CANCEL', style: GoogleFonts.spaceGrotesk(color: Colors.white70)),
+        ),
+        ElevatedButton(
+          onPressed: () {
+            Navigator.pop(context);
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Termination request logged.'),
+                backgroundColor: AppTheme.successColor,
+              ),
+            );
+          },
+          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.errorColor),
+          child: Text('TERMINATE', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold)),
+        ),
+      ],
     );
   }
 
   void _signOut() {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF0C152B),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-            side: const BorderSide(color: Color(0xFF1E293B)),
-          ),
-          title: Text(
-            'DESTROY ACTIVE SESSION',
-            style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
-          ),
-          content: Text(
-            'Are you sure you want to destroy your current session? You will be logged out of this device.',
-            style: GoogleFonts.plusJakartaSans(color: Colors.white70, height: 1.4),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: Text('CANCEL', style: GoogleFonts.spaceGrotesk(color: Colors.white70)),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context);
-                ref.read(authStateProvider.notifier).signOut();
-                Navigator.pushReplacementNamed(context, '/login');
-              },
-              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.errorColor),
-              child: Text('SIGN OUT', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold)),
-            ),
-          ],
-        );
-      },
+    _showAppDialog(
+      title: 'DESTROY ACTIVE SESSION',
+      message: 'Are you sure you want to destroy your current session? You will be logged out of this device.',
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text('CANCEL', style: GoogleFonts.spaceGrotesk(color: Colors.white70)),
+        ),
+        ElevatedButton(
+          onPressed: () {
+            Navigator.pop(context);
+            ref.read(authStateProvider.notifier).signOut();
+            Navigator.pushReplacementNamed(context, '/login');
+          },
+          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.errorColor),
+          child: Text('SIGN OUT', style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold)),
+        ),
+      ],
     );
   }
 }

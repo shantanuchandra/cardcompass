@@ -23,6 +23,7 @@ import '../../../../core/services/global_message_service.dart';
 import '../../../../core/providers/service_providers.dart' show alertEmailSyncServiceProvider;
 import '../../../../core/services/reward_intelligence_service.dart' show InsightType;
 import '../../../../shared/widgets/credit_card_widget.dart';
+import '../../../../shared/widgets/state_widgets.dart';
 import '../../../../shared/widgets/sync_progress_dialog.dart';
 import '../../../auth/providers/auth_provider.dart';
 import '../../../transactions/presentation/screens/transactions_screen.dart';
@@ -55,7 +56,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF050B18),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: LayoutBuilder(
         builder: (context, constraints) {
           final isWide = constraints.maxWidth > 900;
@@ -96,7 +97,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     return Container(
       width: 250,
       color: const Color(0xFF0C152B),
-      padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg, horizontal: AppSpacing.md),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -104,12 +105,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           Row(
             children: [
               Container(
-                padding: const EdgeInsets.all(8),
+                padding: const EdgeInsets.all(AppSpacing.sm),
                 decoration: BoxDecoration(
                   gradient: const LinearGradient(
                     colors: [AppTheme.primaryColor, AppTheme.secondaryColor],
                   ),
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(AppBorderRadius.md),
                   boxShadow: AppTheme.neonGlow(color: AppTheme.primaryColor, opacity: 0.25, blurRadius: 8),
                 ),
                 child: const Icon(
@@ -118,7 +119,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   color: Color(0xFF050B18),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: AppSpacing.sm + 4),
               Text(
                 'CARDCOMPASS',
                 style: GoogleFonts.spaceGrotesk(
@@ -130,30 +131,30 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 40),
-          
+          const SizedBox(height: AppSpacing.xl + 8),
+
           // Navigation Items
           Expanded(
             child: Column(
               children: [
                 _buildSidebarNavItem(0, Icons.home_outlined, Icons.home, 'Home Dashboard'),
-                const SizedBox(height: 8),
+                const SizedBox(height: AppSpacing.sm),
                 _buildSidebarNavItem(1, Icons.receipt_long_outlined, Icons.receipt_long, 'Ledger Txns'),
-                const SizedBox(height: 8),
+                const SizedBox(height: AppSpacing.sm),
                 _buildSidebarNavItem(2, Icons.analytics_outlined, Icons.analytics, 'Analytics Hub'),
-                const SizedBox(height: 8),
+                const SizedBox(height: AppSpacing.sm),
                 _buildSidebarNavItem(3, Icons.recommend_outlined, Icons.recommend, 'Smart Advisor'),
               ],
             ),
           ),
-          
+
           // Extra bottom link/metadata or user profile shortcut
-          const SizedBox(height: 20),
+          const SizedBox(height: AppSpacing.md + 4),
           Container(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(AppSpacing.sm + 4),
             decoration: BoxDecoration(
               color: const Color(0xFF050B18),
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(AppBorderRadius.lg),
               border: Border.all(
                 color: Colors.white.withValues(alpha: 0.05),
               ),
@@ -192,13 +193,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final isSelected = _currentIndex == index;
     return InkWell(
       onTap: () => setState(() => _currentIndex = index),
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(AppBorderRadius.lg),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm + 4),
         decoration: BoxDecoration(
           color: isSelected ? AppTheme.primaryColor.withValues(alpha: 0.08) : Colors.transparent,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(AppBorderRadius.lg),
           border: Border.all(
             color: isSelected ? AppTheme.primaryColor.withValues(alpha: 0.15) : Colors.transparent,
             width: 1,
@@ -229,7 +230,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   Widget _buildMobileBottomNav(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: AppSpacing.sm + 4),
       decoration: BoxDecoration(
         color: const Color(0xFF0C152B).withValues(alpha: 0.85),
         borderRadius: BorderRadius.circular(24),
@@ -264,7 +265,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       borderRadius: BorderRadius.circular(16),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 250),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: AppSpacing.sm),
         decoration: BoxDecoration(
           color: isSelected ? AppTheme.primaryColor.withValues(alpha: 0.1) : Colors.transparent,
           borderRadius: BorderRadius.circular(16),
@@ -311,11 +312,19 @@ class _HomeTabState extends ConsumerState<HomeTab> {
   }
 
   void _loadData() {
+    _refreshData();
+  }
+
+  /// Reloads cards and transactions. Awaited by [RefreshIndicator]; called
+  /// fire-and-forget from [initState] via [_loadData].
+  Future<void> _refreshData() async {
     final authState = ref.read(authStateProvider);
     final userId = authState.user?.id;
     if (userId == null) return;
-    ref.read(cardsProvider.notifier).loadUserCards(userId);
-    ref.read(transactionsProvider.notifier).loadUserTransactions(userId);
+    await Future.wait([
+      ref.read(cardsProvider.notifier).loadUserCards(userId),
+      ref.read(transactionsProvider.notifier).loadUserTransactions(userId),
+    ]);
   }
 
   @override
@@ -397,87 +406,95 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                 final isWide = constraints.maxWidth > 900;
                 if (isWide) {
                   // Wide / Web layout: 3-col left | 2-col right
-                  return SingleChildScrollView(
-                    padding: const EdgeInsets.all(24),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          flex: 3,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _buildSmartAnalyzerSection(context, ref),
-                              const SizedBox(height: 28),
-                              _buildQuickStatsSection(context, ref),
-                              const SizedBox(height: 28),
-                              _buildQuickActionsSection(context, ref),
-                              const SizedBox(height: 28),
-                              _buildThisMonthSection(context, ref),
-                              const SizedBox(height: 28),
-                              _buildMyCardsSection(context, ref),
-                            ],
+                  return RefreshIndicator(
+                    onRefresh: _refreshData,
+                    child: SingleChildScrollView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.all(AppSpacing.lg),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            flex: 3,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _buildSmartAnalyzerSection(context, ref),
+                                const SizedBox(height: 28),
+                                _buildQuickStatsSection(context, ref),
+                                const SizedBox(height: 28),
+                                _buildQuickActionsSection(context, ref),
+                                const SizedBox(height: 28),
+                                _buildThisMonthSection(context, ref),
+                                const SizedBox(height: 28),
+                                _buildMyCardsSection(context, ref),
+                              ],
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 28),
-                        Expanded(
-                          flex: 2,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _buildRecentTransactionsSection(context, ref),
-                              const SizedBox(height: 28),
-                              _buildRecommendationsSection(context),
-                            ],
+                          const SizedBox(width: 28),
+                          Expanded(
+                            flex: 2,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _buildRecentTransactionsSection(context, ref),
+                                const SizedBox(height: 28),
+                                _buildRecommendationsSection(context),
+                              ],
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  );
+                  ).animate().fadeIn(duration: 250.ms, curve: Curves.easeOut);
                 }
                 // Mobile layout: single column
-                return SingleChildScrollView(
-                  padding: const EdgeInsets.all(16),
-                  child: AnimationLimiter(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: AnimationConfiguration.toStaggeredList(
-                        duration: const Duration(milliseconds: 375),
-                        childAnimationBuilder: (widget) => SlideAnimation(
-                          verticalOffset: 50.0,
-                          child: FadeInAnimation(
-                            child: widget,
+                return RefreshIndicator(
+                  onRefresh: _refreshData,
+                  child: SingleChildScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.all(AppSpacing.md),
+                    child: AnimationLimiter(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: AnimationConfiguration.toStaggeredList(
+                          duration: const Duration(milliseconds: 375),
+                          childAnimationBuilder: (widget) => SlideAnimation(
+                            verticalOffset: 50.0,
+                            child: FadeInAnimation(
+                              child: widget,
+                            ),
                           ),
+                          children: [
+                            // Smart Transaction Analyzer (Hero)
+                            _buildSmartAnalyzerSection(context, ref),
+                            const SizedBox(height: 24),
+
+                            // Quick Stats Section
+                            _buildQuickStatsSection(context, ref),
+                            const SizedBox(height: 24),
+
+                            // Quick Actions Section
+                            _buildQuickActionsSection(context, ref),
+                            const SizedBox(height: 24),
+
+                            // This Month Summary
+                            _buildThisMonthSection(context, ref),
+                            const SizedBox(height: 24),
+
+                            // My Cards Section
+                            _buildMyCardsSection(context, ref),
+                            const SizedBox(height: 24),
+
+                            // Recent Transactions Section
+                            _buildRecentTransactionsSection(context, ref),
+                            const SizedBox(height: 24),
+
+                            // Recommendations Section
+                            _buildRecommendationsSection(context),
+                            const SizedBox(height: 100), // Space for FAB
+                          ],
                         ),
-                        children: [
-                          // Smart Transaction Analyzer (Hero)
-                          _buildSmartAnalyzerSection(context, ref),
-                          const SizedBox(height: 24),
-
-                          // Quick Stats Section
-                          _buildQuickStatsSection(context, ref),
-                          const SizedBox(height: 24),
-
-                          // Quick Actions Section
-                          _buildQuickActionsSection(context, ref),
-                          const SizedBox(height: 24),
-
-                          // This Month Summary
-                          _buildThisMonthSection(context, ref),
-                          const SizedBox(height: 24),
-
-                          // My Cards Section
-                          _buildMyCardsSection(context, ref),
-                          const SizedBox(height: 24),
-
-                          // Recent Transactions Section
-                          _buildRecentTransactionsSection(context, ref),
-                          const SizedBox(height: 24),
-
-                          // Recommendations Section
-                          _buildRecommendationsSection(context),
-                          const SizedBox(height: 100), // Space for FAB
-                        ],
                       ),
                     ),
                   ),
@@ -491,552 +508,17 @@ class _HomeTabState extends ConsumerState<HomeTab> {
   }
 
   void _showSyncDataDialog(BuildContext context, WidgetRef ref) {
-    int _selectedDays = 30;
-    int _maxEmails = 10;
-
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final cardBg = isDark ? const Color(0xFF1E1E2E) : Colors.white;
-    final surfaceBg = isDark ? const Color(0xFF2A2A3E) : const Color(0xFFF8F9FF);
-    final accentColor = const Color(0xFF6C63FF);
-    final textPrimary = isDark ? Colors.white : const Color(0xFF1A1A2E);
-    final textSecondary = isDark ? Colors.white60 : Colors.black45;
-
     showDialog(
       context: context,
       barrierColor: Colors.black54,
       builder: (BuildContext dialogContext) {
-        // Ollama parameters
-        var localProvider = AIConfig.activeProvider;
-        final ollamaUrlController = TextEditingController(text: AIConfig.ollamaUrl);
-        final ollamaModelController = TextEditingController(text: AIConfig.ollamaModel);
-
-        // Groq parameters
-        final groqApiKeyController = TextEditingController(text: AIConfig.groqApiKey);
-        final groqModelController = TextEditingController(text: AIConfig.groqModel);
-
-        // Instantly cache in memory as they type
-        ollamaUrlController.addListener(() => AIConfig.ollamaUrl = ollamaUrlController.text.trim());
-        ollamaModelController.addListener(() => AIConfig.ollamaModel = ollamaModelController.text.trim());
-        groqApiKeyController.addListener(() => AIConfig.groqApiKey = groqApiKeyController.text.trim());
-        groqModelController.addListener(() => AIConfig.groqModel = groqModelController.text.trim());
-
-        return StatefulBuilder(
-
-          builder: (context, setState) {
-            // Snap labels for "Look back" slider
-            const List<int> daySnaps = [7, 14, 30, 60, 90, 180, 365];
-            final daysLabel = _selectedDays == 365
-                ? '1 year'
-                : '$_selectedDays days';
-
-            // Snap labels for Max Emails slider
-            const List<int> emailSnaps = [5, 10, 20, 30, 50];
-            final emailsLabel = '$_maxEmails emails';
-
-            // Models dropdown lists
-            final groqModels = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'];
-            if (!groqModels.contains(groqModelController.text)) {
-              groqModels.insert(0, groqModelController.text);
-            }
-
-            final ollamaModels = ['gemma4', 'qwen2.5', 'llama3', 'mistral'];
-            if (!ollamaModels.contains(ollamaModelController.text)) {
-              ollamaModels.insert(0, ollamaModelController.text);
-            }
-
-
-            return Dialog(
-              backgroundColor: Colors.transparent,
-              insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: cardBg,
-                  borderRadius: BorderRadius.circular(24),
-                  boxShadow: [
-                    BoxShadow(
-                      color: accentColor.withOpacity(0.18),
-                      blurRadius: 40,
-                      spreadRadius: 0,
-                      offset: const Offset(0, 8),
-                    ),
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.3),
-                      blurRadius: 20,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // ── Header ──
-                    Container(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [
-                            accentColor.withOpacity(0.9),
-                            const Color(0xFF8B5CF6).withOpacity(0.9),
-                          ],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-                      ),
-                      padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
-                      child: Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.2),
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: const Icon(Icons.sync_rounded, color: Colors.white, size: 20),
-                          ),
-                          const SizedBox(width: 12),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: const [
-
-                              Text(
-                                'Sync from Gmail',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 17,
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: 0.2,
-                                ),
-                              ),
-                              Text(
-                                'Import credit card statements',
-                                style: TextStyle(color: Colors.white70, fontSize: 12),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    // ── Body ──
-                    Flexible(
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.all(20),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            // ─ Look-back slider ─
-                            _buildSliderSection(
-                              context: context,
-                              label: 'Look back',
-                              icon: Icons.calendar_month_rounded,
-                              valueLabel: daysLabel,
-                              accentColor: accentColor,
-                              surfaceBg: surfaceBg,
-                              textPrimary: textPrimary,
-                              textSecondary: textSecondary,
-                              isDark: isDark,
-                              sliderWidget: SliderTheme(
-                                data: _premiumSliderTheme(context, accentColor),
-                                child: Slider(
-                                  value: _selectedDays.toDouble(),
-                                  min: 7,
-                                  max: 365,
-                                  divisions: 52,
-                                  label: daysLabel,
-                                  onChanged: (v) => setState(() {
-                                    final raw = v.round();
-                                    final snapped = daySnaps.reduce((a, b) =>
-                                        (a - raw).abs() < (b - raw).abs() ? a : b);
-                                    _selectedDays = (raw - snapped).abs() < 5 ? snapped : raw;
-                                  }),
-                                ),
-                              ),
-                              ticks: const ['7d', '14d', '30d', '60d', '90d', '180d', '1yr'],
-                            ),
-
-                            const SizedBox(height: 16),
-
-                            // ─ Max emails slider ─
-                            _buildSliderSection(
-                              context: context,
-                              label: 'Max emails',
-                              icon: Icons.email_rounded,
-                              valueLabel: emailsLabel,
-                              accentColor: const Color(0xFF10B981),
-                              surfaceBg: surfaceBg,
-                              textPrimary: textPrimary,
-                              textSecondary: textSecondary,
-                              isDark: isDark,
-                              sliderWidget: SliderTheme(
-                                data: _premiumSliderTheme(context, const Color(0xFF10B981)),
-                                child: Slider(
-                                  value: _maxEmails.toDouble(),
-                                  min: 5,
-                                  max: 50,
-                                  divisions: 9,
-                                  label: emailsLabel,
-                                  onChanged: (v) => setState(() {
-                                    final raw = v.round();
-                                    final snapped = emailSnaps.reduce((a, b) =>
-                                        (a - raw).abs() < (b - raw).abs() ? a : b);
-                                    _maxEmails = (raw - snapped).abs() < 3 ? snapped : raw;
-                                  }),
-                                ),
-                              ),
-                              ticks: const ['5', '10', '20', '30', '50'],
-                            ),
-
-                            const SizedBox(height: 16),
-                            const Divider(height: 24),
-                            
-                            // ─ LLM Provider Dropdown ─
-                            Text(
-                              'AI Parsing Settings',
-                              style: TextStyle(
-                                color: textPrimary,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            DropdownButtonFormField<AIProvider>(
-                              value: localProvider,
-                              dropdownColor: surfaceBg,
-                              style: TextStyle(color: textPrimary, fontSize: 14),
-                              decoration: InputDecoration(
-                                filled: true,
-                                fillColor: surfaceBg,
-                                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                  borderSide: BorderSide(color: textSecondary.withOpacity(0.2)),
-                                ),
-                                enabledBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                  borderSide: BorderSide(color: textSecondary.withOpacity(0.15)),
-                                ),
-                              ),
-                              items: [
-                                DropdownMenuItem(
-                                  value: AIProvider.gemini,
-                                  child: Text('Google Gemini (Cloud)', style: TextStyle(color: textPrimary)),
-                                ),
-                                DropdownMenuItem(
-                                  value: AIProvider.groq,
-                                  child: Text('Groq API (Cloud)', style: TextStyle(color: textPrimary)),
-                                ),
-                                DropdownMenuItem(
-                                  value: AIProvider.ollama,
-                                  child: Text('Ollama (Local LLM)', style: TextStyle(color: textPrimary)),
-                                ),
-                              ],
-                              onChanged: (val) {
-                                if (val != null) {
-                                  setState(() {
-                                    localProvider = val;
-                                  });
-                                }
-                              },
-                            ),
-
-                            if (localProvider == AIProvider.groq) ...[
-                              const SizedBox(height: 12),
-                              TextFormField(
-                                controller: groqApiKeyController,
-                                obscureText: true,
-                                style: TextStyle(color: textPrimary, fontSize: 14),
-                                decoration: InputDecoration(
-                                  labelText: 'Groq API Key',
-                                  labelStyle: TextStyle(color: textSecondary, fontSize: 12),
-                                  hintText: 'gsk_...',
-                                  hintStyle: TextStyle(color: textSecondary.withOpacity(0.5), fontSize: 12),
-                                  filled: true,
-                                  fillColor: surfaceBg,
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                ),
-                              ),
-                            ],
-
-
-
-                            if (localProvider == AIProvider.ollama) ...[
-                              const SizedBox(height: 12),
-                              TextFormField(
-                                controller: ollamaUrlController,
-                                style: TextStyle(color: textPrimary, fontSize: 14),
-                                decoration: InputDecoration(
-                                  labelText: 'Ollama Host URL',
-                                  labelStyle: TextStyle(color: textSecondary, fontSize: 12),
-                                  filled: true,
-                                  fillColor: surfaceBg,
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Container(
-                                padding: const EdgeInsets.all(10),
-                                decoration: BoxDecoration(
-                                  color: Colors.amber.withOpacity(0.15),
-                                  borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(color: Colors.amber.withOpacity(0.3)),
-                                ),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Icon(Icons.warning_amber_rounded, color: Colors.amber, size: 16),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Text(
-                                        'Ensure Ollama is running locally and CORS is enabled via OLLAMA_ORIGINS="*".',
-                                        style: TextStyle(fontSize: 10, color: textPrimary.withOpacity(0.85)),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-
-
-                            const SizedBox(height: 16),
-
-                            // ─ Info card ─
-                            Container(
-                              padding: const EdgeInsets.all(14),
-                              decoration: BoxDecoration(
-                                color: accentColor.withOpacity(isDark ? 0.12 : 0.06),
-                                borderRadius: BorderRadius.circular(14),
-                                border: Border.all(
-                                  color: accentColor.withOpacity(0.2),
-                                  width: 1,
-                                ),
-                              ),
-                              child: Column(
-                                children: [
-                                  _infoRow(Icons.picture_as_pdf_rounded, 'Scans Gmail for PDF bank statements', textSecondary),
-                                  const SizedBox(height: 6),
-                                  _infoRow(Icons.auto_awesome_rounded, 'AI extracts transactions automatically', textSecondary),
-                                  const SizedBox(height: 6),
-                                  _infoRow(Icons.lock_rounded, 'Encrypted PDFs handled with saved passwords', textSecondary),
-                                ],
-                              ),
-                            ),
-
-                            const SizedBox(height: 20),
-
-                            // ─ Action buttons ─
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: TextButton(
-                                    onPressed: () => Navigator.of(dialogContext).pop(),
-                                    style: TextButton.styleFrom(
-                                      padding: const EdgeInsets.symmetric(vertical: 14),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(14),
-                                        side: BorderSide(
-                                          color: textSecondary.withOpacity(0.3),
-                                        ),
-                                      ),
-                                    ),
-                                    child: Text(
-                                      'Cancel',
-                                      style: TextStyle(color: textSecondary, fontWeight: FontWeight.w600),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  flex: 2,
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      gradient: LinearGradient(
-                                        colors: [accentColor, const Color(0xFF8B5CF6)],
-                                      ),
-                                      borderRadius: BorderRadius.circular(14),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: accentColor.withOpacity(0.4),
-                                          blurRadius: 12,
-                                          offset: const Offset(0, 4),
-                                        ),
-                                      ],
-                                    ),
-                                    child: ElevatedButton.icon(
-                                      icon: const Icon(Icons.sync_rounded, size: 18, color: Colors.white),
-                                      label: const Text(
-                                        'Start Sync',
-                                        style: TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.w700,
-                                          fontSize: 15,
-                                        ),
-                                      ),
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: Colors.transparent,
-                                        shadowColor: Colors.transparent,
-                                        padding: const EdgeInsets.symmetric(vertical: 14),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(14),
-                                        ),
-                                      ),
-                                      onPressed: () async {
-                                        // Save configurations before closing
-                                        await AIConfig.saveConfiguration(
-                                          localProvider,
-                                          ollamaUrlController.text.trim(),
-                                          ollamaModelController.text.trim(),
-                                          groqKey: groqApiKeyController.text.trim(),
-                                          groqMod: groqModelController.text.trim(),
-                                        );
-
-                                        final days = _selectedDays;
-                                        final maxEmails = _maxEmails;
-                                        Navigator.of(dialogContext).pop();
-                                        _syncDataFromGmail(context, ref,
-                                            lookbackDays: days, maxEmails: maxEmails);
-                                      },
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
+        return _GmailSyncDialog(
+          onStartSync: (days, maxEmails) =>
+              _syncDataFromGmail(context, ref, lookbackDays: days, maxEmails: maxEmails),
         );
       },
     );
   }
-
-  // ─────────────────────────────────────────────────────────────────────
-  // Helper: premium SliderThemeData with gradient thumb + active track
-  // ─────────────────────────────────────────────────────────────────────
-  SliderThemeData _premiumSliderTheme(BuildContext context, Color accent) {
-    return SliderTheme.of(context).copyWith(
-      trackHeight: 5,
-      activeTrackColor: accent,
-      inactiveTrackColor: accent.withOpacity(0.18),
-      thumbColor: Colors.white,
-      thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 9),
-      overlayColor: accent.withOpacity(0.18),
-      overlayShape: const RoundSliderOverlayShape(overlayRadius: 20),
-      valueIndicatorShape: const PaddleSliderValueIndicatorShape(),
-      valueIndicatorColor: accent,
-      valueIndicatorTextStyle: const TextStyle(
-        color: Colors.white,
-        fontWeight: FontWeight.w700,
-        fontSize: 12,
-      ),
-    );
-  }
-
-  // ─────────────────────────────────────────────────────────────────────
-  // Helper: slider section with label, value chip, slider, and tick marks
-  // ─────────────────────────────────────────────────────────────────────
-  Widget _buildSliderSection({
-    required BuildContext context,
-    required String label,
-    required IconData icon,
-    required String valueLabel,
-    required Color accentColor,
-    required Color surfaceBg,
-    required Color textPrimary,
-    required Color textSecondary,
-    required bool isDark,
-    required Widget sliderWidget,
-    required List<String> ticks,
-  }) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
-      decoration: BoxDecoration(
-        color: surfaceBg,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: accentColor.withOpacity(0.12)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  Icon(icon, size: 16, color: accentColor),
-                  const SizedBox(width: 6),
-                  Text(
-                    label,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: textPrimary,
-                    ),
-                  ),
-                ],
-              ),
-              // Animated value chip
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: accentColor.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: accentColor.withOpacity(0.4), width: 1),
-                ),
-                child: Text(
-                  valueLabel,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: accentColor,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          // Slider
-          sliderWidget,
-          // Tick labels
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 6),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: ticks
-                  .map((t) => Text(
-                        t,
-                        style: TextStyle(fontSize: 9, color: textSecondary),
-                      ))
-                  .toList(),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // Helper: info row in the info card
-  Widget _infoRow(IconData icon, String text, Color textColor) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, size: 13, color: textColor),
-        const SizedBox(width: 7),
-        Expanded(
-          child: Text(text, style: TextStyle(fontSize: 11, color: textColor, height: 1.4)),
-        ),
-      ],
-    );
-  }
-
 
   void _syncDataFromGmail(BuildContext context, WidgetRef ref, {int lookbackDays = 90, int maxEmails = 10}) async {
     final authState = ref.read(authStateProvider);
@@ -1467,7 +949,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text('This Month', style: AppTextStyles.heading3),
-        const SizedBox(height: 16),
+        const SizedBox(height: AppSpacing.md),
         Row(
           children: [
             Expanded(
@@ -1536,7 +1018,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     Color color,
   ) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
         color: const Color(0xFF0C152B),
         borderRadius: BorderRadius.circular(16),
@@ -1552,7 +1034,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
           Row(
             children: [
               Icon(icon, color: color, size: 20),
-              const SizedBox(width: 8),
+              const SizedBox(width: AppSpacing.sm),
               Text(
                 title,
                 style: GoogleFonts.spaceGrotesk(
@@ -1606,7 +1088,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
           'Quick Actions',
           style: AppTextStyles.heading3,
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: AppSpacing.md),
         LayoutBuilder(
           builder: (context, constraints) {
             final cols = constraints.maxWidth > 600 ? 6 : 3;
@@ -1734,7 +1216,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
           'Quick Overview',
           style: AppTextStyles.heading3,
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: AppSpacing.md),
         // Responsive: 3 cards in a row on wide screens, wrapped on narrow screens
         LayoutBuilder(
           builder: (context, constraints) {
@@ -1857,7 +1339,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
             },
             child: Container(
               width: double.infinity,
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(AppSpacing.md),
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   colors: [
@@ -1969,7 +1451,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
           Row(
             children: [
               Icon(icon, color: color, size: 18),
-              const SizedBox(width: 8),
+              const SizedBox(width: AppSpacing.sm),
               Expanded(
                 child: Text(
                   title.toUpperCase(),
@@ -2028,7 +1510,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
             ),
           ],
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: AppSpacing.md),
         Consumer(
           builder: (context, ref, child) {
             final cards = ref.watch(activeCardsProvider);
@@ -2047,7 +1529,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
       height: 200,
       width: double.infinity,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(AppBorderRadius.lg),
         border: Border.all(
           color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.3),
           style: BorderStyle.solid,
@@ -2061,7 +1543,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
             size: 48,
             color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.5),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.md),
           Text(
             'No cards added yet',
             style: AppTextStyles.body1.copyWith(
@@ -2148,7 +1630,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
             ),
           ],
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: AppSpacing.md),
         Consumer(
           builder: (context, ref, child) {
             final transactions = ref.watch(recentTransactionsProvider);
@@ -2163,43 +1645,10 @@ class _HomeTabState extends ConsumerState<HomeTab> {
   }
 
   Widget _buildEmptyTransactionsWidget(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(28),
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: const Color(0xFF0C152B),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: Colors.white.withValues(alpha: 0.06),
-        ),
-      ),
-      child: Column(
-        children: [
-          const Icon(
-            Icons.receipt_long_outlined,
-            size: 44,
-            color: Colors.white24,
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'No transactions yet',
-            style: GoogleFonts.spaceGrotesk(
-              color: Colors.white70,
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Your recent transactions will appear here',
-            style: GoogleFonts.plusJakartaSans(
-              color: Colors.white38,
-              fontSize: 11,
-            ),
-            textAlign: TextAlign.center,
-          ),
-        ],
-      ),
+    return const EmptyState(
+      title: 'No transactions yet',
+      message: 'Your recent transactions will appear here',
+      icon: Icons.receipt_long_outlined,
     );
   }
 
@@ -2209,7 +1658,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
         final categoryColor = _getCategoryColor(transaction.categoryString);
         return Container(
           margin: const EdgeInsets.only(bottom: 12),
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppSpacing.md),
           decoration: BoxDecoration(
             color: const Color(0xFF0C152B),
             borderRadius: BorderRadius.circular(16),
@@ -2304,9 +1753,9 @@ class _HomeTabState extends ConsumerState<HomeTab> {
           'Smart Recommendations',
           style: AppTextStyles.heading3,
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: AppSpacing.md),
         Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppSpacing.md),
           decoration: BoxDecoration(
             gradient: LinearGradient(
               colors: [
@@ -2314,7 +1763,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                 Colors.purple.withValues(alpha: 0.1),
               ],
             ),
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(AppBorderRadius.lg),
             border: Border.all(
               color: Colors.blue.withValues(alpha: 0.2),
             ),
@@ -2325,10 +1774,10 @@ class _HomeTabState extends ConsumerState<HomeTab> {
               Row(
                 children: [
                   Container(
-                    padding: const EdgeInsets.all(8),
+                    padding: const EdgeInsets.all(AppSpacing.sm),
                     decoration: BoxDecoration(
                       color: Colors.blue.withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(AppBorderRadius.md),
                     ),
                     child: const Icon(
                       Icons.lightbulb,
@@ -2352,7 +1801,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               Text(
                 'Tap Recommendations in the bottom bar to see which card earns you the most on your recent spending.',
                 style: AppTextStyles.body2.copyWith(
@@ -2434,5 +1883,556 @@ class _HomeTabState extends ConsumerState<HomeTab> {
       default:
         return [const Color(0xFF6366F1), const Color(0xFF8B5CF6)];
     }
+  }
+}
+
+/// Extracted Gmail-sync configuration dialog (look-back window, max emails,
+/// AI provider settings) shown from [HomeTab]'s "Sync Gmail" action.
+/// Pure UI/state extraction — no business logic changed; the actual sync is
+/// still kicked off via the [onStartSync] callback supplied by the caller.
+class _GmailSyncDialog extends StatefulWidget {
+  final void Function(int lookbackDays, int maxEmails) onStartSync;
+
+  const _GmailSyncDialog({required this.onStartSync});
+
+  @override
+  State<_GmailSyncDialog> createState() => _GmailSyncDialogState();
+}
+
+class _GmailSyncDialogState extends State<_GmailSyncDialog> {
+  int _selectedDays = 30;
+  int _maxEmails = 10;
+
+  late AIProvider _localProvider;
+  late final TextEditingController _ollamaUrlController;
+  late final TextEditingController _ollamaModelController;
+  late final TextEditingController _groqApiKeyController;
+  late final TextEditingController _groqModelController;
+
+  @override
+  void initState() {
+    super.initState();
+    _localProvider = AIConfig.activeProvider;
+    _ollamaUrlController = TextEditingController(text: AIConfig.ollamaUrl);
+    _ollamaModelController = TextEditingController(text: AIConfig.ollamaModel);
+    _groqApiKeyController = TextEditingController(text: AIConfig.groqApiKey);
+    _groqModelController = TextEditingController(text: AIConfig.groqModel);
+
+    // Instantly cache in memory as they type
+    _ollamaUrlController.addListener(() => AIConfig.ollamaUrl = _ollamaUrlController.text.trim());
+    _ollamaModelController.addListener(() => AIConfig.ollamaModel = _ollamaModelController.text.trim());
+    _groqApiKeyController.addListener(() => AIConfig.groqApiKey = _groqApiKeyController.text.trim());
+    _groqModelController.addListener(() => AIConfig.groqModel = _groqModelController.text.trim());
+  }
+
+  @override
+  void dispose() {
+    _ollamaUrlController.dispose();
+    _ollamaModelController.dispose();
+    _groqApiKeyController.dispose();
+    _groqModelController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final localProvider = _localProvider;
+
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final cardBg = isDark ? const Color(0xFF1E1E2E) : Colors.white;
+    final surfaceBg = isDark ? const Color(0xFF2A2A3E) : const Color(0xFFF8F9FF);
+    final accentColor = const Color(0xFF6C63FF);
+    final textPrimary = isDark ? Colors.white : const Color(0xFF1A1A2E);
+    final textSecondary = isDark ? Colors.white60 : Colors.black45;
+
+    // Snap labels for "Look back" slider
+    const List<int> daySnaps = [7, 14, 30, 60, 90, 180, 365];
+    final daysLabel = _selectedDays == 365 ? '1 year' : '$_selectedDays days';
+
+    // Snap labels for Max Emails slider
+    const List<int> emailSnaps = [5, 10, 20, 30, 50];
+    final emailsLabel = '$_maxEmails emails';
+
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
+      child: Container(
+        decoration: BoxDecoration(
+          color: cardBg,
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: [
+            BoxShadow(
+              color: accentColor.withOpacity(0.18),
+              blurRadius: 40,
+              spreadRadius: 0,
+              offset: const Offset(0, 8),
+            ),
+            BoxShadow(
+              color: Colors.black.withOpacity(0.3),
+              blurRadius: 20,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // ── Header ──
+            Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    accentColor.withOpacity(0.9),
+                    const Color(0xFF8B5CF6).withOpacity(0.9),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.sync_rounded, color: Colors.white, size: 20),
+                  ),
+                  const SizedBox(width: 12),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: const [
+                      Text(
+                        'Sync from Gmail',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                      Text(
+                        'Import credit card statements',
+                        style: TextStyle(color: Colors.white70, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+
+            // ── Body ──
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // ─ Look-back slider ─
+                    _buildSliderSection(
+                      context: context,
+                      label: 'Look back',
+                      icon: Icons.calendar_month_rounded,
+                      valueLabel: daysLabel,
+                      accentColor: accentColor,
+                      surfaceBg: surfaceBg,
+                      textPrimary: textPrimary,
+                      textSecondary: textSecondary,
+                      isDark: isDark,
+                      sliderWidget: SliderTheme(
+                        data: _premiumSliderTheme(context, accentColor),
+                        child: Slider(
+                          value: _selectedDays.toDouble(),
+                          min: 7,
+                          max: 365,
+                          divisions: 52,
+                          label: daysLabel,
+                          onChanged: (v) => setState(() {
+                            final raw = v.round();
+                            final snapped = daySnaps.reduce((a, b) =>
+                                (a - raw).abs() < (b - raw).abs() ? a : b);
+                            _selectedDays = (raw - snapped).abs() < 5 ? snapped : raw;
+                          }),
+                        ),
+                      ),
+                      ticks: const ['7d', '14d', '30d', '60d', '90d', '180d', '1yr'],
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    // ─ Max emails slider ─
+                    _buildSliderSection(
+                      context: context,
+                      label: 'Max emails',
+                      icon: Icons.email_rounded,
+                      valueLabel: emailsLabel,
+                      accentColor: const Color(0xFF10B981),
+                      surfaceBg: surfaceBg,
+                      textPrimary: textPrimary,
+                      textSecondary: textSecondary,
+                      isDark: isDark,
+                      sliderWidget: SliderTheme(
+                        data: _premiumSliderTheme(context, const Color(0xFF10B981)),
+                        child: Slider(
+                          value: _maxEmails.toDouble(),
+                          min: 5,
+                          max: 50,
+                          divisions: 9,
+                          label: emailsLabel,
+                          onChanged: (v) => setState(() {
+                            final raw = v.round();
+                            final snapped = emailSnaps.reduce((a, b) =>
+                                (a - raw).abs() < (b - raw).abs() ? a : b);
+                            _maxEmails = (raw - snapped).abs() < 3 ? snapped : raw;
+                          }),
+                        ),
+                      ),
+                      ticks: const ['5', '10', '20', '30', '50'],
+                    ),
+
+                    const SizedBox(height: 16),
+                    const Divider(height: 24),
+
+                    // ─ LLM Provider Dropdown ─
+                    Text(
+                      'AI Parsing Settings',
+                      style: TextStyle(
+                        color: textPrimary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<AIProvider>(
+                      value: localProvider,
+                      dropdownColor: surfaceBg,
+                      style: TextStyle(color: textPrimary, fontSize: 14),
+                      decoration: InputDecoration(
+                        filled: true,
+                        fillColor: surfaceBg,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: BorderSide(color: textSecondary.withOpacity(0.2)),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: BorderSide(color: textSecondary.withOpacity(0.15)),
+                        ),
+                      ),
+                      items: [
+                        DropdownMenuItem(
+                          value: AIProvider.gemini,
+                          child: Text('Google Gemini (Cloud)', style: TextStyle(color: textPrimary)),
+                        ),
+                        DropdownMenuItem(
+                          value: AIProvider.groq,
+                          child: Text('Groq API (Cloud)', style: TextStyle(color: textPrimary)),
+                        ),
+                        DropdownMenuItem(
+                          value: AIProvider.ollama,
+                          child: Text('Ollama (Local LLM)', style: TextStyle(color: textPrimary)),
+                        ),
+                      ],
+                      onChanged: (val) {
+                        if (val != null) {
+                          setState(() {
+                            _localProvider = val;
+                          });
+                        }
+                      },
+                    ),
+
+                    if (localProvider == AIProvider.groq) ...[
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: _groqApiKeyController,
+                        obscureText: true,
+                        style: TextStyle(color: textPrimary, fontSize: 14),
+                        decoration: InputDecoration(
+                          labelText: 'Groq API Key',
+                          labelStyle: TextStyle(color: textSecondary, fontSize: 12),
+                          hintText: 'gsk_...',
+                          hintStyle: TextStyle(color: textSecondary.withOpacity(0.5), fontSize: 12),
+                          filled: true,
+                          fillColor: surfaceBg,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                      ),
+                    ],
+
+                    if (localProvider == AIProvider.ollama) ...[
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: _ollamaUrlController,
+                        style: TextStyle(color: textPrimary, fontSize: 14),
+                        decoration: InputDecoration(
+                          labelText: 'Ollama Host URL',
+                          labelStyle: TextStyle(color: textSecondary, fontSize: 12),
+                          filled: true,
+                          fillColor: surfaceBg,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.amber.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.amber.withOpacity(0.3)),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(Icons.warning_amber_rounded, color: Colors.amber, size: 16),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Ensure Ollama is running locally and CORS is enabled via OLLAMA_ORIGINS="*".',
+                                style: TextStyle(fontSize: 10, color: textPrimary.withOpacity(0.85)),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+
+                    const SizedBox(height: 16),
+
+                    // ─ Info card ─
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: accentColor.withOpacity(isDark ? 0.12 : 0.06),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: accentColor.withOpacity(0.2),
+                          width: 1,
+                        ),
+                      ),
+                      child: Column(
+                        children: [
+                          _infoRow(Icons.picture_as_pdf_rounded, 'Scans Gmail for PDF bank statements', textSecondary),
+                          const SizedBox(height: 6),
+                          _infoRow(Icons.auto_awesome_rounded, 'AI extracts transactions automatically', textSecondary),
+                          const SizedBox(height: 6),
+                          _infoRow(Icons.lock_rounded, 'Encrypted PDFs handled with saved passwords', textSecondary),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 20),
+
+                    // ─ Action buttons ─
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            style: TextButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                                side: BorderSide(
+                                  color: textSecondary.withOpacity(0.3),
+                                ),
+                              ),
+                            ),
+                            child: Text(
+                              'Cancel',
+                              style: TextStyle(color: textSecondary, fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          flex: 2,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [accentColor, const Color(0xFF8B5CF6)],
+                              ),
+                              borderRadius: BorderRadius.circular(14),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: accentColor.withOpacity(0.4),
+                                  blurRadius: 12,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ],
+                            ),
+                            child: ElevatedButton.icon(
+                              icon: const Icon(Icons.sync_rounded, size: 18, color: Colors.white),
+                              label: const Text(
+                                'Start Sync',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 15,
+                                ),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.transparent,
+                                shadowColor: Colors.transparent,
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                              ),
+                              onPressed: () async {
+                                // Save configurations before closing
+                                await AIConfig.saveConfiguration(
+                                  localProvider,
+                                  _ollamaUrlController.text.trim(),
+                                  _ollamaModelController.text.trim(),
+                                  groqKey: _groqApiKeyController.text.trim(),
+                                  groqMod: _groqModelController.text.trim(),
+                                );
+
+                                final days = _selectedDays;
+                                final maxEmails = _maxEmails;
+                                Navigator.of(context).pop();
+                                widget.onStartSync(days, maxEmails);
+                              },
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Helper: premium SliderThemeData with gradient thumb + active track
+  // ─────────────────────────────────────────────────────────────────────
+  SliderThemeData _premiumSliderTheme(BuildContext context, Color accent) {
+    return SliderTheme.of(context).copyWith(
+      trackHeight: 5,
+      activeTrackColor: accent,
+      inactiveTrackColor: accent.withOpacity(0.18),
+      thumbColor: Colors.white,
+      thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 9),
+      overlayColor: accent.withOpacity(0.18),
+      overlayShape: const RoundSliderOverlayShape(overlayRadius: 20),
+      valueIndicatorShape: const PaddleSliderValueIndicatorShape(),
+      valueIndicatorColor: accent,
+      valueIndicatorTextStyle: const TextStyle(
+        color: Colors.white,
+        fontWeight: FontWeight.w700,
+        fontSize: 12,
+      ),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Helper: slider section with label, value chip, slider, and tick marks
+  // ─────────────────────────────────────────────────────────────────────
+  Widget _buildSliderSection({
+    required BuildContext context,
+    required String label,
+    required IconData icon,
+    required String valueLabel,
+    required Color accentColor,
+    required Color surfaceBg,
+    required Color textPrimary,
+    required Color textSecondary,
+    required bool isDark,
+    required Widget sliderWidget,
+    required List<String> ticks,
+  }) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+      decoration: BoxDecoration(
+        color: surfaceBg,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: accentColor.withOpacity(0.12)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Icon(icon, size: 16, color: accentColor),
+                  const SizedBox(width: 6),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: textPrimary,
+                    ),
+                  ),
+                ],
+              ),
+              // Animated value chip
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: accentColor.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: accentColor.withOpacity(0.4), width: 1),
+                ),
+                child: Text(
+                  valueLabel,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: accentColor,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          // Slider
+          sliderWidget,
+          // Tick labels
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: ticks
+                  .map((t) => Text(
+                        t,
+                        style: TextStyle(fontSize: 9, color: textSecondary),
+                      ))
+                  .toList(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Helper: info row in the info card
+  Widget _infoRow(IconData icon, String text, Color textColor) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 13, color: textColor),
+        const SizedBox(width: 7),
+        Expanded(
+          child: Text(text, style: TextStyle(fontSize: 11, color: textColor, height: 1.4)),
+        ),
+      ],
+    );
   }
 }

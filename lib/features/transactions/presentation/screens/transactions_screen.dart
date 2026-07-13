@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../../core/theme.dart';
+import '../../../../shared/widgets/app_scaffold.dart';
+import '../../../../shared/widgets/state_widgets.dart';
 import '../../../auth/providers/auth_provider.dart';
 import '../../../transactions/providers/transactions_provider.dart';
 import '../../../../shared/models/transaction.dart';
@@ -35,74 +38,49 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
         ? allTransactions
         : allTransactions.where((t) => t.category == _categoryFilter).toList();
 
-    return Scaffold(
-      backgroundColor: const Color(0xFF050B18),
-      appBar: AppBar(
-        title: Text(
-          'TRANSACTIONS',
-          style: GoogleFonts.spaceGrotesk(
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1.5,
-            fontSize: 18,
+    return CardCompassScaffold(
+      title: 'Transactions',
+      actions: [
+        IconButton(
+          onPressed: () => _showFilterSheet(context),
+          icon: Icon(
+            _categoryFilter == null ? Icons.filter_list : Icons.filter_alt,
+            color: AppTheme.primaryColor,
           ),
         ),
-        actions: [
-          IconButton(
-            onPressed: () => _showFilterSheet(context),
-            icon: Icon(
-              _categoryFilter == null ? Icons.filter_list : Icons.filter_alt,
-              color: AppTheme.primaryColor,
-            ),
-          ),
-        ],
-      ),
+      ],
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 800),
           child: allTransactions.isEmpty
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(32),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(Icons.receipt_long_outlined, size: 64, color: Colors.white24),
-                        const SizedBox(height: 16),
-                        Text(
-                          'No transactions yet',
-                          style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Transactions from your statements will show up here.',
-                          textAlign: TextAlign.center,
-                          style: GoogleFonts.plusJakartaSans(
-                            color: Colors.white38,
-                            fontSize: 13,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+              ? const EmptyState(
+                  icon: Icons.receipt_long_outlined,
+                  title: 'No transactions yet',
+                  message: 'Transactions from your statements will show up here.',
                 )
               : RefreshIndicator(
                   onRefresh: () async => _load(),
                   color: AppTheme.primaryColor,
                   backgroundColor: const Color(0xFF0C152B),
                   child: ListView.builder(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 80),
+                    padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.md,
+                      AppSpacing.sm + 4,
+                      AppSpacing.md,
+                      80,
+                    ),
                     itemCount: transactions.length,
                     itemBuilder: (context, index) {
                       final t = transactions[index];
                       final isCredit = t.type == TransactionType.credit || t.type == TransactionType.refund;
                       final categoryColor = _getCategoryColor(t.categoryString);
-                      
+
                       return Container(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        padding: const EdgeInsets.all(16),
+                        margin: const EdgeInsets.only(bottom: AppSpacing.sm + 4),
+                        padding: const EdgeInsets.all(AppSpacing.md),
                         decoration: BoxDecoration(
                           color: const Color(0xFF0C152B),
-                          borderRadius: BorderRadius.circular(16),
+                          borderRadius: BorderRadius.circular(AppBorderRadius.xl),
                           border: Border.all(
                             color: Colors.white.withValues(alpha: 0.06),
                             width: 1,
@@ -132,14 +110,13 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                                 children: [
                                   Text(
                                     t.merchantName ?? t.description,
-                                    style: GoogleFonts.plusJakartaSans(
+                                    style: AppTextStyles.body2.copyWith(
                                       color: Colors.white,
                                       fontWeight: FontWeight.w600,
-                                      fontSize: 14,
                                     ),
                                     overflow: TextOverflow.ellipsis,
                                   ),
-                                  const SizedBox(height: 4),
+                                  const SizedBox(height: AppSpacing.xs),
                                   Text(
                                     '${_formatDate(t.transactionDate)} · ${t.categoryString.toUpperCase()}',
                                     style: GoogleFonts.spaceGrotesk(
@@ -181,7 +158,12 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                       );
                     },
                   ),
-                ),
+                ).animate().fadeIn(duration: 250.ms, curve: Curves.easeOut).slideY(
+                    begin: 0.05,
+                    end: 0,
+                    duration: 250.ms,
+                    curve: Curves.easeOut,
+                  ),
         ),
       ),
     );
@@ -202,7 +184,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.only(bottom: AppSpacing.sm + 4),
                   child: Text(
                     'FILTER BY CATEGORY',
                     style: GoogleFonts.spaceGrotesk(
@@ -213,7 +195,7 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                     ),
                   ),
                 ),
-                const Divider(color: Color(0xFF1E293B)),
+                const Divider(),
                 ListTile(
                   title: Text(
                     'ALL CATEGORIES',

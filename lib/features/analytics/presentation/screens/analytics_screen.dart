@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../../core/theme.dart';
+import '../../../../shared/widgets/app_scaffold.dart';
+import '../../../../shared/widgets/state_widgets.dart';
 import '../../../../features/dashboard/widgets/financial_insights_widget.dart';
 import '../../../auth/providers/auth_provider.dart';
 import '../../../cards/providers/cards_provider.dart';
@@ -53,6 +56,14 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
     }
   }
 
+  /// Pull-to-refresh entry point: forces a fresh reload even if data was
+  /// already loaded once, unlike [_loadDataOnce] which is a load-once guard
+  /// used on initial screen entry.
+  Future<void> _handleRefresh() async {
+    _hasLoadedData = false;
+    await _loadDataOnce();
+  }
+
   @override
   Widget build(BuildContext context) {
     final authState = ref.watch(authStateProvider);
@@ -60,164 +71,104 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
     final allTransactions = ref.watch(transactionsProvider);
     final transactions = allTransactions.where((t) => t.amount <= 100000).toList();
 
-    return Scaffold(
-      backgroundColor: const Color(0xFF050B18),
-      appBar: AppBar(
-        title: Text(
-          'ANALYTICS',
-          style: GoogleFonts.spaceGrotesk(
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1.5,
-            fontSize: 18,
-          ),
-        ),
-        actions: [
-          IconButton(
-            onPressed: () {
-              showDialog(
-                context: context,
-                builder: (context) => AlertDialog(
-                  backgroundColor: const Color(0xFF0C152B),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20),
-                    side: const BorderSide(color: Color(0xFF1E293B)),
-                  ),
-                  title: Text(
-                    'EXPORT INTEL',
-                    style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
-                  ),
-                  content: Text(
-                    'CSV/PDF ledger download isn\'t available in guest mode.',
-                    style: GoogleFonts.plusJakartaSans(color: Colors.white70),
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: Text('OK', style: GoogleFonts.spaceGrotesk(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
-                    ),
-                  ],
+    return CardCompassScaffold(
+      title: 'Analytics',
+      actions: [
+        IconButton(
+          onPressed: () {
+            showDialog(
+              context: context,
+              builder: (context) => AlertDialog(
+                backgroundColor: const Color(0xFF0C152B),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppBorderRadius.xl),
+                  side: const BorderSide(color: Color(0xFF1E293B)),
                 ),
-              );
-            },
-            icon: const Icon(Icons.file_download, color: AppTheme.primaryColor),
-          ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 100), // padding for floating dock
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header Section
-            Text(
-              'FINANCIAL INTELLIGENCE',
-              style: GoogleFonts.spaceGrotesk(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 22,
-                letterSpacing: 0.5,
+                title: Text(
+                  'EXPORT INTEL',
+                  style: AppTextStyles.heading3.copyWith(color: Colors.white),
+                ),
+                content: Text(
+                  'CSV/PDF ledger download isn\'t available in guest mode.',
+                  style: AppTextStyles.body1.copyWith(color: Colors.white70),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: Text('OK', style: GoogleFonts.spaceGrotesk(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
+                  ),
+                ],
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Real-time deep analysis of reward utilization and billing habits.',
-              style: GoogleFonts.plusJakartaSans(
-                color: Colors.white60,
-                fontSize: 13,
+            );
+          },
+          icon: const Icon(Icons.file_download, color: AppTheme.primaryColor),
+        ),
+      ],
+      body: RefreshIndicator(
+        onRefresh: _handleRefresh,
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(AppSpacing.md, 12, AppSpacing.md, 100), // padding for floating dock
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header Section
+              Text(
+                'Financial Intelligence',
+                style: AppTextStyles.heading2.copyWith(color: Colors.white),
               ),
-            ),
-            const SizedBox(height: 24),
-            
-            // Analytics Content
-            Builder(
-              builder: (context) {
-                if (_isLoading) {
-                  return const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 80),
-                    child: Center(
-                      child: CircularProgressIndicator(
-                        valueColor: AlwaysStoppedAnimation(AppTheme.primaryColor),
-                      ),
-                    ),
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                'Real-time deep analysis of reward utilization and billing habits.',
+                style: AppTextStyles.body2.copyWith(color: Colors.white60),
+              ),
+              const SizedBox(height: AppSpacing.lg),
+
+              // Analytics Content
+              Builder(
+                builder: (context) {
+                  if (_isLoading) {
+                    return const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 80),
+                      child: LoadingState(),
+                    );
+                  }
+
+                  if (!authState.isAuthenticated || authState.user == null) {
+                    return _buildAuthRequiredState(context);
+                  }
+
+                  if (cards.isEmpty && transactions.isEmpty) {
+                    return _buildEmptyDataState(context);
+                  }
+
+                  return FinancialInsightsWidget(
+                    userId: authState.user!.id,
+                    transactions: transactions,
+                    creditCards: cards,
                   );
-                }
-                
-                if (!authState.isAuthenticated || authState.user == null) {
-                  return _buildAuthRequiredState(context);
-                }
-                
-                if (cards.isEmpty && transactions.isEmpty) {
-                  return _buildEmptyDataState(context);
-                }
-                
-                return FinancialInsightsWidget(
-                  userId: authState.user!.id,
-                  transactions: transactions,
-                  creditCards: cards,
-                );
-              },
-            ),
-          ],
+                },
+              ),
+            ],
+          ).animate().fadeIn(duration: 250.ms, curve: Curves.easeOut).slideY(begin: 0.05, end: 0, duration: 250.ms, curve: Curves.easeOut),
         ),
       ),
     );
   }
 
   Widget _buildAuthRequiredState(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(28),
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: const Color(0xFF0C152B),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
-      ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.lock_outline, size: 48, color: AppTheme.accentColor),
-          const SizedBox(height: 16),
-          Text(
-            'ACCESS RESTRICTED',
-            style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16, letterSpacing: 1.0),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Please authenticate your session to decrypt and view financial analytics.',
-            textAlign: TextAlign.center,
-            style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 12),
-          ),
-        ],
-      ),
+    return const EmptyState(
+      icon: Icons.lock_outline,
+      title: 'Access Restricted',
+      message: 'Please authenticate your session to decrypt and view financial analytics.',
     );
   }
 
   Widget _buildEmptyDataState(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(28),
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: const Color(0xFF0C152B),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
-      ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.analytics_outlined, size: 48, color: Colors.white24),
-          const SizedBox(height: 16),
-          Text(
-            'NO DATA DECRYPTED',
-            style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16, letterSpacing: 1.0),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Add credit cards and import statements to compile financial intelligence graphs.',
-            textAlign: TextAlign.center,
-            style: GoogleFonts.plusJakartaSans(color: Colors.white38, fontSize: 12),
-          ),
-        ],
-      ),
+    return const EmptyState(
+      icon: Icons.analytics_outlined,
+      title: 'No Data Decrypted',
+      message: 'Add credit cards and import statements to compile financial intelligence graphs.',
     );
   }
 }

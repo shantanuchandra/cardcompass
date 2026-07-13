@@ -1,8 +1,9 @@
 import 'package:cardcompass/shared/models/statement.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:cardcompass/shared/widgets/state_widgets.dart';
+import 'package:cardcompass/shared/widgets/app_scaffold.dart';
 import 'package:cardcompass/features/statements/viewmodels/statements_viewmodel.dart';
 import 'package:cardcompass/features/auth/providers/auth_provider.dart';
 import 'package:cardcompass/shared/models/credit_card.dart';
@@ -26,28 +27,18 @@ class StatementsScreen extends ConsumerWidget {
       }
     });
 
-    return Scaffold(
-      backgroundColor: const Color(0xFF050B18),
-      appBar: AppBar(
-        title: Text(
-          'STATEMENTS LEDGER',
-          style: GoogleFonts.spaceGrotesk(
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1.5,
-            fontSize: 16,
-          ),
+    return CardCompassScaffold(
+      title: 'Statements Ledger',
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.refresh, color: AppTheme.primaryColor),
+          onPressed: () => statementsViewModel.refreshStatements(userId),
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh, color: AppTheme.primaryColor),
-            onPressed: () => statementsViewModel.refreshStatements(userId),
-          ),
-          IconButton(
-            icon: const Icon(Icons.mail_outline, color: AppTheme.primaryColor),
-            onPressed: () => statementsViewModel.fetchStatementsFromGmail(userId),
-          ),
-        ],
-      ),
+        IconButton(
+          icon: const Icon(Icons.mail_outline, color: AppTheme.primaryColor),
+          onPressed: () => statementsViewModel.fetchStatementsFromGmail(userId),
+        ),
+      ],
       body: _buildBody(context, statementsState, statementsViewModel, userId),
       floatingActionButton: Padding(
         padding: const EdgeInsets.only(bottom: 80), // raise above bottom nav
@@ -68,7 +59,7 @@ class StatementsScreen extends ConsumerWidget {
     String userId,
   ) {
     if (state.isLoading) {
-      return const Center(child: CircularProgressIndicator(valueColor: AlwaysStoppedAnimation(AppTheme.primaryColor)));
+      return const LoadingState();
     }
 
     if (state.error != null) {
@@ -83,14 +74,14 @@ class StatementsScreen extends ConsumerWidget {
         if (state.isProcessing) const LinearProgressIndicator(color: AppTheme.primaryColor, backgroundColor: Color(0xFF050B18)),
         if (state.uploadProgress != null)
           Padding(
-            padding: const EdgeInsets.all(12.0),
+            padding: const EdgeInsets.all(AppSpacing.sm + AppSpacing.xs),
             child: Text(
               state.uploadProgress!.toUpperCase(),
-              style: GoogleFonts.spaceGrotesk(color: AppTheme.primaryColor, fontSize: 11, fontWeight: FontWeight.bold),
+              style: AppTextStyles.caption.copyWith(color: AppTheme.primaryColor, fontWeight: FontWeight.bold),
             ),
           ),
         Expanded(
-          child: _buildStatementsList(context, state.statements, viewModel),
+          child: _buildStatementsList(context, state.statements, viewModel, userId),
         ),
       ],
     );
@@ -100,23 +91,42 @@ class StatementsScreen extends ConsumerWidget {
     BuildContext context,
     List<Statement> statements,
     StatementsViewModel viewModel,
+    String userId,
   ) {
     if (statements.isEmpty) {
-      return const EmptyState(
-        title: 'NO DOCUMENTS FOUND',
-        message: 'Upload credit card statement PDFs or sync with Gmail API.',
-        icon: Icons.description_outlined,
+      return RefreshIndicator(
+        color: AppTheme.primaryColor,
+        onRefresh: () => viewModel.refreshStatements(userId),
+        child: LayoutBuilder(
+          builder: (context, constraints) => SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+              child: const Center(
+                child: EmptyState(
+                  title: 'NO DOCUMENTS FOUND',
+                  message: 'Upload credit card statement PDFs or sync with Gmail API.',
+                  icon: Icons.description_outlined,
+                ),
+              ),
+            ),
+          ),
+        ),
       );
     }
 
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
-      itemCount: statements.length,
-      itemBuilder: (context, index) {
-        final statement = statements[index];
-        return _buildStatementCard(context, statement, viewModel);
-      },
-    );
+    return RefreshIndicator(
+      color: AppTheme.primaryColor,
+      onRefresh: () => viewModel.refreshStatements(userId),
+      child: ListView.builder(
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md + AppSpacing.xs, vertical: AppSpacing.lg - AppSpacing.xs),
+        itemCount: statements.length,
+        itemBuilder: (context, index) {
+          final statement = statements[index];
+          return _buildStatementCard(context, statement, viewModel);
+        },
+      ),
+    ).animate().fadeIn(duration: 250.ms).slideY(begin: 0.05, end: 0);
   }
 
   Widget _buildStatementCard(
@@ -125,8 +135,8 @@ class StatementsScreen extends ConsumerWidget {
     StatementsViewModel viewModel,
   ) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.only(bottom: AppSpacing.md),
+      padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
         color: const Color(0xFF0C152B),
         borderRadius: BorderRadius.circular(16),
@@ -138,27 +148,19 @@ class StatementsScreen extends ConsumerWidget {
           Row(
             children: [
               const Icon(Icons.description_outlined, color: AppTheme.primaryColor, size: 22),
-              const SizedBox(width: 12),
+              const SizedBox(width: AppSpacing.sm + AppSpacing.xs),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       statement.fileName.toUpperCase(),
-                      style: GoogleFonts.spaceGrotesk(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                      ),
+                      style: AppTextStyles.body2.copyWith(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
                       overflow: TextOverflow.ellipsis,
                     ),
                     Text(
                       'STAGED: ${_formatDate(statement.createdAt)}',
-                      style: GoogleFonts.spaceGrotesk(
-                        color: Colors.white30,
-                        fontSize: 9,
-                        fontWeight: FontWeight.bold,
-                      ),
+                      style: AppTextStyles.caption.copyWith(color: Colors.white30, fontSize: 9, fontWeight: FontWeight.bold),
                     ),
                   ],
                 ),
@@ -166,7 +168,7 @@ class StatementsScreen extends ConsumerWidget {
               _buildStatusChip(statement.processed),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: AppSpacing.md),
           Row(
             children: [
               Expanded(
@@ -182,10 +184,10 @@ class StatementsScreen extends ConsumerWidget {
                   style: OutlinedButton.styleFrom(
                     side: const BorderSide(color: AppTheme.primaryColor, width: 1.2),
                   ),
-                  child: Text('VIEW DETAILED DATA', style: GoogleFonts.spaceGrotesk(fontSize: 10, fontWeight: FontWeight.bold, color: AppTheme.primaryColor)),
+                  child: Text('VIEW DETAILED DATA', style: AppTextStyles.caption.copyWith(fontSize: 10, fontWeight: FontWeight.bold, color: AppTheme.primaryColor)),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: AppSpacing.sm + AppSpacing.xs),
               IconButton(
                 icon: const Icon(Icons.delete_outline, color: AppTheme.errorColor, size: 20),
                 onPressed: () => viewModel.deleteStatement(statement.id),
@@ -200,20 +202,15 @@ class StatementsScreen extends ConsumerWidget {
   Widget _buildStatusChip(bool isProcessed) {
     final chipColor = isProcessed ? AppTheme.successColor : AppTheme.warningColor;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
       decoration: BoxDecoration(
         color: chipColor.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(AppBorderRadius.md),
         border: Border.all(color: chipColor.withValues(alpha: 0.2)),
       ),
       child: Text(
         isProcessed ? 'PROCESSED' : 'PENDING',
-        style: GoogleFonts.spaceGrotesk(
-          color: chipColor,
-          fontWeight: FontWeight.bold,
-          fontSize: 9,
-          letterSpacing: 0.5,
-        ),
+        style: AppTextStyles.caption.copyWith(color: chipColor, fontWeight: FontWeight.bold, fontSize: 9, letterSpacing: 0.5),
       ),
     );
   }
@@ -229,7 +226,7 @@ class StatementsScreen extends ConsumerWidget {
     if (userId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Identity required to upload statements.', style: GoogleFonts.spaceGrotesk(fontSize: 12)),
+          content: Text('Identity required to upload statements.', style: AppTextStyles.caption),
           backgroundColor: AppTheme.errorColor,
         ),
       );
@@ -249,12 +246,12 @@ class StatementsScreen extends ConsumerWidget {
             return AlertDialog(
               backgroundColor: const Color(0xFF0C152B),
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
+                borderRadius: BorderRadius.circular(AppBorderRadius.xl),
                 side: const BorderSide(color: Color(0xFF1E293B)),
               ),
               title: Text(
                 'UPLOAD STATEMENT PDF',
-                style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                style: AppTextStyles.heading3.copyWith(color: Colors.white, fontSize: 14),
               ),
               content: StatefulBuilder(
                 builder: (BuildContext context, StateSetter setState) {
@@ -265,20 +262,20 @@ class StatementsScreen extends ConsumerWidget {
                       if (userCards.isEmpty)
                         Text(
                           'No credit cards linked. Please register a card profile first.',
-                          style: GoogleFonts.plusJakartaSans(color: Colors.white70),
+                          style: AppTextStyles.body2.copyWith(color: Colors.white70),
                         )
                       else
                         DropdownButtonFormField<CreditCard>(
                           dropdownColor: const Color(0xFF0C152B),
                           initialValue: selectedCard,
-                          hint: Text('SELECT TARGET CARD', style: GoogleFonts.spaceGrotesk(color: Colors.white38, fontSize: 11, fontWeight: FontWeight.bold)),
+                          hint: Text('SELECT TARGET CARD', style: AppTextStyles.caption.copyWith(color: Colors.white38, fontSize: 11, fontWeight: FontWeight.bold)),
                           isExpanded: true,
                           items: userCards.map((card) {
                             return DropdownMenuItem<CreditCard>(
                               value: card,
                               child: Text(
                                 '${card.cardName.toUpperCase()} - ${card.bankName.toUpperCase()}',
-                                style: GoogleFonts.spaceGrotesk(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                                style: AppTextStyles.caption.copyWith(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
                               ),
                             );
                           }).toList(),
@@ -288,11 +285,10 @@ class StatementsScreen extends ConsumerWidget {
                             });
                           },
                           decoration: const InputDecoration(
-                            border: OutlineInputBorder(),
-                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            contentPadding: EdgeInsets.symmetric(horizontal: AppSpacing.sm + AppSpacing.xs, vertical: AppSpacing.sm),
                           ),
                         ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: AppSpacing.md),
                       OutlinedButton.icon(
                         onPressed: () async {
                           final result = await FilePicker.pickFiles(
@@ -310,14 +306,14 @@ class StatementsScreen extends ConsumerWidget {
                           side: const BorderSide(color: AppTheme.primaryColor),
                         ),
                         icon: const Icon(Icons.attach_file, color: AppTheme.primaryColor, size: 16),
-                        label: Text('CHOOSE STATEMENT FILE', style: GoogleFonts.spaceGrotesk(color: AppTheme.primaryColor, fontSize: 11, fontWeight: FontWeight.bold)),
+                        label: Text('CHOOSE STATEMENT FILE', style: AppTextStyles.caption.copyWith(color: AppTheme.primaryColor, fontSize: 11, fontWeight: FontWeight.bold)),
                       ),
                       if (selectedFileName != null)
                         Padding(
-                          padding: const EdgeInsets.only(top: 12.0),
+                          padding: const EdgeInsets.only(top: AppSpacing.sm + AppSpacing.xs),
                           child: Text(
                             'FILE SELECTED: $selectedFileName',
-                            style: GoogleFonts.spaceGrotesk(color: AppTheme.successColor, fontSize: 10, fontWeight: FontWeight.bold),
+                            style: AppTextStyles.caption.copyWith(color: AppTheme.successColor, fontSize: 10, fontWeight: FontWeight.bold),
                           ),
                         ),
                     ],
@@ -327,7 +323,7 @@ class StatementsScreen extends ConsumerWidget {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.of(dialogContext).pop(),
-                  child: Text('CANCEL', style: GoogleFonts.spaceGrotesk(color: Colors.white70)),
+                  child: Text('CANCEL', style: AppTextStyles.body2.copyWith(color: Colors.white70)),
                 ),
                 ElevatedButton(
                   onPressed: selectedCard == null || selectedFilePath == null
@@ -344,7 +340,7 @@ class StatementsScreen extends ConsumerWidget {
                     backgroundColor: AppTheme.primaryColor,
                     disabledBackgroundColor: Colors.white10,
                   ),
-                  child: Text('PROCESS STATEMENT', style: GoogleFonts.spaceGrotesk(color: const Color(0xFF050B18), fontWeight: FontWeight.bold, fontSize: 11)),
+                  child: Text('PROCESS STATEMENT', style: AppTextStyles.caption.copyWith(color: const Color(0xFF050B18), fontWeight: FontWeight.bold, fontSize: 11)),
                 ),
               ],
             );
