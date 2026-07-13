@@ -173,6 +173,74 @@ The annual fee is ₹500. Annual fee waived on annual spends of ₹2,00,000.
     expect(result.reasonCodes, contains('duplicate_benefit'));
   });
 
+  test('keeps distinct accelerated reward categories with shared conditions',
+      () {
+    const rewardEvidence = '''
+Earn 3 Reward Points per Rs.100 spent across merchant categories.
+Earn 5 Reward Points per Rs.100 spent on Dining and Grocery categories.
+Earn 1 Reward Point per Rs.100 spent on Insurance and Utility categories.
+''';
+    final data = extraction();
+    data['reward_points'] = {
+      'base_rate': 3,
+      'description':
+          '3 reward points per Rs.100 spent across merchant categories',
+      'evidence_excerpt':
+          'Earn 3 Reward Points per Rs.100 spent across merchant categories.',
+      'accelerated_categories': [
+        {
+          'category': 'Dining and Grocery',
+          'rate': 5,
+          'conditions': 'per Rs.100 spent',
+          'evidence_excerpt':
+              'Earn 5 Reward Points per Rs.100 spent on Dining and Grocery categories.',
+        },
+        {
+          'category': 'Insurance and Utility',
+          'rate': 1,
+          'conditions': 'per Rs.100 spent',
+          'evidence_excerpt':
+              'Earn 1 Reward Point per Rs.100 spent on Insurance and Utility categories.',
+        },
+      ],
+    };
+
+    final result = BenefitExtractionValidator.validate(
+      extractedData: data,
+      evidenceText: '$evidence$rewardEvidence',
+      cardName: 'Airtel',
+      bankName: 'Axis Bank',
+    );
+
+    expect(result.reasonCodes, isNot(contains('duplicate_benefit')));
+    expect(result.reasons, isEmpty, reason: result.reasonCodes.join(', '));
+    expect(result.accepted, isTrue);
+  });
+
+  test('recovers omitted base reward evidence from an exact source claim', () {
+    const rewardEvidence =
+        'Earn 3 Reward Points per Rs.100 spent across merchant categories.';
+    final data = extraction();
+    data['reward_points'] = {
+      'base_rate': 3,
+      'accelerated_categories': [],
+    };
+
+    final result = BenefitExtractionValidator.validate(
+      extractedData: data,
+      evidenceText: '$evidence$rewardEvidence',
+      cardName: 'Airtel',
+      bankName: 'Axis Bank',
+    );
+
+    expect(result.reasonCodes, isNot(contains('missing_evidence')));
+    expect(
+      (result.normalizedData['reward_points'] as Map)['evidence_excerpt'],
+      rewardEvidence,
+    );
+    expect(result.accepted, isTrue);
+  });
+
   test('rejects a materially different card identity', () {
     final result = BenefitExtractionValidator.validate(
       extractedData: extraction(cardName: 'Axis ACE'),

@@ -44,7 +44,7 @@ class BenefitValidationResult {
 /// claim is accepted only when its evidence occurs in the supplied source and
 /// every numeric value can be found in that evidence.
 class BenefitExtractionValidator {
-  static const validationVersion = 'benefit-grounding-v1';
+  static const validationVersion = 'benefit-grounding-v2';
 
   static final RegExp _nonBenefitPattern = RegExp(
     r'customer support|personal loan|savings account|current account|salary account|wealth management|request a callback|apply now|emi conversion facility|utility services|generic concierge',
@@ -102,6 +102,16 @@ class BenefitExtractionValidator {
     final rawRewards = extractedData['reward_points'];
     if (rawRewards is Map) {
       final rewards = Map<String, dynamic>.from(rawRewards);
+      final baseRate = rewards['base_rate'];
+      final baseEvidence = rewards['evidence_excerpt']?.toString().trim();
+      if (baseRate is num && (baseEvidence == null || baseEvidence.isEmpty)) {
+        final recoveredEvidence =
+            _findBaseRewardEvidence(evidenceText, baseRate);
+        if (recoveredEvidence != null) {
+          rewards['evidence_excerpt'] = recoveredEvidence;
+        }
+      }
+      normalized['reward_points'] = rewards;
       if (rewards['base_rate'] is num) {
         rewardClaims.add({
           'category': 'REWARDS',
@@ -119,8 +129,7 @@ class BenefitExtractionValidator {
             'category': accelerated['category'] ?? 'REWARDS',
             'rate': accelerated['rate'],
             'description': accelerated['description'] ??
-                accelerated['conditions'] ??
-                'Accelerated reward points earning rate',
+                _acceleratedRewardDescription(accelerated),
             'evidence_excerpt': accelerated['evidence_excerpt'],
           });
         }
@@ -273,6 +282,33 @@ class BenefitExtractionValidator {
     }
   }
 
+  static String _acceleratedRewardDescription(Map<String, dynamic> reward) {
+    final rate = reward['rate']?.toString();
+    final category = reward['category']?.toString() ?? 'eligible categories';
+    final conditions = reward['conditions']?.toString().trim();
+    final rateLabel = rate == null || rate.isEmpty
+        ? 'Accelerated reward points'
+        : '$rate reward points';
+    return '$rateLabel${conditions == null || conditions.isEmpty ? '' : ' $conditions'} on $category';
+  }
+
+  /// Recovers an omitted model excerpt only when the scraped source contains
+  /// both the extracted rate and an explicit reward-points phrase.
+  static String? _findBaseRewardEvidence(String evidenceText, num rate) {
+    final candidates = evidenceText
+        .split(RegExp(r'(?<=[.!?])\s+|[\r\n]+'))
+        .map((candidate) => candidate.trim())
+        .where((candidate) => candidate.isNotEmpty);
+    for (final candidate in candidates) {
+      if (_containsNumber(candidate, rate) &&
+          RegExp(r'\breward\s+points?\b', caseSensitive: false)
+              .hasMatch(candidate)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
   static List<String> _unsupportedNumbers(
       Map<String, dynamic> benefit, String excerpt) {
     const numericFields = [
@@ -315,9 +351,10 @@ class BenefitExtractionValidator {
       return false;
     }
     final lower = description.toLowerCase();
-    if (lower.contains('fuel') && category != 'FUEL') return true;
+    if (lower.contains('fuel') && !category.contains('FUEL')) return true;
     if ((lower.contains('dining') || lower.contains('restaurant')) &&
-        !const {'DINING', 'CASHBACK', 'REWARDS'}.contains(category)) {
+        !category.contains('DINING') &&
+        !const {'CASHBACK', 'REWARDS'}.contains(category)) {
       return true;
     }
     return false;
