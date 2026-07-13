@@ -476,6 +476,11 @@ STRICT GROUNDING RULES:
 - Missing information must remain null. Never estimate, assume, or substitute a default.
 - If the source identifies a different card variant, return no benefits and explain the mismatch in extraction_notes.
 - Preserve qualifiers such as "up to", promotional dates, merchant restrictions, exclusions, and spend conditions.
+- Return each entitlement as an atomic claim. When a source paragraph contains an entitlement plus an eligibility rule, cap, exclusion, redemption rule, or geographic restriction, preserve every part in the claim's structured fields.
+- One card benefit may produce multiple claims only when the source describes genuinely different entitlements. Do not merge distinct benefits merely because they share a section.
+- Do not omit a source-backed entitlement because it lacks a numeric value. Extract card-specific hotel, dining, insurance, concierge, forex, and travel offers when supported.
+- Preserve all qualifying conditions for lounge, fuel, rewards, insurance, and travel offers: thresholds, date or quarter rules, caps, transaction ranges, exclusions, request requirements, and geographic restrictions.
+- After extracting, scan every benefit-like source sentence once more. Do not omit a source-backed entitlement: it must appear in the returned JSON with its exact evidence_excerpt.
 
 JSON OUTPUT FORMAT:
 {
@@ -493,7 +498,7 @@ JSON OUTPUT FORMAT:
       "rate": percentage_as_number,
       "rate_type": "percentage|flat_amount|points",
       "description": "detailed description",
-      "conditions": "any conditions",
+      "conditions": "all qualifying conditions from the evidence, or null",
       "monthly_cap": amount_or_null,
       "annual_cap": amount_or_null,
       "min_spend_threshold": amount_or_null,
@@ -520,7 +525,7 @@ JSON OUTPUT FORMAT:
     {
       "type": "LOUNGE|INSURANCE|CONCIERGE|OTHER",
       "description": "detailed description",
-      "value": "explicit value or null",
+      "value": "explicit numeric or nonnumeric entitlement value, or null",
       "evidence_excerpt": "exact source sentence containing the claim"
     }
   ],

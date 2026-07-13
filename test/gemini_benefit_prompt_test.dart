@@ -25,4 +25,17 @@ void main() {
     expect(config['maxOutputTokens'], greaterThanOrEqualTo(8192));
     expect(config['temperature'], lessThanOrEqualTo(0.1));
   });
+
+  test('benefit prompt requires atomic claims and source coverage', () {
+    final prompt = GeminiTransactionParser.buildBenefitExtractionPrompt(
+      'Zenith',
+      'AU Small Finance Bank',
+    ).toLowerCase();
+
+    expect(prompt, contains('atomic claim'));
+    expect(prompt, contains('one card benefit may produce multiple claims'));
+    expect(prompt, contains('all qualifying conditions'));
+    expect(prompt, contains('do not omit a source-backed entitlement'));
+    expect(prompt, contains('exclusions'));
+  });
 }
