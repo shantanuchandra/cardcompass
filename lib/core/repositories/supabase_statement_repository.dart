@@ -30,6 +30,15 @@ class SupabaseStatementRepository implements StatementRepository {
     required File file,
   }) async {
     try {
+      // cardId here is the owned user_cards.id; resolve its catalog card_id
+      // so the required (NOT NULL) card_id column is populated correctly.
+      final cardResponse = await _supabase
+          .from('user_cards')
+          .select('catalog_card_id')
+          .eq('id', cardId)
+          .single();
+      final catalogCardId = cardResponse['catalog_card_id'] as String;
+
       // Upload file to Supabase Storage
       final fileName = '${DateTime.now().millisecondsSinceEpoch}_${file.path.split('/').last}';
       final filePath = 'statements/$userId/$fileName';
@@ -45,6 +54,7 @@ class SupabaseStatementRepository implements StatementRepository {
       final result = await _supabase.from('statements').insert({
         // Let Supabase auto-generate UUID for 'id' field
         'user_id': userId,
+        'card_id': catalogCardId,
         'user_card_id': cardId,
         'file_path': publicUrl,
         'file_name': fileName,
@@ -213,10 +223,10 @@ class SupabaseStatementRepository implements StatementRepository {
       try {
         final cardResponse = await _supabase
             .from('user_cards')
-            .select('card_id')
+            .select('catalog_card_id')
             .eq('id', userCardId)
             .single();
-        catalogCardId = cardResponse['card_id'] as String;
+        catalogCardId = cardResponse['catalog_card_id'] as String;
       } catch (e) {
         print('⚠️ Could not resolve catalog card_id for userCardId $userCardId: $e');
       }

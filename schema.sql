@@ -138,33 +138,12 @@ CREATE TABLE IF NOT EXISTS card_benefits_staging (
 -- TRANSACTIONS & STATEMENTS
 -- ============================================================================
 
--- Transactions Table
-CREATE TABLE IF NOT EXISTS transactions (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  user_card_id UUID REFERENCES user_cards(id) ON DELETE CASCADE,
-  amount DECIMAL(12,2) NOT NULL,
-  currency TEXT DEFAULT 'INR',
-  description TEXT NOT NULL,
-  merchant_name TEXT,
-  category TEXT,
-  transaction_type TEXT, -- 'debit', 'credit', 'refund', 'fee', 'interest', 'reward'
-  transaction_date TIMESTAMP WITH TIME ZONE NOT NULL,
-  location TEXT,
-  reward_earned DECIMAL(12,2),
-  reward_type TEXT,
-  statement_id TEXT,
-  metadata JSONB DEFAULT '{}',
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
 -- Statements Table (Credit Card Statements)
 CREATE TABLE IF NOT EXISTS statements (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   card_id UUID NOT NULL REFERENCES card_catalog(id) ON DELETE CASCADE,
-  user_card_id UUID REFERENCES user_cards(id) ON DELETE CASCADE,
+  user_card_id UUID NOT NULL REFERENCES user_cards(id) ON DELETE CASCADE,
   statement_date DATE NOT NULL,
   due_date DATE NOT NULL,
   total_amount DECIMAL(12,2) DEFAULT 0,
@@ -181,7 +160,28 @@ CREATE TABLE IF NOT EXISTS statements (
   transaction_count INTEGER,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  UNIQUE(card_id, statement_date)
+  UNIQUE(user_card_id, statement_date)
+);
+
+-- Transactions Table
+CREATE TABLE IF NOT EXISTS transactions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  user_card_id UUID NOT NULL REFERENCES user_cards(id) ON DELETE CASCADE,
+  amount DECIMAL(12,2) NOT NULL,
+  currency TEXT DEFAULT 'INR',
+  description TEXT NOT NULL,
+  merchant_name TEXT,
+  category TEXT,
+  transaction_type TEXT, -- 'debit', 'credit', 'refund', 'fee', 'interest', 'reward'
+  transaction_date TIMESTAMP WITH TIME ZONE NOT NULL,
+  location TEXT,
+  reward_earned DECIMAL(12,2),
+  reward_type TEXT,
+  statement_id UUID REFERENCES statements(id) ON DELETE SET NULL,
+  metadata JSONB DEFAULT '{}',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- ============================================================================
