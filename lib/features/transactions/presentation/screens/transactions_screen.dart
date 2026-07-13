@@ -282,7 +282,198 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
   }
 
   List<Widget> _buildTransactionSections(TransactionsViewState state) {
-    return [const SizedBox.shrink()]; // replaced in Task 5
+    final groups = state.groupedTransactions(_grouping);
+    final cardsById = {for (final c in state.userCards) c.id: c};
+
+    return [
+      _buildGroupingToggle(),
+      const SizedBox(height: AppSpacing.md),
+      for (final group in groups) ...[
+        if (_grouping != TransactionGrouping.flat) _buildGroupHeader(group, state.selectedCardId, cardsById),
+        for (final t in group.transactions) _buildTransactionRow(t, cardsById),
+        const SizedBox(height: AppSpacing.sm),
+      ],
+    ];
+  }
+
+  Widget _buildGroupingToggle() {
+    const options = {
+      TransactionGrouping.flat: 'Flat',
+      TransactionGrouping.byCard: 'By Card',
+      TransactionGrouping.byCategory: 'By Category',
+      TransactionGrouping.byDate: 'By Date',
+    };
+
+    return SizedBox(
+      height: 34,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        children: options.entries.map((entry) {
+          final selected = _grouping == entry.key;
+          return Padding(
+            padding: const EdgeInsets.only(right: AppSpacing.sm),
+            child: ChoiceChip(
+              label: Text(entry.value, style: GoogleFonts.spaceGrotesk(fontSize: 11, fontWeight: FontWeight.w600, color: selected ? Colors.black : Colors.white70)),
+              selected: selected,
+              onSelected: (_) => setState(() => _grouping = entry.key),
+              selectedColor: AppTheme.primaryColor,
+              backgroundColor: const Color(0xFF0C152B),
+              side: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  Widget _buildGroupHeader(TransactionGroup group, String selectedCardId, Map<String, CreditCard> cardsById) {
+    String title = group.key;
+    if (_grouping == TransactionGrouping.byCard) {
+      title = cardsById[group.key]?.cardName ?? 'Unknown Card';
+    } else if (_grouping == TransactionGrouping.byCategory) {
+      title = group.key.toUpperCase();
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(title, style: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13, letterSpacing: 0.5)),
+          Text('₹${group.subtotal.toStringAsFixed(0)}', style: GoogleFonts.spaceGrotesk(color: AppTheme.primaryColor, fontWeight: FontWeight.bold, fontSize: 13)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTransactionRow(Transaction t, Map<String, CreditCard> cardsById) {
+    final isCredit = t.type == TransactionType.credit || t.type == TransactionType.refund;
+    final categoryColor = _getCategoryColor(t.categoryString);
+    final card = cardsById[t.userCardId];
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: AppSpacing.sm + 4),
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0C152B),
+        borderRadius: BorderRadius.circular(AppBorderRadius.xl),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.06), width: 1),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: categoryColor.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+              border: Border.all(color: categoryColor.withValues(alpha: 0.3), width: 1),
+            ),
+            child: Icon(_categoryIcon(t.category), color: categoryColor, size: 16),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  t.merchantName ?? t.description,
+                  style: AppTextStyles.body2.copyWith(color: Colors.white, fontWeight: FontWeight.w600),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: AppSpacing.xs),
+                Row(
+                  children: [
+                    Text(
+                      '${_formatDate(t.transactionDate)} · ${t.categoryString.toUpperCase()}',
+                      style: GoogleFonts.spaceGrotesk(color: Colors.white38, fontSize: 11, fontWeight: FontWeight.w500, letterSpacing: 0.5),
+                    ),
+                    if (card != null) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: card.networkColor.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(AppBorderRadius.sm),
+                        ),
+                        child: Text(
+                          '${card.cardName} •${card.cardNumberLast4 ?? ''}',
+                          style: GoogleFonts.spaceGrotesk(color: card.networkColor, fontSize: 9, fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '${isCredit ? '+' : '-'}₹${t.amount.toStringAsFixed(0)}',
+                style: GoogleFonts.spaceGrotesk(color: isCredit ? AppTheme.successColor : Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+              ),
+              if (t.rewardEarned != null && t.rewardEarned! > 0) ...[
+                const SizedBox(height: 2),
+                Text(
+                  '+₹${t.rewardEarned!.toStringAsFixed(0)}',
+                  style: GoogleFonts.spaceGrotesk(color: AppTheme.rewardGold, fontWeight: FontWeight.bold, fontSize: 11),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  IconData _categoryIcon(TransactionCategory category) {
+    switch (category) {
+      case TransactionCategory.food:
+        return Icons.restaurant;
+      case TransactionCategory.fuel:
+        return Icons.local_gas_station;
+      case TransactionCategory.grocery:
+        return Icons.shopping_basket;
+      case TransactionCategory.entertainment:
+        return Icons.movie;
+      case TransactionCategory.travel:
+        return Icons.flight;
+      case TransactionCategory.shopping:
+        return Icons.shopping_bag;
+      default:
+        return Icons.payment;
+    }
+  }
+
+  Color _getCategoryColor(String? category) {
+    switch (category?.toLowerCase()) {
+      case 'food':
+        return Colors.orange;
+      case 'shopping':
+        return AppTheme.primaryColor;
+      case 'fuel':
+        return AppTheme.errorColor;
+      case 'entertainment':
+        return Colors.purpleAccent;
+      case 'travel':
+        return Colors.green;
+      case 'grocery':
+      case 'groceries':
+        return Colors.tealAccent;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  String _formatDate(DateTime date) {
+    final now = DateTime.now();
+    final difference = now.difference(date).inDays;
+    if (difference == 0) return 'Today';
+    if (difference == 1) return 'Yesterday';
+    if (difference < 7) return '$difference days ago';
+    return '${date.day}/${date.month}/${date.year}';
   }
 
   Widget _buildTileRow(TransactionsViewState state, TransactionsViewModelController notifier) {
