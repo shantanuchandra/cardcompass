@@ -7,6 +7,7 @@ import 'benefit_extraction_validator.dart';
 import 'benefit_staging_policy.dart';
 import 'benefit_deduplication_service.dart';
 import 'benefit_category_normalizer.dart';
+import 'benefit_repair_service.dart';
 
 /// Advanced benefit calculation service with tier-based rewards
 class AdvancedBenefitCalculationService {
@@ -627,13 +628,57 @@ class AdvancedBenefitCalculationService {
 
       final extractedData =
           Map<String, dynamic>.from(extractionResult['data'] as Map);
-      final validation = BenefitExtractionValidator.validate(
+      var validation = BenefitExtractionValidator.validate(
         extractedData: extractedData,
         evidenceText: htmlContent,
         cardName: normalizedCard,
         bankName: normalizedBank,
         sourceUrl: sourceUrl,
       );
+
+      // A second model call is deliberately narrow: it can only interpret
+      // material source clauses which the first pass left unrepresented. Its
+      // output stays in staging as repair_candidates and is revalidated before
+      // the PM review can see it. No active mappings are modified here.
+      final repairTargets =
+          BenefitRepairService.buildTargets(validation.warnings);
+      if (repairTargets.isNotEmpty) {
+        final repairResult = await GeminiTransactionParser.repairBenefitClaims(
+          cardName: normalizedCard,
+          bankName: normalizedBank,
+          targets: repairTargets,
+        );
+        if (repairResult['success'] == true) {
+          final repairedData = BenefitRepairService.mergeGroundedRepairs(
+            extractedData: validation.normalizedData,
+            targets: repairTargets,
+            rawRepairs: repairResult['repairs'] as List<dynamic>? ?? const [],
+          );
+          validation = BenefitExtractionValidator.validate(
+            extractedData: repairedData,
+            evidenceText: htmlContent,
+            cardName: normalizedCard,
+            bankName: normalizedBank,
+            sourceUrl: sourceUrl,
+          );
+        } else {
+          final dataWithRepairFailure =
+              Map<String, dynamic>.from(validation.normalizedData);
+          dataWithRepairFailure['repair_metadata'] = {
+            'attempted': true,
+            'targets': repairTargets.map((target) => target.toJson()).toList(),
+            'accepted_count': 0,
+            'error': repairResult['error']?.toString() ?? 'Repair call failed',
+          };
+          validation = BenefitValidationResult(
+            accepted: validation.accepted,
+            confidence: validation.confidence,
+            reasons: validation.reasons,
+            warnings: validation.warnings,
+            normalizedData: dataWithRepairFailure,
+          );
+        }
+      }
 
       // 4. Save to staging table for review before committing
       String? stagingId;

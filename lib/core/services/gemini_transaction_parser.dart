@@ -6,6 +6,7 @@ import 'card_normalizer_service.dart';
 import 'pruning_audit_service.dart';
 import 'parsing_logger.dart';
 import 'gemini_request_service.dart';
+import 'benefit_repair_service.dart';
 
 /// Gemini AI Transaction Parser service
 class GeminiTransactionParser {
@@ -455,6 +456,126 @@ GENERAL INDIAN BANK INSTRUCTIONS:
         'temperature': 0.1,
         'maxOutputTokens': 8192,
       };
+
+  /// Makes one narrowly scoped repair call after the main extraction. The
+  /// caller must still validate and stage the returned candidates; this method
+  /// intentionally has no database side effects.
+  static Future<Map<String, dynamic>> repairBenefitClaims({
+    required String cardName,
+    required String bankName,
+    required List<BenefitRepairTarget> targets,
+  }) async {
+    if (targets.isEmpty) {
+      return const {'success': true, 'repairs': <dynamic>[]};
+    }
+
+    try {
+      final prompt = buildBenefitRepairPrompt(
+        cardName: cardName,
+        bankName: bankName,
+        targets: targets,
+      );
+      final response = await _callGeminiWithFallback({
+        'contents': [
+          {
+            'parts': [
+              {'text': prompt}
+            ]
+          }
+        ],
+        'generationConfig': const {
+          'temperature': 0.0,
+          'maxOutputTokens': 4096,
+        },
+      }, maxRetries: 1);
+      if (response == null || response.statusCode != 200) {
+        return {
+          'success': false,
+          'error':
+              'Repair call failed${response == null ? '' : ' (${response.statusCode})'}',
+        };
+      }
+
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final text =
+          body['candidates']?[0]?['content']?['parts']?[0]?['text']?.toString();
+      if (text == null || text.trim().isEmpty) {
+        return const {
+          'success': false,
+          'error': 'Repair call returned no text'
+        };
+      }
+      final match = RegExp(r'\{.*\}', dotAll: true).firstMatch(text);
+      if (match == null) {
+        return const {
+          'success': false,
+          'error': 'Repair call returned invalid JSON'
+        };
+      }
+      final decoded = jsonDecode(match.group(0)!) as Map<String, dynamic>;
+      final repairs = decoded['repairs'];
+      if (repairs is! List) {
+        return const {
+          'success': false,
+          'error': 'Repair response has no repairs list'
+        };
+      }
+      return {'success': true, 'repairs': repairs};
+    } catch (error) {
+      ParsingLogger.error(
+          'Benefits repair: Error parsing repair response', error);
+      return {'success': false, 'error': error.toString()};
+    }
+  }
+
+  static String buildBenefitRepairPrompt({
+    required String cardName,
+    required String bankName,
+    required List<BenefitRepairTarget> targets,
+  }) {
+    final sourceTargets =
+        targets.map((target) => jsonEncode(target.toJson())).join('\n');
+    return '''
+You repair incomplete benefit extraction for exactly $bankName $cardName.
+
+You may interpret ONLY the source targets below. Do not use card knowledge,
+other web text, or assumptions. Each source_excerpt is the complete verbatim
+evidence you may use for that target.
+
+For each target that contains a real card benefit, emit at most one typed repair.
+Preserve every stated cap, threshold, transaction range, exclusion, eligibility
+rule, and geography in structured fields or conditions. Do not add a repair for
+a heading, navigation label, or text that is not a card benefit.
+
+evidence_excerpt must copy the target source_excerpt exactly as supplied. Never
+paraphrase it. target_id must match the supplied id exactly. If the target is
+ambiguous, omit it rather than guessing.
+
+Return ONLY JSON:
+{
+  "repairs": [
+    {
+      "target_id": "repair:0",
+      "category": "FUEL|REWARDS|LOUNGE|FOREX|INSURANCE|TRAVEL|DINING|CONCIERGE|GENERAL",
+      "type": "specific benefit type",
+      "description": "precise card benefit",
+      "rate": "number or null",
+      "rate_type": "percentage|points|flat_amount|null",
+      "monthly_cap": "number or null",
+      "annual_cap": "number or null",
+      "min_spend_threshold": "number or null",
+      "max_cap_limit": "number or null",
+      "conditions": "all non-numeric qualifiers or null",
+      "excluded_categories": ["only explicit exclusions"],
+      "evidence_excerpt": "exact target source excerpt"
+    }
+  ]
+}
+
+SOURCE TARGETS:
+$sourceTargets
+''';
+  }
 
   /// Build the specialized prompt for benefit extraction
   static String buildBenefitExtractionPrompt(String cardName, String bankName) {

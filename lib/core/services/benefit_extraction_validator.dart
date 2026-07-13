@@ -1,3 +1,5 @@
+import 'benefit_evidence_segmenter.dart';
+
 class BenefitValidationIssue {
   final String code;
   final String message;
@@ -145,7 +147,18 @@ class BenefitExtractionValidator {
         }
       }
     }
-    final claims = [...benefits, ...specialBenefits, ...rewardClaims];
+    final repairCandidates = extractedData['repair_candidates'] is List
+        ? (extractedData['repair_candidates'] as List)
+            .whereType<Map>()
+            .map((raw) => Map<String, dynamic>.from(raw))
+            .toList()
+        : <Map<String, dynamic>>[];
+    final claims = [
+      ...benefits,
+      ...specialBenefits,
+      ...rewardClaims,
+      ...repairCandidates,
+    ];
 
     if (claims.isEmpty) {
       reasons.add(const BenefitValidationIssue(
@@ -257,6 +270,9 @@ class BenefitExtractionValidator {
         reasons.isEmpty ? rawConfidence : rawConfidence.clamp(0.0, 0.75);
 
     normalized['benefits'] = benefits;
+    if (repairCandidates.isNotEmpty) {
+      normalized['repair_candidates'] = repairCandidates;
+    }
     normalized['validation_version'] = validationVersion;
     normalized['calculated_confidence'] = confidence;
 
@@ -333,10 +349,7 @@ class BenefitExtractionValidator {
     };
     final warnings = <BenefitValidationIssue>[];
     final seen = <String>{};
-    final sentences = evidenceText
-        .split(RegExp(r'(?<=[.!?])\s+|[\r\n]+'))
-        .map((sentence) => sentence.trim())
-        .where((sentence) => sentence.isNotEmpty);
+    final sentences = BenefitEvidenceSegmenter.clauses(evidenceText);
 
     for (final sentence in sentences) {
       final normalizedSentence = _normalizeText(sentence);
@@ -371,10 +384,7 @@ class BenefitExtractionValidator {
   /// Recovers an omitted model excerpt only when the scraped source contains
   /// both the extracted rate and an explicit reward-points phrase.
   static String? _findBaseRewardEvidence(String evidenceText, num rate) {
-    final candidates = evidenceText
-        .split(RegExp(r'(?<=[.!?])\s+|[\r\n]+'))
-        .map((candidate) => candidate.trim())
-        .where((candidate) => candidate.isNotEmpty);
+    final candidates = BenefitEvidenceSegmenter.clauses(evidenceText);
     for (final candidate in candidates) {
       if (_containsNumber(candidate, rate) &&
           RegExp(r'\breward\s+points?\b', caseSensitive: false)

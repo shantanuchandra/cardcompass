@@ -102,6 +102,25 @@ void main() {
     expect(item.decision, BenefitDecision.unresolved);
   });
 
+  test('shows a repaired candidate with its review-only provenance', () {
+    final state = BenefitReviewState.fromExtractedData({
+      'repair_candidates': [
+        {
+          'category': 'FUEL',
+          'type': 'FUEL_SURCHARGE_WAIVER',
+          'description': '1% fuel surcharge waiver up to ₹1000',
+          'evidence_excerpt': 'Enjoy 1% Fuel Surcharge Waiver up to ₹1000.',
+          'repair_pass': true,
+        },
+      ],
+    });
+
+    final item = state.items.single;
+    expect(item.kind, 'FUEL');
+    expect(item.source['repair_pass'], isTrue);
+    expect(item.decision, BenefitDecision.unresolved);
+  });
+
   test('a pending staging record with candidate data can be opened for review',
       () {
     final access = StagingReviewAccess(

@@ -105,6 +105,7 @@ class BenefitReviewState {
 
     addItems('cashback_benefits', 'category', 'description');
     addItems('special_benefits', 'type', 'description');
+    addItems('repair_candidates', 'category', 'description');
 
     final rewardPoints = data['reward_points'];
     if (rewardPoints is Map) {

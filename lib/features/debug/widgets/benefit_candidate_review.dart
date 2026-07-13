@@ -73,6 +73,7 @@ class BenefitCandidateReview extends StatelessWidget {
     final status = _statusFor(item.decision);
     final actionLabel = item.kind.toLowerCase();
     final sourceCoverageGap = item.source['source_coverage_gap'] == true;
+    final repairPass = item.source['repair_pass'] == true;
     final evidenceExcerpt = item.source['evidence_excerpt']?.toString();
 
     return Card(
@@ -123,7 +124,7 @@ class BenefitCandidateReview extends StatelessWidget {
               item.description,
               style: const TextStyle(color: _text, height: 1.35),
             ),
-            if (sourceCoverageGap) ...[
+            if (sourceCoverageGap || repairPass) ...[
               const SizedBox(height: 10),
               Container(
                 width: double.infinity,
@@ -136,8 +137,10 @@ class BenefitCandidateReview extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'SOURCE COVERAGE GAP',
+                    Text(
+                      repairPass
+                          ? 'SECOND-PASS REPAIR — REVIEW REQUIRED'
+                          : 'SOURCE COVERAGE GAP',
                       style: TextStyle(
                         color: _cyan,
                         fontSize: 10,
