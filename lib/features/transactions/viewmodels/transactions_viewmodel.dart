@@ -65,29 +65,25 @@ class TransactionsViewState {
   /// Per-card spend + reward totals, computed from [filteredTransactions].
   /// Transactions with a null/empty userCardId are excluded.
   Map<String, CardSpendSummary> perCardSummary() {
-    final spendByCard = <String, double>{};
-    final rewardsByCard = <String, double>{};
+    final summaryByCard = <String, CardSpendSummary>{};
 
     for (final t in filteredTransactions) {
       final cardId = t.userCardId;
       if (cardId == null || cardId.isEmpty) continue;
 
-      if (t.type == TransactionType.debit) {
-        spendByCard[cardId] = (spendByCard[cardId] ?? 0) + t.amount.abs();
-      } else {
-        spendByCard.putIfAbsent(cardId, () => 0);
-      }
-      rewardsByCard[cardId] = (rewardsByCard[cardId] ?? 0) + (t.rewardEarned ?? 0);
+      final existing = summaryByCard[cardId];
+      // Every card that has at least one transaction gets an entry, even if
+      // its only transactions are non-debit (e.g. credit/refund) — such a
+      // card still appears in the summary with totalSpend: 0.
+      final spendDelta = t.type == TransactionType.debit ? t.amount.abs() : 0;
+      summaryByCard[cardId] = CardSpendSummary(
+        cardId: cardId,
+        totalSpend: (existing?.totalSpend ?? 0) + spendDelta,
+        totalRewards: (existing?.totalRewards ?? 0) + (t.rewardEarned ?? 0),
+      );
     }
 
-    return {
-      for (final cardId in spendByCard.keys)
-        cardId: CardSpendSummary(
-          cardId: cardId,
-          totalSpend: spendByCard[cardId] ?? 0,
-          totalRewards: rewardsByCard[cardId] ?? 0,
-        ),
-    };
+    return summaryByCard;
   }
 }
 

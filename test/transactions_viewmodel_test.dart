@@ -4,7 +4,7 @@ import 'package:cardcompass/shared/models/transaction.dart';
 
 Transaction _tx({
   required String id,
-  required String userCardId,
+  required String? userCardId,
   required double amount,
   TransactionType type = TransactionType.debit,
   TransactionCategory category = TransactionCategory.food,
@@ -47,6 +47,16 @@ void main() {
     });
 
     test('excludes transactions with null userCardId', () {
+      final state = const TransactionsViewState().copyWith(
+        filteredTransactions: [
+          _tx(id: '1', userCardId: null, amount: 100),
+        ],
+      );
+      final summary = state.perCardSummary();
+      expect(summary.isEmpty, isTrue);
+    });
+
+    test('excludes transactions with empty userCardId', () {
       final state = const TransactionsViewState().copyWith(
         filteredTransactions: [
           _tx(id: '1', userCardId: '', amount: 100),
