@@ -1181,24 +1181,14 @@ class DataPipelineDebugService {
         }
       }
 
-      // ── Fuzzy match tier 2: any card from this bank (last resort) ─────
-      // Only reached when no subject keyword matched — avoids wrong-card
-      // associations like "Etihad Guest" for an SBI BPCL statement.
-      // We skip this tier entirely if this bank has NO user card — in that case
-      // fall through to the URL prompt so the user can register the card.
-      final byBank = await Supabase.instance.client
-          .from('card_catalog')
-          .select('id, bank, card_name')
-          .ilike('bank', '%$bankRoot%')
-          .order('card_name') // alphabetical determinism
-          .limit(1);
-      if (byBank.isNotEmpty) {
-        print(
-            '   ⚠️ Catalog bank-any match (may be approximate): ${byBank.first['card_name']} (${byBank.first['bank']})');
-        return byBank.first['id'] as String;
-      }
-
       // ── No catalog match → ask user for URL ──────────────────────────
+      // Deliberately no "any card from this bank" fallback here: picking an
+      // arbitrary same-bank catalog card with no keyword/name signal tying it
+      // to the actual statement creates a phantom user_cards row for a card
+      // the user may not even own (e.g. an unrelated ICICI product matched
+      // to an ICICI email with no extractable card variant). Falling through
+      // to the manual URL prompt below requires explicit user confirmation
+      // instead of guessing.
       print('   🔄 Card not found in catalog. Requesting URL from user...');
 
       print('');
