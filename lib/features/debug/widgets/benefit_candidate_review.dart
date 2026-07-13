@@ -72,6 +72,8 @@ class BenefitCandidateReview extends StatelessWidget {
     final resolved = item.decision != BenefitDecision.unresolved;
     final status = _statusFor(item.decision);
     final actionLabel = item.kind.toLowerCase();
+    final sourceCoverageGap = item.source['source_coverage_gap'] == true;
+    final evidenceExcerpt = item.source['evidence_excerpt']?.toString();
 
     return Card(
       margin: EdgeInsets.zero,
@@ -121,6 +123,42 @@ class BenefitCandidateReview extends StatelessWidget {
               item.description,
               style: const TextStyle(color: _text, height: 1.35),
             ),
+            if (sourceCoverageGap) ...[
+              const SizedBox(height: 10),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF172554),
+                  border: Border.all(color: _cyan.withValues(alpha: 0.45)),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'SOURCE COVERAGE GAP',
+                      style: TextStyle(
+                        color: _cyan,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    if (evidenceExcerpt != null) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        'VERBATIM: $evidenceExcerpt',
+                        style: const TextStyle(
+                          color: Color(0xFFCBD5E1),
+                          fontSize: 11,
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: 12),
             LayoutBuilder(
               builder: (context, constraints) {

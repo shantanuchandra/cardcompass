@@ -81,7 +81,10 @@ class BenefitReviewState {
 
   bool get allRejected => items.isNotEmpty && rejectedCount == items.length;
 
-  factory BenefitReviewState.fromExtractedData(Map<String, dynamic> data) {
+  factory BenefitReviewState.fromExtractedData(
+    Map<String, dynamic> data, {
+    List<dynamic> coverageWarnings = const [],
+  }) {
     final items = <BenefitReviewCandidate>[];
 
     void addItems(String collectionKey, String kindKey, String descriptionKey) {
@@ -138,6 +141,30 @@ class BenefitReviewState {
           ));
         }
       }
+    }
+
+    for (var index = 0; index < coverageWarnings.length; index++) {
+      final warning = coverageWarnings[index];
+      if (warning is! Map ||
+          warning['code']?.toString() != 'unextracted_source_claim') {
+        continue;
+      }
+      final sourceExcerpt = warning['source_excerpt']?.toString().trim();
+      if (sourceExcerpt == null || sourceExcerpt.isEmpty) continue;
+      final kind =
+          warning['suggested_kind']?.toString().toUpperCase() ?? 'GENERAL';
+      items.add(BenefitReviewCandidate(
+        id: 'source_coverage:$index',
+        kind: kind,
+        description: sourceExcerpt,
+        source: {
+          'category': kind,
+          'type': kind,
+          'description': sourceExcerpt,
+          'evidence_excerpt': sourceExcerpt,
+          'source_coverage_gap': true,
+        },
+      ));
     }
 
     return BenefitReviewState(List.unmodifiable(items));

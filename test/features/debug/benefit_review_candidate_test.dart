@@ -81,6 +81,27 @@ void main() {
     expect(candidate.source['description'], candidate.description);
   });
 
+  test('adds a source coverage gap as an unresolved review candidate', () {
+    final state = BenefitReviewState.fromExtractedData(
+      const {'special_benefits': []},
+      coverageWarnings: const [
+        {
+          'code': 'unextracted_source_claim',
+          'message': 'Source-backed travel benefit was not extracted.',
+          'source_excerpt': 'Experience luxury stay at ITC Hotels.',
+          'suggested_kind': 'TRAVEL',
+        },
+      ],
+    );
+
+    final item = state.items.single;
+    expect(item.kind, 'TRAVEL');
+    expect(item.description, 'Experience luxury stay at ITC Hotels.');
+    expect(item.source['source_coverage_gap'], isTrue);
+    expect(item.source['evidence_excerpt'], contains('ITC Hotels'));
+    expect(item.decision, BenefitDecision.unresolved);
+  });
+
   test('a pending staging record with candidate data can be opened for review',
       () {
     final access = StagingReviewAccess(

@@ -53,6 +53,7 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
   String? _selectedValidationStatus;
   num? _selectedValidationConfidence;
   List<dynamic> _selectedValidationReasons = [];
+  List<dynamic> _selectedValidationWarnings = [];
   bool _showRawJson = false;
   @override
   void initState() {
@@ -676,6 +677,7 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
                                 _selectedValidationStatus = null;
                                 _selectedValidationConfidence = null;
                                 _selectedValidationReasons = [];
+                                _selectedValidationWarnings = [];
                               });
                               {
                                 // Staging is the only extraction/audit record. Active data is
@@ -686,7 +688,7 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
                                   final stagingData = await _supabase
                                       .from('card_benefits_staging')
                                       .select(
-                                          'id, extracted_data, status, created_at, calculated_confidence, validation_reasons')
+                                          'id, extracted_data, status, created_at, calculated_confidence, validation_reasons, validation_warnings')
                                       .eq('card_id', cardId)
                                       .order('created_at', ascending: false)
                                       .limit(1)
@@ -708,6 +710,10 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
                                               as num?;
                                       _selectedValidationReasons =
                                           stagingData['validation_reasons']
+                                                  as List? ??
+                                              [];
+                                      _selectedValidationWarnings =
+                                          stagingData['validation_warnings']
                                                   as List? ??
                                               [];
                                     });
@@ -1874,7 +1880,14 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
           _onLogReceived(
               '📋 STAGING: Benefits extracted and saved to staging (Staging ID: $stagingId). Opening review dialog...');
 
-          _showReviewDialog(stagingId, cardName, bankName, extractedData);
+          _showReviewDialog(
+            stagingId,
+            cardName,
+            bankName,
+            extractedData,
+            coverageWarnings:
+                result['validation_warnings'] as List? ?? const [],
+          );
         }
       } else {
         _onLogReceived('❌ FAILED: ${result['error']}');
@@ -1930,15 +1943,18 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
 
     _onLogReceived(
         '📋 Opening pending candidate review for $bankName $cardName.');
-    _showReviewDialog(access.stagingId!, cardName, bankName, candidateData);
+    _showReviewDialog(
+      access.stagingId!,
+      cardName,
+      bankName,
+      candidateData,
+      coverageWarnings: _selectedValidationWarnings,
+    );
   }
 
-  Future<void> _showReviewDialog(
-    String stagingId,
-    String cardName,
-    String bankName,
-    Map<String, dynamic> candidateData,
-  ) async {
+  Future<void> _showReviewDialog(String stagingId, String cardName,
+      String bankName, Map<String, dynamic> candidateData,
+      {List<dynamic> coverageWarnings = const []}) async {
     List<dynamic> activeBenefits = [];
     Map<String, dynamic>? activeFees;
 
@@ -1973,7 +1989,10 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
 
     if (!mounted) return;
 
-    var reviewState = BenefitReviewState.fromExtractedData(candidateData);
+    var reviewState = BenefitReviewState.fromExtractedData(
+      candidateData,
+      coverageWarnings: coverageWarnings,
+    );
     var applying = false;
 
     showDialog(

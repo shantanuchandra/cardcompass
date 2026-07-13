@@ -666,6 +666,8 @@ class AdvancedBenefitCalculationService {
           'confidence_score': validation.confidence,
           'validation_reasons':
               validation.reasons.map((reason) => reason.toJson()).toList(),
+          'validation_warnings':
+              validation.warnings.map((warning) => warning.toJson()).toList(),
           'source_url': effectiveSource,
           if (!validation.accepted)
             'error': 'Extraction rejected by source-grounding validation',
@@ -786,6 +788,26 @@ class AdvancedBenefitCalculationService {
           )
           .map((item) => Map<String, dynamic>.from(item))
           .toList();
+
+      final invalidCoverageGap = accepted.any((candidate) {
+        final source = candidate['source'];
+        if (source is! Map || source['source_coverage_gap'] != true) {
+          return false;
+        }
+        final excerpt = source['evidence_excerpt']?.toString().trim() ?? '';
+        return excerpt.isEmpty ||
+            !sourceEvidence['text']
+                .toString()
+                .toLowerCase()
+                .contains(excerpt.toLowerCase());
+      });
+      if (invalidCoverageGap) {
+        return {
+          'success': false,
+          'error':
+              'A source coverage candidate lacks its exact source evidence.',
+        };
+      }
 
       // Rejecting every candidate leaves currently active mappings untouched.
       if (accepted.isEmpty) {
