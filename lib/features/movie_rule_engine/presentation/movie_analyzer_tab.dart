@@ -231,6 +231,7 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
                   Expanded(
                     child: DropdownButtonFormField<String>(
                       initialValue: _selectedPlatform,
+                      isExpanded: true,
                       dropdownColor: const Color(0xFF0C152B),
                       decoration: const InputDecoration(
                         labelText: 'Platform',
@@ -239,11 +240,15 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
                       items: [
                         DropdownMenuItem<String>(
                           value: null,
-                          child: Text('ANY PLATFORM', style: GoogleFonts.spaceGrotesk(fontSize: 10, color: Colors.white70)),
+                          child: Text('ANY PLATFORM',
+                              overflow: TextOverflow.ellipsis,
+                              style: GoogleFonts.spaceGrotesk(fontSize: 10, color: Colors.white70)),
                         ),
                         ..._platforms.map((platform) => DropdownMenuItem<String>(
                           value: platform,
-                          child: Text(platform.toUpperCase(), style: GoogleFonts.spaceGrotesk(fontSize: 10, color: Colors.white)),
+                          child: Text(platform.toUpperCase(),
+                              overflow: TextOverflow.ellipsis,
+                              style: GoogleFonts.spaceGrotesk(fontSize: 10, color: Colors.white)),
                         )),
                       ],
                       onChanged: (value) {
@@ -257,6 +262,7 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
                   Expanded(
                     child: DropdownButtonFormField<String>(
                       initialValue: _selectedCinema,
+                      isExpanded: true,
                       dropdownColor: const Color(0xFF0C152B),
                       decoration: const InputDecoration(
                         labelText: 'Cinema',
@@ -265,11 +271,15 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
                       items: [
                         DropdownMenuItem<String>(
                           value: null,
-                          child: Text('ANY CINEMA', style: GoogleFonts.spaceGrotesk(fontSize: 10, color: Colors.white70)),
+                          child: Text('ANY CINEMA',
+                              overflow: TextOverflow.ellipsis,
+                              style: GoogleFonts.spaceGrotesk(fontSize: 10, color: Colors.white70)),
                         ),
                         ..._cinemas.map((cinema) => DropdownMenuItem<String>(
                           value: cinema,
-                          child: Text(cinema.toUpperCase(), style: GoogleFonts.spaceGrotesk(fontSize: 10, color: Colors.white)),
+                          child: Text(cinema.toUpperCase(),
+                              overflow: TextOverflow.ellipsis,
+                              style: GoogleFonts.spaceGrotesk(fontSize: 10, color: Colors.white)),
                         )),
                       ],
                       onChanged: (value) {
