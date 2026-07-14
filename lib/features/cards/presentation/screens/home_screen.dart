@@ -24,8 +24,8 @@ import '../../../../core/providers/service_providers.dart'
     show alertEmailSyncServiceProvider;
 import '../../../../core/services/reward_intelligence_service.dart'
     show InsightType;
+import '../../../../shared/models/statement_sync_failure.dart';
 import '../../../../shared/widgets/credit_card_widget.dart';
-import '../../../../shared/widgets/state_widgets.dart';
 import '../../../../shared/widgets/sync_progress_dialog.dart';
 import '../../../auth/providers/auth_provider.dart';
 import '../../../transactions/presentation/screens/transactions_screen.dart';
@@ -33,6 +33,9 @@ import '../../../analytics/presentation/screens/analytics_screen.dart';
 import '../../../recommendations/presentation/screens/recommendations_screen.dart';
 import '../../../sync/widgets/card_url_input_dialog.dart';
 import '../../../dashboard/widgets/smart_transaction_analyzer.dart';
+import '../../../transaction_advisor/presentation/screens/enhanced_transaction_advisor_screen.dart';
+import '../../../statements/presentation/screens/statements_screen.dart';
+import '../../../benefits/presentation/screens/benefits_screen.dart';
 import '../../providers/cards_provider.dart';
 import '../../../transactions/providers/transactions_provider.dart';
 import 'add_card_screen.dart';
@@ -331,10 +334,23 @@ class HomeTab extends ConsumerStatefulWidget {
 }
 
 class _HomeTabState extends ConsumerState<HomeTab> {
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  Widget? _drawerContent;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadData());
+  }
+
+  /// Opens the shared end drawer with [content] as its body. Every Quick
+  /// Action (except the destructive "Clear Data" confirmation, which stays
+  /// a dialog) routes through this instead of pushing a full-screen route.
+  void _openInDrawer(Widget content) {
+    setState(() {
+      _drawerContent = content;
+    });
+    _scaffoldKey.currentState?.openEndDrawer();
   }
 
   void _loadData() {
@@ -375,6 +391,15 @@ class _HomeTabState extends ConsumerState<HomeTab> {
         : 'there';
 
     return Scaffold(
+      key: _scaffoldKey,
+      endDrawer: SizedBox(
+        width: MediaQuery.of(context).size.width > 700
+            ? 480
+            : MediaQuery.of(context).size.width * 0.9,
+        child: Drawer(
+          child: _drawerContent ?? const SizedBox.shrink(),
+        ),
+      ),
       appBar: AppBar(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -462,8 +487,6 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            _buildRecentTransactionsSection(context, ref),
-                            const SizedBox(height: 28),
                             _buildRecommendationsSection(context),
                           ],
                         ),
@@ -509,10 +532,6 @@ class _HomeTabState extends ConsumerState<HomeTab> {
 
                         // My Cards Section
                         _buildMyCardsSection(context, ref),
-                        const SizedBox(height: 24),
-
-                        // Recent Transactions Section
-                        _buildRecentTransactionsSection(context, ref),
                         const SizedBox(height: 24),
 
                         // Recommendations Section
@@ -727,6 +746,15 @@ class _HomeTabState extends ConsumerState<HomeTab> {
             ? 'Sync complete! Imported $txCount transactions from $emailCount statement(s).'
             : 'Sync complete! ${emailCount > 0 ? "$emailCount email(s) processed." : "No new statements found."}';
         GlobalMessageService.showSuccess(successMsg);
+
+        final failures =
+            (syncResult['failures'] as List<StatementSyncFailure>?) ??
+                const [];
+        final failureMsg = buildSyncFailureMessage(failures);
+        if (failureMsg != null) {
+          GlobalMessageService.showError(failureMsg);
+        }
+
         _loadData();
         ref.invalidate(availableCreditProvider);
         ref.invalidate(statementRewardsTotalProvider);
@@ -1145,38 +1173,49 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                   'Sync Gmail',
                   Icons.sync,
                   Theme.of(context).colorScheme.primary,
-                  () => _showSyncDataDialog(context, ref),
+                  () => _openInDrawer(
+                    _GmailSyncDialog(
+                      onStartSync: (days, maxEmails) => _syncDataFromGmail(
+                        context,
+                        ref,
+                        lookbackDays: days,
+                        maxEmails: maxEmails,
+                      ),
+                    ),
+                  ),
                 ),
                 _buildQuickActionItem(
                   context,
                   'Add Card',
                   Icons.add_card,
                   Colors.amber,
-                  () => Navigator.of(context).pushNamed('/add-card'),
+                  () => _openInDrawer(const AddCardScreen()),
                 ),
                 _buildQuickActionItem(
                   context,
                   'My Cards',
                   Icons.credit_card,
                   Colors.lightBlueAccent,
-                  () => Navigator.of(context).pushNamed('/cards'),
+                  () => _openInDrawer(const CardsListScreen()),
                 ),
                 _buildQuickActionItem(
                   context,
                   'Advisor AI',
                   Icons.lightbulb_outline,
                   Colors.greenAccent,
-                  () => Navigator.of(context)
-                      .pushNamed('/enhanced-transaction-advisor'),
+                  () => _openInDrawer(
+                    const EnhancedTransactionAdvisorScreen(),
+                  ),
                 ),
                 _buildQuickActionItem(
                   context,
                   'Movie Deals',
                   Icons.local_movies_outlined,
                   Colors.pinkAccent,
-                  () => Navigator.of(context).pushNamed(
-                    '/enhanced-transaction-advisor',
-                    arguments: 1,
+                  () => _openInDrawer(
+                    const EnhancedTransactionAdvisorScreen(
+                      initialTabIndex: 1,
+                    ),
                   ),
                 ),
                 _buildQuickActionItem(
@@ -1184,14 +1223,21 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                   'Ledger',
                   Icons.receipt_long,
                   Colors.purpleAccent,
-                  () => Navigator.of(context).pushNamed('/statements'),
+                  () => _openInDrawer(const StatementsScreen()),
                 ),
                 _buildQuickActionItem(
                   context,
                   'Benefits',
                   Icons.card_giftcard,
                   Colors.tealAccent,
-                  () => Navigator.of(context).pushNamed('/benefits'),
+                  () => _openInDrawer(const BenefitsScreen()),
+                ),
+                _buildQuickActionItem(
+                  context,
+                  'Recent Transactions',
+                  Icons.receipt_outlined,
+                  Colors.cyanAccent,
+                  () => _openInDrawer(const TransactionsScreen()),
                 ),
                 _buildQuickActionItem(
                   context,
@@ -1667,155 +1713,6 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     );
   }
 
-  Widget _buildRecentTransactionsSection(BuildContext context, WidgetRef ref) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              'Recent Transactions',
-              style: AppTextStyles.heading3,
-            ),
-            Consumer(
-              builder: (context, ref, child) {
-                final transactions = ref.watch(recentTransactionsProvider);
-                return transactions.isNotEmpty
-                    ? TextButton(
-                        onPressed: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (context) => const TransactionsScreen(),
-                            ),
-                          );
-                        },
-                        child: const Text('View All'),
-                      )
-                    : const SizedBox.shrink();
-              },
-            ),
-          ],
-        ),
-        const SizedBox(height: AppSpacing.md),
-        Consumer(
-          builder: (context, ref, child) {
-            final transactions = ref.watch(recentTransactionsProvider);
-            if (transactions.isEmpty) {
-              return _buildEmptyTransactionsWidget(context);
-            }
-            return _buildTransactionsList(context, transactions);
-          },
-        ),
-      ],
-    );
-  }
-
-  Widget _buildEmptyTransactionsWidget(BuildContext context) {
-    return const EmptyState(
-      title: 'No transactions yet',
-      message: 'Your recent transactions will appear here',
-      icon: Icons.receipt_long_outlined,
-    );
-  }
-
-  Widget _buildTransactionsList(
-      BuildContext context, List<dynamic> transactions) {
-    return Column(
-      children: transactions.take(5).map((transaction) {
-        final categoryColor = _getCategoryColor(transaction.categoryString);
-        return Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          padding: const EdgeInsets.all(AppSpacing.md),
-          decoration: BoxDecoration(
-            color: const Color(0xFF0C152B),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: Colors.white.withValues(alpha: 0.06),
-              width: 1,
-            ),
-          ),
-          child: Row(
-            children: [
-              // Category icon inside a glowing ring
-              Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: categoryColor.withValues(alpha: 0.12),
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: categoryColor.withValues(alpha: 0.3),
-                    width: 1,
-                  ),
-                ),
-                child: Icon(
-                  _getCategoryIcon(transaction.categoryString),
-                  color: categoryColor,
-                  size: 18,
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      transaction.merchantName ??
-                          transaction.description ??
-                          'Unknown Transaction',
-                      style: GoogleFonts.plusJakartaSans(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 14,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _formatDate(transaction.transactionDate),
-                      style: GoogleFonts.plusJakartaSans(
-                        color: Colors.white38,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    '₹${transaction.amount.toStringAsFixed(2)}',
-                    style: GoogleFonts.spaceGrotesk(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15,
-                      color: transaction.typeString == 'debit'
-                          ? AppTheme.errorColor
-                          : AppTheme.primaryColor,
-                    ),
-                  ),
-                  if (transaction.rewardEarned != null &&
-                      transaction.rewardEarned > 0) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      '+₹${transaction.rewardEarned.toStringAsFixed(0)}',
-                      style: GoogleFonts.spaceGrotesk(
-                        color: AppTheme.successColor,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ],
-          ),
-        );
-      }).toList(),
-    );
-  }
-
   Widget _buildRecommendationsSection(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1889,61 +1786,6 @@ class _HomeTabState extends ConsumerState<HomeTab> {
         ),
       ],
     );
-  }
-
-  Color _getCategoryColor(String? category) {
-    switch (category?.toLowerCase()) {
-      case 'food':
-        return Colors.orange;
-      case 'shopping':
-        return Colors.blue;
-      case 'fuel':
-        return Colors.red;
-      case 'entertainment':
-        return Colors.purple;
-      case 'travel':
-        return Colors.green;
-      case 'groceries':
-      case 'grocery':
-        return Colors.teal;
-      default:
-        return Colors.grey;
-    }
-  }
-
-  IconData _getCategoryIcon(String? category) {
-    switch (category?.toLowerCase()) {
-      case 'food':
-        return Icons.restaurant;
-      case 'shopping':
-        return Icons.shopping_bag;
-      case 'fuel':
-        return Icons.local_gas_station;
-      case 'entertainment':
-        return Icons.movie;
-      case 'travel':
-        return Icons.flight;
-      case 'groceries':
-      case 'grocery':
-        return Icons.local_grocery_store;
-      default:
-        return Icons.payment;
-    }
-  }
-
-  String _formatDate(DateTime date) {
-    final now = DateTime.now();
-    final difference = now.difference(date).inDays;
-
-    if (difference == 0) {
-      return 'Today';
-    } else if (difference == 1) {
-      return 'Yesterday';
-    } else if (difference < 7) {
-      return '${difference} days ago';
-    } else {
-      return '${date.day}/${date.month}/${date.year}';
-    }
   }
 
   List<Color> _getCardGradientColors(String network) {

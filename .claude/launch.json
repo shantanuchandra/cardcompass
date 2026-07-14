@@ -4,8 +4,8 @@
     {
       "name": "cardcompass-web",
       "runtimeExecutable": "flutter",
-      "runtimeArgs": ["run", "-d", "chrome", "--web-port", "5173", "--dart-define-from-file=dart_defines.json"],
-      "port": 5173
+      "runtimeArgs": ["run", "-d", "chrome", "--web-port", "54321", "--dart-define-from-file=dart_defines.json"],
+      "port": 54321
     }
   ]
 }
