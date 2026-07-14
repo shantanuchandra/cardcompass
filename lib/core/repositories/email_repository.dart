@@ -1,10 +1,12 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:cardcompass/core/repositories/email_repository_interface.dart';
 
 /// Repository for managing email records in the database
-class EmailRepository {
+class EmailRepository implements EmailRepositoryInterface {
   final SupabaseClient _supabase = Supabase.instance.client;
 
   /// Store email record in the database
+  @override
   Future<String> storeEmail({
     required String userId,
     required String emailId,
@@ -42,6 +44,7 @@ class EmailRepository {
   }
 
   /// Update email processing status
+  @override
   Future<void> updateEmailStatus({
     required String userId,
     required String emailId,
@@ -83,6 +86,7 @@ class EmailRepository {
   }
 
   /// Check if email already exists
+  @override
   Future<bool> emailExists(String userId, String emailId) async {
     try {
       final response = await _supabase

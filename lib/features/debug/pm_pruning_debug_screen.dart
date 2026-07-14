@@ -8,6 +8,7 @@ import 'package:cardcompass/core/services/advanced_benefit_calculation_service.d
 import 'package:cardcompass/features/debug/models/benefit_review_candidate.dart';
 import 'package:cardcompass/features/debug/widgets/benefit_candidate_review.dart';
 import 'package:cardcompass/features/debug/widgets/benefit_refresh_pipeline.dart';
+import 'package:cardcompass/features/debug/widgets/catalog_entry_requests_panel.dart';
 import 'dart:convert';
 import 'package:cardcompass/core/services/parsing_logger.dart';
 
@@ -35,7 +36,7 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
   bool _disposed = false;
 
   // New tab state variables
-  int _activeTab = 1; // 0 = Pruning Audit, 1 = Card Benefits Refresh
+  int _activeTab = 1; // 0 = Pruning Audit, 1 = Card Benefits Refresh, 2 = Catalog Requests
   final SupabaseClient _supabase = Supabase.instance.client;
   List<Map<String, dynamic>> _catalogCards = [];
   bool _isCatalogLoading = false;
@@ -497,7 +498,9 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
                           );
                         },
                       ))
-                : _buildBenefitsRefreshView(),
+                : _activeTab == 1
+                    ? _buildBenefitsRefreshView()
+                    : CatalogEntryRequestsPanel(onLog: _onLogReceived),
           ),
         ],
       ),
@@ -514,6 +517,7 @@ class _PmPruningDebugScreenState extends State<PmPruningDebugScreen> {
         children: [
           _buildTabButton(0, 'STATEMENT PRUNING AUDIT'),
           _buildTabButton(1, 'CARD BENEFITS REFRESH'),
+          _buildTabButton(2, 'CATALOG REQUESTS'),
         ],
       ),
     );

@@ -10,10 +10,13 @@ import 'package:cardcompass/core/services/pdf_parsing_service_impl.dart';
 import 'package:cardcompass/core/services/gemini_transaction_parser.dart';
 import 'package:cardcompass/core/services/password_input_service.dart';
 import 'package:cardcompass/core/repositories/supabase_transaction_repository.dart';
+import 'package:cardcompass/core/repositories/card_repository.dart';
 import 'package:cardcompass/core/repositories/supabase_card_repository.dart';
 import 'package:cardcompass/core/repositories/supabase_statement_repository.dart';
 import 'package:cardcompass/core/repositories/email_repository.dart';
+import 'package:cardcompass/core/repositories/email_repository_interface.dart';
 import 'package:cardcompass/shared/models/credit_card.dart';
+import 'package:cardcompass/shared/models/statement_sync_failure.dart';
 import 'package:cardcompass/shared/models/transaction.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cardcompass/debug/sync_flow_debugger.dart';
@@ -53,15 +56,126 @@ class CardMatchResult {
  * 5. ML algorithm execution
  */
 class DataPipelineDebugService {
-  final SimpleSupabaseSchemaService _schemaService =
+  DataPipelineDebugService({
+    CardRepository? cardRepo,
+    EmailRepositoryInterface? emailRepo,
+    Future<String> Function({
+      required String userId,
+      required String catalogCardId,
+    })? associateUserWithCard,
+    Future<String> Function({
+      required String userId,
+      required String bankName,
+      required String cardName,
+      required String emailSubject,
+    })? findOrCreateCatalogCard,
+    Future<bool> Function({
+      required String userId,
+      required String bankName,
+      required String cardName,
+      required String cardUrl,
+    })? submitCardCatalogRequest,
+    Future<String?> Function({
+      required String bankName,
+      required String cardName,
+      required String emailSubject,
+      required String? cardUrl,
+    })? lookupCatalogCard,
+  })  : _cardRepo = cardRepo ?? SupabaseCardRepository(),
+        _emailRepo = emailRepo,
+        _associateUserWithCard =
+            associateUserWithCard ?? _defaultAssociateUserWithCard,
+        _findOrCreateCatalogCard = findOrCreateCatalogCard,
+        _submitCardCatalogRequest =
+            submitCardCatalogRequest ?? _defaultSubmitCardCatalogRequest,
+        _lookupCatalogCard = lookupCatalogCard ?? _defaultLookupCatalogCard;
+
+  // Lazily constructed: each of these touches `Supabase.instance.client` in
+  // its own field initializer, which throws if Supabase hasn't been
+  // initialized (e.g. in unit tests that only exercise the card-association
+  // path and never need these).
+  late final SimpleSupabaseSchemaService _schemaService =
       SimpleSupabaseSchemaService();
   EnhancedGmailService? _gmailService;
-  final SupabaseTransactionRepository _transactionRepo =
+  late final SupabaseTransactionRepository _transactionRepo =
       SupabaseTransactionRepository();
-  final SupabaseCardRepository _cardRepo = SupabaseCardRepository();
-  final SupabaseStatementRepository _statementRepo =
+  final CardRepository _cardRepo;
+  late final SupabaseStatementRepository _statementRepo =
       SupabaseStatementRepository();
-  final EmailRepository _emailRepo = EmailRepository();
+
+  /// Test seam: when null (the production default), [_emailRepoOrDefault]
+  /// lazily creates the real Supabase-backed [EmailRepository].
+  final EmailRepositoryInterface? _emailRepo;
+  late final EmailRepositoryInterface _emailRepoOrDefault =
+      _emailRepo ?? EmailRepository();
+  final Future<String> Function({
+    required String userId,
+    required String catalogCardId,
+  }) _associateUserWithCard;
+
+  /// Overrides [_findOrCreateCatalogCardWithSeparateBankAndCard] when set
+  /// (test seam) — production code leaves this null and uses the real
+  /// Supabase-backed lookup.
+  final Future<String> Function({
+    required String userId,
+    required String bankName,
+    required String cardName,
+    required String emailSubject,
+  })? _findOrCreateCatalogCard;
+
+  final Future<bool> Function({
+    required String userId,
+    required String bankName,
+    required String cardName,
+    required String cardUrl,
+  }) _submitCardCatalogRequest;
+
+  /// Overrides the exact/fuzzy/duplicate-URL catalog lookup queries (test
+  /// seam) — production code leaves this null and hits Supabase directly.
+  final Future<String?> Function({
+    required String bankName,
+    required String cardName,
+    required String emailSubject,
+    required String? cardUrl,
+  }) _lookupCatalogCard;
+
+  static Future<String> _defaultAssociateUserWithCard({
+    required String userId,
+    required String catalogCardId,
+  }) async {
+    final userCardId = await Supabase.instance.client
+        .rpc('associate_user_with_card', params: {
+      '_user_id': userId,
+      '_catalog_card_id': catalogCardId,
+      '_last_four_digits': '1234', // Default placeholder
+    });
+    return userCardId.toString();
+  }
+
+  /// Queues a new-card request for admin review via the
+  /// `request-card-catalog-entry` edge function (which validates input and
+  /// calls `submit_card_catalog_request` with the service-role key —
+  /// `card_catalog`/`card_benefits_staging` writes are not reachable
+  /// directly by authenticated clients). Returns whether the request was
+  /// accepted (queued or already pending) — the card itself won't exist in
+  /// `card_catalog` until an admin approves it.
+  static Future<bool> _defaultSubmitCardCatalogRequest({
+    required String userId,
+    required String bankName,
+    required String cardName,
+    required String cardUrl,
+  }) async {
+    final response =
+        await Supabase.instance.client.functions.invoke(
+      'request-card-catalog-entry',
+      body: {
+        'bank_name': bankName,
+        'card_name': cardName,
+        'card_url': cardUrl,
+      },
+    );
+    return response.data is Map && response.data['success'] == true;
+  }
 
   /// Callback to prompt user for card URL input
   /// Returns the URL provided by the user, or null if skipped
@@ -590,8 +704,11 @@ class DataPipelineDebugService {
     }
   }
 
-  /// Sequential user flow as per requirements. Returns a summary map with sync results.
-  Future<Map<String, int>> debugSequentialUserFlow(String userId,
+  /// Sequential user flow as per requirements. Returns a summary map with
+  /// sync results — `emailsProcessed`, `emailsStored`, and
+  /// `transactionsStored` are ints; `failures` is a `List<StatementSyncFailure>`
+  /// of statements whose transactions could not be saved.
+  Future<Map<String, dynamic>> debugSequentialUserFlow(String userId,
       [int? maxEmailsToRead, DateTime? customStartDate]) async {
     print('\n--- Sequential User Flow Implementation ---');
     print('==========================================');
@@ -674,6 +791,7 @@ class DataPipelineDebugService {
       int emailsProcessed = 0;
       int emailsStoredToDb = 0;
       int totalTransactionsStored = 0;
+      final failures = <StatementSyncFailure>[];
 
       for (int i = 0; i < allStatements.length; i++) {
         final statement = allStatements[i];
@@ -696,7 +814,7 @@ class DataPipelineDebugService {
         // Process this single email with complete flow
         final emailStartTime =
             SyncFlowDebugger.startTimer('Process Email ${i + 1}');
-        final txCount = await _processEmailSequentially(
+        final result = await _processEmailSequentially(
           userId,
           statement,
           userProfile,
@@ -706,9 +824,12 @@ class DataPipelineDebugService {
         SyncFlowDebugger.endTimer('Process Email ${i + 1}', emailStartTime);
 
         emailsProcessed++;
-        if (txCount > 0) {
+        if (result.transactionCount > 0) {
           emailsStoredToDb++;
-          totalTransactionsStored += txCount;
+          totalTransactionsStored += result.transactionCount;
+        }
+        if (result.failure != null) {
+          failures.add(result.failure!);
         }
 
         print('─' * 60); // Separator after each email
@@ -731,12 +852,14 @@ class DataPipelineDebugService {
             'emailsProcessed': emailsProcessed,
             'emailsStored': emailsStoredToDb,
             'totalTransactions': totalTransactionsStored,
+            'failures': failures.length,
           });
 
       return {
         'emailsProcessed': emailsProcessed,
         'emailsStored': emailsStoredToDb,
         'transactionsStored': totalTransactionsStored,
+        'failures': failures,
       };
     } catch (e) {
       print('❌ Sequential user flow failed: $e');
@@ -746,8 +869,29 @@ class DataPipelineDebugService {
     }
   }
 
-  /// Process a single email with the complete sequential flow. Returns the count of transactions stored (0 = failure).
-  Future<int> _processEmailSequentially(
+  /// Test-only entry point for [_processEmailSequentially].
+  @visibleForTesting
+  Future<({int transactionCount, StatementSyncFailure? failure})>
+      processEmailSequentially(
+    String userId,
+    StatementParsingResult statement,
+    Map<String, dynamic> userProfile,
+    int emailIndex,
+    int totalEmails,
+  ) =>
+          _processEmailSequentially(
+            userId,
+            statement,
+            userProfile,
+            emailIndex,
+            totalEmails,
+          );
+
+  /// Process a single email with the complete sequential flow. Returns the
+  /// count of transactions stored, and — when transactions existed but
+  /// storage failed — a [StatementSyncFailure] describing what was lost.
+  Future<({int transactionCount, StatementSyncFailure? failure})>
+      _processEmailSequentially(
     String userId,
     StatementParsingResult statement,
     Map<String, dynamic> userProfile,
@@ -797,7 +941,7 @@ class DataPipelineDebugService {
 
       if (transactionCount == 0) {
         print('⚠️ No transactions found - skipping database storage');
-        return 0;
+        return (transactionCount: 0, failure: null);
       }
 
       // Check if there's a due amount > 0
@@ -838,23 +982,37 @@ class DataPipelineDebugService {
           SyncFlowDebugger.endTimer(
               'Store to Database $emailIndex', storeStartTime);
           print('💾 Database storage completed successfully');
-          return transactionCount;
+          return (transactionCount: transactionCount, failure: null);
         } catch (e) {
           print('❌ Database storage failed: $e');
           SyncFlowDebugger.logError('DB_STORE', 'Database storage failed',
               exception: e);
-          return 0;
+          return (
+            transactionCount: 0,
+            failure: StatementSyncFailure(
+              bankName: statement.bankName,
+              statementDate: statement.statementDate,
+              reason: e.toString(),
+            ),
+          );
         }
       } else {
         print('⚠️ Step 5: Conditions not met - NOT storing to database');
         print('   Transaction count > 0: ${transactionCount > 0}');
         SyncFlowDebugger.logStep(
             'DB_STORE', 'Skipping database storage - no transactions');
-        return 0;
+        return (transactionCount: 0, failure: null);
       }
     } catch (e) {
       print('❌ Error processing email sequentially: $e');
-      return 0;
+      return (
+        transactionCount: 0,
+        failure: StatementSyncFailure(
+          bankName: statement.bankName,
+          statementDate: statement.statementDate,
+          reason: e.toString(),
+        ),
+      );
     }
   }
 
@@ -872,12 +1030,12 @@ class DataPipelineDebugService {
       String? emailRecordId;
 
       // Check if email already exists to avoid duplicates
-      final emailExists = await _emailRepo.emailExists(
+      final emailExists = await _emailRepoOrDefault.emailExists(
         userId,
         statement.emailMessageId,
       );
       if (!emailExists) {
-        emailRecordId = await _emailRepo.storeEmail(
+        emailRecordId = await _emailRepoOrDefault.storeEmail(
           userId: userId,
           emailId: statement.emailMessageId,
           subject: statement.emailSubject ?? 'Credit Card Statement',
@@ -983,7 +1141,7 @@ class DataPipelineDebugService {
       // regardless of whether statement storage succeeded, to prevent re-processing
       if (emailRecordId != null) {
         try {
-          await _emailRepo.updateEmailStatus(
+          await _emailRepoOrDefault.updateEmailStatus(
             userId: userId,
             emailId: statement.emailMessageId,
             processed: true,
@@ -1088,8 +1246,10 @@ class DataPipelineDebugService {
 
       // ── Pass 3: catalog lookup — exact bank + card ───────────────────
       print('   📝 No existing user card for $bankName — searching catalog...');
-      final catalogCardId =
-          await _findOrCreateCatalogCardWithSeparateBankAndCard(
+      final resolveCatalogCard =
+          _findOrCreateCatalogCard ?? _findOrCreateCatalogCardWithSeparateBankAndCard;
+      final catalogCardId = await resolveCatalogCard(
+        userId: userId,
         bankName: bankName,
         cardName: expectedCardName,
         emailSubject: emailSubject,
@@ -1103,7 +1263,107 @@ class DataPipelineDebugService {
     }
   }
 
+  /// Default [_lookupCatalogCard] implementation: tries an exact bank+card
+  /// match, then a fuzzy bank+subject-keyword match; when [cardUrl] is
+  /// supplied (the user has already provided one), also checks for an
+  /// existing card with that exact URL. Returns the matched catalog card ID,
+  /// or `null` if nothing matches any of these.
+  static Future<String?> _defaultLookupCatalogCard({
+    required String bankName,
+    required String cardName,
+    required String emailSubject,
+    required String? cardUrl,
+  }) async {
+    if (cardUrl != null) {
+      print('   🔍 Checking for existing card with same URL...');
+      final duplicateCheck = await Supabase.instance.client
+          .from('card_catalog')
+          .select('id, bank, card_name')
+          .eq('card_url', cardUrl)
+          .maybeSingle();
+      if (duplicateCheck != null) {
+        print('   ✅ Found existing card with same URL:');
+        print('      Bank: ${duplicateCheck['bank']}');
+        print('      Card: ${duplicateCheck['card_name']}');
+        return duplicateCheck['id'] as String;
+      }
+      return null;
+    }
+
+    // ── Exact match: bank + card_name ────────────────────────────────
+    final exact = await Supabase.instance.client
+        .from('card_catalog')
+        .select('*')
+        .eq('bank', bankName)
+        .eq('card_name', cardName)
+        .limit(1);
+    if (exact.isNotEmpty) {
+      print(
+          '   ✅ Catalog exact match: ${exact.first['card_name']} (${exact.first['bank']})');
+      return exact.first['id'] as String;
+    }
+
+    // ── Fuzzy match tier 1: bank + subject keyword ────────────────────
+    // Extract distinctive words from the email subject (e.g. "BPCL", "Coral",
+    // "Flipkart") and prefer catalog cards whose card_name contains them.
+    final subjectWords = emailSubject
+        .toUpperCase()
+        .split(RegExp(r'[\s\-_/]+'))
+        .where((w) =>
+            w.length > 2 &&
+            ![
+              'YOUR',
+              'CARD',
+              'CREDIT',
+              'BANK',
+              'STATEMENT',
+              'MONTHLY',
+              'ACCOUNT',
+              'FOR',
+              'THE',
+              'AND',
+              'DUE',
+              'DATE',
+              'JAN',
+              'FEB',
+              'MAR',
+              'APR',
+              'MAY',
+              'JUN',
+              'JUL',
+              'AUG',
+              'SEP',
+              'OCT',
+              'NOV',
+              'DEC',
+              'SBI',
+              'HDFC',
+              'ICICI',
+              'AXIS',
+              'KOTAK'
+            ].contains(w))
+        .toSet();
+    final bankRoot =
+        bankName.replaceAll(' Card', '').replaceAll(' Bank', '').trim();
+    for (final keyword in subjectWords) {
+      final bySubjectKw = await Supabase.instance.client
+          .from('card_catalog')
+          .select('id, bank, card_name')
+          .ilike('bank', '%$bankRoot%')
+          .ilike('card_name', '%$keyword%')
+          .limit(1);
+      if (bySubjectKw.isNotEmpty) {
+        print(
+            '   ✅ Catalog subject-keyword match ($keyword): ${bySubjectKw.first['card_name']} (${bySubjectKw.first['bank']})');
+        return bySubjectKw.first['id'] as String;
+      }
+    }
+
+    return null;
+  }
+
   Future<String> _findOrCreateCatalogCardWithSeparateBankAndCard({
+    required String userId,
     required String bankName,
     required String cardName,
     required String emailSubject,
@@ -1112,73 +1372,14 @@ class DataPipelineDebugService {
       print(
           '   🔍 Looking for catalog card: Bank="$bankName", Card="$cardName"');
 
-      // ── Exact match: bank + card_name ────────────────────────────────
-      final exact = await Supabase.instance.client
-          .from('card_catalog')
-          .select('*')
-          .eq('bank', bankName)
-          .eq('card_name', cardName)
-          .limit(1);
-      if (exact.isNotEmpty) {
-        print(
-            '   ✅ Catalog exact match: ${exact.first['card_name']} (${exact.first['bank']})');
-        return exact.first['id'] as String;
-      }
-
-      // ── Fuzzy match tier 1: bank + subject keyword ────────────────────
-      // Extract distinctive words from the email subject (e.g. "BPCL", "Coral",
-      // "Flipkart") and prefer catalog cards whose card_name contains them.
-      final subjectWords = emailSubject
-          .toUpperCase()
-          .split(RegExp(r'[\s\-_/]+'))
-          .where((w) =>
-              w.length > 2 &&
-              ![
-                'YOUR',
-                'CARD',
-                'CREDIT',
-                'BANK',
-                'STATEMENT',
-                'MONTHLY',
-                'ACCOUNT',
-                'FOR',
-                'THE',
-                'AND',
-                'DUE',
-                'DATE',
-                'JAN',
-                'FEB',
-                'MAR',
-                'APR',
-                'MAY',
-                'JUN',
-                'JUL',
-                'AUG',
-                'SEP',
-                'OCT',
-                'NOV',
-                'DEC',
-                'SBI',
-                'HDFC',
-                'ICICI',
-                'AXIS',
-                'KOTAK'
-              ].contains(w))
-          .toSet();
-      final bankRoot =
-          bankName.replaceAll(' Card', '').replaceAll(' Bank', '').trim();
-      for (final keyword in subjectWords) {
-        final bySubjectKw = await Supabase.instance.client
-            .from('card_catalog')
-            .select('id, bank, card_name')
-            .ilike('bank', '%$bankRoot%')
-            .ilike('card_name', '%$keyword%')
-            .limit(1);
-        if (bySubjectKw.isNotEmpty) {
-          print(
-              '   ✅ Catalog subject-keyword match ($keyword): ${bySubjectKw.first['card_name']} (${bySubjectKw.first['bank']})');
-          return bySubjectKw.first['id'] as String;
-        }
+      final match = await _lookupCatalogCard(
+        bankName: bankName,
+        cardName: cardName,
+        emailSubject: emailSubject,
+        cardUrl: null,
+      );
+      if (match != null) {
+        return match;
       }
 
       // ── No catalog match → ask user for URL ──────────────────────────
@@ -1236,48 +1437,36 @@ class DataPipelineDebugService {
 
       try {
         // Check if a card with this URL already exists (deduplication)
-        print('   🔍 Checking for existing card with same URL...');
-        final duplicateCheck = await Supabase.instance.client
-            .from('card_catalog')
-            .select('id, bank, card_name')
-            .eq('card_url', userProvidedUrl)
-            .maybeSingle();
-
-        if (duplicateCheck != null) {
-          final existingCardId = duplicateCheck['id'] as String;
-          print('   ✅ Found existing card with same URL:');
-          print('      Bank: ${duplicateCheck['bank']}');
-          print('      Card: ${duplicateCheck['card_name']}');
-          print('      Reusing card ID: $existingCardId');
+        final duplicateCardId = await _lookupCatalogCard(
+          bankName: bankName,
+          cardName: cardName,
+          emailSubject: emailSubject,
+          cardUrl: userProvidedUrl,
+        );
+        if (duplicateCardId != null) {
+          print('   ✅ Found existing card with same URL. Reusing card ID: $duplicateCardId');
           print('');
-          return existingCardId;
+          return duplicateCardId;
         }
 
-        print('   ✅ No duplicate found. Creating new card...');
+        print('   ✅ No duplicate found. Queuing card for admin review...');
 
-        // Insert new card with user-provided URL
-        final insertResponse = await Supabase.instance.client
-            .from('card_catalog')
-            .insert({
-              'bank': bankName,
-              'card_name': cardName,
-              'card_url': userProvidedUrl,
-              'network': 'visa',
-              'card_type': 'credit',
-              'annual_fee': 999.0,
-              'apr': 3.5,
-              'joining_fee': 0.0,
-              'is_discontinued': false,
-            })
-            .select('id')
-            .single();
-
-        final cardId = insertResponse['id'] as String;
-        print('   ✅ Card created successfully with ID: $cardId');
+        // card_catalog writes are admin-reviewed — clients cannot insert
+        // directly (see supabase/migrations/20260712043000_security_and_email_hardening.sql).
+        // Queue the request instead; the card won't exist until approved.
+        await _submitCardCatalogRequest(
+          userId: userId,
+          bankName: bankName,
+          cardName: cardName,
+          cardUrl: userProvidedUrl,
+        );
+        print('   📝 Card submitted for review: $bankName $cardName');
         print('   🔗 URL: $userProvidedUrl');
         print('');
 
-        return cardId;
+        throw Exception(
+            'New card "$bankName $cardName" submitted for admin review — '
+            'it will be available once approved. Try syncing again later.');
       } catch (insertError) {
         print('   ❌ Failed to create card: $insertError');
         rethrow;
@@ -1288,6 +1477,12 @@ class DataPipelineDebugService {
     }
   }
 
+  /// Test-only entry point for [_createUserCardAssociation].
+  @visibleForTesting
+  Future<String> createUserCardAssociation(
+          String userId, String catalogCardId) =>
+      _createUserCardAssociation(userId, catalogCardId);
+
   /// Create user-card association and return user card ID
   Future<String> _createUserCardAssociation(
       String userId, String catalogCardId) async {
@@ -1295,15 +1490,13 @@ class DataPipelineDebugService {
       print('   🔄 Creating user-card association...');
 
       // Use the RPC function directly to get the user card ID
-      final userCardId = await Supabase.instance.client
-          .rpc('associate_user_with_card', params: {
-        '_user_id': userId,
-        '_catalog_card_id': catalogCardId,
-        '_last_four_digits': '1234', // Default placeholder
-      });
+      final userCardId = await _associateUserWithCard(
+        userId: userId,
+        catalogCardId: catalogCardId,
+      );
 
       print('   ✅ User-card association created with ID: $userCardId');
-      return userCardId.toString();
+      return userCardId;
     } catch (associationError) {
       print('   ⚠️ User-card association error: $associationError');
 
@@ -1324,11 +1517,12 @@ class DataPipelineDebugService {
         // Ignore and continue
       }
 
-      // Generate a temporary ID to continue testing
-      final tempUserCardId = const Uuid().v4();
-      print(
-          '   ⚠️ Generating temporary user card ID to continue: $tempUserCardId');
-      return tempUserCardId;
+      // No RPC success and no existing association found — surface the
+      // failure instead of fabricating an ID that was never persisted to
+      // `user_cards`. A fake ID here causes every subsequent statement/
+      // transaction insert to fail its FK constraint silently.
+      throw Exception(
+          'Failed to create or find user-card association for catalog card $catalogCardId: $associationError');
     }
   }
 

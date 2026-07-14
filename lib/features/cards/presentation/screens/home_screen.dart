@@ -393,9 +393,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     return Scaffold(
       key: _scaffoldKey,
       endDrawer: SizedBox(
-        width: MediaQuery.of(context).size.width > 700
-            ? 480
-            : MediaQuery.of(context).size.width * 0.9,
+        width: (MediaQuery.of(context).size.width * 0.9).clamp(0, 480),
         child: Drawer(
           child: _drawerContent ?? const SizedBox.shrink(),
         ),
