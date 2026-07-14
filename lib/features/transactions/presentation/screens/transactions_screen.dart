@@ -40,45 +40,40 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
 
     return CardCompassScaffold(
       title: 'Transactions',
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 800),
-          child: state.transactions.isEmpty
-              ? const EmptyState(
-                  icon: Icons.receipt_long_outlined,
-                  title: 'No transactions yet',
-                  message: 'Transactions from your statements will show up here.',
-                )
-              : RefreshIndicator(
-                  onRefresh: () async => _load(),
-                  color: AppTheme.primaryColor,
-                  backgroundColor: const Color(0xFF0C152B),
-                  child: ListView(
-                    padding: const EdgeInsets.fromLTRB(
-                      AppSpacing.md,
-                      AppSpacing.sm + 4,
-                      AppSpacing.md,
-                      80,
-                    ),
-                    children: [
-                      _buildFilterBar(state, notifier),
-                      const SizedBox(height: AppSpacing.md),
-                      _buildTileRow(state, notifier),
-                      const SizedBox(height: AppSpacing.md),
-                      if (state.filteredTransactions.isEmpty)
-                        _buildNoResultsState(notifier)
-                      else
-                        ..._buildTransactionSections(state),
-                    ],
-                  ),
-                ).animate().fadeIn(duration: 250.ms, curve: Curves.easeOut).slideY(
-                    begin: 0.05,
-                    end: 0,
-                    duration: 250.ms,
-                    curve: Curves.easeOut,
-                  ),
-        ),
-      ),
+      body: state.transactions.isEmpty
+          ? const EmptyState(
+              icon: Icons.receipt_long_outlined,
+              title: 'No transactions yet',
+              message: 'Transactions from your statements will show up here.',
+            )
+          : RefreshIndicator(
+              onRefresh: () async => _load(),
+              color: AppTheme.primaryColor,
+              backgroundColor: const Color(0xFF0C152B),
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.md,
+                  AppSpacing.sm + 4,
+                  AppSpacing.md,
+                  80,
+                ),
+                children: [
+                  _buildFilterBar(state, notifier),
+                  const SizedBox(height: AppSpacing.md),
+                  _buildTileRow(state, notifier),
+                  const SizedBox(height: AppSpacing.md),
+                  if (state.filteredTransactions.isEmpty)
+                    _buildNoResultsState(notifier)
+                  else
+                    ..._buildTransactionSections(state),
+                ],
+              ),
+            ).animate().fadeIn(duration: 250.ms, curve: Curves.easeOut).slideY(
+                begin: 0.05,
+                end: 0,
+                duration: 250.ms,
+                curve: Curves.easeOut,
+              ),
     );
   }
 
