@@ -600,7 +600,11 @@
   // The static landing page cannot process Supabase auth callbacks —
   // only the Flutter app (with supabase_flutter SDK) can parse the
   // OAuth tokens from the URL hash (#access_token=...).
-  const REDIRECT_URL = 'https://www.cardcompass.in';
+  // On localhost: redirect to the local Flutter web app (port 3000) for dev testing.
+  const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  const REDIRECT_URL = isLocalhost
+    ? 'http://localhost:3000'
+    : 'https://www.cardcompass.in';
   
   // Gmail scopes matching auth_provider.dart
   const SCOPES = [

@@ -206,13 +206,12 @@ class AppRoutes {
         );
 
       default:
+        // Unknown routes (including Supabase OAuth fragments like #sb which
+        // Flutter web converts to route "/sb") fall through to the splash
+        // screen where auth state is checked and the user is redirected
+        // to the appropriate screen.
         return MaterialPageRoute(
-          builder: (_) => Scaffold(
-            appBar: AppBar(title: const Text('Page Not Found')),
-            body: const Center(
-              child: Text('Page not found'),
-            ),
-          ),
+          builder: (_) => const SplashScreen(),
           settings: settings,
         );
     }
