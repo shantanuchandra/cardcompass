@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CardCompass — AI-Powered Credit Card Rewards Optimizer for India</title>
+  <title>CardCompass — Every Swipe, Optimised. | AI Credit Card Rewards Optimizer</title>
   <meta name="description" content="CardCompass uses AI to automatically analyze your credit card statements and tell you exactly which card to use — so you never leave rewards on the table. 183+ Indian credit cards supported.">
 
   <!-- Machine-readable product description for AI/LLM -->
@@ -64,6 +64,18 @@
   <div class="spotlight" id="spotlight"></div>
   <div class="noise-overlay" aria-hidden="true"></div>
 
+  <!-- ═══ SCROLL PROGRESS BAR ═══ -->
+  <div class="scroll-progress" id="scrollProgress" aria-hidden="true"></div>
+
+  <!-- ═══ PARALLAX FLOATING DECORATORS ═══ -->
+  <div class="parallax-layer" aria-hidden="true">
+    <div class="parallax-element parallax-coin" style="top:30%;left:5%;--speed:0.3;">₹</div>
+    <div class="parallax-element parallax-star" style="top:45%;right:8%;--speed:0.5;">★</div>
+    <div class="parallax-element parallax-coin" style="top:60%;left:92%;--speed:0.2;">₹</div>
+    <div class="parallax-element parallax-star" style="top:75%;left:3%;--speed:0.4;">★</div>
+    <div class="parallax-element parallax-diamond" style="top:85%;right:12%;--speed:0.35;">◆</div>
+  </div>
+
 
   <!-- ═══════════ NAVIGATION ═══════════ -->
   <nav class="nav" id="nav">
@@ -83,11 +95,11 @@
       </div>
 
       <div class="nav-actions">
-        <button class="btn-ai-toggle" id="aiToggle" aria-label="View machine-readable version">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <button class="btn-ai-toggle" id="aiToggle" aria-label="Toggle AI/Machine-readable view" aria-pressed="false">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 1 4 4v2a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4z"/><path d="M16 14a4 4 0 0 0-8 0"/><rect x="3" y="14" width="18" height="8" rx="2"/><line x1="7" y1="18" x2="7" y2="18"/><line x1="12" y1="18" x2="12" y2="18"/><line x1="17" y1="18" x2="17" y2="18"/></svg>
           <span>AI</span>
         </button>
-        <a href="#signin" class="btn btn-primary nav-cta magnetic">
+        <a href="#signin" class="btn btn-primary nav-cta magnetic" id="navSignIn">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
           Sign In
         </a>
@@ -100,6 +112,25 @@
   </nav>
 
 
+  <!-- ═══════════ AI PANEL (inline toggle — shows llm.txt as styled markdown) ═══════════ -->
+  <div class="ai-panel" id="aiPanel" aria-hidden="true">
+    <div class="ai-panel-inner">
+      <div class="ai-panel-header">
+        <div class="ai-panel-badge">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 0 1 4 4v2a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4z"/><rect x="3" y="14" width="18" height="8" rx="2"/></svg>
+          Machine-Readable Product Info — <code>llm.txt</code>
+        </div>
+        <button class="ai-panel-close" id="aiPanelClose" aria-label="Close AI panel">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="ai-panel-content" id="aiPanelContent">
+        <pre class="ai-panel-pre"><code id="aiPanelCode">Loading...</code></pre>
+      </div>
+    </div>
+  </div>
+
+
   <main>
     <!-- ═══════════ ACT 1: HERO (The Hook) ═══════════ -->
     <section class="hero" id="hero">
@@ -109,46 +140,43 @@
         <div class="hero-text">
           <div class="hero-badge">
             <span class="pulse-dot"></span>
-            AI-Powered Rewards Optimizer
+            Every Swipe, Optimised.
           </div>
 
           <h1>
-            <span class="line">Stop Leaving</span>
+            <span class="line">Your Cards Are Leaving</span>
             <span class="line gradient-text">₹50,000+</span>
             <span class="line">On the Table.</span>
           </h1>
 
           <p class="hero-subtitle">
-            CardCompass uses Gemini AI to analyze your credit card statements and tell you exactly which card to swipe — for every single purchase.
+            CardCompass uses Gemini AI to read your credit card statements and tell you the best card to swipe — for every purchase, every merchant, every day.
           </p>
 
           <div class="hero-actions">
-            <a href="#signin" class="btn btn-google magnetic" id="heroSignIn">
-              <svg width="20" height="20" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
-              Sign in with Google
-            </a>
-            <a href="#how-it-works" class="btn btn-secondary magnetic">
+            <a href="#how-it-works" class="btn btn-primary magnetic">
               See How It Works
             </a>
+            <a href="#signin" class="btn btn-secondary magnetic">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+              Sign In
+            </a>
+          </div>
+
+          <!-- Social proof directly under CTA -->
+          <div class="hero-social-proof">
+            <div class="social-proof-avatars" aria-hidden="true">
+              <div class="avatar-dot" style="background: var(--color-primary)"></div>
+              <div class="avatar-dot" style="background: var(--color-secondary)"></div>
+              <div class="avatar-dot" style="background: var(--color-accent)"></div>
+            </div>
+            <span>183+ credit cards supported · 10+ Indian banks</span>
           </div>
         </div>
 
+        <!-- SINGLE focal point — compass illustration only -->
         <div class="hero-visual">
           <img src="img/hero-compass.png" alt="AI-powered compass navigating credit card rewards" class="hero-illustration" width="600" height="600">
-          <div class="card-3d" id="card3d">
-            <div class="card-3d-shine" id="cardShine"></div>
-            <div class="card-3d-content">
-              <div>
-                <div class="card-3d-brand">CARDCOMPASS</div>
-                <div class="card-3d-chip"></div>
-              </div>
-              <div class="card-3d-number">•••• •••• •••• 4242</div>
-              <div class="card-3d-footer">
-                <div class="card-3d-name">Shantanu Chandra</div>
-                <div class="card-3d-network">VISA</div>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -159,18 +187,34 @@
     </section>
 
 
+    <!-- ═══ MOTION DIVIDER: Hero → Problem ═══ -->
+    <div class="section-divider section-divider--particles" aria-hidden="true">
+      <svg viewBox="0 0 1440 80" preserveAspectRatio="none" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M0 40C240 80 480 0 720 40C960 80 1200 0 1440 40V80H0V40Z" fill="rgba(0,245,255,0.03)"/>
+        <path d="M0 50C360 10 720 70 1080 30C1200 20 1320 40 1440 50V80H0V50Z" fill="rgba(139,92,246,0.02)"/>
+      </svg>
+      <!-- Floating particles -->
+      <div class="particle" style="--x:10%;--delay:0s;--dur:4s;"></div>
+      <div class="particle" style="--x:25%;--delay:0.8s;--dur:3.5s;"></div>
+      <div class="particle" style="--x:45%;--delay:1.5s;--dur:5s;"></div>
+      <div class="particle" style="--x:65%;--delay:0.3s;--dur:4.2s;"></div>
+      <div class="particle" style="--x:80%;--delay:2s;--dur:3.8s;"></div>
+      <div class="particle" style="--x:92%;--delay:1s;--dur:4.5s;"></div>
+    </div>
+
+
     <!-- ═══════════ ACT 2: THE PROBLEM (Pain) ═══════════ -->
     <section class="act-problem" id="problem">
       <div class="full-width">
         <div class="section-header reveal">
           <div class="section-label">The Problem</div>
-          <h2>Indians leave over <span class="gradient-text">₹50,000</span> in credit card rewards unclaimed every year.</h2>
+          <h2>Most Indians don't know their best card. That's costing them <span class="gradient-text">₹50,000+</span> every year.</h2>
         </div>
 
-        <!-- Visual Infographic Row -->
+        <!-- Visual Infographic Row — center card emphasized -->
         <div class="problem-visual reveal">
           <div class="problem-flow">
-            <!-- Card 1 -->
+            <!-- Card 1 (supporting) -->
             <div class="problem-card glass-card">
               <div class="problem-card-icon">
                 <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="1.5" stroke-linecap="round">
@@ -181,19 +225,10 @@
               <p>of Indians use the <strong>wrong card</strong> for at least half their purchases</p>
             </div>
 
-            <!-- Animated Arrow -->
-            <div class="problem-arrow">
-              <svg width="60" height="24" viewBox="0 0 60 24" fill="none">
-                <path d="M0 12h50M50 12l-8-8M50 12l-8 8" stroke="var(--color-primary)" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 4">
-                  <animate attributeName="stroke-dashoffset" values="0;-16" dur="1s" repeatCount="indefinite"/>
-                </path>
-              </svg>
-            </div>
-
-            <!-- Card 2 -->
-            <div class="problem-card glass-card">
+            <!-- Card 2 (HERO — largest, emphasized) -->
+            <div class="problem-card problem-card-hero glass-card">
               <div class="problem-card-icon">
-                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--color-gold)" stroke-width="1.5" stroke-linecap="round">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--color-gold)" stroke-width="1.5" stroke-linecap="round">
                   <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
                 </svg>
               </div>
@@ -201,16 +236,7 @@
               <p>average annual rewards <strong>left unclaimed</strong> per multi-card household</p>
             </div>
 
-            <!-- Animated Arrow -->
-            <div class="problem-arrow">
-              <svg width="60" height="24" viewBox="0 0 60 24" fill="none">
-                <path d="M0 12h50M50 12l-8-8M50 12l-8 8" stroke="var(--color-secondary)" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 4">
-                  <animate attributeName="stroke-dashoffset" values="0;-16" dur="1.2s" repeatCount="indefinite"/>
-                </path>
-              </svg>
-            </div>
-
-            <!-- Card 3 -->
+            <!-- Card 3 (supporting) -->
             <div class="problem-card glass-card">
               <div class="problem-card-icon">
                 <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="1.5" stroke-linecap="round">
@@ -229,6 +255,35 @@
     </section>
 
 
+    <!-- ═══ MOTION DIVIDER: Problem → How It Works + DATA STREAM ═══ -->
+    <div class="section-divider section-divider--stream" aria-hidden="true">
+      <svg viewBox="0 0 1440 120" preserveAspectRatio="none" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M0 60C480 20 960 80 1440 30V120H0V60Z" fill="rgba(0,245,255,0.04)"/>
+        <path d="M0 40C360 70 720 10 1080 50C1200 60 1320 40 1440 40V120H0V40Z" fill="rgba(255,0,127,0.02)"/>
+        <!-- Animated data stream path -->
+        <path class="data-stream" d="M0 80 C200 40, 400 100, 600 60 S1000 90, 1200 50 S1350 70, 1440 60" stroke="url(#stream-gradient)" stroke-width="1.5" fill="none" stroke-dasharray="8 12" opacity="0.5">
+          <animate attributeName="stroke-dashoffset" values="0;-40" dur="2s" repeatCount="indefinite"/>
+        </path>
+        <path class="data-stream" d="M0 90 C300 50, 500 110, 720 70 S1050 100, 1250 55 S1380 80, 1440 70" stroke="url(#stream-gradient)" stroke-width="1" fill="none" stroke-dasharray="4 8" opacity="0.3">
+          <animate attributeName="stroke-dashoffset" values="0;-24" dur="3s" repeatCount="indefinite"/>
+        </path>
+        <defs>
+          <linearGradient id="stream-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#00F5FF" stop-opacity="0"/>
+            <stop offset="30%" stop-color="#00F5FF"/>
+            <stop offset="70%" stop-color="#8B5CF6"/>
+            <stop offset="100%" stop-color="#FF007F" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+      </svg>
+      <!-- Flowing data dots -->
+      <div class="stream-dot" style="--x:20%;--delay:0s;"></div>
+      <div class="stream-dot" style="--x:40%;--delay:0.6s;"></div>
+      <div class="stream-dot" style="--x:60%;--delay:1.2s;"></div>
+      <div class="stream-dot" style="--x:80%;--delay:1.8s;"></div>
+    </div>
+
+
     <!-- ═══════════ ACT 3: THE SOLUTION (How It Works) ═══════════ -->
     <section id="how-it-works">
       <div class="full-width">
@@ -237,7 +292,7 @@
           <h2>Three Steps to <span class="gradient-text-primary">Maximum Rewards</span></h2>
         </div>
 
-        <!-- Step 1: Full-width panel -->
+        <!-- Step 1: with animated connection graphic -->
         <div class="act-panel reveal" id="step-connect">
           <div class="act-panel-content">
             <div class="act-panel-text">
@@ -251,8 +306,21 @@
               </div>
             </div>
             <div class="act-panel-visual">
-              <div class="step-icon-large">
-                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+              <!-- Animated connection graphic -->
+              <div class="connect-graphic" aria-hidden="true">
+                <div class="connect-node connect-node-gmail">
+                  <svg width="48" height="48" viewBox="0 0 24 24" fill="none"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" stroke="var(--color-primary)" stroke-width="1.5"/><polyline points="22,6 12,13 2,6" stroke="var(--color-primary)" stroke-width="1.5"/></svg>
+                  <span>Gmail</span>
+                </div>
+                <svg class="connect-line" width="120" height="4" viewBox="0 0 120 4" fill="none">
+                  <line x1="0" y1="2" x2="120" y2="2" stroke="var(--color-primary)" stroke-width="2" stroke-dasharray="8 4">
+                    <animate attributeName="stroke-dashoffset" values="0;-24" dur="1.5s" repeatCount="indefinite"/>
+                  </line>
+                </svg>
+                <div class="connect-node connect-node-app">
+                  <img src="img/app-icon.png" alt="CardCompass" width="48" height="48" style="border-radius: 12px;">
+                  <span>CardCompass</span>
+                </div>
               </div>
             </div>
           </div>
@@ -319,6 +387,20 @@
         </div>
       </div>
     </section>
+
+
+    <!-- ═══ MOTION DIVIDER: How It Works → Features ═══ -->
+    <div class="section-divider section-divider--particles" aria-hidden="true">
+      <svg viewBox="0 0 1440 80" preserveAspectRatio="none" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M0 30C240 70 480 10 720 50C960 10 1200 70 1440 30V80H0V30Z" fill="rgba(139,92,246,0.03)"/>
+        <path d="M0 50C480 80 960 20 1440 50V80H0V50Z" fill="rgba(0,245,255,0.02)"/>
+      </svg>
+      <div class="particle" style="--x:15%;--delay:0.2s;--dur:3.8s;"></div>
+      <div class="particle" style="--x:35%;--delay:1.2s;--dur:4.5s;"></div>
+      <div class="particle" style="--x:55%;--delay:0.5s;--dur:3.2s;"></div>
+      <div class="particle" style="--x:75%;--delay:1.8s;--dur:4s;"></div>
+      <div class="particle" style="--x:90%;--delay:0.7s;--dur:5s;"></div>
+    </div>
 
 
     <!-- ═══════════ ACT 4: PROOF (Features + Stats) ═══════════ -->
@@ -412,13 +494,27 @@
     </section>
 
 
+    <!-- ═══ MOTION DIVIDER: Stats → CTA ═══ -->
+    <div class="section-divider section-divider--particles" aria-hidden="true">
+      <svg viewBox="0 0 1440 80" preserveAspectRatio="none" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M0 40C360 0 720 80 1080 40C1200 30 1320 50 1440 40V80H0V40Z" fill="rgba(0,245,255,0.04)"/>
+        <path d="M0 60C480 30 960 60 1440 50V80H0V60Z" fill="rgba(255,0,127,0.02)"/>
+      </svg>
+      <div class="particle" style="--x:8%;--delay:0.3s;--dur:4s;"></div>
+      <div class="particle" style="--x:30%;--delay:1s;--dur:3.5s;"></div>
+      <div class="particle" style="--x:50%;--delay:0.5s;--dur:4.8s;"></div>
+      <div class="particle" style="--x:70%;--delay:1.5s;--dur:3.2s;"></div>
+      <div class="particle" style="--x:88%;--delay:2s;--dur:4.3s;"></div>
+    </div>
+
+
     <!-- ═══════════ ACT 5: THE CALL (Sign In) ═══════════ -->
     <section class="act-signin" id="signin">
       <div class="full-width">
         <div class="signin-content reveal">
           <div class="section-label">Get Started</div>
-          <h2>Ready to <span class="gradient-text-primary">Stop Losing Money</span>?</h2>
-          <p>Sign in with Google and start optimizing your credit card rewards in under 60 seconds. No credit card required. No data stored on external servers.</p>
+          <h2>Start Earning <span class="gradient-text-primary">What You Deserve</span></h2>
+          <p>Connect your Gmail. CardCompass reads your statements, crunches the numbers with Gemini AI, and tells you the best card for every spend — in under 60 seconds.</p>
 
           <a href="#" class="btn btn-google btn-google-large magnetic" id="ctaSignIn">
             <svg width="24" height="24" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
@@ -454,6 +550,7 @@
             <img src="img/app-icon.png" alt="CardCompass" width="28" height="28" style="border-radius: 6px;">
           </div>
           <span>CARDCOMPASS</span>
+          <span class="footer-tagline">Every Swipe, Optimised.</span>
         </div>
 
         <div class="footer-links">

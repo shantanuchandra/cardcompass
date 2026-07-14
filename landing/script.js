@@ -528,51 +528,122 @@
 
 
   /* ═══════════════════════════════════════════
-     11. AI TOGGLE — Navigate to llm.txt
-     The "AI View" button navigates to the
-     machine-readable product description.
+     11. AI TOGGLE — Inline panel
+     Toggles a panel below the nav showing the
+     llm.txt content as styled markdown. Fetches
+     content on first open.
      ═══════════════════════════════════════════ */
   const aiToggle = document.getElementById('aiToggle');
-  if (aiToggle) {
-    aiToggle.addEventListener('click', () => {
-      window.location.href = 'llm.txt';
+  const aiPanel = document.getElementById('aiPanel');
+  const aiPanelClose = document.getElementById('aiPanelClose');
+  const aiPanelCode = document.getElementById('aiPanelCode');
+  let aiContentLoaded = false;
+
+  function toggleAiPanel() {
+    const isOpen = aiPanel.classList.toggle('open');
+    aiPanel.setAttribute('aria-hidden', !isOpen);
+    aiToggle.setAttribute('aria-pressed', isOpen);
+
+    // Fetch llm.txt content on first open
+    if (isOpen && !aiContentLoaded) {
+      fetch('llm.txt')
+        .then(res => res.text())
+        .then(text => {
+          aiPanelCode.textContent = text;
+          aiContentLoaded = true;
+        })
+        .catch(() => {
+          aiPanelCode.textContent = 'Failed to load llm.txt — check that the file exists at /landing/llm.txt';
+        });
+    }
+  }
+
+  if (aiToggle && aiPanel) {
+    aiToggle.addEventListener('click', toggleAiPanel);
+  }
+
+  if (aiPanelClose) {
+    aiPanelClose.addEventListener('click', () => {
+      aiPanel.classList.remove('open');
+      aiPanel.setAttribute('aria-hidden', 'true');
+      aiToggle.setAttribute('aria-pressed', 'false');
     });
   }
 
+  // Close panel on Escape key
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && aiPanel && aiPanel.classList.contains('open')) {
+      aiPanel.classList.remove('open');
+      aiPanel.setAttribute('aria-hidden', 'true');
+      aiToggle.setAttribute('aria-pressed', 'false');
+    }
+  });
+
 
   /* ═══════════════════════════════════════════
-     12. GOOGLE SIGN-IN REDIRECT
-     The Google Sign-In buttons redirect to the
-     Supabase OAuth URL. After auth, Supabase
-     redirects the user to the Flutter app.
+     12. GOOGLE SIGN-IN — Supabase OAuth
+     Redirects to Supabase OAuth which triggers
+     Google Sign-In. After auth, Supabase redirects
+     the user to the Flutter web app at the
+     production URL.
+     
+     Scopes match auth_provider.dart so the
+     provider token can be reused for Gmail API
+     statement sync without a second OAuth prompt.
      ═══════════════════════════════════════════ */
-  const signInButtons = document.querySelectorAll('#heroSignIn, #ctaSignIn');
+  const signInButtons = document.querySelectorAll('#ctaSignIn, [href="#signin"]');
   
-  // Supabase project URL — replace with your actual project URL
-  // The redirect URL should point to your Flutter web app
-  const SUPABASE_URL = 'https://your-project.supabase.co';
-  const REDIRECT_URL = window.location.origin + '/app';
+  // Real Supabase project URL
+  const SUPABASE_URL = 'https://prbcoxqobhjnnfnxevxf.supabase.co';
+  
+  // Always redirect to the production Flutter web app after OAuth.
+  // The static landing page cannot process Supabase auth callbacks —
+  // only the Flutter app (with supabase_flutter SDK) can parse the
+  // OAuth tokens from the URL hash (#access_token=...).
+  const REDIRECT_URL = 'https://www.cardcompass.in';
+  
+  // Gmail scopes matching auth_provider.dart
+  const SCOPES = [
+    'email',
+    'profile',
+    'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/gmail.modify',
+    'https://www.googleapis.com/auth/user.birthday.read',
+  ].join(' ');
+  
+  function initiateSignIn(e) {
+    e.preventDefault();
+    
+    // Build the Supabase OAuth URL
+    const params = new URLSearchParams({
+      provider: 'google',
+      redirect_to: REDIRECT_URL,
+      scopes: SCOPES,
+    });
+    const authUrl = `${SUPABASE_URL}/auth/v1/authorize?${params.toString()}`;
+    
+    // Visual feedback before redirect
+    const btn = e.currentTarget;
+    btn.style.transform = 'scale(0.97)';
+    btn.style.opacity = '0.85';
+    
+    setTimeout(() => {
+      window.location.href = authUrl;
+    }, 150);
+  }
   
   signInButtons.forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.preventDefault();
-      
-      // Construct the Supabase OAuth URL for Google Sign-In
-      const authUrl = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(REDIRECT_URL)}`;
-      
-      // For now, show a brief visual feedback then redirect
-      btn.style.transform = 'scale(0.97)';
-      btn.style.opacity = '0.8';
-      
-      setTimeout(() => {
-        // In production: window.location.href = authUrl;
-        // For demo: show a toast-like notification
-        showSignInToast();
-        btn.style.transform = '';
-        btn.style.opacity = '';
-      }, 200);
-    });
+    // Only attach to actual sign-in buttons, not anchor links to the #signin section
+    if (btn.id === 'ctaSignIn' || btn.classList.contains('btn-google')) {
+      btn.addEventListener('click', initiateSignIn);
+    }
   });
+
+  // Also handle the nav "Sign In" button
+  const navSignIn = document.getElementById('navSignIn');
+  if (navSignIn) {
+    navSignIn.addEventListener('click', initiateSignIn);
+  }
 
   function showSignInToast() {
     const existing = document.querySelector('.signin-toast');
@@ -611,6 +682,88 @@
       toast.style.transition = 'opacity 0.3s ease';
       setTimeout(() => toast.remove(), 300);
     }, 3000);
+  }
+
+
+  /* ═══════════════════════════════════════════
+     13. SCROLL PROGRESS BAR
+     A thin gradient line at the top of the page
+     that shows how far the user has scrolled.
+     Creates IMAX-like "act progress" feeling.
+     ═══════════════════════════════════════════ */
+  const scrollProgressBar = document.getElementById('scrollProgress');
+
+  function updateScrollProgress() {
+    const scrollTop = window.scrollY || document.documentElement.scrollTop;
+    const scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
+    const progress = scrollHeight > 0 ? (scrollTop / scrollHeight) * 100 : 0;
+    if (scrollProgressBar) {
+      scrollProgressBar.style.width = progress + '%';
+    }
+  }
+
+  window.addEventListener('scroll', updateScrollProgress, { passive: true });
+  updateScrollProgress();
+
+
+  /* ═══════════════════════════════════════════
+     14. PARALLAX FLOATING DECORATORS
+     Subtle ₹ coins, stars, and diamonds that
+     drift at different speeds as you scroll,
+     adding depth to the IMAX experience.
+     ═══════════════════════════════════════════ */
+  const parallaxElements = document.querySelectorAll('.parallax-element');
+
+  function updateParallax() {
+    const scrollY = window.scrollY;
+    parallaxElements.forEach(el => {
+      const speed = parseFloat(el.style.getPropertyValue('--speed')) || 0.3;
+      const yOffset = -(scrollY * speed * 0.15);
+      const xDrift = Math.sin(scrollY * 0.002 * speed) * 10;
+      el.style.transform = `translateY(${yOffset}px) translateX(${xDrift}px) rotate(${scrollY * speed * 0.05}deg)`;
+    });
+  }
+
+  // Use requestAnimationFrame for smooth parallax
+  let parallaxTicking = false;
+  window.addEventListener('scroll', () => {
+    if (!parallaxTicking) {
+      requestAnimationFrame(() => {
+        updateParallax();
+        parallaxTicking = false;
+      });
+      parallaxTicking = true;
+    }
+  }, { passive: true });
+
+
+  /* ═══════════════════════════════════════════
+     15. ENHANCED INTERSECTION OBSERVER
+     For browsers without native scroll-driven
+     animations — adds .in-view class for the
+     new motion graphic reveal classes.
+     ═══════════════════════════════════════════ */
+  if (!CSS.supports('animation-timeline', 'view()')) {
+    const motionTargets = document.querySelectorAll(
+      '.reveal-blur, .reveal-left, .reveal-right, ' +
+      '.features-grid .feature-card, .problem-card, ' +
+      '.stat-item, .act-panel .act-panel-text, ' +
+      '.act-panel .act-panel-visual'
+    );
+
+    const motionObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('in-view');
+          motionObserver.unobserve(entry.target);
+        }
+      });
+    }, {
+      threshold: 0.1,
+      rootMargin: '0px 0px -50px 0px'
+    });
+
+    motionTargets.forEach(el => motionObserver.observe(el));
   }
 
 })();

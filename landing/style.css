@@ -792,6 +792,220 @@ section {
 
 
 /* ───────────────────────────────────────────────
+   7b. AI PANEL — Inline toggle (not redirect)
+   Shows llm.txt content as styled markdown
+   below the nav when AI button is toggled.
+   ─────────────────────────────────────────────── */
+.ai-panel {
+  position: fixed;
+  top: 72px;
+  left: 0;
+  right: 0;
+  z-index: 90;
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.5s cubic-bezier(0.22, 1, 0.36, 1),
+              opacity 0.3s ease;
+  opacity: 0;
+}
+
+.ai-panel.open {
+  max-height: 70vh;
+  opacity: 1;
+}
+
+.ai-panel-inner {
+  background: rgba(6, 10, 20, 0.96);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border-bottom: 1px solid rgba(0, 245, 255, 0.12);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: var(--space-lg) clamp(24px, 5vw, 80px);
+}
+
+.ai-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-lg);
+  padding-bottom: var(--space-md);
+  border-bottom: 1px solid var(--surface-subtle);
+}
+
+.ai-panel-badge {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--color-primary);
+}
+
+.ai-panel-badge code {
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 245, 255, 0.08);
+  border: 1px solid rgba(0, 245, 255, 0.15);
+  font-size: var(--text-xs);
+}
+
+.ai-panel-close {
+  background: none;
+  border: 1px solid var(--surface-subtle);
+  border-radius: var(--radius-md);
+  color: var(--text-tertiary);
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--duration-fast) ease;
+}
+
+.ai-panel-close:hover {
+  color: var(--text-primary);
+  border-color: var(--color-primary);
+  background: rgba(0, 245, 255, 0.06);
+}
+
+.ai-panel-pre {
+  background: rgba(2, 8, 16, 0.6);
+  border: 1px solid var(--surface-subtle);
+  border-radius: var(--radius-lg);
+  padding: var(--space-xl);
+  overflow-x: auto;
+  max-height: 50vh;
+}
+
+.ai-panel-pre code {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.7;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Toggle active state on button */
+.btn-ai-toggle[aria-pressed="true"] {
+  background: rgba(0, 245, 255, 0.15);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+
+/* ───────────────────────────────────────────────
+   7c. SECTION DIVIDERS — SVG wave transitions
+   Break dark monotony between folds. Creates
+   cinematic "scene change" motion between acts.
+   ─────────────────────────────────────────────── */
+.section-divider {
+  position: relative;
+  width: 100%;
+  height: 80px;
+  overflow: hidden;
+  margin: 0;
+  pointer-events: none;
+}
+
+.section-divider svg {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+
+/* ───────────────────────────────────────────────
+   7d. HERO SOCIAL PROOF
+   Positioned directly below CTA for proximity.
+   ─────────────────────────────────────────────── */
+.hero-social-proof {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-lg);
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+}
+
+.social-proof-avatars {
+  display: flex;
+  gap: -4px;
+}
+
+.avatar-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--surface-void);
+  margin-right: -4px;
+}
+
+
+/* ───────────────────────────────────────────────
+   7e. CONNECTION GRAPHIC (Step 1 visual)
+   Animated Gmail→CardCompass connection diagram
+   ─────────────────────────────────────────────── */
+.connect-graphic {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+  padding: var(--space-2xl);
+}
+
+.connect-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xl);
+  border-radius: var(--radius-xl);
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(200%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(200%);
+  border: 1px solid var(--glass-border);
+  border-top: 1px solid var(--glass-highlight);
+  transition: all var(--duration-fast) var(--ease-spring);
+}
+
+.connect-node span {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  letter-spacing: 0.05em;
+}
+
+.connect-node:hover {
+  border-color: rgba(0, 245, 255, 0.3);
+  box-shadow: 0 0 30px rgba(0, 245, 255, 0.1);
+}
+
+.connect-line {
+  flex-shrink: 0;
+}
+
+
+/* ───────────────────────────────────────────────
+   7f. PROBLEM CARD HERO (emphasized center)
+   Center card is larger to create visual hierarchy.
+   ─────────────────────────────────────────────── */
+.problem-card-hero {
+  transform: scale(1.08);
+  border-color: rgba(255, 215, 0, 0.2) !important;
+  box-shadow: 0 0 40px rgba(255, 215, 0, 0.08), var(--glass-shadow);
+}
+
+.problem-card-hero .problem-card-number {
+  font-size: clamp(var(--text-5xl), 6vw, var(--text-7xl));
+}
+
+
+/* ───────────────────────────────────────────────
    8. HERO SECTION
    ─────────────────────────────────────────────── */
 .hero {
@@ -1590,6 +1804,18 @@ section {
   color: var(--text-secondary);
 }
 
+.footer-tagline {
+  font-family: var(--font-body);
+  font-weight: 400;
+  font-style: italic;
+  font-size: var(--text-xs);
+  letter-spacing: 0.02em;
+  color: var(--text-tertiary);
+  opacity: 0.7;
+  padding-left: var(--space-sm);
+  border-left: 1px solid var(--surface-subtle);
+}
+
 .footer-links {
   display: flex;
   gap: var(--space-xl);
@@ -1616,6 +1842,349 @@ section {
 
 .footer-bottom .heart {
   color: var(--color-accent);
+}
+
+
+/* ───────────────────────────────────────────────
+   14b. MOTION GRAPHICS — Cinematic Inter-Fold FX
+   Floating particles, data streams, parallax,
+   scroll progress, and enhanced reveals.
+   
+   WHY: Static section dividers create visual breaks
+   but don't create a sense of MOTION or NARRATIVE
+   flow. These elements make the page feel alive —
+   like a single continuous story unfolding.
+   ─────────────────────────────────────────────── */
+
+/* --- Scroll Progress Bar --- */
+.scroll-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 3px;
+  width: 0%;
+  background: linear-gradient(90deg, var(--color-primary), var(--color-accent), var(--color-secondary));
+  z-index: 200;
+  transition: width 0.1s linear;
+  box-shadow: 0 0 12px rgba(0, 245, 255, 0.4);
+}
+
+
+/* --- Floating Particles (in dividers) --- */
+.section-divider--particles {
+  height: 120px;
+}
+
+.particle {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  left: var(--x, 50%);
+  bottom: 10%;
+  opacity: 0;
+  animation: particle-float var(--dur, 4s) var(--delay, 0s) infinite ease-in-out;
+  box-shadow: 0 0 8px rgba(0, 245, 255, 0.6);
+}
+
+.particle:nth-child(even) {
+  background: var(--color-accent);
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.6);
+  width: 3px;
+  height: 3px;
+}
+
+@keyframes particle-float {
+  0% {
+    opacity: 0;
+    transform: translateY(0) scale(0.5);
+  }
+  20% {
+    opacity: 0.8;
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-60px) scale(1);
+  }
+  80% {
+    opacity: 0.6;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-120px) scale(0.3);
+  }
+}
+
+
+/* --- Data Stream Section (Problem → How It Works) --- */
+.section-divider--stream {
+  height: 120px;
+}
+
+.stream-dot {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  left: var(--x, 50%);
+  top: 55%;
+  opacity: 0;
+  box-shadow: 0 0 12px rgba(0, 245, 255, 0.8), 0 0 24px rgba(0, 245, 255, 0.3);
+  animation: stream-flow 2.4s var(--delay, 0s) infinite ease-in-out;
+}
+
+.stream-dot:nth-child(even) {
+  width: 4px;
+  height: 4px;
+  background: var(--color-accent);
+  box-shadow: 0 0 10px rgba(139, 92, 246, 0.8), 0 0 20px rgba(139, 92, 246, 0.3);
+}
+
+@keyframes stream-flow {
+  0% {
+    opacity: 0;
+    transform: translateX(-30px) scale(0.3);
+  }
+  25% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: translateX(30px) translateY(-8px) scale(0.8);
+  }
+  75% {
+    opacity: 0.5;
+    transform: translateX(60px) translateY(4px) scale(0.6);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(90px) scale(0.2);
+  }
+}
+
+
+/* --- Parallax Floating Decorators --- */
+.parallax-layer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
+  overflow: hidden;
+}
+
+.parallax-element {
+  position: absolute;
+  font-size: 1.2rem;
+  opacity: 0.06;
+  color: var(--color-primary);
+  transition: transform 0.1s linear;
+  will-change: transform;
+  animation: parallax-drift 8s infinite ease-in-out alternate;
+}
+
+.parallax-coin {
+  font-size: 1.5rem;
+  color: #FFD700;
+  opacity: 0.05;
+  animation-duration: 10s;
+}
+
+.parallax-star {
+  font-size: 0.8rem;
+  color: var(--color-primary);
+  opacity: 0.04;
+  animation-duration: 7s;
+}
+
+.parallax-diamond {
+  font-size: 0.6rem;
+  color: var(--color-accent);
+  opacity: 0.04;
+  animation-duration: 12s;
+}
+
+@keyframes parallax-drift {
+  0% {
+    transform: translateY(0) rotate(0deg);
+  }
+  100% {
+    transform: translateY(-30px) rotate(15deg);
+  }
+}
+
+
+/* --- Enhanced Feature Card Reveal (blur-to-sharp) --- */
+@keyframes scroll-reveal-blur {
+  from {
+    opacity: 0;
+    transform: translateY(40px) scale(0.95);
+    filter: blur(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+.reveal-blur {
+  animation: scroll-reveal-blur linear both;
+  animation-timeline: view();
+  animation-range: entry 0% entry 40%;
+}
+
+/* Staggered blur reveal for feature cards */
+.features-grid .feature-card {
+  animation: scroll-reveal-blur linear both;
+  animation-timeline: view();
+  animation-range: entry 0% entry 40%;
+}
+
+.features-grid .feature-card:nth-child(2) { animation-range: entry 5% entry 45%; }
+.features-grid .feature-card:nth-child(3) { animation-range: entry 10% entry 50%; }
+.features-grid .feature-card:nth-child(4) { animation-range: entry 5% entry 45%; }
+.features-grid .feature-card:nth-child(5) { animation-range: entry 10% entry 50%; }
+
+
+/* --- Section Entrance — Horizontal Slide --- */
+@keyframes scroll-reveal-left {
+  from {
+    opacity: 0;
+    transform: translateX(-60px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes scroll-reveal-right {
+  from {
+    opacity: 0;
+    transform: translateX(60px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.reveal-left {
+  animation: scroll-reveal-left linear both;
+  animation-timeline: view();
+  animation-range: entry 0% entry 35%;
+}
+
+.reveal-right {
+  animation: scroll-reveal-right linear both;
+  animation-timeline: view();
+  animation-range: entry 0% entry 35%;
+}
+
+
+/* --- Act Panel alternating reveals --- */
+.act-panel:nth-child(odd) .act-panel-text {
+  animation: scroll-reveal-left linear both;
+  animation-timeline: view();
+  animation-range: entry 0% entry 35%;
+}
+.act-panel:nth-child(odd) .act-panel-visual {
+  animation: scroll-reveal-right linear both;
+  animation-timeline: view();
+  animation-range: entry 0% entry 35%;
+}
+.act-panel:nth-child(even) .act-panel-text {
+  animation: scroll-reveal-right linear both;
+  animation-timeline: view();
+  animation-range: entry 0% entry 35%;
+}
+.act-panel:nth-child(even) .act-panel-visual {
+  animation: scroll-reveal-left linear both;
+  animation-timeline: view();
+  animation-range: entry 0% entry 35%;
+}
+
+
+/* --- Problem Cards — Staggered Scale-In --- */
+@keyframes scale-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.8) translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.problem-card {
+  animation: scale-pop linear both;
+  animation-timeline: view();
+  animation-range: entry 0% entry 40%;
+}
+
+.problem-card:nth-child(2) {
+  animation-range: entry 5% entry 45%;
+}
+.problem-card:nth-child(3) {
+  animation-range: entry 10% entry 50%;
+}
+
+/* Restore the hero card scale after animation */
+.problem-card-hero {
+  animation: scale-pop linear both;
+  animation-timeline: view();
+  animation-range: entry 0% entry 40%;
+}
+
+
+/* --- Stat Items counter reveal --- */
+.stat-item {
+  animation: scroll-reveal-blur linear both;
+  animation-timeline: view();
+  animation-range: entry 0% entry 35%;
+}
+
+.stat-item:nth-child(2) { animation-range: entry 5% entry 40%; }
+.stat-item:nth-child(3) { animation-range: entry 10% entry 45%; }
+.stat-item:nth-child(4) { animation-range: entry 15% entry 50%; }
+
+
+/* Fallback for browsers without scroll-driven animations */
+@supports not (animation-timeline: view()) {
+  .reveal-blur,
+  .reveal-left,
+  .reveal-right,
+  .features-grid .feature-card,
+  .problem-card,
+  .stat-item,
+  .act-panel .act-panel-text,
+  .act-panel .act-panel-visual {
+    animation: none;
+    opacity: 0;
+    transform: translateY(40px);
+    transition: opacity 0.6s var(--ease-out-expo), transform 0.6s var(--ease-out-expo), filter 0.6s ease;
+    filter: blur(0);
+  }
+
+  .reveal-blur.in-view,
+  .reveal-left.in-view,
+  .reveal-right.in-view,
+  .features-grid .feature-card.in-view,
+  .problem-card.in-view,
+  .stat-item.in-view,
+  .act-panel .act-panel-text.in-view,
+  .act-panel .act-panel-visual.in-view {
+    opacity: 1;
+    transform: translateY(0) translateX(0) scale(1);
+    filter: blur(0);
+  }
 }
 
 
@@ -2006,10 +2575,19 @@ section {
 
   .reveal,
   .reveal-scale,
-  .reveal-stagger > * {
+  .reveal-blur,
+  .reveal-left,
+  .reveal-right,
+  .reveal-stagger > *,
+  .features-grid .feature-card,
+  .problem-card,
+  .stat-item,
+  .act-panel .act-panel-text,
+  .act-panel .act-panel-visual {
     opacity: 1 !important;
     transform: none !important;
     animation: none !important;
+    filter: none !important;
   }
 
   .terminal-line {
@@ -2027,5 +2605,19 @@ section {
 
   .spotlight {
     display: none;
+  }
+
+  /* Hide all motion graphics */
+  .particle,
+  .stream-dot,
+  .parallax-layer,
+  .scroll-progress,
+  .data-stream {
+    display: none !important;
+  }
+
+  .section-divider--particles,
+  .section-divider--stream {
+    height: 80px;
   }
 }

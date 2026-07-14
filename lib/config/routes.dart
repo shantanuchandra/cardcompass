@@ -88,6 +88,15 @@ class AppRoutes {
     if (candidate == null || candidate.trim().isEmpty) return null;
     var route = candidate.trim();
     if (route.startsWith('#')) route = route.substring(1);
+    // Ignore Supabase OAuth callback hash fragments (#sb, #access_token=..., etc.)
+    // These are processed by supabase_flutter's SupabaseAuth and should not
+    // be interpreted as app routes. Let the splash screen handle auth state.
+    if (route.startsWith('sb') ||
+        route.contains('access_token') ||
+        route.contains('refresh_token') ||
+        route.contains('error_description')) {
+      return null;
+    }
     if (!route.startsWith('/')) route = '/$route';
     return route;
   }

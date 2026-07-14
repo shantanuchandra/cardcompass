@@ -34,6 +34,7 @@
         <a href="#glass" class="nav-link">Glass</a>
         <a href="#motion" class="nav-link">Motion</a>
         <a href="#components" class="nav-link">Components</a>
+        <a href="#hierarchy-docs" class="nav-link">Hierarchy</a>
         <a href="index.html" class="btn btn-primary nav-cta">View Landing</a>
       </div>
     </div>
@@ -484,6 +485,137 @@
 
           <h3 style="margin-top:var(--space-xl);"><code class="mono">CSS-first animation strategy</code></h3>
           <p>All scroll-driven animations use native CSS <code class="mono">animation-timeline: view()</code>, which runs entirely off the main thread. This means zero JavaScript overhead, no IntersectionObserver polling, and guaranteed 60fps on capable browsers. For browsers without support, a lightweight JS fallback adds <code class="mono">.in-view</code> classes via IntersectionObserver. The JS layer only handles things CSS cannot: canvas particles, mouse tracking, and counter math.</p>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ═══ NEW: AI PANEL ═══ -->
+    <section id="ai-panel-docs">
+      <div class="container">
+        <div class="section-header">
+          <div class="section-label">Component</div>
+          <h2>AI Panel <span class="gradient-text">(Inline Toggle)</span></h2>
+          <p>A slide-down panel that reveals machine-readable product information without leaving the page.</p>
+        </div>
+
+        <div class="ds-why-block">
+          <strong>WHY inline instead of redirect:</strong> The previous design navigated to <code class="mono">llm.txt</code> as a raw file. This broke the user's context — they lost their scroll position and had to use the browser's back button. The inline panel follows the <strong>progressive disclosure</strong> pattern: content is hidden until the user explicitly requests it, and they can dismiss it without losing their place. The toggle also uses <code class="mono">aria-pressed</code> for screen readers, making the open/closed state programmatically discoverable.
+        </div>
+
+        <div class="ds-demo-block" style="margin-top:var(--space-xl);">
+          <h4>Toggle Behavior</h4>
+          <ul style="color:var(--text-secondary);font-size:var(--text-sm);margin-top:var(--space-sm);list-style:none;">
+            <li>• <code class="mono">AI</code> button in nav toggles <code class="mono">.ai-panel.open</code></li>
+            <li>• Panel slides down from 72px (nav height) with <code class="mono">max-height</code> transition</li>
+            <li>• Content is fetched lazily on first open via <code class="mono">fetch('llm.txt')</code></li>
+            <li>• Closeable via X button, Escape key, or re-clicking AI button</li>
+            <li>• <code class="mono">position: fixed</code> + <code class="mono">z-index: 90</code> — overlays page content without reflow</li>
+          </ul>
+        </div>
+
+        <div class="ds-why-block" style="margin-top:var(--space-lg);">
+          <strong>WHY <code class="mono">position: fixed</code>:</strong> The panel overlays the page content rather than pushing it down. This avoids expensive layout reflows when toggling — the browser doesn't need to recalculate positions for every element below. It also preserves scroll position perfectly.
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ═══ NEW: SECTION DIVIDERS ═══ -->
+    <section id="dividers-docs">
+      <div class="container">
+        <div class="section-header">
+          <div class="section-label">Component</div>
+          <h2>Section Dividers <span class="gradient-text-primary">(SVG Waves)</span></h2>
+          <p>SVG wave transitions between each "act" of the page, creating cinematic scene changes.</p>
+        </div>
+
+        <div class="ds-demo-block">
+          <h4>Live Preview</h4>
+          <div style="background: var(--surface-card); border-radius: var(--radius-lg); overflow: hidden; margin-top: var(--space-md);">
+            <div style="padding: var(--space-xl); text-align: center; color: var(--text-tertiary); font-size: var(--text-sm);">Section A</div>
+            <div style="position:relative;width:100%;height:80px;overflow:hidden;">
+              <svg viewBox="0 0 1440 80" preserveAspectRatio="none" fill="none" xmlns="http://www.w3.org/2000/svg" style="position:absolute;bottom:0;left:0;width:100%;height:100%;">
+                <path d="M0 40C240 80 480 0 720 40C960 80 1200 0 1440 40V80H0V40Z" fill="rgba(0,245,255,0.05)"/>
+                <path d="M0 50C360 10 720 70 1080 30C1200 20 1320 40 1440 50V80H0V50Z" fill="rgba(139,92,246,0.03)"/>
+              </svg>
+            </div>
+            <div style="padding: var(--space-xl); text-align: center; color: var(--text-tertiary); font-size: var(--text-sm);">Section B</div>
+          </div>
+        </div>
+
+        <div class="ds-why-block" style="margin-top:var(--space-xl);">
+          <strong>WHY SVG waves:</strong> Research on 2026 landing page design shows that <strong>dark backgrounds become monotonous</strong> when unbroken across multiple viewport-height sections. The SVG dividers solve this by creating subtle "scene changes" — like chapter transitions in a film. The dual-layer wave paths use different colors (cyan + purple) with very low opacity (2–4%) to hint at depth without being distracting. <code class="mono">preserveAspectRatio="none"</code> ensures they stretch across all viewport widths.
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ═══ NEW: VISUAL HIERARCHY ═══ -->
+    <section id="hierarchy-docs">
+      <div class="container">
+        <div class="section-header">
+          <div class="section-label">Pattern</div>
+          <h2>Visual Hierarchy <span class="gradient-text">Patterns</span></h2>
+          <p>How we guide the user's eye through each fold using size, contrast, and proximity.</p>
+        </div>
+
+        <div class="ds-principles-grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));">
+          <div class="ds-principle">
+            <div class="ds-principle-num">01</div>
+            <h3>Single Focal Point</h3>
+            <p>The hero section uses ONE visual element (the compass illustration) instead of two competing images. Research shows that multiple focal points above the fold increase cognitive load and reduce conversion — the eye has no anchor.</p>
+          </div>
+          <div class="ds-principle">
+            <div class="ds-principle-num">02</div>
+            <h3>Emphasized Center Card</h3>
+            <p>In the Problem section, the center stat card (₹50K) uses <code class="mono">transform: scale(1.08)</code> and a gold border glow. This creates visual hierarchy across equal-content cards — size communicates importance without needing text labels.</p>
+          </div>
+          <div class="ds-principle">
+            <div class="ds-principle-num">03</div>
+            <h3>CTA-Adjacent Social Proof</h3>
+            <p>Social proof text ("183+ credit cards supported · 10+ Indian banks") is placed directly below the primary CTA button, not in a separate section. Research shows proximity between proof and action increases click-through by creating immediate validation.</p>
+          </div>
+          <div class="ds-principle">
+            <div class="ds-principle-num">04</div>
+            <h3>Balanced Panel Visuals</h3>
+            <p>Each How It Works panel has equal visual weight: Step 1 has an animated connection graphic, Steps 2–3 have app mockup screenshots. No panel is "text-only" — a visual vacuum breaks the narrative flow.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ═══ NEW: CONNECTION GRAPHIC ═══ -->
+    <section id="connect-docs">
+      <div class="container">
+        <div class="section-header">
+          <div class="section-label">Component</div>
+          <h2>Connection Graphic</h2>
+          <p>An animated diagram showing the Gmail → CardCompass data flow in Step 1.</p>
+        </div>
+
+        <div class="ds-demo-block">
+          <h4>Live Preview</h4>
+          <div style="display:flex;align-items:center;gap:var(--space-lg);padding:var(--space-2xl);justify-content:center;">
+            <div class="glass-card" style="padding:var(--space-lg);display:flex;flex-direction:column;align-items:center;gap:var(--space-sm);">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" stroke="var(--color-primary)" stroke-width="1.5"/><polyline points="22,6 12,13 2,6" stroke="var(--color-primary)" stroke-width="1.5"/></svg>
+              <span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--text-tertiary);">Gmail</span>
+            </div>
+            <svg width="120" height="4" viewBox="0 0 120 4" fill="none">
+              <line x1="0" y1="2" x2="120" y2="2" stroke="var(--color-primary)" stroke-width="2" stroke-dasharray="8 4">
+                <animate attributeName="stroke-dashoffset" values="0;-24" dur="1.5s" repeatCount="indefinite"/>
+              </line>
+            </svg>
+            <div class="glass-card" style="padding:var(--space-lg);display:flex;flex-direction:column;align-items:center;gap:var(--space-sm);">
+              <img src="img/app-icon.png" alt="CardCompass" width="48" height="48" style="border-radius: 12px;">
+              <span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--text-tertiary);">CardCompass</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="ds-why-block" style="margin-top:var(--space-xl);">
+          <strong>WHY an animated connection:</strong> Step 1 previously had a lone 64px email SVG icon — visually sparse compared to Steps 2–3 which had rich app mockup screenshots. This created an <strong>unbalanced visual weight</strong> across the act panels, breaking the narrative flow. The connection graphic solves this by showing a live data transfer animation (dashed line with <code class="mono">stroke-dashoffset</code> animation) between two glass-card nodes. It's both informative (explains the OAuth flow) and visually balanced.
         </div>
       </div>
     </section>
