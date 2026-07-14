@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:cardcompass/core/config/ai_config.dart';
 import 'gemini_request_service.dart';
+import 'gemini_call_log_service.dart';
 
 /// Service for interacting with Google Gemini AI API
 class GeminiService {
@@ -347,6 +349,9 @@ CRITICAL REQUIREMENTS:
     required List<Map<String, dynamic>> availableCards,
     int limit = 5,
   }) async {
+    final callLogger = GeminiCallLogService();
+    final stopwatch = Stopwatch()..start();
+    final provider = _activeProviderName();
     try {
       final prompt = '''
 You are an expert credit card advisor in India. Based on the user's profile and spending patterns, recommend the best credit cards from the available options.
@@ -397,8 +402,29 @@ For each recommendation, provide:
         schema: schema,
       );
 
-      return List<Map<String, dynamic>>.from(result['recommendations'] ?? []);
+      final recommendations =
+          List<Map<String, dynamic>>.from(result['recommendations'] ?? []);
+
+      stopwatch.stop();
+      unawaited(callLogger.logRecommendationCall(
+        provider: provider,
+        durationMs: stopwatch.elapsedMilliseconds,
+        userProfile: userProfile,
+        spendingData: spendingData,
+        result: recommendations,
+      ));
+
+      return recommendations;
     } catch (error) {
+      stopwatch.stop();
+      unawaited(callLogger.logRecommendationCall(
+        provider: provider,
+        durationMs: stopwatch.elapsedMilliseconds,
+        userProfile: userProfile,
+        spendingData: spendingData,
+        result: const [],
+        errorMessage: error.toString(),
+      ));
       throw Exception('Failed to generate card recommendations: $error');
     }
   }
@@ -409,6 +435,9 @@ For each recommendation, provide:
     required List<Map<String, dynamic>> transactions,
     required List<Map<String, dynamic>> userCards,
   }) async {
+    final callLogger = GeminiCallLogService();
+    final stopwatch = Stopwatch()..start();
+    final provider = _activeProviderName();
     try {
       final prompt = '''
 You are a financial advisor specializing in credit card rewards optimization in India. Analyze the user's transactions and current cards to identify opportunities for better rewards.
@@ -463,13 +492,43 @@ For each optimization, provide:
 
       if (optimizations == null || optimizations.isEmpty) {
         debugPrint('AI returned null or empty optimizations');
-        return _getMockOptimizations();
+        final mocks = _getMockOptimizations();
+        stopwatch.stop();
+        unawaited(callLogger.logOptimizationCall(
+          provider: provider,
+          durationMs: stopwatch.elapsedMilliseconds,
+          transactionCount: transactions.length,
+          cardCount: userCards.length,
+          result: mocks,
+          usedMockFallback: true,
+        ));
+        return mocks;
       }
 
-      return List<Map<String, dynamic>>.from(optimizations);
+      final typed = List<Map<String, dynamic>>.from(optimizations);
+      stopwatch.stop();
+      unawaited(callLogger.logOptimizationCall(
+        provider: provider,
+        durationMs: stopwatch.elapsedMilliseconds,
+        transactionCount: transactions.length,
+        cardCount: userCards.length,
+        result: typed,
+      ));
+      return typed;
     } catch (error) {
       debugPrint('Failed to generate spending optimizations with AI: $error');
-      return _getMockOptimizations();
+      final mocks = _getMockOptimizations();
+      stopwatch.stop();
+      unawaited(callLogger.logOptimizationCall(
+        provider: provider,
+        durationMs: stopwatch.elapsedMilliseconds,
+        transactionCount: transactions.length,
+        cardCount: userCards.length,
+        result: mocks,
+        usedMockFallback: true,
+        errorMessage: error.toString(),
+      ));
+      return mocks;
     }
   }
 
@@ -701,5 +760,17 @@ Consider:
       print('❌ Ollama fallback call failed: $e');
     }
     return null;
+  }
+
+  /// Returns a human-readable name for the currently active AI provider.
+  String _activeProviderName() {
+    switch (AIConfig.activeProvider) {
+      case AIProvider.ollama:
+        return 'ollama';
+      case AIProvider.groq:
+        return 'groq';
+      default:
+        return 'gemini';
+    }
   }
 }
