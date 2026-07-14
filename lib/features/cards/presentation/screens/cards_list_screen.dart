@@ -10,6 +10,8 @@ import 'package:cardcompass/config/routes.dart';
 import 'package:cardcompass/core/services/card_identification_service.dart';
 import 'package:cardcompass/features/auth/providers/auth_provider.dart';
 import 'package:cardcompass/core/theme.dart';
+import 'package:cardcompass/features/transactions/viewmodels/transactions_viewmodel.dart';
+import 'package:cardcompass/shared/models/credit_card.dart';
 
 /// Screen to display all user's credit cards with filtering and search
 class CardsListScreen extends ConsumerStatefulWidget {
@@ -32,6 +34,7 @@ class _CardsListScreenState extends ConsumerState<CardsListScreen> {
     _loadSuggestedCards();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadUserCards();
+      _loadMonthlySummary();
     });
   }
 
@@ -39,6 +42,19 @@ class _CardsListScreenState extends ConsumerState<CardsListScreen> {
     final authState = ref.read(authStateProvider);
     if (authState.isAuthenticated && authState.user != null) {
       await ref.read(cardsProvider.notifier).loadUserCards(authState.user!.id);
+    }
+  }
+
+  Future<void> _loadMonthlySummary() async {
+    final authState = ref.read(authStateProvider);
+    if (authState.isAuthenticated && authState.user != null) {
+      await ref
+          .read(transactionsViewModelProvider.notifier)
+          .loadTransactions(authState.user!.id);
+      final now = DateTime.now();
+      ref.read(transactionsViewModelProvider.notifier).setDateRange(
+            DateRange(start: DateTime(now.year, now.month, 1), end: now),
+          );
     }
   }
 
@@ -61,6 +77,8 @@ class _CardsListScreenState extends ConsumerState<CardsListScreen> {
   @override
   Widget build(BuildContext context) {
     final cards = ref.watch(cardsProvider);
+    final cardSummaries =
+        ref.watch(transactionsViewModelProvider).perCardSummary();
 
     return CardCompassScaffold(
       title: 'My Portfolio',
@@ -144,18 +162,25 @@ class _CardsListScreenState extends ConsumerState<CardsListScreen> {
                                     arguments: card.id,
                                   );
                                 },
-                                child: Hero(
-                                  tag: 'card_${card.id}',
-                                  child: CreditCardWidget(
-                                    cardName: card.cardName,
-                                    bankName: card.bankName,
-                                    lastFourDigits: card.cardNumber ?? '****',
-                                    expiryDate: card.expiryDate != null
-                                        ? '${card.expiryDate!.month.toString().padLeft(2, '0')}/${card.expiryDate!.year.toString().substring(2)}'
-                                        : 'XX/XX',
-                                    cardType: card.network.name.toUpperCase(),
-                                    gradientColors: _getCardGradient(card.network.name),
-                                  ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  children: [
+                                    Hero(
+                                      tag: 'card_${card.id}',
+                                      child: CreditCardWidget(
+                                        cardName: card.cardName,
+                                        bankName: card.bankName,
+                                        lastFourDigits: card.cardNumber ?? '****',
+                                        expiryDate: card.expiryDate != null
+                                            ? '${card.expiryDate!.month.toString().padLeft(2, '0')}/${card.expiryDate!.year.toString().substring(2)}'
+                                            : 'XX/XX',
+                                        cardType: card.network.name.toUpperCase(),
+                                        gradientColors: _getCardGradient(card.network.name),
+                                      ),
+                                    ),
+                                    const SizedBox(height: AppSpacing.sm),
+                                    _buildCardSummaryStrip(card, cardSummaries[card.id]),
+                                  ],
                                 ),
                               ),
                             );
@@ -513,6 +538,61 @@ class _CardsListScreenState extends ConsumerState<CardsListScreen> {
         );
       }
     }
+  }
+
+  Widget _buildCardSummaryStrip(CreditCard card, CardSpendSummary? summary) {
+    final limitLabel = card.creditLimit != null
+        ? '₹${card.creditLimit!.toStringAsFixed(0)}'
+        : 'Limit not set';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0C152B),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          _summaryStripItem(
+            'THIS MONTH',
+            '₹${(summary?.totalSpend ?? 0).toStringAsFixed(0)}',
+          ),
+          _summaryStripItem(
+            'REWARDS',
+            '+₹${(summary?.totalRewards ?? 0).toStringAsFixed(0)}',
+            valueColor: AppTheme.rewardGold,
+          ),
+          _summaryStripItem('LIMIT', limitLabel),
+        ],
+      ),
+    );
+  }
+
+  Widget _summaryStripItem(String label, String value, {Color? valueColor}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          value,
+          style: GoogleFonts.spaceGrotesk(
+            color: valueColor ?? Colors.white,
+            fontWeight: FontWeight.bold,
+            fontSize: 14,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          style: GoogleFonts.spaceGrotesk(
+            color: Colors.white38,
+            fontSize: 9,
+            letterSpacing: 0.5,
+          ),
+        ),
+      ],
+    );
   }
 
   List<Color> _getCardGradient(String network) {

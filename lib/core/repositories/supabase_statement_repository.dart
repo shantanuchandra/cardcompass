@@ -8,6 +8,15 @@ import 'package:cardcompass/shared/models/statement.dart';
 class SupabaseStatementRepository implements StatementRepository {
   final SupabaseClient _supabase = Supabase.instance.client;
 
+  /// Columns backing the `statements` table's unique constraint
+  /// (`statements_user_card_statement_date_key`, see
+  /// supabase/migrations/20260714020000_enforce_user_card_ownership.sql).
+  /// Must always match that constraint's columns exactly, or every
+  /// statement upsert fails silently (caught and logged in
+  /// DataPipelineDebugService, never surfaced to the user).
+  static const String statementUpsertConflictColumns =
+      'user_card_id,statement_date';
+
   @override
   Future<List<Map<String, dynamic>>> getUserStatements(String userId) async {
     try {
@@ -253,11 +262,11 @@ class SupabaseStatementRepository implements StatementRepository {
         'updated_at': now.toIso8601String(),
       };
 
-      // Upsert on (card_id, statement_date) so re-syncing the same
+      // Upsert on (user_card_id, statement_date) so re-syncing the same
       // statement period is idempotent and returns the existing row instead of 409.
       final result = await _supabase
           .from('statements')
-          .upsert(statementMap, onConflict: 'card_id,statement_date')
+          .upsert(statementMap, onConflict: statementUpsertConflictColumns)
           .select()
           .single();
 

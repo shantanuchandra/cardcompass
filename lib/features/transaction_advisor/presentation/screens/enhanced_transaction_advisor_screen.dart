@@ -12,7 +12,9 @@ import 'package:cardcompass/core/theme.dart';
 
 /// Enhanced transaction advisor with advanced benefit calculations in tech-neon style
 class EnhancedTransactionAdvisorScreen extends ConsumerStatefulWidget {
-  const EnhancedTransactionAdvisorScreen({super.key});
+  final int initialTabIndex;
+
+  const EnhancedTransactionAdvisorScreen({super.key, this.initialTabIndex = 0});
 
   @override
   ConsumerState<EnhancedTransactionAdvisorScreen> createState() =>
@@ -55,7 +57,11 @@ class _EnhancedTransactionAdvisorScreenState
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 5, vsync: this);
+    _tabController = TabController(
+      length: 5,
+      vsync: this,
+      initialIndex: widget.initialTabIndex,
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadInitialData();
     });
@@ -216,7 +222,7 @@ class _EnhancedTransactionAdvisorScreenState
               text: 'CALCULATE'),
           Tab(
               icon: Icon(Icons.local_movies_outlined, size: 18),
-              text: 'SHOWTIMES'),
+              text: 'MOVIE DEALS'),
           Tab(icon: Icon(Icons.trending_up, size: 18), text: 'OPTIMIZE'),
           Tab(icon: Icon(Icons.analytics_outlined, size: 18), text: 'SUMMARY'),
           Tab(

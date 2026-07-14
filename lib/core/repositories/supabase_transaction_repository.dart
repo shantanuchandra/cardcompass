@@ -6,6 +6,13 @@ import 'package:cardcompass/shared/models/transaction.dart';
 /// Supabase implementation of TransactionRepository
 class SupabaseTransactionRepository implements TransactionRepository {
   final SupabaseClient _supabase = Supabase.instance.client;
+
+  /// Columns backing the `transactions` table's unique index
+  /// (`idx_transactions_dedup`, see
+  /// supabase/migrations/20260714040000_add_transaction_dedup_constraint.sql).
+  /// Must always match that index's columns exactly.
+  static const String transactionUpsertConflictColumns =
+      'user_id,user_card_id,transaction_date,description,amount';
     /// Force refresh schema cache to resolve potential schema cache issues
   Future<void> refreshSchemaCache() async {
     try {
@@ -70,26 +77,31 @@ class SupabaseTransactionRepository implements TransactionRepository {
   @override
   Future<void> addTransaction(Transaction transaction) async {
     try {
-      // Direct insert preserves all fields the RPC doesn't accept
+      // Direct upsert preserves all fields the RPC doesn't accept
       // (statement_id, reward_earned, reward_type, metadata, is_recurring).
-      // ON CONFLICT on (user_id, user_card_id, transaction_date, description, amount)
-      // is handled by the DB unique index; duplicate rows are skipped via ignoreDuplicates.
-      await _supabase.from('transactions').insert({
-        'user_id': transaction.userId,
-        'user_card_id': transaction.userCardId,
-        'amount': transaction.amount,
-        'description': transaction.description,
-        'transaction_date': transaction.transactionDate.toIso8601String(),
-        'category': transaction.category.toString().split('.').last,
-        'transaction_type': transaction.type.toString().split('.').last,
-        'currency': transaction.currency,
-        'merchant_name': transaction.merchantName,
-        'location': transaction.location,
-        'reward_earned': transaction.rewardEarned,
-        'reward_type': transaction.rewardType,
-        'statement_id': transaction.statementId,
-        'metadata': transaction.metadata.isEmpty ? null : transaction.metadata,
-      });
+      // ON CONFLICT on (user_id, user_card_id, transaction_date, description,
+      // amount) is handled by idx_transactions_dedup; a genuine duplicate is
+      // silently skipped via ignoreDuplicates rather than raising an error.
+      await _supabase.from('transactions').upsert(
+        {
+          'user_id': transaction.userId,
+          'user_card_id': transaction.userCardId,
+          'amount': transaction.amount,
+          'description': transaction.description,
+          'transaction_date': transaction.transactionDate.toIso8601String(),
+          'category': transaction.category.toString().split('.').last,
+          'transaction_type': transaction.type.toString().split('.').last,
+          'currency': transaction.currency,
+          'merchant_name': transaction.merchantName,
+          'location': transaction.location,
+          'reward_earned': transaction.rewardEarned,
+          'reward_type': transaction.rewardType,
+          'statement_id': transaction.statementId,
+          'metadata': transaction.metadata.isEmpty ? null : transaction.metadata,
+        },
+        onConflict: transactionUpsertConflictColumns,
+        ignoreDuplicates: true,
+      );
     } catch (error) {
       throw Exception('Failed to add transaction: $error');
     }

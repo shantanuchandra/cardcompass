@@ -140,7 +140,9 @@ class AppRoutes {
 
       case enhancedTransactionAdvisor:
         return MaterialPageRoute(
-          builder: (_) => const EnhancedTransactionAdvisorScreen(),
+          builder: (_) => EnhancedTransactionAdvisorScreen(
+            initialTabIndex: settings.arguments as int? ?? 0,
+          ),
           settings: settings,
         );
 

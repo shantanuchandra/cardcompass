@@ -3,6 +3,7 @@ import 'package:cardcompass/shared/models/statement.dart';
 import 'package:cardcompass/shared/models/credit_card.dart';
 import 'package:cardcompass/core/repositories/statement_repository.dart';
 import 'package:cardcompass/core/services/pdf_service.dart';
+import 'package:cardcompass/core/services/pdf_parsing_service_impl.dart';
 import 'package:cardcompass/core/services/enhanced_gmail_service.dart';
 import 'package:cardcompass/core/repositories/card_repository.dart';
 import 'package:cardcompass/core/providers/service_providers.dart';
@@ -49,14 +50,12 @@ class StatementsViewState {
 class StatementsViewModel extends _$StatementsViewModel {
   late final StatementRepository _statementRepository;
   late final PdfService _pdfService;
-  late final EnhancedGmailService _gmailService;
   late final CardRepository _cardRepository;
 
   @override
   StatementsViewState build() {
     _statementRepository = ref.watch(statementRepositoryProvider);
     _pdfService = ref.watch(pdfServiceProvider);
-    _gmailService = ref.watch(gmailServiceProvider);
     _cardRepository = ref.watch(cardRepositoryProvider);
     return const StatementsViewState();
   }
@@ -206,15 +205,22 @@ class StatementsViewModel extends _$StatementsViewModel {
     try {
       state = state.copyWith(uploadProgress: 'Connecting to Gmail...');
 
+      // Constructed here (not via a provider) because it needs a fresh
+      // Gmail OAuth session at the moment the user asks to sync — there's no
+      // authenticated instance to inject ahead of time.
+      final gmailService = EnhancedGmailService(
+        pdfParsingService: PdfParsingServiceImpl(),
+      );
+
       // Authenticate with Gmail
-      final isAuthenticated = await _gmailService.authenticate();
+      final isAuthenticated = await gmailService.authenticate();
       if (!isAuthenticated) {
         throw Exception('Failed to authenticate with Gmail');
       }
 
       // Fetch credit card statements
       state = state.copyWith(uploadProgress: 'Searching for statements...');
-      final statementEmails = await _gmailService.searchStatements();
+      final statementEmails = await gmailService.searchStatements();
 
       state = state.copyWith(uploadProgress: 'Processing statements...');
       int processedCount = 0;
@@ -227,7 +233,7 @@ class StatementsViewModel extends _$StatementsViewModel {
           }
 
           // Download PDF attachment
-          final pdfData = await _gmailService.downloadAttachment(attachmentId);
+          final pdfData = await gmailService.downloadAttachment(attachmentId);
 
           // Parse statement
           final parsedData = await _pdfService.parseStatementFromBytes(pdfData);
