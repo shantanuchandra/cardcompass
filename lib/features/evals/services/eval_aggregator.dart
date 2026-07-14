@@ -83,9 +83,9 @@ class EvalAggregator {
     List<Map<String, dynamic>> stagingRecords = [];
     try {
       final raw = await _supabase
-          .from('card_benefit_staging')
+          .from('card_benefits_staging')
           .select(
-              'id, card_id, status, calculated_confidence, validation_reasons, validation_warnings, source_url, validated_at, repair_metadata')
+              'id, card_id, status, calculated_confidence, validation_reasons, validation_warnings, source_url, validated_at, benefit_decisions')
           .order('validated_at', ascending: false)
           .limit(500);
       stagingRecords = (raw as List)
@@ -96,10 +96,8 @@ class EvalAggregator {
 
     List<Map<String, dynamic>> rewardBalances = [];
     try {
-      final raw = await _supabase
-          .from('reward_balances')
-          .select('*')
-          .limit(200);
+      final raw =
+          await _supabase.from('reward_balances').select('*').limit(200);
       rewardBalances = (raw as List)
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
@@ -115,10 +113,7 @@ class EvalAggregator {
         .map((l) => l.toHive())
         .toList();
 
-    final repairRecords = stagingRecords.where((r) {
-      final rm = r['repair_metadata'];
-      return rm is Map && (rm['attempted'] == true);
-    }).toList();
+    final repairRecords = <Map<String, dynamic>>[];
 
     return EvalFixture(
       version: 1,
@@ -142,8 +137,9 @@ class EvalAggregator {
   Future<SubsystemScore> _benefitExtractionScore() async {
     try {
       final raw = await _supabase
-          .from('card_benefit_staging')
-          .select('status, calculated_confidence, validation_reasons, validation_warnings')
+          .from('card_benefits_staging')
+          .select(
+              'status, calculated_confidence, validation_reasons, validation_warnings')
           .order('validated_at', ascending: false)
           .limit(500);
       final records = (raw as List)
@@ -161,16 +157,13 @@ class EvalAggregator {
     if (records.isEmpty) return _noDataSubsystem('Benefit Extraction', '🧬');
 
     final total = records.length;
-    final accepted =
-        records.where((r) => r['status'] == 'pending').length;
-    final rejected =
-        records.where((r) => r['status'] == 'rejected').length;
+    final accepted = records.where((r) => r['status'] == 'pending').length;
+    final rejected = records.where((r) => r['status'] == 'rejected').length;
 
     final confidences = records
         .map((r) => (r['calculated_confidence'] as num?)?.toDouble() ?? 0.0)
         .toList();
-    final avgConf =
-        confidences.fold(0.0, (s, v) => s + v) / confidences.length;
+    final avgConf = confidences.fold(0.0, (s, v) => s + v) / confidences.length;
 
     // Reason code frequency
     final reasonCounts = <String, int>{};
@@ -188,7 +181,8 @@ class EvalAggregator {
 
     final acceptanceRate = total > 0 ? accepted / total : 0.0;
     final groundingScore = avgConf;
-    final score = ((acceptanceRate * 0.6) + (groundingScore * 0.4)).clamp(0.0, 1.0);
+    final score =
+        ((acceptanceRate * 0.6) + (groundingScore * 0.4)).clamp(0.0, 1.0);
 
     return SubsystemScore(
       name: 'Benefit Extraction',
@@ -270,8 +264,7 @@ class EvalAggregator {
             .first
             .key;
 
-    final score = (leakFreeRate * 0.7 +
-            (avgReduction.clamp(0, 80) / 80 * 0.3))
+    final score = (leakFreeRate * 0.7 + (avgReduction.clamp(0, 80) / 80 * 0.3))
         .clamp(0.0, 1.0);
 
     return SubsystemScore(
@@ -317,7 +310,7 @@ class EvalAggregator {
     try {
       final statementsRaw = await _supabase
           .from('statements')
-          .select('id, bank_name, statement_date')
+          .select('id, statement_date')
           .limit(500);
       final statements = (statementsRaw as List)
           .whereType<Map>()
@@ -351,8 +344,7 @@ class EvalAggregator {
     }
   }
 
-  SubsystemScore _transactionParsingScoreFromStats(
-      Map<String, dynamic> stats) {
+  SubsystemScore _transactionParsingScoreFromStats(Map<String, dynamic> stats) {
     if (stats.isEmpty) return _noDataSubsystem('Transaction Parsing', '🔬');
 
     final total = (stats['totalStatements'] as num?)?.toInt() ?? 0;
@@ -429,8 +421,9 @@ class EvalAggregator {
         .map((b) => (b['inr_value'] as num?)?.toDouble() ?? 0.0)
         .toList();
     final totalInr = inrValues.fold(0.0, (s, v) => s + v);
-    final highValue =
-        balances.where((b) => ((b['inr_value'] as num?)?.toDouble() ?? 0) >= 500).length;
+    final highValue = balances
+        .where((b) => ((b['inr_value'] as num?)?.toDouble() ?? 0) >= 500)
+        .length;
 
     final score = coverageRate;
 
@@ -468,20 +461,8 @@ class EvalAggregator {
   // ─────────────────────────────────────────────────────────────────────────
 
   Future<SubsystemScore> _benefitRepairScore() async {
-    try {
-      final raw = await _supabase
-          .from('card_benefit_staging')
-          .select('repair_metadata')
-          .not('repair_metadata', 'is', null)
-          .limit(200);
-      final records = (raw as List)
-          .whereType<Map>()
-          .map((e) => Map<String, dynamic>.from(e))
-          .toList();
-      return _benefitRepairScoreFromData(records);
-    } catch (_) {
-      return _noDataSubsystem('Benefit Repair', '🔧');
-    }
+    // The deployed staging schema has no repair_metadata column yet.
+    return _benefitRepairScoreFromData(const []);
   }
 
   SubsystemScore _benefitRepairScoreFromData(
@@ -500,8 +481,7 @@ class EvalAggregator {
       totalAccepted += accepted;
     }
 
-    final hitRate =
-        totalTargets > 0 ? totalAccepted / totalTargets : 0.0;
+    final hitRate = totalTargets > 0 ? totalAccepted / totalTargets : 0.0;
     final attemptedRate = records.length;
 
     return SubsystemScore(
@@ -514,7 +494,8 @@ class EvalAggregator {
           name: 'Repair target hit rate',
           value: hitRate,
           displayValue: '${(hitRate * 100).toStringAsFixed(1)} %',
-          description: 'Fraction of repair targets that produced accepted items',
+          description:
+              'Fraction of repair targets that produced accepted items',
           sampleSize: totalTargets,
         ),
         EvalMetric(
@@ -538,7 +519,8 @@ class EvalAggregator {
 
   Future<SubsystemScore> _recommendationsScore() async {
     try {
-      final logs = await _callLog.getLogsForType(GeminiCallType.cardRecommendation);
+      final logs =
+          await _callLog.getLogsForType(GeminiCallType.cardRecommendation);
       return _recommendationsScoreFromData(
           logs.map((l) => l.toHive()).toList());
     } catch (_) {
@@ -605,16 +587,15 @@ class EvalAggregator {
 
   Future<SubsystemScore> _optimizationsScore() async {
     try {
-      final logs = await _callLog.getLogsForType(GeminiCallType.spendingOptimization);
-      return _optimizationsScoreFromData(
-          logs.map((l) => l.toHive()).toList());
+      final logs =
+          await _callLog.getLogsForType(GeminiCallType.spendingOptimization);
+      return _optimizationsScoreFromData(logs.map((l) => l.toHive()).toList());
     } catch (_) {
       return _noDataSubsystem('Spending Optimizations', '📊');
     }
   }
 
-  SubsystemScore _optimizationsScoreFromData(
-      List<Map<String, dynamic>> calls) {
+  SubsystemScore _optimizationsScoreFromData(List<Map<String, dynamic>> calls) {
     if (calls.isEmpty) return _noDataSubsystem('Spending Optimizations', '📊');
 
     int mockCount = 0;
@@ -634,8 +615,7 @@ class EvalAggregator {
       }
     }
 
-    final realRate =
-        calls.isNotEmpty ? 1 - (mockCount / calls.length) : 0.0;
+    final realRate = calls.isNotEmpty ? 1 - (mockCount / calls.length) : 0.0;
     final avgDelta = deltaCount > 0 ? totalDelta / deltaCount : 0.0;
     // Delta of 4x = perfect score
     final deltaScore = (avgDelta / 4.0).clamp(0.0, 1.0);
@@ -651,7 +631,8 @@ class EvalAggregator {
           name: 'Real AI output rate',
           value: realRate,
           displayValue: '${(realRate * 100).toStringAsFixed(0)} %',
-          description: 'Calls that returned live AI results (not mock fallback)',
+          description:
+              'Calls that returned live AI results (not mock fallback)',
           sampleSize: calls.length,
         ),
         EvalMetric(
@@ -680,14 +661,7 @@ class EvalAggregator {
       name: name,
       icon: icon,
       score: 0.0,
-      metrics: [
-        EvalMetric(
-          name: 'No data',
-          value: 0.0,
-          displayValue: 'No data',
-          description: 'Run the pipeline to collect eval data',
-        ),
-      ],
+      metrics: const [], // empty — panels render their own empty states
     );
   }
 
@@ -704,7 +678,10 @@ class EvalAggregator {
       } catch (_) {}
     }
     if (v is List) {
-      return v.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+      return v
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
     }
     return [];
   }

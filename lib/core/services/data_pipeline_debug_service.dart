@@ -68,6 +68,7 @@ class DataPipelineDebugService {
       required String bankName,
       required String cardName,
       required String emailSubject,
+      required String pdfName,
     })? findOrCreateCatalogCard,
     Future<bool> Function({
       required String userId,
@@ -121,6 +122,7 @@ class DataPipelineDebugService {
     required String bankName,
     required String cardName,
     required String emailSubject,
+    required String pdfName,
   })? _findOrCreateCatalogCard;
 
   final Future<bool> Function({
@@ -143,8 +145,8 @@ class DataPipelineDebugService {
     required String userId,
     required String catalogCardId,
   }) async {
-    final userCardId = await Supabase.instance.client
-        .rpc('associate_user_with_card', params: {
+    final userCardId =
+        await Supabase.instance.client.rpc('associate_user_with_card', params: {
       '_user_id': userId,
       '_catalog_card_id': catalogCardId,
       '_last_four_digits': '1234', // Default placeholder
@@ -165,8 +167,7 @@ class DataPipelineDebugService {
     required String cardName,
     required String cardUrl,
   }) async {
-    final response =
-        await Supabase.instance.client.functions.invoke(
+    final response = await Supabase.instance.client.functions.invoke(
       'request-card-catalog-entry',
       body: {
         'bank_name': bankName,
@@ -183,6 +184,7 @@ class DataPipelineDebugService {
     required String bankName,
     required String cardVariant,
     required String emailSubject,
+    required String pdfName,
     String? suggestedUrl,
   })? onCardUrlRequired;
 
@@ -636,6 +638,7 @@ class DataPipelineDebugService {
           // Copy over additional properties from original statement
           emailSubject: statement.emailSubject,
           emailSender: statement.emailSender,
+          attachmentName: statement.attachmentName,
           cardVariantName: statement.cardVariantName,
           dueDate: statement.dueDate,
           totalAmountDue: statement.totalAmountDue,
@@ -658,6 +661,7 @@ class DataPipelineDebugService {
           // Copy over additional properties from original statement
           emailSubject: statement.emailSubject,
           emailSender: statement.emailSender,
+          attachmentName: statement.attachmentName,
           cardVariantName: statement.cardVariantName,
           dueDate: statement.dueDate,
           totalAmountDue: statement.totalAmountDue,
@@ -985,6 +989,16 @@ class DataPipelineDebugService {
           return (transactionCount: transactionCount, failure: null);
         } catch (e) {
           print('❌ Database storage failed: $e');
+          // A discovered email is not successfully processed until its
+          // statement and transactions are durable. Keep it retryable when
+          // card mapping, URL resolution, or persistence fails.
+          try {
+            await _emailRepoOrDefault.updateEmailStatus(
+              userId: userId,
+              emailId: statement.emailMessageId,
+              processed: false,
+            );
+          } catch (_) {}
           SyncFlowDebugger.logError('DB_STORE', 'Database storage failed',
               exception: e);
           return (
@@ -1048,6 +1062,7 @@ class DataPipelineDebugService {
             'card_variant': statement.cardVariantName,
             'has_pdf': true,
             'pdf_size': statement.originalPdfData.length,
+            'pdf_name': statement.attachmentName,
           },
         );
         print('   ✅ Email record stored: $emailRecordId');
@@ -1096,7 +1111,7 @@ class DataPipelineDebugService {
           'fees_charged': 0.0, // Could be extracted from statement if available
           'payment_status': 'pending',
           'file_path': 'gmail_attachment', // Indicates source
-          'file_name':
+          'file_name': statement.attachmentName ??
               '${statement.bankName}_statement_${statement.statementDate.millisecondsSinceEpoch}.pdf',
           'metadata': {
             'bank_name': statement.bankName,
@@ -1139,18 +1154,16 @@ class DataPipelineDebugService {
           });
       // Step 6: Update email status if we have email record — mark processed
       // regardless of whether statement storage succeeded, to prevent re-processing
-      if (emailRecordId != null) {
-        try {
-          await _emailRepoOrDefault.updateEmailStatus(
-            userId: userId,
-            emailId: statement.emailMessageId,
-            processed: true,
-            statementId: statementRecordId, // may be null if statement failed
-          );
-          print('   ✅ Email status updated');
-        } catch (e) {
-          print('   ⚠️ Email status update failed: $e');
-        }
+      try {
+        await _emailRepoOrDefault.updateEmailStatus(
+          userId: userId,
+          emailId: statement.emailMessageId,
+          processed: true,
+          statementId: statementRecordId,
+        );
+        print('   ✅ Email status updated');
+      } catch (e) {
+        print('   ⚠️ Email status update failed: $e');
       }
       print('✅ All data stored successfully to database');
     } catch (error) {
@@ -1246,13 +1259,14 @@ class DataPipelineDebugService {
 
       // ── Pass 3: catalog lookup — exact bank + card ───────────────────
       print('   📝 No existing user card for $bankName — searching catalog...');
-      final resolveCatalogCard =
-          _findOrCreateCatalogCard ?? _findOrCreateCatalogCardWithSeparateBankAndCard;
+      final resolveCatalogCard = _findOrCreateCatalogCard ??
+          _findOrCreateCatalogCardWithSeparateBankAndCard;
       final catalogCardId = await resolveCatalogCard(
         userId: userId,
         bankName: bankName,
         cardName: expectedCardName,
         emailSubject: emailSubject,
+        pdfName: statement.attachmentName ?? 'Unknown PDF',
       );
       final userCardId =
           await _createUserCardAssociation(userId, catalogCardId);
@@ -1367,6 +1381,7 @@ class DataPipelineDebugService {
     required String bankName,
     required String cardName,
     required String emailSubject,
+    required String pdfName,
   }) async {
     try {
       print(
@@ -1417,6 +1432,7 @@ class DataPipelineDebugService {
           bankName: bankName,
           cardVariant: cardName,
           emailSubject: emailSubject,
+          pdfName: pdfName,
           suggestedUrl: suggestedUrl,
         );
       } else {
@@ -1444,7 +1460,8 @@ class DataPipelineDebugService {
           cardUrl: userProvidedUrl,
         );
         if (duplicateCardId != null) {
-          print('   ✅ Found existing card with same URL. Reusing card ID: $duplicateCardId');
+          print(
+              '   ✅ Found existing card with same URL. Reusing card ID: $duplicateCardId');
           print('');
           return duplicateCardId;
         }

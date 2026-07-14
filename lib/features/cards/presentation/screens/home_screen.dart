@@ -182,8 +182,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                           width: 1),
                     ),
                     child: const Center(
-                      child: Text('🧪',
-                          style: TextStyle(fontSize: 14)),
+                      child: Text('🧪', style: TextStyle(fontSize: 14)),
                     ),
                   ),
                   const SizedBox(width: AppSpacing.sm + 4),
@@ -392,6 +391,13 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     _scaffoldKey.currentState?.openEndDrawer();
   }
 
+  /// Closes the shared end drawer. Content embedded in the drawer (e.g.
+  /// [_GmailSyncDialog] in embedded mode) calls this instead of
+  /// Navigator.pop, since it isn't pushed as a route.
+  void _closeDrawer() {
+    _scaffoldKey.currentState?.closeEndDrawer();
+  }
+
   void _loadData() {
     _refreshData();
   }
@@ -432,7 +438,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     return Scaffold(
       key: _scaffoldKey,
       endDrawer: SizedBox(
-        width: (MediaQuery.of(context).size.width * 0.9).clamp(0, 480),
+        width: (MediaQuery.of(context).size.width * 0.94).clamp(0, 560),
         child: Drawer(
           child: _drawerContent ?? const SizedBox.shrink(),
         ),
@@ -752,6 +758,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
         required String bankName,
         required String cardVariant,
         required String emailSubject,
+        required String pdfName,
         String? suggestedUrl,
       }) async {
         return showCardUrlInputDialog(
@@ -759,6 +766,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
           bankName: bankName,
           cardVariant: cardVariant,
           emailSubject: emailSubject,
+          pdfName: pdfName,
           suggestedUrl: suggestedUrl,
         );
       };
@@ -785,8 +793,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
         GlobalMessageService.showSuccess(successMsg);
 
         final failures =
-            (syncResult['failures'] as List<StatementSyncFailure>?) ??
-                const [];
+            (syncResult['failures'] as List<StatementSyncFailure>?) ?? const [];
         final failureMsg = buildSyncFailureMessage(failures);
         if (failureMsg != null) {
           GlobalMessageService.showError(failureMsg);
@@ -1212,12 +1219,17 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                   Theme.of(context).colorScheme.primary,
                   () => _openInDrawer(
                     _GmailSyncDialog(
-                      onStartSync: (days, maxEmails) => _syncDataFromGmail(
-                        context,
-                        ref,
-                        lookbackDays: days,
-                        maxEmails: maxEmails,
-                      ),
+                      embedded: true,
+                      onCancel: _closeDrawer,
+                      onStartSync: (days, maxEmails) {
+                        _closeDrawer();
+                        _syncDataFromGmail(
+                          context,
+                          ref,
+                          lookbackDays: days,
+                          maxEmails: maxEmails,
+                        );
+                      },
                     ),
                   ),
                 ),
@@ -1848,7 +1860,19 @@ class _HomeTabState extends ConsumerState<HomeTab> {
 class _GmailSyncDialog extends StatefulWidget {
   final void Function(int lookbackDays, int maxEmails) onStartSync;
 
-  const _GmailSyncDialog({required this.onStartSync});
+  /// True when this widget is embedded directly as content (e.g. inside the
+  /// dashboard's end drawer) rather than pushed via [showDialog]. In that
+  /// mode it renders without the outer [Dialog]/insetPadding chrome (which
+  /// assumes a full-screen overlay and clips inside a narrower container),
+  /// and calls [onCancel] instead of Navigator.pop to dismiss.
+  final bool embedded;
+  final VoidCallback? onCancel;
+
+  const _GmailSyncDialog({
+    required this.onStartSync,
+    this.embedded = false,
+    this.onCancel,
+  });
 
   @override
   State<_GmailSyncDialog> createState() => _GmailSyncDialogState();
@@ -1913,58 +1937,60 @@ class _GmailSyncDialogState extends State<_GmailSyncDialog> {
     const List<int> emailSnaps = [5, 10, 20, 30, 50];
     final emailsLabel = '$_maxEmails emails';
 
-    return Dialog(
-      backgroundColor: Colors.transparent,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
-      child: Container(
-        decoration: BoxDecoration(
-          color: cardBg,
-          borderRadius: BorderRadius.circular(24),
-          boxShadow: [
-            BoxShadow(
-              color: accentColor.withOpacity(0.18),
-              blurRadius: 40,
-              spreadRadius: 0,
-              offset: const Offset(0, 8),
-            ),
-            BoxShadow(
-              color: Colors.black.withOpacity(0.3),
-              blurRadius: 20,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // ── Header ──
-            Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    accentColor.withOpacity(0.9),
-                    const Color(0xFF8B5CF6).withOpacity(0.9),
-                  ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
+    final card = Container(
+      decoration: BoxDecoration(
+        color: cardBg,
+        borderRadius:
+            widget.embedded ? BorderRadius.zero : BorderRadius.circular(24),
+        boxShadow: widget.embedded
+            ? null
+            : [
+                BoxShadow(
+                  color: accentColor.withOpacity(0.18),
+                  blurRadius: 40,
+                  spreadRadius: 0,
+                  offset: const Offset(0, 8),
                 ),
-                borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(24)),
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.3),
+                  blurRadius: 20,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // ── Header ──
+          Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  accentColor.withOpacity(0.9),
+                  const Color(0xFF8B5CF6).withOpacity(0.9),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
               ),
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(Icons.sync_rounded,
-                        color: Colors.white, size: 20),
+              borderRadius: widget.embedded
+                  ? null
+                  : const BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(10),
                   ),
-                  const SizedBox(width: 12),
-                  Column(
+                  child: const Icon(Icons.sync_rounded,
+                      color: Colors.white, size: 20),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: const [
                       Text(
@@ -1982,346 +2008,361 @@ class _GmailSyncDialogState extends State<_GmailSyncDialog> {
                       ),
                     ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
+          ),
 
-            // ── Body ──
-            Flexible(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // ─ Look-back slider ─
-                    _buildSliderSection(
-                      context: context,
-                      label: 'Look back',
-                      icon: Icons.calendar_month_rounded,
-                      valueLabel: daysLabel,
-                      accentColor: accentColor,
-                      surfaceBg: surfaceBg,
-                      textPrimary: textPrimary,
-                      textSecondary: textSecondary,
-                      isDark: isDark,
-                      sliderWidget: SliderTheme(
-                        data: _premiumSliderTheme(context, accentColor),
-                        child: Slider(
-                          value: daySnaps
-                              .indexOf(_selectedDays)
-                              .clamp(0, daySnaps.length - 1)
-                              .toDouble(),
-                          min: 0,
-                          max: (daySnaps.length - 1).toDouble(),
-                          divisions: daySnaps.length - 1,
-                          label: daysLabel,
-                          onChanged: (v) => setState(() {
-                            _selectedDays = daySnaps[v.round()];
-                          }),
+          // ── Body ──
+          Flexible(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // ─ Look-back slider ─
+                  _buildSliderSection(
+                    context: context,
+                    label: 'Look back',
+                    icon: Icons.calendar_month_rounded,
+                    valueLabel: daysLabel,
+                    accentColor: accentColor,
+                    surfaceBg: surfaceBg,
+                    textPrimary: textPrimary,
+                    textSecondary: textSecondary,
+                    isDark: isDark,
+                    sliderWidget: SliderTheme(
+                      data: _premiumSliderTheme(context, accentColor),
+                      child: Slider(
+                        value: daySnaps
+                            .indexOf(_selectedDays)
+                            .clamp(0, daySnaps.length - 1)
+                            .toDouble(),
+                        min: 0,
+                        max: (daySnaps.length - 1).toDouble(),
+                        divisions: daySnaps.length - 1,
+                        label: daysLabel,
+                        onChanged: (v) => setState(() {
+                          _selectedDays = daySnaps[v.round()];
+                        }),
+                      ),
+                    ),
+                    ticks: const [
+                      '7d',
+                      '14d',
+                      '30d',
+                      '60d',
+                      '90d',
+                      '180d',
+                      '1yr'
+                    ],
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // ─ Max emails slider ─
+                  _buildSliderSection(
+                    context: context,
+                    label: 'Max emails',
+                    icon: Icons.email_rounded,
+                    valueLabel: emailsLabel,
+                    accentColor: const Color(0xFF10B981),
+                    surfaceBg: surfaceBg,
+                    textPrimary: textPrimary,
+                    textSecondary: textSecondary,
+                    isDark: isDark,
+                    sliderWidget: SliderTheme(
+                      data:
+                          _premiumSliderTheme(context, const Color(0xFF10B981)),
+                      child: Slider(
+                        value: emailSnaps
+                            .indexOf(_maxEmails)
+                            .clamp(0, emailSnaps.length - 1)
+                            .toDouble(),
+                        min: 0,
+                        max: (emailSnaps.length - 1).toDouble(),
+                        divisions: emailSnaps.length - 1,
+                        label: emailsLabel,
+                        onChanged: (v) => setState(() {
+                          _maxEmails = emailSnaps[v.round()];
+                        }),
+                      ),
+                    ),
+                    ticks: const ['5', '10', '20', '30', '50'],
+                  ),
+
+                  const SizedBox(height: 16),
+                  const Divider(height: 24),
+
+                  // ─ LLM Provider Dropdown ─
+                  Text(
+                    'AI Parsing Settings',
+                    style: TextStyle(
+                      color: textPrimary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<AIProvider>(
+                    value: localProvider,
+                    dropdownColor: surfaceBg,
+                    style: TextStyle(color: textPrimary, fontSize: 14),
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: surfaceBg,
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide:
+                            BorderSide(color: textSecondary.withOpacity(0.2)),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide:
+                            BorderSide(color: textSecondary.withOpacity(0.15)),
+                      ),
+                    ),
+                    items: [
+                      DropdownMenuItem(
+                        value: AIProvider.gemini,
+                        child: Text('Google Gemini (Cloud)',
+                            style: TextStyle(color: textPrimary)),
+                      ),
+                      DropdownMenuItem(
+                        value: AIProvider.groq,
+                        child: Text('Groq API (Cloud)',
+                            style: TextStyle(color: textPrimary)),
+                      ),
+                      DropdownMenuItem(
+                        value: AIProvider.ollama,
+                        child: Text('Ollama (Local LLM)',
+                            style: TextStyle(color: textPrimary)),
+                      ),
+                    ],
+                    onChanged: (val) {
+                      if (val != null) {
+                        setState(() {
+                          _localProvider = val;
+                        });
+                      }
+                    },
+                  ),
+
+                  if (localProvider == AIProvider.groq) ...[
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: _groqApiKeyController,
+                      obscureText: true,
+                      style: TextStyle(color: textPrimary, fontSize: 14),
+                      decoration: InputDecoration(
+                        labelText: 'Groq API Key',
+                        labelStyle:
+                            TextStyle(color: textSecondary, fontSize: 12),
+                        hintText: 'gsk_...',
+                        hintStyle: TextStyle(
+                            color: textSecondary.withOpacity(0.5),
+                            fontSize: 12),
+                        filled: true,
+                        fillColor: surfaceBg,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
                         ),
                       ),
-                      ticks: const [
-                        '7d',
-                        '14d',
-                        '30d',
-                        '60d',
-                        '90d',
-                        '180d',
-                        '1yr'
-                      ],
                     ),
+                  ],
 
-                    const SizedBox(height: 16),
-
-                    // ─ Max emails slider ─
-                    _buildSliderSection(
-                      context: context,
-                      label: 'Max emails',
-                      icon: Icons.email_rounded,
-                      valueLabel: emailsLabel,
-                      accentColor: const Color(0xFF10B981),
-                      surfaceBg: surfaceBg,
-                      textPrimary: textPrimary,
-                      textSecondary: textSecondary,
-                      isDark: isDark,
-                      sliderWidget: SliderTheme(
-                        data: _premiumSliderTheme(
-                            context, const Color(0xFF10B981)),
-                        child: Slider(
-                          value: emailSnaps
-                              .indexOf(_maxEmails)
-                              .clamp(0, emailSnaps.length - 1)
-                              .toDouble(),
-                          min: 0,
-                          max: (emailSnaps.length - 1).toDouble(),
-                          divisions: emailSnaps.length - 1,
-                          label: emailsLabel,
-                          onChanged: (v) => setState(() {
-                            _maxEmails = emailSnaps[v.round()];
-                          }),
+                  if (localProvider == AIProvider.ollama) ...[
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: _ollamaUrlController,
+                      style: TextStyle(color: textPrimary, fontSize: 14),
+                      decoration: InputDecoration(
+                        labelText: 'Ollama Host URL',
+                        labelStyle:
+                            TextStyle(color: textSecondary, fontSize: 12),
+                        filled: true,
+                        fillColor: surfaceBg,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
                         ),
-                      ),
-                      ticks: const ['5', '10', '20', '30', '50'],
-                    ),
-
-                    const SizedBox(height: 16),
-                    const Divider(height: 24),
-
-                    // ─ LLM Provider Dropdown ─
-                    Text(
-                      'AI Parsing Settings',
-                      style: TextStyle(
-                        color: textPrimary,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
                       ),
                     ),
                     const SizedBox(height: 8),
-                    DropdownButtonFormField<AIProvider>(
-                      value: localProvider,
-                      dropdownColor: surfaceBg,
-                      style: TextStyle(color: textPrimary, fontSize: 14),
-                      decoration: InputDecoration(
-                        filled: true,
-                        fillColor: surfaceBg,
-                        contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 10),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide:
-                              BorderSide(color: textSecondary.withOpacity(0.2)),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: BorderSide(
-                              color: textSecondary.withOpacity(0.15)),
-                        ),
-                      ),
-                      items: [
-                        DropdownMenuItem(
-                          value: AIProvider.gemini,
-                          child: Text('Google Gemini (Cloud)',
-                              style: TextStyle(color: textPrimary)),
-                        ),
-                        DropdownMenuItem(
-                          value: AIProvider.groq,
-                          child: Text('Groq API (Cloud)',
-                              style: TextStyle(color: textPrimary)),
-                        ),
-                        DropdownMenuItem(
-                          value: AIProvider.ollama,
-                          child: Text('Ollama (Local LLM)',
-                              style: TextStyle(color: textPrimary)),
-                        ),
-                      ],
-                      onChanged: (val) {
-                        if (val != null) {
-                          setState(() {
-                            _localProvider = val;
-                          });
-                        }
-                      },
-                    ),
-
-                    if (localProvider == AIProvider.groq) ...[
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: _groqApiKeyController,
-                        obscureText: true,
-                        style: TextStyle(color: textPrimary, fontSize: 14),
-                        decoration: InputDecoration(
-                          labelText: 'Groq API Key',
-                          labelStyle:
-                              TextStyle(color: textSecondary, fontSize: 12),
-                          hintText: 'gsk_...',
-                          hintStyle: TextStyle(
-                              color: textSecondary.withOpacity(0.5),
-                              fontSize: 12),
-                          filled: true,
-                          fillColor: surfaceBg,
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                        ),
-                      ),
-                    ],
-
-                    if (localProvider == AIProvider.ollama) ...[
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: _ollamaUrlController,
-                        style: TextStyle(color: textPrimary, fontSize: 14),
-                        decoration: InputDecoration(
-                          labelText: 'Ollama Host URL',
-                          labelStyle:
-                              TextStyle(color: textSecondary, fontSize: 12),
-                          filled: true,
-                          fillColor: surfaceBg,
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: Colors.amber.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(10),
-                          border:
-                              Border.all(color: Colors.amber.withOpacity(0.3)),
-                        ),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Icon(Icons.warning_amber_rounded,
-                                color: Colors.amber, size: 16),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                'Ensure Ollama is running locally and CORS is enabled via OLLAMA_ORIGINS="*".',
-                                style: TextStyle(
-                                    fontSize: 10,
-                                    color: textPrimary.withOpacity(0.85)),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-
-                    const SizedBox(height: 16),
-
-                    // ─ Info card ─
                     Container(
-                      padding: const EdgeInsets.all(14),
+                      padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                        color: accentColor.withOpacity(isDark ? 0.12 : 0.06),
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                          color: accentColor.withOpacity(0.2),
-                          width: 1,
-                        ),
+                        color: Colors.amber.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(10),
+                        border:
+                            Border.all(color: Colors.amber.withOpacity(0.3)),
                       ),
-                      child: Column(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            'Fetches up to $_maxEmails statement email${_maxEmails == 1 ? '' : 's'} from the past $daysLabel',
-                            textAlign: TextAlign.center,
-                            style: GoogleFonts.spaceGrotesk(
-                              color: textPrimary,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
+                          const Icon(Icons.warning_amber_rounded,
+                              color: Colors.amber, size: 16),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Ensure Ollama is running locally and CORS is enabled via OLLAMA_ORIGINS="*".',
+                              style: TextStyle(
+                                  fontSize: 10,
+                                  color: textPrimary.withOpacity(0.85)),
                             ),
                           ),
-                          const SizedBox(height: 10),
-                          _infoRow(
-                              Icons.picture_as_pdf_rounded,
-                              'Scans Gmail for PDF bank statements',
-                              textSecondary),
-                          const SizedBox(height: 6),
-                          _infoRow(
-                              Icons.auto_awesome_rounded,
-                              'AI extracts transactions automatically',
-                              textSecondary),
-                          const SizedBox(height: 6),
-                          _infoRow(
-                              Icons.lock_rounded,
-                              'Encrypted PDFs handled with saved passwords',
-                              textSecondary),
                         ],
                       ),
                     ),
+                  ],
 
-                    const SizedBox(height: 20),
+                  const SizedBox(height: 16),
 
-                    // ─ Action buttons ─
-                    Row(
+                  // ─ Info card ─
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: accentColor.withOpacity(isDark ? 0.12 : 0.06),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: accentColor.withOpacity(0.2),
+                        width: 1,
+                      ),
+                    ),
+                    child: Column(
                       children: [
-                        Expanded(
-                          child: TextButton(
-                            onPressed: () => Navigator.of(context).pop(),
-                            style: TextButton.styleFrom(
+                        Text(
+                          'Fetches up to $_maxEmails statement email${_maxEmails == 1 ? '' : 's'} from the past $daysLabel',
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.spaceGrotesk(
+                            color: textPrimary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        _infoRow(
+                            Icons.picture_as_pdf_rounded,
+                            'Scans Gmail for PDF bank statements',
+                            textSecondary),
+                        const SizedBox(height: 6),
+                        _infoRow(
+                            Icons.auto_awesome_rounded,
+                            'AI extracts transactions automatically',
+                            textSecondary),
+                        const SizedBox(height: 6),
+                        _infoRow(
+                            Icons.lock_rounded,
+                            'Encrypted PDFs handled with saved passwords',
+                            textSecondary),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  // ─ Action buttons ─
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextButton(
+                          onPressed: () => widget.embedded
+                              ? widget.onCancel?.call()
+                              : Navigator.of(context).pop(),
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              side: BorderSide(
+                                color: textSecondary.withOpacity(0.3),
+                              ),
+                            ),
+                          ),
+                          child: Text(
+                            'Cancel',
+                            style: TextStyle(
+                                color: textSecondary,
+                                fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 2,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [accentColor, const Color(0xFF8B5CF6)],
+                            ),
+                            borderRadius: BorderRadius.circular(14),
+                            boxShadow: [
+                              BoxShadow(
+                                color: accentColor.withOpacity(0.4),
+                                blurRadius: 12,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          child: ElevatedButton.icon(
+                            icon: const Icon(Icons.sync_rounded,
+                                size: 18, color: Colors.white),
+                            label: const Text(
+                              'Start Sync',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 15,
+                              ),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.transparent,
+                              shadowColor: Colors.transparent,
                               padding: const EdgeInsets.symmetric(vertical: 14),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(14),
-                                side: BorderSide(
-                                  color: textSecondary.withOpacity(0.3),
-                                ),
                               ),
                             ),
-                            child: Text(
-                              'Cancel',
-                              style: TextStyle(
-                                  color: textSecondary,
-                                  fontWeight: FontWeight.w600),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          flex: 2,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [accentColor, const Color(0xFF8B5CF6)],
-                              ),
-                              borderRadius: BorderRadius.circular(14),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: accentColor.withOpacity(0.4),
-                                  blurRadius: 12,
-                                  offset: const Offset(0, 4),
-                                ),
-                              ],
-                            ),
-                            child: ElevatedButton.icon(
-                              icon: const Icon(Icons.sync_rounded,
-                                  size: 18, color: Colors.white),
-                              label: const Text(
-                                'Start Sync',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 15,
-                                ),
-                              ),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.transparent,
-                                shadowColor: Colors.transparent,
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 14),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                              ),
-                              onPressed: () async {
-                                // Save configurations before closing
-                                await AIConfig.saveConfiguration(
-                                  localProvider,
-                                  _ollamaUrlController.text.trim(),
-                                  _ollamaModelController.text.trim(),
-                                  groqKey: _groqApiKeyController.text.trim(),
-                                  groqMod: _groqModelController.text.trim(),
-                                );
+                            onPressed: () async {
+                              // Save configurations before closing
+                              await AIConfig.saveConfiguration(
+                                localProvider,
+                                _ollamaUrlController.text.trim(),
+                                _ollamaModelController.text.trim(),
+                                groqKey: _groqApiKeyController.text.trim(),
+                                groqMod: _groqModelController.text.trim(),
+                              );
 
-                                final days = _selectedDays;
-                                final maxEmails = _maxEmails;
+                              final days = _selectedDays;
+                              final maxEmails = _maxEmails;
+                              if (widget.embedded) {
+                                widget.onCancel?.call();
+                              } else {
                                 Navigator.of(context).pop();
-                                widget.onStartSync(days, maxEmails);
-                              },
-                            ),
+                              }
+                              widget.onStartSync(days, maxEmails);
+                            },
                           ),
                         ),
-                      ],
-                    ),
-                  ],
-                ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
+    );
+
+    if (widget.embedded) {
+      return SafeArea(child: card);
+    }
+
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
+      child: card,
     );
   }
 

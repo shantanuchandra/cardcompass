@@ -58,6 +58,7 @@ class StatementParsingResult {
   // Additional email-related properties
   final String? emailSubject;
   final String? emailSender;
+  final String? attachmentName;
 
   // Additional statement-related properties
   final DateTime? dueDate;
@@ -76,6 +77,7 @@ class StatementParsingResult {
     required this.processingSuccess,
     this.emailSubject,
     this.emailSender,
+    this.attachmentName,
     this.dueDate,
     this.totalAmountDue,
     this.minimumAmountDue,
@@ -398,7 +400,9 @@ class EnhancedGmailService {
   DateTime? _parseRfc2822Date(String raw) {
     try {
       // Strip leading weekday "Mon, " if present
-      final stripped = raw.contains(',') ? raw.substring(raw.indexOf(',') + 1).trim() : raw.trim();
+      final stripped = raw.contains(',')
+          ? raw.substring(raw.indexOf(',') + 1).trim()
+          : raw.trim();
       return DateFormat('dd MMM yyyy HH:mm:ss Z').parseUtc(stripped);
     } catch (_) {
       return null;
@@ -592,12 +596,60 @@ class EnhancedGmailService {
   /// Detect credit card variant name from email subject using regex-first approach.
   /// Falls back to Gemini only if regex finds nothing.
   /// Eliminates one full Gemini API call per email for most cases.
+  static const Map<String, String> _knownCardVariants = {
+    'TATA NEU INFINITY': 'Tata Neu Infinity',
+    'TATA NEU PLUS': 'Tata Neu Plus',
+    'REGALIA GOLD': 'Regalia Gold',
+    'DINERS CLUB BLACK': 'Diners Club Black',
+    'AMAZON PAY': 'Amazon Pay',
+    'ICICI AMAZON': 'Amazon Pay',
+    'SAPPHIRO': 'Sapphiro',
+    'EMERALDE': 'Emeralde',
+    'EMERALD': 'Emerald',
+    'RUBYX': 'Rubyx',
+    'CORAL': 'Coral',
+    'BPCL OCTANE': 'Bpcl Octane',
+    'BPCL': 'Bpcl',
+    'PRIVILEGE': 'Privilege',
+    'INFINIA': 'Infinia',
+    'MILLENNIA': 'Millennia',
+    'REGALIA': 'Regalia',
+    'PLATINUM': 'Platinum',
+  };
+
+  @visibleForTesting
+  static String? detectKnownCardVariant({
+    required String emailSubject,
+    String? attachmentName,
+  }) {
+    final subject = emailSubject.toUpperCase();
+    final filename = (attachmentName ?? '')
+        .replaceAll(RegExp(r'[_\-.]+'), ' ')
+        .toUpperCase();
+    for (final source in [subject, filename]) {
+      for (final entry in _knownCardVariants.entries) {
+        if (source.contains(entry.key)) return entry.value;
+      }
+    }
+    return null;
+  }
+
   Future<String> _detectCardVariant({
     required String emailSubject,
+    required String attachmentName,
     required String emailBody,
     required String pdfText,
     required String bankName,
   }) async {
+    final knownVariant = detectKnownCardVariant(
+      emailSubject: emailSubject,
+      attachmentName: attachmentName,
+    );
+    if (knownVariant != null) {
+      print('🎯 Detected card variant: "$knownVariant" '
+          '(subject: "$emailSubject", PDF: "$attachmentName")');
+      return knownVariant;
+    }
     // ── Regex-first: extract known variant patterns from subject ────────
     // Order matters: longer/more specific patterns first.
     final subjectUpper = emailSubject.toUpperCase();
@@ -939,6 +991,7 @@ Product name:'''
 
       final cardVariant = await _detectCardVariant(
         emailSubject: emailSubject,
+        attachmentName: statementPdf.filename,
         emailBody: emailBody,
         pdfText: pdfText,
         bankName: bankFromSender,
@@ -1011,6 +1064,7 @@ Product name:'''
         // Additional email properties
         emailSubject: emailSubject,
         emailSender: senderEmail,
+        attachmentName: statementPdf.filename,
         // Additional statement properties (TODO: extract from PDF if needed)
         dueDate: statementInfo['due_date'] != null
             ? DateTime.tryParse(statementInfo['due_date'])

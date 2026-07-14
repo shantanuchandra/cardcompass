@@ -6,6 +6,7 @@ class CardUrlInputDialog extends StatefulWidget {
   final String bankName;
   final String cardVariant;
   final String emailSubject;
+  final String pdfName;
   final String? suggestedUrl;
 
   const CardUrlInputDialog({
@@ -13,6 +14,7 @@ class CardUrlInputDialog extends StatefulWidget {
     required this.bankName,
     required this.cardVariant,
     required this.emailSubject,
+    required this.pdfName,
     this.suggestedUrl,
   }) : super(key: key);
 
@@ -70,9 +72,10 @@ class _CardUrlInputDialogState extends State<CardUrlInputDialog> {
   }
 
   Future<void> _openSearchInBrowser() async {
-    final searchQuery = Uri.encodeComponent('${widget.bankName} ${widget.cardVariant} credit card official');
+    final searchQuery = Uri.encodeComponent(
+        '${widget.bankName} ${widget.cardVariant} credit card official');
     final searchUrl = Uri.parse('https://www.google.com/search?q=$searchQuery');
-    
+
     if (await canLaunchUrl(searchUrl)) {
       await launchUrl(searchUrl, mode: LaunchMode.externalApplication);
     }
@@ -111,34 +114,39 @@ class _CardUrlInputDialogState extends State<CardUrlInputDialog> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildInfoRow(Icons.account_balance, 'Bank', widget.bankName),
+                    _buildInfoRow(
+                        Icons.account_balance, 'Bank', widget.bankName),
                     const SizedBox(height: 8),
-                    _buildInfoRow(Icons.credit_card, 'Card', widget.cardVariant),
+                    _buildInfoRow(
+                        Icons.credit_card, 'Card', widget.cardVariant),
                     const SizedBox(height: 8),
                     _buildInfoRow(Icons.email, 'Email', widget.emailSubject),
+                    const SizedBox(height: 8),
+                    _buildInfoRow(Icons.picture_as_pdf, 'PDF', widget.pdfName),
                   ],
                 ),
               ),
               const SizedBox(height: 16),
-              
+
               // Explanation text
               const Text(
                 'We need the official product page URL for this credit card to extract benefits and features.',
                 style: TextStyle(fontSize: 14, color: Colors.black87),
               ),
               const SizedBox(height: 16),
-              
+
               // Search button
               OutlinedButton.icon(
                 onPressed: _openSearchInBrowser,
                 icon: const Icon(Icons.search),
                 label: const Text('Search on Google'),
                 style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 ),
               ),
               const SizedBox(height: 16),
-              
+
               // URL input field
               TextField(
                 controller: _urlController,
@@ -154,16 +162,22 @@ class _CardUrlInputDialogState extends State<CardUrlInputDialog> {
                 autofocus: true,
               ),
               const SizedBox(height: 8),
-              
+
               // Example URLs
               const Text(
                 'Examples:',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black54),
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black54),
               ),
               const SizedBox(height: 4),
-              _buildExampleUrl('https://www.hdfcbank.com/personal/pay/cards/credit-cards/regalia-gold'),
-              _buildExampleUrl('https://www.idfcfirstbank.com/credit-card/millennia-credit-card'),
-              _buildExampleUrl('https://www.axisbank.com/retail/cards/credit-card/ace-credit-card'),
+              _buildExampleUrl(
+                  'https://www.hdfcbank.com/personal/pay/cards/credit-cards/regalia-gold'),
+              _buildExampleUrl(
+                  'https://www.idfcfirstbank.com/credit-card/millennia-credit-card'),
+              _buildExampleUrl(
+                  'https://www.axisbank.com/retail/cards/credit-card/ace-credit-card'),
             ],
           ),
         ),
@@ -216,7 +230,8 @@ class _CardUrlInputDialogState extends State<CardUrlInputDialog> {
       padding: const EdgeInsets.only(left: 12, top: 2),
       child: Text(
         '• $url',
-        style: const TextStyle(fontSize: 11, color: Colors.black45, fontFamily: 'monospace'),
+        style: const TextStyle(
+            fontSize: 11, color: Colors.black45, fontFamily: 'monospace'),
       ),
     );
   }
@@ -228,6 +243,7 @@ Future<String?> showCardUrlInputDialog({
   required String bankName,
   required String cardVariant,
   required String emailSubject,
+  required String pdfName,
   String? suggestedUrl,
 }) async {
   print('🎯 showCardUrlInputDialog called!');
@@ -235,12 +251,12 @@ Future<String?> showCardUrlInputDialog({
   print('   Card: $cardVariant');
   print('   Email: $emailSubject');
   print('   Context mounted: ${context.mounted}');
-  
+
   if (!context.mounted) {
     print('   ❌ Context not mounted! Cannot show dialog.');
     return null;
   }
-  
+
   print('   ✅ Showing dialog now...');
   final result = await showDialog<String>(
     context: context,
@@ -249,10 +265,11 @@ Future<String?> showCardUrlInputDialog({
       bankName: bankName,
       cardVariant: cardVariant,
       emailSubject: emailSubject,
+      pdfName: pdfName,
       suggestedUrl: suggestedUrl,
     ),
   );
-  
+
   print('   📱 Dialog returned: $result');
   return result;
 }

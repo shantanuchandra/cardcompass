@@ -186,7 +186,7 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
                         LengthLimitingTextInputFormatter(2),
                       ],
                       decoration: const InputDecoration(
-                        labelText: 'Tickets Count',
+                        labelText: 'Tickets',
                         prefixIcon: Icon(Icons.confirmation_number_outlined, color: AppTheme.primaryColor),
                       ),
                       validator: (v) {
@@ -209,7 +209,7 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
                         LengthLimitingTextInputFormatter(5),
                       ],
                       decoration: const InputDecoration(
-                        labelText: 'Ticket Price (₹)',
+                        labelText: 'Price (₹)',
                         prefixIcon: Icon(Icons.currency_rupee, color: AppTheme.primaryColor),
                       ),
                       validator: (v) {
@@ -233,7 +233,7 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
                       initialValue: _selectedPlatform,
                       dropdownColor: const Color(0xFF0C152B),
                       decoration: const InputDecoration(
-                        labelText: 'Platform (Optional)',
+                        labelText: 'Platform',
                         prefixIcon: Icon(Icons.smartphone_outlined, color: AppTheme.primaryColor),
                       ),
                       items: [
@@ -259,7 +259,7 @@ class _MovieAnalyzerTabState extends ConsumerState<MovieAnalyzerTab> {
                       initialValue: _selectedCinema,
                       dropdownColor: const Color(0xFF0C152B),
                       decoration: const InputDecoration(
-                        labelText: 'Cinema (Optional)',
+                        labelText: 'Cinema',
                         prefixIcon: Icon(Icons.theater_comedy_outlined, color: AppTheme.primaryColor),
                       ),
                       items: [

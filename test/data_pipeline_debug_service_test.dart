@@ -31,7 +31,8 @@ class _FakeCardRepository implements CardRepository {
       throw UnimplementedError();
 
   @override
-  Future<void> removeUserCard({required String userId, required String cardId}) =>
+  Future<void> removeUserCard(
+          {required String userId, required String cardId}) =>
       throw UnimplementedError();
 
   @override
@@ -159,7 +160,8 @@ void main() {
                 {required String userId,
                 required String bankName,
                 required String cardName,
-                required String emailSubject}) async =>
+                required String emailSubject,
+                required String pdfName}) async =>
             'catalog-card-1',
         associateUserWithCard: (
                 {required String userId, required String catalogCardId}) =>
@@ -221,8 +223,8 @@ void main() {
             required String bankName,
             required String cardName,
             required String cardUrl}) async {
-          submittedRequests
-              .add({'bankName': bankName, 'cardName': cardName, 'cardUrl': cardUrl});
+          submittedRequests.add(
+              {'bankName': bankName, 'cardName': cardName, 'cardUrl': cardUrl});
           return true;
         },
       );
@@ -230,6 +232,7 @@ void main() {
         required String bankName,
         required String cardVariant,
         required String emailSubject,
+        required String pdfName,
         String? suggestedUrl,
       }) async =>
           'https://example.com/icici-amazon-pay-card';
