@@ -28,12 +28,20 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Write dart_defines.json from secrets
+        run: |
+          cat > dart_defines.json <<EOF
+          {
+            "SUPABASE_URL": "${{ secrets.SUPABASE_URL }}",
+            "SUPABASE_ANON_KEY": "${{ secrets.SUPABASE_ANON_KEY }}",
+            "GOOGLE_CLIENT_ID": "${{ secrets.GOOGLE_CLIENT_ID }}",
+            "GEMINI_API_KEY": "${{ secrets.GEMINI_API_KEY }}",
+            "GEMINI_API_KEY_2": "${{ secrets.GEMINI_API_KEY_2 }}"
+          }
+          EOF
+
       - name: Build Flutter web
-        run: >-
-          flutter build web --release
-          --dart-define=SUPABASE_URL=${{ secrets.SUPABASE_URL }}
-          --dart-define=SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
-          --dart-define=GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+        run: flutter build web --release --dart-define-from-file=dart_defines.json
 
       - name: Build And Deploy
         id: builddeploy
