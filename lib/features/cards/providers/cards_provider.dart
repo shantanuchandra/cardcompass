@@ -128,7 +128,10 @@ List<CreditCard> userCardsForAnalytics(Ref ref, String? userId) {
 }
 
 /// Async provider that fetches the sum of available_credit from the most recent
-/// statement per user card. Falls back to 0 if no statements are found.
+/// statement per user card, restricted to cards that are still active — so a
+/// deactivated/removed card's stale statement doesn't keep inflating this total
+/// after it stops counting toward [totalCreditLimit]. Falls back to 0 if no
+/// statements are found.
 @riverpod
 Future<double> availableCredit(Ref ref) async {
   final authState = ref.watch(authStateProvider);
@@ -136,11 +139,15 @@ Future<double> availableCredit(Ref ref) async {
   if (userId == null || userId == 'guest') return 0.0;
 
   try {
+    final activeCardIds =
+        ref.watch(activeCardsProvider).map((card) => card.id).toSet();
+    if (activeCardIds.isEmpty) return 0.0;
+
     final supabase = Supabase.instance.client;
 
     final response = await supabase
         .from('statements')
-        .select('card_id, available_credit, statement_date')
+        .select('user_card_id, available_credit, statement_date')
         .eq('user_id', userId)
         .order('statement_date', ascending: false);
 
@@ -149,10 +156,12 @@ Future<double> availableCredit(Ref ref) async {
 
     final Map<String, double> latestAvailablePerCard = {};
     for (final row in rows) {
-      final cardId = row['card_id'] as String?;
+      final userCardId = row['user_card_id'] as String?;
       final available = (row['available_credit'] as num?)?.toDouble() ?? 0.0;
-      if (cardId != null && !latestAvailablePerCard.containsKey(cardId)) {
-        latestAvailablePerCard[cardId] = available;
+      if (userCardId != null &&
+          activeCardIds.contains(userCardId) &&
+          !latestAvailablePerCard.containsKey(userCardId)) {
+        latestAvailablePerCard[userCardId] = available;
       }
     }
 

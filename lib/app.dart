@@ -42,7 +42,15 @@ class CardCompassApp extends ConsumerWidget {
         return MediaQuery(
           data: MediaQuery.of(context)
               .copyWith(textScaler: const TextScaler.linear(1.0)),
-          child: child!,
+          // SelectionArea needs an Overlay ancestor (SelectableRegion asserts
+          // on this at build time) and MaterialApp's own Overlay lives inside
+          // its Navigator, below this builder — not above it. A dedicated
+          // Overlay here gives SelectionArea somewhere valid to mount.
+          child: Overlay(
+            initialEntries: [
+              OverlayEntry(builder: (context) => SelectionArea(child: child!)),
+            ],
+          ),
         );
       },
     );

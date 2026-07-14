@@ -47,266 +47,258 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Widget build(BuildContext context) {
     return CardCompassScaffold(
       title: 'Preferences',
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 800),
-          child: ListView(
-            padding: const EdgeInsets.symmetric(
-                horizontal: 18, vertical: AppSpacing.md),
-            children: [
-              // Notifications Section
-              _buildSection(
-                'ALERT PARAMETERS',
-                [
-                  SwitchListTile(
-                    title: Text('ENABLE NOTIFICATIONS', style: _rowTitleStyle),
-                    subtitle: Text('Receive global app notifications',
-                        style: _rowSubtitleStyle),
-                    value: _notificationsEnabled,
-                    activeColor: AppTheme.primaryColor,
-                    onChanged: (value) {
-                      setState(() {
-                        _notificationsEnabled = value;
-                      });
-                      ref
-                          .read(appPreferencesProvider)
-                          .setNotificationsEnabled(value);
-                    },
-                  ),
-                  const Divider(color: Color(0xFF1E293B), height: 1),
-                  SwitchListTile(
-                    title: Text('PUSH ALERTS', style: _rowTitleStyle),
-                    subtitle: Text('Direct warning overlays',
-                        style: _rowSubtitleStyle),
-                    value: _pushNotifications,
-                    activeColor: AppTheme.primaryColor,
-                    onChanged: _notificationsEnabled
-                        ? (value) {
-                            setState(() {
-                              _pushNotifications = value;
-                            });
-                          }
-                        : null,
-                  ),
-                  const Divider(color: Color(0xFF1E293B), height: 1),
-                  SwitchListTile(
-                    title: Text('EMAIL SUMMARIES', style: _rowTitleStyle),
-                    subtitle: Text('Monthly reward ledger audits',
-                        style: _rowSubtitleStyle),
-                    value: _emailNotifications,
-                    activeColor: AppTheme.primaryColor,
-                    onChanged: _notificationsEnabled
-                        ? (value) {
-                            setState(() {
-                              _emailNotifications = value;
-                            });
-                          }
-                        : null,
-                  ),
-                  const Divider(color: Color(0xFF1E293B), height: 1),
-                  SwitchListTile(
-                    title: Text('SMS TRANSMISSIONS', style: _rowTitleStyle),
-                    subtitle: Text('Immediate billing highlights',
-                        style: _rowSubtitleStyle),
-                    value: _smsNotifications,
-                    activeColor: AppTheme.primaryColor,
-                    onChanged: _notificationsEnabled
-                        ? (value) {
-                            setState(() {
-                              _smsNotifications = value;
-                            });
-                          }
-                        : null,
-                  ),
-                ],
+      body: ListView(
+        padding:
+            const EdgeInsets.symmetric(horizontal: 18, vertical: AppSpacing.md),
+        children: [
+          // Notifications Section
+          _buildSection(
+            'ALERT PARAMETERS',
+            [
+              SwitchListTile(
+                title: Text('ENABLE NOTIFICATIONS', style: _rowTitleStyle),
+                subtitle: Text('Receive global app notifications',
+                    style: _rowSubtitleStyle),
+                value: _notificationsEnabled,
+                activeColor: AppTheme.primaryColor,
+                onChanged: (value) {
+                  setState(() {
+                    _notificationsEnabled = value;
+                  });
+                  ref
+                      .read(appPreferencesProvider)
+                      .setNotificationsEnabled(value);
+                },
               ),
-              const SizedBox(height: AppSpacing.md + AppSpacing.xs),
-
-              // Security Section
-              _buildSection(
-                'SECURITY PROTOCOLS',
-                [
-                  SwitchListTile(
-                    title: Text('BIOMETRIC VALIDATION', style: _rowTitleStyle),
-                    subtitle: Text('Use Face ID / Fingerprint registry',
-                        style: _rowSubtitleStyle),
-                    value: _biometricAuth,
-                    activeColor: AppTheme.primaryColor,
-                    onChanged: (value) {
-                      setState(() {
-                        _biometricAuth = value;
-                      });
-                      ref
-                          .read(appPreferencesProvider)
-                          .setBiometricEnabled(value);
-                    },
-                  ),
-                  const Divider(color: Color(0xFF1E293B), height: 1),
-                  _buildComingSoonTile(
-                    title: 'UPDATE CRYPTO PASSWORD',
-                    subtitle: 'Reset credentials passkeys',
-                    dialogTitle: 'CHANGE PASSWORD',
-                    dialogReason:
-                        'Credential updates require a connected Google identity. Not available in guest mode.',
-                  ),
-                  const Divider(color: Color(0xFF1E293B), height: 1),
-                  _buildComingSoonTile(
-                    title: 'TWO-FACTOR SECURITY (2FA)',
-                    subtitle: 'Link authenticator token generators',
-                    dialogTitle: 'TWO-FACTOR AUTHENTICATION',
-                    dialogReason:
-                        'MFA settings require a persistent server integration. Disabled on this build.',
-                  ),
-                ],
-              ),
-              const SizedBox(height: AppSpacing.md + AppSpacing.xs),
-
-              // Appearance Section
-              _buildSection(
-                'INTERFACE INTERPRETERS',
-                [
-                  SwitchListTile(
-                    title: Text('FORCE TECH NEON STYLE', style: _rowTitleStyle),
-                    subtitle: Text('Cyber-neon default mode enabled',
-                        style: _rowSubtitleStyle),
-                    value: true,
-                    activeColor: AppTheme.primaryColor,
-                    onChanged: null,
-                  ),
-                  const Divider(color: Color(0xFF1E293B), height: 1),
-                  ListTile(
-                    title: Text('DICTIONARY DIALECT', style: _rowTitleStyle),
-                    subtitle: Text(_language.toUpperCase(),
-                        style: AppTextStyles.caption.copyWith(
-                            color: AppTheme.primaryColor,
-                            fontWeight: FontWeight.bold)),
-                    trailing: const Icon(Icons.arrow_forward_ios,
-                        size: 12, color: Colors.white30),
-                    onTap: () => _showLanguageDialog(),
-                  ),
-                  const Divider(color: Color(0xFF1E293B), height: 1),
-                  ListTile(
-                    title: Text('CURRENCY INDEX', style: _rowTitleStyle),
-                    subtitle: Text(_currency.toUpperCase(),
-                        style: AppTextStyles.caption.copyWith(
-                            color: AppTheme.primaryColor,
-                            fontWeight: FontWeight.bold)),
-                    trailing: const Icon(Icons.arrow_forward_ios,
-                        size: 12, color: Colors.white30),
-                    onTap: () => _showCurrencyDialog(),
-                  ),
-                ],
-              ),
-              const SizedBox(height: AppSpacing.md + AppSpacing.xs),
-
-              // Data & Sync Section
-              _buildSection(
-                'DATA STAGE & STORAGE',
-                [
-                  SwitchListTile(
-                    title: Text('AUTO BACKGROUND SYNC', style: _rowTitleStyle),
-                    subtitle: Text('Sync card rules via headless pipeline',
-                        style: _rowSubtitleStyle),
-                    value: _autoSync,
-                    activeColor: AppTheme.primaryColor,
-                    onChanged: (value) {
-                      setState(() {
-                        _autoSync = value;
-                      });
-                      ref
-                          .read(appPreferencesProvider)
-                          .setAutoSyncEnabled(value);
-                    },
-                  ),
-                  const Divider(color: Color(0xFF1E293B), height: 1),
-                  _buildComingSoonTile(
-                    title: 'BACKUP ENCRYPTED DATABASE',
-                    subtitle: 'Log state snapshots locally',
-                    dialogTitle: 'BACKUP DATABASE',
-                    dialogReason:
-                        'Encrypted backup registers require server syncing logic. Sandbox parameters are saved to memory only.',
-                  ),
-                  const Divider(color: Color(0xFF1E293B), height: 1),
-                  _buildComingSoonTile(
-                    title: 'EXPORT LEDGER ARCHIVE',
-                    subtitle: 'Export transactions to CSV files',
-                    dialogTitle: 'EXPORT ARCHIVE',
-                    dialogReason:
-                        'Exporter pipelines are currently compiling. Enabled in production build release.',
-                  ),
-                  const Divider(color: Color(0xFF1E293B), height: 1),
-                  ListTile(
-                    title: Text('RESET SYSTEM CACHE', style: _rowTitleStyle),
-                    subtitle: Text('Purge local database registers',
-                        style: _rowSubtitleStyle),
-                    trailing: const Icon(Icons.arrow_forward_ios,
-                        size: 12, color: Colors.white30),
-                    onTap: () => _showClearCacheDialog(),
-                  ),
-                ],
-              ),
-              const SizedBox(height: AppSpacing.md + AppSpacing.xs),
-
-              // About Section
-              _buildSection(
-                'SYSTEM METADATA',
-                [
-                  ListTile(
-                    title: Text('CARDCOMPASS CORE', style: _rowTitleStyle),
-                    subtitle: Text('Version 1.0.0 (Build 1)',
-                        style: _rowSubtitleStyle),
-                    trailing: const Icon(Icons.info_outline,
-                        size: 16, color: AppTheme.primaryColor),
-                    onTap: () {
-                      _showAppInfoDialog();
-                      setState(() {
-                        _devTapCount++;
-                      });
-                      if (_devTapCount >= 5) {
-                        _devTapCount = 0;
-                        Navigator.pushNamed(context, '/admin/pm');
+              const Divider(color: Color(0xFF1E293B), height: 1),
+              SwitchListTile(
+                title: Text('PUSH ALERTS', style: _rowTitleStyle),
+                subtitle:
+                    Text('Direct warning overlays', style: _rowSubtitleStyle),
+                value: _pushNotifications,
+                activeColor: AppTheme.primaryColor,
+                onChanged: _notificationsEnabled
+                    ? (value) {
+                        setState(() {
+                          _pushNotifications = value;
+                        });
                       }
-                    },
-                  ),
-                  const Divider(color: Color(0xFF1E293B), height: 1),
-                  ListTile(
-                    title: Text('CHECK SYSTEM UPDATES', style: _rowTitleStyle),
-                    subtitle: Text('Check for compilation changes',
-                        style: _rowSubtitleStyle),
-                    trailing: const Icon(Icons.refresh,
-                        size: 16, color: AppTheme.primaryColor),
-                    onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                              'SYSTEM IS COMPILED TO LATEST STABLE BUILD.',
-                              style: AppTextStyles.body2.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                  fontFamily:
-                                      AppTextStyles.heading3.fontFamily)),
-                          backgroundColor: AppTheme.successColor,
-                        ),
-                      );
-                    },
-                  ),
-                  const Divider(color: Color(0xFF1E293B), height: 1),
-                  _buildComingSoonTile(
-                    title: 'TRANSMIT APP FEEDBACK',
-                    subtitle: 'Send log audits to developers',
-                    dialogTitle: 'FEEDBACK SYSTEM',
-                    dialogReason:
-                        'Feedback routes are offline. Please utilize the developer issue registry directly.',
-                    trailingIcon: Icons.feedback_outlined,
-                    trailingIconSize: 16,
-                  ),
-                ],
+                    : null,
               ),
-              const SizedBox(height: 80), // space above bottom dock
+              const Divider(color: Color(0xFF1E293B), height: 1),
+              SwitchListTile(
+                title: Text('EMAIL SUMMARIES', style: _rowTitleStyle),
+                subtitle: Text('Monthly reward ledger audits',
+                    style: _rowSubtitleStyle),
+                value: _emailNotifications,
+                activeColor: AppTheme.primaryColor,
+                onChanged: _notificationsEnabled
+                    ? (value) {
+                        setState(() {
+                          _emailNotifications = value;
+                        });
+                      }
+                    : null,
+              ),
+              const Divider(color: Color(0xFF1E293B), height: 1),
+              SwitchListTile(
+                title: Text('SMS TRANSMISSIONS', style: _rowTitleStyle),
+                subtitle: Text('Immediate billing highlights',
+                    style: _rowSubtitleStyle),
+                value: _smsNotifications,
+                activeColor: AppTheme.primaryColor,
+                onChanged: _notificationsEnabled
+                    ? (value) {
+                        setState(() {
+                          _smsNotifications = value;
+                        });
+                      }
+                    : null,
+              ),
             ],
-          ).animate().fadeIn(duration: 250.ms, curve: Curves.easeOut).slideY(
-              begin: 0.05, end: 0, duration: 250.ms, curve: Curves.easeOut),
-        ),
-      ),
+          ),
+          const SizedBox(height: AppSpacing.md + AppSpacing.xs),
+
+          // Security Section
+          _buildSection(
+            'SECURITY PROTOCOLS',
+            [
+              SwitchListTile(
+                title: Text('BIOMETRIC VALIDATION', style: _rowTitleStyle),
+                subtitle: Text('Use Face ID / Fingerprint registry',
+                    style: _rowSubtitleStyle),
+                value: _biometricAuth,
+                activeColor: AppTheme.primaryColor,
+                onChanged: (value) {
+                  setState(() {
+                    _biometricAuth = value;
+                  });
+                  ref.read(appPreferencesProvider).setBiometricEnabled(value);
+                },
+              ),
+              const Divider(color: Color(0xFF1E293B), height: 1),
+              _buildComingSoonTile(
+                title: 'UPDATE CRYPTO PASSWORD',
+                subtitle: 'Reset credentials passkeys',
+                dialogTitle: 'CHANGE PASSWORD',
+                dialogReason:
+                    'Credential updates require a connected Google identity. Not available in guest mode.',
+              ),
+              const Divider(color: Color(0xFF1E293B), height: 1),
+              _buildComingSoonTile(
+                title: 'TWO-FACTOR SECURITY (2FA)',
+                subtitle: 'Link authenticator token generators',
+                dialogTitle: 'TWO-FACTOR AUTHENTICATION',
+                dialogReason:
+                    'MFA settings require a persistent server integration. Disabled on this build.',
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.md + AppSpacing.xs),
+
+          // Appearance Section
+          _buildSection(
+            'INTERFACE INTERPRETERS',
+            [
+              SwitchListTile(
+                title: Text('FORCE TECH NEON STYLE', style: _rowTitleStyle),
+                subtitle: Text('Cyber-neon default mode enabled',
+                    style: _rowSubtitleStyle),
+                value: true,
+                activeColor: AppTheme.primaryColor,
+                onChanged: null,
+              ),
+              const Divider(color: Color(0xFF1E293B), height: 1),
+              ListTile(
+                title: Text('DICTIONARY DIALECT', style: _rowTitleStyle),
+                subtitle: Text(_language.toUpperCase(),
+                    style: AppTextStyles.caption.copyWith(
+                        color: AppTheme.primaryColor,
+                        fontWeight: FontWeight.bold)),
+                trailing: const Icon(Icons.arrow_forward_ios,
+                    size: 12, color: Colors.white30),
+                onTap: () => _showLanguageDialog(),
+              ),
+              const Divider(color: Color(0xFF1E293B), height: 1),
+              ListTile(
+                title: Text('CURRENCY INDEX', style: _rowTitleStyle),
+                subtitle: Text(_currency.toUpperCase(),
+                    style: AppTextStyles.caption.copyWith(
+                        color: AppTheme.primaryColor,
+                        fontWeight: FontWeight.bold)),
+                trailing: const Icon(Icons.arrow_forward_ios,
+                    size: 12, color: Colors.white30),
+                onTap: () => _showCurrencyDialog(),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.md + AppSpacing.xs),
+
+          // Data & Sync Section
+          _buildSection(
+            'DATA STAGE & STORAGE',
+            [
+              SwitchListTile(
+                title: Text('AUTO BACKGROUND SYNC', style: _rowTitleStyle),
+                subtitle: Text('Sync card rules via headless pipeline',
+                    style: _rowSubtitleStyle),
+                value: _autoSync,
+                activeColor: AppTheme.primaryColor,
+                onChanged: (value) {
+                  setState(() {
+                    _autoSync = value;
+                  });
+                  ref.read(appPreferencesProvider).setAutoSyncEnabled(value);
+                },
+              ),
+              const Divider(color: Color(0xFF1E293B), height: 1),
+              _buildComingSoonTile(
+                title: 'BACKUP ENCRYPTED DATABASE',
+                subtitle: 'Log state snapshots locally',
+                dialogTitle: 'BACKUP DATABASE',
+                dialogReason:
+                    'Encrypted backup registers require server syncing logic. Sandbox parameters are saved to memory only.',
+              ),
+              const Divider(color: Color(0xFF1E293B), height: 1),
+              _buildComingSoonTile(
+                title: 'EXPORT LEDGER ARCHIVE',
+                subtitle: 'Export transactions to CSV files',
+                dialogTitle: 'EXPORT ARCHIVE',
+                dialogReason:
+                    'Exporter pipelines are currently compiling. Enabled in production build release.',
+              ),
+              const Divider(color: Color(0xFF1E293B), height: 1),
+              ListTile(
+                title: Text('RESET SYSTEM CACHE', style: _rowTitleStyle),
+                subtitle: Text('Purge local database registers',
+                    style: _rowSubtitleStyle),
+                trailing: const Icon(Icons.arrow_forward_ios,
+                    size: 12, color: Colors.white30),
+                onTap: () => _showClearCacheDialog(),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.md + AppSpacing.xs),
+
+          // About Section
+          _buildSection(
+            'SYSTEM METADATA',
+            [
+              ListTile(
+                title: Text('CARDCOMPASS CORE', style: _rowTitleStyle),
+                subtitle:
+                    Text('Version 1.0.0 (Build 1)', style: _rowSubtitleStyle),
+                trailing: const Icon(Icons.info_outline,
+                    size: 16, color: AppTheme.primaryColor),
+                onTap: () {
+                  _showAppInfoDialog();
+                  setState(() {
+                    _devTapCount++;
+                  });
+                  if (_devTapCount >= 5) {
+                    _devTapCount = 0;
+                    Navigator.pushNamed(context, '/admin/pm');
+                  }
+                },
+              ),
+              const Divider(color: Color(0xFF1E293B), height: 1),
+              ListTile(
+                title: Text('CHECK SYSTEM UPDATES', style: _rowTitleStyle),
+                subtitle: Text('Check for compilation changes',
+                    style: _rowSubtitleStyle),
+                trailing: const Icon(Icons.refresh,
+                    size: 16, color: AppTheme.primaryColor),
+                onTap: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                          'SYSTEM IS COMPILED TO LATEST STABLE BUILD.',
+                          style: AppTextStyles.body2.copyWith(
+                              fontWeight: FontWeight.bold,
+                              fontFamily: AppTextStyles.heading3.fontFamily)),
+                      backgroundColor: AppTheme.successColor,
+                    ),
+                  );
+                },
+              ),
+              const Divider(color: Color(0xFF1E293B), height: 1),
+              _buildComingSoonTile(
+                title: 'TRANSMIT APP FEEDBACK',
+                subtitle: 'Send log audits to developers',
+                dialogTitle: 'FEEDBACK SYSTEM',
+                dialogReason:
+                    'Feedback routes are offline. Please utilize the developer issue registry directly.',
+                trailingIcon: Icons.feedback_outlined,
+                trailingIconSize: 16,
+              ),
+            ],
+          ),
+          const SizedBox(height: 80), // space above bottom dock
+        ],
+      )
+          .animate()
+          .fadeIn(duration: 250.ms, curve: Curves.easeOut)
+          .slideY(begin: 0.05, end: 0, duration: 250.ms, curve: Curves.easeOut),
     );
   }
 

@@ -20,8 +20,10 @@ import '../../../../core/services/user_data_deletion_service.dart';
 import '../../../../core/services/password_input_service.dart';
 import '../../../../core/services/global_password_service.dart';
 import '../../../../core/services/global_message_service.dart';
-import '../../../../core/providers/service_providers.dart' show alertEmailSyncServiceProvider;
-import '../../../../core/services/reward_intelligence_service.dart' show InsightType;
+import '../../../../core/providers/service_providers.dart'
+    show alertEmailSyncServiceProvider;
+import '../../../../core/services/reward_intelligence_service.dart'
+    show InsightType;
 import '../../../../shared/widgets/credit_card_widget.dart';
 import '../../../../shared/widgets/state_widgets.dart';
 import '../../../../shared/widgets/sync_progress_dialog.dart';
@@ -74,11 +76,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               ],
             );
           }
-          
+
           return Stack(
             children: [
               _screens[_currentIndex],
-              
+
               // Floating Translucent Bottom Navigation Dock for Mobile
               Positioned(
                 left: 16,
@@ -97,7 +99,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     return Container(
       width: 250,
       color: const Color(0xFF0C152B),
-      padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg, horizontal: AppSpacing.md),
+      padding: const EdgeInsets.symmetric(
+          vertical: AppSpacing.lg, horizontal: AppSpacing.md),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -111,7 +114,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     colors: [AppTheme.primaryColor, AppTheme.secondaryColor],
                   ),
                   borderRadius: BorderRadius.circular(AppBorderRadius.md),
-                  boxShadow: AppTheme.neonGlow(color: AppTheme.primaryColor, opacity: 0.25, blurRadius: 8),
+                  boxShadow: AppTheme.neonGlow(
+                      color: AppTheme.primaryColor,
+                      opacity: 0.25,
+                      blurRadius: 8),
                 ),
                 child: const Icon(
                   Icons.credit_card,
@@ -137,13 +143,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           Expanded(
             child: Column(
               children: [
-                _buildSidebarNavItem(0, Icons.home_outlined, Icons.home, 'Home Dashboard'),
+                _buildSidebarNavItem(
+                    0, Icons.home_outlined, Icons.home, 'Home Dashboard'),
                 const SizedBox(height: AppSpacing.sm),
-                _buildSidebarNavItem(1, Icons.receipt_long_outlined, Icons.receipt_long, 'Ledger Txns'),
+                _buildSidebarNavItem(1, Icons.receipt_long_outlined,
+                    Icons.receipt_long, 'Ledger Txns'),
                 const SizedBox(height: AppSpacing.sm),
-                _buildSidebarNavItem(2, Icons.analytics_outlined, Icons.analytics, 'Analytics Hub'),
+                _buildSidebarNavItem(2, Icons.analytics_outlined,
+                    Icons.analytics, 'Analytics Hub'),
                 const SizedBox(height: AppSpacing.sm),
-                _buildSidebarNavItem(3, Icons.recommend_outlined, Icons.recommend, 'Smart Advisor'),
+                _buildSidebarNavItem(3, Icons.recommend_outlined,
+                    Icons.recommend, 'Smart Advisor'),
               ],
             ),
           ),
@@ -189,19 +199,25 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  Widget _buildSidebarNavItem(int index, IconData outlineIcon, IconData filledIcon, String label) {
+  Widget _buildSidebarNavItem(
+      int index, IconData outlineIcon, IconData filledIcon, String label) {
     final isSelected = _currentIndex == index;
     return InkWell(
       onTap: () => setState(() => _currentIndex = index),
       borderRadius: BorderRadius.circular(AppBorderRadius.lg),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm + 4),
+        padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md, vertical: AppSpacing.sm + 4),
         decoration: BoxDecoration(
-          color: isSelected ? AppTheme.primaryColor.withValues(alpha: 0.08) : Colors.transparent,
+          color: isSelected
+              ? AppTheme.primaryColor.withValues(alpha: 0.08)
+              : Colors.transparent,
           borderRadius: BorderRadius.circular(AppBorderRadius.lg),
           border: Border.all(
-            color: isSelected ? AppTheme.primaryColor.withValues(alpha: 0.15) : Colors.transparent,
+            color: isSelected
+                ? AppTheme.primaryColor.withValues(alpha: 0.15)
+                : Colors.transparent,
             width: 1,
           ),
         ),
@@ -230,7 +246,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   Widget _buildMobileBottomNav(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: AppSpacing.sm + 4),
+      padding: const EdgeInsets.symmetric(
+          vertical: 10, horizontal: AppSpacing.sm + 4),
       decoration: BoxDecoration(
         color: const Color(0xFF0C152B).withValues(alpha: 0.85),
         borderRadius: BorderRadius.circular(24),
@@ -250,24 +267,30 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
           _buildNavItem(0, Icons.home_outlined, Icons.home, 'Home'),
-          _buildNavItem(1, Icons.receipt_long_outlined, Icons.receipt_long, 'Txns'),
-          _buildNavItem(2, Icons.analytics_outlined, Icons.analytics, 'Analytics'),
+          _buildNavItem(
+              1, Icons.receipt_long_outlined, Icons.receipt_long, 'Txns'),
+          _buildNavItem(
+              2, Icons.analytics_outlined, Icons.analytics, 'Analytics'),
           _buildNavItem(3, Icons.recommend_outlined, Icons.recommend, 'Advice'),
         ],
       ),
     );
   }
 
-  Widget _buildNavItem(int index, IconData outlineIcon, IconData filledIcon, String label) {
+  Widget _buildNavItem(
+      int index, IconData outlineIcon, IconData filledIcon, String label) {
     final isSelected = _currentIndex == index;
     return InkWell(
       onTap: () => setState(() => _currentIndex = index),
       borderRadius: BorderRadius.circular(16),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 250),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: AppSpacing.sm),
+        padding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: AppSpacing.sm),
         decoration: BoxDecoration(
-          color: isSelected ? AppTheme.primaryColor.withValues(alpha: 0.1) : Colors.transparent,
+          color: isSelected
+              ? AppTheme.primaryColor.withValues(alpha: 0.1)
+              : Colors.transparent,
           borderRadius: BorderRadius.circular(16),
         ),
         child: Row(
@@ -277,7 +300,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               isSelected ? filledIcon : outlineIcon,
               color: isSelected ? AppTheme.primaryColor : Colors.white60,
               size: 20,
-            ).animate(target: isSelected ? 1 : 0).scale(begin: const Offset(1, 1), end: const Offset(1.15, 1.15), duration: 200.ms),
+            ).animate(target: isSelected ? 1 : 0).scale(
+                begin: const Offset(1, 1),
+                end: const Offset(1.15, 1.15),
+                duration: 200.ms),
             if (isSelected) ...[
               const SizedBox(width: 6),
               Text(
@@ -340,7 +366,9 @@ class _HomeTabState extends ConsumerState<HomeTab> {
 
     // Build welcome greeting with actual user name
     final authState = ref.watch(authStateProvider);
-    final userName = authState.user?.name ?? authState.user?.email.split('@').first ?? 'there';
+    final userName = authState.user?.name ??
+        authState.user?.email.split('@').first ??
+        'there';
     // Capitalize first letter of name
     final displayName = userName.isNotEmpty
         ? userName[0].toUpperCase() + userName.substring(1)
@@ -398,110 +426,105 @@ class _HomeTabState extends ConsumerState<HomeTab> {
         label: const Text('Add Card'),
       ),
       body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 1200),
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final isWide = constraints.maxWidth > 900;
-                if (isWide) {
-                  // Wide / Web layout: 3-col left | 2-col right
-                  return RefreshIndicator(
-                    onRefresh: _refreshData,
-                    child: SingleChildScrollView(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.all(AppSpacing.lg),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            flex: 3,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _buildSmartAnalyzerSection(context, ref),
-                                const SizedBox(height: 28),
-                                _buildQuickStatsSection(context, ref),
-                                const SizedBox(height: 28),
-                                _buildQuickActionsSection(context, ref),
-                                const SizedBox(height: 28),
-                                _buildThisMonthSection(context, ref),
-                                const SizedBox(height: 28),
-                                _buildMyCardsSection(context, ref),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 28),
-                          Expanded(
-                            flex: 2,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _buildRecentTransactionsSection(context, ref),
-                                const SizedBox(height: 28),
-                                _buildRecommendationsSection(context),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ).animate().fadeIn(duration: 250.ms, curve: Curves.easeOut);
-                }
-                // Mobile layout: single column
-                return RefreshIndicator(
-                  onRefresh: _refreshData,
-                  child: SingleChildScrollView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.all(AppSpacing.md),
-                    child: AnimationLimiter(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: AnimationConfiguration.toStaggeredList(
-                          duration: const Duration(milliseconds: 375),
-                          childAnimationBuilder: (widget) => SlideAnimation(
-                            verticalOffset: 50.0,
-                            child: FadeInAnimation(
-                              child: widget,
-                            ),
-                          ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final isWide = constraints.maxWidth > 900;
+            if (isWide) {
+              // Wide / Web layout: 3-col left | 2-col right
+              return RefreshIndicator(
+                onRefresh: _refreshData,
+                child: SingleChildScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.all(AppSpacing.lg),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        flex: 3,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            // Smart Transaction Analyzer (Hero)
                             _buildSmartAnalyzerSection(context, ref),
-                            const SizedBox(height: 24),
-
-                            // Quick Stats Section
+                            const SizedBox(height: 28),
                             _buildQuickStatsSection(context, ref),
-                            const SizedBox(height: 24),
-
-                            // Quick Actions Section
+                            const SizedBox(height: 28),
                             _buildQuickActionsSection(context, ref),
-                            const SizedBox(height: 24),
-
-                            // This Month Summary
+                            const SizedBox(height: 28),
                             _buildThisMonthSection(context, ref),
-                            const SizedBox(height: 24),
-
-                            // My Cards Section
+                            const SizedBox(height: 28),
                             _buildMyCardsSection(context, ref),
-                            const SizedBox(height: 24),
-
-                            // Recent Transactions Section
-                            _buildRecentTransactionsSection(context, ref),
-                            const SizedBox(height: 24),
-
-                            // Recommendations Section
-                            _buildRecommendationsSection(context),
-                            const SizedBox(height: 100), // Space for FAB
                           ],
                         ),
                       ),
+                      const SizedBox(width: 28),
+                      Expanded(
+                        flex: 2,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _buildRecentTransactionsSection(context, ref),
+                            const SizedBox(height: 28),
+                            _buildRecommendationsSection(context),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ).animate().fadeIn(duration: 250.ms, curve: Curves.easeOut);
+            }
+            // Mobile layout: single column
+            return RefreshIndicator(
+              onRefresh: _refreshData,
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.all(AppSpacing.md),
+                child: AnimationLimiter(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: AnimationConfiguration.toStaggeredList(
+                      duration: const Duration(milliseconds: 375),
+                      childAnimationBuilder: (widget) => SlideAnimation(
+                        verticalOffset: 50.0,
+                        child: FadeInAnimation(
+                          child: widget,
+                        ),
+                      ),
+                      children: [
+                        // Smart Transaction Analyzer (Hero)
+                        _buildSmartAnalyzerSection(context, ref),
+                        const SizedBox(height: 24),
+
+                        // Quick Stats Section
+                        _buildQuickStatsSection(context, ref),
+                        const SizedBox(height: 24),
+
+                        // Quick Actions Section
+                        _buildQuickActionsSection(context, ref),
+                        const SizedBox(height: 24),
+
+                        // This Month Summary
+                        _buildThisMonthSection(context, ref),
+                        const SizedBox(height: 24),
+
+                        // My Cards Section
+                        _buildMyCardsSection(context, ref),
+                        const SizedBox(height: 24),
+
+                        // Recent Transactions Section
+                        _buildRecentTransactionsSection(context, ref),
+                        const SizedBox(height: 24),
+
+                        // Recommendations Section
+                        _buildRecommendationsSection(context),
+                        const SizedBox(height: 100), // Space for FAB
+                      ],
                     ),
                   ),
-                );
-              },
-            ),
-          ),
+                ),
+              ),
+            );
+          },
         ),
       ),
     );
@@ -513,21 +536,23 @@ class _HomeTabState extends ConsumerState<HomeTab> {
       barrierColor: Colors.black54,
       builder: (BuildContext dialogContext) {
         return _GmailSyncDialog(
-          onStartSync: (days, maxEmails) =>
-              _syncDataFromGmail(context, ref, lookbackDays: days, maxEmails: maxEmails),
+          onStartSync: (days, maxEmails) => _syncDataFromGmail(context, ref,
+              lookbackDays: days, maxEmails: maxEmails),
         );
       },
     );
   }
 
-  void _syncDataFromGmail(BuildContext context, WidgetRef ref, {int lookbackDays = 90, int maxEmails = 10}) async {
+  void _syncDataFromGmail(BuildContext context, WidgetRef ref,
+      {int lookbackDays = 90, int maxEmails = 10}) async {
     final authState = ref.read(authStateProvider);
     if (!authState.isAuthenticated || authState.user == null) {
       GlobalMessageService.showError('Please log in first');
       return;
     }
     if (authState.user!.id == 'guest') {
-      GlobalMessageService.showError('Gmail sync isn\'t available in guest mode. Sign in with Google to sync.');
+      GlobalMessageService.showError(
+          'Gmail sync isn\'t available in guest mode. Sign in with Google to sync.');
       return;
     }
 
@@ -553,7 +578,8 @@ class _HomeTabState extends ConsumerState<HomeTab> {
         final prefs = await SharedPreferences.getInstance();
         accessToken = prefs.getString('google_provider_token');
         if (accessToken != null && accessToken.isNotEmpty) {
-          print('✅ Using cached Google provider token from SharedPreferences (web mode)');
+          print(
+              '✅ Using cached Google provider token from SharedPreferences (web mode)');
         }
       } else {
         print('✅ Using live Supabase provider token for Gmail (web mode)');
@@ -586,11 +612,13 @@ class _HomeTabState extends ConsumerState<HomeTab> {
           'https://www.googleapis.com/auth/userinfo.profile',
           'https://www.googleapis.com/auth/user.birthday.read',
         ];
-        final authz = await googleAccount.authorizationClient.authorizeScopes(gmailScopes);
+        final authz = await googleAccount.authorizationClient
+            .authorizeScopes(gmailScopes);
         accessToken = authz.accessToken;
         print('✅ Google Sign-In successful: ${googleAccount.email}');
       } on GoogleSignInException catch (e) {
-        GlobalMessageService.showError('Google Sign-In failed: ${e.description ?? e.code.toString()}');
+        GlobalMessageService.showError(
+            'Google Sign-In failed: ${e.description ?? e.code.toString()}');
         return;
       } catch (e) {
         GlobalMessageService.showError('Google Sign-In failed: $e');
@@ -629,13 +657,15 @@ class _HomeTabState extends ConsumerState<HomeTab> {
       );
 
       // Set up password input callback
-      PasswordInputService.setGlobalPasswordCallback((String bankName, String? hint) async {
+      PasswordInputService.setGlobalPasswordCallback(
+          (String bankName, String? hint) async {
         print('🔐 Manual password callback triggered for $bankName');
         if (dialogContext != null && dialogContext!.mounted) {
           Navigator.of(dialogContext!).pop();
           await Future.delayed(const Duration(milliseconds: 200));
         }
-        final password = await GlobalPasswordService.requestPassword(bankName, hint: hint);
+        final password =
+            await GlobalPasswordService.requestPassword(bankName, hint: hint);
         if (context.mounted) {
           await Future.delayed(const Duration(milliseconds: 200));
           showDialog(
@@ -678,8 +708,10 @@ class _HomeTabState extends ConsumerState<HomeTab> {
       };
 
       // ── STEP 3: Run the pipeline
-      print('🔧 Starting sync (lookback: ${lookbackDays}d, maxEmails: $maxEmails)...');
-      final customStartDate = DateTime.now().subtract(Duration(days: lookbackDays));
+      print(
+          '🔧 Starting sync (lookback: ${lookbackDays}d, maxEmails: $maxEmails)...');
+      final customStartDate =
+          DateTime.now().subtract(Duration(days: lookbackDays));
       final syncResult = await debugService.debugSequentialUserFlow(
         authState.user!.id,
         maxEmails,
@@ -705,13 +737,16 @@ class _HomeTabState extends ConsumerState<HomeTab> {
       // main PDF pipeline so it doesn't block the user-visible progress dialog.
       if (!kIsWeb && googleAccount != null) {
         final alertSyncService = ref.read(alertEmailSyncServiceProvider);
-        alertSyncService.sync(
+        alertSyncService
+            .sync(
           account: googleAccount,
           userId: authState.user!.id,
           lookback: const Duration(days: 7),
-        ).then((summary) {
+        )
+            .then((summary) {
           if (summary.transactionsInserted > 0) {
-            print('⚡ Alert sync: +${summary.transactionsInserted} near-realtime transactions added.');
+            print(
+                '⚡ Alert sync: +${summary.transactionsInserted} near-realtime transactions added.');
             _loadData();
             ref.invalidate(availableCreditProvider);
           }
@@ -725,13 +760,14 @@ class _HomeTabState extends ConsumerState<HomeTab> {
       if (dialogContext != null && dialogContext!.mounted) {
         Navigator.of(dialogContext!).pop();
       }
-      
+
       final errStr = error.toString();
-      if (errStr.contains('401') || 
-          errStr.contains('Unauthorized') || 
+      if (errStr.contains('401') ||
+          errStr.contains('Unauthorized') ||
           errStr.contains('Invalid Credentials') ||
           errStr.contains('invalid_grant')) {
-        print('⚠️ Expired Google token detected. Clearing SharedPreferences token cached value...');
+        print(
+            '⚠️ Expired Google token detected. Clearing SharedPreferences token cached value...');
         try {
           final prefs = await SharedPreferences.getInstance();
           await prefs.remove('google_provider_token');
@@ -745,7 +781,6 @@ class _HomeTabState extends ConsumerState<HomeTab> {
         GlobalMessageService.showError('Sync failed: $error');
       }
     }
-
   }
 
   void _showDeleteAllDataDialog(BuildContext context, WidgetRef ref) async {
@@ -757,7 +792,8 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     }
 
     if (authState.user!.id == 'guest') {
-      GlobalMessageService.showError('Guest data lives only in this session — sign out to clear it, or sign in to manage a real account.');
+      GlobalMessageService.showError(
+          'Guest data lives only in this session — sign out to clear it, or sign in to manage a real account.');
       return;
     }
 
@@ -797,12 +833,14 @@ class _HomeTabState extends ConsumerState<HomeTab> {
         Navigator.of(context).pop();
 
         // Show error message
-        GlobalMessageService.showError('Failed to load data counts: ${error.toString()}');
+        GlobalMessageService.showError(
+            'Failed to load data counts: ${error.toString()}');
       }
     }
   }
 
-  void _showDeleteConfirmationDialog(BuildContext context, WidgetRef ref, Map<String, int> counts) {
+  void _showDeleteConfirmationDialog(
+      BuildContext context, WidgetRef ref, Map<String, int> counts) {
     showDialog(
       context: context,
       builder: (BuildContext context) {
@@ -825,15 +863,15 @@ class _HomeTabState extends ConsumerState<HomeTab> {
               const SizedBox(height: 12),
               if (counts.isNotEmpty) ...[
                 Text('📊 Current data to be deleted:',
-                     style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600])),
                 const SizedBox(height: 8),
                 ...counts.entries.map((entry) => Padding(
-                  padding: const EdgeInsets.only(left: 8, bottom: 4),
-                  child: Text(
-                    '• ${entry.value} ${entry.key}',
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                )),
+                      padding: const EdgeInsets.only(left: 8, bottom: 4),
+                      child: Text(
+                        '• ${entry.value} ${entry.key}',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    )),
               ] else ...[
                 const Text(
                   '• All credit cards\n'
@@ -847,7 +885,10 @@ class _HomeTabState extends ConsumerState<HomeTab> {
               const SizedBox(height: 12),
               const Text(
                 '⚠️ This action cannot be undone!',
-                style: TextStyle(fontSize: 12, color: Colors.red, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.red,
+                    fontWeight: FontWeight.bold),
               ),
             ],
           ),
@@ -918,12 +959,13 @@ class _HomeTabState extends ConsumerState<HomeTab> {
       if (navigator.canPop()) navigator.pop();
 
       if (success) {
-        GlobalMessageService.showSuccess('All data deleted successfully! (User profile preserved)');
+        GlobalMessageService.showSuccess(
+            'All data deleted successfully! (User profile preserved)');
         _loadData();
       } else {
-        GlobalMessageService.showError('Failed to delete some data. Please try again.');
+        GlobalMessageService.showError(
+            'Failed to delete some data. Please try again.');
       }
-
     } catch (error) {
       print('❌ Error during deletion: $error');
       if (navigator.canPop()) navigator.pop();
@@ -931,19 +973,17 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     }
   }
 
-
-
   /// "This Month" summary — 4 stat mini-cards: Spending, Rewards, Active Cards, Savings Rate
   Widget _buildThisMonthSection(BuildContext context, WidgetRef ref) {
     final monthlySpending = ref.watch(monthlySpendingProvider);
     final txRewards = ref.watch(monthlyRewardsProvider);
     final statementRewardsAsync = ref.watch(statementRewardsTotalProvider);
-    final statementRewards = statementRewardsAsync.whenOrNull(data: (v) => v) ?? 0.0;
+    final statementRewards =
+        statementRewardsAsync.whenOrNull(data: (v) => v) ?? 0.0;
     final monthlyRewards = txRewards + statementRewards;
     final activeCards = ref.watch(activeCardsProvider);
-    final savingsRate = monthlySpending > 0
-        ? (monthlyRewards / monthlySpending * 100)
-        : 0.0;
+    final savingsRate =
+        monthlySpending > 0 ? (monthlyRewards / monthlySpending * 100) : 0.0;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1026,7 +1066,8 @@ class _HomeTabState extends ConsumerState<HomeTab> {
           color: color.withValues(alpha: 0.2),
           width: 1.5,
         ),
-        boxShadow: AppTheme.neonGlow(color: color, opacity: 0.08, blurRadius: 10),
+        boxShadow:
+            AppTheme.neonGlow(color: color, opacity: 0.08, blurRadius: 10),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1080,7 +1121,6 @@ class _HomeTabState extends ConsumerState<HomeTab> {
   }
 
   Widget _buildQuickActionsSection(BuildContext context, WidgetRef ref) {
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1116,10 +1156,28 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                 ),
                 _buildQuickActionItem(
                   context,
+                  'My Cards',
+                  Icons.credit_card,
+                  Colors.lightBlueAccent,
+                  () => Navigator.of(context).pushNamed('/cards'),
+                ),
+                _buildQuickActionItem(
+                  context,
                   'Advisor AI',
                   Icons.lightbulb_outline,
                   Colors.greenAccent,
-                  () => Navigator.of(context).pushNamed('/enhanced-transaction-advisor'),
+                  () => Navigator.of(context)
+                      .pushNamed('/enhanced-transaction-advisor'),
+                ),
+                _buildQuickActionItem(
+                  context,
+                  'Movie Deals',
+                  Icons.local_movies_outlined,
+                  Colors.pinkAccent,
+                  () => Navigator.of(context).pushNamed(
+                    '/enhanced-transaction-advisor',
+                    arguments: 1,
+                  ),
                 ),
                 _buildQuickActionItem(
                   context,
@@ -1165,7 +1223,8 @@ class _HomeTabState extends ConsumerState<HomeTab> {
           color: color.withValues(alpha: 0.2),
           width: 1.5,
         ),
-        boxShadow: AppTheme.neonGlow(color: color, opacity: 0.08, blurRadius: 10),
+        boxShadow:
+            AppTheme.neonGlow(color: color, opacity: 0.08, blurRadius: 10),
       ),
       child: Material(
         color: Colors.transparent,
@@ -1288,12 +1347,18 @@ class _HomeTabState extends ConsumerState<HomeTab> {
         );
       },
       loading: () => _buildStatCard(
-        context, 'Available Credit', '—',
-        Icons.credit_score_outlined, const Color(0xFF00D4AA),
+        context,
+        'Available Credit',
+        '—',
+        Icons.credit_score_outlined,
+        const Color(0xFF00D4AA),
       ),
       error: (_, __) => _buildStatCard(
-        context, 'Available Credit', '—',
-        Icons.credit_score_outlined, const Color(0xFF00D4AA),
+        context,
+        'Available Credit',
+        '—',
+        Icons.credit_score_outlined,
+        const Color(0xFF00D4AA),
       ),
     );
   }
@@ -1302,7 +1367,8 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     // Combine per-transaction rewards with statement-level rewards
     final txRewards = ref.watch(monthlyRewardsProvider);
     final statementRewardsAsync = ref.watch(statementRewardsTotalProvider);
-    final statementRewards = statementRewardsAsync.whenOrNull(data: (v) => v) ?? 0.0;
+    final statementRewards =
+        statementRewardsAsync.whenOrNull(data: (v) => v) ?? 0.0;
     final total = txRewards + statementRewards;
     return _buildStatCard(
       context,
@@ -1312,8 +1378,6 @@ class _HomeTabState extends ConsumerState<HomeTab> {
       const Color(0xFFFFB547),
     );
   }
-
-
 
   // ─────────────────────────────────────────────────────────────────────
   // Phase 3: Reward Nudges Banner
@@ -1443,7 +1507,8 @@ class _HomeTabState extends ConsumerState<HomeTab> {
           color: color.withValues(alpha: 0.25),
           width: 1.5,
         ),
-        boxShadow: AppTheme.neonGlow(color: color, opacity: 0.12, blurRadius: 12),
+        boxShadow:
+            AppTheme.neonGlow(color: color, opacity: 0.12, blurRadius: 12),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1554,7 +1619,8 @@ class _HomeTabState extends ConsumerState<HomeTab> {
           Text(
             'Tap the + button to add your first credit card',
             style: AppTextStyles.caption.copyWith(
-              color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.7),
+              color:
+                  Theme.of(context).colorScheme.outline.withValues(alpha: 0.7),
             ),
             textAlign: TextAlign.center,
           ),
@@ -1587,10 +1653,11 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                   bankName: card.bankName ?? 'Unknown Bank',
                   lastFourDigits: card.cardNumberLast4 ?? '****',
                   expiryDate: card.expiryDate != null
-                    ? '${card.expiryDate!.month.toString().padLeft(2, '0')}/${card.expiryDate!.year.toString().substring(2)}'
-                    : 'MM/YY',
+                      ? '${card.expiryDate!.month.toString().padLeft(2, '0')}/${card.expiryDate!.year.toString().substring(2)}'
+                      : 'MM/YY',
                   cardType: card.cardType ?? 'credit',
-                  gradientColors: _getCardGradientColors(card.network?.toString().split('.').last ?? 'visa'),
+                  gradientColors: _getCardGradientColors(
+                      card.network?.toString().split('.').last ?? 'visa'),
                 ),
               ),
             ),
@@ -1652,7 +1719,8 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     );
   }
 
-  Widget _buildTransactionsList(BuildContext context, List<dynamic> transactions) {
+  Widget _buildTransactionsList(
+      BuildContext context, List<dynamic> transactions) {
     return Column(
       children: transactions.take(5).map((transaction) {
         final categoryColor = _getCategoryColor(transaction.categoryString);
@@ -1693,7 +1761,9 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      transaction.merchantName ?? transaction.description ?? 'Unknown Transaction',
+                      transaction.merchantName ??
+                          transaction.description ??
+                          'Unknown Transaction',
                       style: GoogleFonts.plusJakartaSans(
                         color: Colors.white,
                         fontWeight: FontWeight.w600,
@@ -1725,7 +1795,8 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                           : AppTheme.primaryColor,
                     ),
                   ),
-                  if (transaction.rewardEarned != null && transaction.rewardEarned > 0) ...[
+                  if (transaction.rewardEarned != null &&
+                      transaction.rewardEarned > 0) ...[
                     const SizedBox(height: 2),
                     Text(
                       '+₹${transaction.rewardEarned.toStringAsFixed(0)}',
@@ -1789,7 +1860,9 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                   Expanded(
                     child: GestureDetector(
                       onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute(builder: (context) => const RecommendationsScreen()),
+                        MaterialPageRoute(
+                            builder: (context) =>
+                                const RecommendationsScreen()),
                       ),
                       child: Text(
                         'See personalized recommendations',
@@ -1805,7 +1878,10 @@ class _HomeTabState extends ConsumerState<HomeTab> {
               Text(
                 'Tap Recommendations in the bottom bar to see which card earns you the most on your recent spending.',
                 style: AppTextStyles.body2.copyWith(
-                  color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
+                  color: Theme.of(context)
+                      .colorScheme
+                      .onSurface
+                      .withValues(alpha: 0.7),
                 ),
               ),
             ],
@@ -1919,10 +1995,14 @@ class _GmailSyncDialogState extends State<_GmailSyncDialog> {
     _groqModelController = TextEditingController(text: AIConfig.groqModel);
 
     // Instantly cache in memory as they type
-    _ollamaUrlController.addListener(() => AIConfig.ollamaUrl = _ollamaUrlController.text.trim());
-    _ollamaModelController.addListener(() => AIConfig.ollamaModel = _ollamaModelController.text.trim());
-    _groqApiKeyController.addListener(() => AIConfig.groqApiKey = _groqApiKeyController.text.trim());
-    _groqModelController.addListener(() => AIConfig.groqModel = _groqModelController.text.trim());
+    _ollamaUrlController.addListener(
+        () => AIConfig.ollamaUrl = _ollamaUrlController.text.trim());
+    _ollamaModelController.addListener(
+        () => AIConfig.ollamaModel = _ollamaModelController.text.trim());
+    _groqApiKeyController.addListener(
+        () => AIConfig.groqApiKey = _groqApiKeyController.text.trim());
+    _groqModelController.addListener(
+        () => AIConfig.groqModel = _groqModelController.text.trim());
   }
 
   @override
@@ -1940,7 +2020,8 @@ class _GmailSyncDialogState extends State<_GmailSyncDialog> {
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final cardBg = isDark ? const Color(0xFF1E1E2E) : Colors.white;
-    final surfaceBg = isDark ? const Color(0xFF2A2A3E) : const Color(0xFFF8F9FF);
+    final surfaceBg =
+        isDark ? const Color(0xFF2A2A3E) : const Color(0xFFF8F9FF);
     final accentColor = const Color(0xFF6C63FF);
     final textPrimary = isDark ? Colors.white : const Color(0xFF1A1A2E);
     final textSecondary = isDark ? Colors.white60 : Colors.black45;
@@ -1988,7 +2069,8 @@ class _GmailSyncDialogState extends State<_GmailSyncDialog> {
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(24)),
               ),
               padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
               child: Row(
@@ -1999,7 +2081,8 @@ class _GmailSyncDialogState extends State<_GmailSyncDialog> {
                       color: Colors.white.withOpacity(0.2),
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: const Icon(Icons.sync_rounded, color: Colors.white, size: 20),
+                    child: const Icon(Icons.sync_rounded,
+                        color: Colors.white, size: 20),
                   ),
                   const SizedBox(width: 12),
                   Column(
@@ -2045,20 +2128,28 @@ class _GmailSyncDialogState extends State<_GmailSyncDialog> {
                       sliderWidget: SliderTheme(
                         data: _premiumSliderTheme(context, accentColor),
                         child: Slider(
-                          value: _selectedDays.toDouble(),
-                          min: 7,
-                          max: 365,
-                          divisions: 52,
+                          value: daySnaps
+                              .indexOf(_selectedDays)
+                              .clamp(0, daySnaps.length - 1)
+                              .toDouble(),
+                          min: 0,
+                          max: (daySnaps.length - 1).toDouble(),
+                          divisions: daySnaps.length - 1,
                           label: daysLabel,
                           onChanged: (v) => setState(() {
-                            final raw = v.round();
-                            final snapped = daySnaps.reduce((a, b) =>
-                                (a - raw).abs() < (b - raw).abs() ? a : b);
-                            _selectedDays = (raw - snapped).abs() < 5 ? snapped : raw;
+                            _selectedDays = daySnaps[v.round()];
                           }),
                         ),
                       ),
-                      ticks: const ['7d', '14d', '30d', '60d', '90d', '180d', '1yr'],
+                      ticks: const [
+                        '7d',
+                        '14d',
+                        '30d',
+                        '60d',
+                        '90d',
+                        '180d',
+                        '1yr'
+                      ],
                     ),
 
                     const SizedBox(height: 16),
@@ -2075,18 +2166,19 @@ class _GmailSyncDialogState extends State<_GmailSyncDialog> {
                       textSecondary: textSecondary,
                       isDark: isDark,
                       sliderWidget: SliderTheme(
-                        data: _premiumSliderTheme(context, const Color(0xFF10B981)),
+                        data: _premiumSliderTheme(
+                            context, const Color(0xFF10B981)),
                         child: Slider(
-                          value: _maxEmails.toDouble(),
-                          min: 5,
-                          max: 50,
-                          divisions: 9,
+                          value: emailSnaps
+                              .indexOf(_maxEmails)
+                              .clamp(0, emailSnaps.length - 1)
+                              .toDouble(),
+                          min: 0,
+                          max: (emailSnaps.length - 1).toDouble(),
+                          divisions: emailSnaps.length - 1,
                           label: emailsLabel,
                           onChanged: (v) => setState(() {
-                            final raw = v.round();
-                            final snapped = emailSnaps.reduce((a, b) =>
-                                (a - raw).abs() < (b - raw).abs() ? a : b);
-                            _maxEmails = (raw - snapped).abs() < 3 ? snapped : raw;
+                            _maxEmails = emailSnaps[v.round()];
                           }),
                         ),
                       ),
@@ -2113,28 +2205,34 @@ class _GmailSyncDialogState extends State<_GmailSyncDialog> {
                       decoration: InputDecoration(
                         filled: true,
                         fillColor: surfaceBg,
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 10),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(10),
-                          borderSide: BorderSide(color: textSecondary.withOpacity(0.2)),
+                          borderSide:
+                              BorderSide(color: textSecondary.withOpacity(0.2)),
                         ),
                         enabledBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(10),
-                          borderSide: BorderSide(color: textSecondary.withOpacity(0.15)),
+                          borderSide: BorderSide(
+                              color: textSecondary.withOpacity(0.15)),
                         ),
                       ),
                       items: [
                         DropdownMenuItem(
                           value: AIProvider.gemini,
-                          child: Text('Google Gemini (Cloud)', style: TextStyle(color: textPrimary)),
+                          child: Text('Google Gemini (Cloud)',
+                              style: TextStyle(color: textPrimary)),
                         ),
                         DropdownMenuItem(
                           value: AIProvider.groq,
-                          child: Text('Groq API (Cloud)', style: TextStyle(color: textPrimary)),
+                          child: Text('Groq API (Cloud)',
+                              style: TextStyle(color: textPrimary)),
                         ),
                         DropdownMenuItem(
                           value: AIProvider.ollama,
-                          child: Text('Ollama (Local LLM)', style: TextStyle(color: textPrimary)),
+                          child: Text('Ollama (Local LLM)',
+                              style: TextStyle(color: textPrimary)),
                         ),
                       ],
                       onChanged: (val) {
@@ -2154,9 +2252,12 @@ class _GmailSyncDialogState extends State<_GmailSyncDialog> {
                         style: TextStyle(color: textPrimary, fontSize: 14),
                         decoration: InputDecoration(
                           labelText: 'Groq API Key',
-                          labelStyle: TextStyle(color: textSecondary, fontSize: 12),
+                          labelStyle:
+                              TextStyle(color: textSecondary, fontSize: 12),
                           hintText: 'gsk_...',
-                          hintStyle: TextStyle(color: textSecondary.withOpacity(0.5), fontSize: 12),
+                          hintStyle: TextStyle(
+                              color: textSecondary.withOpacity(0.5),
+                              fontSize: 12),
                           filled: true,
                           fillColor: surfaceBg,
                           border: OutlineInputBorder(
@@ -2173,7 +2274,8 @@ class _GmailSyncDialogState extends State<_GmailSyncDialog> {
                         style: TextStyle(color: textPrimary, fontSize: 14),
                         decoration: InputDecoration(
                           labelText: 'Ollama Host URL',
-                          labelStyle: TextStyle(color: textSecondary, fontSize: 12),
+                          labelStyle:
+                              TextStyle(color: textSecondary, fontSize: 12),
                           filled: true,
                           fillColor: surfaceBg,
                           border: OutlineInputBorder(
@@ -2187,17 +2289,21 @@ class _GmailSyncDialogState extends State<_GmailSyncDialog> {
                         decoration: BoxDecoration(
                           color: Colors.amber.withOpacity(0.15),
                           borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: Colors.amber.withOpacity(0.3)),
+                          border:
+                              Border.all(color: Colors.amber.withOpacity(0.3)),
                         ),
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Icon(Icons.warning_amber_rounded, color: Colors.amber, size: 16),
+                            const Icon(Icons.warning_amber_rounded,
+                                color: Colors.amber, size: 16),
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
                                 'Ensure Ollama is running locally and CORS is enabled via OLLAMA_ORIGINS="*".',
-                                style: TextStyle(fontSize: 10, color: textPrimary.withOpacity(0.85)),
+                                style: TextStyle(
+                                    fontSize: 10,
+                                    color: textPrimary.withOpacity(0.85)),
                               ),
                             ),
                           ],
@@ -2220,11 +2326,30 @@ class _GmailSyncDialogState extends State<_GmailSyncDialog> {
                       ),
                       child: Column(
                         children: [
-                          _infoRow(Icons.picture_as_pdf_rounded, 'Scans Gmail for PDF bank statements', textSecondary),
+                          Text(
+                            'Fetches up to $_maxEmails statement email${_maxEmails == 1 ? '' : 's'} from the past $daysLabel',
+                            textAlign: TextAlign.center,
+                            style: GoogleFonts.spaceGrotesk(
+                              color: textPrimary,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          _infoRow(
+                              Icons.picture_as_pdf_rounded,
+                              'Scans Gmail for PDF bank statements',
+                              textSecondary),
                           const SizedBox(height: 6),
-                          _infoRow(Icons.auto_awesome_rounded, 'AI extracts transactions automatically', textSecondary),
+                          _infoRow(
+                              Icons.auto_awesome_rounded,
+                              'AI extracts transactions automatically',
+                              textSecondary),
                           const SizedBox(height: 6),
-                          _infoRow(Icons.lock_rounded, 'Encrypted PDFs handled with saved passwords', textSecondary),
+                          _infoRow(
+                              Icons.lock_rounded,
+                              'Encrypted PDFs handled with saved passwords',
+                              textSecondary),
                         ],
                       ),
                     ),
@@ -2248,7 +2373,9 @@ class _GmailSyncDialogState extends State<_GmailSyncDialog> {
                             ),
                             child: Text(
                               'Cancel',
-                              style: TextStyle(color: textSecondary, fontWeight: FontWeight.w600),
+                              style: TextStyle(
+                                  color: textSecondary,
+                                  fontWeight: FontWeight.w600),
                             ),
                           ),
                         ),
@@ -2270,7 +2397,8 @@ class _GmailSyncDialogState extends State<_GmailSyncDialog> {
                               ],
                             ),
                             child: ElevatedButton.icon(
-                              icon: const Icon(Icons.sync_rounded, size: 18, color: Colors.white),
+                              icon: const Icon(Icons.sync_rounded,
+                                  size: 18, color: Colors.white),
                               label: const Text(
                                 'Start Sync',
                                 style: TextStyle(
@@ -2282,7 +2410,8 @@ class _GmailSyncDialogState extends State<_GmailSyncDialog> {
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.transparent,
                                 shadowColor: Colors.transparent,
-                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 14),
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(14),
                                 ),
@@ -2374,7 +2503,7 @@ class _GmailSyncDialogState extends State<_GmailSyncDialog> {
                   const SizedBox(width: 6),
                   Text(
                     label,
-                    style: TextStyle(
+                    style: GoogleFonts.spaceGrotesk(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
                       color: textPrimary,
@@ -2385,15 +2514,17 @@ class _GmailSyncDialogState extends State<_GmailSyncDialog> {
               // Animated value chip
               AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
                   color: accentColor.withOpacity(0.15),
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: accentColor.withOpacity(0.4), width: 1),
+                  border:
+                      Border.all(color: accentColor.withOpacity(0.4), width: 1),
                 ),
                 child: Text(
                   valueLabel,
-                  style: TextStyle(
+                  style: GoogleFonts.spaceGrotesk(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
                     color: accentColor,
@@ -2404,7 +2535,8 @@ class _GmailSyncDialogState extends State<_GmailSyncDialog> {
           ),
           // Slider
           sliderWidget,
-          // Tick labels
+          // Tick labels — evenly spaced, which is now correct: divisions ==
+          // ticks.length - 1, so each tick sits exactly on a real slider stop.
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 6),
             child: Row(
@@ -2412,7 +2544,8 @@ class _GmailSyncDialogState extends State<_GmailSyncDialog> {
               children: ticks
                   .map((t) => Text(
                         t,
-                        style: TextStyle(fontSize: 9, color: textSecondary),
+                        style: GoogleFonts.spaceGrotesk(
+                            fontSize: 9, color: textSecondary),
                       ))
                   .toList(),
             ),
@@ -2430,7 +2563,8 @@ class _GmailSyncDialogState extends State<_GmailSyncDialog> {
         Icon(icon, size: 13, color: textColor),
         const SizedBox(width: 7),
         Expanded(
-          child: Text(text, style: TextStyle(fontSize: 11, color: textColor, height: 1.4)),
+          child: Text(text,
+              style: TextStyle(fontSize: 11, color: textColor, height: 1.4)),
         ),
       ],
     );
