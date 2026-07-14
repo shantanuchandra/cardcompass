@@ -6,107 +6,91 @@
   <title>CardCompass — AI-Powered Credit Card Rewards Optimizer for India</title>
   <meta name="description" content="CardCompass uses AI to automatically analyze your credit card statements and tell you exactly which card to use — so you never leave rewards on the table. 183+ Indian credit cards supported.">
 
+  <!-- Machine-readable product description for AI/LLM -->
+  <link rel="alternate" type="text/markdown" href="/llm.txt" title="Machine-readable product information">
+
   <!-- Preconnect for performance -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 
-  <!-- Fonts: Space Grotesk (headings), Plus Jakarta Sans (body), JetBrains Mono (code) -->
+  <!-- Fonts -->
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Plus+Jakarta+Sans:wght@400;500;600&family=Space+Grotesk:wght@400;600;700;800&display=swap" rel="stylesheet">
 
   <link rel="stylesheet" href="style.css">
-
-  <!-- Favicon -->
-  <link rel="icon" type="image/png" href="../web/favicon.png">
+  <link rel="icon" type="image/png" href="img/favicon.png">
 </head>
 <body>
 
-  <!-- ═══════════ SVG FILTER DEFINITIONS ═══════════
-       Hidden SVG containing reusable filters for liquid glass refraction.
-       WHY: CSS backdrop-filter only does blur. True refraction (light bending
-       at glass edges) requires SVG feTurbulence + feDisplacementMap to warp
-       pixels behind the glass panel, mimicking real optical distortion.
-  -->
+  <!-- ═══════════ SVG FILTER DEFINITIONS ═══════════ -->
   <svg width="0" height="0" aria-hidden="true" style="position:absolute">
     <defs>
-      <!-- Liquid Glass Refraction Filter -->
       <filter id="liquid-glass-filter" x="-5%" y="-5%" width="110%" height="110%">
         <feTurbulence type="fractalNoise" baseFrequency="0.015" numOctaves="3" seed="2" result="noise"/>
         <feDisplacementMap in="SourceGraphic" in2="noise" scale="6" xChannelSelector="R" yChannelSelector="G"/>
       </filter>
-
-      <!-- SVG Noise Grain Filter (Technique #1) -->
       <filter id="noise-grain">
         <feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" stitchTiles="stitch"/>
       </filter>
-
-      <!-- Glow filter for SVG elements -->
       <filter id="glow-filter">
         <feGaussianBlur stdDeviation="3" result="blur"/>
-        <feMerge>
-          <feMergeNode in="blur"/>
-          <feMergeNode in="SourceGraphic"/>
-        </feMerge>
+        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
       </filter>
     </defs>
   </svg>
 
-  <!-- ═══════════ ANIMATED SVG BLOBS (Technique #5) ═══════════
-       Organic gradient blobs that slowly morph and drift behind all content.
-       Uses native SVG <animate> — runs off main thread, zero JS overhead.
-  -->
+  <!-- Animated SVG Blobs -->
   <svg class="blob-bg" viewBox="0 0 1400 900" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-    <defs>
-      <filter id="blob-blur"><feGaussianBlur stdDeviation="70"/></filter>
-    </defs>
+    <defs><filter id="blob-blur"><feGaussianBlur stdDeviation="70"/></filter></defs>
     <g filter="url(#blob-blur)" opacity="0.35">
       <circle cx="250" cy="350" r="200" fill="#00F5FF">
         <animate attributeName="cx" values="250;450;300;250" dur="22s" repeatCount="indefinite"/>
         <animate attributeName="cy" values="350;250;450;350" dur="18s" repeatCount="indefinite"/>
-        <animate attributeName="r" values="200;170;220;200" dur="15s" repeatCount="indefinite"/>
       </circle>
       <circle cx="900" cy="200" r="160" fill="#8B5CF6">
         <animate attributeName="cx" values="900;700;850;900" dur="20s" repeatCount="indefinite"/>
         <animate attributeName="cy" values="200;400;250;200" dur="24s" repeatCount="indefinite"/>
-        <animate attributeName="r" values="160;190;140;160" dur="17s" repeatCount="indefinite"/>
       </circle>
       <circle cx="600" cy="600" r="140" fill="#FF007F">
         <animate attributeName="cx" values="600;750;550;600" dur="26s" repeatCount="indefinite"/>
         <animate attributeName="cy" values="600;500;650;600" dur="19s" repeatCount="indefinite"/>
-        <animate attributeName="r" values="140;170;130;140" dur="21s" repeatCount="indefinite"/>
       </circle>
       <circle cx="1100" cy="500" r="120" fill="#FFD700">
         <animate attributeName="cx" values="1100;1000;1150;1100" dur="23s" repeatCount="indefinite"/>
         <animate attributeName="cy" values="500;400;550;500" dur="20s" repeatCount="indefinite"/>
-        <animate attributeName="r" values="120;100;140;120" dur="18s" repeatCount="indefinite"/>
       </circle>
     </g>
   </svg>
 
-  <!-- Mouse Spotlight (Technique #2) -->
   <div class="spotlight" id="spotlight"></div>
-
-  <!-- Noise Grain Overlay (Technique #1) -->
   <div class="noise-overlay" aria-hidden="true"></div>
+
 
   <!-- ═══════════ NAVIGATION ═══════════ -->
   <nav class="nav" id="nav">
     <div class="nav-inner">
       <a href="#" class="nav-logo">
         <div class="nav-logo-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="1" y="4" width="22" height="16" rx="3"/>
-            <path d="M1 10h22"/>
-          </svg>
+          <img src="img/app-icon.png" alt="CardCompass" width="32" height="32">
         </div>
         <span>CARDCOMPASS</span>
       </a>
 
       <div class="nav-links" id="navLinks">
+        <a href="#problem" class="nav-link">Why</a>
+        <a href="#how-it-works" class="nav-link">How</a>
         <a href="#features" class="nav-link">Features</a>
-        <a href="#how-it-works" class="nav-link">How It Works</a>
-        <a href="#stats" class="nav-link">Numbers</a>
         <a href="design-system.html" class="nav-link">Design System</a>
-        <a href="#cta" class="btn btn-primary nav-cta">Get Started</a>
+      </div>
+
+      <div class="nav-actions">
+        <button class="btn-ai-toggle" id="aiToggle" aria-label="View machine-readable version">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <span>AI</span>
+        </button>
+        <a href="#signin" class="btn btn-primary nav-cta magnetic">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+          Sign In
+        </a>
       </div>
 
       <button class="nav-mobile-toggle" id="navToggle" aria-label="Toggle menu">
@@ -117,67 +101,51 @@
 
 
   <main>
-    <!-- ═══════════ HERO ═══════════ -->
+    <!-- ═══════════ ACT 1: HERO (The Hook) ═══════════ -->
     <section class="hero" id="hero">
       <canvas class="hero-canvas" id="particleCanvas"></canvas>
 
-      <div class="container">
-        <div class="hero-content">
-          <div class="hero-text">
-            <div class="hero-badge">
-              <span class="pulse-dot"></span>
-              AI-Powered Rewards Optimizer
-            </div>
-
-            <h1>
-              <span class="line">Navigate Your</span>
-              <span class="line gradient-text">Rewards.</span>
-              <span class="line">Maximize Every</span>
-              <span class="line gradient-text-primary">Swipe.</span>
-            </h1>
-
-            <p class="hero-subtitle">
-              CardCompass uses AI to automatically analyze your credit card statements
-              and tell you exactly which card to use for every purchase — so you never
-              leave rewards on the table.
-            </p>
-
-            <div class="hero-actions">
-              <a href="#cta" class="btn btn-primary btn-glow magnetic">
-                Start Saving
-                <span class="btn-icon">→</span>
-              </a>
-              <a href="#how-it-works" class="btn btn-secondary magnetic">
-                See How It Works
-              </a>
-            </div>
-
-            <div class="hero-trust">
-              <div class="hero-trust-item">
-                <span class="trust-num">183+</span> Cards
-              </div>
-              <div class="hero-trust-item">
-                <span class="trust-num">10+</span> Banks
-              </div>
-              <div class="hero-trust-item">
-                <span class="trust-num">AI</span> Powered
-              </div>
-            </div>
+      <div class="hero-content full-width">
+        <div class="hero-text">
+          <div class="hero-badge">
+            <span class="pulse-dot"></span>
+            AI-Powered Rewards Optimizer
           </div>
 
-          <div class="hero-visual">
-            <div class="card-3d" id="card3d">
-              <div class="card-3d-shine" id="cardShine"></div>
-              <div class="card-3d-content">
-                <div>
-                  <div class="card-3d-brand">CARDCOMPASS</div>
-                  <div class="card-3d-chip"></div>
-                </div>
-                <div class="card-3d-number">•••• •••• •••• 4242</div>
-                <div class="card-3d-footer">
-                  <div class="card-3d-name">Shantanu Chandra</div>
-                  <div class="card-3d-network">VISA</div>
-                </div>
+          <h1>
+            <span class="line">Stop Leaving</span>
+            <span class="line gradient-text">₹50,000+</span>
+            <span class="line">On the Table.</span>
+          </h1>
+
+          <p class="hero-subtitle">
+            CardCompass uses Gemini AI to analyze your credit card statements and tell you exactly which card to swipe — for every single purchase.
+          </p>
+
+          <div class="hero-actions">
+            <a href="#signin" class="btn btn-google magnetic" id="heroSignIn">
+              <svg width="20" height="20" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+              Sign in with Google
+            </a>
+            <a href="#how-it-works" class="btn btn-secondary magnetic">
+              See How It Works
+            </a>
+          </div>
+        </div>
+
+        <div class="hero-visual">
+          <img src="img/hero-compass.png" alt="AI-powered compass navigating credit card rewards" class="hero-illustration" width="600" height="600">
+          <div class="card-3d" id="card3d">
+            <div class="card-3d-shine" id="cardShine"></div>
+            <div class="card-3d-content">
+              <div>
+                <div class="card-3d-brand">CARDCOMPASS</div>
+                <div class="card-3d-chip"></div>
+              </div>
+              <div class="card-3d-number">•••• •••• •••• 4242</div>
+              <div class="card-3d-footer">
+                <div class="card-3d-name">Shantanu Chandra</div>
+                <div class="card-3d-network">VISA</div>
               </div>
             </div>
           </div>
@@ -191,76 +159,144 @@
     </section>
 
 
-    <!-- ═══════════ PROBLEM ═══════════ -->
-    <section class="problem" id="problem">
-      <div class="container">
+    <!-- ═══════════ ACT 2: THE PROBLEM (Pain) ═══════════ -->
+    <section class="act-problem" id="problem">
+      <div class="full-width">
         <div class="section-header reveal">
           <div class="section-label">The Problem</div>
           <h2>Indians leave over <span class="gradient-text">₹50,000</span> in credit card rewards unclaimed every year.</h2>
-          <p>Most people use the wrong card for purchases, forget to activate rotating categories, miss milestone bonuses, and redeem points at the worst rate. It's not your fault — the system is designed to be confusing.</p>
         </div>
 
-        <div class="problem-stats reveal-stagger">
-          <div class="problem-stat">
-            <div class="problem-stat-number" data-count="72">0%</div>
-            <div class="problem-stat-label">of Indians use the wrong card for at least half their purchases</div>
-          </div>
-          <div class="problem-stat">
-            <div class="problem-stat-number">₹<span data-count="50000" data-prefix="₹">0</span>+</div>
-            <div class="problem-stat-label">average annual rewards left unclaimed per multi-card household</div>
-          </div>
-          <div class="problem-stat">
-            <div class="problem-stat-number"><span data-count="183">0</span>+</div>
-            <div class="problem-stat-label">unique Indian credit cards, each with different rules, caps, and quirks</div>
+        <!-- Visual Infographic Row -->
+        <div class="problem-visual reveal">
+          <div class="problem-flow">
+            <!-- Card 1 -->
+            <div class="problem-card glass-card">
+              <div class="problem-card-icon">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="1.5" stroke-linecap="round">
+                  <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+                </svg>
+              </div>
+              <div class="problem-card-number" data-count="72">0<span>%</span></div>
+              <p>of Indians use the <strong>wrong card</strong> for at least half their purchases</p>
+            </div>
+
+            <!-- Animated Arrow -->
+            <div class="problem-arrow">
+              <svg width="60" height="24" viewBox="0 0 60 24" fill="none">
+                <path d="M0 12h50M50 12l-8-8M50 12l-8 8" stroke="var(--color-primary)" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 4">
+                  <animate attributeName="stroke-dashoffset" values="0;-16" dur="1s" repeatCount="indefinite"/>
+                </path>
+              </svg>
+            </div>
+
+            <!-- Card 2 -->
+            <div class="problem-card glass-card">
+              <div class="problem-card-icon">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--color-gold)" stroke-width="1.5" stroke-linecap="round">
+                  <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                </svg>
+              </div>
+              <div class="problem-card-number">₹<span data-count="50000">0</span><span>+</span></div>
+              <p>average annual rewards <strong>left unclaimed</strong> per multi-card household</p>
+            </div>
+
+            <!-- Animated Arrow -->
+            <div class="problem-arrow">
+              <svg width="60" height="24" viewBox="0 0 60 24" fill="none">
+                <path d="M0 12h50M50 12l-8-8M50 12l-8 8" stroke="var(--color-secondary)" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 4">
+                  <animate attributeName="stroke-dashoffset" values="0;-16" dur="1.2s" repeatCount="indefinite"/>
+                </path>
+              </svg>
+            </div>
+
+            <!-- Card 3 -->
+            <div class="problem-card glass-card">
+              <div class="problem-card-icon">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="1.5" stroke-linecap="round">
+                  <rect x="1" y="4" width="22" height="16" rx="3"/>
+                  <path d="M1 10h22"/>
+                </svg>
+              </div>
+              <div class="problem-card-number"><span data-count="183">0</span><span>+</span></div>
+              <p><strong>unique Indian credit cards</strong> each with different rules, caps, and quirks</p>
+            </div>
           </div>
         </div>
+
+        <p class="problem-subtext reveal">Most people use the wrong card, forget to activate rotating categories, miss milestone bonuses, and redeem points at the worst rate. <strong>It's not your fault — the system is designed to be confusing.</strong></p>
       </div>
     </section>
 
 
-    <!-- ═══════════ HOW IT WORKS ═══════════ -->
+    <!-- ═══════════ ACT 3: THE SOLUTION (How It Works) ═══════════ -->
     <section id="how-it-works">
-      <div class="container">
+      <div class="full-width">
         <div class="section-header reveal">
           <div class="section-label">How It Works</div>
           <h2>Three Steps to <span class="gradient-text-primary">Maximum Rewards</span></h2>
-          <p>No spreadsheets. No guesswork. Just connect your email and let the AI do the heavy lifting.</p>
         </div>
 
-        <div class="steps reveal-stagger">
-          <div class="step">
-            <div class="step-card">
-              <div class="step-number">01</div>
-              <div class="step-icon">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+        <!-- Step 1: Full-width panel -->
+        <div class="act-panel reveal" id="step-connect">
+          <div class="act-panel-content">
+            <div class="act-panel-text">
+              <div class="act-number">01</div>
+              <h3>Connect Your Gmail</h3>
+              <p>Securely link your email with Google OAuth. CardCompass scans for bank statement emails and downloads the PDF attachments — you don't touch a thing. Read-only access, zero data stored on our servers.</p>
+              <div class="act-panel-tags">
+                <span class="tag">OAuth 2.0</span>
+                <span class="tag">Read-Only</span>
+                <span class="tag">Auto-Detect</span>
               </div>
-              <h3>Connect Gmail</h3>
-              <p>Securely link your email. CardCompass scans for bank statement emails and downloads the PDF attachments — you don't touch a thing.</p>
+            </div>
+            <div class="act-panel-visual">
+              <div class="step-icon-large">
+                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+              </div>
             </div>
           </div>
-          <div class="step">
-            <div class="step-card">
-              <div class="step-number">02</div>
-              <div class="step-icon">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
+        </div>
+
+        <!-- Step 2 -->
+        <div class="act-panel reverse reveal" id="step-analyze">
+          <div class="act-panel-content">
+            <div class="act-panel-text">
+              <div class="act-number">02</div>
+              <h3>AI Analyzes Everything</h3>
+              <p>Gemini AI reads every transaction — amounts, merchants, categories. It unlocks encrypted PDFs, handles 15+ messy bank formats, and normalizes everything into clean, structured data. 99.2% accuracy.</p>
+              <div class="act-panel-tags">
+                <span class="tag">Gemini AI</span>
+                <span class="tag">15+ Bank Formats</span>
+                <span class="tag">99.2% Accuracy</span>
               </div>
-              <h3>AI Analyzes</h3>
-              <p>Gemini AI reads every transaction — amounts, merchants, categories. It unlocks encrypted PDFs, handles messy bank formats, and normalizes everything.</p>
+            </div>
+            <div class="act-panel-visual">
+              <img src="img/app-dashboard.png" alt="CardCompass dashboard showing card carousel and recommendations" class="act-panel-img" loading="lazy" width="500" height="500">
             </div>
           </div>
-          <div class="step">
-            <div class="step-card">
-              <div class="step-number">03</div>
-              <div class="step-icon">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-              </div>
+        </div>
+
+        <!-- Step 3 -->
+        <div class="act-panel reveal" id="step-optimize">
+          <div class="act-panel-content">
+            <div class="act-panel-text">
+              <div class="act-number">03</div>
               <h3>Smart Recommendations</h3>
-              <p>For every purchase, know exactly which card earns the most. Track milestones, movie offers, rotating categories — all on autopilot.</p>
+              <p>For every purchase, know exactly which card earns the most. Track milestones, movie BOGO offers, rotating categories — all on autopilot. Save ₹4,200+ every month.</p>
+              <div class="act-panel-tags">
+                <span class="tag">50+ Categories</span>
+                <span class="tag">BOGO Engine</span>
+                <span class="tag">₹4,200/mo Savings</span>
+              </div>
+            </div>
+            <div class="act-panel-visual">
+              <img src="img/app-recommendations.png" alt="AI card recommendation showing 5x rewards comparison" class="act-panel-img" loading="lazy" width="500" height="500">
             </div>
           </div>
         </div>
 
-        <!-- Terminal Animation -->
+        <!-- Terminal -->
         <div class="terminal reveal-scale" id="terminal">
           <div class="terminal-header">
             <div class="terminal-dot red"></div>
@@ -285,127 +321,123 @@
     </section>
 
 
-    <!-- ═══════════ FEATURES ═══════════ -->
+    <!-- ═══════════ ACT 4: PROOF (Features + Stats) ═══════════ -->
     <section id="features">
-      <div class="container">
+      <div class="full-width">
         <div class="section-header reveal">
           <div class="section-label">Features</div>
           <h2>Built for the Indian Credit Card <span class="gradient-text">Power User</span></h2>
-          <p>Every feature is designed around the unique complexity of Indian credit card rewards — from BOGO movie deals to milestone-based accelerated earn rates.</p>
         </div>
 
         <div class="features-grid reveal-stagger">
-          <!-- 1. Smart Card Matching (wide) -->
-          <div class="feature-card wide glow-border">
+          <div class="feature-card wide glow-border glass-card">
             <div class="bg-glow"></div>
             <div class="feature-icon cyan">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="3"/><path d="M1 10h22"/></svg>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="1" y="4" width="22" height="16" rx="3"/><path d="M1 10h22"/></svg>
             </div>
             <h3>Smart Card Matching</h3>
-            <p>Know exactly which card to swipe for every purchase category. The engine cross-references your cards against 50+ spending categories with real-time benefit rules, caps, and accelerated earn rates.</p>
+            <p>Cross-references your cards against 50+ spending categories with real-time benefit rules, caps, and accelerated earn rates.</p>
           </div>
 
-          <!-- 2. Movie Ticket Engine -->
-          <div class="feature-card glow-border">
+          <div class="feature-card glow-border glass-card">
             <div class="bg-glow"></div>
             <div class="feature-icon magenta">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/></svg>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
             </div>
             <h3>Movie Ticket Engine</h3>
             <p>BOGO deals on BookMyShow and PVR — the most complex benefit category — solved with a dedicated rule engine.</p>
           </div>
 
-          <!-- 3. Milestone Tracking -->
-          <div class="feature-card glow-border">
+          <div class="feature-card glow-border glass-card">
             <div class="bg-glow"></div>
             <div class="feature-icon gold">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
             </div>
             <h3>Milestone Tracking</h3>
             <p>Never miss a spending milestone that unlocks accelerated earn rates or bonus reward points.</p>
           </div>
 
-          <!-- 4. 183+ Card Database -->
-          <div class="feature-card glow-border">
+          <div class="feature-card glow-border glass-card">
             <div class="bg-glow"></div>
             <div class="feature-icon purple">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
             </div>
             <h3>183+ Card Database</h3>
-            <p>Every major Indian credit card — HDFC, SBI, ICICI, Axis, Kotak, and more — with every benefit rule, always updated.</p>
+            <p>Every major Indian credit card — HDFC, SBI, ICICI, Axis, Kotak — with every benefit rule, always updated.</p>
           </div>
 
-          <!-- 5. Statement Auto-Sync -->
-          <div class="feature-card glow-border">
+          <div class="feature-card glow-border glass-card">
             <div class="bg-glow"></div>
             <div class="feature-icon green">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
             </div>
             <h3>Statement Auto-Sync</h3>
             <p>AI reads your Gmail statements automatically — no manual entry, no CSV uploads. Just connect and forget.</p>
           </div>
 
-          <!-- 6. Spend Analytics (full) -->
-          <div class="feature-card full glow-border">
+          <div class="feature-card full glow-border glass-card">
             <div class="bg-glow"></div>
             <div class="feature-icon cyan">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
             </div>
-            <h3>Spend Analytics & Insights</h3>
-            <p>See where your money goes, how much you're earning back, and which categories are costing you the most in missed rewards. Beautiful charts, real data, actionable insights — not just numbers in a spreadsheet.</p>
+            <h3>Spend Analytics</h3>
+            <p>Visual breakdown of spending patterns across categories, cards, and time periods. See exactly where your money goes and which optimization opportunities you're missing.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Giant Stats Bar -->
+    <section class="stats-bar" id="stats">
+      <div class="full-width">
+        <div class="stats-grid">
+          <div class="stat-item reveal">
+            <div class="stat-number"><span data-count="183">0</span>+</div>
+            <div class="stat-label">Credit Cards</div>
+          </div>
+          <div class="stat-item reveal">
+            <div class="stat-number"><span data-count="10">0</span>+</div>
+            <div class="stat-label">Indian Banks</div>
+          </div>
+          <div class="stat-item reveal">
+            <div class="stat-number">₹<span data-count="50">0</span>K+</div>
+            <div class="stat-label">Annual Savings</div>
+          </div>
+          <div class="stat-item reveal">
+            <div class="stat-number"><span data-count="99">0</span>.2%</div>
+            <div class="stat-label">AI Accuracy</div>
           </div>
         </div>
       </div>
     </section>
 
 
-    <!-- ═══════════ STATS ═══════════ -->
-    <section class="stats" id="stats">
-      <div class="container">
-        <div class="section-header reveal">
-          <div class="section-label">By the Numbers</div>
-          <h2>Precision at <span class="gradient-text-primary">Scale</span></h2>
-        </div>
+    <!-- ═══════════ ACT 5: THE CALL (Sign In) ═══════════ -->
+    <section class="act-signin" id="signin">
+      <div class="full-width">
+        <div class="signin-content reveal">
+          <div class="section-label">Get Started</div>
+          <h2>Ready to <span class="gradient-text-primary">Stop Losing Money</span>?</h2>
+          <p>Sign in with Google and start optimizing your credit card rewards in under 60 seconds. No credit card required. No data stored on external servers.</p>
 
-        <div class="stats-grid reveal-stagger">
-          <div class="stat-item">
-            <div class="stat-number cyan" data-count="183">0</div>
-            <div class="stat-label">Cards Tracked</div>
-          </div>
-          <div class="stat-item">
-            <div class="stat-number purple" data-count="10">0</div>
-            <div class="stat-label">Banks Supported</div>
-          </div>
-          <div class="stat-item">
-            <div class="stat-number gold">₹<span data-count="50000">0</span>+</div>
-            <div class="stat-label">Avg. Annual Savings</div>
-          </div>
-          <div class="stat-item">
-            <div class="stat-number green"><span data-count="99">0</span>.<span data-count="2" data-duration="800">0</span>%</div>
-            <div class="stat-label">Parsing Accuracy</div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-
-    <!-- ═══════════ CTA ═══════════ -->
-    <section class="cta-section" id="cta">
-      <div class="container">
-        <div class="cta-content reveal-scale">
-          <div class="section-label">Ready?</div>
-          <h2>Stop Leaving Money<br>on the <span class="gradient-text">Table.</span></h2>
-          <p>Join thousands of Indian credit card power users who are maximizing every swipe with CardCompass.</p>
-
-          <a href="#" class="btn btn-primary btn-glow magnetic" style="font-size: var(--text-lg); padding: 18px 48px;">
-            Start Saving Now
-            <span class="btn-icon">→</span>
+          <a href="#" class="btn btn-google btn-google-large magnetic" id="ctaSignIn">
+            <svg width="24" height="24" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+            Sign in with Google
           </a>
 
-          <div class="cta-trust-line">
-            <span>Free to try</span>
-            <span>No credit card needed</span>
-            <span>Bank-grade security</span>
+          <div class="signin-trust">
+            <div class="trust-badge">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-success)" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              <span>End-to-end encrypted</span>
+            </div>
+            <div class="trust-badge">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-success)" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              <span>Read-only Gmail access</span>
+            </div>
+            <div class="trust-badge">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-success)" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+              <span>No data stored on servers</span>
+            </div>
           </div>
         </div>
       </div>
@@ -415,11 +447,11 @@
 
   <!-- ═══════════ FOOTER ═══════════ -->
   <footer class="footer">
-    <div class="container">
+    <div class="full-width">
       <div class="footer-inner">
         <div class="footer-logo">
           <div class="nav-logo-icon" style="width:28px;height:28px;">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="3"/><path d="M1 10h22"/></svg>
+            <img src="img/app-icon.png" alt="CardCompass" width="28" height="28" style="border-radius: 6px;">
           </div>
           <span>CARDCOMPASS</span>
         </div>
@@ -428,6 +460,7 @@
           <a href="#features" class="footer-link">Features</a>
           <a href="#how-it-works" class="footer-link">How It Works</a>
           <a href="design-system.html" class="footer-link">Design System</a>
+          <a href="llm.txt" class="footer-link">AI/LLM Info</a>
           <a href="#" class="footer-link">Privacy</a>
           <a href="#" class="footer-link">Terms</a>
         </div>
@@ -443,4 +476,3 @@
   <script src="script.js"></script>
 </body>
 </html>
-

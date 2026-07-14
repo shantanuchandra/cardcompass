@@ -506,12 +506,11 @@
   /* ═══════════════════════════════════════════
      10. SVG STROKE-DRAW INITIALIZATION
      Calculates total path length for each SVG
-     inside .step-icon and .feature-icon, sets
-     the --path-length CSS var, and triggers
+     inside .feature-icon, and triggers
      the draw animation when they scroll into view.
      ═══════════════════════════════════════════ */
   if (!prefersReducedMotion) {
-    const iconSVGs = document.querySelectorAll('.step-icon svg, .feature-icon svg');
+    const iconSVGs = document.querySelectorAll('.feature-icon svg');
     iconSVGs.forEach((svg) => {
       const paths = svg.querySelectorAll('path, polyline, line, circle, rect, ellipse');
       paths.forEach((path) => {
@@ -525,25 +524,93 @@
         }
       });
     });
+  }
 
-    // Trigger stroke-draw when step cards scroll into view
-    const stepObserver = new IntersectionObserver((entries) => {
-      entries.forEach((entry) => {
-        if (entry.isIntersecting) {
-          entry.target.classList.add('in-view');
-          const svgPaths = entry.target.querySelectorAll('.step-icon svg path, .step-icon svg polyline, .step-icon svg line, .step-icon svg circle, .step-icon svg rect');
-          svgPaths.forEach((path, i) => {
-            setTimeout(() => {
-              path.style.transition = 'stroke-dashoffset 1.2s cubic-bezier(0.22, 1, 0.36, 1)';
-              path.style.strokeDashoffset = '0';
-            }, i * 150);
-          });
-          stepObserver.unobserve(entry.target);
-        }
-      });
-    }, { threshold: 0.3 });
 
-    document.querySelectorAll('.step').forEach((step) => stepObserver.observe(step));
+  /* ═══════════════════════════════════════════
+     11. AI TOGGLE — Navigate to llm.txt
+     The "AI View" button navigates to the
+     machine-readable product description.
+     ═══════════════════════════════════════════ */
+  const aiToggle = document.getElementById('aiToggle');
+  if (aiToggle) {
+    aiToggle.addEventListener('click', () => {
+      window.location.href = 'llm.txt';
+    });
+  }
+
+
+  /* ═══════════════════════════════════════════
+     12. GOOGLE SIGN-IN REDIRECT
+     The Google Sign-In buttons redirect to the
+     Supabase OAuth URL. After auth, Supabase
+     redirects the user to the Flutter app.
+     ═══════════════════════════════════════════ */
+  const signInButtons = document.querySelectorAll('#heroSignIn, #ctaSignIn');
+  
+  // Supabase project URL — replace with your actual project URL
+  // The redirect URL should point to your Flutter web app
+  const SUPABASE_URL = 'https://your-project.supabase.co';
+  const REDIRECT_URL = window.location.origin + '/app';
+  
+  signInButtons.forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      
+      // Construct the Supabase OAuth URL for Google Sign-In
+      const authUrl = `${SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(REDIRECT_URL)}`;
+      
+      // For now, show a brief visual feedback then redirect
+      btn.style.transform = 'scale(0.97)';
+      btn.style.opacity = '0.8';
+      
+      setTimeout(() => {
+        // In production: window.location.href = authUrl;
+        // For demo: show a toast-like notification
+        showSignInToast();
+        btn.style.transform = '';
+        btn.style.opacity = '';
+      }, 200);
+    });
+  });
+
+  function showSignInToast() {
+    const existing = document.querySelector('.signin-toast');
+    if (existing) existing.remove();
+
+    const toast = document.createElement('div');
+    toast.className = 'signin-toast';
+    toast.innerHTML = `
+      <div style="
+        position: fixed;
+        bottom: 24px;
+        right: 24px;
+        z-index: 500;
+        background: rgba(16, 24, 48, 0.9);
+        backdrop-filter: blur(20px);
+        border: 1px solid rgba(0, 245, 255, 0.2);
+        border-radius: 12px;
+        padding: 16px 24px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        color: rgba(255,255,255,0.9);
+        font-family: 'Plus Jakarta Sans', sans-serif;
+        font-size: 14px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+        animation: fade-in-up 0.4s ease both;
+      ">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#00F5FF" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        Google Sign-In will redirect to your CardCompass app
+      </div>
+    `;
+    document.body.appendChild(toast);
+    
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transition = 'opacity 0.3s ease';
+      setTimeout(() => toast.remove(), 300);
+    }, 3000);
   }
 
 })();

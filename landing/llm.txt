@@ -1,0 +1,89 @@
+# CardCompass — AI-Powered Credit Card Rewards Optimizer for India
+
+> This file is a machine-readable product description following the llm.txt convention.
+> It provides structured information about CardCompass for AI/LLM consumption.
+
+## Product Overview
+
+**Name:** CardCompass
+**Version:** 2.0.1
+**Category:** Personal Finance / AI-Powered Fintech
+**Market:** India
+**Platform:** Mobile App (Flutter — iOS & Android) + Web Landing Page
+
+CardCompass is an AI-powered credit card rewards optimizer designed specifically for the Indian market. It automatically analyzes credit card statements using Gemini AI, identifies which card earns the most rewards for each purchase category, and provides personalized recommendations to maximize reward earnings.
+
+## Problem Statement
+
+Indian credit card users leave an estimated ₹50,000+ in rewards unclaimed annually because:
+- 183+ unique credit cards exist in India, each with different rules, caps, and quirks
+- 72% of users use the wrong card for at least half their purchases
+- Rotating categories, milestone bonuses, and complex earn-rate structures make manual optimization impossible
+- Reward point redemption rates vary dramatically (1 point = ₹0.15 to ₹1.50 depending on the method)
+
+## Core Features
+
+### 1. Smart Card Matching
+Cross-references user's cards against 50+ spending categories with real-time benefit rules, caps, and accelerated earn rates. For every purchase, tells the user exactly which card earns the most.
+
+### 2. Gmail Statement Auto-Sync
+Connects to user's Gmail account via OAuth. Automatically scans for bank statement emails, downloads PDF attachments, unlocks encrypted statements, and extracts transaction data — no manual entry required.
+
+### 3. AI Transaction Analysis (Gemini AI)
+Uses Google's Gemini AI to read and normalize transaction data from messy, inconsistent bank statement PDFs. Handles OCR, encrypted PDFs, multiple bank formats, and categorizes transactions automatically.
+
+### 4. Movie Ticket Engine
+Dedicated rule engine for BOGO (Buy One Get One) movie deals — the most complex benefit category in Indian credit cards. Covers BookMyShow, PVR, and other platforms.
+
+### 5. Milestone Tracking
+Tracks spending milestones that unlock accelerated earn rates or bonus reward points (e.g., "Spend ₹1L in a quarter for 2x points on all categories").
+
+### 6. 183+ Indian Credit Card Database
+Comprehensive database of every major Indian credit card — HDFC, SBI, ICICI, Axis, Kotak, RBL, IndusInd, and more — with every benefit rule, cap, and condition.
+
+### 7. Spend Analytics
+Visual breakdown of spending patterns across categories, cards, and time periods. Shows optimization opportunities and missed rewards.
+
+## Technical Architecture
+
+- **Frontend:** Flutter (Dart) — cross-platform iOS, Android, Web
+- **State Management:** Riverpod
+- **Backend:** Supabase (PostgreSQL + Auth + Storage)
+- **AI Engine:** Google Gemini 3.5 Flash (via Generative Language API)
+- **Authentication:** Google OAuth + Supabase Auth
+- **Local Storage:** Hive (encrypted local cache)
+- **Email Integration:** Gmail API (OAuth2 scopes: gmail.readonly)
+
+## Supported Banks (India)
+
+HDFC Bank, SBI Cards, ICICI Bank, Axis Bank, Kotak Mahindra, RBL Bank, IndusInd Bank, IDFC First, American Express, Citi Bank, Standard Chartered, Yes Bank, AU Small Finance Bank, Federal Bank, Bank of Baroda
+
+## Data Privacy
+
+- Statement data is processed locally on-device using AI
+- No transaction data is stored on external servers
+- Gmail access uses read-only scopes
+- Supabase stores only user preferences and card configurations
+- Full DPDPA (India's Digital Personal Data Protection Act) compliance
+
+## Key Metrics
+
+- 183+ Indian credit cards supported
+- 50+ spending categories mapped
+- 10+ banks integrated
+- 99.2% AI transaction extraction accuracy
+- ₹50,000+ average annual savings potential per multi-card user
+
+## Contact
+
+- Website: https://cardcompass.in
+- Support: support@cardcompass.in
+
+## API / Integration
+
+CardCompass does not currently offer a public API. The product is a consumer-facing mobile application.
+
+---
+
+*Last updated: 2026-07-14*
+*Format: llm.txt v1.0*
