@@ -34,6 +34,46 @@ class TransactionGroup {
   });
 }
 
+/// How [SpendTrendSummary.points] are bucketed.
+enum TrendBucketing { byDay, byMonth }
+
+/// One bucket's total debit spend, labeled for chart display.
+class TrendPoint {
+  final DateTime bucketStart;
+  final double total;
+  final String label;
+
+  const TrendPoint({
+    required this.bucketStart,
+    required this.total,
+    required this.label,
+  });
+}
+
+/// Aggregated trend data for the spend-trend panel. Null (via
+/// [TransactionsViewState.spendTrend]) when there isn't enough data to plot
+/// a meaningful trend.
+class SpendTrendSummary {
+  final TrendBucketing bucketing;
+  final List<TrendPoint> points;
+  final double dailyAverage;
+  final String peakLabel;
+
+  /// Percentage change in total spend vs. the immediately preceding period
+  /// of equal length. Null when there's no prior-period data to compare
+  /// against (e.g. "All Time" is selected, or there's no history before the
+  /// current range).
+  final double? percentVsPriorPeriod;
+
+  const SpendTrendSummary({
+    required this.bucketing,
+    required this.points,
+    required this.dailyAverage,
+    required this.peakLabel,
+    required this.percentVsPriorPeriod,
+  });
+}
+
 /// The single authoritative definition of "debit spend" for a transaction:
 /// its absolute amount if it's a debit, otherwise zero.
 double _debitAmount(Transaction t) {
@@ -163,6 +203,102 @@ class TransactionsViewState {
         subtotal: _debitTotal(sorted),
       );
     }).toList();
+  }
+
+  /// Aggregates [filteredTransactions] into a spend trend, bucketed by day
+  /// for an explicit [dateRange] or by month when "All Time" (no range) is
+  /// selected. Returns null if there are fewer than 2 distinct buckets.
+  SpendTrendSummary? spendTrend() {
+    if (filteredTransactions.isEmpty) return null;
+
+    final bucketing =
+        dateRange == null ? TrendBucketing.byMonth : TrendBucketing.byDay;
+
+    DateTime bucketKeyFor(DateTime date) {
+      return bucketing == TrendBucketing.byDay
+          ? DateTime(date.year, date.month, date.day)
+          : DateTime(date.year, date.month);
+    }
+
+    String labelFor(DateTime bucketStart) {
+      const months = [
+        'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      ];
+      return bucketing == TrendBucketing.byDay
+          ? '${months[bucketStart.month - 1]} ${bucketStart.day}'
+          : '${months[bucketStart.month - 1]} ${bucketStart.year}';
+    }
+
+    final totalsByBucket = <DateTime, double>{};
+    for (final t in filteredTransactions) {
+      final key = bucketKeyFor(t.transactionDate);
+      totalsByBucket[key] = (totalsByBucket[key] ?? 0) + _debitAmount(t);
+    }
+
+    if (totalsByBucket.length < 2) return null;
+
+    final sortedKeys = totalsByBucket.keys.toList()..sort();
+    final points = sortedKeys
+        .map((key) => TrendPoint(
+              bucketStart: key,
+              total: totalsByBucket[key]!,
+              label: labelFor(key),
+            ))
+        .toList();
+
+    final grandTotal = points.fold<double>(0, (sum, p) => sum + p.total);
+    final dayCount = bucketing == TrendBucketing.byDay
+        ? sortedKeys.last.difference(sortedKeys.first).inDays + 1
+        : sortedKeys.length * 30;
+    final dailyAverage = grandTotal / dayCount;
+
+    final peakPoint = points.reduce((a, b) => a.total >= b.total ? a : b);
+
+    return SpendTrendSummary(
+      bucketing: bucketing,
+      points: points,
+      dailyAverage: dailyAverage,
+      peakLabel: peakPoint.label,
+      percentVsPriorPeriod: _percentVsPriorPeriod(
+        bucketing: bucketing,
+        currentRangeStart: sortedKeys.first,
+        currentRangeEnd: sortedKeys.last,
+        currentTotal: grandTotal,
+      ),
+    );
+  }
+
+  /// Compares the current range's total debit spend to the immediately
+  /// preceding period of equal length, computed from the FULL [transactions]
+  /// list so the prior period isn't restricted by the active date filter.
+  double? _percentVsPriorPeriod({
+    required TrendBucketing bucketing,
+    required DateTime currentRangeStart,
+    required DateTime currentRangeEnd,
+    required double currentTotal,
+  }) {
+    if (bucketing == TrendBucketing.byMonth) return null;
+
+    final rangeLength =
+        currentRangeEnd.difference(currentRangeStart).inDays + 1;
+    final priorEnd = currentRangeStart.subtract(const Duration(days: 1));
+    final priorStart = priorEnd.subtract(Duration(days: rangeLength - 1));
+
+    final cardFilter = selectedCardId.isEmpty ? null : selectedCardId;
+    final categoryFilter = selectedCategory == 'All' ? null : selectedCategory;
+
+    final priorTotal = transactions
+        .where((t) =>
+            (cardFilter == null || t.userCardId == cardFilter) &&
+            (categoryFilter == null || t.category.name == categoryFilter) &&
+            !t.transactionDate.isBefore(priorStart) &&
+            t.transactionDate
+                .isBefore(priorEnd.add(const Duration(days: 1))))
+        .fold<double>(0, (sum, t) => sum + _debitAmount(t));
+
+    if (priorTotal == 0) return null;
+    return (currentTotal - priorTotal) / priorTotal * 100;
   }
 }
 

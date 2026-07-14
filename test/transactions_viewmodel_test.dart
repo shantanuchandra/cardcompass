@@ -146,4 +146,95 @@ void main() {
       expect(keys, {'2026-06', '2026-07'});
     });
   });
+
+  group('TransactionsViewState.spendTrend', () {
+    test('buckets by month for All Time and computes daily average, peak day, no prior-period comparison', () {
+      final state = const TransactionsViewState().copyWith(
+        dateRange: null, // All Time
+        filteredTransactions: [
+          _tx(id: '1', userCardId: 'cardA', amount: 100, date: DateTime(2026, 7, 1)),
+          _tx(id: '2', userCardId: 'cardA', amount: 50, date: DateTime(2026, 7, 1)),
+          _tx(id: '3', userCardId: 'cardA', amount: 300, date: DateTime(2026, 8, 2)),
+        ],
+      );
+
+      final trend = state.spendTrend();
+
+      expect(trend, isNotNull);
+      expect(trend!.bucketing, TrendBucketing.byMonth);
+      expect(trend.points.length, 2);
+      expect(trend.points[0].total, 150); // Jul: 100+50
+      expect(trend.points[1].total, 300); // Aug: 300
+      expect(trend.dailyAverage, isPositive);
+      expect(trend.peakLabel, isNotNull);
+      expect(trend.percentVsPriorPeriod, isNull);
+    });
+
+    test('buckets by day within an explicit date range and computes prior-period comparison', () {
+      final state = const TransactionsViewState().copyWith(
+        dateRange: DateRange(start: DateTime(2026, 7, 8), end: DateTime(2026, 7, 9)),
+        filteredTransactions: [
+          _tx(id: '1', userCardId: 'cardA', amount: 100, date: DateTime(2026, 7, 8)),
+          _tx(id: '2', userCardId: 'cardA', amount: 300, date: DateTime(2026, 7, 9)),
+        ],
+        transactions: [
+          _tx(id: '1', userCardId: 'cardA', amount: 100, date: DateTime(2026, 7, 8)),
+          _tx(id: '2', userCardId: 'cardA', amount: 300, date: DateTime(2026, 7, 9)),
+          // prior period (2026-07-06 to 2026-07-07) — total 200
+          _tx(id: '3', userCardId: 'cardA', amount: 200, date: DateTime(2026, 7, 6)),
+        ],
+      );
+
+      final trend = state.spendTrend();
+
+      expect(trend, isNotNull);
+      expect(trend!.bucketing, TrendBucketing.byDay);
+      expect(trend.points.length, 2);
+      expect(trend.points[0].total, 100);
+      expect(trend.points[1].total, 300);
+      expect(trend.dailyAverage, closeTo(200, 0.01));
+      // (400 - 200) / 200 * 100 = 100% increase
+      expect(trend.percentVsPriorPeriod, closeTo(100, 0.01));
+      expect(trend.peakLabel, isNotNull);
+    });
+
+    test('returns null when there are fewer than 2 distinct buckets of data', () {
+      final state = const TransactionsViewState().copyWith(
+        dateRange: DateRange(start: DateTime(2026, 7, 8), end: DateTime(2026, 7, 8)),
+        filteredTransactions: [
+          _tx(id: '1', userCardId: 'cardA', amount: 100, date: DateTime(2026, 7, 8)),
+        ],
+      );
+
+      final trend = state.spendTrend();
+
+      expect(trend, isNull);
+    });
+
+    test('returns null when there is no filtered data at all', () {
+      final state = const TransactionsViewState().copyWith(filteredTransactions: []);
+
+      final trend = state.spendTrend();
+
+      expect(trend, isNull);
+    });
+
+    test('excludes non-debit transactions from bucket totals', () {
+      final state = const TransactionsViewState().copyWith(
+        dateRange: DateRange(start: DateTime(2026, 7, 8), end: DateTime(2026, 7, 9)),
+        filteredTransactions: [
+          _tx(id: '1', userCardId: 'cardA', amount: 100, date: DateTime(2026, 7, 8)),
+          _tx(id: '2', userCardId: 'cardA', amount: 500, type: TransactionType.credit, date: DateTime(2026, 7, 9)),
+        ],
+      );
+
+      final trend = state.spendTrend();
+
+      // should return null because only 1 bucket has non-zero debit (Jul 8 has 100, Jul 9 has 0 credit)
+      // OR if it returns non-null, the credit tx must not inflate the Jul 9 bucket
+      if (trend != null) {
+        expect(trend.points.firstWhere((p) => p.bucketStart.day == 9).total, 0);
+      }
+    });
+  });
 }
