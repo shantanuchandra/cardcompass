@@ -34,12 +34,15 @@
   <title>cardcompass</title>
   <link rel="manifest" href="manifest.json">
   <style>
-    /* Enable text selection across the Flutter web app */
-    flt-glass-pane {
+    /* Enable text selection across the Flutter web app.
+       flutter-view is the modern (3.x+) host element;
+       flt-glass-pane is the legacy name kept for compat. */
+    flutter-view,
+    flt-glass-pane,
+    flutter-view * {
       user-select: text !important;
       -webkit-user-select: text !important;
     }
-    /* Also ensure the body cursor shows text selection */
     body {
       user-select: text;
       -webkit-user-select: text;
