@@ -75,8 +75,11 @@ class _RecommendationsEvalPanelState extends State<RecommendationsEvalPanel> {
 
   Widget _buildMain() {
     if (_logs.isEmpty) {
-      return _emptyState(
-          'No recommendation calls logged yet.\nUse the Recommendations screen to trigger calls.');
+      return EvalEmptyState(
+        emoji: '🂥',
+        title: 'No recommendation calls logged',
+        subtitle: 'Open the Recommendations screen to trigger AI calls. They will appear here automatically.',
+      );
     }
     final buckets = _confidenceBuckets();
     final maxBucket = buckets.values.fold(0, (a, b) => a > b ? a : b);
@@ -352,23 +355,6 @@ class _RecommendationsEvalPanelState extends State<RecommendationsEvalPanel> {
                       fontSize: 11, color: Colors.white70)),
             ),
           ],
-        ),
-      );
-
-  Widget _emptyState(String message) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('🃏', style: TextStyle(fontSize: 40)),
-              const SizedBox(height: 12),
-              Text(message,
-                  textAlign: TextAlign.center,
-                  style: GoogleFonts.plusJakartaSans(
-                      fontSize: 13, color: Colors.white38)),
-            ],
-          ),
         ),
       );
 }

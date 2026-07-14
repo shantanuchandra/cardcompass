@@ -70,8 +70,11 @@ class _SpendingOptEvalPanelState extends State<SpendingOptEvalPanel> {
 
   Widget _buildMain() {
     if (_logs.isEmpty) {
-      return _emptyState(
-          'No optimisation calls logged yet.\nUse the Analytics → Optimisations screen to trigger calls.');
+      return EvalEmptyState(
+        emoji: '📊',
+        title: 'No optimisation calls logged',
+        subtitle: 'Open Analytics → Optimisations to trigger AI calls. They will appear here automatically.',
+      );
     }
 
     final deltas = _categoryDeltas();
@@ -353,20 +356,4 @@ class _SpendingOptEvalPanelState extends State<SpendingOptEvalPanel> {
         ),
       );
 
-  Widget _emptyState(String message) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('📊', style: TextStyle(fontSize: 40)),
-              const SizedBox(height: 12),
-              Text(message,
-                  textAlign: TextAlign.center,
-                  style: GoogleFonts.plusJakartaSans(
-                      fontSize: 13, color: Colors.white38)),
-            ],
-          ),
-        ),
-      );
 }

@@ -87,7 +87,7 @@ class _BenefitExtractionEvalPanelState
           child: CircularProgressIndicator(color: Color(0xFF00F5FF)));
     }
 
-    return EvalPanelShell(
+      return EvalPanelShell(
       score: score,
       subsystemName: 'Benefit Extraction',
       icon: '🧬',
@@ -160,9 +160,9 @@ class _BenefitExtractionEvalPanelState
     return Table(
       columnWidths: const {
         0: FlexColumnWidth(3),
-        1: FixedColumnWidth(90),
-        2: FixedColumnWidth(70),
-        3: FixedColumnWidth(50),
+        1: FixedColumnWidth(100),
+        2: FixedColumnWidth(90),
+        3: FixedColumnWidth(60),
       },
       border: TableBorder.all(color: Colors.white10, width: 0.5),
       children: [
