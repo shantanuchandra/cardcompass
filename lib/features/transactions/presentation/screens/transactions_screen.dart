@@ -10,6 +10,7 @@ import '../../../../shared/models/transaction.dart';
 import '../../../../shared/models/credit_card.dart';
 import '../../viewmodels/transactions_viewmodel.dart';
 import '../../../benefits/viewmodels/benefits_viewmodel.dart';
+import '../widgets/spend_trend_panel.dart';
 
 class TransactionsScreen extends ConsumerStatefulWidget {
   const TransactionsScreen({super.key});
@@ -61,6 +62,11 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
                   _buildFilterBar(state, notifier),
                   const SizedBox(height: AppSpacing.md),
                   _buildTileRow(state, notifier),
+                  const SizedBox(height: AppSpacing.md),
+                  SpendTrendPanel(
+                    state: state,
+                    filterScopeCaption: _filterScopeCaption(state),
+                  ),
                   const SizedBox(height: AppSpacing.md),
                   if (state.filteredTransactions.isEmpty)
                     _buildNoResultsState(notifier)
@@ -202,6 +208,23 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
   }
 
   String _shortDate(DateTime date) => '${date.day}/${date.month}/${date.year}';
+
+  String _filterScopeCaption(TransactionsViewState state) {
+    final dateLabel = state.dateRange == null
+        ? 'All Time'
+        : '${_shortDate(state.dateRange!.start)} - ${_shortDate(state.dateRange!.end)}';
+
+    final cardLabel = state.selectedCardId.isEmpty
+        ? 'All Cards'
+        : state.userCards
+            .firstWhere(
+              (c) => c.id == state.selectedCardId,
+              orElse: () => state.userCards.first,
+            )
+            .cardName;
+
+    return '$dateLabel · $cardLabel';
+  }
 
   void _showDateRangeSheet(BuildContext context, TransactionsViewModelController notifier) {
     final now = DateTime.now();
