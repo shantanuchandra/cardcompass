@@ -22,6 +22,7 @@ class Env {
   static const String geminiApiKey = String.fromEnvironment('GEMINI_API_KEY');
   static const String geminiApiKey2 =
       String.fromEnvironment('GEMINI_API_KEY_2');
+  static const String groqApiKey = String.fromEnvironment('GROQ_API_KEY');
 
   /// Call once, early in `main()`, so a missing dart-defines file fails at
   /// startup with a clear message instead of much later with a confusing
