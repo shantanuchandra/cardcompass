@@ -253,10 +253,14 @@ class TransactionsViewState {
 
     final grandTotal = points.fold<double>(0, (sum, p) => sum + p.total);
     final dayCount = bucketing == TrendBucketing.byDay
-        ? (dateRange != null
-            ? dateRange!.end.difference(dateRange!.start).inDays + 1
-            : sortedKeys.last.difference(sortedKeys.first).inDays + 1)
-        : sortedKeys.length * 30;
+        ? dateRange!.end.difference(dateRange!.start).inDays + 1
+        : () {
+            // Compute days from start of first month to end of last month
+            final firstDay = sortedKeys.first;
+            final lastMonth = sortedKeys.last;
+            final endOfLastMonth = DateTime(lastMonth.year, lastMonth.month + 1, 0);
+            return endOfLastMonth.difference(firstDay).inDays + 1;
+          }();
     final dailyAverage = grandTotal / dayCount;
 
     final peakPoint = points.reduce((a, b) => a.total >= b.total ? a : b);
@@ -266,12 +270,14 @@ class TransactionsViewState {
       points: points,
       dailyAverage: dailyAverage,
       peakLabel: peakPoint.label,
-      percentVsPriorPeriod: _percentVsPriorPeriod(
-        bucketing: bucketing,
-        currentRangeStart: sortedKeys.first,
-        currentRangeEnd: sortedKeys.last,
-        currentTotal: grandTotal,
-      ),
+      percentVsPriorPeriod: bucketing == TrendBucketing.byDay
+          ? _percentVsPriorPeriod(
+              bucketing: bucketing,
+              currentRangeStart: dateRange!.start,
+              currentRangeEnd: dateRange!.end,
+              currentTotal: grandTotal,
+            )
+          : null,
     );
   }
 

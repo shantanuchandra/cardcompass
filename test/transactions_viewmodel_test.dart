@@ -165,7 +165,8 @@ void main() {
       expect(trend.points.length, 2);
       expect(trend.points[0].total, 150); // Jul: 100+50
       expect(trend.points[1].total, 300); // Aug: 300
-      expect(trend.dailyAverage, isPositive);
+      // 450 total / 62 days (Jul 1 through Aug 31 inclusive) ≈ 7.26
+      expect(trend.dailyAverage, closeTo(7.26, 0.1));
       expect(trend.peakLabel, isNotNull);
       expect(trend.percentVsPriorPeriod, isNull);
     });
@@ -246,6 +247,29 @@ void main() {
       expect(trend, isNotNull);
       // July 9 bucket should have 0 spend (credit ignored)
       expect(trend!.points.firstWhere((p) => p.bucketStart.day == 9).total, 0);
+    });
+
+    test('includes transactions on priorEnd date in prior-period total', () {
+      // Current range: July 10-11 (total 200)
+      // Prior range: July 8-9 (total should include both July 8 AND July 9)
+      final state = const TransactionsViewState().copyWith(
+        dateRange: DateRange(start: DateTime(2026, 7, 10), end: DateTime(2026, 7, 11)),
+        filteredTransactions: [
+          _tx(id: '1', userCardId: 'cardA', amount: 100, date: DateTime(2026, 7, 10)),
+          _tx(id: '2', userCardId: 'cardA', amount: 100, date: DateTime(2026, 7, 11)),
+        ],
+        transactions: [
+          _tx(id: '1', userCardId: 'cardA', amount: 100, date: DateTime(2026, 7, 10)),
+          _tx(id: '2', userCardId: 'cardA', amount: 100, date: DateTime(2026, 7, 11)),
+          _tx(id: '3', userCardId: 'cardA', amount: 50, date: DateTime(2026, 7, 8)),
+          _tx(id: '4', userCardId: 'cardA', amount: 150, date: DateTime(2026, 7, 9)), // priorEnd date
+        ],
+      );
+
+      final trend = state.spendTrend();
+      expect(trend, isNotNull);
+      // priorTotal = 50 + 150 = 200; currentTotal = 200; change = 0%
+      expect(trend!.percentVsPriorPeriod, closeTo(0, 0.01));
     });
   });
 }
