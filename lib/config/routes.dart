@@ -16,6 +16,7 @@ import 'package:cardcompass/features/settings/presentation/screens/settings_scre
 import 'package:cardcompass/features/benefits/presentation/screens/benefits_screen.dart';
 import 'package:cardcompass/features/notifications/presentation/screens/notifications_screen.dart';
 import 'package:cardcompass/features/debug/pm_pruning_debug_screen.dart';
+import 'package:cardcompass/features/evals/presentation/screens/ai_evals_screen.dart';
 
 /// Application routes configuration
 class AppRoutes {
@@ -39,6 +40,7 @@ class AppRoutes {
   static const String profile = '/profile';
   static const String settings = '/settings';
   static const String adminPm = '/admin/pm';
+  static const String adminEvals = '/admin/evals';
 
   static const Set<String> _startupRoutes = {
     splash,
@@ -59,6 +61,7 @@ class AppRoutes {
     profile,
     settings,
     adminPm,
+    adminEvals,
   };
 
   /// Resolves browser hash links before the splash screen can redirect an
@@ -175,6 +178,11 @@ class AppRoutes {
       case adminPm:
         return MaterialPageRoute(
           builder: (_) => const PmPruningDebugScreen(),
+          settings: settings,
+        );
+      case adminEvals:
+        return MaterialPageRoute(
+          builder: (_) => const AiEvalsScreen(),
           settings: settings,
         );
       case '/benefits':

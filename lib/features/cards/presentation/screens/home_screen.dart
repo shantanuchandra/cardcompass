@@ -161,6 +161,45 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             ),
           ),
 
+          // Admin: AI Evals shortcut
+          const SizedBox(height: AppSpacing.sm),
+          InkWell(
+            onTap: () => Navigator.of(context).pushNamed('/admin/evals'),
+            borderRadius: BorderRadius.circular(AppBorderRadius.md),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.sm + 2, vertical: AppSpacing.sm),
+              child: Row(
+                children: [
+                  Container(
+                    width: 30,
+                    height: 30,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF00F5FF).withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                          color: const Color(0xFF00F5FF).withValues(alpha: 0.3),
+                          width: 1),
+                    ),
+                    child: const Center(
+                      child: Text('🧪',
+                          style: TextStyle(fontSize: 14)),
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.sm + 4),
+                  Text(
+                    'AI Evals',
+                    style: GoogleFonts.spaceGrotesk(
+                      color: const Color(0xFF00F5FF),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
           // Extra bottom link/metadata or user profile shortcut
           const SizedBox(height: AppSpacing.md + 4),
           Container(
