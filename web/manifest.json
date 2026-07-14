@@ -1,11 +1,11 @@
 {
-    "name": "cardcompass",
-    "short_name": "cardcompass",
+    "name": "CardCompass",
+    "short_name": "CardCompass",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#0B0F2A",
+    "theme_color": "#0B0F2A",
+    "description": "Track and optimise your credit card rewards.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
