@@ -50,6 +50,122 @@ body {
   background: var(--surface-void);
   overflow-x: hidden;
   min-height: 100vh;
+  position: relative;
+}
+
+
+/* ═══════════════════════════════════════════════
+   BACKGROUND LAYER STACK
+   7 layers work together to break dark monotony:
+   L1: Base color (--surface-void) on body
+   L2: Animated SVG blobs (.blob-bg)
+   L3: Dot grid pattern (.dot-grid via body::after)
+   L4: SVG noise grain overlay (.noise-overlay)
+   L5: Mouse spotlight (.spotlight)
+   L6: Section atmospheric tints (per-section ::after)
+   L7: Section glow dividers (section + section::before)
+   ═══════════════════════════════════════════════ */
+
+/* L2: Animated SVG Blobs (Technique #5)
+   WHY: Organic movement prevents the background from feeling "dead."
+   Slow 15-25s drift is calming and hypnotic — rewards users who linger.
+   Native SVG <animate> runs off main thread, zero JS overhead.
+*/
+.blob-bg {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: -3;
+  pointer-events: none;
+}
+
+/* L3: Dot Grid Pattern (Technique #4)
+   WHY: Dots at grid intersections feel architectural and precise — they say
+   "precision engineering" without the heaviness of full grid lines. The radial
+   mask vignette fades dots toward edges, creating a natural "focus zone"
+   rather than wallpaper-like repetition.
+   Replaces old line grid for subtler, more premium feel.
+*/
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-image: radial-gradient(
+    circle at center,
+    rgba(255, 255, 255, 0.07) 1px,
+    transparent 1px
+  );
+  background-size: 32px 32px;
+  pointer-events: none;
+  mask-image: radial-gradient(ellipse 65% 55% at 50% 45%, black 20%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse 65% 55% at 50% 45%, black 20%, transparent 75%);
+}
+
+/* L4: SVG Noise / Film Grain Overlay (Technique #1)
+   WHY: Perfectly smooth digital gradients look "cheap plastic." Subtle noise
+   mimics film grain — which our eyes associate with "high quality" and "tactile."
+   0.65 baseFrequency = sweet spot for dark fintech (not too coarse, not too fine).
+   Applied at 3.5% opacity with soft-light blend — invisible unless you look for it,
+   but the overall impression shifts from "digital" to "cinematic."
+*/
+.noise-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  pointer-events: none;
+  opacity: 0.04;
+  filter: url(#noise-grain);
+  mix-blend-mode: soft-light;
+}
+
+/* L5: Interactive Mouse Spotlight (Technique #2)
+   WHY: The single highest-impact technique. Every award-winning dark site in
+   2026 has cursor-reactive lighting. The page responds to your presence —
+   creates localized contrast that draws the eye and makes the UI feel
+   "intelligent." Uses CSS custom properties set by JS mousemove.
+*/
+.spotlight {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    650px circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+    rgba(0, 245, 255, 0.045) 0%,
+    rgba(139, 92, 246, 0.02) 30%,
+    transparent 70%
+  );
+  transition: opacity 0.3s ease;
+  opacity: 0;
+}
+
+.spotlight.active {
+  opacity: 1;
+}
+
+/* L7: Section Glow Dividers (Technique #6)
+   WHY: Replaces boring border lines with luminous gradient seams. Glow creates
+   depth at section boundaries — the "light seams" between content zones.
+*/
+section + section::before {
+  content: '';
+  display: block;
+  height: 1px;
+  margin: 0 auto;
+  max-width: 800px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(0, 245, 255, 0.25) 25%,
+    rgba(139, 92, 246, 0.2) 50%,
+    rgba(255, 0, 127, 0.15) 75%,
+    transparent 100%
+  );
+  box-shadow:
+    0 0 12px rgba(0, 245, 255, 0.1),
+    0 0 30px rgba(139, 92, 246, 0.05);
 }
 
 img, video, svg { display: block; max-width: 100%; }
@@ -76,15 +192,17 @@ ul, ol { list-style: none; }
   --color-warning:    #F59E0B;   /* Neon Amber               */
 
   /* ── Surface Hierarchy ──
-     WHY: 5 levels of darkness create spatial depth without 3D rendering.
+     WHY: 5 levels of warm dark create spatial depth without 3D rendering.
+     Shifted from pure cold-black to warm-ink tones — prevents halation
+     (text glowing/smearing) and feels sophisticated rather than sterile.
      Each step is ~10-15 lightness units apart — enough to distinguish
      layers but close enough to feel cohesive.
   */
-  --surface-void:     #020810;   /* Deepest void — page bg   */
-  --surface-base:     #050B18;   /* Primary canvas           */
-  --surface-raised:   #0C152B;   /* Cards, panels            */
-  --surface-overlay:  #111D38;   /* Popovers, dropdowns      */
-  --surface-subtle:   #1E293B;   /* Borders, dividers        */
+  --surface-void:     #06090F;   /* Warm void — page bg      */
+  --surface-base:     #0A0F1A;   /* Warm primary canvas      */
+  --surface-raised:   #101828;   /* Cards, panels            */
+  --surface-overlay:  #162032;   /* Popovers, dropdowns      */
+  --surface-subtle:   #1F2C40;   /* Borders, dividers        */
 
   /* ── Text Hierarchy ──
      WHY: 4 levels prevent the "everything looks the same" problem.
@@ -99,14 +217,18 @@ ul, ol { list-style: none; }
   /* ── Glass System ──
      WHY: Frosted glass (backdrop-filter) creates literal visual depth —
      content behind panels stays partially visible, making the UI feel
-     three-dimensional and spatial. 20px blur obscures detail while
-     preserving color/light; 0.08 border opacity catches edge-light.
+     three-dimensional and spatial. 24px blur + 200% saturate makes
+     background colors richer through the glass. Edge highlights use
+     a top-border trick for specular "catch light" along the rim.
   */
-  --glass-bg:         rgba(12, 21, 43, 0.55);
-  --glass-border:     rgba(255, 255, 255, 0.08);
-  --glass-border-hover: rgba(255, 255, 255, 0.15);
-  --glass-blur:       20px;
-  --glass-shadow:     0 8px 32px rgba(0, 0, 0, 0.3);
+  --glass-bg:         rgba(16, 24, 48, 0.45);
+  --glass-bg-strong:  rgba(16, 24, 48, 0.65);
+  --glass-border:     rgba(255, 255, 255, 0.10);
+  --glass-border-hover: rgba(255, 255, 255, 0.20);
+  --glass-highlight:  rgba(255, 255, 255, 0.12);
+  --glass-blur:       24px;
+  --glass-shadow:     0 8px 32px rgba(0, 0, 0, 0.25),
+                      inset 0 1px 0 rgba(255, 255, 255, 0.06);
 
   /* ── Typography ──
      WHY: Space Grotesk headings = geometric precision with monospace DNA
@@ -300,32 +422,58 @@ section {
 
 /* ───────────────────────────────────────────────
    5. GLASS COMPONENTS
+   Upgraded with specular highlight (top border),
+   increased saturation, and refraction-ready
+   SVG filter class.
    ─────────────────────────────────────────────── */
 .glass {
   background: var(--glass-bg);
-  backdrop-filter: blur(var(--glass-blur)) saturate(180%);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  backdrop-filter: blur(var(--glass-blur)) saturate(200%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(200%);
   border: 1px solid var(--glass-border);
+  border-top: 1px solid var(--glass-highlight);
   box-shadow: var(--glass-shadow);
+}
+
+/* Deep glass variant — more frosted, more opaque */
+.glass-deep {
+  background: var(--glass-bg-strong);
+  backdrop-filter: blur(32px) saturate(220%);
+  -webkit-backdrop-filter: blur(32px) saturate(220%);
+  border: 1px solid var(--glass-border);
+  border-top: 1px solid var(--glass-highlight);
+  box-shadow: var(--glass-shadow);
+}
+
+/* Refraction class — applies SVG displacement filter */
+.glass-refract {
+  filter: url(#liquid-glass-filter);
 }
 
 .glass-card {
   background: var(--glass-bg);
-  backdrop-filter: blur(var(--glass-blur)) saturate(180%);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  backdrop-filter: blur(var(--glass-blur)) saturate(200%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(200%);
   border: 1px solid var(--glass-border);
+  border-top: 1px solid var(--glass-highlight);
   border-radius: var(--radius-xl);
   box-shadow: var(--glass-shadow);
   padding: var(--space-xl);
   transition: border-color var(--duration-fast) var(--ease-spring),
               transform var(--duration-fast) var(--ease-spring),
-              box-shadow var(--duration-fast) var(--ease-spring);
+              box-shadow var(--duration-fast) var(--ease-spring),
+              background var(--duration-fast) ease;
 }
 
 .glass-card:hover {
   border-color: var(--glass-border-hover);
+  border-top-color: rgba(255, 255, 255, 0.22);
   transform: translateY(-4px);
-  box-shadow: var(--glass-shadow), var(--glow-md) rgba(0, 245, 255, 0.06);
+  background: rgba(16, 24, 48, 0.55);
+  box-shadow:
+    var(--glass-shadow),
+    0 20px 50px rgba(0, 0, 0, 0.2),
+    var(--glow-md) rgba(0, 245, 255, 0.08);
 }
 
 /* Animated gradient border */
@@ -810,7 +958,8 @@ section {
    ─────────────────────────────────────────────── */
 .problem {
   background:
-    linear-gradient(180deg, var(--surface-void) 0%, var(--surface-base) 30%, var(--surface-base) 70%, var(--surface-void) 100%);
+    radial-gradient(ellipse 50% 40% at 50% 50%, rgba(255, 0, 127, 0.04) 0%, transparent 70%),
+    linear-gradient(180deg, transparent 0%, rgba(10, 15, 26, 0.5) 30%, rgba(10, 15, 26, 0.5) 70%, transparent 100%);
 }
 
 .problem-stats {
@@ -824,8 +973,12 @@ section {
   text-align: center;
   padding: var(--space-2xl) var(--space-lg);
   border-radius: var(--radius-xl);
-  background: var(--surface-raised);
-  border: 1px solid var(--surface-subtle);
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(200%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(200%);
+  border: 1px solid var(--glass-border);
+  border-top: 1px solid var(--glass-highlight);
+  box-shadow: var(--glass-shadow);
   transition: all var(--duration-fast) var(--ease-spring);
 }
 
@@ -870,8 +1023,12 @@ section {
 .step-card {
   padding: var(--space-2xl) var(--space-lg);
   border-radius: var(--radius-xl);
-  background: var(--surface-raised);
-  border: 1px solid var(--surface-subtle);
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(200%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(200%);
+  border: 1px solid var(--glass-border);
+  border-top: 1px solid var(--glass-highlight);
+  box-shadow: var(--glass-shadow);
   height: 100%;
   transition: all var(--duration-fast) var(--ease-spring);
   position: relative;
@@ -897,17 +1054,43 @@ section {
 }
 
 .step-icon {
-  width: 52px;
-  height: 52px;
+  width: 56px;
+  height: 56px;
   border-radius: var(--radius-lg);
-  background: rgba(0, 245, 255, 0.08);
-  border: 1px solid rgba(0, 245, 255, 0.2);
+  background: rgba(0, 245, 255, 0.06);
+  border: 1px solid rgba(0, 245, 255, 0.15);
   display: flex;
   align-items: center;
   justify-content: center;
   margin-bottom: var(--space-lg);
   color: var(--color-primary);
   font-size: 24px;
+  transition: all var(--duration-fast) var(--ease-spring);
+  position: relative;
+}
+
+/* SVG icons inside step-icon: stroke-draw on scroll-into-view */
+.step-icon svg {
+  stroke-dasharray: var(--path-length, 100);
+  stroke-dashoffset: var(--path-length, 100);
+  transition: stroke-dashoffset 1s var(--ease-out-expo),
+              filter var(--duration-fast) ease;
+}
+
+.step-icon svg.drawn,
+.step.in-view .step-icon svg {
+  stroke-dashoffset: 0;
+}
+
+.step-card:hover .step-icon {
+  background: rgba(0, 245, 255, 0.12);
+  border-color: rgba(0, 245, 255, 0.35);
+  transform: scale(1.1);
+  box-shadow: 0 0 20px rgba(0, 245, 255, 0.15);
+}
+
+.step-card:hover .step-icon svg {
+  filter: drop-shadow(0 0 6px rgba(0, 245, 255, 0.5));
 }
 
 .step h3 {
@@ -995,6 +1178,20 @@ section {
 /* ───────────────────────────────────────────────
    11. FEATURES BENTO GRID
    ─────────────────────────────────────────────── */
+
+/* L6: Section Atmospheric Tint (Technique #3) — Features gets purple glow */
+#features {
+  position: relative;
+}
+
+#features::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 55% 45% at 65% 35%, rgba(139, 92, 246, 0.06) 0%, transparent 55%);
+  pointer-events: none;
+  z-index: 0;
+}
 .features-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -1005,8 +1202,12 @@ section {
 .feature-card {
   padding: var(--space-2xl);
   border-radius: var(--radius-xl);
-  background: var(--surface-raised);
-  border: 1px solid var(--surface-subtle);
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(200%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(200%);
+  border: 1px solid var(--glass-border);
+  border-top: 1px solid var(--glass-highlight);
+  box-shadow: var(--glass-shadow);
   position: relative;
   overflow: hidden;
   transition: all var(--duration-fast) var(--ease-spring);
@@ -1014,8 +1215,13 @@ section {
 
 .feature-card:hover {
   border-color: var(--glass-border-hover);
+  border-top-color: rgba(255, 255, 255, 0.25);
   transform: translateY(-6px);
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+  background: rgba(16, 24, 48, 0.55);
+  box-shadow:
+    var(--glass-shadow),
+    0 24px 48px rgba(0, 0, 0, 0.25),
+    var(--glow-md) rgba(0, 245, 255, 0.06);
 }
 
 .feature-card.wide {
@@ -1027,8 +1233,8 @@ section {
 }
 
 .feature-icon {
-  width: 48px;
-  height: 48px;
+  width: 52px;
+  height: 52px;
   border-radius: var(--radius-lg);
   display: flex;
   align-items: center;
@@ -1036,6 +1242,16 @@ section {
   margin-bottom: var(--space-lg);
   font-size: 24px;
   transition: all var(--duration-fast) var(--ease-spring);
+}
+
+/* SVG icons inside feature-icon: hover glow + stroke effects */
+.feature-icon svg {
+  transition: filter var(--duration-fast) ease, transform var(--duration-fast) var(--ease-spring);
+}
+
+.feature-card:hover .feature-icon svg {
+  filter: drop-shadow(0 0 8px currentColor);
+  transform: scale(1.05);
 }
 
 .feature-icon.cyan {
@@ -1109,9 +1325,21 @@ section {
 /* ───────────────────────────────────────────────
    12. STATS SECTION
    ─────────────────────────────────────────────── */
+
+/* L6: Section Atmospheric Tint — Stats gets gold glow */
 .stats {
+  position: relative;
+}
+
+.stats::after {
+  content: '';
+  position: absolute;
+  inset: 0;
   background:
-    linear-gradient(180deg, var(--surface-void), var(--surface-base), var(--surface-void));
+    radial-gradient(ellipse 50% 40% at 40% 50%, rgba(255, 215, 0, 0.04) 0%, transparent 55%),
+    radial-gradient(ellipse 40% 40% at 70% 40%, rgba(0, 245, 255, 0.03) 0%, transparent 50%);
+  pointer-events: none;
+  z-index: 0;
 }
 
 .stats-grid {
@@ -1347,6 +1575,42 @@ section {
 @keyframes typewriter-blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
+}
+
+/* Aurora mesh background drift */
+@keyframes aurora-drift {
+  0% {
+    transform: translate(0, 0) scale(1);
+    opacity: 0.8;
+  }
+  33% {
+    transform: translate(3%, -2%) scale(1.05);
+    opacity: 1;
+  }
+  66% {
+    transform: translate(-2%, 3%) scale(0.97);
+    opacity: 0.9;
+  }
+  100% {
+    transform: translate(1%, -1%) scale(1.02);
+    opacity: 0.85;
+  }
+}
+
+/* SVG stroke drawing animation */
+@keyframes stroke-draw {
+  from {
+    stroke-dashoffset: var(--path-length, 100);
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* SVG icon glow pulse on parent hover */
+@keyframes icon-glow {
+  0%, 100% { filter: drop-shadow(0 0 3px currentColor); }
+  50% { filter: drop-shadow(0 0 10px currentColor) drop-shadow(0 0 20px currentColor); }
 }
 
 
@@ -1607,6 +1871,14 @@ section {
   }
 
   .scroll-indicator {
+    display: none;
+  }
+
+  .blob-bg {
+    display: none;
+  }
+
+  .spotlight {
     display: none;
   }
 }

@@ -474,4 +474,76 @@
     });
   }
 
+
+  /* ═══════════════════════════════════════════
+     9. MOUSE SPOTLIGHT (Technique #2)
+     Tracks cursor position and updates CSS custom
+     properties for the radial-gradient spotlight.
+     Highest-impact single technique for dark UIs.
+     ═══════════════════════════════════════════ */
+  const spotlight = document.getElementById('spotlight');
+  if (spotlight && !prefersReducedMotion) {
+    let hasActivated = false;
+
+    document.addEventListener('mousemove', (e) => {
+      if (!hasActivated) {
+        spotlight.classList.add('active');
+        hasActivated = true;
+      }
+      // Update CSS custom properties — the gradient follows these
+      document.body.style.setProperty('--mouse-x', e.clientX + 'px');
+      document.body.style.setProperty('--mouse-y', e.clientY + 'px');
+    });
+
+    // Fade out when mouse leaves window
+    document.addEventListener('mouseleave', () => {
+      spotlight.classList.remove('active');
+      hasActivated = false;
+    });
+  }
+
+
+  /* ═══════════════════════════════════════════
+     10. SVG STROKE-DRAW INITIALIZATION
+     Calculates total path length for each SVG
+     inside .step-icon and .feature-icon, sets
+     the --path-length CSS var, and triggers
+     the draw animation when they scroll into view.
+     ═══════════════════════════════════════════ */
+  if (!prefersReducedMotion) {
+    const iconSVGs = document.querySelectorAll('.step-icon svg, .feature-icon svg');
+    iconSVGs.forEach((svg) => {
+      const paths = svg.querySelectorAll('path, polyline, line, circle, rect, ellipse');
+      paths.forEach((path) => {
+        try {
+          const length = path.getTotalLength();
+          path.style.setProperty('--path-length', length);
+          path.style.strokeDasharray = length;
+          path.style.strokeDashoffset = length;
+        } catch (e) {
+          // Some SVG elements don't support getTotalLength
+        }
+      });
+    });
+
+    // Trigger stroke-draw when step cards scroll into view
+    const stepObserver = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('in-view');
+          const svgPaths = entry.target.querySelectorAll('.step-icon svg path, .step-icon svg polyline, .step-icon svg line, .step-icon svg circle, .step-icon svg rect');
+          svgPaths.forEach((path, i) => {
+            setTimeout(() => {
+              path.style.transition = 'stroke-dashoffset 1.2s cubic-bezier(0.22, 1, 0.36, 1)';
+              path.style.strokeDashoffset = '0';
+            }, i * 150);
+          });
+          stepObserver.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.3 });
+
+    document.querySelectorAll('.step').forEach((step) => stepObserver.observe(step));
+  }
+
 })();

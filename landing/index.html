@@ -20,6 +20,74 @@
 </head>
 <body>
 
+  <!-- ═══════════ SVG FILTER DEFINITIONS ═══════════
+       Hidden SVG containing reusable filters for liquid glass refraction.
+       WHY: CSS backdrop-filter only does blur. True refraction (light bending
+       at glass edges) requires SVG feTurbulence + feDisplacementMap to warp
+       pixels behind the glass panel, mimicking real optical distortion.
+  -->
+  <svg width="0" height="0" aria-hidden="true" style="position:absolute">
+    <defs>
+      <!-- Liquid Glass Refraction Filter -->
+      <filter id="liquid-glass-filter" x="-5%" y="-5%" width="110%" height="110%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.015" numOctaves="3" seed="2" result="noise"/>
+        <feDisplacementMap in="SourceGraphic" in2="noise" scale="6" xChannelSelector="R" yChannelSelector="G"/>
+      </filter>
+
+      <!-- SVG Noise Grain Filter (Technique #1) -->
+      <filter id="noise-grain">
+        <feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" stitchTiles="stitch"/>
+      </filter>
+
+      <!-- Glow filter for SVG elements -->
+      <filter id="glow-filter">
+        <feGaussianBlur stdDeviation="3" result="blur"/>
+        <feMerge>
+          <feMergeNode in="blur"/>
+          <feMergeNode in="SourceGraphic"/>
+        </feMerge>
+      </filter>
+    </defs>
+  </svg>
+
+  <!-- ═══════════ ANIMATED SVG BLOBS (Technique #5) ═══════════
+       Organic gradient blobs that slowly morph and drift behind all content.
+       Uses native SVG <animate> — runs off main thread, zero JS overhead.
+  -->
+  <svg class="blob-bg" viewBox="0 0 1400 900" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <defs>
+      <filter id="blob-blur"><feGaussianBlur stdDeviation="70"/></filter>
+    </defs>
+    <g filter="url(#blob-blur)" opacity="0.35">
+      <circle cx="250" cy="350" r="200" fill="#00F5FF">
+        <animate attributeName="cx" values="250;450;300;250" dur="22s" repeatCount="indefinite"/>
+        <animate attributeName="cy" values="350;250;450;350" dur="18s" repeatCount="indefinite"/>
+        <animate attributeName="r" values="200;170;220;200" dur="15s" repeatCount="indefinite"/>
+      </circle>
+      <circle cx="900" cy="200" r="160" fill="#8B5CF6">
+        <animate attributeName="cx" values="900;700;850;900" dur="20s" repeatCount="indefinite"/>
+        <animate attributeName="cy" values="200;400;250;200" dur="24s" repeatCount="indefinite"/>
+        <animate attributeName="r" values="160;190;140;160" dur="17s" repeatCount="indefinite"/>
+      </circle>
+      <circle cx="600" cy="600" r="140" fill="#FF007F">
+        <animate attributeName="cx" values="600;750;550;600" dur="26s" repeatCount="indefinite"/>
+        <animate attributeName="cy" values="600;500;650;600" dur="19s" repeatCount="indefinite"/>
+        <animate attributeName="r" values="140;170;130;140" dur="21s" repeatCount="indefinite"/>
+      </circle>
+      <circle cx="1100" cy="500" r="120" fill="#FFD700">
+        <animate attributeName="cx" values="1100;1000;1150;1100" dur="23s" repeatCount="indefinite"/>
+        <animate attributeName="cy" values="500;400;550;500" dur="20s" repeatCount="indefinite"/>
+        <animate attributeName="r" values="120;100;140;120" dur="18s" repeatCount="indefinite"/>
+      </circle>
+    </g>
+  </svg>
+
+  <!-- Mouse Spotlight (Technique #2) -->
+  <div class="spotlight" id="spotlight"></div>
+
+  <!-- Noise Grain Overlay (Technique #1) -->
+  <div class="noise-overlay" aria-hidden="true"></div>
+
   <!-- ═══════════ NAVIGATION ═══════════ -->
   <nav class="nav" id="nav">
     <div class="nav-inner">
@@ -375,3 +443,4 @@
   <script src="script.js"></script>
 </body>
 </html>
+
