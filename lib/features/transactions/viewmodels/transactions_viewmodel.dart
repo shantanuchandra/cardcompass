@@ -236,7 +236,11 @@ class TransactionsViewState {
       totalsByBucket[key] = (totalsByBucket[key] ?? 0) + _debitAmount(t);
     }
 
-    if (totalsByBucket.length < 2) return null;
+    // Only count buckets that have actual debit spend; credit-only days produce
+    // zero-total buckets that don't constitute meaningful trend points.
+    final nonZeroBucketCount =
+        totalsByBucket.values.where((v) => v > 0).length;
+    if (nonZeroBucketCount < 2) return null;
 
     final sortedKeys = totalsByBucket.keys.toList()..sort();
     final points = sortedKeys
@@ -249,7 +253,9 @@ class TransactionsViewState {
 
     final grandTotal = points.fold<double>(0, (sum, p) => sum + p.total);
     final dayCount = bucketing == TrendBucketing.byDay
-        ? sortedKeys.last.difference(sortedKeys.first).inDays + 1
+        ? (dateRange != null
+            ? dateRange!.end.difference(dateRange!.start).inDays + 1
+            : sortedKeys.last.difference(sortedKeys.first).inDays + 1)
         : sortedKeys.length * 30;
     final dailyAverage = grandTotal / dayCount;
 

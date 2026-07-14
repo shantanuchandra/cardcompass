@@ -219,7 +219,7 @@ void main() {
       expect(trend, isNull);
     });
 
-    test('excludes non-debit transactions from bucket totals', () {
+    test('returns null when only one day has debit spend (credit txns on other days are ignored)', () {
       final state = const TransactionsViewState().copyWith(
         dateRange: DateRange(start: DateTime(2026, 7, 8), end: DateTime(2026, 7, 9)),
         filteredTransactions: [
@@ -228,13 +228,24 @@ void main() {
         ],
       );
 
-      final trend = state.spendTrend();
+      // Only 1 debit bucket, so trend should be null
+      expect(state.spendTrend(), isNull);
+    });
 
-      // should return null because only 1 bucket has non-zero debit (Jul 8 has 100, Jul 9 has 0 credit)
-      // OR if it returns non-null, the credit tx must not inflate the Jul 9 bucket
-      if (trend != null) {
-        expect(trend.points.firstWhere((p) => p.bucketStart.day == 9).total, 0);
-      }
+    test('excludes credit amounts from bucket totals when there are 2+ debit buckets', () {
+      final state = const TransactionsViewState().copyWith(
+        dateRange: DateRange(start: DateTime(2026, 7, 8), end: DateTime(2026, 7, 10)),
+        filteredTransactions: [
+          _tx(id: '1', userCardId: 'cardA', amount: 100, date: DateTime(2026, 7, 8)),
+          _tx(id: '2', userCardId: 'cardA', amount: 500, type: TransactionType.credit, date: DateTime(2026, 7, 9)),
+          _tx(id: '3', userCardId: 'cardA', amount: 200, date: DateTime(2026, 7, 10)),
+        ],
+      );
+
+      final trend = state.spendTrend();
+      expect(trend, isNotNull);
+      // July 9 bucket should have 0 spend (credit ignored)
+      expect(trend!.points.firstWhere((p) => p.bucketStart.day == 9).total, 0);
     });
   });
 }
