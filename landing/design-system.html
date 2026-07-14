@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CardCompass Design System — 2026 Edition</title>
+  <meta name="description" content="The complete design language system for CardCompass: every color, font, spacing, animation, and component with the reasoning behind each choice.">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Plus+Jakarta+Sans:wght@400;500;600&family=Space+Grotesk:wght@400;600;700;800&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="design-system.css">
+  <link rel="icon" type="image/png" href="../web/favicon.png">
+</head>
+<body>
+
+  <!-- Navigation -->
+  <nav class="nav scrolled" style="position:sticky;">
+    <div class="nav-inner">
+      <a href="index.html" class="nav-logo">
+        <div class="nav-logo-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="1" y="4" width="22" height="16" rx="3"/><path d="M1 10h22"/>
+          </svg>
+        </div>
+        <span>DESIGN SYSTEM</span>
+      </a>
+      <div class="nav-links">
+        <a href="#colors" class="nav-link">Colors</a>
+        <a href="#typography" class="nav-link">Typography</a>
+        <a href="#spacing" class="nav-link">Spacing</a>
+        <a href="#glass" class="nav-link">Glass</a>
+        <a href="#motion" class="nav-link">Motion</a>
+        <a href="#components" class="nav-link">Components</a>
+        <a href="index.html" class="btn btn-primary nav-cta">View Landing</a>
+      </div>
+    </div>
+  </nav>
+
+
+  <main class="ds-main">
+
+    <!-- ═══ HEADER ═══ -->
+    <section class="ds-hero">
+      <div class="container">
+        <div class="section-label">Design Language System</div>
+        <h1>CardCompass <span class="gradient-text">Design System</span></h1>
+        <p class="ds-hero-subtitle">Every design decision is intentional. This document explains not just <em>what</em> each token is, but <em>why</em> it exists — the research, psychology, and technical reasoning behind every choice in our 2026 cyberpunk fintech visual language.</p>
+
+        <div class="ds-hero-meta">
+          <span class="ds-meta-tag">Version 2.0</span>
+          <span class="ds-meta-tag">July 2026</span>
+          <span class="ds-meta-tag">Dark-First</span>
+          <span class="ds-meta-tag">Cyberpunk Fintech</span>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ═══ DESIGN PRINCIPLES ═══ -->
+    <section id="principles">
+      <div class="container">
+        <div class="section-header">
+          <div class="section-label">Foundation</div>
+          <h2>Design Principles</h2>
+          <p>Three lenses through which every design decision must pass.</p>
+        </div>
+
+        <div class="ds-principles-grid">
+          <div class="ds-principle">
+            <div class="ds-principle-num">01</div>
+            <h3>Trust Through Precision</h3>
+            <p>This is a fintech app that reads bank statements. Every pixel must communicate competence, security, and technical authority. Sloppy design = zero trust.</p>
+          </div>
+          <div class="ds-principle">
+            <div class="ds-principle-num">02</div>
+            <h3>Intelligence Made Visible</h3>
+            <p>CardCompass runs a complex AI pipeline behind the scenes. The design must make this invisible complexity feel tangible — through neon glows, data visualizations, and terminal aesthetics that signal "smart technology at work."</p>
+          </div>
+          <div class="ds-principle">
+            <div class="ds-principle-num">03</div>
+            <h3>Reward the User's Eyes</h3>
+            <p>A rewards optimizer should itself feel rewarding to use. Micro-animations, satisfying transitions, and glowing accents create a "dopamine loop" that makes the app addictive — not just useful.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ═══ COLORS ═══ -->
+    <section id="colors">
+      <div class="container">
+        <div class="section-header">
+          <div class="section-label">Color System</div>
+          <h2>Chromatic Identity</h2>
+          <p>A neon-on-midnight palette engineered for fintech trust, AI intelligence, and visual excitement.</p>
+        </div>
+
+        <!-- Primary Palette -->
+        <h3 class="ds-subsection-title">Brand Palette</h3>
+        <div class="ds-color-grid">
+          <div class="ds-color-card">
+            <div class="ds-color-swatch" style="background:#00F5FF;box-shadow:0 0 30px rgba(0,245,255,0.3);"></div>
+            <div class="ds-color-info">
+              <div class="ds-color-name">Neon Cyber Cyan</div>
+              <div class="ds-color-hex mono">#00F5FF</div>
+              <div class="ds-color-role">Primary • CTAs • Active States</div>
+            </div>
+            <div class="ds-color-why">
+              <strong>WHY:</strong> Cyan sits at the intersection of "trustworthy blue" (banks, finance) and "innovative green" (growth, money). We push it to neon intensity to signal that CardCompass isn't a traditional bank — it's a cutting-edge AI tool. The high luminance against dark backgrounds creates immediate visual hierarchy and draws the eye to primary actions. Mercury, Stripe, and Revolut all use high-saturation blues for the same reason — trust + modernity.
+            </div>
+          </div>
+
+          <div class="ds-color-card">
+            <div class="ds-color-swatch" style="background:#8B5CF6;box-shadow:0 0 30px rgba(139,92,246,0.3);"></div>
+            <div class="ds-color-info">
+              <div class="ds-color-name">High-Tech Purple</div>
+              <div class="ds-color-hex mono">#8B5CF6</div>
+              <div class="ds-color-role">Secondary • Gradients • AI Elements</div>
+            </div>
+            <div class="ds-color-why">
+              <strong>WHY:</strong> Purple has centuries of association with luxury and intelligence. In modern tech contexts (Twitch, Figma, Stripe's gradient), it signals "smart" and "premium." We use it as a gradient partner for cyan, creating a spectrum that reads as "intelligent technology." The specific hue (HSL 264°, 90%, 66%) is calibrated to feel vivid without competing with cyan for attention.
+            </div>
+          </div>
+
+          <div class="ds-color-card">
+            <div class="ds-color-swatch" style="background:#FF007F;box-shadow:0 0 30px rgba(255,0,127,0.3);"></div>
+            <div class="ds-color-info">
+              <div class="ds-color-name">Holographic Magenta</div>
+              <div class="ds-color-hex mono">#FF007F</div>
+              <div class="ds-color-role">Accent • Hover States • Urgency</div>
+            </div>
+            <div class="ds-color-why">
+              <strong>WHY:</strong> Hot pink/magenta creates urgency without the alarm of red. It's our "attention" color — used sparingly for hover states, badges, and elements that need to pop against the cyan-purple palette. The warmth (330° hue) balances the cool primary/secondary, preventing the interface from feeling cold or clinical. In cyberpunk aesthetics, magenta is the traditional complement to cyan.
+            </div>
+          </div>
+
+          <div class="ds-color-card">
+            <div class="ds-color-swatch" style="background:#FFD700;box-shadow:0 0 30px rgba(255,215,0,0.3);"></div>
+            <div class="ds-color-info">
+              <div class="ds-color-name">Reward Gold</div>
+              <div class="ds-color-hex mono">#FFD700</div>
+              <div class="ds-color-role">Rewards • Savings • Premium</div>
+            </div>
+            <div class="ds-color-why">
+              <strong>WHY:</strong> Gold is universal shorthand for value and achievement. In a rewards optimizer, it's the color of money saved. We use it for earnings numbers, savings displays, milestone achievements, and premium tier indicators. The high chroma (51° hue, full saturation) ensures it reads as "real gold" rather than "dull yellow."
+            </div>
+          </div>
+        </div>
+
+        <!-- Semantic Palette -->
+        <h3 class="ds-subsection-title">Semantic Colors</h3>
+        <div class="ds-color-grid ds-color-grid-sm">
+          <div class="ds-color-chip">
+            <div class="ds-chip-swatch" style="background:#10B981"></div>
+            <div class="ds-chip-label">Success<br><span class="mono">#10B981</span></div>
+          </div>
+          <div class="ds-color-chip">
+            <div class="ds-chip-swatch" style="background:#EF4444"></div>
+            <div class="ds-chip-label">Error<br><span class="mono">#EF4444</span></div>
+          </div>
+          <div class="ds-color-chip">
+            <div class="ds-chip-swatch" style="background:#F59E0B"></div>
+            <div class="ds-chip-label">Warning<br><span class="mono">#F59E0B</span></div>
+          </div>
+        </div>
+
+        <!-- Surface Palette -->
+        <h3 class="ds-subsection-title">Surface Hierarchy</h3>
+        <p class="ds-subsection-desc">Five levels of darkness create spatial depth without 3D rendering. Each step is ~10-15 lightness units apart — enough to distinguish layers but close enough to feel cohesive.</p>
+        <div class="ds-surface-stack">
+          <div class="ds-surface-level" style="background:#020810"><span>Void</span><span class="mono">#020810</span><span>Page background — the deepest canvas</span></div>
+          <div class="ds-surface-level" style="background:#050B18"><span>Base</span><span class="mono">#050B18</span><span>Primary content canvas</span></div>
+          <div class="ds-surface-level" style="background:#0C152B"><span>Raised</span><span class="mono">#0C152B</span><span>Cards, panels, elevated content</span></div>
+          <div class="ds-surface-level" style="background:#111D38"><span>Overlay</span><span class="mono">#111D38</span><span>Popovers, dropdowns, menus</span></div>
+          <div class="ds-surface-level" style="background:#1E293B"><span>Subtle</span><span class="mono">#1E293B</span><span>Borders, dividers, hairlines</span></div>
+        </div>
+        <div class="ds-why-block">
+          <strong>WHY dark surfaces:</strong> Deep midnight tones do three things: (1) create the depth needed for neon colors to glow convincingly — neon on white looks wrong, (2) reduce eye strain for an app people use frequently, (3) signal sophistication — every premium fintech in 2026 (Mercury, Stripe, Robinhood) defaults to dark. The progression from #020810 to #1E293B follows a near-exponential lightness curve, giving each layer a distinct but subtle separation.
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ═══ TYPOGRAPHY ═══ -->
+    <section id="typography">
+      <div class="container">
+        <div class="section-header">
+          <div class="section-label">Typography</div>
+          <h2>Type System</h2>
+          <p>Three font families, each chosen for a specific role in the CardCompass voice.</p>
+        </div>
+
+        <!-- Font Families -->
+        <div class="ds-font-showcase">
+          <div class="ds-font-card">
+            <div class="ds-font-specimen" style="font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:48px;letter-spacing:-0.02em;">
+              Space Grotesk
+            </div>
+            <div class="ds-font-meta">
+              <span class="ds-meta-tag">Headings</span>
+              <span class="ds-meta-tag">700 / 800 weight</span>
+              <span class="ds-meta-tag">-0.02em tracking</span>
+            </div>
+            <div class="ds-color-why">
+              <strong>WHY:</strong> A geometric sans-serif with monospaced DNA — the letterforms have the precision of code but the warmth of a humanist font. This duality mirrors CardCompass itself: technical AI capability, human-friendly experience. The tight -0.02em letter-spacing at headline sizes creates the "confident, assured" typographic voice that premium fintech demands. Compare to Inter or Roboto, which are safer but lack personality.
+            </div>
+          </div>
+
+          <div class="ds-font-card">
+            <div class="ds-font-specimen" style="font-family:'Plus Jakarta Sans',sans-serif;font-weight:400;font-size:32px;">
+              Plus Jakarta Sans
+            </div>
+            <div class="ds-font-meta">
+              <span class="ds-meta-tag">Body Text</span>
+              <span class="ds-meta-tag">400 / 500 / 600 weight</span>
+              <span class="ds-meta-tag">1.6 line height</span>
+            </div>
+            <div class="ds-color-why">
+              <strong>WHY:</strong> A modern, highly-readable humanist sans-serif designed for digital screens. Its slightly rounded terminals make body text feel approachable, counterbalancing the technical precision of Space Grotesk headings. At 400 weight with 1.6 line-height, it's optimized for long-form readability on dark backgrounds — crucial for an app that presents transaction data and financial insights.
+            </div>
+          </div>
+
+          <div class="ds-font-card">
+            <div class="ds-font-specimen" style="font-family:'JetBrains Mono',monospace;font-weight:400;font-size:28px;letter-spacing:0.05em;">
+              JetBrains Mono
+            </div>
+            <div class="ds-font-meta">
+              <span class="ds-meta-tag">Code / Terminal</span>
+              <span class="ds-meta-tag">400 / 600 weight</span>
+              <span class="ds-meta-tag">+0.05em tracking</span>
+            </div>
+            <div class="ds-color-why">
+              <strong>WHY:</strong> The industry-standard monospace font for 2026, with increased x-height and carefully designed ligatures that make data pipelines and code blocks feel premium rather than raw. We use it for labels, badges, metadata, and the terminal UI — anywhere we want to invoke the "technical authority" aesthetic that reassures users the AI is doing serious work.
+            </div>
+          </div>
+        </div>
+
+        <!-- Type Scale -->
+        <h3 class="ds-subsection-title">Type Scale — Major Third (1.25 ratio)</h3>
+        <p class="ds-subsection-desc">Each step is a 1.25× multiplier from the base 16px. This creates comfortable reading hierarchy without dramatic jumps — each size feels distinctly larger without overwhelming adjacent content.</p>
+        <div class="ds-type-scale">
+          <div class="ds-type-row"><span class="ds-type-label mono">--text-7xl</span><span style="font-family:'Space Grotesk';font-size:72px;font-weight:700;line-height:1.1;">72px</span></div>
+          <div class="ds-type-row"><span class="ds-type-label mono">--text-6xl</span><span style="font-family:'Space Grotesk';font-size:60px;font-weight:700;line-height:1.1;">60px</span></div>
+          <div class="ds-type-row"><span class="ds-type-label mono">--text-5xl</span><span style="font-family:'Space Grotesk';font-size:48px;font-weight:700;line-height:1.15;">48px</span></div>
+          <div class="ds-type-row"><span class="ds-type-label mono">--text-4xl</span><span style="font-family:'Space Grotesk';font-size:36px;font-weight:700;line-height:1.15;">36px</span></div>
+          <div class="ds-type-row"><span class="ds-type-label mono">--text-3xl</span><span style="font-family:'Space Grotesk';font-size:30px;font-weight:600;line-height:1.2;">30px</span></div>
+          <div class="ds-type-row"><span class="ds-type-label mono">--text-2xl</span><span style="font-family:'Space Grotesk';font-size:24px;font-weight:600;line-height:1.25;">24px</span></div>
+          <div class="ds-type-row"><span class="ds-type-label mono">--text-xl</span><span style="font-family:'Plus Jakarta Sans';font-size:20px;line-height:1.4;">20px</span></div>
+          <div class="ds-type-row"><span class="ds-type-label mono">--text-lg</span><span style="font-family:'Plus Jakarta Sans';font-size:18px;line-height:1.5;">18px body</span></div>
+          <div class="ds-type-row"><span class="ds-type-label mono">--text-base</span><span style="font-family:'Plus Jakarta Sans';font-size:16px;line-height:1.6;">16px base</span></div>
+          <div class="ds-type-row"><span class="ds-type-label mono">--text-sm</span><span style="font-family:'Plus Jakarta Sans';font-size:14px;line-height:1.5;">14px small</span></div>
+          <div class="ds-type-row"><span class="ds-type-label mono">--text-xs</span><span style="font-family:'JetBrains Mono';font-size:12px;letter-spacing:0.05em;line-height:1.4;">12px caption</span></div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ═══ SPACING ═══ -->
+    <section id="spacing">
+      <div class="container">
+        <div class="section-header">
+          <div class="section-label">Spacing & Radius</div>
+          <h2>Spatial System</h2>
+          <p>An 8px base grid that scales cleanly at every screen density.</p>
+        </div>
+
+        <div class="ds-two-col">
+          <div>
+            <h3 class="ds-subsection-title">Spacing Scale</h3>
+            <div class="ds-spacing-list">
+              <div class="ds-spacing-row"><span class="mono ds-type-label">--space-xs</span><div class="ds-spacing-bar" style="width:4px"></div><span>4px</span></div>
+              <div class="ds-spacing-row"><span class="mono ds-type-label">--space-sm</span><div class="ds-spacing-bar" style="width:8px"></div><span>8px</span></div>
+              <div class="ds-spacing-row"><span class="mono ds-type-label">--space-md</span><div class="ds-spacing-bar" style="width:16px"></div><span>16px</span></div>
+              <div class="ds-spacing-row"><span class="mono ds-type-label">--space-lg</span><div class="ds-spacing-bar" style="width:24px"></div><span>24px</span></div>
+              <div class="ds-spacing-row"><span class="mono ds-type-label">--space-xl</span><div class="ds-spacing-bar" style="width:32px"></div><span>32px</span></div>
+              <div class="ds-spacing-row"><span class="mono ds-type-label">--space-2xl</span><div class="ds-spacing-bar" style="width:48px"></div><span>48px</span></div>
+              <div class="ds-spacing-row"><span class="mono ds-type-label">--space-3xl</span><div class="ds-spacing-bar" style="width:64px"></div><span>64px</span></div>
+              <div class="ds-spacing-row"><span class="mono ds-type-label">--space-4xl</span><div class="ds-spacing-bar" style="width:96px"></div><span>96px</span></div>
+              <div class="ds-spacing-row"><span class="mono ds-type-label">--space-5xl</span><div class="ds-spacing-bar" style="width:128px"></div><span>128px</span></div>
+            </div>
+            <div class="ds-why-block">
+              <strong>WHY 8px grid:</strong> 8px multiplies cleanly at every common screen density (1×, 1.5×, 2×, 3×) without producing sub-pixel values. Each step is a clear perceptual jump — no ambiguity between "is this 12px or 16px?" The scale follows a near-doubling pattern (4→8→16→24→32→48→64→96→128), giving designers a constrained but expressive set of spatial options.
+            </div>
+          </div>
+
+          <div>
+            <h3 class="ds-subsection-title">Border Radius</h3>
+            <div class="ds-radius-grid">
+              <div class="ds-radius-item"><div class="ds-radius-preview" style="border-radius:4px"></div><span class="mono">--radius-sm<br>4px</span></div>
+              <div class="ds-radius-item"><div class="ds-radius-preview" style="border-radius:8px"></div><span class="mono">--radius-md<br>8px</span></div>
+              <div class="ds-radius-item"><div class="ds-radius-preview" style="border-radius:12px"></div><span class="mono">--radius-lg<br>12px</span></div>
+              <div class="ds-radius-item"><div class="ds-radius-preview" style="border-radius:20px"></div><span class="mono">--radius-xl<br>20px</span></div>
+              <div class="ds-radius-item"><div class="ds-radius-preview" style="border-radius:28px"></div><span class="mono">--radius-2xl<br>28px</span></div>
+              <div class="ds-radius-item"><div class="ds-radius-preview" style="border-radius:9999px"></div><span class="mono">--radius-full<br>pill</span></div>
+            </div>
+            <div class="ds-why-block">
+              <strong>WHY progressive rounding:</strong> Small elements (badges, inputs) get subtle rounding (4-8px) for a sense of precision. Medium elements (cards, panels) get generous curves (12-20px) for approachability. CTAs and pills get full rounding (9999px) for maximum visual prominence. This creates an unconscious reading hierarchy — rounder = more important/interactive.
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ═══ GLASS ═══ -->
+    <section id="glass">
+      <div class="container">
+        <div class="section-header">
+          <div class="section-label">Glass & Depth</div>
+          <h2>Liquid Glass System</h2>
+          <p>Frosted translucent panels create real depth and spatial hierarchy.</p>
+        </div>
+
+        <div class="ds-glass-demo">
+          <div class="ds-glass-background">
+            <div class="ds-glass-orb ds-glass-orb-1"></div>
+            <div class="ds-glass-orb ds-glass-orb-2"></div>
+            <div class="ds-glass-orb ds-glass-orb-3"></div>
+          </div>
+          <div class="ds-glass-panel glass-card">
+            <h3>Glass Panel</h3>
+            <p style="font-size:var(--text-sm)">This panel uses <code class="mono">backdrop-filter: blur(20px) saturate(180%)</code> with a semi-transparent background and 0.08 opacity border. The blur obscures detail while preserving color/light from the gradient orbs behind it.</p>
+            <div class="ds-glass-specs">
+              <span class="mono">bg: rgba(12, 21, 43, 0.55)</span>
+              <span class="mono">border: rgba(255, 255, 255, 0.08)</span>
+              <span class="mono">blur: 20px</span>
+              <span class="mono">saturate: 180%</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="ds-why-block" style="margin-top:var(--space-xl);">
+          <strong>WHY glass effects:</strong> Frosted glass (backdrop-filter) creates literal visual depth — you can see content layered behind panels, which makes the interface feel three-dimensional and spatial without expensive 3D rendering. The 20px blur radius is calibrated: less than 15px and content is still readable (breaks the illusion); more than 30px and it's just an opaque color with extra GPU cost. The 180% saturation boost prevents the blur from looking "washed out." The 0.08 opacity border catches edge-light and defines the panel against the dark background — too thick and it looks cheap, too thin and the panel dissolves into nothing. Apple's "Liquid Glass" in 2025/2026 validated this aesthetic for mass-market appeal.
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ═══ MOTION ═══ -->
+    <section id="motion">
+      <div class="container">
+        <div class="section-header">
+          <div class="section-label">Animation</div>
+          <h2>Motion System</h2>
+          <p>Every animation serves a purpose: feedback, guidance, or delight. Nothing moves just for show.</p>
+        </div>
+
+        <h3 class="ds-subsection-title">Easing Curves</h3>
+        <div class="ds-easing-grid">
+          <div class="ds-easing-card">
+            <div class="ds-easing-demo">
+              <div class="ds-easing-ball" style="animation:ds-ease-demo 2s cubic-bezier(0.16, 1, 0.3, 1) infinite"></div>
+            </div>
+            <div class="mono ds-easing-name">--ease-out-expo</div>
+            <div class="ds-easing-values mono">cubic-bezier(0.16, 1, 0.3, 1)</div>
+            <p class="ds-easing-desc">Natural deceleration — objects start fast and settle gently. Used for page entrances, element reveals, and navigation transitions. Mimics real-world physics (a ball rolling to a stop).</p>
+          </div>
+
+          <div class="ds-easing-card">
+            <div class="ds-easing-demo">
+              <div class="ds-easing-ball" style="animation:ds-ease-demo 2s cubic-bezier(0.34, 1.56, 0.64, 1) infinite"></div>
+            </div>
+            <div class="mono ds-easing-name">--ease-out-back</div>
+            <div class="ds-easing-values mono">cubic-bezier(0.34, 1.56, 0.64, 1)</div>
+            <p class="ds-easing-desc">Slight overshoot — element goes past its target then springs back. Used for interactive feedback: buttons, toggles, popovers. Makes the interface feel "alive" and physically responsive.</p>
+          </div>
+
+          <div class="ds-easing-card">
+            <div class="ds-easing-demo">
+              <div class="ds-easing-ball" style="animation:ds-ease-demo 2s cubic-bezier(0.22, 1, 0.36, 1) infinite"></div>
+            </div>
+            <div class="mono ds-easing-name">--ease-spring</div>
+            <div class="ds-easing-values mono">cubic-bezier(0.22, 1, 0.36, 1)</div>
+            <p class="ds-easing-desc">Smooth spring — fast start with a gentle, satisfying settle. Our default for most transitions. Feels precise and controlled, matching the "technical authority" design principle.</p>
+          </div>
+        </div>
+
+        <h3 class="ds-subsection-title">Duration Scale</h3>
+        <div class="ds-duration-grid">
+          <div class="ds-duration-item"><span class="mono">--duration-micro</span><span>150ms</span><span>Hover, focus, micro-feedback</span></div>
+          <div class="ds-duration-item"><span class="mono">--duration-fast</span><span>300ms</span><span>Standard transitions, state changes</span></div>
+          <div class="ds-duration-item"><span class="mono">--duration-normal</span><span>500ms</span><span>Element entrances, reveals</span></div>
+          <div class="ds-duration-item"><span class="mono">--duration-slow</span><span>800ms</span><span>Hero animations, section reveals</span></div>
+          <div class="ds-duration-item"><span class="mono">--duration-slower</span><span>1200ms</span><span>Page transitions, complex sequences</span></div>
+        </div>
+
+        <div class="ds-why-block">
+          <strong>WHY these specific durations:</strong> Below 100ms, transitions feel instant (good for state but bad for showing change). 150ms is the minimum duration where the human eye registers "something moved." 300ms is the sweet spot for UI transitions — fast enough to not feel sluggish, slow enough to see the motion. Beyond 800ms, users start to feel the interface is "slow." Our scale stops at 1200ms, used only for dramatic hero sequences on first page load. Every duration above 150ms must use a non-linear easing curve — linear motion looks robotic and cheap.
+        </div>
+
+        <h3 class="ds-subsection-title">Neon Glow Scale</h3>
+        <p class="ds-subsection-desc">Neon glow uses multi-layer box-shadows to mimic real light diffusion. A single shadow looks flat; stacked shadows at different blur radii create a tight bright core + a wide diffused halo — mimicking how neon tubes actually illuminate.</p>
+        <div class="ds-glow-demo-grid">
+          <div class="ds-glow-item" style="box-shadow: 0 0 8px rgba(0,245,255,0.4);">
+            <span class="mono">--glow-sm</span><span>8px</span>
+          </div>
+          <div class="ds-glow-item" style="box-shadow: 0 0 15px rgba(0,245,255,0.4);">
+            <span class="mono">--glow-md</span><span>15px</span>
+          </div>
+          <div class="ds-glow-item" style="box-shadow: 0 0 30px rgba(0,245,255,0.4);">
+            <span class="mono">--glow-lg</span><span>30px</span>
+          </div>
+          <div class="ds-glow-item" style="box-shadow: 0 0 60px rgba(0,245,255,0.4), 0 0 120px rgba(0,245,255,0.15);">
+            <span class="mono">--glow-xl</span><span>60px</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ═══ COMPONENTS ═══ -->
+    <section id="components">
+      <div class="container">
+        <div class="section-header">
+          <div class="section-label">Components</div>
+          <h2>Interactive Elements</h2>
+          <p>Buttons, badges, and cards — each with built-in hover states, glows, and micro-interactions.</p>
+        </div>
+
+        <!-- Buttons -->
+        <h3 class="ds-subsection-title">Buttons</h3>
+        <div class="ds-component-row">
+          <div>
+            <a href="#" class="btn btn-primary magnetic">Primary CTA <span class="btn-icon">→</span></a>
+            <div class="mono ds-comp-label">.btn .btn-primary</div>
+          </div>
+          <div>
+            <a href="#" class="btn btn-primary btn-glow magnetic">Glowing CTA <span class="btn-icon">→</span></a>
+            <div class="mono ds-comp-label">.btn .btn-primary .btn-glow</div>
+          </div>
+          <div>
+            <a href="#" class="btn btn-secondary magnetic">Secondary</a>
+            <div class="mono ds-comp-label">.btn .btn-secondary</div>
+          </div>
+        </div>
+
+        <!-- Badges -->
+        <h3 class="ds-subsection-title">Section Labels / Badges</h3>
+        <div class="ds-component-row">
+          <div>
+            <div class="section-label">Default Label</div>
+            <div class="mono ds-comp-label">.section-label</div>
+          </div>
+          <div>
+            <div class="ds-meta-tag">Meta Tag</div>
+            <div class="mono ds-comp-label">.ds-meta-tag</div>
+          </div>
+        </div>
+
+        <!-- Glass Card -->
+        <h3 class="ds-subsection-title">Glass Card</h3>
+        <div class="ds-component-row">
+          <div class="glass-card" style="max-width:400px;">
+            <h4>Glass Card Component</h4>
+            <p style="font-size:var(--text-sm)">Hover me to see the lift + glow border effect. Uses backdrop-filter for the frosted glass aesthetic.</p>
+          </div>
+          <div class="glass-card glow-border" style="max-width:400px;">
+            <h4>Glass + Glow Border</h4>
+            <p style="font-size:var(--text-sm)">Hover me to see the animated gradient border that transitions from transparent to a cyan→purple→magenta gradient using CSS mask-composite.</p>
+          </div>
+        </div>
+
+        <div class="ds-why-block" style="margin-top:var(--space-xl);">
+          <strong>WHY magnetic cursor:</strong> Buttons with the <code class="mono">.magnetic</code> class subtly pull toward the mouse when nearby (30% of the cursor offset). This creates a subconscious sense that the interface is "intelligent" and responsive — the UI literally reaches for you. It increases perceived interactivity and click-through rates by making targets feel larger than they are. The effect must be subtle (≤ 30% offset) or it becomes nauseating.
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ═══ ACCESSIBILITY ═══ -->
+    <section id="a11y">
+      <div class="container">
+        <div class="section-header">
+          <div class="section-label">Accessibility</div>
+          <h2>Motion & Inclusion</h2>
+        </div>
+
+        <div class="ds-a11y-block">
+          <h3><code class="mono">prefers-reduced-motion: reduce</code></h3>
+          <p>~25% of users experience motion sensitivity. When this media query matches, we disable ALL non-essential animation — particle canvas, 3D card tilt, scroll reveals, magnetic cursor, counter animations, and terminal typing. Layout, color, and hover state changes are preserved. This is not optional — it's a fundamental design constraint that every feature must respect.</p>
+
+          <h3 style="margin-top:var(--space-xl);"><code class="mono">CSS-first animation strategy</code></h3>
+          <p>All scroll-driven animations use native CSS <code class="mono">animation-timeline: view()</code>, which runs entirely off the main thread. This means zero JavaScript overhead, no IntersectionObserver polling, and guaranteed 60fps on capable browsers. For browsers without support, a lightweight JS fallback adds <code class="mono">.in-view</code> classes via IntersectionObserver. The JS layer only handles things CSS cannot: canvas particles, mouse tracking, and counter math.</p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-bottom" style="border-top:none;margin-top:0;padding-top:0;">
+        <p>CardCompass Design System — 2026 Edition. Made with <span class="heart">♥</span> in India.</p>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Minimal JS for the easing demos and magnetic buttons -->
+  <script>
+    // Magnetic cursor for design system buttons
+    document.querySelectorAll('.magnetic').forEach(el => {
+      el.addEventListener('mousemove', (e) => {
+        const rect = el.getBoundingClientRect();
+        const x = e.clientX - rect.left - rect.width / 2;
+        const y = e.clientY - rect.top - rect.height / 2;
+        el.style.transform = `translate(${x * 0.3}px, ${y * 0.3}px)`;
+      });
+      el.addEventListener('mouseleave', () => {
+        el.style.transform = 'translate(0, 0)';
+        el.style.transition = 'transform 0.4s cubic-bezier(0.22, 1, 0.36, 1)';
+        setTimeout(() => el.style.transition = '', 400);
+      });
+    });
+
+    // Smooth scroll
+    document.querySelectorAll('a[href^="#"]').forEach(a => {
+      a.addEventListener('click', e => {
+        const t = a.getAttribute('href');
+        if (t === '#') return;
+        const target = document.querySelector(t);
+        if (target) {
+          e.preventDefault();
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      });
+    });
+  </script>
+</body>
+</html>
