@@ -117,7 +117,7 @@ class _SpendTrendPanelState extends State<SpendTrendPanel> {
             bottomTitles: AxisTitles(
               sideTitles: SideTitles(
                 showTitles: true,
-                interval: (trend.points.length / 3).ceilToDouble().clamp(1, double.infinity),
+                interval: (trend.points.length / 3).ceilToDouble().clamp(1, 100.0),
                 getTitlesWidget: (value, meta) {
                   final index = value.round();
                   if (index < 0 || index >= trend.points.length) {
@@ -143,7 +143,7 @@ class _SpendTrendPanelState extends State<SpendTrendPanel> {
               barWidth: 2.5,
               dotData: FlDotData(
                 show: true,
-                checkToShowDot: (spot, barData) => spot.x == spots.length - 1,
+                checkToShowDot: (spot, barData) => spot.x == (spots.length - 1).toDouble(),
               ),
               belowBarData: BarAreaData(
                 show: true,
@@ -166,6 +166,7 @@ class _SpendTrendPanelState extends State<SpendTrendPanel> {
   Widget _buildStatsRow(SpendTrendSummary trend) {
     final percent = trend.percentVsPriorPeriod;
     final isIncrease = (percent ?? 0) > 0;
+    final isFlat = percent != null && percent == 0.0;
 
     return Row(
       children: [
@@ -181,8 +182,10 @@ class _SpendTrendPanelState extends State<SpendTrendPanel> {
             'VS LAST PERIOD',
             percent == null
                 ? '—'
-                : '${isIncrease ? '↑' : '↓'} ${percent.abs().toStringAsFixed(0)}%',
-            percent == null
+                : isFlat
+                    ? '→ 0%'
+                    : '${isIncrease ? '↑' : '↓'} ${percent.abs().toStringAsFixed(0)}%',
+            percent == null || isFlat
                 ? Colors.white54
                 : (isIncrease ? AppTheme.errorColor : AppTheme.successColor),
           ),
