@@ -6,7 +6,28 @@ import 'package:cardcompass/shared/models/statement.dart';
 /// Supabase implementation of the StatementRepository interface
 /// Updated to fix UUID generation issue
 class SupabaseStatementRepository implements StatementRepository {
-  final SupabaseClient _supabase = Supabase.instance.client;
+  SupabaseStatementRepository({
+    Future<String> Function(String userCardId)? resolveCatalogCardId,
+  }) : _resolveCatalogCardId =
+            resolveCatalogCardId ?? _defaultResolveCatalogCardId;
+
+  // `late` so constructing this repository in a unit test that injects
+  // [_resolveCatalogCardId] and never touches Supabase-backed methods doesn't
+  // require Supabase.initialize() to have run first.
+  late final SupabaseClient _supabase = Supabase.instance.client;
+
+  /// Test seam: resolves a `user_cards.id` to its `catalog_card_id`. Defaults
+  /// to the real Supabase lookup in production.
+  final Future<String> Function(String userCardId) _resolveCatalogCardId;
+
+  static Future<String> _defaultResolveCatalogCardId(String userCardId) async {
+    final cardResponse = await Supabase.instance.client
+        .from('user_cards')
+        .select('catalog_card_id')
+        .eq('id', userCardId)
+        .single();
+    return cardResponse['catalog_card_id'] as String;
+  }
 
   /// Columns backing the `statements` table's unique constraint
   /// (`statements_user_card_statement_date_key`, see
@@ -226,19 +247,13 @@ class SupabaseStatementRepository implements StatementRepository {
   }) async {
     try {
       final now = DateTime.now();
-      
-      // Resolve card_id (catalog_card_id) from user_cards table
-      String catalogCardId = userCardId;
-      try {
-        final cardResponse = await _supabase
-            .from('user_cards')
-            .select('catalog_card_id')
-            .eq('id', userCardId)
-            .single();
-        catalogCardId = cardResponse['catalog_card_id'] as String;
-      } catch (e) {
-        print('⚠️ Could not resolve catalog card_id for userCardId $userCardId: $e');
-      }
+
+      // Resolve card_id (catalog_card_id) from user_cards table. userCardId
+      // must reference a real user_cards row — silently falling back to
+      // userCardId itself here previously wrote a user_cards.id into the
+      // card_id column (which actually references card_catalog(id)),
+      // corrupting the row instead of surfacing the real problem.
+      final catalogCardId = await _resolveCatalogCardId(userCardId);
 
       final statementMap = {
         'user_id': userId,

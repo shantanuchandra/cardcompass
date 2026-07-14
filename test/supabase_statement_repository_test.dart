@@ -17,4 +17,31 @@ void main() {
       );
     });
   });
+
+  group('SupabaseStatementRepository.createStatement', () {
+    test(
+        'throws instead of silently using userCardId as card_id when the '
+        'catalog_card_id lookup fails', () async {
+      // A userCardId that doesn't resolve to any user_cards row (fabricated,
+      // orphaned, or otherwise) must fail loudly. Previously this was caught
+      // and swallowed, leaving `catalogCardId = userCardId` — a user_cards.id
+      // silently written into statements.card_id, which actually references
+      // card_catalog(id). That corrupts the row instead of surfacing the
+      // real problem.
+      final repository = SupabaseStatementRepository(
+        resolveCatalogCardId: (userCardId) async {
+          throw Exception('simulated: no user_cards row for $userCardId');
+        },
+      );
+
+      expect(
+        () => repository.createStatement(
+          userId: 'user-1',
+          userCardId: 'nonexistent-user-card-id',
+          statementData: const {},
+        ),
+        throwsException,
+      );
+    });
+  });
 }
