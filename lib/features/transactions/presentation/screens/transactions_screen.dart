@@ -217,11 +217,9 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
     final cardLabel = state.selectedCardId.isEmpty
         ? 'All Cards'
         : state.userCards
-            .firstWhere(
-              (c) => c.id == state.selectedCardId,
-              orElse: () => state.userCards.first,
-            )
-            .cardName;
+              .where((c) => c.id == state.selectedCardId)
+              .map((c) => c.cardName)
+              .firstOrNull ?? 'All Cards';
 
     return '$dateLabel · $cardLabel';
   }
