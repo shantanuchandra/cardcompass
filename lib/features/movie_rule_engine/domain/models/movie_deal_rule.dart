@@ -1,14 +1,14 @@
 /// The benefit and card data required to normalize one movie-deal record.
 class MovieBenefitSource {
-  const MovieBenefitSource({
+  MovieBenefitSource({
     required this.benefitId,
     required this.catalogCardId,
     required this.title,
-    required this.valueConfig,
+    required Map<String, dynamic> valueConfig,
     this.sourceUrl,
     this.cardName,
     this.displayPriority = 0,
-  });
+  }) : valueConfig = Map.unmodifiable(valueConfig);
 
   final String benefitId;
   final String catalogCardId;
@@ -31,7 +31,7 @@ enum MovieDealOfferType {
 /// An immutable, validated movie-deal rule. Null commercial terms are unknown,
 /// rather than inferred from legacy defaults.
 class MovieDealRule {
-  const MovieDealRule({
+  MovieDealRule({
     required this.benefitId,
     required this.catalogCardId,
     required this.title,
@@ -39,8 +39,8 @@ class MovieDealRule {
     this.sourceUrl,
     this.cardName,
     this.displayPriority = 0,
-    this.platforms = const {},
-    this.cinemas = const {},
+    Set<String> platforms = const {},
+    Set<String> cinemas = const {},
     this.buyCount,
     this.freeCount,
     this.discountPercent,
@@ -52,11 +52,14 @@ class MovieDealRule {
     this.cycleTransactionLimit,
     this.validityStart,
     this.validityEnd,
-    this.validWeekdays = const {},
+    Set<String> validWeekdays = const {},
     this.milestoneThreshold,
     this.milestoneReward,
-    this.exclusions = const {},
-  });
+    Set<String> exclusions = const {},
+  })  : platforms = Set.unmodifiable(platforms),
+        cinemas = Set.unmodifiable(cinemas),
+        validWeekdays = Set.unmodifiable(validWeekdays),
+        exclusions = Set.unmodifiable(exclusions);
 
   final String benefitId;
   final String catalogCardId;

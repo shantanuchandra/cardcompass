@@ -2,6 +2,12 @@ import 'models/movie_deal_rule.dart';
 
 RuleNormalizationResult normalizeMovieDealRule(MovieBenefitSource source) {
   final config = source.valueConfig;
+  final malformedOptionalField = _malformedOptionalField(config);
+  if (malformedOptionalField != null) {
+    return RejectedMovieDealRule(
+      'The supplied $malformedOptionalField field is malformed.',
+    );
+  }
   final explicitType = _string(config['offer_type'])?.toUpperCase();
   final discountPercent = _number(config['discount_percent']);
   final rate = _number(config['rate']);
@@ -161,4 +167,79 @@ Iterable<String> _strings(Object? value) {
 DateTime? _date(Object? value) {
   final string = _string(value);
   return string == null ? null : DateTime.tryParse(string);
+}
+
+String? _malformedOptionalField(Map<String, dynamic> config) {
+  const dateFields = ['start_date', 'valid_from', 'end_date', 'valid_until'];
+  for (final field in dateFields) {
+    if (_isSupplied(config, field) && _date(config[field]) == null) return field;
+  }
+
+  const numberFields = [
+    'max_discount_amount',
+    'maximum_discount',
+    'min_transaction_amount',
+    'min_transaction',
+  ];
+  for (final field in numberFields) {
+    if (_isSupplied(config, field) && !_isFiniteNumber(config[field])) {
+      return field;
+    }
+  }
+
+  const integerFields = [
+    'buy_ticket_count',
+    'buy_count',
+    'free_ticket_count',
+    'free_count',
+    'txn_ticket_limit',
+    'month_ticket_limit',
+    'cycle_ticket_limit',
+    'max_usage_per_month',
+    'cycle_transaction_limit',
+  ];
+  for (final field in integerFields) {
+    if (_isSupplied(config, field) && _integer(config[field]) == null) {
+      return field;
+    }
+  }
+
+  const listFields = [
+    'platform',
+    'partner_filter',
+    'cinema',
+    'cinemas',
+    'excluded_show_types',
+  ];
+  for (final field in listFields) {
+    if (_isSupplied(config, field) && !_isStringList(config[field])) return field;
+  }
+
+  const weekdayFields = ['valid_dow', 'valid_days'];
+  for (final field in weekdayFields) {
+    if (_isSupplied(config, field) && !_isWeekdayList(config[field])) return field;
+  }
+  return null;
+}
+
+bool _isSupplied(Map<String, dynamic> config, String field) =>
+    config.containsKey(field) && config[field] != null;
+
+bool _isFiniteNumber(Object? value) =>
+    _number(value)?.isFinite ?? false;
+
+bool _isStringList(Object? value) {
+  if (value is String) return _string(value) != null;
+  return value is Iterable && value.every((item) => _string(item) != null);
+}
+
+bool _isWeekdayList(Object? value) {
+  const weekdays = {
+    'monday', 'mon', 'tuesday', 'tue', 'tues', 'wednesday', 'wed',
+    'thursday', 'thu', 'thur', 'thurs', 'friday', 'fri', 'saturday', 'sat',
+    'sunday', 'sun',
+  };
+  if (!_isStringList(value)) return false;
+  final values = value is String ? [value] : value as Iterable;
+  return values.every((item) => weekdays.contains(_string(item)?.toLowerCase()));
 }

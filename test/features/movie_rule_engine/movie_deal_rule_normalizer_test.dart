@@ -71,5 +71,49 @@ void main() {
       expect(result, isA<RejectedMovieDealRule>());
       expect((result as RejectedMovieDealRule).reason, isNotEmpty);
     });
+
+    test('rejects supplied malformed optional fields', () {
+      final invalidConfigs = [
+        {'discount_percent': 10, 'start_date': 'not-a-date'},
+        {'discount_percent': 10, 'txn_ticket_limit': 'many'},
+        {'discount_percent': 10, 'max_discount_amount': 'unknown'},
+        {'discount_percent': 10, 'min_transaction_amount': 'unknown'},
+        {'discount_percent': 10, 'valid_dow': 3},
+        {'discount_percent': 10, 'platform': ['BookMyShow', 42]},
+      ];
+
+      for (final config in invalidConfigs) {
+        final result = normalizeMovieDealRule(source(config));
+        expect(result, isA<RejectedMovieDealRule>(), reason: '$config');
+      }
+    });
+
+    test('rejects a malformed supplied BOGO buy ticket count', () {
+      final result = normalizeMovieDealRule(
+        source({
+          'offer_type': 'BOGO',
+          'buy_ticket_count': 'one',
+          'free_ticket_count': 1,
+        }),
+      );
+
+      expect(result, isA<RejectedMovieDealRule>());
+    });
+
+    test('defensively copies canonical model collections', () {
+      final platforms = {'BookMyShow'};
+      final rule = MovieDealRule(
+        benefitId: 'benefit-1',
+        catalogCardId: 'card-1',
+        title: 'Movie benefit',
+        offerType: MovieDealOfferType.percentDiscount,
+        platforms: platforms,
+      );
+
+      platforms.add('Paytm Movies');
+
+      expect(rule.platforms, {'BookMyShow'});
+      expect(() => rule.platforms.add('PVR'), throwsUnsupportedError);
+    });
   });
 }
