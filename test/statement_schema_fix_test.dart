@@ -28,6 +28,19 @@ void main() {
           contains("conname = 'statements_paid_amount_bounds_check'"));
     });
 
+    test('statement payment migration provisions required ingestion metadata',
+        () {
+      final migration = File(
+        'supabase/migrations/20260716090000_statement_payment_tracking.sql',
+      ).readAsStringSync();
+
+      expect(
+        migration,
+        contains(
+            "ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb"),
+      );
+    });
+
     test('should create statement without email_id schema error', () async {
       // Test that statement creation no longer fails due to missing email_id column
       // Skip this test in the test environment since it requires Supabase connection

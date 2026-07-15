@@ -76,3 +76,22 @@ test. The pre-existing Task 1 fuzzy-match modifications in
   test/gemini_statement_info_test.dart
   test/data_pipeline_debug_service_test.dart`: all 13 tests passed.
 - `git diff --check` passed.
+
+## Review Follow-up: Metadata Schema Contract
+
+- Added a migration contract test for `statements.metadata` and ran it red
+  before changing the migration; it failed because the column was absent.
+- Extended `20260716090000_statement_payment_tracking.sql` with idempotent
+  `metadata JSONB NOT NULL DEFAULT '{}'::jsonb` provisioning. The migration
+  reapplies the default, backfills existing nulls, then enforces `NOT NULL` so
+  installations with a previously nullable metadata column are repaired.
+- Ran the focused repository/schema/parser suite:
+
+  ```sh
+  flutter test test/statement_schema_fix_test.dart \
+    test/supabase_statement_repository_test.dart \
+    test/gemini_statement_info_test.dart \
+    test/data_pipeline_debug_service_test.dart
+  ```
+
+  All 17 tests passed. `git diff --check` also passed.
