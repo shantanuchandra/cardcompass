@@ -66,6 +66,8 @@ class StatementParsingResult {
   final double? minimumAmountDue;
   final double? availableCredit;
   final double? rewardsEarned;
+  final String statementDateSource;
+  final double? paymentsReceived;
 
   StatementParsingResult({
     required this.bankName,
@@ -83,7 +85,46 @@ class StatementParsingResult {
     this.minimumAmountDue,
     this.availableCredit,
     this.rewardsEarned,
+    this.statementDateSource = 'email_fallback',
+    this.paymentsReceived,
   });
+
+  /// Applies PDF-derived statement facts to an existing email-derived result.
+  factory StatementParsingResult.fromParsedInfo({
+    required DateTime emailDate,
+    required Map<String, dynamic> statementInfo,
+    required StatementParsingResult base,
+  }) {
+    final parsedDate = _localCalendarDate(
+      DateTime.tryParse(statementInfo['statement_date']?.toString() ?? ''),
+    );
+    final paymentsReceived = (statementInfo['payments_received'] as num?)
+            ?.toDouble() ??
+        double.tryParse(statementInfo['payments_received']?.toString() ?? '');
+
+    return StatementParsingResult(
+      bankName: base.bankName,
+      cardVariantName: base.cardVariantName,
+      statementDate: parsedDate ?? emailDate,
+      transactions: base.transactions,
+      originalPdfData: base.originalPdfData,
+      emailMessageId: base.emailMessageId,
+      processingSuccess: base.processingSuccess,
+      emailSubject: base.emailSubject,
+      emailSender: base.emailSender,
+      attachmentName: base.attachmentName,
+      dueDate: base.dueDate,
+      totalAmountDue: base.totalAmountDue,
+      minimumAmountDue: base.minimumAmountDue,
+      availableCredit: base.availableCredit,
+      rewardsEarned: base.rewardsEarned,
+      statementDateSource: parsedDate == null ? 'email_fallback' : 'pdf',
+      paymentsReceived: paymentsReceived,
+    );
+  }
+
+  static DateTime? _localCalendarDate(DateTime? date) =>
+      date == null ? null : DateTime(date.year, date.month, date.day);
 }
 
 /// Helper class for PDF attachment information
@@ -1053,7 +1094,7 @@ Product name:'''
 
       // Return result
       print('-' * 60);
-      return StatementParsingResult(
+      final baseResult = StatementParsingResult(
         bankName: bankFromSender, // Use bank from sender, not card variant
         cardVariantName: cleanCardName, // Add clean card name
         statementDate: emailDate,
@@ -1075,6 +1116,11 @@ Product name:'''
         availableCredit:
             (statementInfo['available_credit'] as num?)?.toDouble(),
         rewardsEarned: (statementInfo['rewards_earned'] as num?)?.toDouble(),
+      );
+      return StatementParsingResult.fromParsedInfo(
+        emailDate: emailDate,
+        statementInfo: statementInfo,
+        base: baseResult,
       );
     } catch (error) {
       print('Error processing statement email $messageId: $error');

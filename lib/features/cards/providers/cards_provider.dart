@@ -1,12 +1,26 @@
 import 'package:riverpod_annotation/riverpod_annotation.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart' show FutureProvider;
 import 'package:cardcompass/core/repositories/card_repository.dart';
+import 'package:cardcompass/core/repositories/statement_repository.dart';
 import 'package:cardcompass/core/providers/service_providers.dart';
 import 'package:cardcompass/core/services/reward_intelligence_service.dart';
+import 'package:cardcompass/features/cards/models/card_statement_summary.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../shared/models/credit_card.dart';
 import '../../auth/providers/auth_provider.dart';
 
 part 'cards_provider.g.dart';
+
+/// Latest persisted statement per owned card for the signed-in user.
+final cardStatementSummariesProvider =
+    FutureProvider<Map<String, CardStatementSummary>>((ref) async {
+  final userId = ref.watch(authStateProvider).user?.id;
+  if (userId == null || userId == 'guest') return const {};
+
+  final StatementRepository repository = ref.watch(statementRepositoryProvider);
+  final statements = await repository.getStatements(userId);
+  return buildCardStatementSummaries(statements);
+});
 
 @riverpod
 class CardsNotifier extends _$CardsNotifier {
@@ -94,10 +108,6 @@ class CardsNotifier extends _$CardsNotifier {
     }
   }
 }
-
-
-
-
 
 // Provider for active cards only
 @riverpod

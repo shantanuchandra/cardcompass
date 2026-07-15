@@ -23,6 +23,36 @@ void main() {
       expect(rule.platforms, {'BookMyShow'});
     });
 
+    test('treats a null maximum discount as an absent cap', () {
+      final result = normalizeMovieDealRule(
+        source({'discount_percent': 10, 'max_discount_amount': null}),
+      );
+
+      final rule = (result as AcceptedMovieDealRule).rule;
+      expect(rule.offerType, MovieDealOfferType.percentDiscount);
+      expect(rule.maximumDiscount, isNull);
+    });
+
+    test('treats a null minimum transaction as no minimum', () {
+      final result = normalizeMovieDealRule(
+        source({'discount_percent': 10, 'min_transaction_amount': null}),
+      );
+
+      final rule = (result as AcceptedMovieDealRule).rule;
+      expect(rule.offerType, MovieDealOfferType.percentDiscount);
+      expect(rule.minimumTransaction, isNull);
+    });
+
+    test('infers a percentage rule when offer_type is null', () {
+      final result = normalizeMovieDealRule(
+        source({'discount_percent': 10, 'offer_type': null}),
+      );
+
+      final rule = (result as AcceptedMovieDealRule).rule;
+      expect(rule.offerType, MovieDealOfferType.percentDiscount);
+      expect(rule.discountPercent, 10);
+    });
+
     test('normalizes a legacy percent rate', () {
       final result = normalizeMovieDealRule(
         source({'rate': 15, 'unit': 'percent'}),
@@ -31,6 +61,58 @@ void main() {
       final rule = (result as AcceptedMovieDealRule).rule;
       expect(rule.offerType, MovieDealOfferType.percentDiscount);
       expect(rule.discountPercent, 15);
+    });
+
+    test('rejects a malformed supplied unit during inference', () {
+      final result = normalizeMovieDealRule(
+        source({'discount_percent': 10, 'unit': 42}),
+      );
+
+      expect(result, isA<RejectedMovieDealRule>());
+    });
+
+    test('rejects a malformed supplied offer type during inference', () {
+      final result = normalizeMovieDealRule(
+        source({'discount_percent': 10, 'offer_type': 42}),
+      );
+
+      expect(result, isA<RejectedMovieDealRule>());
+    });
+
+    test('rejects an unknown supplied offer type despite a valid percentage',
+        () {
+      expect(
+        normalizeMovieDealRule(
+          source({'offer_type': 'BOGUS', 'discount_percent': 10}),
+        ),
+        isA<RejectedMovieDealRule>(),
+      );
+    });
+
+    test('rejects an unknown supplied offer type despite a valid fixed amount',
+        () {
+      expect(
+        normalizeMovieDealRule(
+          source({'offer_type': 'BOGUS', 'discount_amount': 100}),
+        ),
+        isA<RejectedMovieDealRule>(),
+      );
+    });
+
+    test('rejects contradictory supplied units', () {
+      final invalidConfigs = [
+        {'unit': 'fixed', 'discount_percent': 10},
+        {'unit': 'percent', 'discount_amount': 100},
+        {'offer_type': 'BOGO', 'discount_percent': 10},
+      ];
+
+      for (final config in invalidConfigs) {
+        expect(
+          normalizeMovieDealRule(source(config)),
+          isA<RejectedMovieDealRule>(),
+          reason: '$config',
+        );
+      }
     });
 
     test('normalizes discount_amount as a fixed discount without defaults', () {
@@ -72,22 +154,43 @@ void main() {
       expect((result as RejectedMovieDealRule).reason, isNotEmpty);
     });
 
-    test('rejects non-finite percentage discount values', () {
+    test('rejects a malformed percentage alias despite a valid fallback', () {
       final result = normalizeMovieDealRule(
-        source({'discount_percent': 'NaN'}),
+        source({'discount_percent': 'NaN', 'rate': 10, 'unit': 'percent'}),
       );
 
       expect(result, isA<RejectedMovieDealRule>());
       expect((result as RejectedMovieDealRule).reason, isNotEmpty);
     });
 
-    test('rejects non-finite fixed discount values', () {
+    test('rejects a malformed fixed amount alias despite a valid fallback', () {
       final result = normalizeMovieDealRule(
-        source({'discount_amount': 'Infinity'}),
+        source({'discount_amount': 'Infinity', 'fixed_amount': 100}),
       );
 
       expect(result, isA<RejectedMovieDealRule>());
-      expect((result as RejectedMovieDealRule).reason, isNotEmpty);
+      expect(
+        (result as RejectedMovieDealRule).reason,
+        contains('discount_amount'),
+      );
+    });
+
+    test('rejects a malformed milestone threshold despite a valid fallback',
+        () {
+      final result = normalizeMovieDealRule(
+        source({
+          'offer_type': 'MILESTONE',
+          'milestone_threshold': 'NaN',
+          'milestone_currency': 1000,
+          'milestone_reward': 100,
+        }),
+      );
+
+      expect(result, isA<RejectedMovieDealRule>());
+      expect(
+        (result as RejectedMovieDealRule).reason,
+        contains('milestone_threshold'),
+      );
     });
 
     test('rejects supplied malformed optional fields', () {
@@ -97,12 +200,42 @@ void main() {
         {'discount_percent': 10, 'max_discount_amount': 'unknown'},
         {'discount_percent': 10, 'min_transaction_amount': 'unknown'},
         {'discount_percent': 10, 'valid_dow': 3},
-        {'discount_percent': 10, 'platform': ['BookMyShow', 42]},
+        {
+          'discount_percent': 10,
+          'platform': ['BookMyShow', 42]
+        },
       ];
 
       for (final config in invalidConfigs) {
         final result = normalizeMovieDealRule(source(config));
         expect(result, isA<RejectedMovieDealRule>(), reason: '$config');
+      }
+    });
+
+    test('rejects negative supplied commercial aliases outside inferred terms',
+        () {
+      final invalidConfigs = [
+        {'discount_percent': 10, 'max_discount_amount': -1},
+        {'discount_percent': 10, 'min_transaction_amount': -1},
+        {'discount_percent': 10, 'txn_ticket_limit': -1},
+        {'discount_percent': 10, 'transaction_ticket_limit': -1},
+        {'discount_percent': 10, 'month_ticket_limit': -1},
+        {'discount_percent': 10, 'cycle_ticket_limit': -1},
+        {'discount_percent': 10, 'buy_ticket_count': -1},
+        {'discount_percent': 10, 'free_count': -1},
+        {'discount_percent': 10, 'discount_amount': -1},
+        {'discount_percent': 10, 'fixed_amount': -1},
+        {'discount_percent': 10, 'milestone_threshold': -1},
+        {'discount_percent': 10, 'milestone_currency': -1},
+        {'discount_percent': 10, 'milestone_reward': -1},
+      ];
+
+      for (final config in invalidConfigs) {
+        expect(
+          normalizeMovieDealRule(source(config)),
+          isA<RejectedMovieDealRule>(),
+          reason: '$config',
+        );
       }
     });
 

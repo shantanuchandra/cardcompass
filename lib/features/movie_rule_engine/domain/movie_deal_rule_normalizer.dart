@@ -9,10 +9,25 @@ RuleNormalizationResult normalizeMovieDealRule(MovieBenefitSource source) {
     );
   }
   final explicitType = _string(config['offer_type'])?.toUpperCase();
+  if (explicitType != null && !_isKnownOfferType(explicitType)) {
+    return const RejectedMovieDealRule('The supplied offer type is unknown.');
+  }
   final discountPercent = _number(config['discount_percent']);
   final rate = _number(config['rate']);
   final unit = _string(config['unit'])?.toLowerCase();
   final discountAmount = _number(config['discount_amount']);
+
+  if (!_hasCompatibleDiscriminators(
+    explicitType: explicitType,
+    unit: unit,
+    hasPercentageTerm: discountPercent != null || rate != null,
+    hasDiscountAmount:
+        discountAmount != null || _number(config['fixed_amount']) != null,
+  )) {
+    return const RejectedMovieDealRule(
+      'The supplied offer type and unit are contradictory.',
+    );
+  }
 
   final type = _offerType(
     explicitType: explicitType,
@@ -98,7 +113,8 @@ RuleNormalizationResult normalizeMovieDealRule(MovieBenefitSource source) {
           _number(config['maximum_discount']),
       minimumTransaction: _number(config['min_transaction_amount']) ??
           _number(config['min_transaction']),
-      transactionTicketLimit: _integer(config['txn_ticket_limit']),
+      transactionTicketLimit: _integer(config['txn_ticket_limit']) ??
+          _integer(config['transaction_ticket_limit']),
       cycleTicketLimit: _integer(config['month_ticket_limit']) ??
           _integer(config['cycle_ticket_limit']),
       cycleTransactionLimit: _integer(config['max_usage_per_month']) ??
@@ -143,6 +159,40 @@ MovieDealOfferType? _offerType({
   return null;
 }
 
+bool _isKnownOfferType(String type) => const {
+      'BOGO',
+      'PERCENT_DISCOUNT',
+      'PERCENTAGE_DISCOUNT',
+      'FIXED_DISCOUNT',
+      'FIXED',
+      'CASHBACK',
+      'FREE_TICKETS',
+      'VOUCHER',
+    }.contains(type);
+
+bool _hasCompatibleDiscriminators({
+  required String? explicitType,
+  required String? unit,
+  required bool hasPercentageTerm,
+  required bool hasDiscountAmount,
+}) {
+  if (unit != null && unit != 'percent' && unit != 'fixed') return false;
+  if (unit == 'percent' && hasDiscountAmount) return false;
+  if (unit == 'fixed' && hasPercentageTerm) return false;
+
+  if (explicitType == null) return true;
+  final percentType = explicitType == 'PERCENT_DISCOUNT' ||
+      explicitType == 'PERCENTAGE_DISCOUNT' ||
+      explicitType == 'CASHBACK';
+  final fixedType = explicitType == 'FIXED_DISCOUNT' ||
+      explicitType == 'FIXED' ||
+      explicitType == 'VOUCHER';
+  if (hasPercentageTerm && !percentType) return false;
+  if (hasDiscountAmount && !fixedType) return false;
+  if (unit == null) return true;
+  return unit == 'percent' ? percentType : fixedType;
+}
+
 double? _number(Object? value) {
   final number = value is num
       ? value.toDouble()
@@ -175,19 +225,67 @@ DateTime? _date(Object? value) {
 }
 
 String? _malformedOptionalField(Map<String, dynamic> config) {
+  const stringFields = ['offer_type', 'unit'];
+  for (final field in stringFields) {
+    if (_isSupplied(config, field) && _string(config[field]) == null) {
+      return field;
+    }
+  }
+
   const dateFields = ['start_date', 'valid_from', 'end_date', 'valid_until'];
   for (final field in dateFields) {
-    if (_isSupplied(config, field) && _date(config[field]) == null) return field;
+    if (_isSupplied(config, field) && _date(config[field]) == null)
+      return field;
   }
 
   const numberFields = [
+    'discount_percent',
+    'rate',
+    'discount_amount',
+    'fixed_amount',
+    'max_discount_amount',
+    'maximum_discount',
+    'min_transaction_amount',
+    'min_transaction',
+    'milestone_threshold',
+    'milestone_currency',
+    'milestone_reward',
+  ];
+  for (final field in numberFields) {
+    if (_isSupplied(config, field) && !_isFiniteNumber(config[field])) {
+      return field;
+    }
+  }
+
+  const percentageFields = ['discount_percent', 'rate'];
+  for (final field in percentageFields) {
+    if (_isSupplied(config, field) &&
+        (_number(config[field])! <= 0 || _number(config[field])! > 100)) {
+      return field;
+    }
+  }
+
+  const positiveNumberFields = [
+    'discount_amount',
+    'fixed_amount',
+    'milestone_threshold',
+    'milestone_currency',
+    'milestone_reward',
+  ];
+  for (final field in positiveNumberFields) {
+    if (_isSupplied(config, field) && _number(config[field])! <= 0) {
+      return field;
+    }
+  }
+
+  const nonNegativeNumberFields = [
     'max_discount_amount',
     'maximum_discount',
     'min_transaction_amount',
     'min_transaction',
   ];
-  for (final field in numberFields) {
-    if (_isSupplied(config, field) && !_isFiniteNumber(config[field])) {
+  for (final field in nonNegativeNumberFields) {
+    if (_isSupplied(config, field) && _number(config[field])! < 0) {
       return field;
     }
   }
@@ -198,6 +296,7 @@ String? _malformedOptionalField(Map<String, dynamic> config) {
     'free_ticket_count',
     'free_count',
     'txn_ticket_limit',
+    'transaction_ticket_limit',
     'month_ticket_limit',
     'cycle_ticket_limit',
     'max_usage_per_month',
@@ -205,6 +304,32 @@ String? _malformedOptionalField(Map<String, dynamic> config) {
   ];
   for (final field in integerFields) {
     if (_isSupplied(config, field) && _integer(config[field]) == null) {
+      return field;
+    }
+  }
+
+  const positiveCountFields = [
+    'buy_ticket_count',
+    'buy_count',
+    'free_ticket_count',
+    'free_count',
+  ];
+  for (final field in positiveCountFields) {
+    if (_isSupplied(config, field) && _integer(config[field])! <= 0) {
+      return field;
+    }
+  }
+
+  const nonNegativeLimitFields = [
+    'txn_ticket_limit',
+    'transaction_ticket_limit',
+    'month_ticket_limit',
+    'cycle_ticket_limit',
+    'max_usage_per_month',
+    'cycle_transaction_limit',
+  ];
+  for (final field in nonNegativeLimitFields) {
+    if (_isSupplied(config, field) && _integer(config[field])! < 0) {
       return field;
     }
   }
@@ -217,12 +342,14 @@ String? _malformedOptionalField(Map<String, dynamic> config) {
     'excluded_show_types',
   ];
   for (final field in listFields) {
-    if (_isSupplied(config, field) && !_isStringList(config[field])) return field;
+    if (_isSupplied(config, field) && !_isStringList(config[field]))
+      return field;
   }
 
   const weekdayFields = ['valid_dow', 'valid_days'];
   for (final field in weekdayFields) {
-    if (_isSupplied(config, field) && !_isWeekdayList(config[field])) return field;
+    if (_isSupplied(config, field) && !_isWeekdayList(config[field]))
+      return field;
   }
   return null;
 }
@@ -230,8 +357,7 @@ String? _malformedOptionalField(Map<String, dynamic> config) {
 bool _isSupplied(Map<String, dynamic> config, String field) =>
     config.containsKey(field) && config[field] != null;
 
-bool _isFiniteNumber(Object? value) =>
-    _number(value)?.isFinite ?? false;
+bool _isFiniteNumber(Object? value) => _number(value)?.isFinite ?? false;
 
 bool _isStringList(Object? value) {
   if (value is String) return _string(value) != null;
@@ -240,11 +366,26 @@ bool _isStringList(Object? value) {
 
 bool _isWeekdayList(Object? value) {
   const weekdays = {
-    'monday', 'mon', 'tuesday', 'tue', 'tues', 'wednesday', 'wed',
-    'thursday', 'thu', 'thur', 'thurs', 'friday', 'fri', 'saturday', 'sat',
-    'sunday', 'sun',
+    'monday',
+    'mon',
+    'tuesday',
+    'tue',
+    'tues',
+    'wednesday',
+    'wed',
+    'thursday',
+    'thu',
+    'thur',
+    'thurs',
+    'friday',
+    'fri',
+    'saturday',
+    'sat',
+    'sunday',
+    'sun',
   };
   if (!_isStringList(value)) return false;
   final values = value is String ? [value] : value as Iterable;
-  return values.every((item) => weekdays.contains(_string(item)?.toLowerCase()));
+  return values
+      .every((item) => weekdays.contains(_string(item)?.toLowerCase()));
 }
