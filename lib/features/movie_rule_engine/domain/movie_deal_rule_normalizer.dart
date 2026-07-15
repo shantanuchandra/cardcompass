@@ -144,14 +144,19 @@ MovieDealOfferType? _offerType({
 }
 
 double? _number(Object? value) {
-  if (value is num) return value.toDouble();
-  if (value is String) return double.tryParse(value);
-  return null;
+  final number = value is num
+      ? value.toDouble()
+      : value is String
+          ? double.tryParse(value)
+          : null;
+  return number?.isFinite ?? false ? number : null;
 }
 
 int? _integer(Object? value) {
   if (value is int) return value;
-  if (value is num && value == value.roundToDouble()) return value.toInt();
+  if (value is num && value.isFinite && value == value.roundToDouble()) {
+    return value.toInt();
+  }
   return int.tryParse(value?.toString() ?? '');
 }
 

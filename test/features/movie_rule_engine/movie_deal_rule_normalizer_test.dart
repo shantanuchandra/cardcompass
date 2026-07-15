@@ -72,6 +72,24 @@ void main() {
       expect((result as RejectedMovieDealRule).reason, isNotEmpty);
     });
 
+    test('rejects non-finite percentage discount values', () {
+      final result = normalizeMovieDealRule(
+        source({'discount_percent': 'NaN'}),
+      );
+
+      expect(result, isA<RejectedMovieDealRule>());
+      expect((result as RejectedMovieDealRule).reason, isNotEmpty);
+    });
+
+    test('rejects non-finite fixed discount values', () {
+      final result = normalizeMovieDealRule(
+        source({'discount_amount': 'Infinity'}),
+      );
+
+      expect(result, isA<RejectedMovieDealRule>());
+      expect((result as RejectedMovieDealRule).reason, isNotEmpty);
+    });
+
     test('rejects supplied malformed optional fields', () {
       final invalidConfigs = [
         {'discount_percent': 10, 'start_date': 'not-a-date'},
