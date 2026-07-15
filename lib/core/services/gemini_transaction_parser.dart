@@ -39,6 +39,7 @@ WHAT TO LOOK FOR:
 - Card details (last 4 digits, product name)
 - Currency (usually INR for Indian banks)
 - Reward/loyalty points earned
+- Payments received/credits applied during the statement period
 
 COMMON PATTERNS:
 - "Statement Date", "Bill Date", "Statement Period"
@@ -59,6 +60,7 @@ JSON OUTPUT (return ONLY this object, no markdown or code blocks):
   "credit_limit": number or null,
   "available_credit": number or null,
   "rewards_earned": number or null,
+  "payments_received": number or null,
   "currency": "INR",
   "card_last4": "last 4 digits or null",
   "card_name": "card product name or null",
@@ -166,6 +168,17 @@ ANALYZE THE STATEMENT:''';
           double.tryParse(amountMatch.group(1)!.replaceAll(',', '')) ?? 0.0;
     }
 
+    // Try to extract payment credits reported in the statement summary.
+    final paymentsReceivedMatch = RegExp(
+      r'payments?\s+received\s*[:\-]?\s*(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d{1,2})?)',
+      caseSensitive: false,
+    ).firstMatch(pdfText);
+    if (paymentsReceivedMatch != null) {
+      statementInfo['payments_received'] = double.tryParse(
+        paymentsReceivedMatch.group(1)!.replaceAll(',', ''),
+      );
+    }
+
     // Set defaults
     statementInfo['currency'] = 'INR';
     statementInfo['card_type'] = 'credit';
@@ -174,6 +187,14 @@ ANALYZE THE STATEMENT:''';
 
     return statementInfo;
   }
+
+  /// Exposes the deterministic fallback parser for statement-info fixtures.
+  @visibleForTesting
+  static Map<String, dynamic> fallbackStatementParsingForTesting(
+    String pdfText,
+    String bankName,
+  ) =>
+      _fallbackStatementParsing(pdfText, bankName);
 
   /// Convert date format from DD/MM/YYYY or DD-MM-YYYY to ISO string
   static String _convertDateFormat(String dateStr) {

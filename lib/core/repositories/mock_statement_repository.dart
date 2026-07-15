@@ -7,12 +7,55 @@ class MockStatementRepository implements StatementRepository {
   final List<Statement> _statements = MockData.statements();
 
   @override
+  Future<List<Statement>> getOpenStatementsForCard({
+    required String userId,
+    required String userCardId,
+  }) async =>
+      _statements
+          .where((statement) =>
+              statement.userId == userId &&
+              statement.userCardId == userCardId &&
+              statement.paymentStatus != PaymentStatus.paid)
+          .toList();
+
+  @override
+  Future<PaymentReconciliationResult> reconcileImportedPayment({
+    required String sourceStatementId,
+    required String userId,
+    required String userCardId,
+    required double paymentCredit,
+    required List<PaymentUpdate> updates,
+    required double unmatchedPaymentCredit,
+  }) async =>
+      PaymentReconciliationResult(
+        appliedUpdates: updates,
+        unmatchedPaymentCredit: unmatchedPaymentCredit,
+      );
+
+  @override
+  Future<void> applyPaymentToStatement({
+    required String statementId,
+    required String userId,
+    required String userCardId,
+    required double paymentAmount,
+    required PaymentStatus paymentStatus,
+  }) async {}
+
+  @override
+  Future<void> markStatementPaid({
+    required String statementId,
+    required String userId,
+    required String userCardId,
+  }) async {}
+
+  @override
   Future<List<Map<String, dynamic>>> getUserStatements(String userId) async {
     return _statements.map((s) => s.toJson()).toList();
   }
 
   @override
-  Future<List<Statement>> getStatements(String userId) async => List.unmodifiable(_statements);
+  Future<List<Statement>> getStatements(String userId) async =>
+      List.unmodifiable(_statements);
 
   @override
   Future<Statement> createStatement({
@@ -27,7 +70,8 @@ class MockStatementRepository implements StatementRepository {
       'user_id': userId,
       'user_card_id': userCardId,
       'statement_date': DateTime.now().toIso8601String(),
-      'due_date': DateTime.now().add(const Duration(days: 20)).toIso8601String(),
+      'due_date':
+          DateTime.now().add(const Duration(days: 20)).toIso8601String(),
       'total_amount': statementData['total_amount'] ?? 0,
       'minimum_payment': statementData['minimum_payment'] ?? 0,
       'closing_balance': statementData['closing_balance'] ?? 0,
@@ -45,7 +89,10 @@ class MockStatementRepository implements StatementRepository {
   }
 
   @override
-  Future<String> uploadStatement({required String userId, required String cardId, required File file}) async {
+  Future<String> uploadStatement(
+      {required String userId,
+      required String cardId,
+      required File file}) async {
     return 'mock-upload-${DateTime.now().millisecondsSinceEpoch}';
   }
 
@@ -65,7 +112,8 @@ class MockStatementRepository implements StatementRepository {
   }
 
   @override
-  Future<void> updateStatementStatus({required String statementId, required bool processed}) async {
+  Future<void> updateStatementStatus(
+      {required String statementId, required bool processed}) async {
     final index = _statements.indexWhere((s) => s.id == statementId);
     if (index != -1) _statements[index] = _statements[index].copyWith();
   }
@@ -76,8 +124,12 @@ class MockStatementRepository implements StatementRepository {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> getStatementsForCard({required String userId, required String cardId}) async {
-    return _statements.where((s) => s.userCardId == cardId).map((s) => s.toJson()).toList();
+  Future<List<Map<String, dynamic>>> getStatementsForCard(
+      {required String userId, required String cardId}) async {
+    return _statements
+        .where((s) => s.userCardId == cardId)
+        .map((s) => s.toJson())
+        .toList();
   }
 
   @override

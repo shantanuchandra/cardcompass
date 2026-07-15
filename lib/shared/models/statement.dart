@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 /// Payment status enum for statements
 enum PaymentStatus {
   pending,
@@ -14,6 +16,8 @@ class Statement {
   final DateTime statementDate;
   final DateTime dueDate;
   final double totalAmount;
+  final double paidAmount;
+  final DateTime? paidAt;
   final double minimumPayment;
   final double closingBalance;
   final double availableCredit;
@@ -28,13 +32,15 @@ class Statement {
   final DateTime createdAt;
   final bool processed;
   final int? transactionCount;
-  const Statement({
+  Statement({
     required this.id,
     required this.userId,
     required this.userCardId,
     required this.statementDate,
     required this.dueDate,
-    required this.totalAmount,
+    required double totalAmount,
+    double paidAmount = 0,
+    this.paidAt,
     required this.minimumPayment,
     required this.closingBalance,
     required this.availableCredit,
@@ -49,7 +55,26 @@ class Statement {
     required this.createdAt,
     this.processed = false,
     this.transactionCount,
-  });
+  })  : totalAmount = totalAmount,
+        paidAmount = _validatedPaidAmount(totalAmount, paidAmount);
+
+  static double _validatedPaidAmount(double totalAmount, double paidAmount) {
+    if (!totalAmount.isFinite || totalAmount < 0) {
+      throw ArgumentError.value(
+        totalAmount,
+        'totalAmount',
+        'must be finite and non-negative',
+      );
+    }
+    if (!paidAmount.isFinite || paidAmount < 0 || paidAmount > totalAmount) {
+      throw ArgumentError.value(
+        paidAmount,
+        'paidAmount',
+        'must be finite, non-negative, and no greater than totalAmount',
+      );
+    }
+    return paidAmount;
+  }
 
   factory Statement.fromJson(Map<String, dynamic> json) {
     return Statement(
@@ -59,6 +84,8 @@ class Statement {
       statementDate: DateTime.parse(json['statement_date']),
       dueDate: DateTime.parse(json['due_date']),
       totalAmount: (json['total_amount'] as num).toDouble(),
+      paidAmount: (json['paid_amount'] as num?)?.toDouble() ?? 0,
+      paidAt: json['paid_at'] != null ? DateTime.parse(json['paid_at']) : null,
       minimumPayment: (json['minimum_payment'] as num).toDouble(),
       closingBalance: (json['closing_balance'] as num).toDouble(),
       availableCredit: (json['available_credit'] as num).toDouble(),
@@ -71,7 +98,8 @@ class Statement {
       ),
       filePath: json['file_path'],
       fileName: json['file_name'],
-      parsedAt: json['parsed_at'] != null ? DateTime.parse(json['parsed_at']) : null,
+      parsedAt:
+          json['parsed_at'] != null ? DateTime.parse(json['parsed_at']) : null,
       metadata: Map<String, dynamic>.from(json['metadata'] ?? {}),
       createdAt: DateTime.parse(json['created_at']),
     );
@@ -85,6 +113,8 @@ class Statement {
       'statement_date': statementDate.toIso8601String(),
       'due_date': dueDate.toIso8601String(),
       'total_amount': totalAmount,
+      'paid_amount': paidAmount,
+      'paid_at': paidAt?.toIso8601String(),
       'minimum_payment': minimumPayment,
       'closing_balance': closingBalance,
       'available_credit': availableCredit,
@@ -101,9 +131,8 @@ class Statement {
   }
 
   /// Check if statement is overdue
-  bool get isOverdue => 
-      paymentStatus != PaymentStatus.paid && 
-      dueDate.isBefore(DateTime.now());
+  bool get isOverdue =>
+      paymentStatus != PaymentStatus.paid && dueDate.isBefore(DateTime.now());
 
   /// Get days until due date
   int get daysUntilDue => dueDate.difference(DateTime.now()).inDays;
@@ -111,13 +140,27 @@ class Statement {
   /// Check if statement is paid
   bool get isPaid => paymentStatus == PaymentStatus.paid;
 
+  /// Amount remaining to be paid, never below zero.
+  double get remainingAmount =>
+      math.max(0, totalAmount - paidAmount).toDouble();
+
   /// Get formatted statement period
   String get statementPeriod {
     final year = statementDate.year;
     final month = statementDate.month;
     final monthNames = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
     ];
     return '${monthNames[month - 1]} $year';
   }
@@ -130,6 +173,8 @@ class Statement {
     DateTime? statementDate,
     DateTime? dueDate,
     double? totalAmount,
+    double? paidAmount,
+    DateTime? paidAt,
     double? minimumPayment,
     double? closingBalance,
     double? availableCredit,
@@ -150,6 +195,8 @@ class Statement {
       statementDate: statementDate ?? this.statementDate,
       dueDate: dueDate ?? this.dueDate,
       totalAmount: totalAmount ?? this.totalAmount,
+      paidAmount: paidAmount ?? this.paidAmount,
+      paidAt: paidAt ?? this.paidAt,
       minimumPayment: minimumPayment ?? this.minimumPayment,
       closingBalance: closingBalance ?? this.closingBalance,
       availableCredit: availableCredit ?? this.availableCredit,
