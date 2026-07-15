@@ -36,8 +36,7 @@ void main() {
 
       expect(
         migration,
-        contains(
-            "ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb"),
+        contains("ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb"),
       );
       expect(
         migration,
@@ -46,6 +45,23 @@ void main() {
       expect(migration, contains("SET metadata = '{}'::jsonb"));
       expect(migration, contains('WHERE metadata IS NULL'));
       expect(migration, contains('ALTER COLUMN metadata SET NOT NULL'));
+    });
+
+    test(
+        'forward payment repair backfills paid amounts and bounds reconciliation',
+        () {
+      final migration = File(
+        'supabase/migrations/20260716090400_repair_statement_payment_history.sql',
+      ).readAsStringSync();
+
+      expect(migration, contains("payment_status = 'paid'"));
+      expect(migration, contains('SET paid_amount = total_amount'));
+      expect(migration, contains('paid_at is intentionally left unchanged'));
+      expect(migration,
+          contains('statements.statement_date < v_source.statement_date'));
+      expect(
+          migration, contains('same statement date is deliberately excluded'));
+      expect(migration, contains('paid_at = COALESCE(paid_at, NOW())'));
     });
 
     test('should create statement without email_id schema error', () async {
