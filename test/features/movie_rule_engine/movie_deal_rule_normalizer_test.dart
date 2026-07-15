@@ -23,6 +23,36 @@ void main() {
       expect(rule.platforms, {'BookMyShow'});
     });
 
+    test('treats a null maximum discount as an absent cap', () {
+      final result = normalizeMovieDealRule(
+        source({'discount_percent': 10, 'max_discount_amount': null}),
+      );
+
+      final rule = (result as AcceptedMovieDealRule).rule;
+      expect(rule.offerType, MovieDealOfferType.percentDiscount);
+      expect(rule.maximumDiscount, isNull);
+    });
+
+    test('treats a null minimum transaction as no minimum', () {
+      final result = normalizeMovieDealRule(
+        source({'discount_percent': 10, 'min_transaction_amount': null}),
+      );
+
+      final rule = (result as AcceptedMovieDealRule).rule;
+      expect(rule.offerType, MovieDealOfferType.percentDiscount);
+      expect(rule.minimumTransaction, isNull);
+    });
+
+    test('infers a percentage rule when offer_type is null', () {
+      final result = normalizeMovieDealRule(
+        source({'discount_percent': 10, 'offer_type': null}),
+      );
+
+      final rule = (result as AcceptedMovieDealRule).rule;
+      expect(rule.offerType, MovieDealOfferType.percentDiscount);
+      expect(rule.discountPercent, 10);
+    });
+
     test('normalizes a legacy percent rate', () {
       final result = normalizeMovieDealRule(
         source({'rate': 15, 'unit': 'percent'}),
