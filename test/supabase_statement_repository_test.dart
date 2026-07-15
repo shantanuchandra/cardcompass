@@ -50,6 +50,39 @@ void main() {
       expect(migration,
           contains('WHEN paid_amount + v_payment >= total_amount THEN NOW()'));
     });
+
+    test('database trigger keeps reconciliation-owned fields during an upsert',
+        () {
+      final migration = File(
+        'supabase/migrations/20260716090300_protect_reconciled_statement_fields.sql',
+      ).readAsStringSync();
+
+      expect(migration, contains('CREATE OR REPLACE FUNCTION'));
+      expect(migration, contains('protect_reconciled_statement_fields'));
+      expect(migration, contains('BEFORE UPDATE ON public.statements'));
+      expect(migration, contains("NEW.payment_status := OLD.payment_status"));
+      expect(migration, contains("NEW.paid_amount := OLD.paid_amount"));
+      expect(migration, contains("NEW.paid_at := OLD.paid_at"));
+      expect(migration, contains("'{payment_reconciliation_state}'"));
+      expect(migration, contains("'{unmatched_payment_credit}'"));
+      expect(
+          migration,
+          contains(
+              "current_setting('cardcompass.reconciliation_write', true)"));
+    });
+
+    test('payment RPCs opt into the trigger trusted-writer contract', () {
+      final migration = File(
+        'supabase/migrations/20260716090300_protect_reconciled_statement_fields.sql',
+      ).readAsStringSync();
+
+      expect(migration, contains('reconcile_imported_statement_payment'));
+      expect(migration, contains('apply_statement_payment'));
+      expect(
+          migration,
+          contains(
+              "set_config('cardcompass.reconciliation_write', 'on', true)"));
+    });
   });
 
   group('SupabaseStatementRepository.statementUpsertConflictColumns', () {
@@ -70,62 +103,6 @@ void main() {
   });
 
   group('SupabaseStatementRepository.createStatement', () {
-    test('preserves applied payment reconciliation state on source reimport',
-        () async {
-      Map<String, dynamic>? persistedStatement;
-      final repository = SupabaseStatementRepository(
-        resolveCatalogCardId: (_) async => 'catalog-card-1',
-        findExistingStatement: ({
-          required userId,
-          required userCardId,
-          required statementDate,
-        }) async =>
-            {
-          'payment_status': 'paid',
-          'paid_amount': 1250.0,
-          'paid_at': '2026-07-15T12:00:00.000Z',
-          'metadata': {
-            'payment_reconciliation_state': 'applied',
-            'unmatched_payment_credit': 50.0,
-            'payments_received': 1250.0,
-          },
-        },
-        upsertStatement: (statement, {required onConflict}) async {
-          persistedStatement = statement;
-          return {
-            ...statement,
-            'id': 'statement-1',
-            'file_path': 'test-statement.pdf',
-          };
-        },
-      );
-
-      await repository.createStatement(
-        userId: 'user-1',
-        userCardId: 'user-card-1',
-        statementData: {
-          'statement_date': '2026-07-10T00:00:00.000Z',
-          'total_amount': 1250.0,
-          'metadata': {
-            'statement_date_source': 'pdf',
-            'payments_received': 1250.0,
-            'payment_reconciliation_status': 'unreconciled',
-          },
-        },
-      );
-
-      expect(persistedStatement?['payment_status'], 'paid');
-      expect(persistedStatement?['paid_amount'], 1250.0);
-      expect(persistedStatement?['paid_at'], '2026-07-15T12:00:00.000Z');
-      expect(persistedStatement?['metadata'], {
-        'statement_date_source': 'pdf',
-        'payments_received': 1250.0,
-        'payment_reconciliation_status': 'unreconciled',
-        'payment_reconciliation_state': 'applied',
-        'unmatched_payment_credit': 50.0,
-      });
-    });
-
     test('persists ingestion metadata in the statement upsert row', () async {
       Map<String, dynamic>? persistedStatement;
       final repository = SupabaseStatementRepository(
