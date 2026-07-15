@@ -95,3 +95,18 @@ test. The pre-existing Task 1 fuzzy-match modifications in
   ```
 
   All 17 tests passed. `git diff --check` also passed.
+
+## Review Follow-up: Deploy-Safe Metadata Migration
+
+- Restored `20260716090000_statement_payment_tracking.sql` to its original
+  Task 1 payment-tracking scope so it is not retroactively changed after
+  deployment.
+- Added the later, idempotent
+  `20260716090100_statement_metadata_contract.sql` migration to add
+  `statements.metadata` with a JSONB default, reapply that default, backfill
+  existing nulls, and then enforce `NOT NULL`.
+- Updated the schema contract test to require the later migration’s add-column,
+  default, null-backfill, and `SET NOT NULL` statements.
+- Ran `flutter test test/statement_schema_fix_test.dart` red first; it failed
+  as expected because the new migration file did not yet exist.
+- After adding the migration, reran that focused test successfully.

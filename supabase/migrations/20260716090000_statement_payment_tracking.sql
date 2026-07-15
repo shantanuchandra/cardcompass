@@ -2,22 +2,6 @@ ALTER TABLE public.statements
   ADD COLUMN IF NOT EXISTS paid_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
 
--- Statement ingestion persists parser provenance and reconciliation facts here.
--- The backfill also repairs installations where this column existed before the
--- migration but allowed NULL values.
-ALTER TABLE public.statements
-  ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
-
-ALTER TABLE public.statements
-  ALTER COLUMN metadata SET DEFAULT '{}'::jsonb;
-
-UPDATE public.statements
-SET metadata = '{}'::jsonb
-WHERE metadata IS NULL;
-
-ALTER TABLE public.statements
-  ALTER COLUMN metadata SET NOT NULL;
-
 UPDATE public.statements
 SET total_amount = 0
 WHERE total_amount IS NULL;

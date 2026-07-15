@@ -28,17 +28,24 @@ void main() {
           contains("conname = 'statements_paid_amount_bounds_check'"));
     });
 
-    test('statement payment migration provisions required ingestion metadata',
+    test('later metadata migration repairs the ingestion metadata contract',
         () {
       final migration = File(
-        'supabase/migrations/20260716090000_statement_payment_tracking.sql',
+        'supabase/migrations/20260716090100_statement_metadata_contract.sql',
       ).readAsStringSync();
 
       expect(
         migration,
         contains(
-            "ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb"),
+            "ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb"),
       );
+      expect(
+        migration,
+        contains("ALTER COLUMN metadata SET DEFAULT '{}'::jsonb"),
+      );
+      expect(migration, contains("SET metadata = '{}'::jsonb"));
+      expect(migration, contains('WHERE metadata IS NULL'));
+      expect(migration, contains('ALTER COLUMN metadata SET NOT NULL'));
     });
 
     test('should create statement without email_id schema error', () async {
