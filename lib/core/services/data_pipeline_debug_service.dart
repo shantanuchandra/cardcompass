@@ -47,9 +47,75 @@ class CardMatchResult {
   });
 }
 
+/// Generic words that appear in almost every bank statement subject line and
+/// are never a useful fuzzy-match keyword against `card_catalog.card_name`.
+const Set<String> _catalogFuzzyMatchStopWords = {
+  'YOUR',
+  'CARD',
+  'CREDIT',
+  'BANK',
+  'STATEMENT',
+  'MONTHLY',
+  'ACCOUNT',
+  'FOR',
+  'THE',
+  'AND',
+  'DUE',
+  'DATE',
+  'JAN',
+  'FEB',
+  'MAR',
+  'APR',
+  'MAY',
+  'JUN',
+  'JUL',
+  'AUG',
+  'SEP',
+  'OCT',
+  'NOV',
+  'DEC',
+  'SBI',
+  'HDFC',
+  'ICICI',
+  'AXIS',
+  'KOTAK',
+};
+
+/// Distinct words extracted from [word], uppercased, stop-words removed.
+Iterable<String> _distinctiveWords(String words) => words
+    .toUpperCase()
+    .split(RegExp(r'[\s\-_/]+'))
+    .where((w) => w.length > 2 && !_catalogFuzzyMatchStopWords.contains(w));
+
+/// Ordered, de-duplicated fuzzy-match keywords to try against
+/// `card_catalog.card_name` when an exact bank+card_name match fails.
+///
+/// [cardName] — the card variant already extracted from the statement itself
+/// (by regex on the subject or by Gemini reading the PDF, e.g. "Sapphiro")
+/// — is tried first, since it's the most specific signal available and is
+/// often present even when the email subject is too generic to carry any
+/// distinguishing word (e.g. "ICICI Bank Credit Card Statement for the
+/// period..."). Email-subject words are tried after, as a fallback for
+/// statements where no real variant name was extracted (`cardName` then
+/// just repeats the bank name and contributes no keyword of its own).
+List<String> catalogFuzzyMatchKeywords({
+  required String cardName,
+  required String emailSubject,
+}) {
+  final seen = <String>{};
+  final ordered = <String>[];
+  for (final word in [
+    ..._distinctiveWords(cardName),
+    ..._distinctiveWords(emailSubject),
+  ]) {
+    if (seen.add(word)) ordered.add(word);
+  }
+  return ordered;
+}
+
 /**
  * Service for debugging and testing the complete data pipeline.
- * 
+ *
  * This service provides methods to test each step of the pipeline:
  * 1. Database setup and connectivity
  * 2. Gmail API authentication and email fetching
@@ -1341,59 +1407,31 @@ class DataPipelineDebugService {
       return exact.first['id'] as String;
     }
 
-    // ── Fuzzy match tier 1: bank + subject keyword ────────────────────
-    // Extract distinctive words from the email subject (e.g. "BPCL", "Coral",
-    // "Flipkart") and prefer catalog cards whose card_name contains them.
-    final subjectWords = emailSubject
-        .toUpperCase()
-        .split(RegExp(r'[\s\-_/]+'))
-        .where((w) =>
-            w.length > 2 &&
-            ![
-              'YOUR',
-              'CARD',
-              'CREDIT',
-              'BANK',
-              'STATEMENT',
-              'MONTHLY',
-              'ACCOUNT',
-              'FOR',
-              'THE',
-              'AND',
-              'DUE',
-              'DATE',
-              'JAN',
-              'FEB',
-              'MAR',
-              'APR',
-              'MAY',
-              'JUN',
-              'JUL',
-              'AUG',
-              'SEP',
-              'OCT',
-              'NOV',
-              'DEC',
-              'SBI',
-              'HDFC',
-              'ICICI',
-              'AXIS',
-              'KOTAK'
-            ].contains(w))
-        .toSet();
+    // ── Fuzzy match tier 1: bank + keyword ────────────────────────────
+    // Try the already-extracted card variant name first (e.g. "Sapphiro"),
+    // then fall back to distinctive words from the email subject (e.g.
+    // "BPCL", "Coral", "Flipkart"). The variant name is often the only
+    // specific signal available — bank statement subjects are frequently
+    // generic ("ICICI Bank Credit Card Statement for the period...") and
+    // carry no keyword of their own even when the variant was successfully
+    // read off the PDF/Gemini.
+    final keywords = catalogFuzzyMatchKeywords(
+      cardName: cardName,
+      emailSubject: emailSubject,
+    );
     final bankRoot =
         bankName.replaceAll(' Card', '').replaceAll(' Bank', '').trim();
-    for (final keyword in subjectWords) {
-      final bySubjectKw = await Supabase.instance.client
+    for (final keyword in keywords) {
+      final byKeyword = await Supabase.instance.client
           .from('card_catalog')
           .select('id, bank, card_name')
           .ilike('bank', '%$bankRoot%')
           .ilike('card_name', '%$keyword%')
           .limit(1);
-      if (bySubjectKw.isNotEmpty) {
+      if (byKeyword.isNotEmpty) {
         print(
-            '   ✅ Catalog subject-keyword match ($keyword): ${bySubjectKw.first['card_name']} (${bySubjectKw.first['bank']})');
-        return bySubjectKw.first['id'] as String;
+            '   ✅ Catalog keyword match ($keyword): ${byKeyword.first['card_name']} (${byKeyword.first['bank']})');
+        return byKeyword.first['id'] as String;
       }
     }
 

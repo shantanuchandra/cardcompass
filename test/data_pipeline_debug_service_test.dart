@@ -132,6 +132,48 @@ class _CapturingStatementRepository extends MockStatementRepository {
 }
 
 void main() {
+  group('catalogFuzzyMatchKeywords', () {
+    test(
+        'tries the extracted card variant name before falling back to '
+        'email-subject words', () {
+      // The email subject is generic ("ICICI Bank Credit Card Statement for
+      // the period...") and contains no word distinctive enough to identify
+      // the card, but the card variant name extracted from the PDF/Gemini
+      // ("Sapphiro") is already known at this point and should be tried
+      // first, not ignored.
+      final keywords = catalogFuzzyMatchKeywords(
+        cardName: 'Sapphiro',
+        emailSubject:
+            'ICICI Bank Credit Card Statement for the period  June 12 2026 to July 11 2026',
+      );
+
+      expect(keywords, contains('SAPPHIRO'));
+      expect(keywords.first, 'SAPPHIRO');
+    });
+
+    test('falls back to email-subject keywords when the card name is generic',
+        () {
+      // When cardName is just the bank name (no real variant was extracted),
+      // it isn't a useful fuzzy-search term, so subject keywords should
+      // still be tried.
+      final keywords = catalogFuzzyMatchKeywords(
+        cardName: 'ICICI Bank',
+        emailSubject: 'Your BPCL SBI Card Statement',
+      );
+
+      expect(keywords, contains('BPCL'));
+    });
+
+    test('does not duplicate a keyword that appears in both sources', () {
+      final keywords = catalogFuzzyMatchKeywords(
+        cardName: 'Coral',
+        emailSubject: 'Your Coral Credit Card Statement',
+      );
+
+      expect(keywords.where((k) => k == 'CORAL').length, 1);
+    });
+  });
+
   group('DataPipelineDebugService.createUserCardAssociation', () {
     test(
         'throws instead of fabricating a user card ID when the RPC fails and no existing match is found',
