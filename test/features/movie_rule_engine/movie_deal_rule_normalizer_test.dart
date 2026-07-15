@@ -49,6 +49,42 @@ void main() {
       expect(result, isA<RejectedMovieDealRule>());
     });
 
+    test('rejects an unknown supplied offer type despite a valid percentage',
+        () {
+      expect(
+        normalizeMovieDealRule(
+          source({'offer_type': 'BOGUS', 'discount_percent': 10}),
+        ),
+        isA<RejectedMovieDealRule>(),
+      );
+    });
+
+    test('rejects an unknown supplied offer type despite a valid fixed amount',
+        () {
+      expect(
+        normalizeMovieDealRule(
+          source({'offer_type': 'BOGUS', 'discount_amount': 100}),
+        ),
+        isA<RejectedMovieDealRule>(),
+      );
+    });
+
+    test('rejects contradictory supplied units', () {
+      final invalidConfigs = [
+        {'unit': 'fixed', 'discount_percent': 10},
+        {'unit': 'percent', 'discount_amount': 100},
+        {'offer_type': 'BOGO', 'discount_percent': 10},
+      ];
+
+      for (final config in invalidConfigs) {
+        expect(
+          normalizeMovieDealRule(source(config)),
+          isA<RejectedMovieDealRule>(),
+          reason: '$config',
+        );
+      }
+    });
+
     test('normalizes discount_amount as a fixed discount without defaults', () {
       final result = normalizeMovieDealRule(
         source({'discount_amount': 250}),
@@ -109,7 +145,8 @@ void main() {
       );
     });
 
-    test('rejects a malformed milestone threshold despite a valid fallback', () {
+    test('rejects a malformed milestone threshold despite a valid fallback',
+        () {
       final result = normalizeMovieDealRule(
         source({
           'offer_type': 'MILESTONE',
@@ -133,12 +170,42 @@ void main() {
         {'discount_percent': 10, 'max_discount_amount': 'unknown'},
         {'discount_percent': 10, 'min_transaction_amount': 'unknown'},
         {'discount_percent': 10, 'valid_dow': 3},
-        {'discount_percent': 10, 'platform': ['BookMyShow', 42]},
+        {
+          'discount_percent': 10,
+          'platform': ['BookMyShow', 42]
+        },
       ];
 
       for (final config in invalidConfigs) {
         final result = normalizeMovieDealRule(source(config));
         expect(result, isA<RejectedMovieDealRule>(), reason: '$config');
+      }
+    });
+
+    test('rejects negative supplied commercial aliases outside inferred terms',
+        () {
+      final invalidConfigs = [
+        {'discount_percent': 10, 'max_discount_amount': -1},
+        {'discount_percent': 10, 'min_transaction_amount': -1},
+        {'discount_percent': 10, 'txn_ticket_limit': -1},
+        {'discount_percent': 10, 'transaction_ticket_limit': -1},
+        {'discount_percent': 10, 'month_ticket_limit': -1},
+        {'discount_percent': 10, 'cycle_ticket_limit': -1},
+        {'discount_percent': 10, 'buy_ticket_count': -1},
+        {'discount_percent': 10, 'free_count': -1},
+        {'discount_percent': 10, 'discount_amount': -1},
+        {'discount_percent': 10, 'fixed_amount': -1},
+        {'discount_percent': 10, 'milestone_threshold': -1},
+        {'discount_percent': 10, 'milestone_currency': -1},
+        {'discount_percent': 10, 'milestone_reward': -1},
+      ];
+
+      for (final config in invalidConfigs) {
+        expect(
+          normalizeMovieDealRule(source(config)),
+          isA<RejectedMovieDealRule>(),
+          reason: '$config',
+        );
       }
     });
 
