@@ -8,15 +8,22 @@ typedef StatementUpsert = Future<Map<String, dynamic>> Function(
   required String onConflict,
 });
 
+typedef StatementPaymentRpc = Future<Map<String, dynamic>> Function(
+  String functionName, {
+  required Map<String, dynamic> params,
+});
+
 /// Supabase implementation of the StatementRepository interface
 /// Updated to fix UUID generation issue
 class SupabaseStatementRepository implements StatementRepository {
   SupabaseStatementRepository({
     Future<String> Function(String userCardId)? resolveCatalogCardId,
     StatementUpsert? upsertStatement,
+    StatementPaymentRpc? statementPaymentRpc,
   })  : _resolveCatalogCardId =
             resolveCatalogCardId ?? _defaultResolveCatalogCardId,
-        _upsertStatementOverride = upsertStatement;
+        _upsertStatementOverride = upsertStatement,
+        _statementPaymentRpcOverride = statementPaymentRpc;
 
   // `late` so constructing this repository in a unit test that injects
   // [_resolveCatalogCardId] and never touches Supabase-backed methods doesn't
@@ -27,6 +34,7 @@ class SupabaseStatementRepository implements StatementRepository {
   /// to the real Supabase lookup in production.
   final Future<String> Function(String userCardId) _resolveCatalogCardId;
   final StatementUpsert? _upsertStatementOverride;
+  final StatementPaymentRpc? _statementPaymentRpcOverride;
 
   Future<Map<String, dynamic>> _upsertStatement(
     Map<String, dynamic> statement, {
@@ -42,6 +50,16 @@ class SupabaseStatementRepository implements StatementRepository {
         .upsert(statement, onConflict: onConflict)
         .select()
         .single();
+  }
+
+  Future<Map<String, dynamic>> _statementPaymentRpc(
+    String functionName, {
+    required Map<String, dynamic> params,
+  }) async {
+    final override = _statementPaymentRpcOverride;
+    if (override != null) return override(functionName, params: params);
+    final response = await _supabase.rpc(functionName, params: params);
+    return Map<String, dynamic>.from(response as Map);
   }
 
   static Future<String> _defaultResolveCatalogCardId(String userCardId) async {
@@ -61,6 +79,91 @@ class SupabaseStatementRepository implements StatementRepository {
   /// DataPipelineDebugService, never surfaced to the user).
   static const String statementUpsertConflictColumns =
       'user_card_id,statement_date';
+
+  @override
+  Future<List<Statement>> getOpenStatementsForCard({
+    required String userId,
+    required String userCardId,
+  }) async {
+    final response = await _supabase
+        .from('statements')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('user_card_id', userCardId)
+        .inFilter('payment_status',
+            const ['pending', 'partial', 'overdue']).order('due_date');
+    return List<Map<String, dynamic>>.from(response)
+        .map(Statement.fromJson)
+        .toList();
+  }
+
+  @override
+  Future<PaymentReconciliationResult> reconcileImportedPayment({
+    required String sourceStatementId,
+    required String userId,
+    required String userCardId,
+    required double paymentCredit,
+    required List<PaymentUpdate> updates,
+    required double unmatchedPaymentCredit,
+  }) async {
+    final response = await _statementPaymentRpc(
+      'reconcile_imported_statement_payment',
+      params: {
+        'p_source_statement_id': sourceStatementId,
+        'p_user_id': userId,
+        'p_user_card_id': userCardId,
+        'p_expected_payment_credit': paymentCredit,
+      },
+    );
+    final rpcUpdates = (response['updates'] as List? ?? const [])
+        .map((value) => Map<String, dynamic>.from(value as Map))
+        .map((value) => PaymentUpdate(
+              value['statement_id'] as String,
+              (value['payment_amount'] as num).toDouble(),
+              PaymentStatus.values.firstWhere(
+                (status) => status.name == value['payment_status'],
+              ),
+            ))
+        .toList();
+    return PaymentReconciliationResult(
+      alreadyApplied: response['already_applied'] as bool? ?? false,
+      appliedUpdates: rpcUpdates,
+      unmatchedPaymentCredit:
+          (response['unmatched_payment_credit'] as num?)?.toDouble() ?? 0,
+    );
+  }
+
+  @override
+  Future<void> applyPaymentToStatement({
+    required String statementId,
+    required String userId,
+    required String userCardId,
+    required double paymentAmount,
+    required PaymentStatus paymentStatus,
+  }) async {
+    await _statementPaymentRpc('apply_statement_payment', params: {
+      'p_statement_id': statementId,
+      'p_user_id': userId,
+      'p_user_card_id': userCardId,
+      'p_payment_amount': paymentAmount,
+      'p_mark_paid': false,
+    });
+  }
+
+  @override
+  Future<void> markStatementPaid({
+    required String statementId,
+    required String userId,
+    required String userCardId,
+  }) async {
+    await _statementPaymentRpc('apply_statement_payment', params: {
+      'p_statement_id': statementId,
+      'p_user_id': userId,
+      'p_user_card_id': userCardId,
+      'p_payment_amount': 0,
+      'p_mark_paid': true,
+    });
+  }
 
   @override
   Future<List<Map<String, dynamic>>> getUserStatements(String userId) async {
@@ -94,27 +197,30 @@ class SupabaseStatementRepository implements StatementRepository {
       final catalogCardId = cardResponse['catalog_card_id'] as String;
 
       // Upload file to Supabase Storage
-      final fileName = '${DateTime.now().millisecondsSinceEpoch}_${file.path.split('/').last}';
+      final fileName =
+          '${DateTime.now().millisecondsSinceEpoch}_${file.path.split('/').last}';
       final filePath = 'statements/$userId/$fileName';
 
-      await _supabase.storage
-          .from('documents')
-          .upload(filePath, file);
+      await _supabase.storage.from('documents').upload(filePath, file);
 
       // Get the public URL
       final publicUrl = _supabase.storage
           .from('documents')
-          .getPublicUrl(filePath);      // Create statement record
-      final result = await _supabase.from('statements').insert({
-        // Let Supabase auto-generate UUID for 'id' field
-        'user_id': userId,
-        'card_id': catalogCardId,
-        'user_card_id': cardId,
-        'file_path': publicUrl,
-        'file_name': fileName,
-        'processed': false,
-        'created_at': DateTime.now().toIso8601String(),
-      }).select().single();
+          .getPublicUrl(filePath); // Create statement record
+      final result = await _supabase
+          .from('statements')
+          .insert({
+            // Let Supabase auto-generate UUID for 'id' field
+            'user_id': userId,
+            'card_id': catalogCardId,
+            'user_card_id': cardId,
+            'file_path': publicUrl,
+            'file_name': fileName,
+            'processed': false,
+            'created_at': DateTime.now().toIso8601String(),
+          })
+          .select()
+          .single();
 
       return result['id'] as String;
     } catch (e) {
@@ -129,7 +235,8 @@ class SupabaseStatementRepository implements StatementRepository {
     required String filePath,
   }) async {
     // Parsing of statements via PDF should be handled by PdfParsingService
-    throw UnimplementedError('Statement parsing not implemented in repository. Use PdfParsingService directly.');
+    throw UnimplementedError(
+        'Statement parsing not implemented in repository. Use PdfParsingService directly.');
   }
 
   @override
@@ -165,10 +272,7 @@ class SupabaseStatementRepository implements StatementRepository {
   @override
   Future<void> deleteStatement(String statementId) async {
     try {
-      await _supabase
-          .from('statements')
-          .delete()
-          .eq('id', statementId);
+      await _supabase.from('statements').delete().eq('id', statementId);
     } catch (e) {
       throw Exception('Failed to delete statement: $e');
     }
@@ -202,7 +306,7 @@ class SupabaseStatementRepository implements StatementRepository {
       // 2. Searching for statement emails
       // 3. Downloading PDF attachments
       // 4. Processing them through parseStatement
-      
+
       // For now, return empty list
       return [];
     } catch (e) {
@@ -235,11 +339,13 @@ class SupabaseStatementRepository implements StatementRepository {
   List<String> getSupportedFormats() {
     return ['pdf'];
   }
+
   @override
   Future<List<Statement>> getStatements(String userId) async {
     try {
-      print('🔍 SupabaseStatementRepository: Fetching statements for user: $userId');
-      
+      print(
+          '🔍 SupabaseStatementRepository: Fetching statements for user: $userId');
+
       final response = await _supabase
           .from('statements')
           .select('*')
@@ -247,13 +353,14 @@ class SupabaseStatementRepository implements StatementRepository {
           .order('statement_date', ascending: false);
 
       print('📋 SupabaseStatementRepository: Raw response: $response');
-      
+
       final statements = List<Map<String, dynamic>>.from(response)
           .map((data) => Statement.fromJson(data))
           .toList();
-          
-      print('📋 SupabaseStatementRepository: Parsed ${statements.length} statements');
-      
+
+      print(
+          '📋 SupabaseStatementRepository: Parsed ${statements.length} statements');
+
       return statements;
     } catch (e) {
       print('❌ SupabaseStatementRepository: Error fetching statements: $e');
@@ -283,21 +390,30 @@ class SupabaseStatementRepository implements StatementRepository {
         'user_id': userId,
         'card_id': catalogCardId, // References card_catalog(id)
         'user_card_id': userCardId, // References user_cards(id)
-        'statement_date': statementData['statement_date'] ?? now.toIso8601String(),
-        'due_date': statementData['due_date'] ?? DateTime.now().add(const Duration(days: 30)).toIso8601String(),
+        'statement_date':
+            statementData['statement_date'] ?? now.toIso8601String(),
+        'due_date': statementData['due_date'] ??
+            DateTime.now().add(const Duration(days: 30)).toIso8601String(),
         'total_amount': statementData['total_amount'] ?? 0.0,
-        'minimum_payment': statementData['min_amount_due'] ?? statementData['minimum_payment'] ?? 0.0,
-        'closing_balance': statementData['previous_balance'] ?? statementData['closing_balance'] ?? 0.0,
+        'minimum_payment': statementData['min_amount_due'] ??
+            statementData['minimum_payment'] ??
+            0.0,
+        'closing_balance': statementData['previous_balance'] ??
+            statementData['closing_balance'] ??
+            0.0,
         'available_credit': statementData['available_credit'] ?? 0.0,
         'interest_charged': statementData['interest_charged'] ?? 0.0,
         'fees_charged': statementData['fees_charged'] ?? 0.0,
         'payment_status': 'pending',
         'rewards_earned': statementData['rewards_earned'] ?? 0,
         'file_path': filePath ?? statementData['file_path'],
-        'file_name': statementData['file_name'] ?? filePath?.split('/').last ?? 'statement.pdf',
+        'file_name': statementData['file_name'] ??
+            filePath?.split('/').last ??
+            'statement.pdf',
         'metadata': statementData['metadata'] ?? {},
         'processed': true,
-        'transaction_count': (statementData['transactions'] as List?)?.length ?? 0,
+        'transaction_count':
+            (statementData['transactions'] as List?)?.length ?? 0,
         'created_at': now.toIso8601String(),
         'updated_at': now.toIso8601String(),
       };

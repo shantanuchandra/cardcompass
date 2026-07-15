@@ -9,6 +9,7 @@ import 'package:cardcompass/core/services/enhanced_gmail_service.dart';
 import 'package:cardcompass/core/services/pdf_parsing_service_impl.dart';
 import 'package:cardcompass/core/services/gemini_transaction_parser.dart';
 import 'package:cardcompass/core/services/password_input_service.dart';
+import 'package:cardcompass/core/services/statement_payment_reconciliation_service.dart';
 import 'package:cardcompass/core/repositories/supabase_transaction_repository.dart';
 import 'package:cardcompass/core/repositories/card_repository.dart';
 import 'package:cardcompass/core/repositories/supabase_card_repository.dart';
@@ -61,6 +62,7 @@ class DataPipelineDebugService {
     CardRepository? cardRepo,
     EmailRepositoryInterface? emailRepo,
     StatementRepository? statementRepo,
+    StatementPaymentReconciliationService? paymentReconciliationService,
     Future<String> Function({
       required String userId,
       required String catalogCardId,
@@ -87,6 +89,7 @@ class DataPipelineDebugService {
   })  : _cardRepo = cardRepo ?? SupabaseCardRepository(),
         _emailRepo = emailRepo,
         _statementRepo = statementRepo ?? SupabaseStatementRepository(),
+        _paymentReconciliationService = paymentReconciliationService,
         _associateUserWithCard =
             associateUserWithCard ?? _defaultAssociateUserWithCard,
         _findOrCreateCatalogCard = findOrCreateCatalogCard,
@@ -104,8 +107,8 @@ class DataPipelineDebugService {
   late final SupabaseTransactionRepository _transactionRepo =
       SupabaseTransactionRepository();
   final CardRepository _cardRepo;
-  late final SupabaseStatementRepository _statementRepo =
-      SupabaseStatementRepository();
+  final StatementRepository _statementRepo;
+  final StatementPaymentReconciliationService? _paymentReconciliationService;
 
   /// Test seam: when null (the production default), [_emailRepoOrDefault]
   /// lazily creates the real Supabase-backed [EmailRepository].
@@ -1142,6 +1145,17 @@ class DataPipelineDebugService {
 
         statementRecordId = statementRecord.id;
         print('   ✅ Statement record stored: $statementRecordId');
+        final paymentCredit = statement.paymentsReceived;
+        if (paymentCredit != null && paymentCredit > 0) {
+          await (_paymentReconciliationService ??
+                  StatementPaymentReconciliationService(_statementRepo))
+              .reconcileImportedPayment(
+            sourceStatementId: statementRecordId,
+            userId: userId,
+            userCardId: cardInfo.userCardId,
+            paymentCredit: paymentCredit,
+          );
+        }
       } catch (e) {
         print(
             '   ⚠️ Statement storage failed (continuing with transactions): $e');
