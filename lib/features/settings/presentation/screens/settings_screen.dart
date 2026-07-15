@@ -173,9 +173,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         : 'Frosted pearl style',
                     value: isDark,
                     onChanged: (v) {
-                      ref.read(themeModeProvider.notifier).setThemeMode(
-                            v ? ThemeMode.dark : ThemeMode.light,
-                          );
+                      setThemeMode(
+                            ref, v ? ThemeMode.dark : ThemeMode.light);
                     },
                   ),
                   _divider(context),
@@ -352,7 +351,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       title: Text(title, style: _rowTitleStyle(context)),
       subtitle: Text(subtitle, style: _rowSubtitleStyle(context)),
       value: value,
-      activeColor: AppTheme.adaptivePrimary(context),
+      activeThumbColor: AppTheme.adaptivePrimary(context),
       onChanged: onChanged,
     );
   }

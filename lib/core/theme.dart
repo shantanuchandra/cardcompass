@@ -81,23 +81,25 @@ class AppTheme {
 
   // ─── Surface Hierarchy (Dark) ────────────────────────────────────────────
   //
-  // WHY 5 levels of darkness:
-  //   Creates spatial depth without 3D rendering. Each step is ~10-15
-  //   lightness units apart — enough to distinguish layers but close
-  //   enough to feel cohesive. Neon colors glow convincingly only
-  //   against deep darks; on light backgrounds they look garish.
+  // WHY these specific lightness values (2026 revision):
+  //   The original palette (Void=#020810, Base=#050B18) was near-black,
+  //   making depth perception impossible — cards merged with the background.
+  //   Research (Material Design 3, Apple Liquid Glass) shows dark themes
+  //   need a base at L≈10-12 with cards at L≈14-16 for visible tonal
+  //   elevation. Neon accents still glow at these levels while the UI
+  //   gains real spatial hierarchy.
   //
-  //   Void  (#020810) — deepest page background
-  //   Base  (#050B18) — primary content canvas
-  //   Raised(#0C152B) — cards, panels, elevated surfaces
-  //   Overlay(#111D38) — popovers, drawers, sheets
-  //   Subtle(#1E293B) — borders, dividers, hairlines
+  //   Void  (#080E1A) — deepest page background / behind scroll
+  //   Base  (#0F172A) — primary content canvas (Slate-900)
+  //   Raised(#1A2332) — cards, panels, elevated surfaces
+  //   Overlay(#1E293B) — popovers, drawers, sheets (Slate-800)
+  //   Subtle(#334155) — borders, dividers, hairlines (Slate-700)
   //
-  static const Color surfaceVoid = Color(0xFF020810);
-  static const Color surfaceBase = Color(0xFF050B18);
-  static const Color surfaceRaised = Color(0xFF0C152B);
-  static const Color surfaceOverlay = Color(0xFF111D38);
-  static const Color surfaceSubtle = Color(0xFF1E293B);
+  static const Color surfaceVoid = Color(0xFF080E1A);
+  static const Color surfaceBase = Color(0xFF0F172A);
+  static const Color surfaceRaised = Color(0xFF1A2332);
+  static const Color surfaceOverlay = Color(0xFF1E293B);
+  static const Color surfaceSubtle = Color(0xFF334155);
 
   // ─── Surface Hierarchy (Light) ───────────────────────────────────────────
   //
@@ -256,7 +258,7 @@ class AppTheme {
     Color? borderColor,
   }) {
     return BoxDecoration(
-      color: surfaceRaised.withValues(alpha: 0.55),
+      color: surfaceRaised.withValues(alpha: 0.7),
       borderRadius: BorderRadius.circular(borderRadius),
       border: Border.all(
         color: borderColor ?? Colors.white.withValues(alpha: 0.08),
@@ -602,7 +604,7 @@ class AppTheme {
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: const Color(0xFF0F172A),
+        fillColor: surfaceRaised,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(AppBorderRadius.md),
           borderSide: const BorderSide(color: surfaceSubtle),
