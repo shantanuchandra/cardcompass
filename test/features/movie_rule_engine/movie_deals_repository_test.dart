@@ -90,6 +90,49 @@ void main() {
         MovieDealUsageConfidence.unverified);
   });
 
+  test(
+      'verifies and aggregates capped usage from matching platform or merchant transactions',
+      () async {
+    final source = FakeMovieDealsDataSource(
+      benefits: [
+        {
+          'benefit_id': 'benefit-1',
+          'title': 'Capped movie offer',
+          'value_config': {'discount_percent': 10, 'cycle_ticket_limit': 4},
+        },
+      ],
+      mappings: [
+        {'benefit_id': 'benefit-1', 'card_id': 'catalog-card'},
+      ],
+      cards: [
+        {'id': 'catalog-card', 'card_name': 'Card'},
+      ],
+      userCards: [
+        {'id': 'user-card', 'catalog_card_id': 'catalog-card'},
+      ],
+      transactions: [
+        {
+          'user_card_id': 'user-card',
+          'merchant_name': 'Cinema partner',
+          'metadata': {'platform': 'BookMyShow', 'ticket_count': 2},
+        },
+        {
+          'user_card_id': 'user-card',
+          'merchant_name': 'BookMyShow',
+          'metadata': {'ticket_count': 1},
+        },
+      ],
+    );
+
+    final snapshot = await MovieDealsSupabaseRepository(source)
+        .loadSnapshot('user-1', request);
+
+    final context = snapshot.contexts['catalog-card']!;
+    expect(context.usageConfidence, MovieDealUsageConfidence.verified);
+    expect(context.usedTickets, 3);
+    expect(context.usedTransactions, 2);
+  });
+
   test('returns unavailable milestone spending when cache is absent', () async {
     final source = FakeMovieDealsDataSource(
       benefits: [
