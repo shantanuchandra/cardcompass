@@ -115,8 +115,10 @@ class AuthService {
   Future<User?> signInWithGoogle() async {
     try {
       // Use Supabase OAuth for Google Sign-In
+      // Use the full base URL (including path like /app/) so Supabase
+      // redirects back to the Flutter app, not the landing page root.
       final String? webRedirect = kIsWeb
-          ? Uri.base.origin // preserve scheme+host+port, e.g., http://localhost:54321
+          ? Uri.base.toString().replaceAll(RegExp(r'[#?].*$'), '') // strip hash/query, keep path
           : null;
 
       final bool success = await _supabase.auth.signInWithOAuth(
