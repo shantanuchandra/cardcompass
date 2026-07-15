@@ -175,6 +175,13 @@ DateTime? _date(Object? value) {
 }
 
 String? _malformedOptionalField(Map<String, dynamic> config) {
+  const stringFields = ['offer_type', 'unit'];
+  for (final field in stringFields) {
+    if (_isSupplied(config, field) && _string(config[field]) == null) {
+      return field;
+    }
+  }
+
   const dateFields = ['start_date', 'valid_from', 'end_date', 'valid_until'];
   for (final field in dateFields) {
     if (_isSupplied(config, field) && _date(config[field]) == null) return field;

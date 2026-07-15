@@ -33,6 +33,22 @@ void main() {
       expect(rule.discountPercent, 15);
     });
 
+    test('rejects a malformed supplied unit during inference', () {
+      final result = normalizeMovieDealRule(
+        source({'discount_percent': 10, 'unit': 42}),
+      );
+
+      expect(result, isA<RejectedMovieDealRule>());
+    });
+
+    test('rejects a malformed supplied offer type during inference', () {
+      final result = normalizeMovieDealRule(
+        source({'discount_percent': 10, 'offer_type': 42}),
+      );
+
+      expect(result, isA<RejectedMovieDealRule>());
+    });
+
     test('normalizes discount_amount as a fixed discount without defaults', () {
       final result = normalizeMovieDealRule(
         source({'discount_amount': 250}),
