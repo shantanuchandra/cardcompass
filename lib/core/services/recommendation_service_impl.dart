@@ -33,7 +33,12 @@ class RecommendationServiceImpl implements RecommendationService {
     required String category,
     required double amount,
   }) async {
-    return _rewardCalculator.calculateRewardValue(card, amount, category);
+    return _rewardCalculator.calculateRewardValue(
+      card,
+      amount,
+      category,
+      merchantName: merchantName,
+    );
   }
 
   @override
@@ -65,10 +70,51 @@ class RecommendationServiceImpl implements RecommendationService {
       );
     }
 
+    final userBest = await _findBestCard(
+      userCards,
+      merchantName: merchantName,
+      category: category,
+      amount: amount,
+    );
+
+    List<CreditCard> allCards;
+    try {
+      allCards = await _cardRepository.getAllCards();
+    } catch (_) {
+      allCards = userCards;
+    }
+    if (allCards.isEmpty) allCards = userCards;
+
+    final overallBest = await _findBestCard(
+      allCards,
+      merchantName: merchantName,
+      category: category,
+      amount: amount,
+    );
+    final potentialSavings =
+        (overallBest.reward - userBest.reward).clamp(0.0, double.infinity);
+
+    return CardRecommendationResult(
+      bestUserCard: userBest.card,
+      bestUserReward: userBest.reward,
+      bestOverallCard: overallBest.card,
+      bestOverallReward: overallBest.reward,
+      potentialSavings: potentialSavings,
+      explanation: userBest.card == null
+          ? 'No suitable card found for this transaction'
+          : 'Best card you own for this transaction: ${userBest.card!.cardName} with ₹${userBest.reward.toStringAsFixed(0)} reward',
+    );
+  }
+
+  Future<({CreditCard? card, double reward})> _findBestCard(
+    List<CreditCard> cards, {
+    required String merchantName,
+    required String category,
+    required double amount,
+  }) async {
     CreditCard? bestCard;
     double maxReward = 0.0;
-
-    for (final card in userCards) {
+    for (final card in cards) {
       final reward = await _rewardCalculator.calculateRewardValue(
         card,
         amount,
@@ -80,17 +126,7 @@ class RecommendationServiceImpl implements RecommendationService {
         bestCard = card;
       }
     }
-
-    return CardRecommendationResult(
-      bestUserCard: bestCard,
-      bestUserReward: maxReward,
-      bestOverallCard: bestCard,
-      bestOverallReward: maxReward,
-      potentialSavings: maxReward,
-      explanation: bestCard == null
-          ? 'No suitable card found for this transaction'
-          : 'Best card for this transaction: ${bestCard.cardName} with ₹${maxReward.toStringAsFixed(0)} reward',
-    );
+    return (card: bestCard, reward: maxReward);
   }
 
   /// Compares what the user actually earned on each category against what
@@ -112,8 +148,10 @@ class RecommendationServiceImpl implements RecommendationService {
     );
 
     final spendByCategory = <String, double>{};
-    for (final t in transactions.where((t) => t.type == TransactionType.debit)) {
-      spendByCategory[t.categoryString] = (spendByCategory[t.categoryString] ?? 0) + t.amount;
+    for (final t
+        in transactions.where((t) => t.type == TransactionType.debit)) {
+      spendByCategory[t.categoryString] =
+          (spendByCategory[t.categoryString] ?? 0) + t.amount;
     }
 
     final optimizations = <SpendingOptimization>[];
@@ -144,13 +182,15 @@ class RecommendationServiceImpl implements RecommendationService {
           category: category,
           currentSpending: spend,
           potentialSavings: upside,
-          suggestion: 'Route your $category spending through ${bestCard.cardName} to earn more rewards.',
+          suggestion:
+              'Route your $category spending through ${bestCard.cardName} to earn more rewards.',
           recommendedCard: bestCard,
         ));
       }
     }
 
-    optimizations.sort((a, b) => b.potentialSavings.compareTo(a.potentialSavings));
+    optimizations
+        .sort((a, b) => b.potentialSavings.compareTo(a.potentialSavings));
     return optimizations.take(5).toList();
   }
 
@@ -181,7 +221,9 @@ class RecommendationServiceImpl implements RecommendationService {
     for (final card in cards) {
       for (final category in card.rewardRates.keys) {
         final currentBest = result[category];
-        if (currentBest == null || (card.rewardRates[category] ?? 0) > (currentBest.rewardRates[category] ?? 0)) {
+        if (currentBest == null ||
+            (card.rewardRates[category] ?? 0) >
+                (currentBest.rewardRates[category] ?? 0)) {
           result[category] = card;
         }
       }
@@ -204,7 +246,8 @@ class RecommendationServiceImpl implements RecommendationService {
     final rewardsByCard = <String, double>{};
     for (final t in transactions) {
       if (t.userCardId == null || t.rewardEarned == null) continue;
-      rewardsByCard[t.userCardId!] = (rewardsByCard[t.userCardId!] ?? 0) + t.rewardEarned!;
+      rewardsByCard[t.userCardId!] =
+          (rewardsByCard[t.userCardId!] ?? 0) + t.rewardEarned!;
     }
 
     final results = <RewardOptimization>[];
@@ -213,7 +256,8 @@ class RecommendationServiceImpl implements RecommendationService {
       if (earned <= 0) continue;
       results.add(RewardOptimization(
         title: '${card.cardName} rewards ready to redeem',
-        description: 'You earned ₹${earned.toStringAsFixed(0)} in rewards on ${card.cardName} this month.',
+        description:
+            'You earned ₹${earned.toStringAsFixed(0)} in rewards on ${card.cardName} this month.',
         potentialReward: earned,
         actionRequired: 'Redeem via your card\'s rewards portal',
         relatedCard: card,
@@ -237,10 +281,12 @@ class RecommendationServiceImpl implements RecommendationService {
     );
     final debits = transactions.where((t) => t.type == TransactionType.debit);
     final totalSpending = debits.fold<double>(0.0, (sum, t) => sum + t.amount);
-    final totalRewards = transactions.fold<double>(0.0, (sum, t) => sum + (t.rewardEarned ?? 0));
+    final totalRewards =
+        transactions.fold<double>(0.0, (sum, t) => sum + (t.rewardEarned ?? 0));
     final categoryBreakdown = <String, double>{};
     for (final t in debits) {
-      categoryBreakdown[t.categoryString] = (categoryBreakdown[t.categoryString] ?? 0) + t.amount;
+      categoryBreakdown[t.categoryString] =
+          (categoryBreakdown[t.categoryString] ?? 0) + t.amount;
     }
     return SpendingAnalysis(
       totalSpending: totalSpending,
@@ -248,7 +294,9 @@ class RecommendationServiceImpl implements RecommendationService {
       categoryBreakdown: categoryBreakdown,
       monthlyTrend: const {},
       insights: totalSpending > 0
-          ? ['You earned ${(totalRewards / totalSpending * 100).toStringAsFixed(1)}% back in rewards on your spending.']
+          ? [
+              'You earned ${(totalRewards / totalSpending * 100).toStringAsFixed(1)}% back in rewards on your spending.'
+            ]
           : [],
       rewardRate: totalSpending > 0 ? totalRewards / totalSpending : 0.0,
     );

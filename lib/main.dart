@@ -9,6 +9,7 @@ import 'core/app_config.dart';
 import 'core/env.dart';
 import 'core/config/ai_config.dart';
 import 'core/providers/service_providers.dart';
+import 'core/providers/theme_provider.dart';
 import 'app.dart';
 
 void main() async {
@@ -43,6 +44,9 @@ void main() async {
   await GoogleSignIn.instance.initialize(
     clientId: AppConfig.googleClientId,
   );
+
+  // Load persisted theme preference
+  await loadPersistedThemeMode();
 
   runApp(
     ProviderScope(
