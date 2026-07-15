@@ -1,7 +1,28 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('Statement Repository Fix Tests', () {
+    test(
+        'statement payment migration adds audited payment fields and lookup index',
+        () {
+      final migration = File(
+        'supabase/migrations/20260716090000_statement_payment_tracking.sql',
+      ).readAsStringSync();
+
+      expect(migration, contains('paid_amount'));
+      expect(migration, contains('paid_at'));
+      expect(
+        migration,
+        contains('paid_amount >= 0 AND paid_amount <= total_amount'),
+      );
+      expect(
+        migration,
+        contains('(user_card_id, payment_status, due_date)'),
+      );
+    });
+
     test('should create statement without email_id schema error', () async {
       // Test that statement creation no longer fails due to missing email_id column
       // Skip this test in the test environment since it requires Supabase connection
@@ -11,7 +32,7 @@ void main() {
       print('   ✅ Updated SupabaseStatementRepository to handle new schema');
       print('   ✅ Mock data updated to use correct enum values');
     });
-    
+
     test('should handle HDFC-style statement data format', () {
       // Test that the data format typically sent for HDFC statements is handled correctly
       final hdfcStyleData = {
@@ -30,13 +51,13 @@ void main() {
         'processed': true,
         'transaction_count': 16,
       };
-      
+
       // Verify all expected fields are present and have correct types
       expect(hdfcStyleData['statement_date'], isA<String>());
       expect(hdfcStyleData['total_amount'], isA<double>());
       expect(hdfcStyleData['transaction_count'], equals(16));
       expect(hdfcStyleData['processed'], isTrue);
-      
+
       print('✅ HDFC statement data format validation passed');
     });
   });
