@@ -2,6 +2,10 @@ import 'movie_deal_rule.dart';
 
 enum MovieDealUsageConfidence { verified, unverified, unavailable }
 
+/// Distinguishes a successfully evaluated empty result from an unavailable
+/// data source. Consumers must not present the latter as "no deals".
+enum MovieDealsStatus { available, unavailable }
+
 /// Context supplied by the repository for one catalog card. It deliberately
 /// contains only already-observed state, keeping the evaluator pure.
 class MovieDealContext {
@@ -66,6 +70,7 @@ class MovieDealsRecommendation {
   MovieDealsRecommendation({
     required List<MovieDealCandidate> candidates,
     required List<RejectedMovieDealCandidate> rejectedCandidates,
+    this.status = MovieDealsStatus.available,
     this.bestOwned,
     this.bestOverall,
   })  : candidates = List.unmodifiable(candidates),
@@ -73,6 +78,7 @@ class MovieDealsRecommendation {
 
   final List<MovieDealCandidate> candidates;
   final List<RejectedMovieDealCandidate> rejectedCandidates;
+  final MovieDealsStatus status;
   final MovieDealCandidate? bestOwned;
   final MovieDealCandidate? bestOverall;
 }
