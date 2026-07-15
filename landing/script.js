@@ -601,30 +601,13 @@
   // only the Flutter app (with supabase_flutter SDK) can parse the
   // OAuth tokens from the URL hash (#access_token=...).
   // On localhost: redirect to the local Flutter web app (port 3000) for dev testing.
+  // The Flutter app's login screen handles Google OAuth natively.
+  // Sign-in buttons on the landing page simply navigate to the app.
   const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-  const REDIRECT_URL = isLocalhost
-    ? 'http://localhost:3000'
-    : 'https://www.cardcompass.in';
-  
-  // Gmail scopes matching auth_provider.dart
-  const SCOPES = [
-    'email',
-    'profile',
-    'https://www.googleapis.com/auth/gmail.readonly',
-    'https://www.googleapis.com/auth/gmail.modify',
-    'https://www.googleapis.com/auth/user.birthday.read',
-  ].join(' ');
-  
-  function initiateSignIn(e) {
+  const APP_URL = isLocalhost ? '/app/' : 'https://www.cardcompass.in';
+
+  function navigateToApp(e) {
     e.preventDefault();
-    
-    // Build the Supabase OAuth URL
-    const params = new URLSearchParams({
-      provider: 'google',
-      redirect_to: REDIRECT_URL,
-      scopes: SCOPES,
-    });
-    const authUrl = `${SUPABASE_URL}/auth/v1/authorize?${params.toString()}`;
     
     // Visual feedback before redirect
     const btn = e.currentTarget;
@@ -632,21 +615,20 @@
     btn.style.opacity = '0.85';
     
     setTimeout(() => {
-      window.location.href = authUrl;
+      window.location.href = APP_URL;
     }, 150);
   }
   
   signInButtons.forEach(btn => {
-    // Only attach to actual sign-in buttons, not anchor links to the #signin section
     if (btn.id === 'ctaSignIn' || btn.classList.contains('btn-google')) {
-      btn.addEventListener('click', initiateSignIn);
+      btn.addEventListener('click', navigateToApp);
     }
   });
 
   // Also handle the nav "Sign In" button
   const navSignIn = document.getElementById('navSignIn');
   if (navSignIn) {
-    navSignIn.addEventListener('click', initiateSignIn);
+    navSignIn.addEventListener('click', navigateToApp);
   }
 
   function showSignInToast() {
