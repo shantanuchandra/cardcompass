@@ -2,43 +2,49 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Manages the app's theme mode (light / dark / system).
+/// Theme mode provider for CardCompass.
 ///
-/// Defaults to [ThemeMode.dark] because the majority of screens still use
-/// hardcoded dark-mode colors. As screens migrate to adaptive tokens,
-/// this can be changed to [ThemeMode.system].
-///
-/// Persists the user's choice via SharedPreferences under key `theme_mode`.
-final themeModeProvider =
-    NotifierProvider<ThemeModeNotifier, ThemeMode>(ThemeModeNotifier.new);
+/// Uses a simple [Provider] that reads the stored theme preference.
+/// To change the theme, call [updateThemeMode] which writes to
+/// SharedPreferences and invalidates the provider to trigger a rebuild.
 
-class ThemeModeNotifier extends Notifier<ThemeMode> {
-  static const _key = 'theme_mode';
+const String _kThemeModeKey = 'theme_mode';
 
-  @override
-  ThemeMode build() {
-    _load();
-    return ThemeMode.dark;
-  }
+/// Global ref holder — set once in the app's ConsumerWidget build.
+/// This avoids the Riverpod 3 complexity with Notifier codegen.
+WidgetRef? _globalRef;
 
-  Future<void> _load() async {
+/// Internal mutable state — the provider reads this on build.
+ThemeMode _currentThemeMode = ThemeMode.dark;
+
+final themeModeProvider = Provider<ThemeMode>((ref) {
+  return _currentThemeMode;
+});
+
+/// Call from app startup to hydrate the theme from SharedPreferences.
+Future<void> loadPersistedThemeMode() async {
+  try {
     final prefs = await SharedPreferences.getInstance();
-    final stored = prefs.getString(_key);
+    final stored = prefs.getString(_kThemeModeKey);
     if (stored != null) {
-      state = ThemeMode.values.firstWhere(
+      _currentThemeMode = ThemeMode.values.firstWhere(
         (m) => m.name == stored,
         orElse: () => ThemeMode.dark,
       );
     }
+  } catch (_) {
+    // Default to dark
   }
+}
 
-  Future<void> setThemeMode(ThemeMode mode) async {
-    state = mode;
+/// Updates theme mode, persists to SharedPreferences, and rebuilds.
+Future<void> setThemeMode(WidgetRef ref, ThemeMode mode) async {
+  _currentThemeMode = mode;
+  ref.invalidate(themeModeProvider);
+  try {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_key, mode.name);
-  }
-
-  void toggle() {
-    setThemeMode(state == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark);
+    await prefs.setString(_kThemeModeKey, mode.name);
+  } catch (_) {
+    // Ignore persistence failures
   }
 }
