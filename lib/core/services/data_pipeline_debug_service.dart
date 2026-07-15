@@ -645,6 +645,8 @@ class DataPipelineDebugService {
           minimumAmountDue: statement.minimumAmountDue,
           availableCredit: statement.availableCredit,
           rewardsEarned: statement.rewardsEarned,
+          statementDateSource: statement.statementDateSource,
+          paymentsReceived: statement.paymentsReceived,
         );
       } else {
         print('❌ Conditions not met:');
@@ -668,6 +670,8 @@ class DataPipelineDebugService {
           minimumAmountDue: statement.minimumAmountDue,
           availableCredit: statement.availableCredit,
           rewardsEarned: statement.rewardsEarned,
+          statementDateSource: statement.statementDateSource,
+          paymentsReceived: statement.paymentsReceived,
         );
       }
     } catch (e) {
@@ -1118,6 +1122,9 @@ class DataPipelineDebugService {
             'card_variant': statement.cardVariantName,
             'transaction_count': statement.transactions.length,
             'parsed_from': 'gmail_attachment',
+            'statement_date_source': statement.statementDateSource,
+            'payments_received': statement.paymentsReceived,
+            'payment_reconciliation_status': 'unreconciled',
           },
           'processed': true,
           'transaction_count': statement.transactions.length,
