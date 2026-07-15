@@ -17,8 +17,38 @@ void main() {
       expect(migration, contains("'\"applied\"'::jsonb"));
       expect(migration, contains("unmatched_payment_credit'"));
       expect(migration, contains("ORDER BY due_date ASC"));
+      expect(migration, contains('AND id <> p_source_statement_id'));
       expect(migration, contains('p_user_card_id'));
       expect(migration, contains('auth.uid()'));
+    });
+
+    test('records the unmatched remainder on the source after excluding it',
+        () {
+      final migration = File(
+        'supabase/migrations/20260716090200_reconcile_imported_statement_payments.sql',
+      ).readAsStringSync();
+
+      final sourceExclusion =
+          migration.indexOf('AND id <> p_source_statement_id');
+      final remainderUpdate = migration.indexOf("'{unmatched_payment_credit}'");
+      expect(sourceExclusion, greaterThanOrEqualTo(0));
+      expect(remainderUpdate, greaterThan(sourceExclusion));
+    });
+
+    test('marks a manually paid statement with its remaining balance and time',
+        () {
+      final migration = File(
+        'supabase/migrations/20260716090200_reconcile_imported_statement_payments.sql',
+      ).readAsStringSync();
+
+      expect(
+        migration,
+        contains(
+            'WHEN p_mark_paid THEN v_statement.total_amount - v_statement.paid_amount'),
+      );
+      expect(migration, contains('paid_at = CASE'));
+      expect(migration,
+          contains('WHEN paid_amount + v_payment >= total_amount THEN NOW()'));
     });
   });
 
@@ -40,6 +70,62 @@ void main() {
   });
 
   group('SupabaseStatementRepository.createStatement', () {
+    test('preserves applied payment reconciliation state on source reimport',
+        () async {
+      Map<String, dynamic>? persistedStatement;
+      final repository = SupabaseStatementRepository(
+        resolveCatalogCardId: (_) async => 'catalog-card-1',
+        findExistingStatement: ({
+          required userId,
+          required userCardId,
+          required statementDate,
+        }) async =>
+            {
+          'payment_status': 'paid',
+          'paid_amount': 1250.0,
+          'paid_at': '2026-07-15T12:00:00.000Z',
+          'metadata': {
+            'payment_reconciliation_state': 'applied',
+            'unmatched_payment_credit': 50.0,
+            'payments_received': 1250.0,
+          },
+        },
+        upsertStatement: (statement, {required onConflict}) async {
+          persistedStatement = statement;
+          return {
+            ...statement,
+            'id': 'statement-1',
+            'file_path': 'test-statement.pdf',
+          };
+        },
+      );
+
+      await repository.createStatement(
+        userId: 'user-1',
+        userCardId: 'user-card-1',
+        statementData: {
+          'statement_date': '2026-07-10T00:00:00.000Z',
+          'total_amount': 1250.0,
+          'metadata': {
+            'statement_date_source': 'pdf',
+            'payments_received': 1250.0,
+            'payment_reconciliation_status': 'unreconciled',
+          },
+        },
+      );
+
+      expect(persistedStatement?['payment_status'], 'paid');
+      expect(persistedStatement?['paid_amount'], 1250.0);
+      expect(persistedStatement?['paid_at'], '2026-07-15T12:00:00.000Z');
+      expect(persistedStatement?['metadata'], {
+        'statement_date_source': 'pdf',
+        'payments_received': 1250.0,
+        'payment_reconciliation_status': 'unreconciled',
+        'payment_reconciliation_state': 'applied',
+        'unmatched_payment_credit': 50.0,
+      });
+    });
+
     test('persists ingestion metadata in the statement upsert row', () async {
       Map<String, dynamic>? persistedStatement;
       final repository = SupabaseStatementRepository(

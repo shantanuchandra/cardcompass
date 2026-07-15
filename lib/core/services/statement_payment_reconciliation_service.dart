@@ -51,6 +51,7 @@ class StatementPaymentReconciliationService {
         .where((statement) =>
             statement.userId == resolvedRequest.userId &&
             statement.userCardId == resolvedRequest.userCardId &&
+            statement.id != resolvedRequest.sourceStatementId &&
             statement.paymentStatus != PaymentStatus.paid &&
             statement.remainingAmount > 0)
         .toList()

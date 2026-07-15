@@ -66,6 +66,7 @@ BEGIN
     FROM public.statements
     WHERE user_id = p_user_id
       AND user_card_id = p_user_card_id
+      AND id <> p_source_statement_id
       AND payment_status IN ('pending', 'partial', 'overdue')
       AND total_amount > paid_amount
     ORDER BY due_date ASC, id ASC

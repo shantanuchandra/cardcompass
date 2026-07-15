@@ -13,6 +13,12 @@ typedef StatementPaymentRpc = Future<Map<String, dynamic>> Function(
   required Map<String, dynamic> params,
 });
 
+typedef ExistingStatementLookup = Future<Map<String, dynamic>?> Function({
+  required String userId,
+  required String userCardId,
+  required dynamic statementDate,
+});
+
 /// Supabase implementation of the StatementRepository interface
 /// Updated to fix UUID generation issue
 class SupabaseStatementRepository implements StatementRepository {
@@ -20,10 +26,15 @@ class SupabaseStatementRepository implements StatementRepository {
     Future<String> Function(String userCardId)? resolveCatalogCardId,
     StatementUpsert? upsertStatement,
     StatementPaymentRpc? statementPaymentRpc,
+    ExistingStatementLookup? findExistingStatement,
   })  : _resolveCatalogCardId =
             resolveCatalogCardId ?? _defaultResolveCatalogCardId,
         _upsertStatementOverride = upsertStatement,
-        _statementPaymentRpcOverride = statementPaymentRpc;
+        _statementPaymentRpcOverride = statementPaymentRpc,
+        _findExistingStatement = findExistingStatement ??
+            (upsertStatement != null
+                ? _noExistingStatement
+                : _defaultFindExistingStatement);
 
   // `late` so constructing this repository in a unit test that injects
   // [_resolveCatalogCardId] and never touches Supabase-backed methods doesn't
@@ -35,6 +46,7 @@ class SupabaseStatementRepository implements StatementRepository {
   final Future<String> Function(String userCardId) _resolveCatalogCardId;
   final StatementUpsert? _upsertStatementOverride;
   final StatementPaymentRpc? _statementPaymentRpcOverride;
+  final ExistingStatementLookup _findExistingStatement;
 
   Future<Map<String, dynamic>> _upsertStatement(
     Map<String, dynamic> statement, {
@@ -70,6 +82,28 @@ class SupabaseStatementRepository implements StatementRepository {
         .single();
     return cardResponse['catalog_card_id'] as String;
   }
+
+  static Future<Map<String, dynamic>?> _defaultFindExistingStatement({
+    required String userId,
+    required String userCardId,
+    required dynamic statementDate,
+  }) async {
+    final response = await Supabase.instance.client
+        .from('statements')
+        .select('payment_status, paid_amount, paid_at, metadata')
+        .eq('user_id', userId)
+        .eq('user_card_id', userCardId)
+        .eq('statement_date', statementDate)
+        .maybeSingle();
+    return response == null ? null : Map<String, dynamic>.from(response);
+  }
+
+  static Future<Map<String, dynamic>?> _noExistingStatement({
+    required String userId,
+    required String userCardId,
+    required dynamic statementDate,
+  }) async =>
+      null;
 
   /// Columns backing the `statements` table's unique constraint
   /// (`statements_user_card_statement_date_key`, see
@@ -418,6 +452,17 @@ class SupabaseStatementRepository implements StatementRepository {
         'updated_at': now.toIso8601String(),
       };
 
+      // Supabase upsert overwrites each submitted field on conflict. Preserve
+      // fields owned by payment reconciliation when this is a reimport.
+      final existing = await _findExistingStatement(
+        userId: userId,
+        userCardId: userCardId,
+        statementDate: statementMap['statement_date'],
+      );
+      if (existing != null) {
+        _preserveReconciliationState(statementMap, existing);
+      }
+
       // Upsert on (user_card_id, statement_date) so re-syncing the same
       // statement period is idempotent and returns the existing row instead of 409.
       final result = await _upsertStatement(
@@ -429,5 +474,32 @@ class SupabaseStatementRepository implements StatementRepository {
     } catch (e) {
       throw Exception('Failed to create statement: $e');
     }
+  }
+
+  static void _preserveReconciliationState(
+    Map<String, dynamic> incoming,
+    Map<String, dynamic> existing,
+  ) {
+    for (final field in const ['payment_status', 'paid_amount', 'paid_at']) {
+      if (existing.containsKey(field) && existing[field] != null) {
+        incoming[field] = existing[field];
+      }
+    }
+
+    final existingMetadata = Map<String, dynamic>.from(
+      existing['metadata'] as Map? ?? const <String, dynamic>{},
+    );
+    final incomingMetadata = Map<String, dynamic>.from(
+      incoming['metadata'] as Map? ?? const <String, dynamic>{},
+    );
+    for (final key in const [
+      'payment_reconciliation_state',
+      'unmatched_payment_credit',
+    ]) {
+      if (existingMetadata.containsKey(key)) {
+        incomingMetadata[key] = existingMetadata[key];
+      }
+    }
+    incoming['metadata'] = incomingMetadata;
   }
 }

@@ -262,5 +262,24 @@ void main() {
           repo.updates, [const PaymentUpdate('may', 250, PaymentStatus.paid)]);
       expect(repo.unmatchedCredits, [500]);
     });
+
+    test('does not allocate an imported credit back to its source statement',
+        () async {
+      final repo = _FakeStatementRepository([
+        _statement(
+            id: 'july', userCardId: 'card-a', dueDate: DateTime(2026, 7, 1)),
+      ]);
+      final service = StatementPaymentReconciliationService(repo);
+
+      await service.reconcileImportedPayment(
+        sourceStatementId: 'july',
+        userId: 'user',
+        userCardId: 'card-a',
+        paymentCredit: 750,
+      );
+
+      expect(repo.updates, isEmpty);
+      expect(repo.unmatchedCredits, [750]);
+    });
   });
 }
