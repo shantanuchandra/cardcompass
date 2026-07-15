@@ -3,13 +3,20 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cardcompass/core/repositories/statement_repository.dart';
 import 'package:cardcompass/shared/models/statement.dart';
 
+typedef StatementUpsert = Future<Map<String, dynamic>> Function(
+  Map<String, dynamic> statement, {
+  required String onConflict,
+});
+
 /// Supabase implementation of the StatementRepository interface
 /// Updated to fix UUID generation issue
 class SupabaseStatementRepository implements StatementRepository {
   SupabaseStatementRepository({
     Future<String> Function(String userCardId)? resolveCatalogCardId,
-  }) : _resolveCatalogCardId =
-            resolveCatalogCardId ?? _defaultResolveCatalogCardId;
+    StatementUpsert? upsertStatement,
+  })  : _resolveCatalogCardId =
+            resolveCatalogCardId ?? _defaultResolveCatalogCardId,
+        _upsertStatementOverride = upsertStatement;
 
   // `late` so constructing this repository in a unit test that injects
   // [_resolveCatalogCardId] and never touches Supabase-backed methods doesn't
@@ -19,6 +26,23 @@ class SupabaseStatementRepository implements StatementRepository {
   /// Test seam: resolves a `user_cards.id` to its `catalog_card_id`. Defaults
   /// to the real Supabase lookup in production.
   final Future<String> Function(String userCardId) _resolveCatalogCardId;
+  final StatementUpsert? _upsertStatementOverride;
+
+  Future<Map<String, dynamic>> _upsertStatement(
+    Map<String, dynamic> statement, {
+    required String onConflict,
+  }) async {
+    final override = _upsertStatementOverride;
+    if (override != null) {
+      return override(statement, onConflict: onConflict);
+    }
+
+    return await _supabase
+        .from('statements')
+        .upsert(statement, onConflict: onConflict)
+        .select()
+        .single();
+  }
 
   static Future<String> _defaultResolveCatalogCardId(String userCardId) async {
     final cardResponse = await Supabase.instance.client
@@ -271,6 +295,7 @@ class SupabaseStatementRepository implements StatementRepository {
         'rewards_earned': statementData['rewards_earned'] ?? 0,
         'file_path': filePath ?? statementData['file_path'],
         'file_name': statementData['file_name'] ?? filePath?.split('/').last ?? 'statement.pdf',
+        'metadata': statementData['metadata'] ?? {},
         'processed': true,
         'transaction_count': (statementData['transactions'] as List?)?.length ?? 0,
         'created_at': now.toIso8601String(),
@@ -279,11 +304,10 @@ class SupabaseStatementRepository implements StatementRepository {
 
       // Upsert on (user_card_id, statement_date) so re-syncing the same
       // statement period is idempotent and returns the existing row instead of 409.
-      final result = await _supabase
-          .from('statements')
-          .upsert(statementMap, onConflict: statementUpsertConflictColumns)
-          .select()
-          .single();
+      final result = await _upsertStatement(
+        statementMap,
+        onConflict: statementUpsertConflictColumns,
+      );
 
       return Statement.fromJson(result);
     } catch (e) {

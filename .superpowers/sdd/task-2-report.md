@@ -33,6 +33,7 @@
 ## Verification
 
 - `git diff --check` passed.
+
 - Focused Flutter test suite passed: 9 tests.
 - Focused analyzer run completed with two existing warnings in
   `data_pipeline_debug_service.dart`: an unused `app_config.dart` import and
@@ -58,4 +59,20 @@ test. The pre-existing Task 1 fuzzy-match modifications in
   production still defaults to `SupabaseStatementRepository`.
 - Reran `flutter test test/gemini_statement_info_test.dart
   test/data_pipeline_debug_service_test.dart`: all 10 tests passed.
+- `git diff --check` passed.
+
+## Review Follow-up: Repository Metadata Persistence
+
+- Added a repository-level regression test that injects the statement upsert
+  operation, avoiding live Supabase initialization, and asserts the exact
+  persistence row contains the PDF-ingestion metadata:
+  `statement_date_source`, `payments_received`, and
+  `payment_reconciliation_status`.
+- The test was run red first and failed to compile because
+  `SupabaseStatementRepository` did not expose an upsert seam.
+- Added the minimal optional `StatementUpsert` constructor dependency and
+  copied `statementData['metadata']` into the repository's upsert row.
+- Ran `flutter test test/supabase_statement_repository_test.dart
+  test/gemini_statement_info_test.dart
+  test/data_pipeline_debug_service_test.dart`: all 13 tests passed.
 - `git diff --check` passed.

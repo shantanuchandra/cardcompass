@@ -19,6 +19,44 @@ void main() {
   });
 
   group('SupabaseStatementRepository.createStatement', () {
+    test('persists ingestion metadata in the statement upsert row', () async {
+      Map<String, dynamic>? persistedStatement;
+      final repository = SupabaseStatementRepository(
+        resolveCatalogCardId: (_) async => 'catalog-card-1',
+        upsertStatement: (statement, {required onConflict}) async {
+          persistedStatement = statement;
+          expect(
+            onConflict,
+            SupabaseStatementRepository.statementUpsertConflictColumns,
+          );
+          return {
+            ...statement,
+            'id': 'statement-1',
+            'file_path': 'test-statement.pdf',
+          };
+        },
+      );
+
+      await repository.createStatement(
+        userId: 'user-1',
+        userCardId: 'user-card-1',
+        statementData: {
+          'statement_date': '2026-07-10T00:00:00.000Z',
+          'metadata': {
+            'statement_date_source': 'pdf',
+            'payments_received': 1250.0,
+            'payment_reconciliation_status': 'unreconciled',
+          },
+        },
+      );
+
+      expect(persistedStatement?['metadata'], {
+        'statement_date_source': 'pdf',
+        'payments_received': 1250.0,
+        'payment_reconciliation_status': 'unreconciled',
+      });
+    });
+
     test(
         'throws instead of silently using userCardId as card_id when the '
         'catalog_card_id lookup fails', () async {
