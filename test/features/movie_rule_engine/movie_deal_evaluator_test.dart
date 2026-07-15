@@ -220,6 +220,95 @@ void main() {
     expect(result.rejectedCandidates.single.cardId, 'limited');
   });
 
+  test('rejects verified cycle limits that cannot cover the request tickets',
+      () {
+    final result = evaluateMovieDeals(
+      request: request(2, 300),
+      rules: [
+        rule(
+          cardId: 'limited',
+          type: MovieDealOfferType.bogo,
+          buyCount: 1,
+          freeCount: 1,
+          cycleTicketLimit: 2,
+        ),
+      ],
+      contexts: const {
+        'limited': MovieDealContext(
+          usageConfidence: MovieDealUsageConfidence.verified,
+          usedTickets: 1,
+        ),
+      },
+      now: today,
+    );
+
+    expect(result.candidates, isEmpty);
+    expect(result.rejectedCandidates.single.reason,
+        'Ticket limit for this request is exceeded.');
+  });
+
+  test('sanitizes negative ticket counts before evaluating spend and savings',
+      () {
+    final result = evaluateMovieDeals(
+      request: request(-2, 300),
+      rules: [
+        rule(
+          cardId: 'minimum',
+          type: MovieDealOfferType.percentDiscount,
+          percent: 10,
+          minimum: 1,
+        ),
+      ],
+      contexts: const {},
+      now: today,
+    );
+
+    expect(result.candidates, isEmpty);
+    expect(
+        result.rejectedCandidates.single.reason, 'Minimum spend is not met.');
+  });
+
+  test('sanitizes negative ticket prices before evaluating spend and savings',
+      () {
+    final result = evaluateMovieDeals(
+      request: request(2, -300),
+      rules: [
+        rule(
+          cardId: 'minimum',
+          type: MovieDealOfferType.percentDiscount,
+          percent: 10,
+          minimum: 1,
+        ),
+      ],
+      contexts: const {},
+      now: today,
+    );
+
+    expect(result.candidates, isEmpty);
+    expect(
+        result.rejectedCandidates.single.reason, 'Minimum spend is not met.');
+  });
+
+  test('does not make two negative request values eligible or profitable', () {
+    final result = evaluateMovieDeals(
+      request: request(-2, -300),
+      rules: [
+        rule(
+          cardId: 'minimum',
+          type: MovieDealOfferType.percentDiscount,
+          percent: 10,
+          minimum: 1,
+        ),
+      ],
+      contexts: const {},
+      now: today,
+    );
+
+    expect(result.candidates, isEmpty);
+    expect(
+        result.rejectedCandidates.single.reason, 'Minimum spend is not met.');
+  });
+
   test('uses deterministic ties after confidence and display priority', () {
     final result = evaluateMovieDeals(
       request: request(1, 300),

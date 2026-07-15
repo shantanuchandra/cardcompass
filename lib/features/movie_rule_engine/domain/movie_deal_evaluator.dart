@@ -12,10 +12,11 @@ MovieDealsRecommendation evaluateMovieDeals({
 }) {
   final candidates = <MovieDealCandidate>[];
   final rejected = <RejectedMovieDealCandidate>[];
+  final sanitizedRequest = _sanitizeRequest(request);
 
   for (final rule in rules) {
     final context = contexts[rule.catalogCardId] ?? const MovieDealContext();
-    final reason = _ineligibilityReason(rule, request, context, now);
+    final reason = _ineligibilityReason(rule, sanitizedRequest, context, now);
     if (reason != null) {
       rejected.add(RejectedMovieDealCandidate(
         cardId: rule.catalogCardId,
@@ -26,8 +27,8 @@ MovieDealsRecommendation evaluateMovieDeals({
       continue;
     }
 
-    final gross = request.totalAmount < 0 ? 0.0 : request.totalAmount;
-    final saving = _calculateSavings(rule, request, gross);
+    final gross = sanitizedRequest.totalAmount;
+    final saving = _calculateSavings(rule, sanitizedRequest, gross);
     candidates.add(MovieDealCandidate(
       cardId: rule.catalogCardId,
       benefitId: rule.benefitId,
@@ -52,6 +53,15 @@ MovieDealsRecommendation evaluateMovieDeals({
     bestOverall: candidates.isEmpty ? null : candidates.first,
   );
 }
+
+MovieTicketRequest _sanitizeRequest(MovieTicketRequest request) =>
+    MovieTicketRequest(
+      numberOfTickets:
+          request.numberOfTickets < 0 ? 0 : request.numberOfTickets,
+      pricePerTicket: request.pricePerTicket < 0 ? 0 : request.pricePerTicket,
+      preferredCinema: request.preferredCinema,
+      preferredPlatform: request.preferredPlatform,
+    );
 
 String? _ineligibilityReason(
   MovieDealRule rule,
@@ -83,8 +93,8 @@ String? _ineligibilityReason(
     return 'Transaction limit has been used.';
   if (rule.cycleTicketLimit != null &&
       context.usageConfidence == MovieDealUsageConfidence.verified &&
-      context.usedTickets >= rule.cycleTicketLimit!)
-    return 'Ticket limit has been used.';
+      request.numberOfTickets > _remainingUsage(rule, context)!)
+    return 'Ticket limit for this request is exceeded.';
   if (rule.milestoneThreshold != null) {
     if (context.milestoneSpend == null ||
         context.usageConfidence == MovieDealUsageConfidence.unavailable)
@@ -127,8 +137,8 @@ bool _matchesWeekday(Set<String> weekdays, DateTime now) {
 
 double _calculateSavings(
     MovieDealRule rule, MovieTicketRequest request, double gross) {
-  final tickets = request.numberOfTickets < 0 ? 0 : request.numberOfTickets;
-  final price = request.pricePerTicket < 0 ? 0.0 : request.pricePerTicket;
+  final tickets = request.numberOfTickets;
+  final price = request.pricePerTicket;
   double savings;
   switch (rule.offerType) {
     case MovieDealOfferType.bogo:
