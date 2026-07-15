@@ -13,6 +13,7 @@ import 'package:cardcompass/core/repositories/supabase_transaction_repository.da
 import 'package:cardcompass/core/repositories/card_repository.dart';
 import 'package:cardcompass/core/repositories/supabase_card_repository.dart';
 import 'package:cardcompass/core/repositories/supabase_statement_repository.dart';
+import 'package:cardcompass/core/repositories/statement_repository.dart';
 import 'package:cardcompass/core/repositories/email_repository.dart';
 import 'package:cardcompass/core/repositories/email_repository_interface.dart';
 import 'package:cardcompass/shared/models/credit_card.dart';
@@ -59,6 +60,7 @@ class DataPipelineDebugService {
   DataPipelineDebugService({
     CardRepository? cardRepo,
     EmailRepositoryInterface? emailRepo,
+    StatementRepository? statementRepo,
     Future<String> Function({
       required String userId,
       required String catalogCardId,
@@ -84,6 +86,7 @@ class DataPipelineDebugService {
     })? lookupCatalogCard,
   })  : _cardRepo = cardRepo ?? SupabaseCardRepository(),
         _emailRepo = emailRepo,
+        _statementRepo = statementRepo ?? SupabaseStatementRepository(),
         _associateUserWithCard =
             associateUserWithCard ?? _defaultAssociateUserWithCard,
         _findOrCreateCatalogCard = findOrCreateCatalogCard,

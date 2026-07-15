@@ -3,6 +3,8 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:cardcompass/core/repositories/card_repository.dart';
 import 'package:cardcompass/core/repositories/email_repository_interface.dart';
+import 'package:cardcompass/core/repositories/mock_statement_repository.dart';
+import 'package:cardcompass/shared/models/statement.dart';
 import 'package:cardcompass/core/services/data_pipeline_debug_service.dart';
 import 'package:cardcompass/core/services/enhanced_gmail_service.dart'
     show StatementParsingResult;
@@ -107,6 +109,28 @@ class _FakeEmailRepository implements EmailRepositoryInterface {
   }) async {}
 }
 
+class _CapturingStatementRepository extends MockStatementRepository {
+  Map<String, dynamic>? createdStatementData;
+
+  @override
+  Future<Statement> createStatement({
+    required String userId,
+    required String userCardId,
+    required Map<String, dynamic> statementData,
+    String? filePath,
+    String? emailId,
+  }) async {
+    createdStatementData = statementData;
+    return super.createStatement(
+      userId: userId,
+      userCardId: userCardId,
+      statementData: statementData,
+      filePath: filePath,
+      emailId: emailId,
+    );
+  }
+}
+
 void main() {
   group('DataPipelineDebugService.createUserCardAssociation', () {
     test(
@@ -127,6 +151,65 @@ void main() {
   });
 
   group('DataPipelineDebugService.processEmailSequentially', () {
+    test('persists PDF-derived statement facts in statement metadata',
+        () async {
+      final statementRepository = _CapturingStatementRepository();
+      final statement = StatementParsingResult.fromParsedInfo(
+        emailDate: DateTime(2026, 7, 15),
+        statementInfo: {
+          'statement_date': '2026-07-10T00:00:00.000Z',
+          'payments_received': 1250.0,
+        },
+        base: StatementParsingResult(
+          bankName: 'ICICI',
+          statementDate: DateTime(2026, 7, 15),
+          transactions: [
+            Transaction(
+              id: 'tx-1',
+              userId: 'user-1',
+              amount: 100.0,
+              description: 'Test purchase',
+              transactionDate: DateTime(2026, 7, 10),
+              createdAt: DateTime(2026, 7, 10),
+            ),
+          ],
+          originalPdfData: Uint8List(0),
+          emailMessageId: 'email-1',
+          processingSuccess: true,
+          emailSubject: 'Your ICICI statement',
+        ),
+      );
+      final service = DataPipelineDebugService(
+        cardRepo: _FakeCardRepository(userCards: const []),
+        emailRepo: _FakeEmailRepository(),
+        statementRepo: statementRepository,
+        findOrCreateCatalogCard: (
+                {required String userId,
+                required String bankName,
+                required String cardName,
+                required String emailSubject,
+                required String pdfName}) async =>
+            'catalog-card-1',
+        associateUserWithCard: (
+                {required String userId,
+                required String catalogCardId}) async =>
+            'user-card-1',
+      );
+
+      await service.processEmailSequentially(
+          'user-1', statement, const {}, 1, 1);
+
+      expect(statementRepository.createdStatementData!['metadata'], {
+        'bank_name': 'ICICI',
+        'card_variant': null,
+        'transaction_count': 1,
+        'parsed_from': 'gmail_attachment',
+        'statement_date_source': 'pdf',
+        'payments_received': 1250.0,
+        'payment_reconciliation_status': 'unreconciled',
+      });
+    });
+
     test(
         'reports a StatementSyncFailure with the statement bank/date when '
         'card association fails and no existing match is found, instead of '
