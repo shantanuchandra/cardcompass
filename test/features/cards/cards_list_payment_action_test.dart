@@ -73,6 +73,49 @@ void main() {
     expect(find.textContaining('PAID'), findsOneWidget);
   });
 
+  testWidgets('preserves paise in due, confirmation, and paid amounts',
+      (tester) async {
+    final fractionalSummary = unpaidSummary.copyWith(paidAmount: 99.50);
+    final paidFractionalSummary = CardStatementSummary(
+      statementId: 'statement-2',
+      userCardId: 'card-1',
+      statementDate: DateTime(2026, 7, 1),
+      dueDate: DateTime(2026, 7, 25),
+      totalAmount: 900.50,
+      paidAmount: 900.50,
+      paidAt: DateTime(2026, 7, 2),
+    );
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: CardStatementPaymentPanel(
+          cardName: 'Travel Card',
+          summary: fractionalSummary,
+          onMarkPaid: () async {},
+        ),
+      ),
+    ));
+
+    expect(find.text('AMOUNT DUE  ₹900.50'), findsOneWidget);
+    expect(find.textContaining('₹901'), findsNothing);
+
+    await tester.tap(find.text('MARK PAID'));
+    await tester.pumpAndSettle();
+    expect(find.text('Mark ₹900.50 paid for Travel Card?'), findsOneWidget);
+    expect(find.textContaining('₹901'), findsNothing);
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: CardStatementPaymentPanel(
+          cardName: 'Travel Card',
+          summary: paidFractionalSummary,
+          onMarkPaid: () async {},
+        ),
+      ),
+    ));
+
+    expect(find.text('PAID ₹900.50 · 02/07/2026'), findsOneWidget);
+  });
+
   testWidgets(
       'shows an error and leaves the payment action available on failure',
       (tester) async {

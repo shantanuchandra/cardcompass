@@ -53,7 +53,7 @@ class _CardStatementPaymentPanelState extends State<CardStatementPaymentPanel> {
       builder: (dialogContext) => AlertDialog(
         title: const Text('CONFIRM PAYMENT'),
         content: Text(
-          'Mark ₹${summary.remainingAmount.toStringAsFixed(0)} paid for ${widget.cardName}?',
+          'Mark ₹${summary.remainingAmount.toStringAsFixed(2)} paid for ${widget.cardName}?',
         ),
         actions: [
           TextButton(
@@ -91,8 +91,8 @@ class _CardStatementPaymentPanelState extends State<CardStatementPaymentPanel> {
     if (summary == null) return const _NoStatementPanel();
 
     final paidLabel = summary.paidAt == null
-        ? 'PAID ₹${summary.paidAmount.toStringAsFixed(0)}'
-        : 'PAID ₹${summary.paidAmount.toStringAsFixed(0)} · ${_formatDate(summary.paidAt!)}';
+        ? 'PAID ₹${summary.paidAmount.toStringAsFixed(2)}'
+        : 'PAID ₹${summary.paidAmount.toStringAsFixed(2)} · ${_formatDate(summary.paidAt!)}';
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -109,7 +109,7 @@ class _CardStatementPaymentPanelState extends State<CardStatementPaymentPanel> {
                 Text(
                   summary.isPaid
                       ? paidLabel
-                      : 'AMOUNT DUE  ₹${summary.remainingAmount.toStringAsFixed(0)}',
+                      : 'AMOUNT DUE  ₹${summary.remainingAmount.toStringAsFixed(2)}',
                   style: GoogleFonts.spaceGrotesk(
                     color:
                         summary.isPaid ? AppTheme.successColor : Colors.white,
