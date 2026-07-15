@@ -32,14 +32,14 @@ class Statement {
   final DateTime createdAt;
   final bool processed;
   final int? transactionCount;
-  const Statement({
+  Statement({
     required this.id,
     required this.userId,
     required this.userCardId,
     required this.statementDate,
     required this.dueDate,
-    required this.totalAmount,
-    this.paidAmount = 0,
+    required double totalAmount,
+    double paidAmount = 0,
     this.paidAt,
     required this.minimumPayment,
     required this.closingBalance,
@@ -55,7 +55,26 @@ class Statement {
     required this.createdAt,
     this.processed = false,
     this.transactionCount,
-  });
+  })  : totalAmount = totalAmount,
+        paidAmount = _validatedPaidAmount(totalAmount, paidAmount);
+
+  static double _validatedPaidAmount(double totalAmount, double paidAmount) {
+    if (!totalAmount.isFinite || totalAmount < 0) {
+      throw ArgumentError.value(
+        totalAmount,
+        'totalAmount',
+        'must be finite and non-negative',
+      );
+    }
+    if (!paidAmount.isFinite || paidAmount < 0 || paidAmount > totalAmount) {
+      throw ArgumentError.value(
+        paidAmount,
+        'paidAmount',
+        'must be finite, non-negative, and no greater than totalAmount',
+      );
+    }
+    return paidAmount;
+  }
 
   factory Statement.fromJson(Map<String, dynamic> json) {
     return Statement(

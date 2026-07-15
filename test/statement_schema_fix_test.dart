@@ -21,6 +21,11 @@ void main() {
         migration,
         contains('(user_card_id, payment_status, due_date)'),
       );
+      expect(migration, contains('WHERE total_amount IS NULL'));
+      expect(migration, contains('ALTER COLUMN total_amount SET NOT NULL'));
+      expect(migration, contains(r'DO $$'));
+      expect(migration,
+          contains("conname = 'statements_paid_amount_bounds_check'"));
     });
 
     test('should create statement without email_id schema error', () async {
