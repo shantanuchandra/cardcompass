@@ -181,10 +181,17 @@ String? _malformedOptionalField(Map<String, dynamic> config) {
   }
 
   const numberFields = [
+    'discount_percent',
+    'rate',
+    'discount_amount',
+    'fixed_amount',
     'max_discount_amount',
     'maximum_discount',
     'min_transaction_amount',
     'min_transaction',
+    'milestone_threshold',
+    'milestone_currency',
+    'milestone_reward',
   ];
   for (final field in numberFields) {
     if (_isSupplied(config, field) && !_isFiniteNumber(config[field])) {

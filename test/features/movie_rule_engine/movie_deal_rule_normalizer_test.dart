@@ -72,22 +72,42 @@ void main() {
       expect((result as RejectedMovieDealRule).reason, isNotEmpty);
     });
 
-    test('rejects non-finite percentage discount values', () {
+    test('rejects a malformed percentage alias despite a valid fallback', () {
       final result = normalizeMovieDealRule(
-        source({'discount_percent': 'NaN'}),
+        source({'discount_percent': 'NaN', 'rate': 10, 'unit': 'percent'}),
       );
 
       expect(result, isA<RejectedMovieDealRule>());
       expect((result as RejectedMovieDealRule).reason, isNotEmpty);
     });
 
-    test('rejects non-finite fixed discount values', () {
+    test('rejects a malformed fixed amount alias despite a valid fallback', () {
       final result = normalizeMovieDealRule(
-        source({'discount_amount': 'Infinity'}),
+        source({'discount_amount': 'Infinity', 'fixed_amount': 100}),
       );
 
       expect(result, isA<RejectedMovieDealRule>());
-      expect((result as RejectedMovieDealRule).reason, isNotEmpty);
+      expect(
+        (result as RejectedMovieDealRule).reason,
+        contains('discount_amount'),
+      );
+    });
+
+    test('rejects a malformed milestone threshold despite a valid fallback', () {
+      final result = normalizeMovieDealRule(
+        source({
+          'offer_type': 'MILESTONE',
+          'milestone_threshold': 'NaN',
+          'milestone_currency': 1000,
+          'milestone_reward': 100,
+        }),
+      );
+
+      expect(result, isA<RejectedMovieDealRule>());
+      expect(
+        (result as RejectedMovieDealRule).reason,
+        contains('milestone_threshold'),
+      );
     });
 
     test('rejects supplied malformed optional fields', () {
