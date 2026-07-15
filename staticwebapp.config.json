@@ -1,0 +1,32 @@
+{
+  "navigationFallback": {
+    "rewrite": "/app/index.html",
+    "exclude": [
+      "/img/*",
+      "/app/assets/*",
+      "/app/icons/*",
+      "/app/canvaskit/*",
+      "*.css",
+      "*.js",
+      "*.json",
+      "*.png",
+      "*.jpg",
+      "*.svg",
+      "*.ico",
+      "*.woff2",
+      "*.wasm",
+      "/llm.txt"
+    ]
+  },
+  "routes": [
+    {
+      "route": "/",
+      "rewrite": "/index.html"
+    }
+  ],
+  "responseOverrides": {
+    "404": {
+      "rewrite": "/app/index.html"
+    }
+  }
+}

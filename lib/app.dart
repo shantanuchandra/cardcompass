@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cardcompass/core/theme.dart';
+import 'package:cardcompass/core/providers/theme_provider.dart';
 import 'package:cardcompass/config/routes.dart';
 
 /// Global navigator key for accessing context from anywhere in the app
@@ -14,6 +15,7 @@ class CardCompassApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final themeMode = ref.watch(themeModeProvider);
     return MaterialApp(
       title: 'CardCompass',
       debugShowCheckedModeBanner: false,
@@ -24,7 +26,7 @@ class CardCompassApp extends ConsumerWidget {
       // App Theme Configuration
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
-      themeMode: ThemeMode.system,
+      themeMode: themeMode,
 
       // Initial Route
       initialRoute: AppRoutes.startupRoute(

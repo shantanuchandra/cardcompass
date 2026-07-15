@@ -2,10 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:cardcompass/core/providers/service_providers.dart';
+import 'package:cardcompass/core/providers/theme_provider.dart';
 import 'package:cardcompass/core/theme.dart';
 import 'package:cardcompass/shared/widgets/app_scaffold.dart';
 
-/// Settings screen for app preferences and configurations in cyber-fintech style
+/// Settings screen — adaptive for both light and dark themes.
+///
+/// Uses [AppTheme] semantic helpers for all colors so the entire page
+/// automatically adapts when the user toggles the theme.
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
@@ -24,14 +28,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   String _language = 'English';
   int _devTapCount = 0;
 
-  /// Shared row-title style: body2 size, Space Grotesk family (matches the
-  /// screen's original bold-technical look) via AppTextStyles.heading3.
-  TextStyle get _rowTitleStyle => AppTextStyles.heading3
-      .copyWith(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white);
-
-  TextStyle get _rowSubtitleStyle =>
-      AppTextStyles.caption.copyWith(color: Colors.white30);
-
   @override
   void initState() {
     super.initState();
@@ -43,294 +39,299 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _currency = prefs.currency;
   }
 
+  // ─── Adaptive Styles ──────────────────────────────────────────────────────
+
+  TextStyle _rowTitleStyle(BuildContext context) =>
+      AppTextStyles.body2.copyWith(
+        fontWeight: FontWeight.w600,
+        color: AppTheme.adaptiveTextPrimary(context),
+      );
+
+  TextStyle _rowSubtitleStyle(BuildContext context) =>
+      AppTextStyles.caption.copyWith(
+        color: AppTheme.adaptiveTextTertiary(context),
+      );
+
+  TextStyle _sectionLabelStyle(BuildContext context) =>
+      AppTextStyles.mono.copyWith(
+        color: AppTheme.adaptivePrimary(context),
+        fontWeight: FontWeight.w600,
+        letterSpacing: 1.2,
+      );
+
   @override
   Widget build(BuildContext context) {
+    final isDark = AppTheme.isDark(context);
+
     return CardCompassScaffold(
-      title: 'Preferences',
-      body: ListView(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 18, vertical: AppSpacing.md),
-        children: [
-          // Notifications Section
-          _buildSection(
-            'ALERT PARAMETERS',
-            [
-              SwitchListTile(
-                title: Text('ENABLE NOTIFICATIONS', style: _rowTitleStyle),
-                subtitle: Text('Receive global app notifications',
-                    style: _rowSubtitleStyle),
-                value: _notificationsEnabled,
-                activeColor: AppTheme.primaryColor,
-                onChanged: (value) {
-                  setState(() {
-                    _notificationsEnabled = value;
-                  });
-                  ref
-                      .read(appPreferencesProvider)
-                      .setNotificationsEnabled(value);
-                },
+      title: 'Settings',
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 600),
+          child: ListView(
+            padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.md, vertical: AppSpacing.md),
+            children: [
+              // ── Notifications ──────────────────────────────────────────
+              _buildSection(
+                context,
+                'NOTIFICATIONS',
+                [
+                  _buildSwitchTile(
+                    context,
+                    title: 'Notifications',
+                    subtitle: 'Receive app notifications',
+                    value: _notificationsEnabled,
+                    onChanged: (v) {
+                      setState(() => _notificationsEnabled = v);
+                      ref
+                          .read(appPreferencesProvider)
+                          .setNotificationsEnabled(v);
+                    },
+                  ),
+                  _divider(context),
+                  _buildSwitchTile(
+                    context,
+                    title: 'Push Notifications',
+                    subtitle: 'Direct push alerts',
+                    value: _pushNotifications,
+                    onChanged: _notificationsEnabled
+                        ? (v) => setState(() => _pushNotifications = v)
+                        : null,
+                  ),
+                  _divider(context),
+                  _buildSwitchTile(
+                    context,
+                    title: 'Email Digests',
+                    subtitle: 'Monthly reward summaries',
+                    value: _emailNotifications,
+                    onChanged: _notificationsEnabled
+                        ? (v) => setState(() => _emailNotifications = v)
+                        : null,
+                  ),
+                  _divider(context),
+                  _buildSwitchTile(
+                    context,
+                    title: 'SMS Alerts',
+                    subtitle: 'Immediate billing highlights',
+                    value: _smsNotifications,
+                    onChanged: _notificationsEnabled
+                        ? (v) => setState(() => _smsNotifications = v)
+                        : null,
+                  ),
+                ],
               ),
-              const Divider(color: Color(0xFF1E293B), height: 1),
-              SwitchListTile(
-                title: Text('PUSH ALERTS', style: _rowTitleStyle),
-                subtitle:
-                    Text('Direct warning overlays', style: _rowSubtitleStyle),
-                value: _pushNotifications,
-                activeColor: AppTheme.primaryColor,
-                onChanged: _notificationsEnabled
-                    ? (value) {
-                        setState(() {
-                          _pushNotifications = value;
-                        });
+              const SizedBox(height: AppSpacing.lg),
+
+              // ── Security ───────────────────────────────────────────────
+              _buildSection(
+                context,
+                'SECURITY',
+                [
+                  _buildSwitchTile(
+                    context,
+                    title: 'Biometric Login',
+                    subtitle: 'Use Face ID / Fingerprint',
+                    value: _biometricAuth,
+                    onChanged: (v) {
+                      setState(() => _biometricAuth = v);
+                      ref.read(appPreferencesProvider).setBiometricEnabled(v);
+                    },
+                  ),
+                  _divider(context),
+                  _buildComingSoonTile(
+                    context,
+                    title: 'Change Password',
+                    subtitle: 'Reset your credentials',
+                    dialogTitle: 'Change Password',
+                    dialogReason:
+                        'Password changes require a connected Google identity. Not available in guest mode.',
+                  ),
+                  _divider(context),
+                  _buildComingSoonTile(
+                    context,
+                    title: 'Two-Factor Auth (2FA)',
+                    subtitle: 'Link an authenticator app',
+                    dialogTitle: 'Two-Factor Authentication',
+                    dialogReason:
+                        'MFA settings require a server integration. Coming in a future update.',
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.lg),
+
+              // ── Appearance ─────────────────────────────────────────────
+              _buildSection(
+                context,
+                'APPEARANCE',
+                [
+                  _buildSwitchTile(
+                    context,
+                    title: 'Dark Mode',
+                    subtitle: isDark
+                        ? 'Cyberpunk neon style'
+                        : 'Frosted pearl style',
+                    value: isDark,
+                    onChanged: (v) {
+                      ref.read(themeModeProvider.notifier).setThemeMode(
+                            v ? ThemeMode.dark : ThemeMode.light,
+                          );
+                    },
+                  ),
+                  _divider(context),
+                  _buildNavTile(
+                    context,
+                    title: 'Language',
+                    value: _language,
+                    onTap: () => _showLanguageDialog(context),
+                  ),
+                  _divider(context),
+                  _buildNavTile(
+                    context,
+                    title: 'Currency',
+                    value: _currency,
+                    onTap: () => _showCurrencyDialog(context),
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.lg),
+
+              // ── Data & Sync ────────────────────────────────────────────
+              _buildSection(
+                context,
+                'DATA & SYNC',
+                [
+                  _buildSwitchTile(
+                    context,
+                    title: 'Auto-Sync',
+                    subtitle: 'Sync card data in background',
+                    value: _autoSync,
+                    onChanged: (v) {
+                      setState(() => _autoSync = v);
+                      ref.read(appPreferencesProvider).setAutoSyncEnabled(v);
+                    },
+                  ),
+                  _divider(context),
+                  _buildComingSoonTile(
+                    context,
+                    title: 'Backup Data',
+                    subtitle: 'Save encrypted local backup',
+                    dialogTitle: 'Backup Data',
+                    dialogReason:
+                        'Encrypted backups require server syncing. Coming in a future update.',
+                  ),
+                  _divider(context),
+                  _buildComingSoonTile(
+                    context,
+                    title: 'Export Transactions',
+                    subtitle: 'Export to CSV',
+                    dialogTitle: 'Export Transactions',
+                    dialogReason:
+                        'CSV export is being built. Coming in a future update.',
+                  ),
+                  _divider(context),
+                  ListTile(
+                    title: Text('Clear Cache',
+                        style: _rowTitleStyle(context)),
+                    subtitle: Text('Remove cached data',
+                        style: _rowSubtitleStyle(context)),
+                    trailing: Icon(Icons.arrow_forward_ios,
+                        size: 12,
+                        color: AppTheme.adaptiveTextDisabled(context)),
+                    onTap: () => _showClearCacheDialog(context),
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.lg),
+
+              // ── About ──────────────────────────────────────────────────
+              _buildSection(
+                context,
+                'ABOUT',
+                [
+                  ListTile(
+                    title:
+                        Text('CardCompass', style: _rowTitleStyle(context)),
+                    subtitle: Text('Version 1.0.0 (Build 1)',
+                        style: _rowSubtitleStyle(context)),
+                    trailing: Icon(Icons.info_outline,
+                        size: 16,
+                        color: AppTheme.adaptivePrimary(context)),
+                    onTap: () {
+                      _showAppInfoDialog(context);
+                      setState(() => _devTapCount++);
+                      if (_devTapCount >= 5) {
+                        _devTapCount = 0;
+                        Navigator.pushNamed(context, '/admin/pm');
                       }
-                    : null,
+                    },
+                  ),
+                  _divider(context),
+                  ListTile(
+                    title: Text('Check for Updates',
+                        style: _rowTitleStyle(context)),
+                    subtitle: Text('Verify latest version',
+                        style: _rowSubtitleStyle(context)),
+                    trailing: Icon(Icons.refresh,
+                        size: 16,
+                        color: AppTheme.adaptivePrimary(context)),
+                    onTap: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('You\'re on the latest version.',
+                              style: AppTextStyles.body2
+                                  .copyWith(fontWeight: FontWeight.w600)),
+                          backgroundColor: AppTheme.successColor,
+                        ),
+                      );
+                    },
+                  ),
+                  _divider(context),
+                  _buildComingSoonTile(
+                    context,
+                    title: 'Send Feedback',
+                    subtitle: 'Report issues or suggestions',
+                    dialogTitle: 'Send Feedback',
+                    dialogReason:
+                        'Feedback form coming soon. Please use the GitHub issue tracker.',
+                    trailingIcon: Icons.feedback_outlined,
+                    trailingIconSize: 16,
+                  ),
+                ],
               ),
-              const Divider(color: Color(0xFF1E293B), height: 1),
-              SwitchListTile(
-                title: Text('EMAIL SUMMARIES', style: _rowTitleStyle),
-                subtitle: Text('Monthly reward ledger audits',
-                    style: _rowSubtitleStyle),
-                value: _emailNotifications,
-                activeColor: AppTheme.primaryColor,
-                onChanged: _notificationsEnabled
-                    ? (value) {
-                        setState(() {
-                          _emailNotifications = value;
-                        });
-                      }
-                    : null,
-              ),
-              const Divider(color: Color(0xFF1E293B), height: 1),
-              SwitchListTile(
-                title: Text('SMS TRANSMISSIONS', style: _rowTitleStyle),
-                subtitle: Text('Immediate billing highlights',
-                    style: _rowSubtitleStyle),
-                value: _smsNotifications,
-                activeColor: AppTheme.primaryColor,
-                onChanged: _notificationsEnabled
-                    ? (value) {
-                        setState(() {
-                          _smsNotifications = value;
-                        });
-                      }
-                    : null,
-              ),
+              const SizedBox(height: 80), // space above bottom dock
             ],
           ),
-          const SizedBox(height: AppSpacing.md + AppSpacing.xs),
-
-          // Security Section
-          _buildSection(
-            'SECURITY PROTOCOLS',
-            [
-              SwitchListTile(
-                title: Text('BIOMETRIC VALIDATION', style: _rowTitleStyle),
-                subtitle: Text('Use Face ID / Fingerprint registry',
-                    style: _rowSubtitleStyle),
-                value: _biometricAuth,
-                activeColor: AppTheme.primaryColor,
-                onChanged: (value) {
-                  setState(() {
-                    _biometricAuth = value;
-                  });
-                  ref.read(appPreferencesProvider).setBiometricEnabled(value);
-                },
-              ),
-              const Divider(color: Color(0xFF1E293B), height: 1),
-              _buildComingSoonTile(
-                title: 'UPDATE CRYPTO PASSWORD',
-                subtitle: 'Reset credentials passkeys',
-                dialogTitle: 'CHANGE PASSWORD',
-                dialogReason:
-                    'Credential updates require a connected Google identity. Not available in guest mode.',
-              ),
-              const Divider(color: Color(0xFF1E293B), height: 1),
-              _buildComingSoonTile(
-                title: 'TWO-FACTOR SECURITY (2FA)',
-                subtitle: 'Link authenticator token generators',
-                dialogTitle: 'TWO-FACTOR AUTHENTICATION',
-                dialogReason:
-                    'MFA settings require a persistent server integration. Disabled on this build.',
-              ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.md + AppSpacing.xs),
-
-          // Appearance Section
-          _buildSection(
-            'INTERFACE INTERPRETERS',
-            [
-              SwitchListTile(
-                title: Text('FORCE TECH NEON STYLE', style: _rowTitleStyle),
-                subtitle: Text('Cyber-neon default mode enabled',
-                    style: _rowSubtitleStyle),
-                value: true,
-                activeColor: AppTheme.primaryColor,
-                onChanged: null,
-              ),
-              const Divider(color: Color(0xFF1E293B), height: 1),
-              ListTile(
-                title: Text('DICTIONARY DIALECT', style: _rowTitleStyle),
-                subtitle: Text(_language.toUpperCase(),
-                    style: AppTextStyles.caption.copyWith(
-                        color: AppTheme.primaryColor,
-                        fontWeight: FontWeight.bold)),
-                trailing: const Icon(Icons.arrow_forward_ios,
-                    size: 12, color: Colors.white30),
-                onTap: () => _showLanguageDialog(),
-              ),
-              const Divider(color: Color(0xFF1E293B), height: 1),
-              ListTile(
-                title: Text('CURRENCY INDEX', style: _rowTitleStyle),
-                subtitle: Text(_currency.toUpperCase(),
-                    style: AppTextStyles.caption.copyWith(
-                        color: AppTheme.primaryColor,
-                        fontWeight: FontWeight.bold)),
-                trailing: const Icon(Icons.arrow_forward_ios,
-                    size: 12, color: Colors.white30),
-                onTap: () => _showCurrencyDialog(),
-              ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.md + AppSpacing.xs),
-
-          // Data & Sync Section
-          _buildSection(
-            'DATA STAGE & STORAGE',
-            [
-              SwitchListTile(
-                title: Text('AUTO BACKGROUND SYNC', style: _rowTitleStyle),
-                subtitle: Text('Sync card rules via headless pipeline',
-                    style: _rowSubtitleStyle),
-                value: _autoSync,
-                activeColor: AppTheme.primaryColor,
-                onChanged: (value) {
-                  setState(() {
-                    _autoSync = value;
-                  });
-                  ref.read(appPreferencesProvider).setAutoSyncEnabled(value);
-                },
-              ),
-              const Divider(color: Color(0xFF1E293B), height: 1),
-              _buildComingSoonTile(
-                title: 'BACKUP ENCRYPTED DATABASE',
-                subtitle: 'Log state snapshots locally',
-                dialogTitle: 'BACKUP DATABASE',
-                dialogReason:
-                    'Encrypted backup registers require server syncing logic. Sandbox parameters are saved to memory only.',
-              ),
-              const Divider(color: Color(0xFF1E293B), height: 1),
-              _buildComingSoonTile(
-                title: 'EXPORT LEDGER ARCHIVE',
-                subtitle: 'Export transactions to CSV files',
-                dialogTitle: 'EXPORT ARCHIVE',
-                dialogReason:
-                    'Exporter pipelines are currently compiling. Enabled in production build release.',
-              ),
-              const Divider(color: Color(0xFF1E293B), height: 1),
-              ListTile(
-                title: Text('RESET SYSTEM CACHE', style: _rowTitleStyle),
-                subtitle: Text('Purge local database registers',
-                    style: _rowSubtitleStyle),
-                trailing: const Icon(Icons.arrow_forward_ios,
-                    size: 12, color: Colors.white30),
-                onTap: () => _showClearCacheDialog(),
-              ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.md + AppSpacing.xs),
-
-          // About Section
-          _buildSection(
-            'SYSTEM METADATA',
-            [
-              ListTile(
-                title: Text('CARDCOMPASS CORE', style: _rowTitleStyle),
-                subtitle:
-                    Text('Version 1.0.0 (Build 1)', style: _rowSubtitleStyle),
-                trailing: const Icon(Icons.info_outline,
-                    size: 16, color: AppTheme.primaryColor),
-                onTap: () {
-                  _showAppInfoDialog();
-                  setState(() {
-                    _devTapCount++;
-                  });
-                  if (_devTapCount >= 5) {
-                    _devTapCount = 0;
-                    Navigator.pushNamed(context, '/admin/pm');
-                  }
-                },
-              ),
-              const Divider(color: Color(0xFF1E293B), height: 1),
-              ListTile(
-                title: Text('CHECK SYSTEM UPDATES', style: _rowTitleStyle),
-                subtitle: Text('Check for compilation changes',
-                    style: _rowSubtitleStyle),
-                trailing: const Icon(Icons.refresh,
-                    size: 16, color: AppTheme.primaryColor),
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                          'SYSTEM IS COMPILED TO LATEST STABLE BUILD.',
-                          style: AppTextStyles.body2.copyWith(
-                              fontWeight: FontWeight.bold,
-                              fontFamily: AppTextStyles.heading3.fontFamily)),
-                      backgroundColor: AppTheme.successColor,
-                    ),
-                  );
-                },
-              ),
-              const Divider(color: Color(0xFF1E293B), height: 1),
-              _buildComingSoonTile(
-                title: 'TRANSMIT APP FEEDBACK',
-                subtitle: 'Send log audits to developers',
-                dialogTitle: 'FEEDBACK SYSTEM',
-                dialogReason:
-                    'Feedback routes are offline. Please utilize the developer issue registry directly.',
-                trailingIcon: Icons.feedback_outlined,
-                trailingIconSize: 16,
-              ),
-            ],
-          ),
-          const SizedBox(height: 80), // space above bottom dock
-        ],
+        ),
       )
           .animate()
           .fadeIn(duration: 250.ms, curve: Curves.easeOut)
-          .slideY(begin: 0.05, end: 0, duration: 250.ms, curve: Curves.easeOut),
+          .slideY(
+              begin: 0.03, end: 0, duration: 250.ms, curve: Curves.easeOut),
     );
   }
 
-  Widget _buildSection(String title, List<Widget> children) {
+  // ─── Section Container ──────────────────────────────────────────────────
+
+  Widget _buildSection(
+      BuildContext context, String title, List<Widget> children) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding:
-              const EdgeInsets.only(left: AppSpacing.xs, bottom: AppSpacing.sm),
-          child: Text(
-            title,
-            style: AppTextStyles.caption.copyWith(
-              color: Colors.white60,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 1.0,
-              fontFamily: AppTextStyles.heading3.fontFamily,
-            ),
-          ),
+          padding: const EdgeInsets.only(
+              left: AppSpacing.xs, bottom: AppSpacing.sm),
+          child: Text(title, style: _sectionLabelStyle(context)),
         ),
         Container(
-          decoration: BoxDecoration(
-            color: const Color(0xFF0C152B),
-            borderRadius: BorderRadius.circular(AppBorderRadius.xl - 4),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
-          ),
-          // Material(transparency) restores ListTile ink splashes/tap
-          // feedback, which the DecoratedBox above would otherwise hide.
+          decoration: AppTheme.adaptiveGlass(context,
+              borderRadius: AppBorderRadius.xl - 4),
           child: Material(
             type: MaterialType.transparency,
-            child: Column(
-              children: children,
+            child: ClipRRect(
+              borderRadius:
+                  BorderRadius.circular(AppBorderRadius.xl - 4),
+              child: Column(children: children),
             ),
           ),
         ),
@@ -338,12 +339,47 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  /// A settings row that isn't wired up to real functionality yet.
-  ///
-  /// Renders with a muted "Soon" badge next to the title and slightly
-  /// reduced opacity so it visually reads as a preview/disabled row
-  /// instead of looking identical to a working row until tapped.
-  Widget _buildComingSoonTile({
+  // ─── Row Builders ───────────────────────────────────────────────────────
+
+  Widget _buildSwitchTile(
+    BuildContext context, {
+    required String title,
+    required String subtitle,
+    required bool value,
+    ValueChanged<bool>? onChanged,
+  }) {
+    return SwitchListTile(
+      title: Text(title, style: _rowTitleStyle(context)),
+      subtitle: Text(subtitle, style: _rowSubtitleStyle(context)),
+      value: value,
+      activeColor: AppTheme.adaptivePrimary(context),
+      onChanged: onChanged,
+    );
+  }
+
+  Widget _buildNavTile(
+    BuildContext context, {
+    required String title,
+    required String value,
+    required VoidCallback onTap,
+  }) {
+    return ListTile(
+      title: Text(title, style: _rowTitleStyle(context)),
+      subtitle: Text(
+        value,
+        style: AppTextStyles.caption.copyWith(
+          color: AppTheme.adaptivePrimary(context),
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      trailing: Icon(Icons.arrow_forward_ios,
+          size: 12, color: AppTheme.adaptiveTextDisabled(context)),
+      onTap: onTap,
+    );
+  }
+
+  Widget _buildComingSoonTile(
+    BuildContext context, {
     required String title,
     required String subtitle,
     required String dialogTitle,
@@ -352,69 +388,71 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     double trailingIconSize = 12,
   }) {
     return Opacity(
-      opacity: 0.7,
+      opacity: 0.6,
       child: ListTile(
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Flexible(
-              child: Text(
-                title,
-                style: _rowTitleStyle,
-              ),
-            ),
+            Flexible(child: Text(title, style: _rowTitleStyle(context))),
             const SizedBox(width: AppSpacing.sm),
-            _buildSoonBadge(),
+            _buildSoonBadge(context),
           ],
         ),
-        subtitle: Text(subtitle, style: _rowSubtitleStyle),
-        trailing:
-            Icon(trailingIcon, size: trailingIconSize, color: Colors.white30),
-        onTap: () => _showUnavailableDialog(dialogTitle, dialogReason),
+        subtitle: Text(subtitle, style: _rowSubtitleStyle(context)),
+        trailing: Icon(trailingIcon,
+            size: trailingIconSize,
+            color: AppTheme.adaptiveTextDisabled(context)),
+        onTap: () => _showUnavailableDialog(context, dialogTitle, dialogReason),
       ),
     );
   }
 
-  Widget _buildSoonBadge() {
+  Widget _buildSoonBadge(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(
           horizontal: AppSpacing.xs + 2, vertical: 2),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.08),
+        color: AppTheme.adaptivePrimary(context).withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(AppBorderRadius.sm),
-        border: Border.all(color: Colors.white24),
+        border: Border.all(
+          color: AppTheme.adaptivePrimary(context).withValues(alpha: 0.3),
+        ),
       ),
       child: Text(
         'SOON',
-        style: AppTextStyles.caption.copyWith(
-          color: Colors.white54,
+        style: AppTextStyles.mono.copyWith(
+          color: AppTheme.adaptivePrimary(context),
           fontSize: 9,
-          fontWeight: FontWeight.bold,
-          letterSpacing: 0.5,
-          fontFamily: AppTextStyles.heading3.fontFamily,
+          fontWeight: FontWeight.w600,
         ),
       ),
     );
   }
 
-  /// Single reusable "coming soon" / unavailable-feature dialog.
-  ///
-  /// Consolidates what used to be 5+ duplicated inline AlertDialogs with
-  /// identical boilerplate (backgroundColor, shape) — every dialog in this
-  /// screen builds its chrome via this helper and supplies only its own
-  /// title/content/actions.
-  Future<T?> _showThemedDialog<T>({
+  Widget _divider(BuildContext context) {
+    return Divider(
+      color: AppTheme.adaptiveSurfaceSubtle(context),
+      height: 1,
+    );
+  }
+
+  // ─── Dialogs ────────────────────────────────────────────────────────────
+
+  Future<T?> _showThemedDialog<T>(
+    BuildContext context, {
     required Widget title,
     required Widget content,
     List<Widget>? actions,
   }) {
     return showDialog<T>(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF0C152B),
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.adaptiveSurfaceRaised(ctx),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppBorderRadius.xl),
-          side: const BorderSide(color: Color(0xFF1E293B)),
+          side: BorderSide(
+            color: AppTheme.adaptiveSurfaceSubtle(ctx),
+          ),
         ),
         title: title,
         content: content,
@@ -423,34 +461,32 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  void _showUnavailableDialog(String feature, String reason) {
+  void _showUnavailableDialog(
+      BuildContext context, String feature, String reason) {
     _showThemedDialog(
-      title: Text(
-        feature,
-        style: AppTextStyles.heading3
-            .copyWith(color: Colors.white, fontWeight: FontWeight.bold),
-      ),
-      content: Text(
-        reason,
-        style: AppTextStyles.body1.copyWith(color: Colors.white70, height: 1.4),
-      ),
+      context,
+      title: Text(feature,
+          style: AppTextStyles.heading3.copyWith(
+              color: AppTheme.adaptiveTextPrimary(context),
+              fontWeight: FontWeight.bold)),
+      content: Text(reason,
+          style: AppTextStyles.body1.copyWith(
+              color: AppTheme.adaptiveTextSecondary(context), height: 1.4)),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
           child: Text('OK',
-              style:
-                  AppTextStyles.button.copyWith(color: AppTheme.primaryColor)),
+              style: AppTextStyles.button
+                  .copyWith(color: AppTheme.adaptivePrimary(context))),
         ),
       ],
     );
   }
 
-  void _showLanguageDialog() {
+  void _showLanguageDialog(BuildContext context) {
     _showThemedDialog(
-      title: Text(
-        'SELECT DICTIONARY LANGUAGE',
-        style: _rowTitleStyle,
-      ),
+      context,
+      title: Text('Select Language', style: _rowTitleStyle(context)),
       content: SizedBox(
         width: double.maxFinite,
         child: ListView(
@@ -466,28 +502,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             'Malayalam',
             'Marathi',
             'Punjabi',
-          ].map((language) {
+          ].map((lang) {
+            final isSelected = _language == lang;
             return ListTile(
-              title: Text(
-                language.toUpperCase(),
-                style: AppTextStyles.body2.copyWith(
-                  color: _language == language
-                      ? AppTheme.primaryColor
-                      : Colors.white70,
-                  fontWeight: FontWeight.bold,
-                  fontFamily: AppTextStyles.heading3.fontFamily,
-                ),
-              ),
+              title: Text(lang,
+                  style: AppTextStyles.body2.copyWith(
+                    color: isSelected
+                        ? AppTheme.adaptivePrimary(context)
+                        : AppTheme.adaptiveTextPrimary(context),
+                    fontWeight:
+                        isSelected ? FontWeight.w700 : FontWeight.w400,
+                  )),
+              trailing: isSelected
+                  ? Icon(Icons.check,
+                      size: 18, color: AppTheme.adaptivePrimary(context))
+                  : null,
               onTap: () {
-                setState(() {
-                  _language = language;
-                });
-                ref.read(appPreferencesProvider).setLanguage(language);
+                setState(() => _language = lang);
+                ref.read(appPreferencesProvider).setLanguage(lang);
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content:
-                        Text('Language successfully configured: $language'),
+                    content: Text('Language set to $lang'),
                     backgroundColor: AppTheme.successColor,
                   ),
                 );
@@ -499,12 +535,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  void _showCurrencyDialog() {
+  void _showCurrencyDialog(BuildContext context) {
     _showThemedDialog(
-      title: Text(
-        'SELECT CURRENCY INDEX',
-        style: _rowTitleStyle,
-      ),
+      context,
+      title: Text('Select Currency', style: _rowTitleStyle(context)),
       content: SizedBox(
         width: double.maxFinite,
         child: ListView(
@@ -517,28 +551,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             'AED (د.إ)',
             'SAR (ر.س)',
           ].map((currency) {
-            final curSymbol = currency.split(' ')[0];
+            final code = currency.split(' ')[0];
+            final isSelected = _currency == code;
             return ListTile(
-              title: Text(
-                currency.toUpperCase(),
-                style: AppTextStyles.body2.copyWith(
-                  color: _currency == curSymbol
-                      ? AppTheme.primaryColor
-                      : Colors.white70,
-                  fontWeight: FontWeight.bold,
-                  fontFamily: AppTextStyles.heading3.fontFamily,
-                ),
-              ),
+              title: Text(currency,
+                  style: AppTextStyles.body2.copyWith(
+                    color: isSelected
+                        ? AppTheme.adaptivePrimary(context)
+                        : AppTheme.adaptiveTextPrimary(context),
+                    fontWeight:
+                        isSelected ? FontWeight.w700 : FontWeight.w400,
+                  )),
+              trailing: isSelected
+                  ? Icon(Icons.check,
+                      size: 18, color: AppTheme.adaptivePrimary(context))
+                  : null,
               onTap: () {
-                setState(() {
-                  _currency = curSymbol;
-                });
-                ref.read(appPreferencesProvider).setCurrency(curSymbol);
+                setState(() => _currency = code);
+                ref.read(appPreferencesProvider).setCurrency(code);
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content:
-                        Text('Currency successfully configured: $curSymbol'),
+                    content: Text('Currency set to $code'),
                     backgroundColor: AppTheme.successColor,
                   ),
                 );
@@ -550,86 +584,81 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  void _showClearCacheDialog() {
+  void _showClearCacheDialog(BuildContext context) {
     _showThemedDialog(
-      title: Text(
-        'PURGE LOCAL CACHE',
-        style: AppTextStyles.heading3
-            .copyWith(color: AppTheme.errorColor, fontWeight: FontWeight.bold),
-      ),
+      context,
+      title: Text('Clear Cache',
+          style: AppTextStyles.heading3.copyWith(
+              color: AppTheme.errorColor, fontWeight: FontWeight.bold)),
       content: Text(
-        'This action will permanently delete all cached transaction details and config registries. Proceed?',
-        style: AppTextStyles.body1.copyWith(color: Colors.white70, height: 1.4),
-      ),
+          'This will delete all cached data. Are you sure?',
+          style: AppTextStyles.body1.copyWith(
+              color: AppTheme.adaptiveTextSecondary(context), height: 1.4)),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: Text('CANCEL',
-              style: AppTextStyles.button.copyWith(color: Colors.white70)),
+          child: Text('Cancel',
+              style: AppTextStyles.button.copyWith(
+                  color: AppTheme.adaptiveTextSecondary(context))),
         ),
         ElevatedButton(
           onPressed: () {
             Navigator.pop(context);
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('CACHE PROTOCOLS ALREADY COMPLETED.',
-                    style: AppTextStyles.body2.copyWith(
-                        fontWeight: FontWeight.bold,
-                        fontFamily: AppTextStyles.heading3.fontFamily)),
+                content: Text('Cache cleared.',
+                    style: AppTextStyles.body2
+                        .copyWith(fontWeight: FontWeight.w600)),
                 backgroundColor: AppTheme.successColor,
               ),
             );
           },
-          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.errorColor),
-          child: Text('PURGE',
+          style:
+              ElevatedButton.styleFrom(backgroundColor: AppTheme.errorColor),
+          child: Text('Clear',
               style: AppTextStyles.button.copyWith(color: Colors.white)),
         ),
       ],
     );
   }
 
-  void _showAppInfoDialog() {
+  void _showAppInfoDialog(BuildContext context) {
     _showThemedDialog(
-      title: Text(
-        'CARDCOMPASS CORE ENGINE',
-        style: AppTextStyles.heading3
-            .copyWith(color: Colors.white, fontWeight: FontWeight.bold),
-      ),
+      context,
+      title: Text('CardCompass',
+          style: AppTextStyles.heading3.copyWith(
+              color: AppTheme.adaptiveTextPrimary(context),
+              fontWeight: FontWeight.bold)),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('VERSION: 1.0.0',
+          Text('Version 1.0.0',
               style: AppTextStyles.body2.copyWith(
-                  color: AppTheme.primaryColor,
-                  fontWeight: FontWeight.bold,
-                  fontFamily: AppTextStyles.heading3.fontFamily)),
-          Text('COMPILATION: BUILD 1',
+                  color: AppTheme.adaptivePrimary(context),
+                  fontWeight: FontWeight.w600)),
+          Text('Build 1',
               style: AppTextStyles.caption.copyWith(
-                  color: Colors.white54,
-                  fontFamily: AppTextStyles.heading3.fontFamily)),
-          const SizedBox(height: AppSpacing.sm + 4),
+                  color: AppTheme.adaptiveTextTertiary(context))),
+          const SizedBox(height: AppSpacing.md),
           Text(
-            'CardCompass is a cybernetic sandbox ledger that automatically categorizes statements, analyzes benefits routing, and optimizes rewards.',
-            style: AppTextStyles.body1
-                .copyWith(color: Colors.white70, height: 1.4),
+            'CardCompass automatically categorizes your credit card statements, analyzes reward benefits, and recommends the best card for every purchase.',
+            style: AppTextStyles.body1.copyWith(
+                color: AppTheme.adaptiveTextSecondary(context), height: 1.5),
           ),
-          const SizedBox(height: AppSpacing.sm + 4),
-          Text('DEVELOPED IN INDIA',
+          const SizedBox(height: AppSpacing.md),
+          Text('Made in India 🇮🇳',
               style: AppTextStyles.caption.copyWith(
-                  color: Colors.white38,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 9,
-                  letterSpacing: 0.5,
-                  fontFamily: AppTextStyles.heading3.fontFamily)),
+                  color: AppTheme.adaptiveTextTertiary(context),
+                  fontWeight: FontWeight.w500)),
         ],
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
           child: Text('OK',
-              style:
-                  AppTextStyles.button.copyWith(color: AppTheme.primaryColor)),
+              style: AppTextStyles.button
+                  .copyWith(color: AppTheme.adaptivePrimary(context))),
         ),
       ],
     );

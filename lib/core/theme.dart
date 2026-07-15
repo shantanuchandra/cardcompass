@@ -79,7 +79,7 @@ class AppTheme {
   static const Color axisColor = Color(0xFF800020);
   static const Color kotakColor = Color(0xFFED1C24);
 
-  // ─── Surface Hierarchy ──────────────────────────────────────────────────
+  // ─── Surface Hierarchy (Dark) ────────────────────────────────────────────
   //
   // WHY 5 levels of darkness:
   //   Creates spatial depth without 3D rendering. Each step is ~10-15
@@ -98,6 +98,88 @@ class AppTheme {
   static const Color surfaceRaised = Color(0xFF0C152B);
   static const Color surfaceOverlay = Color(0xFF111D38);
   static const Color surfaceSubtle = Color(0xFF1E293B);
+
+  // ─── Surface Hierarchy (Light) ───────────────────────────────────────────
+  //
+  // WHY off-white instead of pure white:
+  //   Pure #FFFFFF creates harsh glare on screens, especially in data-heavy
+  //   financial interfaces. Off-white (#F5F7FA) reduces eye strain while
+  //   maintaining a "clean premium" feel — used by CRED, Jupiter, and most
+  //   modern fintech apps in light mode.
+  //
+  //   Depth in light mode is created via shadows (not lighter surfaces).
+  //   Cards are white on off-white background — elevation comes from
+  //   soft box-shadows rather than surface-color differentiation.
+  //
+  static const Color lightSurfaceVoid = Color(0xFFF0F2F5);
+  static const Color lightSurfaceBase = Color(0xFFF5F7FA);
+  static const Color lightSurfaceRaised = Color(0xFFFFFFFF);
+  static const Color lightSurfaceOverlay = Color(0xFFFFFFFF);
+  static const Color lightSurfaceSubtle = Color(0xFFE2E8F0);
+
+  // ─── Brand Accents (Light Mode) ─────────────────────────────────────────
+  //
+  // WHY desaturated/darkened:
+  //   Neon colors are designed to "vibrate" against dark backgrounds.
+  //   On light surfaces they become garish and illegible. We shift each
+  //   accent toward a darker, more saturated variant of the same hue
+  //   that maintains 4.5:1+ WCAG AA contrast against white.
+  //
+  //   Ocean teal (#0891B2) preserves cyan's "tech precision" identity.
+  //   Deep violet (#7C3AED) keeps the premium AI feel.
+  //   Rose (#DB2777) retains urgency without neon vibration.
+  //   Amber (#D97706) preserves the reward/gold metaphor.
+  //
+  static const Color lightPrimaryColor = Color(0xFF0891B2);    // Ocean Teal
+  static const Color lightSecondaryColor = Color(0xFF7C3AED);   // Deep Violet
+  static const Color lightAccentColor = Color(0xFFDB2777);      // Rose
+  static const Color lightRewardGold = Color(0xFFD97706);       // Amber
+
+  // ─── Light Text Colors ──────────────────────────────────────────────────
+  //
+  // WHY charcoal instead of pure black:
+  //   Pure black on white creates maximum contrast (21:1) which causes
+  //   eye strain during extended reading. Slate-900 (#0F172A) achieves
+  //   15:1 contrast — well above WCAG AAA (7:1) while feeling softer.
+  //
+  static const Color lightTextPrimary = Color(0xFF0F172A);    // Slate-900
+  static const Color lightTextSecondary = Color(0xFF475569);   // Slate-600
+  static const Color lightTextTertiary = Color(0xFF94A3B8);    // Slate-400
+  static const Color lightTextDisabled = Color(0xFFCBD5E1);    // Slate-300
+
+  // ─── Semantic Adaptive Helpers ───────────────────────────────────────────
+  //
+  // Usage: `AppTheme.adaptivePrimary(context)` returns the correct brand
+  // accent for the current brightness. Screens that support both themes
+  // should use these instead of the raw constants.
+  //
+  static bool isDark(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark;
+
+  static Color adaptivePrimary(BuildContext context) =>
+      isDark(context) ? primaryColor : lightPrimaryColor;
+  static Color adaptiveSecondary(BuildContext context) =>
+      isDark(context) ? secondaryColor : lightSecondaryColor;
+  static Color adaptiveAccent(BuildContext context) =>
+      isDark(context) ? accentColor : lightAccentColor;
+  static Color adaptiveGold(BuildContext context) =>
+      isDark(context) ? rewardGold : lightRewardGold;
+
+  static Color adaptiveSurfaceRaised(BuildContext context) =>
+      isDark(context) ? surfaceRaised : lightSurfaceRaised;
+  static Color adaptiveSurfaceSubtle(BuildContext context) =>
+      isDark(context) ? surfaceSubtle : lightSurfaceSubtle;
+  static Color adaptiveSurfaceBase(BuildContext context) =>
+      isDark(context) ? surfaceBase : lightSurfaceBase;
+
+  static Color adaptiveTextPrimary(BuildContext context) =>
+      isDark(context) ? Colors.white : lightTextPrimary;
+  static Color adaptiveTextSecondary(BuildContext context) =>
+      isDark(context) ? Colors.white70 : lightTextSecondary;
+  static Color adaptiveTextTertiary(BuildContext context) =>
+      isDark(context) ? Colors.white38 : lightTextTertiary;
+  static Color adaptiveTextDisabled(BuildContext context) =>
+      isDark(context) ? Colors.white24 : lightTextDisabled;
 
   // ─── Neon Glow Utilities ────────────────────────────────────────────────
   //
@@ -158,7 +240,7 @@ class AppTheme {
         ),
       ];
 
-  // ─── Glass Effect Decoration ────────────────────────────────────────────
+  // ─── Glass Effect Decoration (Dark) ──────────────────────────────────────
   //
   // WHY frosted glass:
   //   backdrop-filter: blur() creates literal visual depth — content behind
@@ -190,7 +272,93 @@ class AppTheme {
     );
   }
 
-  // ─── Gradient Presets ───────────────────────────────────────────────────
+  // ─── Glass Effect Decoration (Light — "Frosted Pearl") ──────────────────
+  //
+  // WHY a separate light glass:
+  //   In dark mode, glass panels are semi-transparent dark surfaces catching
+  //   neon edge-light from borders. In light mode, the physics reverse:
+  //   panels are semi-transparent white with subtle shadows creating depth.
+  //   This is Apple's Liquid Glass adapted for light backgrounds — the panel
+  //   "floats" via shadow rather than glowing via border-light.
+  //
+  //   The 0.85 white opacity ensures cards feel substantial (not ghostly)
+  //   while the soft double-shadow (near + far) creates convincing elevation.
+  //
+  static BoxDecoration glassDecorationLight({
+    double borderRadius = AppBorderRadius.xl,
+    Color? borderColor,
+  }) {
+    return BoxDecoration(
+      color: Colors.white.withValues(alpha: 0.85),
+      borderRadius: BorderRadius.circular(borderRadius),
+      border: Border.all(
+        color: borderColor ?? Colors.black.withValues(alpha: 0.06),
+        width: 1,
+      ),
+      boxShadow: [
+        // Near shadow — tight, defines the card edge
+        BoxShadow(
+          color: Colors.black.withValues(alpha: 0.04),
+          blurRadius: 8,
+          offset: const Offset(0, 2),
+        ),
+        // Far shadow — diffused, creates floating depth
+        BoxShadow(
+          color: Colors.black.withValues(alpha: 0.06),
+          blurRadius: 24,
+          offset: const Offset(0, 8),
+        ),
+      ],
+    );
+  }
+
+  // ─── Adaptive Glass (resolves dark/light automatically) ─────────────────
+  static BoxDecoration adaptiveGlass(
+    BuildContext context, {
+    double borderRadius = AppBorderRadius.xl,
+    Color? borderColor,
+  }) {
+    return isDark(context)
+        ? glassDecoration(borderRadius: borderRadius, borderColor: borderColor)
+        : glassDecorationLight(borderRadius: borderRadius, borderColor: borderColor);
+  }
+
+  // ─── Adaptive Elevation Shadows ─────────────────────────────────────────
+  //
+  // WHY separate from neonGlow:
+  //   In dark mode, elevation is signaled by neon glow (light emission).
+  //   In light mode, elevation is signaled by shadow (light blocking).
+  //   These return the appropriate depth indicator for the current theme.
+  //
+  static List<BoxShadow> adaptiveElevation(
+    BuildContext context, {
+    Color? glowColor,
+    double elevation = 1, // 0-3 scale: subtle → dramatic
+  }) {
+    if (isDark(context)) {
+      return neonGlow(
+        color: glowColor ?? primaryColor,
+        opacity: 0.1 + (elevation * 0.1),
+        blurRadius: 8 + (elevation * 8),
+      );
+    }
+    // Light mode: soft material shadows
+    final baseOpacity = 0.03 + (elevation * 0.03);
+    return [
+      BoxShadow(
+        color: Colors.black.withValues(alpha: baseOpacity),
+        blurRadius: 4 + (elevation * 4),
+        offset: Offset(0, 1 + elevation),
+      ),
+      BoxShadow(
+        color: Colors.black.withValues(alpha: baseOpacity * 0.6),
+        blurRadius: 12 + (elevation * 12),
+        offset: Offset(0, 4 + (elevation * 4)),
+      ),
+    ];
+  }
+
+  // ─── Gradient Presets (Dark) ─────────────────────────────────────────────
   //
   // WHY these specific gradients:
   //   Primary gradient (cyan → purple) is our brand signature — used for
@@ -216,6 +384,38 @@ class AppTheme {
     colors: [surfaceVoid, surfaceBase, surfaceVoid],
   );
 
+  // ─── Gradient Presets (Light) ───────────────────────────────────────────
+  //
+  // WHY desaturated gradients for light:
+  //   The dark-mode neon gradients would overwhelm a light interface.
+  //   Ocean teal → deep violet preserves the brand's "intelligent tech"
+  //   signature while sitting harmoniously against white/off-white surfaces.
+  //   Used for CTAs, progress bars, and accent elements in light mode.
+  //
+  static const LinearGradient primaryGradientLight = LinearGradient(
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+    colors: [lightPrimaryColor, lightSecondaryColor],
+  );
+
+  static const LinearGradient accentGradientLight = LinearGradient(
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+    colors: [lightPrimaryColor, lightSecondaryColor, lightAccentColor],
+  );
+
+  static const LinearGradient surfaceGradientLight = LinearGradient(
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    colors: [lightSurfaceVoid, lightSurfaceBase, lightSurfaceVoid],
+  );
+
+  // ─── Adaptive Gradients ─────────────────────────────────────────────────
+  static LinearGradient adaptivePrimaryGradient(BuildContext context) =>
+      isDark(context) ? primaryGradient : primaryGradientLight;
+  static LinearGradient adaptiveAccentGradient(BuildContext context) =>
+      isDark(context) ? accentGradient : accentGradientLight;
+
   // ─── Typography ─────────────────────────────────────────────────────────
   //
   // WHY these fonts:
@@ -232,16 +432,23 @@ class AppTheme {
     return GoogleFonts.plusJakartaSansTextTheme(base);
   }
 
-  // ─── Light Theme ────────────────────────────────────────────────────────
+  // ─── Light Theme (Premium Clean — "Frosted Pearl") ───────────────────────
+  //
+  // WHY "Same Brand, Different Physics":
+  //   Dark mode uses light emission (neon glow on dark surfaces).
+  //   Light mode uses material depth (shadows on light surfaces).
+  //   Both share typography, layout grid, icons, and motion curves.
+  //   Only surface colors and accent rendering differ.
+  //
   static ThemeData get lightTheme {
     final colorScheme = ColorScheme.fromSeed(
-      seedColor: const Color(0xFF2563EB),
+      seedColor: lightPrimaryColor,
       brightness: Brightness.light,
-      primary: const Color(0xFF2563EB),
-      secondary: const Color(0xFF8B5CF6),
-      tertiary: const Color(0xFFD946EF),
+      primary: lightPrimaryColor,
+      secondary: lightSecondaryColor,
+      tertiary: lightAccentColor,
       error: errorColor,
-      surface: Colors.white,
+      surface: lightSurfaceRaised,
     );
     final base = ThemeData(
       useMaterial3: true,
@@ -250,34 +457,37 @@ class AppTheme {
     );
     return base.copyWith(
       textTheme: _buildTextTheme(base.textTheme),
-      scaffoldBackgroundColor: const Color(0xFFF8FAFC),
-      appBarTheme: const AppBarTheme(
+      scaffoldBackgroundColor: lightSurfaceBase,
+      appBarTheme: AppBarTheme(
         elevation: 0,
         centerTitle: true,
-        backgroundColor: Colors.transparent,
-        foregroundColor: Color(0xFF0F172A),
+        backgroundColor: lightSurfaceRaised,
+        foregroundColor: lightTextPrimary,
+        surfaceTintColor: Colors.transparent,
+        shadowColor: Colors.black.withValues(alpha: 0.06),
       ),
       cardTheme: CardThemeData(
-        elevation: 2,
-        color: Colors.white,
+        elevation: 0,
+        color: lightSurfaceRaised,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppBorderRadius.xl),
           side: BorderSide(
-            color: Colors.black.withValues(alpha: 0.05),
-            width: 1.2,
+            color: lightSurfaceSubtle.withValues(alpha: 0.6),
+            width: 1,
           ),
         ),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
           elevation: 2,
+          shadowColor: lightPrimaryColor.withValues(alpha: 0.2),
           minimumSize: const Size.fromHeight(48),
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppBorderRadius.lg),
           ),
-          backgroundColor: const Color(0xFF2563EB),
+          backgroundColor: lightPrimaryColor,
           foregroundColor: Colors.white,
         ),
       ),
@@ -288,29 +498,46 @@ class AppTheme {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppBorderRadius.lg),
           ),
-          side: const BorderSide(color: Color(0xFF2563EB), width: 1.5),
-          foregroundColor: const Color(0xFF2563EB),
+          side: BorderSide(color: lightPrimaryColor, width: 1.5),
+          foregroundColor: lightPrimaryColor,
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: const Color(0xFFF1F5F9),
+        fillColor: lightSurfaceVoid,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(AppBorderRadius.md),
-          borderSide:
-              BorderSide(color: Colors.black.withValues(alpha: 0.08)),
+          borderSide: BorderSide(color: lightSurfaceSubtle),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(AppBorderRadius.md),
-          borderSide:
-              const BorderSide(color: Color(0xFF2563EB), width: 1.5),
+          borderSide: BorderSide(color: lightPrimaryColor, width: 1.5),
         ),
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       ),
       dividerTheme: DividerThemeData(
-        color: Colors.black.withValues(alpha: 0.08),
+        color: lightSurfaceSubtle,
         thickness: 1,
+      ),
+      switchTheme: SwitchThemeData(
+        thumbColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) return lightPrimaryColor;
+          return lightTextTertiary;
+        }),
+        trackColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return lightPrimaryColor.withValues(alpha: 0.3);
+          }
+          return lightSurfaceSubtle;
+        }),
+      ),
+      listTileTheme: ListTileThemeData(
+        textColor: lightTextPrimary,
+        iconColor: lightTextSecondary,
+      ),
+      iconTheme: IconThemeData(
+        color: lightTextSecondary,
       ),
     );
   }

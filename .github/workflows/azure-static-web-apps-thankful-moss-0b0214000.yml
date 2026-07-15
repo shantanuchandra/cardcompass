@@ -23,7 +23,7 @@ jobs:
       - name: Install Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: 'stable'   # always latest stable — includes Dart >=3.10
+          channel: 'stable'
 
       - name: Install dependencies
         run: flutter pub get
@@ -42,7 +42,17 @@ jobs:
           EOF
 
       - name: Build Flutter web
-        run: flutter build web --release --dart-define-from-file=dart_defines.json
+        run: flutter build web --release --base-href /app/ --dart-define-from-file=dart_defines.json
+
+      - name: Assemble deploy directory
+        run: |
+          mkdir -p deploy
+          # Landing page at root (/)
+          cp -r landing/* deploy/
+          # Flutter app under /app/
+          cp -r build/web deploy/app
+          # Azure SWA routing config
+          cp staticwebapp.config.json deploy/
 
       - name: Build And Deploy
         id: builddeploy
@@ -51,9 +61,10 @@ jobs:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_THANKFUL_MOSS_0B0214000 }}
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           action: "upload"
-          app_location: "build/web"
+          app_location: "deploy"
           api_location: ""
           output_location: ""
+          skip_app_build: true
 
   close_pull_request_job:
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
