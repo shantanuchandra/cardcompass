@@ -60,3 +60,5 @@ dart_defines.json
 db_cluster*
 *.sql.gz
 *.dump
+.playwright-mcp/
+.superpowers/brainstorm/
