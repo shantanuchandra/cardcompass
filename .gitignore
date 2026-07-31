@@ -60,3 +60,16 @@ dart_defines.json
 db_cluster*
 *.sql.gz
 *.dump
+
+# Flutter (removed from this branch — web-only)
+lib/
+android/
+ios/
+web/
+build/
+assets/
+test/
+pubspec.yaml
+pubspec.lock
+*.md
+!docs/
