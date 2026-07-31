@@ -505,3 +505,11 @@ input, select { font-family: var(--font-body); }
   .footer-inner { flex-direction: column; align-items: flex-start; gap: 12px; }
   .section-pad { padding: 60px 20px; }
 }
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  .fade-in { transition: none; }
+  .pulse-dot { animation: none; }
+  .blob-bg { display: none; }
+  .modal, .modal-overlay { transition: none; }
+}

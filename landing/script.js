@@ -56,6 +56,22 @@ function openModal(waitlistId) {
   document.getElementById('modalName').focus();
 }
 
+function trapFocus(e) {
+  if (!overlay.classList.contains('is-open')) return;
+  const focusable = Array.from(overlay.querySelectorAll('input, select, button'));
+  const first = focusable[0];
+  const last  = focusable[focusable.length - 1];
+  if (e.key === 'Tab') {
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault(); last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault(); first.focus();
+    }
+  }
+}
+
+document.addEventListener('keydown', trapFocus);
+
 function closeModal() {
   overlay.setAttribute('aria-hidden', 'true');
   overlay.classList.remove('is-open');
@@ -75,7 +91,11 @@ modalForm.addEventListener('submit', async (e) => {
   if (!pendingWaitlistId) { closeModal(); return; }
   const name      = document.getElementById('modalName').value;
   const cardCount = document.getElementById('modalCardCount').value;
-  await submitEnrichment(pendingWaitlistId, name, cardCount);
+  try {
+    await submitEnrichment(pendingWaitlistId, name, cardCount);
+  } catch {
+    // enrichment is optional — close modal regardless, failure is non-blocking
+  }
   closeModal();
 });
 
@@ -104,6 +124,7 @@ function wireForm(formId, emailInputId, submitBtnId, errorSpanId) {
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
+    if (form.classList.contains('joined')) return;
     if (!isValidEmail(emailEl.value)) return;
 
     submitBtn.disabled = true;
@@ -183,4 +204,9 @@ if (!prefersReducedMotion) {
       el.style.transform = '';
     });
   });
+}
+
+// ── Reduced motion: pause SVG blob animations ────────────────────────────────
+if (prefersReducedMotion) {
+  document.querySelectorAll('.blob-bg animate').forEach(el => el.setAttribute('dur', '99999s'));
 }

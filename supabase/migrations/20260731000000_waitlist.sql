@@ -7,8 +7,10 @@ create table if not exists waitlist (
   created_at  timestamptz not null default now()
 );
 
--- RLS: anon can insert and update their own row (matched by id).
+-- RLS: anon can insert rows and update any row by id (stateless — no auth.uid() available).
+-- The update is constrained in JS by passing the id returned from the insert.
 -- No anon select — signups are not readable from the client.
+-- Low-risk: name/card_count are non-sensitive enrichment fields.
 alter table waitlist enable row level security;
 
 create policy "anon insert"
