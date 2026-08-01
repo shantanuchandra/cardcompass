@@ -94,9 +94,11 @@ btn.addEventListener('click', signInWithGoogle);
 
 // ---------------------------------------------------------------------------
 // Handle OAuth callback (hash-fragment tokens on return)
+// Only redirect when Supabase just exchanged the code — not on every load
+// with a pre-existing session.
 // ---------------------------------------------------------------------------
 supabase.auth.onAuthStateChange((event, session) => {
-  if (event === 'SIGNED_IN' && session) {
+  if (event === 'SIGNED_IN' && session && window.location.hash.includes('access_token')) {
     window.location.href = APP_URL;
   }
 });
