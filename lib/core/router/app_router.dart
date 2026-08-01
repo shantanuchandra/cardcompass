@@ -12,6 +12,7 @@ import '../../features/cards/screens/add_card_screen.dart';
 import '../../features/transactions/screens/transactions_screen.dart';
 import '../../features/settings/screens/settings_screen.dart';
 import '../theme/app_theme.dart';
+import '../../app.dart' show navigatorKey;
 
 const _kTabPaths = ['/app', '/app/cards', '/app/transactions', '/app/settings'];
 
@@ -29,6 +30,7 @@ final routerProvider = Provider<GoRouter>((ref) {
   final authState = ref.watch(authNotifierProvider);
 
   return GoRouter(
+    navigatorKey: navigatorKey,
     initialLocation: '/',
     redirect: (context, state) {
       if (authState.isLoading) return null;
