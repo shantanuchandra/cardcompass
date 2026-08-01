@@ -22,7 +22,8 @@ class AuthNotifier extends AsyncNotifier<AuthStatus> {
       await ref.read(supabaseClientProvider).auth.signInWithOAuth(
         OAuthProvider.google,
         redirectTo: Uri.base.origin,
-        scopes: 'email profile https://www.googleapis.com/auth/gmail.readonly',
+        scopes: 'email profile https://www.googleapis.com/auth/gmail.readonly '
+            'https://www.googleapis.com/auth/user.birthday.read',
         queryParams: const {'access_type': 'offline', 'prompt': 'consent'},
       );
       // Auth state resolves via the onAuthStateChange stream after Supabase
