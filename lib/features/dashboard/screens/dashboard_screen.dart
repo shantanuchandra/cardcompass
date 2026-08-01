@@ -6,7 +6,6 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/providers/supabase_provider.dart';
-import '../../../core/router/app_router.dart';
 import '../../../shared/models/user_card.dart';
 import '../../../shared/models/transaction.dart';
 import '../../../shared/models/statement.dart';
@@ -656,7 +655,7 @@ class _AddFirstCard extends ConsumerWidget {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: () => context.go(AppRoutes.addCard),
+                onPressed: () => context.go('/app/cards/add'),
                 icon: const Icon(Icons.add, size: 18),
                 label: const Text('Add Card'),
               ),

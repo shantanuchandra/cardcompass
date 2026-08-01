@@ -6,7 +6,6 @@ import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/providers/repository_providers.dart';
 import '../../../core/providers/supabase_provider.dart';
-import '../../../core/router/app_router.dart';
 import '../../../shared/models/user_card.dart';
 
 final _userCardsProvider = FutureProvider<List<UserCard>>((ref) async {
@@ -30,7 +29,7 @@ class CardsScreen extends ConsumerWidget {
         actions: [
           IconButton(
             icon: const Icon(Icons.add_rounded),
-            onPressed: () => context.go(AppRoutes.addCard),
+            onPressed: () => context.go('/app/cards/add'),
             tooltip: 'Add card',
           ),
         ],
@@ -47,7 +46,7 @@ class CardsScreen extends ConsumerWidget {
                 child: ListView.separated(
                   padding: const EdgeInsets.all(AppSpacing.md),
                   itemCount: cards.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.sm),
+                  separatorBuilder: (_, _a) => const SizedBox(height: AppSpacing.sm),
                   itemBuilder: (_, i) => _CardListTile(card: cards[i], ref: ref),
                 ),
               ),
@@ -125,7 +124,7 @@ class _EmptyCards extends ConsumerWidget {
                 style: GoogleFonts.inter(fontSize: 14, color: AppColors.textSecondary, height: 1.5)),
             const SizedBox(height: AppSpacing.xl),
             ElevatedButton.icon(
-              onPressed: () => context.go(AppRoutes.addCard),
+              onPressed: () => context.go('/app/cards/add'),
               icon: const Icon(Icons.add, size: 18),
               label: const Text('Add Card'),
             ),
