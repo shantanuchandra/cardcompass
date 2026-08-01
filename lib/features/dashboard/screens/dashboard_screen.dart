@@ -11,6 +11,7 @@ import '../../../shared/models/transaction.dart';
 import '../../../shared/models/statement.dart';
 import '../../cards/screens/card_detail_screen.dart';
 import '../providers/dashboard_provider.dart';
+import '../providers/gmail_sync_provider.dart';
 
 final _currencyFmt = NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 0);
 final _shortCurrency = NumberFormat.compactCurrency(locale: 'en_IN', symbol: '₹', decimalDigits: 1);
@@ -45,16 +46,39 @@ class DashboardScreen extends ConsumerWidget {
 }
 
 // ─── App Bar ────────────────────────────────────────────────────────────────
-class _DashboardAppBar extends StatelessWidget {
+class _DashboardAppBar extends ConsumerWidget {
   final dynamic user;
   const _DashboardAppBar({this.user});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final name = (user?.userMetadata?['full_name'] as String?)?.split(' ').first ?? 'there';
     final avatar = user?.userMetadata?['avatar_url'] as String?;
     final hour = DateTime.now().hour;
     final greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+    final syncState = ref.watch(gmailSyncProvider);
+
+    ref.listen(gmailSyncProvider, (previous, next) {
+      next.whenOrNull(
+        data: (result) {
+          if (result == null) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Found ${result.foundCount} statement emails, '
+                '${result.newlyStoredCount} new'
+                '${result.failedCount > 0 ? ', ${result.failedCount} failed' : ''}.',
+              ),
+            ),
+          );
+        },
+        error: (error, _) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Gmail sync failed: $error')),
+          );
+        },
+      );
+    });
 
     return SliverAppBar(
       backgroundColor: AppColors.surfaceVoid,
@@ -87,6 +111,24 @@ class _DashboardAppBar extends StatelessWidget {
                 ],
               ),
             ),
+            // Sync Gmail button
+            IconButton(
+              tooltip: 'Sync Gmail',
+              onPressed: syncState.isLoading
+                  ? null
+                  : () => ref.read(gmailSyncProvider.notifier).syncGmail(),
+              icon: syncState.isLoading
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: AppColors.neonCyan,
+                      ),
+                    )
+                  : const Icon(Icons.sync_rounded, color: AppColors.neonCyan),
+            ),
+            const SizedBox(width: AppSpacing.sm),
             // Avatar
             CircleAvatar(
               radius: 20,
