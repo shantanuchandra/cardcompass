@@ -50,6 +50,7 @@ class EmailRepository implements EmailRepositoryInterface {
     required String emailId,
     required bool processed,
     String? statementId,
+    String? bankDetected,
   }) async {
     try {
       final updateData = <String, dynamic>{
@@ -58,6 +59,9 @@ class EmailRepository implements EmailRepositoryInterface {
 
       if (statementId != null) {
         updateData['statement_id'] = statementId;
+      }
+      if (bankDetected != null) {
+        updateData['bank_detected'] = bankDetected;
       }
 
       await _supabase
@@ -84,6 +88,25 @@ class EmailRepository implements EmailRepositoryInterface {
       return response.isNotEmpty;
     } catch (e) {
       return false;
+    }
+  }
+
+  /// Get emails with attachments that haven't been processed into a
+  /// statement yet, for the given user.
+  @override
+  Future<List<Map<String, dynamic>>> getUnprocessedEmails(String userId) async {
+    try {
+      final response = await _supabase
+          .from('emails')
+          .select('*')
+          .eq('user_id', userId)
+          .eq('processed', false)
+          .eq('has_attachments', true)
+          .order('received_date', ascending: false);
+
+      return List<Map<String, dynamic>>.from(response);
+    } catch (e) {
+      throw Exception('Failed to fetch unprocessed emails: $e');
     }
   }
 }

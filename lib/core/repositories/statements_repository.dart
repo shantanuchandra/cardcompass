@@ -40,4 +40,44 @@ class StatementsRepository {
         .single();
     return Statement.fromJson(data as Map<String, dynamic>);
   }
+
+  /// Create or update a statement for one card + statement period. Upserts
+  /// on (user_card_id, statement_date) so re-processing the same email is
+  /// idempotent, matching this project's statements_user_card_statement_date_key
+  /// constraint (see main's SupabaseStatementRepository, same schema).
+  Future<Statement> upsertStatement({
+    required String userId,
+    required String cardId,
+    required String userCardId,
+    required DateTime statementDate,
+    required DateTime dueDate,
+    double totalAmount = 0,
+    double minimumPayment = 0,
+    double closingBalance = 0,
+    double availableCredit = 0,
+    double rewardsEarned = 0,
+    Map<String, dynamic>? metadata,
+    int? transactionCount,
+  }) async {
+    final data = await _db.from('statements').upsert(
+      {
+        'user_id': userId,
+        'card_id': cardId,
+        'user_card_id': userCardId,
+        'statement_date': statementDate.toIso8601String(),
+        'due_date': dueDate.toIso8601String(),
+        'total_amount': totalAmount,
+        'minimum_payment': minimumPayment,
+        'closing_balance': closingBalance,
+        'available_credit': availableCredit,
+        'rewards_earned': rewardsEarned,
+        'payment_status': 'pending',
+        'processed': true,
+        'metadata': metadata ?? {},
+        if (transactionCount != null) 'transaction_count': transactionCount,
+      },
+      onConflict: 'user_card_id,statement_date',
+    ).select().single();
+    return Statement.fromJson(data as Map<String, dynamic>);
+  }
 }

@@ -59,4 +59,46 @@ class TransactionsRepository {
     }
     return map;
   }
+
+  /// Insert one transaction. Silently skips if a row with the same
+  /// (user_id, user_card_id, transaction_date, description, amount) already
+  /// exists — this project's dedup key, matching main's
+  /// idx_transactions_dedup unique index.
+  Future<void> addTransaction({
+    required String userId,
+    required String userCardId,
+    required double amount,
+    required String description,
+    required DateTime transactionDate,
+    String currency = 'INR',
+    String? merchantName,
+    String? category,
+    String transactionType = 'debit',
+    String? location,
+    double? rewardEarned,
+    String? rewardType,
+    String? statementId,
+    Map<String, dynamic>? metadata,
+  }) async {
+    await _db.from('transactions').upsert(
+      {
+        'user_id': userId,
+        'user_card_id': userCardId,
+        'amount': amount,
+        'description': description,
+        'transaction_date': transactionDate.toIso8601String(),
+        'currency': currency,
+        'merchant_name': merchantName,
+        'category': category,
+        'transaction_type': transactionType,
+        'location': location,
+        'reward_earned': rewardEarned,
+        'reward_type': rewardType,
+        'statement_id': statementId,
+        'metadata': metadata,
+      },
+      onConflict: 'user_id,user_card_id,transaction_date,description,amount',
+      ignoreDuplicates: true,
+    );
+  }
 }

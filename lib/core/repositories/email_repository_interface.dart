@@ -23,5 +23,9 @@ abstract class EmailRepositoryInterface {
     required String emailId,
     required bool processed,
     String? statementId,
+    String? bankDetected,
   });
+
+  /// Get emails with attachments that haven't been processed yet
+  Future<List<Map<String, dynamic>>> getUnprocessedEmails(String userId);
 }
