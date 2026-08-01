@@ -1,10 +1,5 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
-
-// ── Config ──────────────────────────────────────────────────────────────────
-// Replace with real values before deploying. These are intentionally visible
-// (anon key only — RLS prevents reads; insert+update own row only).
-const SUPABASE_URL  = 'https://YOUR_PROJECT.supabase.co';
-const SUPABASE_ANON = 'YOUR_ANON_KEY';
+import { SUPABASE_URL, SUPABASE_ANON } from '../config.js';
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
 

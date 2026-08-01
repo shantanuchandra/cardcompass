@@ -2,12 +2,7 @@
 // ES module — loaded with type="module" in index.html
 
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
-
-// ---------------------------------------------------------------------------
-// Config — swap placeholders before deploying
-// ---------------------------------------------------------------------------
-const SUPABASE_URL  = 'https://prbcoxqobhjnnfnxevxf.supabase.co';
-const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InByYmNveHFvYmhqbm5mbnhldnhmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM3MjM1NDMsImV4cCI6MjA5OTI5OTU0M30.m0vUEsfu1FtIMw0WMhF7ojpxzMGf-M_xeb1LNdYNhuI';
+import { SUPABASE_URL, SUPABASE_ANON } from '../config.js';
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
 
@@ -15,11 +10,15 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
 // Redirect destination after successful sign-in
 // ---------------------------------------------------------------------------
 const isLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
-// On localhost: redirect to Flutter web dev server (port 54321).
-// In prod: redirect to the main app domain.
+
+// Where to send the user after a successful sign-in.
+const APP_URL = isLocalhost ? 'http://localhost:54321/app/' : 'https://www.cardcompass.in/app/';
+
+// Supabase must redirect back to THIS page after OAuth so we can catch the
+// session token. Once onAuthStateChange fires SIGNED_IN we forward to APP_URL.
 const REDIRECT_URL = isLocalhost
-  ? 'http://localhost:54321'
-  : 'https://www.cardcompass.in';
+  ? 'http://localhost:8080/login/'
+  : 'https://www.cardcompass.in/login/';
 
 // ---------------------------------------------------------------------------
 // DOM refs
@@ -98,7 +97,6 @@ btn.addEventListener('click', signInWithGoogle);
 // ---------------------------------------------------------------------------
 supabase.auth.onAuthStateChange((event, session) => {
   if (event === 'SIGNED_IN' && session) {
-    // Redirect to app — Supabase will have set the session cookie/storage
-    window.location.href = REDIRECT_URL;
+    window.location.href = APP_URL;
   }
 });
