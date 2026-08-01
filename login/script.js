@@ -6,8 +6,8 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 // ---------------------------------------------------------------------------
 // Config — swap placeholders before deploying
 // ---------------------------------------------------------------------------
-const SUPABASE_URL  = 'https://YOUR_PROJECT.supabase.co';
-const SUPABASE_ANON = 'YOUR_ANON_KEY';
+const SUPABASE_URL  = 'https://prbcoxqobhjnnfnxevxf.supabase.co';
+const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InByYmNveHFvYmhqbm5mbnhldnhmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM3MjM1NDMsImV4cCI6MjA5OTI5OTU0M30.m0vUEsfu1FtIMw0WMhF7ojpxzMGf-M_xeb1LNdYNhuI';
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
 
@@ -15,8 +15,10 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
 // Redirect destination after successful sign-in
 // ---------------------------------------------------------------------------
 const isLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+// On localhost: redirect to Flutter web dev server (port 54321).
+// In prod: redirect to the main app domain.
 const REDIRECT_URL = isLocalhost
-  ? `${window.location.origin}/app/`
+  ? 'http://localhost:54321'
   : 'https://www.cardcompass.in';
 
 // ---------------------------------------------------------------------------
