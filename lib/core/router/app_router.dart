@@ -37,9 +37,14 @@ final routerProvider = Provider<GoRouter>((ref) {
       if (Uri.base.fragment.contains('access_token')) { return null; }
       if (!isAuthed && loc.startsWith('/app')) { return '/login'; }
       if (isAuthed && (loc == '/login' || loc == '/')) {
-        // Restore tab from URL on initial load
+        // Restore from URL on initial load: deep links take priority over /app
         final fragment = Uri.base.fragment;
-        _tabIndexNotifier.value = _tabIndexFor(fragment.isEmpty ? '/app' : '/$fragment');
+        final target = fragment.isEmpty ? '/app' : '/$fragment';
+        // If the fragment is a deep route (not a tab path), navigate there directly
+        if (!_kTabPaths.contains(target) && target.startsWith('/app/')) {
+          return target;
+        }
+        _tabIndexNotifier.value = _tabIndexFor(target);
         return '/app';
       }
       if (loc == '/' && !isAuthed) { return '/login'; }
@@ -55,7 +60,6 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/app',
         pageBuilder: (_, s) => const NoTransitionPage(child: _AppShell()),
       ),
-      // add-card is a separate full-page push on top of the shell
       GoRoute(
         path: '/app/cards/add',
         pageBuilder: (_, s) => const NoTransitionPage(child: AddCardScreen()),

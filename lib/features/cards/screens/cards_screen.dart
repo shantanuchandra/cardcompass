@@ -7,6 +7,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/providers/repository_providers.dart';
 import '../../../core/providers/supabase_provider.dart';
 import '../../../shared/models/user_card.dart';
+import 'card_detail_screen.dart';
 
 final _userCardsProvider = FutureProvider<List<UserCard>>((ref) async {
   final user = ref.watch(currentUserProvider);
@@ -62,7 +63,14 @@ class _CardListTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return InkWell(
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => CardDetailScreen(cardId: card.id),
+        ),
+      ),
+      borderRadius: BorderRadius.circular(AppRadius.lg),
+      child: Container(
       padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
         color: AppColors.surface1,
@@ -98,7 +106,10 @@ class _CardListTile extends StatelessWidget {
               style: GoogleFonts.spaceGrotesk(
                   fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
             ),
+          const SizedBox(width: AppSpacing.xs),
+          const Icon(Icons.chevron_right_rounded, size: 18, color: AppColors.textMuted),
         ],
+      ),
       ),
     );
   }
