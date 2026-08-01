@@ -70,6 +70,10 @@ class GmailSyncNotifier extends AsyncNotifier<GmailSyncResult?> {
               sender: result.from,
               receivedDate: result.receivedDate,
               hasAttachments: result.hasAttachment,
+              metadata: {
+                if (result.attachmentId != null) 'attachmentId': result.attachmentId,
+                if (result.attachmentFilename != null) 'attachmentFilename': result.attachmentFilename,
+              },
             );
             newlyStored++;
           } catch (_) {

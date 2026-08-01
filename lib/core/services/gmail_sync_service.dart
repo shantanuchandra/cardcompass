@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:typed_data';
 import 'package:googleapis/gmail/v1.dart' as gmail;
 import 'package:http/http.dart' as http;
 
@@ -9,6 +11,8 @@ class GmailSearchResult {
   final String from;
   final DateTime receivedDate;
   final bool hasAttachment;
+  final String? attachmentId;
+  final String? attachmentFilename;
 
   const GmailSearchResult({
     required this.messageId,
@@ -16,6 +20,8 @@ class GmailSearchResult {
     required this.from,
     required this.receivedDate,
     required this.hasAttachment,
+    this.attachmentId,
+    this.attachmentFilename,
   });
 }
 
@@ -133,14 +139,16 @@ class GmailSyncService {
         ? (DateTime.tryParse(dateHeader) ?? _fromInternalDate(message))
         : _fromInternalDate(message);
 
-    final hasAttachment = _hasPdfAttachment(message.payload?.parts);
+    final attachment = _findPdfAttachment(message.payload?.parts);
 
     return GmailSearchResult(
       messageId: id,
       subject: subject,
       from: from,
       receivedDate: receivedDate,
-      hasAttachment: hasAttachment,
+      hasAttachment: attachment.found,
+      attachmentId: attachment.attachmentId,
+      attachmentFilename: attachment.filename,
     );
   }
 
@@ -153,17 +161,35 @@ class GmailSyncService {
         : DateTime.now();
   }
 
-  bool _hasPdfAttachment(List<gmail.MessagePart>? parts) {
-    if (parts == null) return false;
+  ({bool found, String? attachmentId, String? filename}) _findPdfAttachment(
+    List<gmail.MessagePart>? parts,
+  ) {
+    if (parts == null) return (found: false, attachmentId: null, filename: null);
     for (final part in parts) {
       if (part.filename != null &&
           part.filename!.isNotEmpty &&
           part.filename!.toLowerCase().endsWith('.pdf')) {
-        return true;
+        return (found: true, attachmentId: part.body?.attachmentId, filename: part.filename);
       }
-      if (_hasPdfAttachment(part.parts)) return true;
+      final nested = _findPdfAttachment(part.parts);
+      if (nested.found) return nested;
     }
-    return false;
+    return (found: false, attachmentId: null, filename: null);
+  }
+
+  /// Downloads and base64url-decodes a Gmail attachment's raw bytes.
+  Future<Uint8List> downloadAttachment(String messageId, String attachmentId) async {
+    final attachment = await _api.users.messages.attachments.get(
+      'me',
+      messageId,
+      attachmentId,
+    );
+
+    if (attachment.data == null) {
+      throw Exception('No attachment data found');
+    }
+
+    return base64Url.decode(base64Url.normalize(attachment.data!));
   }
 
   void dispose() {
