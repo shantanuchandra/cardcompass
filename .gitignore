@@ -63,15 +63,14 @@ db_cluster*
 *.sql.gz
 *.dump
 
-# Flutter (removed from this branch — web-only)
-lib/
+# Flutter build artifacts (not source)
+/build/
+.dart_tool/
+
+# Platform directories not used (web-only app)
 android/
 ios/
-web/
-build/
-assets/
-test/
-pubspec.yaml
-pubspec.lock
+
+# MD files outside docs/ are not committed (use docs/ instead)
 *.md
 !docs/
