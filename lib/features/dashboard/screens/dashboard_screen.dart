@@ -65,12 +65,15 @@ class _DashboardAppBar extends ConsumerWidget {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
-                'Found ${result.foundCount} statement emails, '
-                '${result.newlyStoredCount} new'
-                '${result.failedCount > 0 ? ', ${result.failedCount} failed' : ''}.',
+                'Found ${result.foundCount} statement emails, ${result.newlyStoredCount} new. '
+                'Processed ${result.processedAttempted}: ${result.processedSucceeded} succeeded'
+                '${result.processedNeedsPassword > 0 ? ', ${result.processedNeedsPassword} need a password' : ''}'
+                '${result.processedFailed > 0 ? ', ${result.processedFailed} failed' : ''}.',
               ),
+              duration: const Duration(seconds: 8),
             ),
           );
+          ref.invalidate(dashboardProvider);
         },
         error: (error, _) {
           ScaffoldMessenger.of(context).showSnackBar(

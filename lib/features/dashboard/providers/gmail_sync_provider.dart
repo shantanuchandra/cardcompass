@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/providers/supabase_provider.dart';
 import '../../../core/repositories/email_repository.dart';
 import '../../../core/services/gmail_sync_service.dart';
+import '../../../core/services/statement_processing_service.dart';
 
 /// Outcome of one Gmail sync run, shown to the user as a summary.
 class GmailSyncResult {
@@ -9,12 +10,20 @@ class GmailSyncResult {
   final int newlyStoredCount;
   final int skippedCount;
   final int failedCount;
+  final int processedAttempted;
+  final int processedSucceeded;
+  final int processedNeedsPassword;
+  final int processedFailed;
 
   const GmailSyncResult({
     required this.foundCount,
     required this.newlyStoredCount,
     required this.skippedCount,
     required this.failedCount,
+    this.processedAttempted = 0,
+    this.processedSucceeded = 0,
+    this.processedNeedsPassword = 0,
+    this.processedFailed = 0,
   });
 }
 
@@ -81,11 +90,27 @@ class GmailSyncNotifier extends AsyncNotifier<GmailSyncResult?> {
           }
         }
 
+        final userName =
+            session!.user.userMetadata?['full_name'] as String? ?? 'there';
+
+        final processingService = StatementProcessingService(
+          gmailService: gmailService,
+          supabaseClient: ref.read(supabaseClientProvider),
+          userId: userId,
+          userEmail: session.user.email ?? '',
+          userName: userName,
+        );
+        final processingResult = await processingService.processUnprocessedEmails();
+
         state = AsyncValue.data(GmailSyncResult(
           foundCount: results.length,
           newlyStoredCount: newlyStored,
           skippedCount: skipped,
           failedCount: failed,
+          processedAttempted: processingResult.totalAttempted,
+          processedSucceeded: processingResult.succeeded,
+          processedNeedsPassword: processingResult.needsPassword,
+          processedFailed: processingResult.failed,
         ));
       } finally {
         gmailService.dispose();
