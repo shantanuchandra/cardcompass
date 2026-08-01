@@ -312,12 +312,12 @@ class AppTheme {
   }
 
   static final _bankGradients = {
-    'hdfc': [const Color(0xFF004C8F), const Color(0xFF0066CC)],
-    'sbi': [const Color(0xFF22409A), const Color(0xFF3B5FC0)],
-    'icici': [const Color(0xFF8B1A1A), const Color(0xFFB02A37)],
-    'axis': [const Color(0xFF4A0015), const Color(0xFF800020)],
-    'kotak': [const Color(0xFF8B1A1A), const Color(0xFFED1C24)],
-    'amex': [const Color(0xFF004A97), const Color(0xFF006FCF)],
-    'default': [const Color(0xFF1E293B), const Color(0xFF334155)],
+    'hdfc':    [const Color(0xFF1565C0), const Color(0xFF1E88E5)],
+    'sbi':     [const Color(0xFF1565C0), const Color(0xFF42A5F5)],
+    'icici':   [const Color(0xFFC62828), const Color(0xFFEF5350)],
+    'axis':    [const Color(0xFF6A1429), const Color(0xFFC2185B)],
+    'kotak':   [const Color(0xFFC62828), const Color(0xFFFF5722)],
+    'amex':    [const Color(0xFF0D47A1), const Color(0xFF1E88E5)],
+    'default': [const Color(0xFF263238), const Color(0xFF455A64)],
   };
 }

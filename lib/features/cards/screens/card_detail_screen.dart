@@ -219,10 +219,23 @@ class _CreditCardWidget extends StatelessWidget {
         decoration: BoxDecoration(
           gradient: gradient,
           borderRadius: BorderRadius.circular(AppRadius.lg),
-          boxShadow: AppTheme.neonGlow(
-            color: gradient.colors.last,
-            spread: 6,
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.12),
+            width: 1,
           ),
+          boxShadow: [
+            BoxShadow(
+              color: gradient.colors.last.withValues(alpha: 0.5),
+              blurRadius: 24,
+              spreadRadius: 2,
+              offset: const Offset(0, 8),
+            ),
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.4),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
         ),
         child: Stack(
           children: [

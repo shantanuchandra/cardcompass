@@ -10,6 +10,7 @@ import '../../../shared/models/user_card.dart';
 import '../../../shared/models/transaction.dart';
 import '../../../shared/models/statement.dart';
 import '../providers/dashboard_provider.dart';
+import '../../cards/screens/card_detail_screen.dart';
 
 final _currencyFmt = NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 0);
 final _shortCurrency = NumberFormat.compactCurrency(locale: 'en_IN', symbol: '₹', decimalDigits: 1);
@@ -308,7 +309,14 @@ class _CardsCarouselState extends State<_CardsCarousel> {
                   left: i == 0 ? AppSpacing.md : AppSpacing.sm,
                   right: i == widget.cards.length - 1 ? AppSpacing.md : AppSpacing.sm,
                 ),
-                child: _CreditCardTile(card: card),
+                child: GestureDetector(
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => CardDetailScreen(cardId: card.id),
+                    ),
+                  ),
+                  child: _CreditCardTile(card: card),
+                ),
               );
             },
           ),
@@ -340,15 +348,23 @@ class _CreditCardTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final gradient = AppTheme.cardGradient(card.bankCode);
     return Container(
       decoration: BoxDecoration(
-        gradient: AppTheme.cardGradient(card.bankCode),
+        gradient: gradient,
         borderRadius: BorderRadius.circular(AppRadius.xl),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.10), width: 1),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.4),
+            color: gradient.colors.last.withValues(alpha: 0.45),
             blurRadius: 20,
+            spreadRadius: 1,
             offset: const Offset(0, 8),
+          ),
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.35),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
