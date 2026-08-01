@@ -24,6 +24,7 @@ dependencies:
 
   # Auth
   google_sign_in: ^6.2.2
+  googleapis: ^16.0.0
 
   # UI & Fonts
   google_fonts: ^6.2.1
