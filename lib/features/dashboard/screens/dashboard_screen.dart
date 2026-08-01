@@ -9,8 +9,8 @@ import '../../../core/providers/supabase_provider.dart';
 import '../../../shared/models/user_card.dart';
 import '../../../shared/models/transaction.dart';
 import '../../../shared/models/statement.dart';
-import '../providers/dashboard_provider.dart';
 import '../../cards/screens/card_detail_screen.dart';
+import '../providers/dashboard_provider.dart';
 
 final _currencyFmt = NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 0);
 final _shortCurrency = NumberFormat.compactCurrency(locale: 'en_IN', symbol: '₹', decimalDigits: 1);

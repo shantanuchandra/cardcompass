@@ -121,8 +121,13 @@ class _CardDetailBody extends ConsumerWidget {
       child: ListView(
         padding: const EdgeInsets.all(AppSpacing.md),
         children: [
-          // Credit card visual
-          _CreditCardWidget(card: card),
+          // Credit card visual — cap at 480px so it doesn't stretch full-width on desktop
+          Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 480),
+              child: _CreditCardWidget(card: card),
+            ),
+          ),
           const SizedBox(height: AppSpacing.lg),
 
           // Stats row: utilization + month spend

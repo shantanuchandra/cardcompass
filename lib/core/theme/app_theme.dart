@@ -307,17 +307,30 @@ class AppTheme {
 
   // Card gradient for credit card widgets
   static LinearGradient cardGradient(String bankCode) {
-    final colors = _bankGradients[bankCode.toLowerCase()] ?? _bankGradients['default']!;
-    return LinearGradient(colors: colors, begin: Alignment.topLeft, end: Alignment.bottomRight);
+    final stops = _bankGradients[bankCode.toLowerCase()] ?? _bankGradients['default']!;
+    // top-left dark → bottom-right mid → top-right light shimmer gives a 3D lift on wide cards
+    return LinearGradient(
+      colors: [stops[0], stops[1], stops[2]],
+      stops: const [0.0, 0.6, 1.0],
+      begin: Alignment.bottomLeft,
+      end: Alignment.topRight,
+    );
   }
 
+  // Each entry: [dark base, mid, bright highlight]
   static final _bankGradients = {
-    'hdfc':    [const Color(0xFF1565C0), const Color(0xFF1E88E5)],
-    'sbi':     [const Color(0xFF1565C0), const Color(0xFF42A5F5)],
-    'icici':   [const Color(0xFFC62828), const Color(0xFFEF5350)],
-    'axis':    [const Color(0xFF6A1429), const Color(0xFFC2185B)],
-    'kotak':   [const Color(0xFFC62828), const Color(0xFFFF5722)],
-    'amex':    [const Color(0xFF0D47A1), const Color(0xFF1E88E5)],
-    'default': [const Color(0xFF263238), const Color(0xFF455A64)],
+    'hdfc':     [const Color(0xFF0D47A1), const Color(0xFF1565C0), const Color(0xFF42A5F5)],
+    'sbi':      [const Color(0xFF0D47A1), const Color(0xFF1565C0), const Color(0xFF42A5F5)],
+    'icici':    [const Color(0xFF7B0000), const Color(0xFFB71C1C), const Color(0xFFE57373)],
+    'axis':     [const Color(0xFF38006B), const Color(0xFF6A1B4D), const Color(0xFFCE93D8)],
+    'kotak':    [const Color(0xFF7B0000), const Color(0xFFBF360C), const Color(0xFFFF7043)],
+    'amex':     [const Color(0xFF01579B), const Color(0xFF0277BD), const Color(0xFF4FC3F7)],
+    'bpcl':     [const Color(0xFF1B5E20), const Color(0xFF2E7D32), const Color(0xFF66BB6A)],
+    'indusind': [const Color(0xFF38006B), const Color(0xFF6A1B9A), const Color(0xFFBA68C8)],
+    'yes':      [const Color(0xFF1A237E), const Color(0xFF283593), const Color(0xFF5C6BC0)],
+    'rbl':      [const Color(0xFF880E4F), const Color(0xFFAD1457), const Color(0xFFF06292)],
+    'idfc':     [const Color(0xFF004D40), const Color(0xFF00695C), const Color(0xFF26A69A)],
+    'bob':      [const Color(0xFF3E2723), const Color(0xFF6D4C41), const Color(0xFFA1887F)],
+    'default':  [const Color(0xFF1A237E), const Color(0xFF283593), const Color(0xFF5C6BC0)],
   };
 }

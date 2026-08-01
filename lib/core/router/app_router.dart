@@ -16,9 +16,9 @@ import '../theme/app_theme.dart';
 const _kTabPaths = ['/app', '/app/cards', '/app/transactions', '/app/settings'];
 
 int _tabIndexFor(String loc) {
-  if (loc.startsWith('/app/cards')) { return 1; }
-  if (loc.startsWith('/app/transactions')) { return 2; }
-  if (loc.startsWith('/app/settings')) { return 3; }
+  if (loc.startsWith('/app/cards')) return 1;
+  if (loc.startsWith('/app/transactions')) return 2;
+  if (loc.startsWith('/app/settings')) return 3;
   return 0;
 }
 
@@ -31,23 +31,18 @@ final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     initialLocation: '/',
     redirect: (context, state) {
-      if (authState.isLoading) { return null; }
+      if (authState.isLoading) return null;
       final isAuthed = authState.valueOrNull == AuthStatus.authenticated;
       final loc = state.matchedLocation;
-      if (Uri.base.fragment.contains('access_token')) { return null; }
-      if (!isAuthed && loc.startsWith('/app')) { return '/login'; }
+      if (Uri.base.fragment.contains('access_token')) return null;
+      if (!isAuthed && loc.startsWith('/app')) return '/login';
       if (isAuthed && (loc == '/login' || loc == '/')) {
-        // Restore from URL on initial load: deep links take priority over /app
+        // Restore tab from URL on initial load
         final fragment = Uri.base.fragment;
-        final target = fragment.isEmpty ? '/app' : '/$fragment';
-        // If the fragment is a deep route (not a tab path), navigate there directly
-        if (!_kTabPaths.contains(target) && target.startsWith('/app/')) {
-          return target;
-        }
-        _tabIndexNotifier.value = _tabIndexFor(target);
+        _tabIndexNotifier.value = _tabIndexFor(fragment.isEmpty ? '/app' : '/$fragment');
         return '/app';
       }
-      if (loc == '/' && !isAuthed) { return '/login'; }
+      if (loc == '/' && !isAuthed) return '/login';
       return null;
     },
     routes: [
@@ -60,6 +55,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/app',
         pageBuilder: (_, s) => const NoTransitionPage(child: _AppShell()),
       ),
+      // add-card is a separate full-page push on top of the shell
       GoRoute(
         path: '/app/cards/add',
         pageBuilder: (_, s) => const NoTransitionPage(child: AddCardScreen()),

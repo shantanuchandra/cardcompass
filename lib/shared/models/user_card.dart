@@ -61,5 +61,23 @@ class UserCard {
 
   String get displayName => cardName ?? 'Card ••••${lastFourDigits ?? ''}';
   String get maskedNumber => lastFourDigits != null ? '••••  ••••  ••••  $lastFourDigits' : '';
-  String get bankCode => (bank ?? '').toLowerCase().replaceAll(' ', '');
+
+  // Maps any bank name variant to a short gradient key.
+  // "HDFC Bank", "hdfc" → "hdfc"; "SBI Cards" → "sbi"; "Bpcl" → "bpcl"; etc.
+  String get bankCode {
+    final b = (bank ?? '').toLowerCase();
+    if (b.contains('hdfc')) return 'hdfc';
+    if (b.contains('sbi')) return 'sbi';
+    if (b.contains('icici')) return 'icici';
+    if (b.contains('axis')) return 'axis';
+    if (b.contains('kotak')) return 'kotak';
+    if (b.contains('amex') || b.contains('american express')) return 'amex';
+    if (b.contains('bpcl')) return 'bpcl';
+    if (b.contains('indusind')) return 'indusind';
+    if (b.contains('yes bank') || b == 'yes') return 'yes';
+    if (b.contains('rbl')) return 'rbl';
+    if (b.contains('idfc')) return 'idfc';
+    if (b.contains('bob') || b.contains('bank of baroda')) return 'bob';
+    return b.replaceAll(' ', '');
+  }
 }
