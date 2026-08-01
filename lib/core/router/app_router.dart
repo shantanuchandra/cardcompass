@@ -1,6 +1,8 @@
+import 'package:web/web.dart' as web;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../../features/auth/providers/auth_provider.dart';
 import '../../features/auth/screens/login_screen.dart';
 import '../../features/auth/screens/splash_screen.dart';
@@ -9,123 +11,153 @@ import '../../features/cards/screens/cards_screen.dart';
 import '../../features/cards/screens/add_card_screen.dart';
 import '../../features/transactions/screens/transactions_screen.dart';
 import '../../features/settings/screens/settings_screen.dart';
+import '../theme/app_theme.dart';
 
-class AppRoutes {
-  static const splash = '/';
-  static const login = '/login';
-  static const dashboard = '/app';
-  static const cards = '/app/cards';
-  static const addCard = '/app/cards/add';
-  static const transactions = '/app/transactions';
-  static const settings = '/app/settings';
+const _kTabPaths = ['/app', '/app/cards', '/app/transactions', '/app/settings'];
+
+int _tabIndexFor(String loc) {
+  if (loc.startsWith('/app/cards')) { return 1; }
+  if (loc.startsWith('/app/transactions')) { return 2; }
+  if (loc.startsWith('/app/settings')) { return 3; }
+  return 0;
 }
+
+// The current tab index — a simple ValueNotifier so _AppShell rebuilds on change.
+final _tabIndexNotifier = ValueNotifier<int>(0);
 
 final routerProvider = Provider<GoRouter>((ref) {
   final authState = ref.watch(authNotifierProvider);
 
   return GoRouter(
-    initialLocation: AppRoutes.splash,
-    debugLogDiagnostics: false,
+    initialLocation: '/',
     redirect: (context, state) {
-      final isLoading = authState.isLoading;
-      if (isLoading) return null;
-
+      if (authState.isLoading) { return null; }
       final isAuthed = authState.valueOrNull == AuthStatus.authenticated;
-      final onSplash = state.matchedLocation == AppRoutes.splash;
-      final onLogin = state.matchedLocation == AppRoutes.login;
-      final onApp = state.matchedLocation.startsWith('/app');
-
-      // Handle Supabase OAuth callback hash
-      final uri = Uri.base;
-      if (uri.fragment.contains('access_token')) return null;
-
-      if (!isAuthed && onApp) return AppRoutes.login;
-      if (isAuthed && (onLogin || onSplash)) return AppRoutes.dashboard;
-      if (onSplash && !isAuthed) return AppRoutes.login;
+      final loc = state.matchedLocation;
+      if (Uri.base.fragment.contains('access_token')) { return null; }
+      if (!isAuthed && loc.startsWith('/app')) { return '/login'; }
+      if (isAuthed && (loc == '/login' || loc == '/')) {
+        // Restore tab from URL on initial load
+        final fragment = Uri.base.fragment;
+        _tabIndexNotifier.value = _tabIndexFor(fragment.isEmpty ? '/app' : '/$fragment');
+        return '/app';
+      }
+      if (loc == '/' && !isAuthed) { return '/login'; }
       return null;
     },
     routes: [
+      GoRoute(path: '/', builder: (_, s) => const SplashScreen()),
+      GoRoute(path: '/login', builder: (_, s) => const LoginScreen()),
+      // Single route for ALL app tabs — GoRouter never re-navigates between tabs.
+      // Tab switches are handled by _AppShell internally via ValueNotifier +
+      // window.history.replaceState to keep the URL in sync.
       GoRoute(
-        path: AppRoutes.splash,
-        builder: (_, __) => const SplashScreen(),
+        path: '/app',
+        pageBuilder: (_, s) => const NoTransitionPage(child: _AppShell()),
       ),
+      // add-card is a separate full-page push on top of the shell
       GoRoute(
-        path: AppRoutes.login,
-        builder: (_, __) => const LoginScreen(),
-      ),
-      ShellRoute(
-        builder: (context, state, child) => AppShell(child: child),
-        routes: [
-          GoRoute(
-            path: AppRoutes.dashboard,
-            builder: (_, __) => const DashboardScreen(),
-          ),
-          GoRoute(
-            path: AppRoutes.cards,
-            builder: (_, __) => const CardsScreen(),
-            routes: [
-              GoRoute(
-                path: 'add',
-                builder: (_, __) => const AddCardScreen(),
-              ),
-            ],
-          ),
-          GoRoute(
-            path: AppRoutes.transactions,
-            builder: (_, __) => const TransactionsScreen(),
-          ),
-          GoRoute(
-            path: AppRoutes.settings,
-            builder: (_, __) => const SettingsScreen(),
-          ),
-        ],
+        path: '/app/cards/add',
+        pageBuilder: (_, s) => const NoTransitionPage(child: AddCardScreen()),
       ),
     ],
   );
 });
 
-// Bottom nav shell wrapper
-class AppShell extends ConsumerStatefulWidget {
-  final Widget child;
-  const AppShell({super.key, required this.child});
+class _AppShell extends ConsumerWidget {
+  const _AppShell();
 
-  @override
-  ConsumerState<AppShell> createState() => _AppShellState();
-}
-
-class _AppShellState extends ConsumerState<AppShell> {
-  int _selectedIndex = 0;
-
-  static const _tabs = [
-    AppRoutes.dashboard,
-    AppRoutes.cards,
-    AppRoutes.transactions,
-    AppRoutes.settings,
+  static const _bodies = <Widget>[
+    DashboardScreen(),
+    CardsScreen(),
+    TransactionsScreen(),
+    SettingsScreen(),
   ];
 
-  void _onTap(int index) {
-    if (index == _selectedIndex) return;
-    setState(() => _selectedIndex = index);
-    context.go(_tabs[index]);
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return ValueListenableBuilder<int>(
+      valueListenable: _tabIndexNotifier,
+      builder: (context, tabIndex, _) {
+        return Scaffold(
+          body: IndexedStack(
+            index: tabIndex,
+            children: _bodies,
+          ),
+          bottomNavigationBar: _BottomNav(
+            selectedIndex: tabIndex,
+            onTap: (i) {
+              _tabIndexNotifier.value = i;
+              // Keep browser URL in sync without triggering a GoRouter navigation
+              web.window.history.replaceState(null, '', '#${_kTabPaths[i]}');
+            },
+          ),
+        );
+      },
+    );
   }
+}
+
+class _BottomNav extends StatelessWidget {
+  final int selectedIndex;
+  final ValueChanged<int> onTap;
+  const _BottomNav({required this.selectedIndex, required this.onTap});
+
+  static const _items = [
+    (icon: Icons.dashboard_outlined, activeIcon: Icons.dashboard, label: 'Dashboard'),
+    (icon: Icons.credit_card_outlined, activeIcon: Icons.credit_card, label: 'Cards'),
+    (icon: Icons.receipt_long_outlined, activeIcon: Icons.receipt_long, label: 'Ledger'),
+    (icon: Icons.settings_outlined, activeIcon: Icons.settings, label: 'Settings'),
+  ];
 
   @override
   Widget build(BuildContext context) {
-    final location = GoRouterState.of(context).matchedLocation;
-    final currentIndex = _tabs.indexWhere((t) => location.startsWith(t));
-    final idx = currentIndex < 0 ? 0 : currentIndex;
-
-    return Scaffold(
-      body: widget.child,
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: idx,
-        onDestinationSelected: _onTap,
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: 'Dashboard'),
-          NavigationDestination(icon: Icon(Icons.credit_card_outlined), selectedIcon: Icon(Icons.credit_card), label: 'Cards'),
-          NavigationDestination(icon: Icon(Icons.receipt_long_outlined), selectedIcon: Icon(Icons.receipt_long), label: 'Ledger'),
-          NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: 'Settings'),
-        ],
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.surface1,
+        border: Border(top: BorderSide(color: AppColors.surface3, width: 1)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: SizedBox(
+          height: 64,
+          child: Row(
+            children: List.generate(_items.length, (i) {
+              final item = _items[i];
+              final selected = i == selectedIndex;
+              return Expanded(
+                child: InkWell(
+                  onTap: () => onTap(i),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      if (selected)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: AppColors.neonCyan.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Icon(item.activeIcon, size: 20, color: AppColors.neonCyan),
+                        )
+                      else
+                        Icon(item.icon, size: 20, color: AppColors.textMuted),
+                      const SizedBox(height: 2),
+                      Text(
+                        item.label,
+                        style: GoogleFonts.inter(
+                          fontSize: 10,
+                          fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                          color: selected ? AppColors.neonCyan : AppColors.textMuted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }),
+          ),
+        ),
       ),
     );
   }
