@@ -19,6 +19,13 @@ The evaluator's ranking algorithm itself (BOGO math, independent owned/overall s
 
 This design fixes all four root causes with a fresh implementation native to the `cardcompass-landing-v2` worktree, built against real seed data (not assumed field shapes).
 
+### 1.1 Post-approval corrections (applied after initial approval, before implementation)
+
+- **Per-transaction cap vs. cycle amount cap were conflated.** An earlier draft of this spec mapped both `max_discount_per_transaction` (bogo) and `monthly_cap` (fixedDiscount) onto a single `maximumDiscount` field, applied per-evaluation. These are different things: a bogo redemption's cap applies once per booking, while `monthly_cap` is a **total ceiling across every booking in the month**. §4.2/§4.4 now split these into `perTransactionCap` and `cycleAmountCap`.
+- **BOGO's usage-limit label was wrong.** `max_usage_per_month: 2` caps redemptions/transactions, not tickets. The field itself (`cycleTransactionLimit`, renamed `cycleRedemptionLimit`) was always correctly named; only the user-facing label text was fixed.
+- **Platform data was being read from the wrong field.** `value_config.platform` is present on only 3 of the real entertainment rows — `benefits.partners` (a structured JSONB column) is the actual, reliable source, and was ignored entirely in the first draft. §4.3 is new; it documents the real `partners` data (Zomato, BookMyShow, Uber, cult.fit Live, TataCliQ, etc.) and replaces the singular `platform: String?` model field with `partners: Set<String>`.
+- **Cinema-chain matching was found to be non-functional in the old engine too, for the same root cause.** While correcting the above, a check of the real seed data found **zero rows** carry any cinema-chain data (PVR/INOX/Cinepolis) in either `value_config` or `partners` — confirmed by checking the old engine's own `_cinemas` list in `movie_analyzer_tab.dart`, which is a hardcoded static UI list never derived from a query, and by confirming the old normalizer's `cinema`/`cinemas` field reads never matched any real row. The old evaluator's cinema eligibility check therefore always passed via the same empty-set-as-wildcard bug as platform matching — it was never actually filtering on cinema against real data, just silently and invisibly permissive. This design keeps the Cinema dropdown (§8, matches the ported UI) but every rule is cinema-agnostic until real cinema-chain data exists in the schema — documented here as a known, deliberate gap, not a working filter.
+
 ---
 
 ## 2. Goal
@@ -51,41 +58,59 @@ The normalizer (not the category tag) is the source of truth for classification 
 MovieDealRule
 - benefitId, catalogCardId, title, sourceUrl, cardName, displayPriority
 - offerType: percentDiscount | fixedDiscount | bogo | annualAllowance | milestone | rewardMultiplier
-- platform: String?              // single value in real data, not a list; null means "not recorded"
-- discountPercent, fixedAmount, maximumDiscount
+- partners: Set<String>          // sourced from benefits.partners (structured column) merged with
+                                  // value_config.platform when present; empty means "not recorded"
+- discountPercent, fixedAmount
+- perTransactionCap               // caps a SINGLE booking's discount (e.g. bogo's per-pair cap)
+- cycleAmountCap                  // caps TOTAL discount across the whole cycle (e.g. fixedDiscount's monthly_cap)
 - buyCount, freeCount             // bogo only; buyCount=1, freeCount=1 in all real rows
-- cycleTransactionLimit           // "N times per month/year"
+- cycleRedemptionLimit            // "N redemptions/uses per cycle" — NOT a ticket count
 - annualCap                       // annualAllowance only
 - milestoneThreshold, milestoneReward, milestoneCycle: monthly
 - rewardMultiplierRate, rewardMultiplierUnit  // rewardMultiplier only ("points per ₹150" or "percent")
 - qualifyingCategories: Set<String>            // rewardMultiplier only, e.g. {dining, movies, grocery}
 ```
 
-### 4.3 Field-alias table (built from every real row observed)
+`perTransactionCap` and `cycleAmountCap` are deliberately separate fields — conflating them was an earlier design error. A single booking's savings can never exceed `perTransactionCap`; the sum of savings across a cycle can never exceed `cycleAmountCap`. A rule may have either, both, or neither.
+
+### 4.3 Platforms come from `benefits.partners`, not `value_config.platform`
+
+`benefits.partners` (JSONB array, see `schema.sql`) is the **structured, reliable** signal for which platforms/merchants a benefit applies to — `value_config.platform` is the exception (present on only 3 of the real entertainment rows), not the rule. Real examples:
+
+| Row | `value_config.platform` | `partners` | What this means |
+|---|---|---|---|
+| Twin ticket treats | *(absent)* | `["Zomato"]` | Redeemed via Zomato's District app — a real, specific platform the old design missed entirely by only reading `value_config.platform` |
+| BookMyShow Discount | `"BookMyShow"` | `["BookMyShow"]` | Redundant here — both sources agree |
+| Monthly Vouchers on Spends | *(absent)* | `["Uber", "cult.fit Live", "BookMyShow", "TataCliQ"]` | A milestone reward redeemable at any of 4 partners — genuinely multi-platform |
+| 10X CashPoints on Favorite Merchants | *(absent)* | `["Big Basket", "BookMyShow", "OYO", "Swiggy", "Uber"]` | The reward multiplier's actual qualifying merchant list |
+
+`MovieDealRule.partners` is built as `partners` (the structured column, comma/array-parsed) **unioned with** `value_config.platform` when present — never one to the exclusion of the other. An empty `partners` set means the row genuinely has no partner data recorded (still possible — some rows have `partners: []`), which platform confidence (§5) already has a defined behavior for.
+
+### 4.4 Field-alias table (built from every real row observed)
 
 | Offer type | Real shape observed | Field mapping |
 |---|---|---|
 | `percentDiscount` | `{"discount_type": "percent", "discount_percent": 25.0}` | `discountPercent` ← `discount_percent` |
-| `percentDiscount` (platform-specific) | `{"platform": "BookMyShow", "discount_type": "percent", "discount_percent": 10.0}` | same, plus `platform` ← `platform` |
-| `fixedDiscount` | `{"platform": "BookMyShow", "monthly_cap": 1500.0, "discount_amount": 1500.0, "is_recurring": true}` | `fixedAmount` ← `discount_amount`; `maximumDiscount`/cycle cap ← `monthly_cap` |
-| `bogo` | `{"discount_type": "BOGO", "max_usage_per_month": 2, "max_discount_per_transaction": 500.0}` | `buyCount=1, freeCount=1`; `maximumDiscount` ← `max_discount_per_transaction` (**per-transaction cap**); `cycleTransactionLimit` ← `max_usage_per_month`. Displayed as "BOGO up to ₹{maximumDiscount} for {cycleTransactionLimit} tickets/month." |
+| `percentDiscount` (partner-specific) | `value_config: {"platform": "BookMyShow", "discount_type": "percent", "discount_percent": 10.0}`, `partners: ["BookMyShow"]` | same, plus `partners` ← `partners` ∪ `{value_config.platform}` |
+| `fixedDiscount` | `value_config: {"platform": "BookMyShow", "monthly_cap": 1500.0, "discount_amount": 1500.0, "is_recurring": true}`, `partners: ["BookMyShow"]` | `fixedAmount` ← `discount_amount`; `cycleAmountCap` ← `monthly_cap` (this is a **total-for-the-month** cap, never a per-transaction one — a user could book 3 times in a month and the combined discount across all 3 still can't exceed ₹1,500) |
+| `bogo` | `value_config: {"discount_type": "BOGO", "max_usage_per_month": 2, "max_discount_per_transaction": 500.0}`, `partners: ["Zomato"]` | `buyCount=1, freeCount=1`; `perTransactionCap` ← `max_discount_per_transaction` (caps a single redemption's discount); `cycleRedemptionLimit` ← `max_usage_per_month` (this is **2 redemptions/transactions per month, not 2 tickets** — each redemption discounts exactly one ticket, so 2 redemptions = at most 2 discounted tickets, but the field itself counts uses, not tickets). Displayed as "BOGO — up to ₹{perTransactionCap} off, {cycleRedemptionLimit} redemptions/month." |
 | `annualAllowance` (new type) | `{"unit": "fixed", "annual_cap": 6000.0, "reward_value": 6000.0}` OR `{"unit": "fixed", "currency_unit": 6000.0}` | `annualCap` ← `annual_cap` OR `reward_value` OR `currency_unit` (only when `unit == "fixed"` and no percent/rate field is present — `currency_unit` means something different, e.g. a points-per-rupee denominator, in `rewardMultiplier` rows, so this alias is gated strictly on the fixed-no-percent condition) |
-| `milestone` | `{"reward_value": 500.0, "milestone_type": "monthly", "threshold_amount": 80000.0}` | `milestoneReward` ← `reward_value`; `milestoneThreshold` ← `threshold_amount`; cycle = monthly. Eligibility gated on **prior month's** confirmed spend from `statement_milestone_cache`, never a forward-looking "spend more to qualify" projection. |
-| `rewardMultiplier` (new type) | `{"unit": "points per Rs.150", "category": "dining,movies,grocery", "multiplier": 10.0}` OR `{"unit": "percent", "category": "utilities,movies", "base_rate": 5.0}` | `rewardMultiplierRate` ← `multiplier` or `base_rate`; `rewardMultiplierUnit` ← `unit`; `qualifyingCategories` ← parsed `category` (comma-split). Only accepted when `movies`/`movie` appears in the category list. |
+| `milestone` | `value_config: {"reward_value": 500.0, "milestone_type": "monthly", "threshold_amount": 80000.0}`, `partners: ["Uber", "cult.fit Live", "BookMyShow", "TataCliQ"]` | `milestoneReward` ← `reward_value`; `milestoneThreshold` ← `threshold_amount`; cycle = monthly; `partners` ← `partners` (the redeemable-at list — this is the row type where `partners` matters most, since the reward is genuinely usable at any of several merchants, not just movies). Eligibility gated on **prior month's** confirmed spend from `statement_milestone_cache`, never a forward-looking "spend more to qualify" projection. |
+| `rewardMultiplier` (new type) | `value_config: {"unit": "points per Rs.150", "category": "dining,movies,grocery", "multiplier": 10.0}`, `partners: ["Big Basket", "BookMyShow", "OYO", "Swiggy", "Uber"]` | `rewardMultiplierRate` ← `multiplier` or `base_rate`; `rewardMultiplierUnit` ← `unit`; `qualifyingCategories` ← parsed `category` (comma-split); `partners` ← `partners`. Only accepted when `movies`/`movie` appears in the category list. |
 
 Anything not matching one of these shapes is rejected with a diagnostic reason (never silently dropped, never given invented defaults) — same "never invent commercial terms" principle as the original design.
 
 ## 5. Platform confidence (fixes root cause 2)
 
-`platform == null` no longer means "matches everything." `platformConfidence` is computed per evaluation — it depends on both the rule and the specific platform the user searched for, not a static property stored on the rule. It parallels the existing `usageConfidence` pattern:
+An empty `partners` set no longer means "matches everything." `platformConfidence` is computed per evaluation — it depends on both the rule's `partners` set (§4.3) and the specific platform the user searched for, not a static property stored on the rule. It parallels the existing `usageConfidence` pattern:
 
-- **`explicit`** — the rule's `platform` field is set and matches the user's search.
-- **`communityConfirmed`** — the rule's `platform` is null, but ≥1 confirmed user report exists for this `(benefitId, searchedPlatform)` pair (§6).
-- **`unconfirmed`** — the rule's `platform` is null, no confirmations exist for this pair.
+- **`explicit`** — the rule's `partners` set is non-empty and contains the user's searched platform (case-insensitive).
+- **`communityConfirmed`** — the rule's `partners` set is empty, but ≥1 confirmed user report exists for this `(benefitId, searchedPlatform)` pair (§6).
+- **`unconfirmed`** — the rule's `partners` set is empty, no confirmations exist for this pair.
 
-If the user searches with no platform selected ("Any Platform"), every rule matches at `explicit` confidence regardless of its own `platform` field — there is nothing to be unconfirmed against.
+If the user searches with no platform selected ("Any Platform"), every rule matches at `explicit` confidence regardless of its own `partners` set — there is nothing to be unconfirmed against.
 
-A rule with no platform recorded still surfaces as a candidate (it may be a genuine platform-agnostic discount) but is never presented as an unqualified match — the UI shows a caveat chip ("Platform not confirmed for this offer") for anything below `explicit`.
+A rule with an empty `partners` set still surfaces as a candidate (it may be a genuine platform-agnostic discount, or simply unrecorded) but is never presented as an unqualified match — the UI shows a caveat chip ("Platform not confirmed for this offer") for anything below `explicit`.
 
 **Ranking tie-break order** (extends the original, un-modified BOGO/savings math): guaranteed savings → lower final amount → platform confidence (`explicit` > `communityConfirmed` > `unconfirmed`) → usage confidence (`verified` > `unverified` > `unavailable`) → display priority → stable card/benefit IDs.
 
@@ -123,9 +148,9 @@ flowchart LR
 
 Per-candidate evaluation order (unchanged from the original, sound design):
 1. Rule is active, complete, and within validity dates.
-2. Requested platform/cinema eligibility, using the new confidence tiers (§5) rather than binary match/no-match.
+2. Requested platform eligibility against `rule.partners`, using the new confidence tiers (§5) rather than binary match/no-match. Cinema selection is accepted from the user but does not filter or affect confidence — no real row carries cinema-chain data (§1.1); every rule is currently cinema-agnostic.
 3. Weekday, exclusions, minimum transaction pass.
-4. Per-transaction and cycle usage limits pass (verified via `transactions.metadata`, same as before).
+4. `perTransactionCap` clamps a single booking's discount; `cycleAmountCap` and `cycleRedemptionLimit` are checked against confirmed cycle-to-date usage (verified via `transactions.metadata`, same as before).
 5. Milestone rules require `statement_milestone_cache` to show the **prior month's** spend already met the threshold.
 6. Calculate savings by offer type (ported formulas, plus new `annualAllowance` — remaining allowance = `annualCap` minus confirmed year-to-date usage where verifiable, else full `annualCap` shown as `unverified`). `rewardMultiplier` candidates do **not** get a computed ₹ savings figure — there is no points-to-rupee exchange rate in the data, and inventing one would violate the "never invent commercial terms" principle. They display their raw rate (e.g. "10 points per ₹150 spent") and rank behind every offer type that has a real ₹ savings figure, regardless of nominal point count.
 7. Clamp to `[0, eligibleTransactionAmount]` and any declared cap.
@@ -149,7 +174,7 @@ The RCA found the main repo's `MovieAnalyzerTab` (`lib/features/movie_rule_engin
 ```
 ┌─ BEST CARD YOU OWN ──────────────┐
 │ HDFC Diners Club Black            │
-│ BOGO up to ₹500 for 2/month      │
+│ BOGO — up to ₹500 off, 2/month   │
 │ ₹1,200 → ₹700 · Save ₹500         │
 │ [OWNED INTEGRATION] [Route →]    │
 └───────────────────────────────────┘
