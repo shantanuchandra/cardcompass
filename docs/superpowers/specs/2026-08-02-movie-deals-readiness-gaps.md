@@ -1,7 +1,8 @@
 # Movie Deals — Readiness Gaps Specification
 
 **Date:** 2026-08-02  
-**Status:** Needs resolution before implementation  
+**Last reviewed:** 2026-08-02, after Design §1.2 corrections  
+**Status:** Approved with blocking prerequisites after the remaining P0/P1 items are resolved  
 **Branch:** `feature/landing-v2`  
 **Worktree scope:** `cardcompass-landing-v2` only  
 **Companion design:** `docs/superpowers/specs/2026-08-02-movie-deals-design.md`  
@@ -11,60 +12,77 @@
 
 ## 1. Purpose
 
-This document records the remaining gaps found during the post-correction review of the Movie Deals design and implementation plan. It is an implementation-readiness gate: the feature should not be treated as capable of producing trustworthy recommendations until every P0 and P1 item below is either resolved or explicitly removed from the promised scope.
+This document is the implementation-readiness gate for Movie Deals. It records which earlier findings the revised design has resolved and which gaps still remain after re-reading Design §1.2 against the v2 migration chain, seed data, current statement ingestion, and implementation plan.
 
-## 2. Corrections already incorporated
+The design is now conceptually sound. It should not be implemented from the current plan, or described as producing trustworthy recommendations, until every P0 and P1 item below is resolved or explicitly removed from scope.
 
-The revised design and plan correctly address several earlier problems:
+## 2. Findings resolved by the revised design
 
-- Per-transaction discount caps and whole-cycle amount caps are now separate concepts.
+The following earlier findings are closed at the design level:
+
+- Per-transaction caps and whole-cycle amount caps are separate concepts.
 - `max_usage_per_month` is correctly described as a redemption limit, not a ticket limit.
-- Platform and merchant data now comes from `benefits.partners`, merged with `value_config.platform` when present.
-- Cinema filtering is explicitly documented as unsupported by the current data rather than silently presented as working.
-- BOGO presentation copy now describes redemptions per month correctly.
+- Partner data comes from `benefits.partners`, merged with `value_config.platform` where present.
+- Cinema filtering is explicitly documented as unsupported by current data.
+- Empty mappings and the schema/migration column-type disagreement are identified as blocking prerequisites.
+- Mapping provenance and the SimplyCLICK/ELITE data defect are explicitly acknowledged.
+- `validityStart` and `validityEnd` are included in the canonical rule.
+- Guaranteed and potential savings are separated into different ranking tiers.
+- Platform confirmations are specified as benefit-scoped rather than card-scoped.
+- Confirmation storage includes normalization, uniqueness, and aggregate-only reads.
+- The widened fetch requires the JSONB predicates from Design §4.1.
+- The platform vocabulary must come from observed partner data rather than the previous static list.
+- Verification now requires exhaustive seed-row fixtures and a clean-database integration check.
 
-These corrections are sound, but they do not resolve the data-foundation, eligibility, usage-tracking, ranking, and confirmation issues below.
+These items remain open in the implementation plan until the plan is synchronized with the revised design.
 
 ## 3. Remaining gaps
 
 | Priority | Missing or misaligned item | Evidence | Why it is important | Required correction |
 |---|---|---|---|---|
-| P0 | No reproducible card-benefit mappings | `supabase/migrations/20260713180753_normalize_card_benefit_mappings.sql:3-6` deletes all rows from `card_benefit_mapping` and no later migration repopulates them. | A clean v2 database can fetch benefits but cannot associate them with cards, so Movie Deals produces no candidates. | Add a migration containing approved mappings, or define a verified production bootstrap process. Add a clean-database integration test asserting that mapped movie candidates exist. |
-| P0 | Migration schema disagrees with the schema assumed by the design | `schema.sql:73-75` defines `partners`, `exclusions`, and `regions` as JSONB, while `supabase/migrations/20260711043541_initial_schema.sql:66-80` defines them as `TEXT[]`. Seed values use JSON-style data. | Migrations are the reproducible database source. Clean environments may fail to load the seed or expose different types from production, invalidating partner parsing and tests. | Add a migration that establishes the intended JSONB types before compatible data is loaded. Verify the complete chain with `supabase db reset`. |
-| P0 | No commercial-validity gate for card-benefit associations | `supabase/migrations/20260711043900_restore_reference_data.sql:320` contains an SBI Card ELITE movie allowance and line 1450 maps it to SimplyCLICK. Similar repeated associations exist for unrelated cards. | Normalizing a field shape does not prove that the benefit belongs to the mapped card. Bad associations can create confidently incorrect purchase and acquisition recommendations. | Use curated, approved mappings backed by card-specific source URLs. Add provenance/approval state and negative regression cases, including that SimplyCLICK does not receive ELITE benefits. |
-| P1 | Eligibility data promised by the spec is absent from the rule model and repository query | Design §7 promises active-date, weekday, exclusion, and minimum-transaction checks. `MovieBenefitSource` in the plan carries only identifiers, title, `valueConfig`, partners, URL, card name, and priority. The evaluator checks only platform, milestone, and BOGO usage. | Expired or ineligible offers can be ranked as winners while the product claims that eligibility was verified. | Add `validFrom`, `validUntil`, exclusions, qualifying days, and minimum transaction amount to the source and rule models, fetch them, normalize them, and test them. Otherwise remove these checks from the current scope and UI claims. |
-| P1 | Cycle, annual, and prior-month usage cannot be calculated from current v2 data | The planned transaction query omits `transaction_date`; the milestone query omits statement-cycle dates. Current statement ingestion in `lib/core/services/statement_processing_service.dart` does not write ticket count, platform, redemption, or discount-used metadata. | Monthly redemption limits, remaining monthly caps, remaining annual allowances, and prior-month milestone eligibility cannot be verified. | Define a benefit-usage metadata contract or dedicated redemption ledger. Query explicit cycle windows. Until populated usage exists, present affected benefits as informational or potential—not verified savings. |
-| P1 | Unverified savings outrank verified savings | The planned evaluator assigns the full annual cap as current savings and sorts by savings before usage confidence (`movie-deals.md`, evaluator `_calculateSavings` and `_compareCandidates`). | An uncertain ₹6,000 allowance can beat a verified ₹500 discount even when the allowance may already be exhausted. This conflicts with “guaranteed savings” and “trustworthy recommendation.” | Separate `guaranteedSavings` from `potentialSavings`. Rank verified direct savings first and place benefits with unknown remaining usage in a clearly labeled potential-benefit section. |
-| P1 | Community-confirmation state leaks between benefits on the same card | The repository groups confirmations by benefit, then unions the sets into a `MovieDealContext` keyed only by catalog card (`movie-deals.md`, repository snapshot construction). | A confirmation for benefit A can incorrectly promote benefit B on the same card to `communityConfirmed`. | Key evaluation context by `(catalogCardId, benefitId)` or pass a `confirmedPlatformsByBenefit` map directly to the evaluator. Add a two-benefits-on-one-card regression test. |
-| P1 | The live widened query does not implement all design predicates | Design §4.1 requires JSON checks against `value_config.category` and `value_config.discount_type`. The plan filters only `benefit_category`, `title`, and `description`. | A valid benefit whose only movie signal is structured inside `value_config` can be silently omitted. | Implement and test the JSONB predicates through PostgREST or a small SQL/RPC function. Include a fixture whose only movie signal is inside `value_config`. |
-| P2 | The platform selector does not represent the partner vocabulary now used by the model | The plan offers `BookMyShow`, `PVR`, `INOX`, `Cinepolis`, and `Moviemax`. Real partner data includes Zomato/District, Paytm, Uber, and others, while the design acknowledges that the listed cinema chains have no structured matching data. | Users cannot select several real booking partners, while unsupported selections mostly produce unconfirmed results. | Define a canonical movie-booking-platform vocabulary and alias map, including `District by Zomato` → `Zomato`. Populate the selector from supported canonical values and remove or disable unsupported cinema filtering. |
-| P2 | Crowd confirmations lack uniqueness, normalization, and privacy boundaries | The planned table has no uniqueness or nonblank-platform constraint. Authenticated users receive direct read access to confirmation rows, including `user_id`. Only positive reports are modeled despite yes/no wording. | Duplicate reports, spelling variants, and direct reporter exposure weaken the trust and privacy of the crowd signal. One report currently creates `communityConfirmed` status. | Add a normalized platform key, a nonblank check, and `UNIQUE(user_id, benefit_id, platform_key)`. Expose aggregate counts through a view/RPC without reporter IDs. Decide whether negative reports and a minimum number of unique reporters are required. |
-| P2 | The promised all-seed-row regression test is only a representative fixture set | Design §12 promises evaluation of every seed row matching the widened fetch query. The plan hardcodes a small list of representative configurations. | New, malformed, or commercially invalid seed rows can bypass the regression guard intended to prevent the original failures. | Generate a checked-in fixture from every matching migration row, including mapping/provenance data and an expected accepted, rejected, or quarantined outcome. |
+| P0 | The implementation plan still implements the pre-§1.2 design | `docs/superpowers/plans/2026-08-02-movie-deals.md` still contains card-level confirmation context, raw-savings-first ranking, the old confirmation migration, the incomplete widened query, and a static platform list. See approximately lines 1095, 1713, 1766, 2192, 2228, and 2533. | Executing the current plan would recreate several defects the revised design explicitly resolves. | Rewrite the affected plan tasks before implementation: rule/context models, evaluator, migration, repository/query, provider/result model, UI, and tests. |
+| P0 | The UI examples still use commercially invalid or unverified card-benefit associations | Design §3.1 identifies the SimplyCLICK/ELITE association as incorrect. Design §8 nevertheless shows “SBI Card Simplyclick — Up to ₹6,000/year” in the Potential mockup. The HDFC Millennia/BookMyShow example is also not demonstrated to come from an approved mapping. | A specification should not normalize or advertise an association it identifies as invalid, even in a potential-results example. It undermines the commercial-provenance prerequisite. | Replace concrete examples with commercially verified mappings. Until curated mappings exist, use neutral placeholders rather than real card names. |
+| P1 | `transaction_date` does not make benefit usage verifiable by itself | Design §7 now requires date-bounded transactions, but current ingestion in `lib/core/services/statement_processing_service.dart` stores merchant transactions without `benefit_id`, redemption state, ticket count, discount used, or platform metadata. | A merchant charge proves a purchase occurred; it does not prove which offer was redeemed or how much of a monthly or annual cap was consumed. Counts inferred from ordinary transactions can be wrong. | Introduce a benefit-redemption ledger or a populated metadata contract containing at least `benefit_id`, canonical platform, redemption count, discount used, and cycle. Keep capped offers potential/unverified until this signal exists. |
+| P1 | Guaranteed-tier membership does not require confirmed platform applicability | Design §5 defines the guaranteed tier primarily from usage confidence or absence of a usage cap. The same section permits a candidate with no partner record to be `unconfirmed`. | Savings are not guaranteed when the system does not know whether the offer works on the selected platform. Such a candidate can still become the primary winner. | Require platform certainty as part of guaranteed-tier eligibility. At minimum require `platformConfidence == explicit`; if community reports are accepted, place `communityConfirmed` in a separately labeled reported-working tier or treat it as potential. |
+| P1 | General benefit partners are still treated as movie-booking platforms | Real multi-purpose benefits list partners such as Uber, cult.fit, Big Basket, OYO, Swiggy, and BookMyShow. Design §8 proposes deriving dropdown choices from distinct partners across fetched benefits. | This can offer irrelevant choices such as Uber as a movie platform and can treat every partner on a multi-purpose benefit as eligible for its movie component, even though the data does not map categories to individual partners. | Derive a separate canonical `moviePlatforms` projection. Include only verified movie-booking partners and aliases, such as `District by Zomato` → `Zomato`. Quarantine ambiguous multi-partner rules from platform-specific guarantees. |
+| P1 | Prior-month milestone selection is not defined precisely enough | Design §7 requires prior-month spend from `statement_milestone_cache`, whose authoritative fields are statement-cycle start/end dates. The existing plan selects `card_id`, `total_spending`, and `last_updated`, then takes the newest row. | The latest updated row may represent the current cycle or an unrelated category, producing false milestone eligibility. Credit-card statement cycles also need not align with calendar months. | Define the exact lookup: the most recently completed statement cycle for the owned card, ending before the evaluation date, with the required category/benefit association. Fetch `statement_start_date` and `statement_end_date` and add boundary tests. |
+| P1 | Exclusion analysis covers only entertainment-tagged rows, not the full widened candidate set | Design §4.2 declines exclusion fields because the entertainment subset has empty exclusion shells. The widened fetch also includes `rewards`, `offers`, `dining`, and `lifestyle` rows; matching examples such as the Paytm movie reward row contain non-empty exclusion categories in `restore_reference_data.sql`. | The population used to justify omitting exclusions is narrower than the population evaluated at runtime. Relevant restrictions can be silently ignored. | Analyze exclusions across every row matching Design §4.1. Normalize observed, decision-relevant exclusion shapes or reject/quarantine candidates whose restrictions cannot be represented safely. |
+| P1 | The column-type fix must occur before the incompatible seed migration, not merely afterward | Design §3.1 correctly requires JSONB before the JSON-formatted seed is loaded. A normally appended corrective migration runs after the initial schema and restore-data migrations. | If the restore migration cannot load JSON-array syntax into `TEXT[]`, migration execution fails before reaching a later correction. | Correct the baseline migration, change the seed payload to valid PostgreSQL-array syntax, or add an ordered migration between the initial-schema and restore-data timestamps. Prove the complete chain with `supabase db reset`. |
+| P1 | “Reinstate mappings” could restore mappings already known to be invalid | Design §3.1 separately says mappings must be reinstated and commercially verified. A mechanical restoration of the raw seed mappings would include the SimplyCLICK/ELITE defect and similar associations. | Restoring the old relationship set would make the database non-empty while preserving the exact commercial correctness problem that blocks trustworthy recommendations. | State that the migration inserts only curated, approved mappings. Make approval/provenance an enforceable repository eligibility condition rather than an informal operational expectation. |
+| P2 | Confirmation inserts are not fully specified as idempotent | Design §6 adds a unique constraint and states that a repeat click does not fail visibly, but a normal insert against the constraint raises a uniqueness error. | A harmless repeat confirmation can surface as a UI error even though it should be treated as success. | Require an upsert/ignore-duplicate operation targeting `(user_id, benefit_id, platform_key)`, or catch SQLSTATE `23505`. Explicitly specify base-table privilege revocation and aggregate-view/RPC grants. |
+| P2 | Potential-only result semantics are ambiguous | Design §5 allows `bestOwned` and `bestOverall` to fall back to potential candidates, while Design §8 places potential candidates in a separate non-winner section. | A potential-only candidate can be duplicated or placed in a field whose name encourages the UI to call it a winner. | Model tiered results explicitly, for example `bestGuaranteedOwned`, `bestGuaranteedOverall`, `bestPotentialOwned`, and `bestPotentialOverall`. Never place a potential result in a guaranteed-winner field. |
+| P2 | The widened JSONB OR query is not defined as executable query-builder code | Design §4.1 describes several alternatives joined by OR but mentions individual `.filter(...)` calls. Separate Supabase filters normally combine as AND unless assembled into a compatible `.or(...)` expression. | An implementation may appear to include every predicate while accidentally requiring all of them, silently returning fewer candidates. | Specify and test the exact PostgREST `.or(...)` expression or implement the candidate fetch as an SQL/RPC function. The JSON-only case must be a real query-builder/integration test, not only a fake-data-source test. |
+| P3 | Design-system references remain inaccurate | Design §8 refers to `AppTheme.primaryColor` and Plus Jakarta Sans as established Flutter-app tokens. The v2 app uses `AppColors.neonCyan` and Inter for body typography. | Literal implementation can cause a compile error or visual inconsistency. | Replace the references with `AppColors.neonCyan` and the existing Space Grotesk/Inter typography. |
+| P3 | This readiness document and the plan need explicit lifecycle status | The design now incorporates many former gaps, while the implementation plan still contains their old behavior. | Without status labels, an implementer can mistake the old plan or the earlier findings for the current source of truth. | Mark the current plan “Needs revision for Design §1.2” until regenerated. Treat the latest design plus this readiness gate as authoritative in the interim. |
 
-## 4. Implementation readiness criteria
+## 4. Implementation-readiness criteria
 
 Movie Deals is ready for implementation only when all of the following are true:
 
-- [ ] A clean v2 migration run succeeds and produces approved card-benefit mappings.
-- [ ] JSONB/array column types have one authoritative definition across migrations and schema documentation.
-- [ ] Mappings used by recommendations have card-specific commercial provenance and approval.
-- [ ] Every eligibility check claimed by the design is represented in the rule model and covered by evaluator tests.
-- [ ] Cycle and annual usage either have a populated, date-bounded tracking contract or are explicitly excluded from guaranteed savings.
-- [ ] Verified and potential savings are represented and ranked separately.
-- [ ] Platform confirmations remain scoped to a single benefit and canonical platform.
-- [ ] The widened live query includes every predicate specified by Design §4.1.
-- [ ] Platform options align with real canonical partner data and aliases.
-- [ ] Confirmation aggregation does not expose reporter identities or count duplicate reports from one user.
-- [ ] The regression fixture covers every matching seed row and its approved mapping outcome.
+- [ ] The implementation plan has been regenerated or comprehensively synchronized with Design §1.2.
+- [ ] A clean `supabase db reset` succeeds with the intended JSONB/array column contract.
+- [ ] The migration chain inserts only curated and commercially approved card-benefit mappings.
+- [ ] UI examples and fixtures use approved mappings or neutral placeholders.
+- [ ] Guaranteed-tier eligibility requires both usage certainty and platform certainty.
+- [ ] Capped benefit usage is backed by a real redemption/usage signal, or those candidates remain potential.
+- [ ] Prior-month milestones use a precisely selected completed statement cycle.
+- [ ] Exclusions have been evaluated across every row matched by the widened query.
+- [ ] Movie-platform choices are distinct from general benefit partners and use canonical aliases.
+- [ ] Confirmation writes are idempotent and confirmation reads expose aggregates only.
+- [ ] Guaranteed and potential result types cannot be confused or rendered twice.
+- [ ] The widened fetch uses a tested OR query including the JSONB-only case.
+- [ ] The screen uses existing v2 theme tokens and typography.
+- [ ] Exhaustive seed fixtures and the clean-database integration check pass.
 
 ## 5. Recommended resolution order
 
-1. Repair migration reproducibility and establish approved mappings.
-2. Add commercial provenance and quarantine invalid associations.
-3. Align the canonical rule model with the eligibility claims.
-4. Define usage tracking and separate verified savings from potential value.
-5. Correct benefit-level confirmation scoping and confirmation-table integrity.
-6. Complete the widened query and exhaustive seed fixture.
-7. Align platform choices and aliases with the real partner vocabulary.
+1. Repair the migration ordering/type contract and create curated approved mappings.
+2. Replace invalid design examples and define enforceable mapping provenance.
+3. Regenerate the implementation plan from the revised design.
+4. Define guaranteed-tier eligibility, including platform confidence.
+5. Define the benefit-redemption signal and exact milestone-cycle lookup.
+6. Separate movie platforms from general partners and complete exclusion analysis.
+7. Finalize confirmation idempotency, tiered result types, and the executable widened query.
+8. Correct theme references and run the exhaustive/unit/widget/integration verification suite.
 
-Until steps 1–4 are complete, the feature may be prototyped visually but should not be described as producing trustworthy best-card recommendations.
+Until steps 1–5 are complete, the feature may be prototyped visually but should not be described as producing trustworthy best-card recommendations.
