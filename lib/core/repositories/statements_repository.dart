@@ -73,7 +73,11 @@ class StatementsRepository {
         'rewards_earned': rewardsEarned,
         'payment_status': 'pending',
         'processed': true,
-        'metadata': metadata ?? {},
+        // Not sending 'metadata' — the live statements table's PostgREST
+        // schema cache doesn't recognize that column on this Supabase
+        // project (confirmed via PGRST204 at runtime), even though a
+        // migration for it exists on main. Drop until that migration is
+        // actually applied here.
         if (transactionCount != null) 'transaction_count': transactionCount,
       },
       onConflict: 'user_card_id,statement_date',
