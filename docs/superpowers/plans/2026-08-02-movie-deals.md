@@ -286,18 +286,24 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:cardcompass/features/benefits/movie_deals/domain/movie_deal_rule.dart';
 import 'package:cardcompass/features/benefits/movie_deals/domain/movie_deal_rule_normalizer.dart';
 
-MovieBenefitSource _source(Map<String, dynamic> config, {String? title}) =>
+MovieBenefitSource _source(
+  Map<String, dynamic> config, {
+  String? title,
+  Set<String> partners = const {},
+}) =>
     MovieBenefitSource(
       benefitId: 'b1',
       catalogCardId: 'c1',
       title: title ?? 'Test benefit',
       valueConfig: config,
+      partners: partners,
     );
 
 void main() {
   group('normalizeMovieDealRule — percentDiscount', () {
     test('discount_type=percent with discount_percent normalizes correctly', () {
-      // Real row: "25% Off on Movie Tickets"
+      // Real row: "25% Off on Movie Tickets" — partners: [] (no partner data
+      // recorded for this row per the real migration).
       final result = normalizeMovieDealRule(
         _source({'discount_type': 'percent', 'discount_percent': 25.0}),
       );
@@ -305,18 +311,20 @@ void main() {
       final rule = (result as AcceptedMovieDealRule).rule;
       expect(rule.offerType, MovieDealOfferType.percentDiscount);
       expect(rule.discountPercent, 25.0);
-      expect(rule.platform, isNull);
+      expect(rule.partners, isEmpty);
     });
 
-    test('platform field is captured when present', () {
-      // Real row: "Instant Discount on Bookmyshow"
+    test('platform field is unioned into partners when present', () {
+      // Real row: "Instant Discount on Bookmyshow" — value_config.platform
+      // is "Bookmyshow" but partners column is ["BookMyShow"] (design spec
+      // §4.3); both must surface in the merged set.
       final result = normalizeMovieDealRule(_source({
         'platform': 'Bookmyshow',
         'discount_type': 'percent',
         'discount_percent': 10.0,
-      }));
+      }, partners: {'BookMyShow'}));
       final rule = (result as AcceptedMovieDealRule).rule;
-      expect(rule.platform, 'Bookmyshow');
+      expect(rule.partners, containsAll(['Bookmyshow', 'BookMyShow']));
       expect(rule.discountPercent, 10.0);
     });
 
@@ -331,20 +339,21 @@ void main() {
 
   group('normalizeMovieDealRule — fixedDiscount', () {
     test('platform + monthly_cap + discount_amount normalizes correctly', () {
-      // Real row: "BookMyShow Discount"
+      // Real row: "BookMyShow Discount" — partners: ["BookMyShow"]
+      // (design spec §4.4).
       final result = normalizeMovieDealRule(_source({
         'category': 'movie_tickets',
         'platform': 'BookMyShow',
         'monthly_cap': 1500.0,
         'is_recurring': true,
         'discount_amount': 1500.0,
-      }));
+      }, partners: {'BookMyShow'}));
       expect(result, isA<AcceptedMovieDealRule>());
       final rule = (result as AcceptedMovieDealRule).rule;
       expect(rule.offerType, MovieDealOfferType.fixedDiscount);
       expect(rule.fixedAmount, 1500.0);
-      expect(rule.maximumDiscount, 1500.0);
-      expect(rule.platform, 'BookMyShow');
+      expect(rule.cycleAmountCap, 1500.0);
+      expect(rule.partners, contains('BookMyShow'));
     });
 
     test('rejects a non-positive discount_amount', () {
@@ -357,24 +366,28 @@ void main() {
 
   group('normalizeMovieDealRule — bogo', () {
     test('discount_type=BOGO with per-transaction cap normalizes correctly', () {
-      // Real row: "Twin ticket treats" — $500 off 2nd ticket, twice/month
+      // Real row: "Twin ticket treats" — $500 off 2nd ticket, twice/month,
+      // partners: ["Zomato"] (design spec §4.3).
       final result = normalizeMovieDealRule(_source({
         'category': 'movie_tickets',
         'discount_type': 'BOGO',
         'max_usage_per_month': 2,
         'max_discount_per_transaction': 500.0,
-      }, title: 'Twin ticket treats'));
+      }, title: 'Twin ticket treats', partners: {'Zomato'}));
       expect(result, isA<AcceptedMovieDealRule>());
       final rule = (result as AcceptedMovieDealRule).rule;
       expect(rule.offerType, MovieDealOfferType.bogo);
       expect(rule.buyCount, 1);
       expect(rule.freeCount, 1);
-      expect(rule.maximumDiscount, 500.0);
-      expect(rule.cycleTransactionLimit, 2);
+      expect(rule.perTransactionCap, 500.0);
+      expect(rule.cycleRedemptionLimit, 2);
+      expect(rule.partners, contains('Zomato'));
     });
 
     test('second real bogo row (250 cap) normalizes correctly', () {
-      // Real row: "Buy-1-Get-1 Movie Ticket Offer"
+      // Real row: "Buy-1-Get-1 Movie Ticket Offer" — partners: [] in the
+      // real migration data (genuinely no partner recorded for this row;
+      // do not invent one).
       final result = normalizeMovieDealRule(_source({
         'category': 'movie_tickets',
         'discount_type': 'BOGO',
@@ -382,8 +395,9 @@ void main() {
         'max_discount_per_transaction': 250.0,
       }));
       final rule = (result as AcceptedMovieDealRule).rule;
-      expect(rule.maximumDiscount, 250.0);
-      expect(rule.cycleTransactionLimit, 2);
+      expect(rule.perTransactionCap, 250.0);
+      expect(rule.cycleRedemptionLimit, 2);
+      expect(rule.partners, isEmpty);
     });
   });
 
@@ -439,6 +453,11 @@ RuleNormalizationResult normalizeMovieDealRule(MovieBenefitSource source) {
   );
 }
 
+/// Merges the structured `benefits.partners` column with `value_config.platform`
+/// when present — never one to the exclusion of the other (design spec §4.3).
+Set<String> _mergedPartners(MovieBenefitSource source, String? platform) =>
+    source.partners.union(platform != null ? {platform} : const {});
+
 RuleNormalizationResult _normalizePercent(
   MovieBenefitSource source,
   String? platform,
@@ -457,7 +476,7 @@ RuleNormalizationResult _normalizePercent(
     cardName: source.cardName,
     displayPriority: source.displayPriority,
     offerType: MovieDealOfferType.percentDiscount,
-    platform: platform,
+    partners: _mergedPartners(source, platform),
     discountPercent: discountPercent,
   ));
 }
@@ -472,8 +491,11 @@ RuleNormalizationResult _normalizeFixed(
       'A fixed-value offer requires a positive discount amount.',
     );
   }
-  final cap = _number(source.valueConfig['monthly_cap']) ??
-      _number(source.valueConfig['max_discount_per_transaction']);
+  // fixedDiscount's cap is a TOTAL-for-the-cycle ceiling (monthly_cap), never
+  // a per-transaction one — no real fixedDiscount row observed carries a
+  // max_discount_per_transaction concept (that's bogo's shape). Design spec
+  // §1.1/§4.4.
+  final cycleAmountCap = _number(source.valueConfig['monthly_cap']);
   final cycleLimit = _integer(source.valueConfig['max_usage_per_month']);
   return AcceptedMovieDealRule(MovieDealRule(
     benefitId: source.benefitId,
@@ -483,10 +505,10 @@ RuleNormalizationResult _normalizeFixed(
     cardName: source.cardName,
     displayPriority: source.displayPriority,
     offerType: MovieDealOfferType.fixedDiscount,
-    platform: platform,
+    partners: _mergedPartners(source, platform),
     fixedAmount: discountAmount,
-    maximumDiscount: cap,
-    cycleTransactionLimit: cycleLimit,
+    cycleAmountCap: cycleAmountCap,
+    cycleRedemptionLimit: cycleLimit,
   ));
 }
 
@@ -494,9 +516,11 @@ RuleNormalizationResult _normalizeBogo(
   MovieBenefitSource source,
   String? platform,
 ) {
-  final cap = _number(source.valueConfig['max_discount_per_transaction']);
+  // bogo's cap is genuinely per-single-redemption (max_discount_per_transaction),
+  // distinct from fixedDiscount's whole-cycle monthly_cap. Design spec §1.1/§4.4.
+  final perTransactionCap = _number(source.valueConfig['max_discount_per_transaction']);
   final cycleLimit = _integer(source.valueConfig['max_usage_per_month']);
-  if (cap == null || cap <= 0) {
+  if (perTransactionCap == null || perTransactionCap <= 0) {
     return const RejectedMovieDealRule(
       'A BOGO offer requires a positive per-transaction discount cap.',
     );
@@ -514,11 +538,11 @@ RuleNormalizationResult _normalizeBogo(
     cardName: source.cardName,
     displayPriority: source.displayPriority,
     offerType: MovieDealOfferType.bogo,
-    platform: platform,
+    partners: _mergedPartners(source, platform),
     buyCount: 1,
     freeCount: 1,
-    maximumDiscount: cap,
-    cycleTransactionLimit: cycleLimit,
+    perTransactionCap: perTransactionCap,
+    cycleRedemptionLimit: cycleLimit,
   ));
 }
 
@@ -571,7 +595,9 @@ Append to `test/features/benefits/movie_deals/movie_deal_rule_normalizer_test.da
 ```dart
   group('normalizeMovieDealRule — annualAllowance', () {
     test('unit=fixed with annual_cap and reward_value normalizes correctly', () {
-      // Real row: "SBI Card ELITE Free Movie Tickets"
+      // Real row: "SBI Card ELITE Free Movie Tickets" — partners: [] in the
+      // real migration data (no partner recorded; annualAllowance rows
+      // don't carry meaningful partner data, per design spec §4.4).
       final result = normalizeMovieDealRule(_source({
         'unit': 'fixed',
         'category': 'movie_tickets',
@@ -582,10 +608,12 @@ Append to `test/features/benefits/movie_deals/movie_deal_rule_normalizer_test.da
       final rule = (result as AcceptedMovieDealRule).rule;
       expect(rule.offerType, MovieDealOfferType.annualAllowance);
       expect(rule.annualCap, 6000.0);
+      expect(rule.partners, isEmpty);
     });
 
     test('unit=fixed with only currency_unit normalizes correctly', () {
-      // Real row: "Free Movie Tickets" (miscategorized as lifestyle)
+      // Real row: "Free Movie Tickets" (miscategorized as lifestyle) —
+      // partners: [] in the real migration data.
       final result = normalizeMovieDealRule(_source({
         'unit': 'fixed',
         'currency_unit': 6000.0,
@@ -603,18 +631,21 @@ Append to `test/features/benefits/movie_deals/movie_deal_rule_normalizer_test.da
   });
 
   group('normalizeMovieDealRule — milestone', () {
-    test('reward_value + threshold_amount + milestone_type normalizes correctly', () {
-      // Real row: "Monthly Vouchers on Spends"
+    test('reward_value + threshold_amount + milestone_type normalizes correctly, including partners', () {
+      // Real row: "Monthly Vouchers on Spends" — partners:
+      // ["Uber", "cult.fit Live", "BookMyShow", "TataCliQ"] (design spec
+      // §4.4) — the redeemable-at list, genuinely multi-partner data.
       final result = normalizeMovieDealRule(_source({
         'reward_value': 500.0,
         'milestone_type': 'monthly',
         'threshold_amount': 80000.0,
-      }));
+      }, partners: {'Uber', 'cult.fit Live', 'BookMyShow', 'TataCliQ'}));
       expect(result, isA<AcceptedMovieDealRule>());
       final rule = (result as AcceptedMovieDealRule).rule;
       expect(rule.offerType, MovieDealOfferType.milestone);
       expect(rule.milestoneReward, 500.0);
       expect(rule.milestoneThreshold, 80000.0);
+      expect(rule.partners, containsAll(['Uber', 'BookMyShow']));
     });
 
     test('rejects a milestone missing threshold_amount', () {
@@ -628,7 +659,10 @@ Append to `test/features/benefits/movie_deals/movie_deal_rule_normalizer_test.da
 
   group('normalizeMovieDealRule — rewardMultiplier', () {
     test('points-per-rupee multiplier with movies in category list normalizes correctly', () {
-      // Real row: "10X Reward Points on Dining, Movies, Departmental Stores and Grocery"
+      // Real row: "10X Reward Points on Dining, Movies, Departmental Stores
+      // and Grocery" — partners: [] in the real migration data (this
+      // particular row has no partner recorded; see the Paytm test below
+      // for a rewardMultiplier row that does).
       final result = normalizeMovieDealRule(_source({
         'unit': 'points per Rs.150',
         'category': 'dining,movies,departmental_stores,grocery',
@@ -640,19 +674,23 @@ Append to `test/features/benefits/movie_deals/movie_deal_rule_normalizer_test.da
       expect(rule.rewardMultiplierRate, 10.0);
       expect(rule.rewardMultiplierUnit, 'points per Rs.150');
       expect(rule.qualifyingCategories, contains('movies'));
+      expect(rule.partners, isEmpty);
     });
 
-    test('percent-based cashback multiplier with movies in category list normalizes correctly', () {
-      // Real row: "3% Cashpoints on Paytm Purchases"
+    test('percent-based cashback multiplier with movies in category list normalizes correctly, including partners', () {
+      // Real row: "3% Cashpoints on Paytm Purchases" — partners: ["Paytm"]
+      // (design spec §4.4) — the reward multiplier's actual qualifying
+      // merchant list.
       final result = normalizeMovieDealRule(_source({
         'unit': 'percent',
         'category': 'utilities,movies',
         'base_rate': 3.0,
         'is_recurring': true,
-      }));
+      }, partners: {'Paytm'}));
       final rule = (result as AcceptedMovieDealRule).rule;
       expect(rule.offerType, MovieDealOfferType.rewardMultiplier);
       expect(rule.rewardMultiplierRate, 3.0);
+      expect(rule.partners, contains('Paytm'));
     });
 
     test('rejects a category list with no movies entry', () {
@@ -763,6 +801,12 @@ RuleNormalizationResult _normalizeMilestone(MovieBenefitSource source) {
     cardName: source.cardName,
     displayPriority: source.displayPriority,
     offerType: MovieDealOfferType.milestone,
+    // Design spec §4.4 — this is the row type where partners matters most:
+    // a milestone reward is genuinely redeemable at any of several real
+    // merchants (e.g. Uber, cult.fit Live, BookMyShow, TataCliQ), not just
+    // movies. No value_config.platform key is ever present alongside a
+    // milestone shape in the real data, so there's nothing to union here.
+    partners: source.partners,
     milestoneThreshold: threshold,
     milestoneReward: reward,
   ));
@@ -792,6 +836,10 @@ RuleNormalizationResult _normalizeRewardMultiplier(
     cardName: source.cardName,
     displayPriority: source.displayPriority,
     offerType: MovieDealOfferType.rewardMultiplier,
+    // Design spec §4.4 — partners is the reward multiplier's actual
+    // qualifying merchant list (e.g. Paytm). No value_config.platform key
+    // is observed alongside this shape in the real data.
+    partners: source.partners,
     rewardMultiplierRate: rate,
     rewardMultiplierUnit: unit,
     qualifyingCategories: categories,
@@ -830,70 +878,111 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:cardcompass/features/benefits/movie_deals/domain/movie_deal_rule.dart';
 import 'package:cardcompass/features/benefits/movie_deals/domain/movie_deal_rule_normalizer.dart';
 
-MovieBenefitSource _source(Map<String, dynamic> config, String title) =>
+MovieBenefitSource _source(
+  Map<String, dynamic> config,
+  String title, {
+  Set<String> partners = const {},
+}) =>
     MovieBenefitSource(
       benefitId: 'fixture',
       catalogCardId: 'fixture-card',
       title: title,
       valueConfig: config,
+      partners: partners,
     );
 
 void main() {
   group('production-format fixture regression', () {
-    final fixtures = <String, (Map<String, dynamic>, MovieDealOfferType)>{
+    // Each fixture's `dbPartners` is copied verbatim from the real
+    // `benefits.partners` column in
+    // supabase/migrations/20260711043900_restore_reference_data.sql — never
+    // invented. Several real rows genuinely have partners: [] (empty); those
+    // fixtures deliberately use `dbPartners: const {}` and the resulting
+    // merged set is NOT asserted to have any partner (design spec §4.3).
+    // `expectedMergedPartners` is `dbPartners` UNIONED with
+    // `value_config.platform` when present — for most rows these are
+    // identical, but "Instant Discount on Bookmyshow" has a case-mismatched
+    // value_config.platform ("Bookmyshow") vs. its partners column
+    // ("BookMyShow"), so the true merged set has both variants.
+    final fixtures = <String, (Map<String, dynamic>, MovieDealOfferType, Set<String> dbPartners, Set<String> expectedMergedPartners)>{
       '25% Off on Movie Tickets': (
         {'discount_type': 'percent', 'discount_percent': 25.0},
         MovieDealOfferType.percentDiscount,
+        const {}, // real row: partners: []
+        const {},
       ),
       'SBI Card ELITE Free Movie Tickets': (
         {'unit': 'fixed', 'category': 'movie_tickets', 'annual_cap': 6000.0, 'reward_value': 6000.0},
         MovieDealOfferType.annualAllowance,
+        const {}, // real row: partners: []
+        const {},
       ),
       'Twin ticket treats': (
         {'category': 'movie_tickets', 'discount_type': 'BOGO', 'max_usage_per_month': 2, 'max_discount_per_transaction': 500.0},
         MovieDealOfferType.bogo,
+        {'Zomato'}, // real row: partners: ["Zomato"]
+        {'Zomato'},
       ),
       'Buy-1-Get-1 Movie Ticket Offer': (
         {'category': 'movie_tickets', 'discount_type': 'BOGO', 'max_usage_per_month': 2, 'max_discount_per_transaction': 250.0},
         MovieDealOfferType.bogo,
+        const {}, // real row: partners: []
+        const {},
       ),
       'BookMyShow Discount': (
         {'category': 'movie_tickets', 'platform': 'BookMyShow', 'monthly_cap': 1500.0, 'is_recurring': true, 'currency_unit': 1500.0, 'discount_amount': 1500.0},
         MovieDealOfferType.fixedDiscount,
+        {'BookMyShow'}, // real row: partners: ["BookMyShow"]
+        {'BookMyShow'}, // value_config.platform "BookMyShow" matches case exactly — no duplicate
       ),
       'Instant Discount on Bookmyshow': (
         {'category': 'movie_tickets', 'platform': 'Bookmyshow', 'discount_type': 'percent', 'discount_percent': 10.0},
         MovieDealOfferType.percentDiscount,
+        {'BookMyShow'}, // real row: partners: ["BookMyShow"]
+        {'BookMyShow', 'Bookmyshow'}, // value_config.platform is "Bookmyshow" (different case) — both surface
       ),
       'Monthly Vouchers on Spends': (
         {'reward_value': 500.0, 'milestone_type': 'monthly', 'threshold_amount': 80000.0},
         MovieDealOfferType.milestone,
+        {'Uber', 'cult.fit Live', 'BookMyShow', 'TataCliQ'}, // real row's partners column
+        {'Uber', 'cult.fit Live', 'BookMyShow', 'TataCliQ'},
       ),
       'Free Movie Tickets (lifestyle-tagged variant)': (
         {'unit': 'fixed', 'currency_unit': 6000.0},
         MovieDealOfferType.annualAllowance,
+        const {}, // real row: partners: []
+        const {},
       ),
       '10X Reward Points on Dining, Movies, Departmental Stores and Grocery': (
         {'unit': 'points per Rs.150', 'category': 'dining,movies,departmental_stores,grocery', 'multiplier': 10.0},
         MovieDealOfferType.rewardMultiplier,
+        const {}, // real row: partners: []
+        const {},
       ),
       '3% Cashpoints on Paytm Purchases': (
         {'unit': 'percent', 'category': 'utilities,movies', 'base_rate': 3.0, 'monthly_cap': 500.0, 'is_recurring': true},
         MovieDealOfferType.rewardMultiplier,
+        {'Paytm'}, // real row: partners: ["Paytm"]
+        {'Paytm'},
       ),
       '5% Cashpoints on Paytm': (
         {'unit': 'percent', 'category': 'recharge,utilities,travel,movies', 'base_rate': 5.0, 'monthly_cap_points': 1500},
         MovieDealOfferType.rewardMultiplier,
+        {'Paytm'}, // real row: partners: ["Paytm"]
+        {'Paytm'},
       ),
     };
 
     fixtures.forEach((title, fixture) {
-      final (config, expectedType) = fixture;
+      final (config, expectedType, dbPartners, expectedMergedPartners) = fixture;
       test('$title normalizes as $expectedType', () {
-        final result = normalizeMovieDealRule(_source(config, title));
+        final result = normalizeMovieDealRule(_source(config, title, partners: dbPartners));
         expect(result, isA<AcceptedMovieDealRule>(),
             reason: 'Expected $title to be accepted, got: $result');
-        expect((result as AcceptedMovieDealRule).rule.offerType, expectedType);
+        final rule = (result as AcceptedMovieDealRule).rule;
+        expect(rule.offerType, expectedType);
+        expect(rule.partners, expectedMergedPartners,
+            reason: 'partners must be dbPartners unioned with value_config.platform when present');
       });
     });
 
@@ -1125,24 +1214,30 @@ import 'package:cardcompass/features/benefits/movie_deals/domain/movie_deal_eval
 import 'package:cardcompass/features/benefits/movie_deals/domain/movie_deal_rule.dart';
 import 'package:cardcompass/features/benefits/movie_deals/domain/movie_ticket_request.dart';
 
-MovieDealRule _bogoRule({String cardId = 'c1', String? platform}) => MovieDealRule(
+MovieDealRule _bogoRule({String cardId = 'c1', Set<String> partners = const {}}) => MovieDealRule(
       benefitId: 'b-bogo',
       catalogCardId: cardId,
       title: 'Twin ticket treats',
       offerType: MovieDealOfferType.bogo,
-      platform: platform,
+      partners: partners,
       buyCount: 1,
       freeCount: 1,
-      maximumDiscount: 500,
-      cycleTransactionLimit: 2,
+      perTransactionCap: 500,
+      cycleRedemptionLimit: 2,
     );
 
-MovieDealRule _percentRule({String cardId = 'c2', double percent = 10}) => MovieDealRule(
+MovieDealRule _percentRule({
+  String cardId = 'c2',
+  double percent = 10,
+  Set<String> partners = const {},
+}) =>
+    MovieDealRule(
       benefitId: 'b-percent',
       catalogCardId: cardId,
       title: '10% off',
       offerType: MovieDealOfferType.percentDiscount,
       discountPercent: percent,
+      partners: partners,
     );
 
 void main() {
@@ -1233,7 +1328,7 @@ void main() {
           pricePerTicket: 300,
           preferredPlatform: 'PVR',
         ),
-        rules: [_bogoRule(platform: 'BookMyShow')],
+        rules: [_bogoRule(partners: {'BookMyShow'})],
         contexts: {'c1': const MovieDealContext(isOwned: true)},
         now: today,
       );
@@ -1249,7 +1344,7 @@ void main() {
           pricePerTicket: 300,
           preferredPlatform: 'PVR',
         ),
-        rules: [_percentRule()], // no platform set
+        rules: [_percentRule()], // default partners: const {} — no partner set
         contexts: {'c2': const MovieDealContext(isOwned: true)},
         now: today,
       );
@@ -1294,15 +1389,7 @@ void main() {
           preferredPlatform: 'BookMyShow',
         ),
         rules: [
-          _percentRule(cardId: 'explicit-card', percent: 10)
-              .let((r) => MovieDealRule(
-                    benefitId: r.benefitId,
-                    catalogCardId: r.catalogCardId,
-                    title: r.title,
-                    offerType: r.offerType,
-                    discountPercent: r.discountPercent,
-                    platform: 'BookMyShow',
-                  )),
+          _percentRule(cardId: 'explicit-card', percent: 10, partners: {'BookMyShow'}),
           _percentRule(cardId: 'unconfirmed-card', percent: 10),
         ],
         contexts: {
@@ -1418,10 +1505,6 @@ void main() {
     });
   });
 }
-
-extension _Let<T> on T {
-  R let<R>(R Function(T) block) => block(this);
-}
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1511,23 +1594,33 @@ String? _ineligibilityReason(
   }
 
   if (rule.offerType == MovieDealOfferType.bogo &&
-      rule.cycleTransactionLimit != null &&
+      rule.cycleRedemptionLimit != null &&
       context.usageConfidence == MovieDealUsageConfidence.verified &&
-      context.usedTransactions >= rule.cycleTransactionLimit!) {
+      context.usedTransactions >= rule.cycleRedemptionLimit!) {
     return 'Monthly usage limit has been reached.';
   }
 
   return null;
 }
 
-/// A rule tied to a specific platform must match the search exactly. A rule
-/// with no recorded platform, or a search with no preferred platform, always
+/// A rule tied to specific partners must match the search exactly. A rule
+/// with no recorded partners, or a search with no preferred platform, always
 /// passes eligibility — platform CONFIDENCE (not eligibility) is what
 /// distinguishes a confirmed match from an unconfirmed one (design spec §5).
+///
+/// Cinema selection (request.preferredCinema) is intentionally never
+/// consulted here. Design spec §1.1 — a full check of the real seed data
+/// found zero rows carry any cinema-chain data (PVR/INOX/Cinepolis) in
+/// either value_config or partners; the old engine's cinema filter was
+/// silently permissive for the same reason. Cinema is accepted from the UI
+/// form and carried through MovieTicketRequest, but every rule is
+/// cinema-agnostic until real cinema-chain data exists in the schema — this
+/// is a documented, deliberate gap, not an oversight.
 bool _platformMatches(MovieDealRule rule, MovieTicketRequest request) {
-  if (rule.platform == null) return true;
+  if (rule.partners.isEmpty) return true;
   if (request.preferredPlatform == null) return true;
-  return rule.platform!.toLowerCase() == request.preferredPlatform!.toLowerCase();
+  return rule.partners
+      .any((p) => p.toLowerCase() == request.preferredPlatform!.toLowerCase());
 }
 
 MovieDealPlatformConfidence _platformConfidence(
@@ -1538,8 +1631,8 @@ MovieDealPlatformConfidence _platformConfidence(
   if (request.preferredPlatform == null) {
     return MovieDealPlatformConfidence.explicit;
   }
-  if (rule.platform != null &&
-      rule.platform!.toLowerCase() == request.preferredPlatform!.toLowerCase()) {
+  if (rule.partners
+      .any((p) => p.toLowerCase() == request.preferredPlatform!.toLowerCase())) {
     return MovieDealPlatformConfidence.explicit;
   }
   final confirmed = context.confirmedPlatforms
@@ -1557,8 +1650,8 @@ double _calculateSavings(
   switch (rule.offerType) {
     case MovieDealOfferType.bogo:
       final pairCount = tickets ~/ (rule.buyCount! + rule.freeCount!);
-      final perPairDiscount = rule.maximumDiscount != null
-          ? (price < rule.maximumDiscount! ? price : rule.maximumDiscount!)
+      final perPairDiscount = rule.perTransactionCap != null
+          ? (price < rule.perTransactionCap! ? price : rule.perTransactionCap!)
           : price;
       savings = pairCount * rule.freeCount! * perPairDiscount;
     case MovieDealOfferType.percentDiscount:
@@ -1573,10 +1666,31 @@ double _calculateSavings(
       // Never converted to a rupee figure — design spec §7 step 6.
       savings = 0;
   }
-  if (rule.maximumDiscount != null &&
+  // cycleAmountCap is a TOTAL-across-the-whole-cycle ceiling (e.g.
+  // fixedDiscount's monthly_cap), not a per-booking one — design spec
+  // §1.1/§4.2. Correctly enforcing it requires knowing how much of the cap
+  // this cycle has already consumed (cumulative discount ₹ used so far this
+  // month), the same way cycleRedemptionLimit needs context.usedTransactions
+  // to check remaining redemptions.
+  //
+  // KNOWN SIMPLIFICATION: MovieDealContext currently tracks usage as COUNTS
+  // (usedTickets, usedTransactions), not a cumulative discount-₹-amount.
+  // transactions.metadata in the real schema only ever carries ticket_count/
+  // platform/merchant keys (confirmed against the old engine and its tests)
+  // — there is no real, populated field to source a "discount amount
+  // already used this cycle" figure from without inventing one, which the
+  // "never invent commercial terms" principle rules out. Until a genuinely
+  // populated usedDiscountAmount signal exists (e.g. a future metadata
+  // field), this clamps to the FULL cycleAmountCap on every single
+  // evaluation, matching the unverified-usage philosophy used elsewhere
+  // (assume the full amount is still available rather than zeroing it) —
+  // but this means a user who has already spent most of this month's cap in
+  // an earlier booking could still be shown up to the full cap again here.
+  // Flagged as a real gap for the reader, not silently pretended correct.
+  if (rule.cycleAmountCap != null &&
       rule.offerType != MovieDealOfferType.bogo &&
-      savings > rule.maximumDiscount!) {
-    savings = rule.maximumDiscount!;
+      savings > rule.cycleAmountCap!) {
+    savings = rule.cycleAmountCap!;
   }
   return savings.clamp(0, gross).toDouble();
 }
@@ -1586,6 +1700,13 @@ String _explanation(MovieDealRule rule, double savings,
     switch (rule.offerType) {
       MovieDealOfferType.rewardMultiplier =>
         '${rule.rewardMultiplierRate} ${rule.rewardMultiplierUnit} (points program, not a direct discount).',
+      // Design spec §1.1/§4.4 — corrected label: max_usage_per_month caps
+      // REDEMPTIONS/TRANSACTIONS, not tickets. "BOGO up to ₹{cap} for {N}
+      // tickets/month" (an earlier draft's wording) was wrong; this is the
+      // corrected wording.
+      MovieDealOfferType.bogo =>
+        'BOGO — up to ₹${rule.perTransactionCap?.toStringAsFixed(0)} off, '
+            '${rule.cycleRedemptionLimit} redemptions/month.',
       _ => '${rule.offerType.name} saves ₹${savings.toStringAsFixed(2)} (${confidence.name} usage).',
     };
 
@@ -1624,7 +1745,7 @@ int _usageConfidenceRank(MovieDealUsageConfidence confidence) =>
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `flutter test test/features/benefits/movie_deals/movie_deal_evaluator_test.dart`
-Expected: PASS (14 tests)
+Expected: PASS (15 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -1783,6 +1904,36 @@ void main() {
         expect(snapshot.sources.first.catalogCardId, 'catalog-card-1');
         expect(snapshot.contexts['catalog-card-1']?.isOwned, isTrue);
       });
+    });
+
+    test('partners column flows through from a fake Supabase row to MovieBenefitSource', () async {
+      // Design spec §4.3 — benefits.partners is a separate database column
+      // from value_config, not nested inside it.
+      final dataSource = _FakeDataSource(
+        benefits: [
+          {
+            'benefit_id': 'b1',
+            'title': 'Twin ticket treats',
+            'value_config': {'discount_type': 'BOGO', 'max_usage_per_month': 2, 'max_discount_per_transaction': 500.0},
+            'source_url': null,
+            'partners': ['Zomato'],
+          },
+        ],
+        mappings: [
+          {'benefit_id': 'b1', 'card_id': 'catalog-card-1', 'display_priority': 0},
+        ],
+        catalogCards: [
+          {'id': 'catalog-card-1', 'card_name': 'Test Card'},
+        ],
+        userCards: const [],
+      );
+      final repository = MovieDealsSupabaseRepository(dataSource);
+
+      final snapshot = await repository.loadSnapshot(
+        'user1',
+        const MovieTicketRequest(numberOfTickets: 1, pricePerTicket: 300),
+      );
+      expect(snapshot.sources.first.partners, contains('Zomato'));
     });
 
     test('capped usage is unverified when matching transaction metadata lacks numeric ticket_count', () async {
@@ -1989,6 +2140,9 @@ class MovieDealsSupabaseRepository implements MovieDealsRepository {
         catalogCardId: cardId,
         title: _string(benefit['title']) ?? '',
         valueConfig: _valueConfig(benefit['value_config']),
+        // Design spec §4.3 — partners is a separate database column, not
+        // nested inside value_config's JSONB blob.
+        partners: _partners(benefit['partners']),
         sourceUrl: _string(benefit['source_url']),
         cardName: _string(card['card_name']),
         displayPriority: _integer(mapping['display_priority']) ?? 0,
@@ -2071,7 +2225,7 @@ class SupabaseMovieDealsDataSource implements MovieDealsDataSource {
         .join(',');
     final rows = _rows(await _client
         .from('benefits')
-        .select('benefit_id, title, value_config, source_url')
+        .select('benefit_id, title, value_config, source_url, partners')
         .eq('is_active', true)
         .or('benefit_category.eq.entertainment,$keywordFilter'));
     return rows;
@@ -2160,6 +2314,12 @@ Map<String, dynamic> _valueConfig(dynamic value) {
   return const {};
 }
 
+/// Design spec §4.3 — benefits.partners comes back from Supabase as a JSON
+/// array (the schema's `partners JSONB DEFAULT '[]'` column), never nested
+/// inside value_config.
+Set<String> _partners(dynamic value) =>
+    value is List ? value.whereType<String>().toSet() : const {};
+
 Map<String, dynamic> _metadata(Map<String, dynamic> transaction) {
   final metadata = transaction['metadata'];
   return metadata is Map ? Map<String, dynamic>.from(metadata) : const {};
@@ -2188,7 +2348,7 @@ bool _matchesRequest(
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `flutter test test/features/benefits/movie_deals/movie_deals_repository_test.dart`
-Expected: PASS (4 tests)
+Expected: PASS (5 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -3182,10 +3342,14 @@ class _CandidatePanel extends StatefulWidget {
   final bool? isOwned;
   final String? trailingLabel;
 
-  /// Called with the searched platform when the user confirms this deal
-  /// worked there. Null when there's nothing to confirm (explicit match,
-  /// or an "any platform" search).
-  final Future<void> Function(String platform)? onConfirmPlatform;
+  /// Called when the user confirms this deal worked at the searched
+  /// platform. Null when there's nothing to confirm (explicit match, or an
+  /// "any platform" search). Takes no argument — the caller already knows
+  /// which platform was searched (design spec §6: it closes over
+  /// request.preferredPlatform), and candidate.rule is now a Set<String> of
+  /// partners rather than a singular platform, so there's no single
+  /// meaningful String to thread through here.
+  final Future<void> Function()? onConfirmPlatform;
 
   @override
   State<_CandidatePanel> createState() => _CandidatePanelState();
@@ -3253,7 +3417,7 @@ class _CandidatePanelState extends State<_CandidatePanel> {
             const SizedBox(height: 12),
             TextButton(
               onPressed: () async {
-                await widget.onConfirmPlatform!(candidate.rule.platform ?? '');
+                await widget.onConfirmPlatform!();
                 if (mounted) setState(() => _confirmed = true);
               },
               child: const Text('Did this work here? Let us know'),
@@ -3287,10 +3451,10 @@ Update `MovieDealsResults._buildRecommendation` to pass `onConfirmPlatform` when
       return _buildNoDealCard(context);
     }
 
-    Future<void> Function(String)? confirmCallbackFor(MovieDealCandidate candidate) {
+    Future<void> Function()? confirmCallbackFor(MovieDealCandidate candidate) {
       if (request.preferredPlatform == null) return null;
       if (candidate.platformConfidence == MovieDealPlatformConfidence.explicit) return null;
-      return (platform) => ref.read(movieDealsRepositoryProvider).confirmPlatform(
+      return () => ref.read(movieDealsRepositoryProvider).confirmPlatform(
             benefitId: candidate.benefitId,
             platform: request.preferredPlatform!,
             userId: ref.read(currentUserProvider)!.id,
@@ -3464,7 +3628,7 @@ Enter 2 tickets, ₹300 price, leave platform/cinema as "ANY". Tap "OPTIMIZE DEA
 
 - [ ] **Step 6: Verify a platform-specific search**
 
-Select "BookMyShow" as the platform, submit again. Confirm any card with `platform: null` in its underlying rule (i.e., not tied to a specific platform) shows the "Platform not confirmed for this offer" chip rather than being presented as an unqualified match.
+Select "BookMyShow" as the platform, submit again. Confirm any card with an empty `partners` set in its underlying rule (i.e., not tied to any specific platform/merchant) shows the "Platform not confirmed for this offer" chip rather than being presented as an unqualified match.
 
 - [ ] **Step 7: Check responsive layout**
 
