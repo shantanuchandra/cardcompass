@@ -70,8 +70,3 @@ db_cluster*
 # Platform directories not used (web-only app)
 android/
 ios/
-
-# MD files outside docs/ are not committed (use docs/ instead)
-*.md
-!docs/
-!docs/**

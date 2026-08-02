@@ -51,4 +51,20 @@ class CardsRepository {
         .limit(20);
     return (data as List).cast<Map<String, dynamic>>();
   }
+
+  /// Catalog entries for one bank, optionally filtered by card-name typeahead
+  /// text — used when resolving a statement email whose bank didn't match
+  /// any card the user already has on file.
+  Future<List<Map<String, dynamic>>> searchCatalogForBank(String bank, {String query = ''}) async {
+    var builder = _db
+        .from('card_catalog')
+        .select('id, card_name, bank, network, annual_fee, card_url')
+        .eq('is_discontinued', false)
+        .ilike('bank', '%$bank%');
+    if (query.isNotEmpty) {
+      builder = builder.ilike('card_name', '%$query%');
+    }
+    final data = await builder.order('card_name').limit(30);
+    return (data as List).cast<Map<String, dynamic>>();
+  }
 }

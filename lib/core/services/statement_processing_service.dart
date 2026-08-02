@@ -11,18 +11,20 @@ import 'gemini_statement_parser.dart';
 import 'card_normalizer_service.dart';
 import 'parsing_logger.dart';
 
-enum EmailOutcome { succeeded, needsPassword, failed }
+enum EmailOutcome { succeeded, needsPassword, needsCardAssignment, failed }
 
 class StatementProcessingResult {
   final int totalAttempted;
   final int succeeded;
   final int needsPassword;
+  final int needsCardAssignment;
   final int failed;
 
   const StatementProcessingResult({
     required this.totalAttempted,
     required this.succeeded,
     required this.needsPassword,
+    required this.needsCardAssignment,
     required this.failed,
   });
 }
@@ -39,13 +41,19 @@ class StatementProcessingService {
   final String _userId;
   final String _userEmail;
   final String _userName;
+  final Map<String, String> _forcedCardIdByBank;
 
+  /// [forcedCardIdByBank] lets a caller pin a specific bank name (as stored
+  /// in emails.bank_detected) to a card for this run — used right after the
+  /// user manually resolves a previously-unmatched bank, so this pass uses
+  /// their choice instead of (still nonexistent) prior-resolution history.
   StatementProcessingService({
     required GmailSyncService gmailService,
     required SupabaseClient supabaseClient,
     required String userId,
     required String userEmail,
     required String userName,
+    Map<String, String> forcedCardIdByBank = const {},
   })  : _gmailService = gmailService,
         _emailRepo = EmailRepository(),
         _statementsRepo = StatementsRepository(supabaseClient),
@@ -53,7 +61,8 @@ class StatementProcessingService {
         _cardsRepo = CardsRepository(supabaseClient),
         _userId = userId,
         _userEmail = userEmail,
-        _userName = userName;
+        _userName = userName,
+        _forcedCardIdByBank = forcedCardIdByBank;
 
   Future<StatementProcessingResult> processUnprocessedEmails() async {
     final emails = await _emailRepo.getUnprocessedEmails(_userId);
@@ -61,6 +70,7 @@ class StatementProcessingService {
 
     var succeeded = 0;
     var needsPassword = 0;
+    var needsCardAssignment = 0;
     var failed = 0;
 
     for (final email in emails) {
@@ -72,6 +82,9 @@ class StatementProcessingService {
         case EmailOutcome.needsPassword:
           needsPassword++;
           break;
+        case EmailOutcome.needsCardAssignment:
+          needsCardAssignment++;
+          break;
         case EmailOutcome.failed:
           failed++;
           break;
@@ -82,6 +95,7 @@ class StatementProcessingService {
       totalAttempted: emails.length,
       succeeded: succeeded,
       needsPassword: needsPassword,
+      needsCardAssignment: needsCardAssignment,
       failed: failed,
     );
   }
@@ -104,6 +118,11 @@ class StatementProcessingService {
 
     final bankName = CardNormalizerService.normalizeBankName(sender.isNotEmpty ? sender : subject);
 
+    if (userCards.isEmpty) {
+      ParsingLogger.warning('Statement Processing: No cards on file for user, skipping email $emailId');
+      return EmailOutcome.failed;
+    }
+
     UserCard? matchedCard;
     for (final card in userCards) {
       final code = card.bankCode;
@@ -114,9 +133,29 @@ class StatementProcessingService {
       }
     }
 
-    if (userCards.isEmpty) {
-      ParsingLogger.warning('Statement Processing: No cards on file for user, skipping email $emailId');
-      return EmailOutcome.failed;
+    // Bank didn't match any card's gradient-lookup code. Rather than
+    // silently guessing (userCards.first), check if the user has already
+    // resolved this exact bank name before; if not, ask them to clarify
+    // instead of risking a wrong — or colliding — statement attribution.
+    if (matchedCard == null) {
+      final forcedCardId = _forcedCardIdByBank[bankName];
+      final previousCardId = forcedCardId ??
+          await _emailRepo.findPreviouslyAssignedCard(
+            userId: _userId,
+            bankDetected: bankName,
+          );
+      if (previousCardId != null) {
+        matchedCard = userCards.where((c) => c.id == previousCardId).firstOrNull;
+      }
+    }
+
+    if (matchedCard == null) {
+      await _emailRepo.markNeedsCardAssignment(
+        userId: _userId,
+        emailId: emailId,
+        bankDetected: bankName,
+      );
+      return EmailOutcome.needsCardAssignment;
     }
 
     Uint8List pdfBytes;
@@ -162,7 +201,7 @@ class StatementProcessingService {
         bankName: bankName,
       );
 
-      final userCard = matchedCard ?? userCards.first;
+      final userCard = matchedCard;
       final userCardId = userCard.id;
       final catalogCardId = userCard.catalogCardId;
 

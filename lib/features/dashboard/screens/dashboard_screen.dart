@@ -6,6 +6,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/providers/supabase_provider.dart';
+import '../../../core/providers/repository_providers.dart';
 import '../../../shared/models/user_card.dart';
 import '../../../shared/models/transaction.dart';
 import '../../../shared/models/statement.dart';
@@ -24,21 +25,28 @@ class DashboardScreen extends ConsumerWidget {
     final dashAsync = ref.watch(dashboardProvider);
     final user = ref.watch(currentUserProvider);
 
+    final isDesktop = MediaQuery.sizeOf(context).width >= 1024;
+
     return Scaffold(
       backgroundColor: AppColors.surfaceVoid,
       body: RefreshIndicator(
         color: AppColors.neonCyan,
         backgroundColor: AppColors.surface1,
         onRefresh: () => ref.refresh(dashboardProvider.future),
-        child: CustomScrollView(
-          slivers: [
-            _DashboardAppBar(user: user),
-            dashAsync.when(
-              loading: () => const SliverFillRemaining(child: _DashboardSkeleton()),
-              error: (e, _) => SliverFillRemaining(child: _ErrorState(error: e)),
-              data: (data) => _DashboardContent(data: data),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: isDesktop ? 1120 : double.infinity),
+            child: CustomScrollView(
+              slivers: [
+                _DashboardAppBar(user: user),
+                dashAsync.when(
+                  loading: () => const SliverFillRemaining(child: _DashboardSkeleton()),
+                  error: (e, _) => SliverFillRemaining(child: _ErrorState(error: e)),
+                  data: (data) => _DashboardContent(data: data, isDesktop: isDesktop),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -68,12 +76,14 @@ class _DashboardAppBar extends ConsumerWidget {
                 'Found ${result.foundCount} statement emails, ${result.newlyStoredCount} new. '
                 'Processed ${result.processedAttempted}: ${result.processedSucceeded} succeeded'
                 '${result.processedNeedsPassword > 0 ? ', ${result.processedNeedsPassword} need a password' : ''}'
+                '${result.processedNeedsCardAssignment > 0 ? ', ${result.processedNeedsCardAssignment} need a card assigned' : ''}'
                 '${result.processedFailed > 0 ? ', ${result.processedFailed} failed' : ''}.',
               ),
               duration: const Duration(seconds: 8),
             ),
           );
           ref.invalidate(dashboardProvider);
+          ref.invalidate(pendingCardAssignmentsProvider);
         },
         error: (error, _) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -119,7 +129,7 @@ class _DashboardAppBar extends ConsumerWidget {
               tooltip: 'Sync Gmail',
               onPressed: syncState.isLoading
                   ? null
-                  : () => ref.read(gmailSyncProvider.notifier).syncGmail(),
+                  : () => _showSyncRangeDialog(context, ref),
               icon: syncState.isLoading
                   ? const SizedBox(
                       width: 20,
@@ -151,58 +161,359 @@ class _DashboardAppBar extends ConsumerWidget {
   }
 }
 
-// ─── Main Content ───────────────────────────────────────────────────────────
-class _DashboardContent extends StatelessWidget {
-  final DashboardData data;
-  const _DashboardContent({required this.data});
+void _showSyncRangeDialog(BuildContext context, WidgetRef ref) {
+  showGeneralDialog<void>(
+    context: context,
+    barrierLabel: 'Sync from Gmail',
+    barrierDismissible: true,
+    barrierColor: Colors.black.withValues(alpha: 0.6),
+    transitionDuration: 220.ms,
+    pageBuilder: (dialogContext, _, __) => _SyncRangeDialog(
+      onStartSync: (days) {
+        Navigator.of(dialogContext).pop();
+        ref.read(gmailSyncProvider.notifier).syncGmail(lookbackDays: days);
+      },
+    ),
+    transitionBuilder: (context, animation, _, child) {
+      final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
+      return FadeTransition(
+        opacity: curved,
+        child: ScaleTransition(
+          scale: Tween(begin: 0.94, end: 1.0).animate(curved),
+          child: child,
+        ),
+      );
+    },
+  );
+}
+
+class _SyncRangeOption {
+  final int days;
+  final String label;
+  const _SyncRangeOption(this.days, this.label);
+}
+
+class _SyncRangeDialog extends StatefulWidget {
+  final void Function(int days) onStartSync;
+  const _SyncRangeDialog({required this.onStartSync});
+
+  @override
+  State<_SyncRangeDialog> createState() => _SyncRangeDialogState();
+}
+
+class _SyncRangeDialogState extends State<_SyncRangeDialog> {
+  int _selectedDays = 7;
+  static const _options = [
+    _SyncRangeOption(7, '7d'),
+    _SyncRangeOption(30, '30d'),
+    _SyncRangeOption(60, '60d'),
+    _SyncRangeOption(90, '90d'),
+    _SyncRangeOption(240, '8mo'),
+    _SyncRangeOption(369, '1yr'),
+  ];
+
+  String get _friendlyRange {
+    if (_selectedDays >= 365) return 'about a year';
+    if (_selectedDays >= 240) return 'about 8 months';
+    if (_selectedDays == 7) return 'the past week';
+    return 'the past $_selectedDays days';
+  }
 
   @override
   Widget build(BuildContext context) {
-    return SliverList(
-      delegate: SliverChildListDelegate([
-        // KPI row
-        _KpiRow(data: data)
-            .animate()
-            .fadeIn(duration: 400.ms)
-            .slideY(begin: 0.1),
-        const SizedBox(height: AppSpacing.lg),
-
-        // Cards carousel (or empty state)
-        if (data.cards.isEmpty)
-          _AddFirstCard()
-              .animate(delay: 100.ms)
-              .fadeIn()
-        else ...[
-          _SectionHeader(title: 'Your Cards', action: 'Manage', onTap: () {}),
-          _CardsCarousel(cards: data.cards, statements: data.latestStatements)
-              .animate(delay: 100.ms)
-              .fadeIn()
-              .slideX(begin: 0.05),
-        ],
-        const SizedBox(height: AppSpacing.lg),
-
-        // Upcoming bills
-        if (data.latestStatements.isNotEmpty) ...[
-          _SectionHeader(title: 'Bills Due', action: null, onTap: null),
-          _BillsPanel(cards: data.cards, statements: data.latestStatements)
-              .animate(delay: 150.ms)
-              .fadeIn(),
-          const SizedBox(height: AppSpacing.lg),
-        ],
-
-        // Recent transactions
-        _SectionHeader(
-          title: 'Recent Spend',
-          action: 'View All',
-          onTap: () {},
+    final isDesktop = MediaQuery.sizeOf(context).width >= 1024;
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.xl),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: isDesktop ? 460 : 420),
+          child: Material(
+            color: Colors.transparent,
+            child: Container(
+              decoration: BoxDecoration(
+                color: AppColors.surface1,
+                borderRadius: BorderRadius.circular(AppRadius.xl),
+                border: Border.all(color: AppColors.textMuted.withValues(alpha: 0.12)),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.neonCyan.withValues(alpha: 0.08),
+                    blurRadius: 40,
+                    spreadRadius: -8,
+                  ),
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.4),
+                    blurRadius: 24,
+                    offset: const Offset(0, 12),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Header
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.lg, AppSpacing.sm, 0),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            gradient: AppTheme.cyanFadeGradient,
+                            borderRadius: BorderRadius.circular(AppRadius.md),
+                          ),
+                          child: const Icon(Icons.sync_rounded, size: 20, color: AppColors.textInverse),
+                        ),
+                        const SizedBox(width: AppSpacing.sm),
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Sync from Gmail',
+                                  style: GoogleFonts.spaceGrotesk(
+                                    fontSize: 17, fontWeight: FontWeight.w700, color: AppColors.textPrimary,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  'Import credit card statements',
+                                  style: GoogleFonts.inter(fontSize: 12.5, color: AppColors.textSecondary),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => Navigator.of(context).pop(),
+                          icon: const Icon(Icons.close_rounded, size: 20),
+                          color: AppColors.textMuted,
+                          tooltip: 'Close',
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+                    child: Text(
+                      'LOOK BACK',
+                      style: GoogleFonts.inter(
+                        fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.textMuted, letterSpacing: 1.0,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+                    child: GridView.count(
+                      crossAxisCount: 3,
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      mainAxisSpacing: AppSpacing.sm,
+                      crossAxisSpacing: AppSpacing.sm,
+                      childAspectRatio: 1.7,
+                      children: _options.map((opt) {
+                        final selected = opt.days == _selectedDays;
+                        return _RangeChip(
+                          label: opt.label,
+                          selected: selected,
+                          onTap: () => setState(() => _selectedDays = opt.days),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+                    child: AnimatedSwitcher(
+                      duration: 200.ms,
+                      child: Container(
+                        key: ValueKey(_selectedDays),
+                        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.sm),
+                        decoration: BoxDecoration(
+                          color: AppColors.surface2,
+                          borderRadius: BorderRadius.circular(AppRadius.md),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.info_outline_rounded, size: 15, color: AppColors.textMuted),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Fetches statement emails from $_friendlyRange',
+                                style: GoogleFonts.inter(fontSize: 12.5, color: AppColors.textSecondary),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.lg),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.lg),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            child: const Text('Cancel'),
+                          ),
+                        ),
+                        const SizedBox(width: AppSpacing.sm),
+                        Expanded(
+                          flex: 2,
+                          child: ElevatedButton.icon(
+                            onPressed: () => widget.onStartSync(_selectedDays),
+                            icon: const Icon(Icons.sync_rounded, size: 18),
+                            label: const Text('Sync now'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
+      ),
+    );
+  }
+}
+
+class _RangeChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  const _RangeChip({required this.label, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        child: AnimatedContainer(
+          duration: 180.ms,
+          curve: Curves.easeOut,
+          decoration: BoxDecoration(
+            color: selected ? AppColors.neonCyan.withValues(alpha: 0.15) : AppColors.surface2,
+            borderRadius: BorderRadius.circular(AppRadius.md),
+            border: Border.all(
+              color: selected ? AppColors.neonCyan : AppColors.textMuted.withValues(alpha: 0.18),
+              width: selected ? 1.5 : 1,
+            ),
+          ),
+          child: Center(
+            child: Text(
+              label,
+              style: GoogleFonts.spaceGrotesk(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: selected ? AppColors.neonCyan : AppColors.textSecondary,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Main Content ───────────────────────────────────────────────────────────
+class _DashboardContent extends StatelessWidget {
+  final DashboardData data;
+  final bool isDesktop;
+  const _DashboardContent({required this.data, required this.isDesktop});
+
+  @override
+  Widget build(BuildContext context) {
+    final cardsSection = data.cards.isEmpty
+        ? _AddFirstCard().animate(delay: 100.ms).fadeIn()
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _SectionHeader(title: 'Your Cards', action: 'Manage', onTap: () {}),
+              _CardsCarousel(cards: data.cards, statements: data.latestStatements)
+                  .animate(delay: 100.ms)
+                  .fadeIn()
+                  .slideX(begin: 0.05),
+            ],
+          );
+
+    final billsSection = data.latestStatements.isNotEmpty
+        ? Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _SectionHeader(title: 'Bills Due', action: null, onTap: null),
+              _BillsPanel(cards: data.cards, statements: data.latestStatements)
+                  .animate(delay: 150.ms)
+                  .fadeIn(),
+            ],
+          )
+        : const SizedBox.shrink();
+
+    final transactionsSection = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SectionHeader(title: 'Recent Spend', action: 'View All', onTap: () {}),
         data.recentTransactions.isEmpty
-            ? _EmptyTransactions()
-                .animate(delay: 200.ms)
-                .fadeIn()
+            ? _EmptyTransactions().animate(delay: 200.ms).fadeIn()
             : _RecentTransactions(transactions: data.recentTransactions)
                 .animate(delay: 200.ms)
                 .fadeIn(),
+      ],
+    );
+
+    if (isDesktop) {
+      return SliverList(
+        delegate: SliverChildListDelegate([
+          _KpiRow(data: data).animate().fadeIn(duration: 400.ms).slideY(begin: 0.1),
+          const SizedBox(height: AppSpacing.lg),
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      cardsSection,
+                      const SizedBox(height: AppSpacing.lg),
+                      billsSection,
+                    ],
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.lg),
+                Expanded(flex: 2, child: transactionsSection),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSpacing.xxl),
+        ]),
+      );
+    }
+
+    return SliverList(
+      delegate: SliverChildListDelegate([
+        _KpiRow(data: data).animate().fadeIn(duration: 400.ms).slideY(begin: 0.1),
+        const SizedBox(height: AppSpacing.lg),
+        cardsSection,
+        const SizedBox(height: AppSpacing.lg),
+        if (data.latestStatements.isNotEmpty) ...[
+          billsSection,
+          const SizedBox(height: AppSpacing.lg),
+        ],
+        transactionsSection,
         const SizedBox(height: AppSpacing.xxl),
       ]),
     );
@@ -324,65 +635,293 @@ class _SectionHeader extends StatelessWidget {
 }
 
 // ─── Cards Carousel ─────────────────────────────────────────────────────────
-class _CardsCarousel extends StatefulWidget {
+class _CardsCarousel extends ConsumerStatefulWidget {
   final List<UserCard> cards;
   final Map<String, Statement> statements;
   const _CardsCarousel({required this.cards, required this.statements});
 
   @override
-  State<_CardsCarousel> createState() => _CardsCarouselState();
+  ConsumerState<_CardsCarousel> createState() => _CardsCarouselState();
 }
 
-class _CardsCarouselState extends State<_CardsCarousel> {
+class _CardsCarouselState extends ConsumerState<_CardsCarousel> {
   int _current = 0;
+
+  // Real credit cards are ISO/IEC 7810 ID-1: 85.60mm x 53.98mm ≈ 1.586:1.
+  static const _cardAspectRatio = 1.586;
+  static const _maxCardWidth = 340.0;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        SizedBox(
-          height: 200,
-          child: PageView.builder(
-            itemCount: widget.cards.length,
-            padEnds: false,
-            controller: PageController(viewportFraction: 0.88),
-            onPageChanged: (i) => setState(() => _current = i),
-            itemBuilder: (context, i) {
-              final card = widget.cards[i];
-              return Padding(
-                padding: EdgeInsets.only(
-                  left: i == 0 ? AppSpacing.md : AppSpacing.sm,
-                  right: i == widget.cards.length - 1 ? AppSpacing.md : AppSpacing.sm,
-                ),
-                child: GestureDetector(
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => CardDetailScreen(cardId: card.id),
+    final pending = ref.watch(pendingCardAssignmentsProvider).valueOrNull ?? [];
+    final itemCount = widget.cards.length + pending.length;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final cardWidth = constraints.maxWidth * 0.6 > _maxCardWidth
+            ? _maxCardWidth
+            : constraints.maxWidth * 0.6;
+        final cardHeight = cardWidth / _cardAspectRatio;
+        final viewportFraction = ((cardWidth + AppSpacing.sm) / constraints.maxWidth).clamp(0.3, 0.9);
+
+        return Column(
+          children: [
+            SizedBox(
+              height: cardHeight,
+              child: PageView.builder(
+                itemCount: itemCount,
+                padEnds: false,
+                controller: PageController(viewportFraction: viewportFraction),
+                onPageChanged: (i) => setState(() => _current = i),
+                itemBuilder: (context, i) {
+                  final isPending = i >= widget.cards.length;
+                  final tile = isPending
+                      ? _PendingBankTile(email: pending[i - widget.cards.length])
+                      : GestureDetector(
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => CardDetailScreen(cardId: widget.cards[i].id),
+                            ),
+                          ),
+                          child: _CreditCardTile(card: widget.cards[i]),
+                        );
+                  return Padding(
+                    padding: EdgeInsets.only(
+                      left: i == 0 ? AppSpacing.md : AppSpacing.sm,
+                      right: i == itemCount - 1 ? AppSpacing.md : AppSpacing.sm,
                     ),
-                  ),
-                  child: _CreditCardTile(card: card),
-                ),
-              );
-            },
-          ),
-        ),
-        if (widget.cards.length > 1) ...[
-          const SizedBox(height: AppSpacing.sm),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: List.generate(widget.cards.length, (i) => AnimatedContainer(
-              duration: 250.ms,
-              width: i == _current ? 20 : 6,
-              height: 6,
-              margin: const EdgeInsets.symmetric(horizontal: 3),
-              decoration: BoxDecoration(
-                color: i == _current ? AppColors.neonCyan : AppColors.textMuted.withValues(alpha: 0.4),
-                borderRadius: BorderRadius.circular(AppRadius.pill),
+                    child: SizedBox(width: cardWidth, child: tile),
+                  );
+                },
               ),
-            )),
+            ),
+            if (itemCount > 1) ...[
+              const SizedBox(height: AppSpacing.sm),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(itemCount, (i) => AnimatedContainer(
+                  duration: 250.ms,
+                  width: i == _current ? 20 : 6,
+                  height: 6,
+                  margin: const EdgeInsets.symmetric(horizontal: 3),
+                  decoration: BoxDecoration(
+                    color: i == _current ? AppColors.neonCyan : AppColors.textMuted.withValues(alpha: 0.4),
+                    borderRadius: BorderRadius.circular(AppRadius.pill),
+                  ),
+                )),
+              ),
+            ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+// A dim, outlined placeholder tile for a statement whose bank couldn't be
+// matched to any card on file. Tapping the warning badge opens a typeahead
+// search over that bank's card_catalog entries to resolve it.
+class _PendingBankTile extends StatelessWidget {
+  final Map<String, dynamic> email;
+  const _PendingBankTile({required this.email});
+
+  @override
+  Widget build(BuildContext context) {
+    final bankDetected = email['bank_detected'] as String? ?? 'Unknown bank';
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.surface2,
+        borderRadius: BorderRadius.circular(AppRadius.xl),
+        border: Border.all(
+          color: AppColors.warning.withValues(alpha: 0.4),
+          width: 1.5,
+          style: BorderStyle.solid,
+        ),
+      ),
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  bankDetected,
+                  style: GoogleFonts.inter(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w500, letterSpacing: 0.5),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              GestureDetector(
+                onTap: () => _showBankResolveDialog(context, email),
+                child: Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: AppColors.warning.withValues(alpha: 0.15),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.priority_high_rounded, size: 16, color: AppColors.warning),
+                ),
+              ),
+            ],
+          ),
+          const Spacer(),
+          Icon(Icons.help_outline_rounded, size: 28, color: AppColors.textMuted.withValues(alpha: 0.5)),
+          const SizedBox(height: AppSpacing.sm),
+          Text(
+            'Which card is this?',
+            style: GoogleFonts.inter(fontSize: 13, color: AppColors.textMuted),
           ),
         ],
-      ],
+      ),
+    );
+  }
+}
+
+void _showBankResolveDialog(BuildContext context, Map<String, dynamic> email) {
+  final bankDetected = email['bank_detected'] as String? ?? '';
+  showDialog<void>(
+    context: context,
+    builder: (dialogContext) => _BankResolveDialog(email: email, bankDetected: bankDetected),
+  );
+}
+
+class _BankResolveDialog extends ConsumerStatefulWidget {
+  final Map<String, dynamic> email;
+  final String bankDetected;
+  const _BankResolveDialog({required this.email, required this.bankDetected});
+
+  @override
+  ConsumerState<_BankResolveDialog> createState() => _BankResolveDialogState();
+}
+
+class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
+  List<Map<String, dynamic>> _options = [];
+  bool _loading = true;
+  bool _resolving = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _search('');
+  }
+
+  Future<void> _search(String query) async {
+    setState(() => _loading = true);
+    try {
+      final results = await ref
+          .read(cardsRepositoryProvider)
+          .searchCatalogForBank(widget.bankDetected, query: query);
+      if (mounted) setState(() { _options = results; _loading = false; });
+    } catch (e) {
+      if (mounted) setState(() { _error = e.toString(); _loading = false; });
+    }
+  }
+
+  Future<void> _resolve(Map<String, dynamic> catalogEntry) async {
+    setState(() => _resolving = true);
+    try {
+      await ref.read(cardAssignmentProvider.notifier).resolveWithCatalogEntry(
+            email: widget.email,
+            catalogCardId: catalogEntry['id'] as String,
+          );
+      ref.invalidate(dashboardProvider);
+      if (mounted) Navigator.of(context).pop();
+    } finally {
+      if (mounted) setState(() => _resolving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: AppColors.surface1,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadius.xl)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420, maxHeight: 480),
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Which card is this?',
+                style: GoogleFonts.spaceGrotesk(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                widget.bankDetected,
+                style: GoogleFonts.inter(fontSize: 12.5, color: AppColors.textSecondary),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              TextField(
+                autofocus: true,
+                decoration: InputDecoration(
+                  hintText: 'Type to search ${widget.bankDetected} cards…',
+                  prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                ),
+                onChanged: _search,
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              Flexible(
+                child: _loading
+                    ? const Padding(
+                        padding: EdgeInsets.symmetric(vertical: AppSpacing.xl),
+                        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                      )
+                    : _error != null
+                        ? Padding(
+                            padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+                            child: Text(_error!, style: GoogleFonts.inter(fontSize: 12, color: AppColors.error)),
+                          )
+                        : _options.isEmpty
+                            ? Padding(
+                                padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+                                child: Text(
+                                  'No matching card found. Try a different search.',
+                                  style: GoogleFonts.inter(fontSize: 12.5, color: AppColors.textMuted),
+                                ),
+                              )
+                            : ListView.builder(
+                                shrinkWrap: true,
+                                itemCount: _options.length,
+                                itemBuilder: (context, i) {
+                                  final entry = _options[i];
+                                  return ListTile(
+                                    dense: true,
+                                    contentPadding: EdgeInsets.zero,
+                                    title: Text(
+                                      entry['card_name'] as String? ?? '',
+                                      style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                                    ),
+                                    subtitle: Text(
+                                      entry['bank'] as String? ?? '',
+                                      style: GoogleFonts.inter(fontSize: 12, color: AppColors.textMuted),
+                                    ),
+                                    trailing: _resolving
+                                        ? const SizedBox(
+                                            width: 16, height: 16,
+                                            child: CircularProgressIndicator(strokeWidth: 2),
+                                          )
+                                        : const Icon(Icons.chevron_right_rounded, color: AppColors.textMuted),
+                                    onTap: _resolving ? null : () => _resolve(entry),
+                                  );
+                                },
+                              ),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancel'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

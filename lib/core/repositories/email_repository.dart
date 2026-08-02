@@ -109,4 +109,61 @@ class EmailRepository implements EmailRepositoryInterface {
       throw Exception('Failed to fetch unprocessed emails: $e');
     }
   }
+
+  /// Looks up which card the user has previously assigned emails from this
+  /// bank to, by joining already-resolved emails to their statement's card.
+  /// Returns null if this bank has never been resolved before, meaning the
+  /// caller should ask the user to clarify instead of guessing.
+  Future<String?> findPreviouslyAssignedCard({
+    required String userId,
+    required String bankDetected,
+  }) async {
+    final rows = await _supabase
+        .from('emails')
+        .select('statement_id, statements!inner(user_card_id)')
+        .eq('user_id', userId)
+        .eq('bank_detected', bankDetected)
+        .eq('processed', true)
+        .not('statement_id', 'is', null)
+        .order('created_at', ascending: false)
+        .limit(1);
+
+    if (rows.isEmpty) return null;
+    final statement = rows.first['statements'] as Map<String, dynamic>?;
+    return statement?['user_card_id'] as String?;
+  }
+
+  /// Marks an email as needing the user to manually pick which card its
+  /// statement belongs to (its bank didn't match any card on file, and no
+  /// prior resolution for that bank exists yet).
+  Future<void> markNeedsCardAssignment({
+    required String userId,
+    required String emailId,
+    required String bankDetected,
+  }) async {
+    await _supabase
+        .from('emails')
+        .update({
+          'processed': false,
+          'bank_detected': bankDetected,
+          'metadata': {'needsCardAssignment': true},
+        })
+        .eq('user_id', userId)
+        .eq('email_id', emailId);
+  }
+
+  /// Emails whose statement bank couldn't be matched to any card and has
+  /// never been resolved before — surfaced to the user for one-time
+  /// clarification (see [markNeedsCardAssignment]).
+  Future<List<Map<String, dynamic>>> getEmailsNeedingCardAssignment(String userId) async {
+    final response = await _supabase
+        .from('emails')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('processed', false)
+        .contains('metadata', {'needsCardAssignment': true})
+        .order('received_date', ascending: false);
+
+    return List<Map<String, dynamic>>.from(response);
+  }
 }

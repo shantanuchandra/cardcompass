@@ -66,6 +66,10 @@ final routerProvider = Provider<GoRouter>((ref) {
   );
 });
 
+// Screens ≥1024px get a persistent side rail instead of a bottom bar
+// (Material adaptive navigation guidance).
+const _kDesktopBreakpoint = 1024.0;
+
 class _AppShell extends ConsumerWidget {
   const _AppShell();
 
@@ -81,6 +85,27 @@ class _AppShell extends ConsumerWidget {
     return ValueListenableBuilder<int>(
       valueListenable: _tabIndexNotifier,
       builder: (context, tabIndex, _) {
+        void onTap(int i) {
+          _tabIndexNotifier.value = i;
+          // Keep browser URL in sync without triggering a GoRouter navigation
+          web.window.history.replaceState(null, '', '#${_kTabPaths[i]}');
+        }
+
+        final isDesktop = MediaQuery.sizeOf(context).width >= _kDesktopBreakpoint;
+
+        if (isDesktop) {
+          return Scaffold(
+            body: Row(
+              children: [
+                _SideRail(selectedIndex: tabIndex, onTap: onTap),
+                Expanded(
+                  child: IndexedStack(index: tabIndex, children: _bodies),
+                ),
+              ],
+            ),
+          );
+        }
+
         return Scaffold(
           body: IndexedStack(
             index: tabIndex,
@@ -88,14 +113,87 @@ class _AppShell extends ConsumerWidget {
           ),
           bottomNavigationBar: _BottomNav(
             selectedIndex: tabIndex,
-            onTap: (i) {
-              _tabIndexNotifier.value = i;
-              // Keep browser URL in sync without triggering a GoRouter navigation
-              web.window.history.replaceState(null, '', '#${_kTabPaths[i]}');
-            },
+            onTap: onTap,
           ),
         );
       },
+    );
+  }
+}
+
+class _SideRail extends StatelessWidget {
+  final int selectedIndex;
+  final ValueChanged<int> onTap;
+  const _SideRail({required this.selectedIndex, required this.onTap});
+
+  static const _items = [
+    (icon: Icons.dashboard_outlined, activeIcon: Icons.dashboard, label: 'Dashboard'),
+    (icon: Icons.credit_card_outlined, activeIcon: Icons.credit_card, label: 'Cards'),
+    (icon: Icons.receipt_long_outlined, activeIcon: Icons.receipt_long, label: 'Ledger'),
+    (icon: Icons.settings_outlined, activeIcon: Icons.settings, label: 'Settings'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 220,
+      decoration: BoxDecoration(
+        color: AppColors.surface1,
+        border: Border(right: BorderSide(color: AppColors.surface3, width: 1)),
+      ),
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+              child: Text(
+                'CardCompass',
+                style: GoogleFonts.spaceGrotesk(
+                  fontSize: 20, fontWeight: FontWeight.w800,
+                  color: AppColors.textPrimary, letterSpacing: -0.5,
+                ),
+              ),
+            ),
+            ...List.generate(_items.length, (i) {
+              final item = _items[i];
+              final selected = i == selectedIndex;
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+                child: Material(
+                  color: selected ? AppColors.neonCyan.withValues(alpha: 0.12) : Colors.transparent,
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(AppRadius.md),
+                    onTap: () => onTap(i),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      child: Row(
+                        children: [
+                          Icon(
+                            selected ? item.activeIcon : item.icon,
+                            size: 20,
+                            color: selected ? AppColors.neonCyan : AppColors.textMuted,
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            item.label,
+                            style: GoogleFonts.inter(
+                              fontSize: 14,
+                              fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                              color: selected ? AppColors.neonCyan : AppColors.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
     );
   }
 }
