@@ -74,3 +74,4 @@ ios/
 # MD files outside docs/ are not committed (use docs/ instead)
 *.md
 !docs/
+!docs/**
