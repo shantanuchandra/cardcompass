@@ -74,7 +74,16 @@ class StatementProcessingService {
     var failed = 0;
 
     for (final email in emails) {
-      final outcome = await _processOne(email, userCards);
+      EmailOutcome outcome;
+      try {
+        outcome = await _processOne(email, userCards);
+      } catch (e) {
+        ParsingLogger.error(
+          'Statement Processing: Unhandled error processing email ${email['email_id']}',
+          e,
+        );
+        outcome = EmailOutcome.failed;
+      }
       switch (outcome) {
         case EmailOutcome.succeeded:
           succeeded++;

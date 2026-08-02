@@ -111,16 +111,19 @@ class EmailRepository implements EmailRepositoryInterface {
   }
 
   /// Looks up which card the user has previously assigned emails from this
-  /// bank to, by joining already-resolved emails to their statement's card.
+  /// bank to, via already-resolved emails' statement_id -> statements.user_card_id.
+  /// Two separate queries (not a PostgREST embedded join) because
+  /// emails.statement_id is a plain TEXT column, not a declared foreign key,
+  /// so there's no schema relationship for PostgREST to embed across.
   /// Returns null if this bank has never been resolved before, meaning the
   /// caller should ask the user to clarify instead of guessing.
   Future<String?> findPreviouslyAssignedCard({
     required String userId,
     required String bankDetected,
   }) async {
-    final rows = await _supabase
+    final emailRows = await _supabase
         .from('emails')
-        .select('statement_id, statements!inner(user_card_id)')
+        .select('statement_id')
         .eq('user_id', userId)
         .eq('bank_detected', bankDetected)
         .eq('processed', true)
@@ -128,9 +131,18 @@ class EmailRepository implements EmailRepositoryInterface {
         .order('created_at', ascending: false)
         .limit(1);
 
-    if (rows.isEmpty) return null;
-    final statement = rows.first['statements'] as Map<String, dynamic>?;
-    return statement?['user_card_id'] as String?;
+    if (emailRows.isEmpty) return null;
+    final statementId = emailRows.first['statement_id'] as String?;
+    if (statementId == null) return null;
+
+    final statementRows = await _supabase
+        .from('statements')
+        .select('user_card_id')
+        .eq('id', statementId)
+        .limit(1);
+
+    if (statementRows.isEmpty) return null;
+    return statementRows.first['user_card_id'] as String?;
   }
 
   /// Marks an email as needing the user to manually pick which card its

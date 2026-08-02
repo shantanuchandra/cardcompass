@@ -48,6 +48,7 @@ import 'package:cardcompass/features/benefits/movie_deals/domain/movie_deal_rule
 void main() {
   group('MovieDealRule', () {
     test('bogo rule stores per-transaction cap and monthly usage limit', () {
+      // Real row: "Twin ticket treats" — partners: ["Zomato"] (design spec §4.3).
       final rule = MovieDealRule(
         benefitId: 'b1',
         catalogCardId: 'c1',
@@ -55,16 +56,17 @@ void main() {
         offerType: MovieDealOfferType.bogo,
         buyCount: 1,
         freeCount: 1,
-        maximumDiscount: 500,
-        cycleTransactionLimit: 2,
+        perTransactionCap: 500,
+        cycleRedemptionLimit: 2,
+        partners: {'Zomato'},
       );
 
       expect(rule.offerType, MovieDealOfferType.bogo);
       expect(rule.buyCount, 1);
       expect(rule.freeCount, 1);
-      expect(rule.maximumDiscount, 500);
-      expect(rule.cycleTransactionLimit, 2);
-      expect(rule.platform, isNull);
+      expect(rule.perTransactionCap, 500);
+      expect(rule.cycleRedemptionLimit, 2);
+      expect(rule.partners, contains('Zomato'));
     });
 
     test('rewardMultiplier rule stores rate, unit, and qualifying categories', () {
@@ -121,21 +123,26 @@ class MovieTicketRequest {
 
 /// The benefit and card data required to normalize one movie-deal record.
 /// [valueConfig] is the raw `benefits.value_config` JSONB for this row.
+/// [partners] is the raw `benefits.partners` JSONB column (design spec §4.3)
+/// — a separate database column, not nested inside [valueConfig].
 class MovieBenefitSource {
   MovieBenefitSource({
     required this.benefitId,
     required this.catalogCardId,
     required this.title,
     required Map<String, dynamic> valueConfig,
+    Set<String> partners = const {},
     this.sourceUrl,
     this.cardName,
     this.displayPriority = 0,
-  }) : valueConfig = Map.unmodifiable(valueConfig);
+  })  : valueConfig = Map.unmodifiable(valueConfig),
+        partners = Set.unmodifiable(partners);
 
   final String benefitId;
   final String catalogCardId;
   final String title;
   final Map<String, dynamic> valueConfig;
+  final Set<String> partners;
   final String? sourceUrl;
   final String? cardName;
   final int displayPriority;
@@ -161,20 +168,22 @@ class MovieDealRule {
     this.sourceUrl,
     this.cardName,
     this.displayPriority = 0,
-    this.platform,
+    Set<String> partners = const {},
     this.discountPercent,
     this.fixedAmount,
-    this.maximumDiscount,
+    this.perTransactionCap,
+    this.cycleAmountCap,
     this.buyCount,
     this.freeCount,
-    this.cycleTransactionLimit,
+    this.cycleRedemptionLimit,
     this.annualCap,
     this.milestoneThreshold,
     this.milestoneReward,
     this.rewardMultiplierRate,
     this.rewardMultiplierUnit,
     Set<String> qualifyingCategories = const {},
-  }) : qualifyingCategories = Set.unmodifiable(qualifyingCategories);
+  })  : partners = Set.unmodifiable(partners),
+        qualifyingCategories = Set.unmodifiable(qualifyingCategories);
 
   final String benefitId;
   final String catalogCardId;
@@ -184,22 +193,37 @@ class MovieDealRule {
   final int displayPriority;
   final MovieDealOfferType offerType;
 
-  /// Single platform this rule is explicitly tied to. Null means "not
-  /// recorded" — NOT "matches every platform" (design spec §5 fixes the
+  /// Platforms/merchants this rule is tied to — sourced from
+  /// `benefits.partners` (a structured JSONB column) merged with
+  /// `value_config.platform` when present (design spec §4.3). Empty means
+  /// "not recorded" — NOT "matches every platform" (design spec §5 fixes the
   /// old empty-set-as-wildcard bug; platform confidence is computed by the
   /// evaluator per search, not stored here).
-  final String? platform;
+  final Set<String> partners;
 
   final double? discountPercent;
   final double? fixedAmount;
-  final double? maximumDiscount;
+
+  /// Caps a SINGLE booking's discount (e.g. bogo's per-pair cap, sourced
+  /// from `max_discount_per_transaction`). Distinct from [cycleAmountCap] —
+  /// conflating the two was an earlier design error (design spec §1.1/§4.2).
+  final double? perTransactionCap;
+
+  /// Caps TOTAL discount across the whole cycle (e.g. fixedDiscount's
+  /// `monthly_cap` — a ceiling on the sum of every booking's discount in
+  /// the month, never a single-booking cap). Distinct from
+  /// [perTransactionCap] (design spec §1.1/§4.2).
+  final double? cycleAmountCap;
 
   /// bogo only. All real rows observed have buyCount=1, freeCount=1.
   final int? buyCount;
   final int? freeCount;
 
-  /// "N times per month" usage limit — used by bogo and fixedDiscount rules.
-  final int? cycleTransactionLimit;
+  /// "N redemptions/uses per cycle" — counts REDEMPTIONS/TRANSACTIONS, NOT
+  /// tickets (design spec §1.1/§4.4: `max_usage_per_month: 2` means 2
+  /// redemptions/month, each of which discounts exactly one ticket — not 2
+  /// tickets). Used by bogo and fixedDiscount rules.
+  final int? cycleRedemptionLimit;
 
   /// annualAllowance only — total ₹ available per calendar year.
   final double? annualCap;
