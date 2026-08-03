@@ -72,7 +72,7 @@ ANALYZE THE STATEMENT:''';
             ]
           }
         ],
-        'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 512}
+        'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 2048}
       };
 
       final response = await _callGemini(requestBody, maxRetries: 3);
@@ -108,6 +108,28 @@ ANALYZE THE STATEMENT:''';
     } catch (e) {
       ParsingLogger.error('Gemini Parser: Error parsing statement info', e);
       return _fallbackStatementParsing(pdfText, bankName);
+    }
+  }
+
+  /// Regex-extracts a statement date directly from the PDF text, independent
+  /// of Gemini. Used as a second-chance fallback when Gemini's JSON call
+  /// *succeeds* but returns "statement_date": null for a given statement
+  /// format — that path previously fell straight through to DateTime.now(),
+  /// which silently collided every such statement onto one upsert row
+  /// (statements are keyed on user_card_id + statement_date).
+  static DateTime? extractStatementDateFromText(String pdfText) {
+    final dateMatch = RegExp(r'statement date[:\s]*(\d{2}[-/]\d{2}[-/]\d{4})', caseSensitive: false)
+        .firstMatch(pdfText);
+    if (dateMatch == null) return null;
+    try {
+      final parts = dateMatch.group(1)!.split(RegExp(r'[-/]'));
+      if (parts.length != 3) return null;
+      final day = int.parse(parts[0]);
+      final month = int.parse(parts[1]);
+      final year = int.parse(parts[2]);
+      return DateTime(year, month, day);
+    } catch (_) {
+      return null;
     }
   }
 

@@ -3,7 +3,7 @@ import '../../../core/providers/supabase_provider.dart';
 import '../../../core/providers/repository_providers.dart';
 import '../../../core/repositories/email_repository.dart';
 import '../../../core/services/gmail_sync_service.dart';
-import '../../../core/services/statement_processing_service.dart';
+import '../../../core/services/statement_processing_service.dart' show StatementProcessingService, EmailOutcome;
 
 /// Outcome of one Gmail sync run, shown to the user as a summary.
 class GmailSyncResult {
@@ -173,6 +173,7 @@ class CardAssignmentNotifier extends AsyncNotifier<void> {
       await resolve(email: email, userCardId: userCardId);
     } catch (e, st) {
       state = AsyncValue.error(e, st);
+      rethrow;
     }
   }
 
@@ -212,9 +213,14 @@ class CardAssignmentNotifier extends AsyncNotifier<void> {
           userId: userId,
           userEmail: session.user.email ?? '',
           userName: userName,
-          forcedCardIdByBank: {bankDetected: userCardId},
         );
-        await processingService.processUnprocessedEmails();
+        final outcome = await processingService.processSpecificEmail(
+          emailId: email['email_id'] as String,
+          userCardId: userCardId,
+        );
+        if (outcome != EmailOutcome.succeeded && outcome != EmailOutcome.needsPassword) {
+          throw Exception('Failed to reprocess statement (outcome: $outcome)');
+        }
       } finally {
         gmailService.dispose();
       }
@@ -223,6 +229,7 @@ class CardAssignmentNotifier extends AsyncNotifier<void> {
       ref.invalidate(pendingCardAssignmentsProvider);
     } catch (e, st) {
       state = AsyncValue.error(e, st);
+      rethrow;
     }
   }
 }

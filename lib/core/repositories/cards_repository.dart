@@ -40,6 +40,43 @@ class CardsRepository {
     await _db.from('user_cards').update({'is_active': false}).eq('id', userCardId);
   }
 
+  /// Placeholder last-4 seen on cards added before real statement data was
+  /// available — not a real card number, safe to overwrite once a statement
+  /// reveals the actual digits.
+  static const placeholderLastFour = '1234';
+
+  /// Backfills last-4 digits and/or credit limit onto a user_card once
+  /// they're learned from a parsed statement. Only overwrites last-4 when
+  /// it's currently null OR the known placeholder value; a real value the
+  /// user entered manually is never clobbered. Credit limit is only filled
+  /// when currently null.
+  Future<void> backfillCardDetails({
+    required String userCardId,
+    String? lastFourDigits,
+    double? creditLimit,
+  }) async {
+    if (lastFourDigits == null && creditLimit == null) return;
+
+    final existing = await _db
+        .from('user_cards')
+        .select('last_four_digits, credit_limit')
+        .eq('id', userCardId)
+        .single();
+
+    final updates = <String, dynamic>{};
+    final existingLastFour = existing['last_four_digits'] as String?;
+    if (lastFourDigits != null &&
+        (existingLastFour == null || existingLastFour == placeholderLastFour)) {
+      updates['last_four_digits'] = lastFourDigits;
+    }
+    if (creditLimit != null && existing['credit_limit'] == null) {
+      updates['credit_limit'] = creditLimit;
+    }
+    if (updates.isEmpty) return;
+
+    await _db.from('user_cards').update(updates).eq('id', userCardId);
+  }
+
   // Search the catalog — used in add-card flow
   Future<List<Map<String, dynamic>>> searchCatalog(String query) async {
     final data = await _db

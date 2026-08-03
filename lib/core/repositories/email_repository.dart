@@ -147,21 +147,44 @@ class EmailRepository implements EmailRepositoryInterface {
 
   /// Marks an email as needing the user to manually pick which card its
   /// statement belongs to (its bank didn't match any card on file, and no
-  /// prior resolution for that bank exists yet).
+  /// prior resolution for that bank exists yet). Merges into the existing
+  /// metadata rather than replacing it — it still holds attachmentId/
+  /// attachmentFilename, which processing needs once the bank is resolved.
   Future<void> markNeedsCardAssignment({
     required String userId,
     required String emailId,
     required String bankDetected,
   }) async {
+    final existing = await getEmailById(userId: userId, emailId: emailId);
+    final metadata = Map<String, dynamic>.from(
+      existing?['metadata'] as Map<String, dynamic>? ?? {},
+    );
+    metadata['needsCardAssignment'] = true;
+
     await _supabase
         .from('emails')
         .update({
           'processed': false,
           'bank_detected': bankDetected,
-          'metadata': {'needsCardAssignment': true},
+          'metadata': metadata,
         })
         .eq('user_id', userId)
         .eq('email_id', emailId);
+  }
+
+  /// Fetches a single email row by its Gmail message id, or null if not found.
+  Future<Map<String, dynamic>?> getEmailById({
+    required String userId,
+    required String emailId,
+  }) async {
+    final rows = await _supabase
+        .from('emails')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('email_id', emailId)
+        .limit(1);
+    if (rows.isEmpty) return null;
+    return rows.first;
   }
 
   /// Emails whose statement bank couldn't be matched to any card and has

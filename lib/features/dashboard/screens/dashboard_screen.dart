@@ -646,10 +646,18 @@ class _CardsCarousel extends ConsumerStatefulWidget {
 
 class _CardsCarouselState extends ConsumerState<_CardsCarousel> {
   int _current = 0;
+  PageController? _controller;
+  double? _controllerViewportFraction;
 
   // Real credit cards are ISO/IEC 7810 ID-1: 85.60mm x 53.98mm ≈ 1.586:1.
   static const _cardAspectRatio = 1.586;
   static const _maxCardWidth = 340.0;
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -664,6 +672,16 @@ class _CardsCarouselState extends ConsumerState<_CardsCarousel> {
         final cardHeight = cardWidth / _cardAspectRatio;
         final viewportFraction = ((cardWidth + AppSpacing.sm) / constraints.maxWidth).clamp(0.3, 0.9);
 
+        // Only replace the controller when the viewport math actually
+        // changes (e.g. window resize) — recreating it on every rebuild
+        // (which happens whenever pendingCardAssignmentsProvider refreshes)
+        // resets the user's scroll position back to page 0 mid-swipe.
+        if (_controller == null || _controllerViewportFraction != viewportFraction) {
+          _controller?.dispose();
+          _controller = PageController(viewportFraction: viewportFraction, initialPage: _current);
+          _controllerViewportFraction = viewportFraction;
+        }
+
         return Column(
           children: [
             SizedBox(
@@ -671,7 +689,7 @@ class _CardsCarouselState extends ConsumerState<_CardsCarousel> {
               child: PageView.builder(
                 itemCount: itemCount,
                 padEnds: false,
-                controller: PageController(viewportFraction: viewportFraction),
+                controller: _controller,
                 onPageChanged: (i) => setState(() => _current = i),
                 itemBuilder: (context, i) {
                   final isPending = i >= widget.cards.length;
@@ -819,7 +837,7 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
   }
 
   Future<void> _resolve(Map<String, dynamic> catalogEntry) async {
-    setState(() => _resolving = true);
+    setState(() { _resolving = true; _error = null; });
     try {
       await ref.read(cardAssignmentProvider.notifier).resolveWithCatalogEntry(
             email: widget.email,
@@ -827,6 +845,8 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
           );
       ref.invalidate(dashboardProvider);
       if (mounted) Navigator.of(context).pop();
+    } catch (e) {
+      if (mounted) setState(() => _error = 'Failed to assign card: $e');
     } finally {
       if (mounted) setState(() => _resolving = false);
     }
