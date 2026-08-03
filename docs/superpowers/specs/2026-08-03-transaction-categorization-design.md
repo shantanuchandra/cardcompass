@@ -147,6 +147,22 @@ vocabulary has exactly one place to update, not three.
 - Unifying `transactions.category` with the two other, unrelated category
   vocabularies already in this schema (see the note at the end of the
   Taxonomy section). No alias/translation table is built for this.
+- **Fixing `TransactionType` extraction (added after second review pass).**
+  The Gemini prompt only ever requests `debit|credit`, never `refund`,
+  `fee`, `interest`, or `reward`, despite `TransactionType` having all
+  five values (see the Taxonomy section's correction, above). This is a
+  real gap — fee/interest charges are indistinguishable from ordinary
+  spend today — but it's a transaction-*type* extraction problem,
+  independent of the transaction-*category* extraction this spec fixes.
+  Fixing both in one spec would conflate two different vocabularies
+  again, the exact mistake this spec corrects for `category`. Flagged
+  explicitly as follow-up work, not silently left for the categorizer to
+  paper over (it won't — a fee transaction will categorize as `other`,
+  correctly reflecting that it isn't spend on anything, but will still be
+  *counted* as spend by anything that sums debit amounts without checking
+  `transactionType`, e.g. `transactions_provider.dart`'s `totalSpend`,
+  `TxnsState.totalSpend`, currently unconditional on `t.isDebit` — this
+  spec doesn't change that either).
 
 ## Taxonomy: adopt main's 16-category vocabulary, verified sufficient
 
@@ -176,15 +192,52 @@ found, so no expansion needed — "grocery" and
 attributes respectively, not distinct merchant categories (see
 `isInternational` below).
 
+**"Sufficient" means the 16 values cover every real category — it does
+not mean every value has an equally reliable path to being selected,
+correction added after a second review pass.** Checked the actual seed
+data and keyword rules being built: `investment`, `rental`, and `gift`
+appear in the valid-category list and the display mapping (§5), but have
+**no seed merchants and no keyword rules** — confirmed by inspecting the
+implementation plan's merchant seed map and keyword-fallback rule list
+directly. These three categories can only ever be selected via tier 2
+(Gemini's own per-transaction value happening to be exactly one of these
+three strings) — there is no deterministic path to them at all. This
+isn't a defect in the 16-value list itself (a rent payment genuinely is
+`rental`, not some other category), it's an honest limitation in *how
+reliably* three of the sixteen can be detected from a bank statement line
+with the mechanisms this spec builds — rent payments, gift purchases, and
+investment transactions don't have obvious universal keyword signatures
+the way "SWIGGY" or "PETROL PUMP" do. Left as a named gap rather than
+papered over with speculative keyword rules that would likely be wrong
+more often than they're right (e.g. what generic word reliably signals
+"rental" without also matching unrelated transactions?).
+
 v2's current prompt vocabulary (`shopping, dining, travel, fuel,
 entertainment, bills, transfer, fee, payment, cash, other`) gets replaced by
 this list. `bills` maps to `utilities`. `transfer`, `fee`, `payment`, `cash`
 are dropped from the *category* vocabulary — they describe how money moved
-or what kind of charge it was, which `TransactionType` already exists to
-capture (`debit, credit, refund, fee, interest, reward` —
-`transaction.dart:1`); conflating a transaction's type with its spend
-category is what let `fee`/`payment`/`cash` end up in a category field in
-the first place.
+or what kind of charge it was, not what it was spent on.
+
+**Correction (post-review, second pass):** the previous version of this
+spec claimed `TransactionType` "already exists to capture" these four
+values, citing the enum's `debit, credit, refund, fee, interest, reward`
+values as if they were already being extracted. Checked directly and
+that's not true in practice: `gemini_statement_parser.dart`'s prompt
+(line 210) only ever asks Gemini for `"type": "debit|credit"` — never
+`refund`, `fee`, `interest`, or `reward`, despite the enum having all
+five. So today, a genuine fee/interest-charge line item gets extracted as
+a plain `debit` with (after this fix) a category of `other`, rather than
+being identified as a non-spend movement at all. Removing `fee`/`payment`/
+`cash`/`transfer` from the *category* vocabulary is still correct — they
+were never a coherent spend category — but claiming `TransactionType`
+already "captures" them was wrong; nothing currently extracts that
+distinction. Fixing the prompt to actually request the full
+`TransactionType` vocabulary (`debit|credit|refund|fee|interest|reward`)
+is a real, separate piece of work this spec does not do — it's a
+transaction-*type* extraction gap, independent of transaction-*category*
+extraction, and conflating the two is exactly the mistake being corrected
+here. Noted as an explicit non-goal below rather than silently assumed
+solved.
 
 **Known limitation, documented rather than fixed (post-review finding):**
 this 16-value list is a *third* category vocabulary in this schema,
@@ -240,43 +293,131 @@ table, unchanged from main's design:
 ```sql
 CREATE TABLE merchant_category_map (
   merchant_name_normalized TEXT PRIMARY KEY,
-  category TEXT NOT NULL,        -- one of the 16 categories above
-  source TEXT NOT NULL DEFAULT 'seed',  -- 'seed' | 'keyword_fallback' | 'manual'
+  category TEXT NOT NULL CHECK (category IN (
+    'food', 'fuel', 'grocery', 'entertainment', 'travel', 'shopping',
+    'utilities', 'insurance', 'medical', 'education', 'investment',
+    'transport', 'rental', 'subscription', 'gift', 'other'
+  )),
+  source TEXT NOT NULL DEFAULT 'seed' CHECK (source IN ('seed', 'keyword_fallback')),
   created_at TIMESTAMPTZ DEFAULT now()
 );
 ```
 
-**Write trust model (missing from the original version of this spec,
-flagged in review):** this table is shared across all users — a wrong row
-would misclassify that merchant for everyone, not just the user whose
-transaction triggered it. So:
+**Write trust model — revised again after a second review pass.** The
+previous revision specified a `SECURITY DEFINER` RPC as the only write
+path, correctly closing off direct client `INSERT`/`UPDATE`. What it
+missed: the RPC itself still accepted `category` and `source` as
+client-supplied string parameters with no validation *inside the
+function* — meaning a buggy or malicious authenticated client could call
+`upsert_merchant_category('AMAZON', 'gift', 'seed')` and the function
+would happily insert it, mislabeled as trustworthy seed data, for every
+user, permanently (per the first-write-wins rule below). The `CHECK`
+constraints added to the table above catch this at the *storage* layer
+(an invalid `category` value can no longer be inserted at all, by anyone,
+including this RPC), but the RPC should still not trust client input
+blindly:
+
+```sql
+CREATE OR REPLACE FUNCTION upsert_merchant_category(
+  p_merchant_name_normalized TEXT,
+  p_category TEXT
+) RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  -- Reject empty/oversized input before it reaches the table's own
+  -- CHECK constraints — a clearer failure than a generic constraint
+  -- violation, and cheaper than letting Postgres do the rejecting.
+  IF p_merchant_name_normalized IS NULL
+     OR length(trim(p_merchant_name_normalized)) = 0
+     OR length(p_merchant_name_normalized) > 200 THEN
+    RAISE EXCEPTION 'invalid merchant_name_normalized';
+  END IF;
+
+  INSERT INTO merchant_category_map (merchant_name_normalized, category, source)
+  VALUES (trim(upper(p_merchant_name_normalized)), p_category, 'keyword_fallback')
+  ON CONFLICT (merchant_name_normalized) DO NOTHING;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION upsert_merchant_category(TEXT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION upsert_merchant_category(TEXT, TEXT) TO authenticated;
+```
+
+Two changes from the previous revision, both closing the same class of
+gap: **`p_source` is removed from the function's parameters entirely** —
+the only legitimate caller of this RPC is the app's own keyword-fallback
+tier (§3, tier 3; seed rows are inserted by the migration directly, never
+through this RPC), so the function hardcodes `source = 'keyword_fallback'`
+rather than trusting a client to self-report it. **`REVOKE ... FROM
+PUBLIC`** is explicit rather than assumed — Postgres grants `EXECUTE` on
+new functions to `PUBLIC` by default, so without this line, any
+authenticated *or unauthenticated* Supabase role could call the function;
+the previous revision's "`GRANT EXECUTE ... TO authenticated`" alone
+looked sufficient but didn't override the implicit `PUBLIC` grant.
 
 - Every authenticated user can **read** the table directly (it's not
   per-user data).
-- **Writes never happen directly from an authenticated client.** The
-  app never calls `INSERT`/`UPDATE` on this table with the regular
-  Supabase client. Instead, a `SECURITY DEFINER` Postgres function
-  (`upsert_merchant_category`) is the only write path, callable via RPC,
-  and it always inserts with `ON CONFLICT (merchant_name_normalized) DO
-  NOTHING` — **the first categorization for a merchant wins, permanently,
-  from the app's perspective.** This is a deliberate simplification, not
-  an oversight: it avoids a single bad keyword-fallback guess silently
-  overwriting a previously-correct row (whether seeded or
-  keyword-fallback-derived), at the cost of also preventing a later
-  *correct* re-classification from overwriting an earlier wrong one
-  automatically. Correcting a wrong row that's already in the table is a
-  manual operation (direct SQL against the table, bypassing the RPC) —
-  out of scope for this spec, since no tooling exists yet for
-  operator-driven corrections and none is built here.
-- `source = 'keyword_fallback'` distinguishes runtime-learned rows from
+- **The first categorization for a merchant wins, permanently, from the
+  app's perspective** (`ON CONFLICT ... DO NOTHING`). This is a
+  deliberate simplification, not an oversight: it avoids a single bad
+  keyword-fallback guess silently overwriting a previously-correct row,
+  at the cost of also preventing a later *correct* re-classification from
+  overwriting an earlier wrong one automatically. Correcting a wrong row
+  already in the table is a manual operation (direct SQL against the
+  table, bypassing the RPC) — out of scope for this spec, since no
+  tooling exists yet for operator-driven corrections and none is built
+  here.
+- `source = 'keyword_fallback'` (now server-controlled, never
+  client-supplied — see above) distinguishes runtime-learned rows from
   the hand-seeded `'seed'` rows, so it's possible to audit later which
   rows came from a one-off keyword match on a single transaction's
-  description vs. a deliberately curated seed list — this matters because
-  a keyword match (Task 3's tier 3) is a weaker signal than an exact
-  merchant name in the seed list, even though both currently get treated
-  identically by the read side (there's no confidence scoring; the table
-  doesn't distinguish "seen once, from one transaction's description"
-  from "known common merchant" once a row exists).
+  description vs. a deliberately curated seed list.
+
+**Known-ambiguous merchants are excluded from this table entirely (added
+after a second review pass — see the note in §3 on ambiguity, this is
+the concrete mechanism).** A merchant like Amazon spans multiple real
+categories (plain shopping, Amazon Fresh groceries, Prime subscription)
+that a bare merchant name can't disambiguate — and because of the
+first-write-wins rule above, permanently locking Amazon to whichever
+category its *first-ever* transaction happened to be would silently
+miscategorize every other kind of Amazon purchase forever, with no
+mechanism to fix it short of a manual database edit. Rather than accept
+that, a small hardcoded denylist (`lib/core/services/ambiguous_merchants.dart`
+— just `{'AMAZON', 'PAYPAL'}` to start, extend as more are found) is
+checked *before* the merchant-lookup tier runs: a denylisted merchant
+never queries or writes `merchant_category_map` at all, and always falls
+through to tier 2 (Gemini's own per-transaction value) or tier 3 (keyword
+matching on `description`), both of which can react to per-transaction
+context (`"AMAZON PRIME MEMBERSHIP"` vs. `"AMAZON.IN PURCHASE"`) that a
+bare merchant name can't. This trades determinism for correctness on a
+small, explicitly-maintained set of merchants known to be genuinely
+multi-category — most seeded merchants (Carrefour, Swiggy, ADNOC) aren't
+ambiguous and keep the deterministic, fast merchant-map path.
+
+**Merchant-name normalization scope, addressed explicitly after a second
+review pass (previously left entirely to the implementation plan, never
+specified here).** The review's concern: real statement descriptors carry
+gateway prefixes, reference numbers, punctuation, and legal suffixes, so
+exact-match lookup after only uppercase/trim/whitespace-collapse will miss
+most seed rows. Checked before deciding whether to expand this spec's
+scope: `gemini_statement_parser.dart`'s prompt already instructs Gemini to
+**clean merchant names before they ever reach this pipeline** — "Clean
+merchant names (remove codes, URLs, extra numbers)" (line 198), and the
+JSON schema explicitly asks for `"merchantName": "Primary merchant name"`
+(line 208) and `"description": "Clean merchant name without codes"`
+(line 205). This is real, existing mitigation this spec hadn't credited.
+Given that, the case/whitespace normalization already specified is kept
+as a cheap second layer on top of Gemini's own cleanup, rather than this
+spec adding a second, redundant canonicalization system (stripping legal
+suffixes, location codes, gateway prefixes) to solve a problem already
+substantially mitigated upstream. This is a deliberate scope decision, not
+an oversight — if real-world testing (once actual UAE statements are
+available, per §4's honesty note) shows Gemini's cleanup is insufficient
+in practice for a meaningful share of transactions, expanding
+normalization is a small, contained follow-up to this table's lookup
+function, not a redesign.
 
 ### 2. Enforce the vocabulary at the database level
 
@@ -361,15 +502,17 @@ Step 2 differs from main's design: since v2's Gemini call already runs as
 part of statement parsing (there's no separate "alert email" pipeline to
 add an LLM fallback *to*), the corrected-vocabulary Gemini output is used
 directly when it's valid, rather than treated as a last-resort fallback.
-The merchant-lookup table still gets priority (step 1) so a known merchant
-is deterministic even if Gemini's per-transaction guess would've differed
+The merchant-lookup table still gets priority (step 1) — **except for
+denylisted ambiguous merchants (see §1), which skip step 1 entirely and
+go straight to step 2.** For everything else, a known merchant is
+deterministic even if Gemini's per-transaction guess would've differed
 run to run. Step 3 (keyword fallback on `description`) exists for the case
-where the merchant is unrecognized *and* Gemini's returned value isn't one
-of the 16 valid categories (e.g. it hallucinates something outside its own
-instructed vocabulary) — built from scratch here, seeded with the same
-kind of India + UAE merchant keywords the main-repo spec described
-(Swiggy/Zomato/Flipkart/Ola/Careem/Talabat/Carrefour/ADNOC/etc.), since no
-prior keyword list exists in this worktree to promote from.
+where the merchant is unrecognized (or denylisted) *and* Gemini's returned
+value isn't one of the 16 valid categories (e.g. it hallucinates something
+outside its own instructed vocabulary) — built from scratch here, seeded
+with the same kind of India + UAE merchant keywords the main-repo spec
+described (Swiggy/Zomato/Flipkart/Ola/Careem/Talabat/Carrefour/ADNOC/etc.),
+since no prior keyword list exists in this worktree to promote from.
 
 Applied silently — no confirmation UI, no "AI-guessed" flag, consistent
 with the main spec's decision and with v2 having no review-UI precedent to
@@ -404,14 +547,39 @@ and all three need fixing for `isInternational` to mean anything real:
    currency marker). Bank name is known at parse time (statement ingestion
    already resolves which bank a statement is from, to select
    card-matching logic) — add a small `currencyForBank(bankName)` lookup
-   (INR for Indian banks, AED for UAE banks; this also requires teaching
+   as the last-resort default, used only when Gemini's per-transaction
+   value is missing. This requires teaching
    `CardNormalizerService.normalizeBankName` to recognize UAE banks at
-   all, since it currently only recognizes Indian ones) as the last-resort
-   default, used only when Gemini's per-transaction value is missing.
+   all, since it currently only recognizes Indian ones — **and this
+   ordering matters, corrected after a second review pass:** the existing
+   Indian-bank checks in `normalizeBankName` include generic
+   `lower.contains('hsbc')` and `lower.contains('citi')` matches. If UAE
+   bank checks (`hsbc uae`, `citi uae`) are appended *after* those generic
+   checks, they become unreachable — Dart's if/else-if chain matches the
+   generic Indian check first and never evaluates the more specific UAE
+   one, even when the raw sender/subject name explicitly says "UAE." The
+   UAE-specific checks for shared-brand banks (HSBC, Citibank) must be
+   ordered *before* their generic Indian-bank counterparts in the
+   if/else-if chain, not after. Banks with no Indian namesake (FAB,
+   Emirates NBD, ADCB, Mashreq, CBD, RAKBANK) don't have this ordering
+   hazard and can be added in any position.
+
+   **`currencyForBank` must not silently default to INR for an
+   unrecognized bank name** — the previous revision of this spec treated
+   "default to INR" as safe for any name not recognized as UAE, but that
+   masks exactly the failure this section is trying to prevent: if a real
+   UAE bank isn't in the recognized list (or is unreachable due to the
+   ordering hazard above), the currency-resolution code should surface
+   that as an explicit unresolved/unknown-market result rather than
+   quietly asserting INR. Return a nullable/sentinel value instead of a
+   bare `String` default, and let the caller (layer 3 above) decide what
+   to do with "market unknown" — likely falling through to whatever
+   Gemini's own per-transaction currency value was (layer 1+2), if any,
+   rather than overriding it with a guess.
 
 Priority order per transaction: Gemini's own reported currency (layer 1+2,
 now actually read) → `currencyForBank` fallback (layer 3) → hardcoded
-`'INR'` never happens again as a bare default.
+`'INR'` never happens again as a bare, unconditional default.
 
 Add a derived `isInternational` method on `Transaction`:
 `currency != bankMarketCurrency`, where `bankMarketCurrency` is the same
@@ -420,6 +588,24 @@ market currency, independent of what this specific transaction's currency
 turned out to be. Independent signal from `category`, not a new category
 value (a foreign-currency restaurant charge is still "food," and separately
 "international").
+
+**This spec requires at least one real caller of `isInternational`,
+added after a second review pass — a signal with no consumer is
+incomplete, not merely unused.** The concrete consumer: the transactions
+list (`transactions_screen.dart`, via `transactions_provider.dart`)
+already renders each transaction's category icon per row (§5); add an
+international-currency badge/indicator next to it, visible when
+`isInternational(bankMarketCurrency)` is true for that row.
+`bankMarketCurrency` for a loaded `Transaction` is resolved the same way
+as at ingestion time — via the bank name of the card the transaction
+belongs to (`userCardId` → `user_cards.catalog_card_id` → `card_catalog.bank`
+→ `currencyForBank`) — which means `transactions_provider.dart`'s existing
+query needs to either join that bank name in, or the provider resolves it
+per-card once (there are far fewer cards than transactions) and looks it
+up per row rather than re-deriving it per transaction. Exact query
+shape/join strategy is an implementation-plan detail; the requirement
+this spec fixes is that *a* real, named consumer exists and is specified,
+not left for the plan to invent or skip.
 
 **What this fix does not cover, honestly:** none of this can be verified
 end-to-end without a real UAE statement PDF to run through the pipeline —
@@ -456,6 +642,56 @@ lands, re-categorizing existing transactions using their already-stored
 `merchant_name`/`description` — no re-parsing of statements needed. Runs
 across all users, not filtered by market.
 
+**Scope, made precise after a second review pass** — the previous
+revision said "re-categorizing existing transactions" without defining
+which ones need it, which a prior implementation (predating this
+revision) narrowed to only `category = 'other'` exactly. That's
+insufficient: a transaction stored under the *old*, now-invalid
+vocabulary (`'dining'`, `'bills'`, `'transfer'`, `'fee'`, `'payment'`,
+`'cash'`, or any casing/spelling variant Gemini emitted before this fix)
+is not literally `'other'`, but is exactly as wrong as one that is — and
+once the `CHECK` constraint from §2 is added, any row holding one of
+these now-invalid values would violate it. **The backfill must run, and
+the `CHECK` constraint must be added, in a specific order relative to
+each other**, addressed below. The backfill's selection query needs to
+target every row where `category` is:
+
+- `NULL`, or
+- exactly `'other'`, or
+- **not** one of the 16 valid values (catches every legacy/invalid string
+  in one condition, rather than enumerating each legacy value by name —
+  more robust against a legacy value this spec's authors didn't think to
+  list, including anything Gemini hallucinated outside even its own old,
+  wrong vocabulary).
+
+**Constraint-vs-backfill ordering, addressing the review's concern that a
+normal `CHECK` constraint would fail immediately if legacy invalid rows
+already exist:** add the constraint as `NOT VALID` first (Postgres
+enforces it for all *new* writes immediately, without scanning/validating
+existing rows, so it can be added safely even with known-bad data
+present), run the backfill second (which naturally fixes every row the
+constraint would otherwise reject), then run `VALIDATE CONSTRAINT`
+third to confirm every existing row now complies and upgrade it to a
+fully-enforced constraint. If the backfill can't run immediately after
+the constraint is added `NOT VALID` (e.g. it's a separate deploy step),
+the window between them is safe — `NOT VALID` doesn't block existing rows
+from being read or updated, only rejects *new* writes of invalid values,
+so legacy rows sit in a known-bad-but-not-blocking state until the
+backfill reaches them.
+
+**Trigger mechanism — deliberately deferred, not decided, called out
+explicitly rather than left implicit.** This spec does not decide how the
+backfill job gets invoked for real production data (a temporary
+debug-menu button, a manually-run Supabase Edge Function, a one-off
+script run directly against production) — that's an operational decision
+requiring a human choice about production data, out of place in a design
+spec whose scope is the categorization pipeline itself. What this spec
+does commit to: the backfill's selection query (above) and its
+constraint-ordering relationship (above) are both fully specified
+regardless of *how* it's triggered, so the implementation plan has
+something unambiguous to build a trigger mechanism around, rather than
+needing to also invent the query logic.
+
 ## Testing
 
 - Unit tests for the merchant-lookup layer (new, built from scratch here):
@@ -474,9 +710,20 @@ across all users, not filtered by market.
   fallback — call this out explicitly rather than silently skipping
   constraint verification.
 - **Currency fix, three layers (§4, revised after review):**
-  - Gemini prompt: no automated test possible (same reasoning as the
-    original spec's note on the category prompt — this only affects what
-    Gemini is *asked* to return, not verifiable by unit test).
+  - Gemini prompt: **corrected after a second review pass** — the prompt
+    *text itself* is a static, deterministic string, and asserting
+    against it is exactly as testable as any other string. What's
+    genuinely untestable is *Gemini's actual response* to that prompt
+    (an LLM call, not deterministic). So: extract the prompt-building
+    logic into a function returning the prompt string (rather than
+    inlining it in `parseTransactions()`), and add a unit test asserting
+    the returned string contains the expected currency instruction and
+    does not contain the old hardcoded `"INR"` literal — this catches a
+    future edit accidentally reintroducing the hardcoded value, which a
+    "we can't test this" stance would silently miss. Live LLM behavior
+    (whether Gemini actually complies) stays a separate,
+    manual/integration concern, consistent with the note on the category
+    prompt below.
   - Ingestion reading `txn['currency']`: unit-testable once extracted into
     a pure function (given a parsed transaction map, extract and validate
     its currency field) — test that a present, valid currency is used,
