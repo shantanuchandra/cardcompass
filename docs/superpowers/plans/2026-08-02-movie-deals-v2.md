@@ -2619,6 +2619,8 @@ Expected: PASS (3 tests)
 
 The `loadSnapshot` method above returns empty `contexts` and has no live Supabase data-source implementation yet — Task 11 completes both. Proceed directly; both tasks' files commit together there.
 
+**Post-implementation correction:** code-quality review of the committed Tasks 10+11 code found that `loadSnapshot`'s internal `final now = DateTime.now();` (used for milestone cycle-completion gating) made a milestone-cycle-selection test's correctness depend on the real wall-clock date at whatever moment the suite happened to run — the test passed only by coincidence and would have started failing once real time passed its later fixture date (2026-08-31). The COMMITTED code and test file now both accept `now` as an explicit required parameter on `loadSnapshot` (`request` becomes a named-parameter boundary: `loadSnapshot(userId, request, {required DateTime now})`), matching `evaluateMovieDeals`'s (Task 7) established pattern — every `.loadSnapshot(...)` call site above in this task's own spec text is missing this parameter and reflects the pre-fix code; the actual committed file and test differ from what's shown above in exactly this one respect. Task 12's provider-wiring code (further below in this document) has already been corrected to pass `now:` to both `loadSnapshot` and `evaluateMovieDeals` from a single computed value.
+
 ---
 
 ## Task 11: Repository, part 2 — context-building, milestone cycle-precision, live data source
@@ -3157,8 +3159,15 @@ final movieDealsSearchProvider =
   }
 
   try {
+    // Computed once and reused for both calls below — movie_deals_repository.dart's
+    // loadSnapshot() and evaluateMovieDeals() both gate time-sensitive logic
+    // (milestone cycle-completion, rule validity dates) on `now`; calling
+    // DateTime.now() separately at each call site risks the two moments
+    // straddling a boundary (e.g. midnight) and disagreeing about which
+    // cycle is "current" within the same single search.
+    final now = DateTime.now();
     final repository = ref.read(movieDealsRepositoryProvider);
-    final snapshot = await repository.loadSnapshot(user.id, request);
+    final snapshot = await repository.loadSnapshot(user.id, request, now: now);
 
     final rules = <MovieDealRule>[];
     for (final source in snapshot.sources) {
@@ -3187,7 +3196,7 @@ final movieDealsSearchProvider =
           if (snapshot.contexts[(rule.catalogCardId, rule.benefitId)] != null)
             rule.catalogCardId: snapshot.contexts[(rule.catalogCardId, rule.benefitId)]!,
       },
-      now: DateTime.now(),
+      now: now,
     );
   } catch (_) {
     return const MovieDealsRecommendation(
@@ -3206,11 +3215,11 @@ final movieDealsSearchProvider =
       request: request,
       rules: rules,
       contexts: snapshot.contexts,
-      now: DateTime.now(),
+      now: now,
     );
 ```
 
-This removes the flawed re-keying block above entirely — the corrected evaluator signature accepts the repository's native `(catalogCardId, benefitId)`-keyed map directly, with no lossy intermediate step.
+This removes the flawed re-keying block above entirely — the corrected evaluator signature accepts the repository's native `(catalogCardId, benefitId)`-keyed map directly, with no lossy intermediate step. `now` here is the same value already computed once at the top of the provider body (see the `loadSnapshot(..., now: now)` call above) — not a fresh `DateTime.now()` call, for the same straddling-a-boundary reason noted there.
 
 - [ ] **Step 5: Go back and fix Task 7's evaluator signature**
 
