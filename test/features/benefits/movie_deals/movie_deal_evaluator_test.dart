@@ -55,7 +55,7 @@ void main() {
       final result = evaluateMovieDeals(
         request: const MovieTicketRequest(numberOfTickets: 2, pricePerTicket: 400),
         rules: [_bogoRule()],
-        contexts: {'c1': const MovieDealContext(isOwned: true)},
+        contexts: {('c1', 'b-bogo'): const MovieDealContext(isOwned: true)},
         now: today,
       );
       final candidate = result.candidates.firstWhere((c) => c.cardId == 'c1');
@@ -67,7 +67,7 @@ void main() {
       final result = evaluateMovieDeals(
         request: const MovieTicketRequest(numberOfTickets: 2, pricePerTicket: 600),
         rules: [_bogoRule()],
-        contexts: {'c1': const MovieDealContext(isOwned: true)},
+        contexts: {('c1', 'b-bogo'): const MovieDealContext(isOwned: true)},
         now: today,
       );
       final candidate = result.candidates.firstWhere((c) => c.cardId == 'c1');
@@ -81,7 +81,7 @@ void main() {
       final result = evaluateMovieDeals(
         request: const MovieTicketRequest(numberOfTickets: 4, pricePerTicket: 300),
         rules: [_percentRule(percent: 10)],
-        contexts: {'c2': const MovieDealContext(isOwned: true)},
+        contexts: {('c2', 'b-percent'): const MovieDealContext(isOwned: true)},
         now: today,
       );
       final candidate = result.candidates.firstWhere((c) => c.cardId == 'c2');
@@ -101,7 +101,7 @@ void main() {
         request: const MovieTicketRequest(numberOfTickets: 2, pricePerTicket: 300, preferredPlatform: 'Zomato'),
         rules: [_bogoRule(partners: {'Zomato'})],
         contexts: {
-          'c1': const MovieDealContext(isOwned: true, usageConfidence: MovieDealUsageConfidence.unverified),
+          ('c1', 'b-bogo'): const MovieDealContext(isOwned: true, usageConfidence: MovieDealUsageConfidence.unverified),
         },
         now: today,
       );
@@ -114,7 +114,7 @@ void main() {
       final result = evaluateMovieDeals(
         request: const MovieTicketRequest(numberOfTickets: 4, pricePerTicket: 300, preferredPlatform: 'BookMyShow'),
         rules: [_percentRule(percent: 10, partners: {'BookMyShow'})],
-        contexts: {'c2': const MovieDealContext(isOwned: true)},
+        contexts: {('c2', 'b-percent'): const MovieDealContext(isOwned: true)},
         now: today,
       );
       expect(result.bestGuaranteedOwned, isNotNull);
@@ -126,7 +126,7 @@ void main() {
         request: const MovieTicketRequest(numberOfTickets: 1, pricePerTicket: 300, preferredPlatform: 'BookMyShow'),
         rules: [_milestoneRule(partners: {'BookMyShow'})],
         contexts: {
-          'c3': const MovieDealContext(isOwned: true, milestoneSpend: 85000),
+          ('c3', 'b-milestone'): const MovieDealContext(isOwned: true, milestoneSpend: 85000),
         },
         now: today,
       );
@@ -138,7 +138,7 @@ void main() {
       final result = evaluateMovieDeals(
         request: const MovieTicketRequest(numberOfTickets: 1, pricePerTicket: 300, preferredPlatform: 'BookMyShow'),
         rules: [_fixedDiscountWithCapRule()],
-        contexts: {'c4': const MovieDealContext(isOwned: true)},
+        contexts: {('c4', 'b-fixed'): const MovieDealContext(isOwned: true)},
         now: today,
       );
       expect(result.bestGuaranteedOwned, isNull);
@@ -154,7 +154,7 @@ void main() {
       final result = evaluateMovieDeals(
         request: const MovieTicketRequest(numberOfTickets: 1, pricePerTicket: 300, preferredPlatform: 'Uber'),
         rules: [_milestoneRule(partners: {'Uber', 'cult.fit Live', 'BookMyShow', 'TataCliQ'})],
-        contexts: {'c3': const MovieDealContext(isOwned: true, milestoneSpend: 85000)},
+        contexts: {('c3', 'b-milestone'): const MovieDealContext(isOwned: true, milestoneSpend: 85000)},
         now: today,
       );
       final candidate = result.candidates.firstWhere((c) => c.cardId == 'c3');
@@ -165,7 +165,7 @@ void main() {
       final result = evaluateMovieDeals(
         request: const MovieTicketRequest(numberOfTickets: 1, pricePerTicket: 300, preferredPlatform: 'BookMyShow'),
         rules: [_milestoneRule(partners: {'Uber', 'cult.fit Live', 'BookMyShow', 'TataCliQ'})],
-        contexts: {'c3': const MovieDealContext(isOwned: true, milestoneSpend: 85000)},
+        contexts: {('c3', 'b-milestone'): const MovieDealContext(isOwned: true, milestoneSpend: 85000)},
         now: today,
       );
       final candidate = result.candidates.firstWhere((c) => c.cardId == 'c3');
@@ -178,7 +178,7 @@ void main() {
       final result = evaluateMovieDeals(
         request: const MovieTicketRequest(numberOfTickets: 1, pricePerTicket: 300),
         rules: [_percentRule()], // no partners
-        contexts: {'c2': const MovieDealContext(isOwned: true)},
+        contexts: {('c2', 'b-percent'): const MovieDealContext(isOwned: true)},
         now: today,
       );
       final candidate = result.candidates.firstWhere((c) => c.cardId == 'c2');
@@ -190,7 +190,7 @@ void main() {
         request: const MovieTicketRequest(numberOfTickets: 1, pricePerTicket: 300),
         rules: [_percentRule()],
         contexts: {
-          'c2': const MovieDealContext(isOwned: true, confirmedPlatforms: {'PVR'}),
+          ('c2', 'b-percent'): const MovieDealContext(isOwned: true, confirmedPlatforms: {'PVR'}),
         },
         now: today,
       );
@@ -202,7 +202,7 @@ void main() {
       final result = evaluateMovieDeals(
         request: const MovieTicketRequest(numberOfTickets: 1, pricePerTicket: 300, preferredPlatform: 'PVR'),
         rules: [_percentRule()],
-        contexts: {'c2': const MovieDealContext(isOwned: true)},
+        contexts: {('c2', 'b-percent'): const MovieDealContext(isOwned: true)},
         now: today,
       );
       final candidate = result.candidates.firstWhere((c) => c.cardId == 'c2');
@@ -219,8 +219,8 @@ void main() {
           _percentRule(cardId: 'unowned-card', percent: 20, partners: {'BookMyShow'}),
         ],
         contexts: {
-          'owned-card': const MovieDealContext(isOwned: true),
-          'unowned-card': const MovieDealContext(isOwned: false),
+          ('owned-card', 'b-percent'): const MovieDealContext(isOwned: true),
+          ('unowned-card', 'b-percent'): const MovieDealContext(isOwned: false),
         },
         now: today,
       );
@@ -233,7 +233,7 @@ void main() {
       final result = evaluateMovieDeals(
         request: const MovieTicketRequest(numberOfTickets: 2, pricePerTicket: 300, preferredPlatform: 'BookMyShow'),
         rules: [_percentRule(cardId: 'c1', percent: 10, partners: {'BookMyShow'})],
-        contexts: {'c1': const MovieDealContext(isOwned: true)},
+        contexts: {('c1', 'b-percent'): const MovieDealContext(isOwned: true)},
         now: today,
       );
       expect(result.bestGuaranteedOwned!.cardId, result.bestGuaranteedOverall!.cardId);
@@ -255,7 +255,7 @@ void main() {
       final result = evaluateMovieDeals(
         request: const MovieTicketRequest(numberOfTickets: 2, pricePerTicket: 300),
         rules: [multiplierRule],
-        contexts: {'c5': const MovieDealContext(isOwned: true)},
+        contexts: {('c5', 'b-mult'): const MovieDealContext(isOwned: true)},
         now: today,
       );
       final candidate = result.candidates.firstWhere((c) => c.cardId == 'c5');
@@ -268,7 +268,7 @@ void main() {
       final result = evaluateMovieDeals(
         request: const MovieTicketRequest(numberOfTickets: 1, pricePerTicket: 100),
         rules: [_bogoRule()], // cap of 500 far exceeds a 100-rupee ticket
-        contexts: {'c1': const MovieDealContext(isOwned: true)},
+        contexts: {('c1', 'b-bogo'): const MovieDealContext(isOwned: true)},
         now: today,
       );
       final candidate = result.candidates.firstWhere((c) => c.cardId == 'c1');

@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../repositories/cards_repository.dart';
 import '../repositories/transactions_repository.dart';
 import '../repositories/statements_repository.dart';
+import '../repositories/movie_deals_repository.dart';
 import 'supabase_provider.dart';
 
 final cardsRepositoryProvider = Provider<CardsRepository>((ref) {
@@ -14,4 +15,10 @@ final transactionsRepositoryProvider = Provider<TransactionsRepository>((ref) {
 
 final statementsRepositoryProvider = Provider<StatementsRepository>((ref) {
   return StatementsRepository(ref.watch(supabaseClientProvider));
+});
+
+final movieDealsRepositoryProvider = Provider<MovieDealsRepository>((ref) {
+  return MovieDealsSupabaseRepository(
+    SupabaseMovieDealsDataSource(ref.watch(supabaseClientProvider)),
+  );
 });

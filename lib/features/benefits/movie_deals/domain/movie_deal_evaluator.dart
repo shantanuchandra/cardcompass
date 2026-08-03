@@ -12,14 +12,14 @@ export 'movie_deal_candidate.dart';
 MovieDealsRecommendation evaluateMovieDeals({
   required MovieTicketRequest request,
   required List<MovieDealRule> rules,
-  required Map<String, MovieDealContext> contexts,
+  required Map<(String, String), MovieDealContext> contexts,
   required DateTime now,
 }) {
   final candidates = <MovieDealCandidate>[];
   final rejected = <RejectedMovieDealCandidate>[];
 
   for (final rule in rules) {
-    final context = contexts[rule.catalogCardId] ?? const MovieDealContext();
+    final context = contexts[(rule.catalogCardId, rule.benefitId)] ?? const MovieDealContext();
     final reason = _ineligibilityReason(rule, request, context, now);
     if (reason != null) {
       rejected.add(RejectedMovieDealCandidate(
