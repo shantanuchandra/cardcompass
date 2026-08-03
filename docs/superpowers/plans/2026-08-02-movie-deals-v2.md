@@ -628,7 +628,14 @@ RuleNormalizationResult normalizeMovieDealRule(MovieBenefitSource source) {
     return _normalizePercent(source, discountPercent);
   }
 
-  final unit = _string(config['unit'])?.toLowerCase();
+  // rawUnit preserves the original casing for storage/display
+  // (rewardMultiplierUnit, e.g. "points per Rs.150" must survive intact —
+  // a real bug found during implementation: an earlier draft only kept the
+  // lowercased comparison value and passed THAT into storage, silently
+  // lowercasing every displayed unit string). unit (lowercased) is used
+  // ONLY for the dispatch comparisons below (`unit != 'fixed'` etc.).
+  final rawUnit = _string(config['unit']);
+  final unit = rawUnit?.toLowerCase();
   final threshold = _number(config['threshold_amount']);
   final milestoneType = _string(config['milestone_type']);
   if (milestoneType != null || threshold != null) {
@@ -638,8 +645,8 @@ RuleNormalizationResult normalizeMovieDealRule(MovieBenefitSource source) {
   final category = _string(config['category'])?.toLowerCase() ?? '';
   final mentionsMovies = category.split(',').map((c) => c.trim()).contains('movies');
   final rate = _number(config['multiplier']) ?? _number(config['base_rate']);
-  if (mentionsMovies && rate != null && unit != null && unit != 'fixed') {
-    return _normalizeRewardMultiplier(source, unit, rate, category);
+  if (mentionsMovies && rate != null && rawUnit != null && unit != 'fixed') {
+    return _normalizeRewardMultiplier(source, rawUnit, rate, category);
   }
 
   if (unit == 'fixed') {
@@ -1085,10 +1092,15 @@ void main() {
         {'unit': 'percent', 'category': 'recharge,utilities,travel,movies', 'base_rate': 5.0, 'monthly_cap_points': 1500},
         {'Paytm'}, {}, MovieDealOfferType.rewardMultiplier,
       ),
-      '10X CashPoints on Favorite Merchants': (
-        {'unit': 'points per Rs.150', 'category': 'shopping,dining,entertainment', 'multiplier': 10.0, 'currency_unit': 150.0, 'monthly_cap_points': 2500},
-        {'Big Basket', 'BookMyShow', 'OYO', 'Swiggy', 'Uber'}, {'wallet_loads', 'fuel', 'EMI'}, MovieDealOfferType.rewardMultiplier,
-      ),
+      // NOTE: a 4th row also titled "10X CashPoints on Favorite Merchants"
+      // (category: "shopping,dining,entertainment") exists in the seed data
+      // and was originally listed here, but its category value is
+      // "entertainment", never the literal "movies"/"movie" token §4.4's
+      // classification rule requires — it genuinely isn't a movie deal, and
+      // normalizeMovieDealRule correctly rejects it. Removed per design spec
+      // §4.4 correction (see spec file). Do not re-add it; do not widen the
+      // classifier to treat "entertainment" as movies-equivalent — no data
+      // supports that mapping.
     };
 
     fixtures.forEach((title, fixture) {
@@ -1118,7 +1130,7 @@ void main() {
 - [ ] **Step 2: Run test to verify it passes**
 
 Run: `flutter test test/features/benefits/movie_deals/movie_benefit_fixture_test.dart`
-Expected: If Tasks 3–4 were completed correctly, this should already PASS (13 tests) — it's a regression guard over existing behavior. Run it to confirm.
+Expected: If Tasks 3–4 were completed correctly, this should already PASS (12 tests) — it's a regression guard over existing behavior. Run it to confirm.
 
 - [ ] **Step 3: If any fixture fails, fix the normalizer, never the fixture**
 
@@ -1127,7 +1139,7 @@ A fixture mismatch means a real production row would be mishandled. Trace which 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `flutter test test/features/benefits/movie_deals/movie_benefit_fixture_test.dart`
-Expected: PASS (13 tests)
+Expected: PASS (12 tests)
 
 - [ ] **Step 5: Commit**
 
