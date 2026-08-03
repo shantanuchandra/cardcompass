@@ -10,16 +10,18 @@ import '../../features/dashboard/screens/dashboard_screen.dart';
 import '../../features/cards/screens/cards_screen.dart';
 import '../../features/cards/screens/add_card_screen.dart';
 import '../../features/transactions/screens/transactions_screen.dart';
+import '../../features/benefits/movie_deals/screens/movie_deals_screen.dart';
 import '../../features/settings/screens/settings_screen.dart';
 import '../theme/app_theme.dart';
 import '../../app.dart' show navigatorKey;
 
-const _kTabPaths = ['/app', '/app/cards', '/app/transactions', '/app/settings'];
+const _kTabPaths = ['/app', '/app/cards', '/app/transactions', '/app/movie-deals', '/app/settings'];
 
 int _tabIndexFor(String loc) {
   if (loc.startsWith('/app/cards')) return 1;
   if (loc.startsWith('/app/transactions')) return 2;
-  if (loc.startsWith('/app/settings')) return 3;
+  if (loc.startsWith('/app/movie-deals')) return 3;
+  if (loc.startsWith('/app/settings')) return 4;
   return 0;
 }
 
@@ -77,6 +79,7 @@ class _AppShell extends ConsumerWidget {
     DashboardScreen(),
     CardsScreen(),
     TransactionsScreen(),
+    MovieDealsScreen(),
     SettingsScreen(),
   ];
 
@@ -130,6 +133,7 @@ class _SideRail extends StatelessWidget {
     (icon: Icons.dashboard_outlined, activeIcon: Icons.dashboard, label: 'Dashboard'),
     (icon: Icons.credit_card_outlined, activeIcon: Icons.credit_card, label: 'Cards'),
     (icon: Icons.receipt_long_outlined, activeIcon: Icons.receipt_long, label: 'Ledger'),
+    (icon: Icons.local_movies_outlined, activeIcon: Icons.local_movies, label: 'Movie Deals'),
     (icon: Icons.settings_outlined, activeIcon: Icons.settings, label: 'Settings'),
   ];
 
@@ -207,6 +211,7 @@ class _BottomNav extends StatelessWidget {
     (icon: Icons.dashboard_outlined, activeIcon: Icons.dashboard, label: 'Dashboard'),
     (icon: Icons.credit_card_outlined, activeIcon: Icons.credit_card, label: 'Cards'),
     (icon: Icons.receipt_long_outlined, activeIcon: Icons.receipt_long, label: 'Ledger'),
+    (icon: Icons.local_movies_outlined, activeIcon: Icons.local_movies, label: 'Movie Deals'),
     (icon: Icons.settings_outlined, activeIcon: Icons.settings, label: 'Settings'),
   ];
 
