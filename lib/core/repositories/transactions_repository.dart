@@ -1,5 +1,6 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../shared/models/transaction.dart';
+import '../services/mcc_resolver.dart';
 
 String? parseMerchantCategoryRow(Map<String, dynamic>? row) {
   return row?['category'] as String?;
@@ -18,13 +19,11 @@ class TransactionsRepository {
     int limit = 50,
     int offset = 0,
   }) async {
-    var query = _db
-        .from('transactions')
-        .select()
-        .eq('user_id', userId);
+    var query = _db.from('transactions').select().eq('user_id', userId);
 
     if (userCardId != null) query = query.eq('user_card_id', userCardId);
-    if (from != null) query = query.gte('transaction_date', from.toIso8601String());
+    if (from != null)
+      query = query.gte('transaction_date', from.toIso8601String());
     if (to != null) query = query.lte('transaction_date', to.toIso8601String());
     if (category != null) query = query.eq('category', category);
 
@@ -32,17 +31,24 @@ class TransactionsRepository {
         .order('transaction_date', ascending: false)
         .range(offset, offset + limit - 1);
 
-    return (data as List).map((e) => Transaction.fromJson(e as Map<String, dynamic>)).toList();
+    return (data as List)
+        .map((e) => Transaction.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
-  Future<List<Transaction>> getRecentTransactions(String userId, {int limit = 10}) async {
+  Future<List<Transaction>> getRecentTransactions(
+    String userId, {
+    int limit = 10,
+  }) async {
     final data = await _db
         .from('transactions')
         .select()
         .eq('user_id', userId)
         .order('transaction_date', ascending: false)
         .limit(limit);
-    return (data as List).map((e) => Transaction.fromJson(e as Map<String, dynamic>)).toList();
+    return (data as List)
+        .map((e) => Transaction.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   Future<String?> lookupMerchantCategory(String normalizedMerchantName) async {
@@ -91,27 +97,36 @@ class TransactionsRepository {
     double? rewardEarned,
     String? rewardType,
     String? statementId,
+    MccCandidate? mcc,
     Map<String, dynamic>? metadata,
   }) async {
-    await _db.from('transactions').upsert(
-      {
-        'user_id': userId,
-        'user_card_id': userCardId,
-        'amount': amount,
-        'description': description,
-        'transaction_date': transactionDate.toIso8601String(),
-        'currency': currency,
-        'merchant_name': merchantName,
-        'category': category,
-        'transaction_type': transactionType,
-        'location': location,
-        'reward_earned': rewardEarned,
-        'reward_type': rewardType,
-        'statement_id': statementId,
-        'metadata': metadata,
-      },
-      onConflict: 'user_id,user_card_id,transaction_date,description,amount',
-      ignoreDuplicates: true,
-    );
+    await _db
+        .from('transactions')
+        .upsert(
+          {
+            'user_id': userId,
+            'user_card_id': userCardId,
+            'amount': amount,
+            'description': description,
+            'transaction_date': transactionDate.toIso8601String(),
+            'currency': currency,
+            'merchant_name': merchantName,
+            'category': category,
+            'transaction_type': transactionType,
+            'location': location,
+            'reward_earned': rewardEarned,
+            'reward_type': rewardType,
+            'statement_id': statementId,
+            'mcc_code': mcc?.code,
+            'mcc_description': mcc?.description,
+            'mcc_source': mcc?.source.databaseValue,
+            'mcc_confidence': mcc?.confidence,
+            'mcc_verified_at': mcc?.verifiedAt?.toIso8601String(),
+            'metadata': metadata,
+          },
+          onConflict:
+              'user_id,user_card_id,transaction_date,description,amount',
+          ignoreDuplicates: true,
+        );
   }
 }

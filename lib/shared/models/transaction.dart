@@ -15,6 +15,11 @@ class Transaction {
   final double? rewardEarned;
   final String? rewardType;
   final String? statementId;
+  final String? mccCode;
+  final String? mccDescription;
+  final String? mccSource;
+  final double? mccConfidence;
+  final DateTime? mccVerifiedAt;
   final Map<String, dynamic> metadata;
   final DateTime createdAt;
 
@@ -33,6 +38,11 @@ class Transaction {
     this.rewardEarned,
     this.rewardType,
     this.statementId,
+    this.mccCode,
+    this.mccDescription,
+    this.mccSource,
+    this.mccConfidence,
+    this.mccVerifiedAt,
     this.metadata = const {},
     required this.createdAt,
   });
@@ -55,6 +65,13 @@ class Transaction {
       rewardEarned: (json['reward_earned'] as num?)?.toDouble(),
       rewardType: json['reward_type'] as String?,
       statementId: json['statement_id'] as String?,
+      mccCode: json['mcc_code'] as String?,
+      mccDescription: json['mcc_description'] as String?,
+      mccSource: json['mcc_source'] as String?,
+      mccConfidence: (json['mcc_confidence'] as num?)?.toDouble(),
+      mccVerifiedAt: json['mcc_verified_at'] != null
+          ? DateTime.parse(json['mcc_verified_at'] as String)
+          : null,
       metadata: (json['metadata'] as Map<String, dynamic>?) ?? {},
       createdAt: DateTime.parse(json['created_at'] as String),
     );
@@ -62,12 +79,18 @@ class Transaction {
 
   static TransactionType _parseType(String? type) {
     switch (type) {
-      case 'credit': return TransactionType.credit;
-      case 'refund': return TransactionType.refund;
-      case 'fee': return TransactionType.fee;
-      case 'interest': return TransactionType.interest;
-      case 'reward': return TransactionType.reward;
-      default: return TransactionType.debit;
+      case 'credit':
+        return TransactionType.credit;
+      case 'refund':
+        return TransactionType.refund;
+      case 'fee':
+        return TransactionType.fee;
+      case 'interest':
+        return TransactionType.interest;
+      case 'reward':
+        return TransactionType.reward;
+      default:
+        return TransactionType.debit;
     }
   }
 }
