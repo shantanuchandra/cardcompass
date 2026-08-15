@@ -53,7 +53,7 @@
                 <h2 id="waitlist-title">Apply to the Founding 100</h2>
                 <p>Start with your email. The next step takes about a minute.</p>
               </div>
-              <form id="joinForm" novalidate data-placement="hero">
+              <form id="joinForm" method="post" action="/waitlist-unavailable/" novalidate data-placement="hero">
                 <label for="email">Email address</label>
                 <div class="field-action-row">
                   <input id="email" name="email" type="email" inputmode="email" autocomplete="email" maxlength="254" placeholder="you@example.com" aria-describedby="emailError" required aria-required="true">
@@ -75,7 +75,7 @@
                 <h2>Help us understand your card setup</h2>
                 <p>These answers help us prioritise early access. Required fields are marked.</p>
               </div>
-              <form id="qualificationForm" novalidate>
+              <form id="qualificationForm" method="post" action="/waitlist-unavailable/" novalidate>
                 <div class="field-grid field-grid-two">
                   <div class="field-group">
                     <label for="name">Name <span>(optional)</span></label>

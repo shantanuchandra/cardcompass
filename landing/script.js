@@ -1,4 +1,6 @@
 import { SUPABASE_URL, SUPABASE_ANON } from '/env.js';
+import { installAnalyticsTransport } from '/landing/analytics.js';
+import { activeOptionForEnter, closeComboboxState } from '/landing/combobox.js';
 import {
   buildApplicationReceipt,
   buildEnrichmentPayload,
@@ -47,30 +49,15 @@ window.plausible.init({
 // The configured data-domain tracker is Plausible's legacy-compatible URL.
 // Keep a final request guard until a site-specific pa-*.js URL is available:
 // old builds ignore init options, while current builds safely sanitize twice.
-const nativeFetch = window.fetch.bind(window);
-let manualPageviewEnabled = false;
-window.fetch = function guardedFetch(input, init = {}) {
-  const requestUrl = typeof input === 'string' ? input : input?.url;
-  if (requestUrl === 'https://plausible.io/api/event' && typeof init.body === 'string') {
-    try {
-      const payload = JSON.parse(init.body);
-      if (payload.n === 'pageview' && !manualPageviewEnabled) {
-        return Promise.resolve(new Response(null, { status: 202 }));
-      }
-      init = { ...init, body: JSON.stringify(sanitizeAnalyticsPayload(payload)) };
-    } catch {
-      return Promise.resolve(new Response(null, { status: 202 }));
-    }
-  }
-  return nativeFetch(input, init);
-};
+const analyticsTransport = installAnalyticsTransport({ fetchImpl: window.fetch.bind(window) });
+window.fetch = analyticsTransport.fetch;
 
 const plausibleScript = document.createElement('script');
 plausibleScript.async = true;
 plausibleScript.dataset.domain = 'cardcompass.in';
 plausibleScript.src = 'https://plausible.io/js/script.js';
 plausibleScript.addEventListener('load', () => {
-  manualPageviewEnabled = true;
+  analyticsTransport.enableManualPageview();
   window.plausible('pageview', { url: stripAnalyticsUrl(window.location.href) });
 }, { once: true });
 document.head.append(plausibleScript);
@@ -308,11 +295,32 @@ function chooseCard(label) {
   if (selectedCards.length >= 2 || selectedCards.includes(label)) return;
   selectedCards.push(label);
   cardSearch.value = '';
-  cardSearch.setAttribute('aria-expanded', 'false');
-  cardSearch.removeAttribute('aria-activedescendant');
-  cardSuggestions.hidden = true;
+  closeSuggestions();
   renderSelectedCards();
   document.getElementById('topCardsError').textContent = '';
+}
+
+function currentComboboxState() {
+  const activeDescendant = cardSearch.getAttribute('aria-activedescendant');
+  const selectedOption = cardSuggestions.querySelector('[role="option"][aria-selected="true"]');
+  return {
+    isOpen: !cardSuggestions.hidden,
+    activeSuggestion,
+    activeDescendant,
+    selectedOptionId: selectedOption?.id || null,
+  };
+}
+
+function closeSuggestions() {
+  const closedState = closeComboboxState(currentComboboxState());
+  activeSuggestion = closedState.activeSuggestion;
+  cardSuggestions.hidden = true;
+  cardSearch.setAttribute('aria-expanded', 'false');
+  cardSearch.removeAttribute('aria-activedescendant');
+  cardSuggestions.querySelectorAll('[role="option"]').forEach((option) => {
+    option.classList.remove('is-active');
+    option.setAttribute('aria-selected', 'false');
+  });
 }
 
 function updateSuggestions() {
@@ -351,11 +359,7 @@ function moveSuggestion(direction) {
 
 cardSearch.addEventListener('input', updateSuggestions);
 cardSearch.addEventListener('focus', updateSuggestions);
-cardSearch.addEventListener('blur', () => {
-  cardSuggestions.hidden = true;
-  cardSearch.setAttribute('aria-expanded', 'false');
-  cardSearch.removeAttribute('aria-activedescendant');
-});
+cardSearch.addEventListener('blur', closeSuggestions);
 cardSearch.addEventListener('keydown', (event) => {
   if (event.key === 'ArrowDown') {
     event.preventDefault();
@@ -363,14 +367,16 @@ cardSearch.addEventListener('keydown', (event) => {
   } else if (event.key === 'ArrowUp') {
     event.preventDefault();
     moveSuggestion(-1);
-  } else if (event.key === 'Enter' && activeSuggestion >= 0) {
-    event.preventDefault();
-    const activeOption = cardSuggestions.querySelectorAll('[role="option"]')[activeSuggestion];
-    if (activeOption) chooseCard(activeOption.dataset.label);
+  } else if (event.key === 'Enter') {
+    const options = [...cardSuggestions.querySelectorAll('[role="option"]')]
+      .map((option) => ({ id: option.id, label: option.dataset.label }));
+    const activeOption = activeOptionForEnter(options, currentComboboxState());
+    if (activeOption) {
+      event.preventDefault();
+      chooseCard(activeOption.label);
+    }
   } else if (event.key === 'Escape') {
-    cardSuggestions.hidden = true;
-    cardSearch.setAttribute('aria-expanded', 'false');
-    cardSearch.removeAttribute('aria-activedescendant');
+    closeSuggestions();
   }
 });
 
