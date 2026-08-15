@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/theme/category_display.dart';
 import '../../../core/providers/repository_providers.dart';
 import '../../../core/providers/supabase_provider.dart';
 import '../../../shared/models/user_card.dart';
@@ -767,31 +768,7 @@ class _TxnTile extends StatelessWidget {
     );
   }
 
-  IconData _categoryIcon(String? category) {
-    switch ((category ?? '').toLowerCase()) {
-      case 'food':
-      case 'dining':
-        return Icons.restaurant_rounded;
-      case 'travel':
-      case 'transport':
-        return Icons.flight_rounded;
-      case 'shopping':
-        return Icons.shopping_bag_rounded;
-      case 'entertainment':
-        return Icons.movie_rounded;
-      case 'fuel':
-        return Icons.local_gas_station_rounded;
-      case 'groceries':
-        return Icons.local_grocery_store_rounded;
-      case 'utilities':
-        return Icons.bolt_rounded;
-      case 'health':
-      case 'medical':
-        return Icons.medical_services_rounded;
-      default:
-        return Icons.receipt_rounded;
-    }
-  }
+  IconData _categoryIcon(String? category) => categoryIcon(category);
 }
 
 class _EmptyTransactions extends StatelessWidget {

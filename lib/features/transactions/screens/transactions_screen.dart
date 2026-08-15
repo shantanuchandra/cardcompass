@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/theme/category_display.dart';
 import '../providers/transactions_provider.dart';
 import '../widgets/spend_trend_panel.dart';
 import '../../../shared/models/transaction.dart';
@@ -385,29 +386,9 @@ class _TxnRow extends StatelessWidget {
     );
   }
 
-  static Color _categoryColor(String? cat) {
-    switch (cat?.toLowerCase()) {
-      case 'dining': case 'food': return AppColors.warning;
-      case 'travel': return const Color(0xFF38BDF8);
-      case 'shopping': return AppColors.violet;
-      case 'fuel': return const Color(0xFFF97316);
-      case 'entertainment': return const Color(0xFFEC4899);
-      case 'groceries': return AppColors.success;
-      default: return AppColors.textSecondary;
-    }
-  }
+  static Color _categoryColor(String? cat) => categoryColor(cat);
 
-  static IconData _categoryIcon(String? cat) {
-    switch (cat?.toLowerCase()) {
-      case 'dining': case 'food': return Icons.restaurant_rounded;
-      case 'travel': return Icons.flight_rounded;
-      case 'shopping': return Icons.shopping_bag_rounded;
-      case 'fuel': return Icons.local_gas_station_rounded;
-      case 'entertainment': return Icons.theaters_rounded;
-      case 'groceries': return Icons.local_grocery_store_rounded;
-      default: return Icons.receipt_rounded;
-    }
-  }
+  static IconData _categoryIcon(String? cat) => categoryIcon(cat);
 }
 
 // ── Shared pill/chip widgets ─────────────────────────────────────────────────
