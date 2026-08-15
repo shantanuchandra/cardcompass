@@ -1,15 +1,19 @@
 import { SUPABASE_URL, SUPABASE_ANON } from '/env.js';
-import { installAnalyticsTransport } from '/analytics.js';
+import { PLAUSIBLE_ENDPOINT } from '/analytics.js';
 import { activeOptionForEnter, closeComboboxState } from '/combobox.js';
 import {
   buildApplicationReceipt,
   buildEnrichmentPayload,
   buildJoinPayload,
   buildPlausibleEvent,
+  analyticsVariant,
   captureFirstTouch,
+  clearEnrichmentSession,
+  clearFirstTouch,
   extractEnrichmentToken,
   isValidEmail,
-  sanitizeAnalyticsPayload,
+  persistEnrichmentSession,
+  restoreEnrichmentSession,
   searchCards,
   stripAnalyticsUrl,
   validateQualification,
@@ -19,7 +23,7 @@ let supabaseClientPromise = null;
 
 async function getSupabaseClient() {
   if (!SUPABASE_URL || !SUPABASE_ANON) return null;
-  supabaseClientPromise ||= import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm')
+  supabaseClientPromise ||= import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/+esm')
     .then(({ createClient }) => createClient(SUPABASE_URL, SUPABASE_ANON));
   return supabaseClientPromise;
 }
@@ -33,40 +37,20 @@ const attribution = captureFirstTouch({
   variant: pageLandingVariant,
   storage: attributionStorage,
 });
-const landingVariant = attribution.landing_variant || pageLandingVariant;
-
-window.plausible = window.plausible || function plausible() {
-  (window.plausible.q = window.plausible.q || []).push(arguments);
-};
-window.plausible.init = window.plausible.init || function init(options) {
-  window.plausible.o = options || {};
-};
-window.plausible.init({
-  autoCapturePageviews: false,
-  logging: false,
-  transformRequest: sanitizeAnalyticsPayload,
-});
-
-// The configured data-domain tracker is Plausible's legacy-compatible URL.
-// Keep a final request guard until a site-specific pa-*.js URL is available:
-// old builds ignore init options, while current builds safely sanitize twice.
-const analyticsTransport = installAnalyticsTransport({ fetchImpl: window.fetch.bind(window) });
-window.fetch = analyticsTransport.fetch;
-
-const plausibleScript = document.createElement('script');
-plausibleScript.async = true;
-plausibleScript.dataset.domain = 'cardcompass.in';
-plausibleScript.src = 'https://plausible.io/js/script.js';
-plausibleScript.addEventListener('load', () => {
-  analyticsTransport.enableManualPageview();
-  window.plausible('pageview', { url: stripAnalyticsUrl(window.location.href) });
-}, { once: true });
-document.head.append(plausibleScript);
+const landingVariant = analyticsVariant(pageLandingVariant);
 
 function track(name, context = {}) {
   const event = buildPlausibleEvent(name, context, window.location.href);
-  if (event) window.plausible(event.name, event.options);
+  if (!event) return;
+  void fetch(PLAUSIBLE_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    keepalive: true,
+    body: JSON.stringify({ n: event.name, u: event.options.url, d: 'cardcompass.in', r: '', p: event.options.props }),
+  });
 }
+
+track('pageview', { variant: landingVariant });
 
 const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const siteHeader = document.getElementById('siteHeader');
@@ -88,6 +72,9 @@ const selectedCardsElement = document.getElementById('selectedCards');
 
 let activePlacement = 'hero';
 let enrichmentToken = null;
+let enrichmentStorage = null;
+try { enrichmentStorage = window.sessionStorage; } catch { /* Storage is optional. */ }
+enrichmentToken = restoreEnrichmentSession(enrichmentStorage);
 let waitlistStartedTracked = false;
 let cardCatalog = [];
 let selectedCards = [];
@@ -117,6 +104,8 @@ function revealQualification() {
   document.querySelector('[data-step-marker="2"]').setAttribute('aria-current', 'step');
   document.getElementById('name').focus();
 }
+
+if (enrichmentToken) revealQualification();
 
 document.querySelectorAll('[data-waitlist-entry]').forEach((link) => {
   link.addEventListener('click', () => {
@@ -182,10 +171,13 @@ joinForm.addEventListener('submit', async (event) => {
       privacyConsent: privacyConsent.checked,
       source: `landing_${activePlacement}`,
       attribution,
+      website: joinForm.elements.namedItem('website')?.value || '',
     });
     const { data, error } = await supabase.rpc('join_waitlist', payload);
     if (error) throw error;
     enrichmentToken = extractEnrichmentToken(data);
+    persistEnrichmentSession(enrichmentStorage, enrichmentToken);
+    clearFirstTouch(attributionStorage);
     track('Waitlist Joined', { placement: activePlacement, step: 'email', variant: landingVariant, outcome: 'accepted' });
     revealQualification();
   } catch {
@@ -250,6 +242,7 @@ qualificationForm.addEventListener('submit', async (event) => {
     if (error || data !== true) throw error || new Error('Enrichment was not accepted');
     const applicationReceipt = buildApplicationReceipt(data);
     enrichmentToken = null;
+    clearEnrichmentSession(enrichmentStorage);
     stepTwo.hidden = true;
     document.querySelector('.step-meter').hidden = true;
     document.getElementById('successEyebrow').textContent = applicationReceipt.eyebrow;

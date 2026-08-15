@@ -30,6 +30,16 @@ Before clearing this gate:
 - Record the environment, migration version, verification time, operator, commands and results in the launch record.
 - Keep broad acquisition paused if any check is incomplete or fails. A small internal remediation cohort must not submit PAN, expiry, CVV, PIN, OTP or banking credentials.
 
+## External launch gates: consent, abuse and analytics
+
+- Do not send marketing mail from `marketing_consent_requested_at`. It records an unverified request only. Marketing remains blocked until an email-ownership verification mechanism and unsubscribe workflow are configured, tested and able to set `marketing_consent_at` only after verification.
+- The database honeypot and hashed-email rate bucket reduce repeated same-address calls without retaining raw IP. They are not a complete bot boundary. Broad production acquisition remains blocked until a server or Edge boundary with Turnstile (or equivalent) is configured with external secrets and tested.
+- In Plausible, create custom event goals with the exact names `Waitlist Started`, `Waitlist Joined`, `Enrichment Submitted`, and `Waitlist Error`. Verify each goal in production with query-free URLs and allow-listed properties before launch. `Enrichment Submitted` is diagnostic only; completed applications come from non-null `enriched_at` in the operator view.
+- Apply migrations through the controlled database workflow, then open Supabase Studio with an authorized service workflow. Read `operator_waitlist_ranked`; mutate only through `update_waitlist_operator(...)`. Never expose a service-role or secret key to the browser or export the enrichment token hash.
+- Production OAuth remains gated on adding the exact `https://cardcompass.in/app/` redirect URL in Supabase Auth and completing a deployed callback/session test.
+- The repository's standalone `login/` directory is non-deployed legacy material. Production and the local public server expose authentication only through the Flutter app under `/app/`; no campaign or public navigation may link to `/login/`.
+- Target-database apply, executable reset/upgrade/RLS tests, qualified legal review, email verification configuration, Turnstile configuration and Plausible account setup are explicit external launch gates, not completed repository work.
+
 ## 8-week cadence
 
 | Week | Learning objective | Founder actions | Exit evidence |

@@ -25,7 +25,8 @@ test('homepage retains waitlist anchors and exposes the utility CTA apply target
 
   assert.match(html, /\bid="waitlist"/);
   assert.match(html, /\bid="apply"/);
-  assert.match(html, /href="#waitlist"/);
+  assert.doesNotMatch(html, /href="#waitlist"/);
+  assert.match(html, /href="#apply"/);
 });
 
 test('public deploy-root documents and modules use root asset URLs', async () => {
@@ -47,7 +48,7 @@ test('public deploy-root documents and modules use root asset URLs', async () =>
   }
 });
 
-test('local server serves landing, login, app, and generated environment roots', async (t) => {
+test('local server serves landing, app, and generated environment roots without legacy login', async (t) => {
   const appFixture = new URL('../../build/web/server-allowlist-test.txt', import.meta.url);
   await mkdir(new URL('../../build/web/', import.meta.url), { recursive: true });
   await writeFile(appFixture, 'app fixture', 'utf8');
@@ -65,10 +66,12 @@ test('local server serves landing, login, app, and generated environment roots',
     new Promise((_, reject) => setTimeout(() => reject(new Error('server did not start')), 3000)),
   ]);
 
-  for (const route of ['/', '/style.css', '/privacy/', '/tools/tools.js', '/llms.txt', '/img/social-preview.png', '/login/', '/login/style.css', '/app/server-allowlist-test.txt', '/env.js']) {
+  for (const route of ['/', '/style.css', '/privacy/', '/tools/tools.js', '/llms.txt', '/img/social-preview.png', '/app/server-allowlist-test.txt', '/env.js']) {
     const response = await fetch(`http://127.0.0.1:${port}${route}`);
     assert.equal(response.status, 200, route);
   }
+
+  assert.equal((await fetch(`http://127.0.0.1:${port}/login/`)).status, 404);
 
 });
 
@@ -117,7 +120,7 @@ test('deployment environment module serializes public Supabase values as inert J
     env: {
       ...process.env,
       SUPABASE_URL: 'https://project.supabase.co',
-      SUPABASE_ANON_KEY: `key'; globalThis.compromised = true; //`,
+      SUPABASE_ANON_KEY: 'sb_publishable_public_test_key',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -127,10 +130,19 @@ test('deployment environment module serializes public Supabase values as inert J
   const [exitCode] = await once(child, 'exit');
 
   assert.equal(exitCode, 0);
-  assert.equal(stdout, `export const SUPABASE_URL = "https://project.supabase.co";\nexport const SUPABASE_ANON = "key'; globalThis.compromised = true; //";\n`);
+  assert.equal(stdout, `export const SUPABASE_URL = "https://project.supabase.co";\nexport const SUPABASE_ANON = "sb_publishable_public_test_key";\n`);
 
   const workflow = await readFile(new URL('.github/workflows/azure-static-web-apps-thankful-moss-0b0214000.yml', repoRoot), 'utf8');
   assert.match(workflow, /write-landing-env\.mjs deploy\/env\.js/);
+});
+
+test('deployment environment rejects Supabase secret and service-role keys', async () => {
+  const { assertPublicSupabaseKey } = await import('../../scripts/write-landing-env.mjs');
+  assert.throws(() => assertPublicSupabaseKey('sb_secret_server_only'), /server-only/i);
+  const header = Buffer.from('{}').toString('base64url');
+  const payload = Buffer.from(JSON.stringify({ role: 'service_role' })).toString('base64url');
+  assert.throws(() => assertPublicSupabaseKey(`${header}.${payload}.signature`), /service_role/i);
+  assert.equal(assertPublicSupabaseKey('sb_publishable_public_test_key'), 'sb_publishable_public_test_key');
 });
 
 test('browser dart defines contain public configuration only', async () => {

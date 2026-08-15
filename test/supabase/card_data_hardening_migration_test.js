@@ -28,7 +28,9 @@ test('forward migration revokes and removes every PAN or expiry RPC overload bef
     assert.match(sql, new RegExp(`DROP FUNCTION[\\s\\S]*${signature.source}`, 'i'));
   }
 
-  assert.match(sql, /UPDATE\s+public\.user_cards[\s\S]*card_number\s*=\s*NULL[\s\S]*expiry_date\s*=\s*NULL/i);
+  assert.doesNotMatch(sql, /UPDATE\s+public\.user_cards[\s\S]*card_number\s*=\s*NULL/i);
+  assert.match(sql, /logical active schema|logical active-schema/i);
+  assert.match(sql, /backups?\s+or\s+WAL/i);
   assert.match(sql, /DROP COLUMN\s+IF EXISTS\s+card_number/i);
   assert.match(sql, /DROP COLUMN\s+IF EXISTS\s+expiry_date/i);
   assert.doesNotMatch(sql, /CREATE(?:\s+OR\s+REPLACE)?\s+FUNCTION[\s\S]*_(?:card_number|expiry_date)\b/i);

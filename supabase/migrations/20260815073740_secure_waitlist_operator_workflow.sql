@@ -17,6 +17,7 @@ ALTER TABLE public.waitlist
   ADD COLUMN IF NOT EXISTS referrer_path text,
   ADD COLUMN IF NOT EXISTS privacy_consent_at timestamptz,
   ADD COLUMN IF NOT EXISTS marketing_consent_at timestamptz,
+  ADD COLUMN IF NOT EXISTS marketing_consent_requested_at timestamptz,
   ADD COLUMN IF NOT EXISTS enriched_at timestamptz,
   ADD COLUMN IF NOT EXISTS operator_status text NOT NULL DEFAULT 'new',
   ADD COLUMN IF NOT EXISTS qualification_score integer,
@@ -29,12 +30,12 @@ ALTER TABLE public.waitlist
 ALTER TABLE public.waitlist
   DROP CONSTRAINT IF EXISTS waitlist_card_count_check;
 
--- The original launch used `3-5` and `6+`; preserve those historical rows
--- while moving the public qualification taxonomy to the approved bands.
+-- The original launch used `3-5` and the ambiguous `6+`. Preserve that
+-- ambiguity for requalification rather than asserting that it meant 7+.
 UPDATE public.waitlist
 SET card_count = CASE card_count
   WHEN '3-5' THEN '3-6'
-  WHEN '6+' THEN '7+'
+  WHEN '6+' THEN 'legacy-6-plus'
   ELSE card_count
 END
 WHERE card_count IN ('3-5', '6+');
@@ -87,6 +88,7 @@ merged AS (
       FILTER (WHERE referrer_path IS NOT NULL))[1] AS referrer_path,
     min(privacy_consent_at) AS privacy_consent_at,
     min(marketing_consent_at) AS marketing_consent_at,
+    min(marketing_consent_requested_at) AS marketing_consent_requested_at,
     min(enriched_at) AS enriched_at,
     (array_agg(operator_status ORDER BY created_at ASC, id ASC))[1] AS operator_status,
     max(qualification_score) AS qualification_score,
@@ -118,6 +120,7 @@ SET
   referrer_path = merged.referrer_path,
   privacy_consent_at = merged.privacy_consent_at,
   marketing_consent_at = merged.marketing_consent_at,
+  marketing_consent_requested_at = merged.marketing_consent_requested_at,
   enriched_at = merged.enriched_at,
   operator_status = merged.operator_status,
   qualification_score = merged.qualification_score,
@@ -150,7 +153,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS waitlist_email_lower_key
 
 ALTER TABLE public.waitlist
   ADD CONSTRAINT waitlist_card_count_check
-    CHECK (card_count IN ('1-2', '3-6', '7+') OR card_count IS NULL),
+    CHECK (card_count IN ('1-2', '3-6', '7+', 'legacy-6-plus') OR card_count IS NULL),
   ADD CONSTRAINT waitlist_primary_goal_check
     CHECK (
       primary_goal IN ('maximize_rewards', 'track_benefits', 'simplify_card_choices')
@@ -188,6 +191,15 @@ DROP POLICY IF EXISTS "authenticated select own" ON public.waitlist;
 REVOKE ALL ON TABLE public.waitlist FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON TABLE public.waitlist TO service_role;
 
+CREATE TABLE IF NOT EXISTS public.waitlist_public_attempts (
+  email_hash text NOT NULL,
+  window_started timestamptz NOT NULL,
+  attempt_count integer NOT NULL DEFAULT 1,
+  PRIMARY KEY (email_hash, window_started)
+);
+ALTER TABLE public.waitlist_public_attempts ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.waitlist_public_attempts FROM PUBLIC, anon, authenticated;
+
 CREATE OR REPLACE FUNCTION public.join_waitlist(
   p_email text,
   p_source text DEFAULT NULL,
@@ -198,7 +210,8 @@ CREATE OR REPLACE FUNCTION public.join_waitlist(
   p_utm_content text DEFAULT NULL,
   p_referrer_path text DEFAULT NULL,
   p_landing_variant text DEFAULT NULL,
-  p_privacy_consent boolean DEFAULT false
+  p_privacy_consent boolean DEFAULT false,
+  p_website text DEFAULT NULL
 )
 RETURNS TABLE (status text, enrichment_token text)
 LANGUAGE plpgsql
@@ -217,6 +230,9 @@ DECLARE
   v_landing_variant text := nullif(btrim(p_landing_variant), '');
   v_token text;
   v_token_hash text;
+  v_email_hash text;
+  v_window timestamptz := date_bin('15 minutes', now(), timestamptz '2001-01-01');
+  v_attempt_count integer;
 BEGIN
   IF v_email IS NULL
      OR char_length(v_email) NOT BETWEEN 3 AND 254
@@ -243,6 +259,20 @@ BEGIN
 
   v_token := encode(extensions.gen_random_bytes(32), 'hex');
   v_token_hash := encode(extensions.digest(v_token, 'sha256'), 'hex');
+  v_email_hash := encode(extensions.digest(v_email, 'sha256'), 'hex');
+
+  INSERT INTO public.waitlist_public_attempts (email_hash, window_started, attempt_count)
+  VALUES (v_email_hash, v_window, 1)
+  ON CONFLICT (email_hash, window_started) DO UPDATE
+    SET attempt_count = public.waitlist_public_attempts.attempt_count + 1
+  RETURNING attempt_count INTO v_attempt_count;
+
+  -- Honeypot and rate-limited calls keep the public success shape but cannot
+  -- create or mutate a lead. The table stores only a one-way email hash.
+  IF nullif(btrim(p_website), '') IS NOT NULL OR v_attempt_count > 5 THEN
+    RETURN QUERY SELECT 'accepted'::text, v_token;
+    RETURN;
+  END IF;
 
   INSERT INTO public.waitlist (
     email,
@@ -351,9 +381,9 @@ BEGIN
     primary_goal = v_primary_goal,
     problem_detail = v_problem_detail,
     top_cards = v_top_cards,
-    marketing_consent_at = CASE
-      WHEN p_marketing_consent THEN COALESCE(marketing_consent_at, now())
-      ELSE marketing_consent_at
+    marketing_consent_requested_at = CASE
+      WHEN p_marketing_consent THEN COALESCE(marketing_consent_requested_at, now())
+      ELSE marketing_consent_requested_at
     END,
     enriched_at = now(),
     enrichment_token_hash = NULL
@@ -367,10 +397,10 @@ END;
 $$;
 
 REVOKE ALL ON FUNCTION public.join_waitlist(
-  text, text, text, text, text, text, text, text, text, boolean
+  text, text, text, text, text, text, text, text, text, boolean, text
 ) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.join_waitlist(
-  text, text, text, text, text, text, text, text, text, boolean
+  text, text, text, text, text, text, text, text, text, boolean, text
 ) TO anon, authenticated;
 
 REVOKE ALL ON FUNCTION public.enrich_waitlist(
@@ -407,6 +437,7 @@ SELECT
   w.referrer_path,
   w.privacy_consent_at,
   w.marketing_consent_at,
+  w.marketing_consent_requested_at,
   w.created_at,
   w.enriched_at,
   w.operator_status,
@@ -414,8 +445,9 @@ SELECT
   w.operator_notes,
   w.contacted_at,
   w.invited_at,
+  (w.card_count = 'legacy-6-plus') AS needs_requalification,
   CASE
-    WHEN w.card_count IS NULL
+    WHEN w.card_count IS NULL OR w.card_count = 'legacy-6-plus'
       OR w.monthly_spend_band IS NULL
       OR w.primary_goal IS NULL THEN 0
     ELSE
@@ -435,13 +467,12 @@ SELECT
         WHEN 'track_benefits' THEN 15
         WHEN 'simplify_card_choices' THEN 10
       END
-      + CASE WHEN w.marketing_consent_at IS NOT NULL THEN 5 ELSE 0 END
       + COALESCE(w.qualification_score, 0)
   END AS rank_score
 FROM public.waitlist w
 ORDER BY
   CASE
-    WHEN w.card_count IS NULL
+    WHEN w.card_count IS NULL OR w.card_count = 'legacy-6-plus'
       OR w.monthly_spend_band IS NULL
       OR w.primary_goal IS NULL THEN 0
     ELSE
@@ -461,10 +492,30 @@ ORDER BY
         WHEN 'track_benefits' THEN 15
         WHEN 'simplify_card_choices' THEN 10
       END
-      + CASE WHEN w.marketing_consent_at IS NOT NULL THEN 5 ELSE 0 END
       + COALESCE(w.qualification_score, 0)
   END DESC,
   w.created_at ASC;
 
 REVOKE ALL ON TABLE public.operator_waitlist_ranked FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON TABLE public.operator_waitlist_ranked TO service_role;
+
+CREATE OR REPLACE FUNCTION public.update_waitlist_operator(
+  p_id uuid, p_status text, p_notes text DEFAULT NULL,
+  p_operator_score integer DEFAULT NULL, p_contacted_at timestamptz DEFAULT NULL,
+  p_invited_at timestamptz DEFAULT NULL
+) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  IF p_status NOT IN ('new','reviewing','qualified','not_a_fit','waitlisted','invited')
+     OR (p_operator_score IS NOT NULL AND p_operator_score NOT BETWEEN 0 AND 100)
+     OR char_length(COALESCE(p_notes,'')) > 2000 THEN
+    RAISE EXCEPTION 'operator update is invalid' USING ERRCODE = '22023';
+  END IF;
+  UPDATE public.waitlist SET operator_status=p_status,
+    operator_notes=nullif(btrim(p_notes),''), qualification_score=p_operator_score,
+    contacted_at=p_contacted_at, invited_at=p_invited_at WHERE id=p_id;
+  RETURN FOUND;
+END; $$;
+REVOKE ALL ON FUNCTION public.update_waitlist_operator(uuid,text,text,integer,timestamptz,timestamptz)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.update_waitlist_operator(uuid,text,text,integer,timestamptz,timestamptz)
+  TO service_role;

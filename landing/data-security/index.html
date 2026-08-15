@@ -1,20 +1,337 @@
 <!doctype html>
-<html lang="en"><head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Data &amp; Security | CardCompass</title><meta name="description" content="A concrete map of CardCompass Gmail, PDF, Gemini, Supabase, analytics and deletion boundaries."><link rel="canonical" href="https://cardcompass.in/data-security/">
-  <meta property="og:title" content="CardCompass Data &amp; Security"><meta property="og:description" content="See what runs locally, what crosses providers and what is stored."><meta property="og:type" content="website"><meta property="og:url" content="https://cardcompass.in/data-security/"><meta property="og:image" content="https://cardcompass.in/img/social-preview.png"><meta property="og:image:alt" content="CardCompass decision receipt showing an inspectable credit-card choice."><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:image" content="https://cardcompass.in/img/social-preview.png"><meta name="twitter:image:alt" content="CardCompass decision receipt showing an inspectable credit-card choice."><meta name="theme-color" content="#0B1015">
-  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet"><link rel="stylesheet" href="/resources.css"><link rel="icon" href="/img/favicon.png"><script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"CardCompass Data and Security","url":"https://cardcompass.in/data-security/","dateModified":"2026-08-15","isPartOf":{"@type":"WebSite","name":"CardCompass","url":"https://cardcompass.in/"}}</script>
-</head><body><a class="skip-link" href="#main">Skip to content</a><header class="site-header"><div class="shell nav-row"><a class="wordmark" href="/"><span class="wordmark-mark">CC</span><span>CardCompass</span></a><nav class="nav-links" aria-label="Primary"><a href="/privacy/">Privacy</a><a class="button button-primary" href="/#apply">Join waitlist</a></nav></div></header>
-<main id="main"><section class="resource-hero"><div class="shell"><nav class="breadcrumb" aria-label="Breadcrumb"><a href="/">Home</a> / Data &amp; security</nav><p class="eyebrow">Trust / implementation map</p><h1>Data &amp; security</h1><p class="lede">Security language should match the system that exists. This page maps the current application boundaries without claiming a certification or pretending statement processing stays entirely on-device.</p><p class="updated">Implementation reviewed: 15 August 2026</p></div></section>
-<div class="resource-main"><div class="shell content-layout"><article class="content">
-  <h2 id="flow">The statement-processing path</h2><ol><li><strong>Authorisation:</strong> Google OAuth requests profile access, <code>gmail.readonly</code> and <code>user.birthday.read</code>.</li><li><strong>Search:</strong> the app searches Gmail for statement-like messages with PDF attachments and stores message ID, subject, sender, date and attachment metadata in Supabase.</li><li><strong>Download:</strong> matching PDF attachment bytes are downloaded to the running app for processing.</li><li><strong>Unlock and extract:</strong> the app tries bank password patterns or asks for a statement PDF password, then extracts text from the PDF.</li><li><strong>AI parsing:</strong> pruned statement text is sent through an authenticated Supabase edge-function proxy to Google Gemini.</li><li><strong>Persistence:</strong> structured statement, transaction, card and processing-status records are written to Supabase.</li></ol>
-  <h2 id="gmail">Read-only is specific, not invisible</h2><p>The Gmail scope is read-only: it does not authorise CardCompass to send, edit or delete email. It still authorises the app to search matching mail, read metadata and download a PDF attachment. The current Gmail <code>messages.get</code> call uses the default full format, which retrieves each matching full parsed message into app memory. CardCompass then uses headers and attachment identifiers and does not intentionally persist the message body. The app narrows its query to PDFs and statement-like subjects, but a user should treat connected-statement processing as access to sensitive financial records.</p>
-  <h2 id="passwords">Password boundary</h2><p>The current UI does not request a full primary account number (PAN), CVV, PIN, OTP or banking password. It can ask for a statement PDF password. A working PDF password and a learned password pattern are cached locally in browser/app preferences, keyed to the bank and user email. The current code does not deliberately send that password to Supabase or Google Gemini.</p><div class="notice"><p><strong>Local does not mean magically secure.</strong> Browser/app preferences are accessible within the local application environment and are not described here as hardware-backed or independently encrypted. Use a trusted device, and clear the site's or app's stored data to remove local password preferences.</p></div>
-  <h2 id="providers">Provider boundaries</h2><table class="data-table"><thead><tr><th>Provider</th><th>Current role</th><th>Data crossing the boundary</th></tr></thead><tbody><tr><td>Google OAuth/Gmail/People</td><td>Sign-in, statement-email access, optional birthday lookup</td><td>Account/profile identifiers, authorised Gmail metadata/PDF, birthday when available</td></tr><tr><td>Supabase</td><td>Authentication, database, RPCs and authenticated Gemini proxy</td><td>Account/profile, email metadata, card, statement, transaction and waitlist data; statement-text proxy requests</td></tr><tr><td>Google Gemini</td><td>Convert extracted statement text into structured statement and transaction fields</td><td>Pruned statement text and instructions sent by the proxy</td></tr><tr><td>Plausible</td><td>Limited landing-page analytics</td><td>Query-stripped page URL and allow-listed event context</td></tr></tbody></table>
-  <h2 id="supabase">Data stored in Supabase</h2><p>The application attempts to persist profile data including date of birth. If a user-profile row or update is unavailable, DOB may remain in app memory and the product may request it again. Supabase can also hold cards in a user's wallet and last four digits; statement totals, dates, balances and rewards; transactions including dates, amounts, merchant descriptions and categories; Gmail processing metadata; and waitlist applications and consent/attribution fields. The current UI does not request or send PAN or card expiry. This repository includes a hardening migration intended to erase and drop legacy PAN/expiry columns and remove older RPC signatures; until it is applied and verified in the deployed Supabase project, the live backend may still retain those legacy columns or RPCs. Row-level policies are intended to separate signed-in user records, and the public waitlist uses narrow RPCs rather than direct table access.</p><p>The current statement pipeline processes PDF bytes in the app and does not upload the original PDF file through the repository path. Extracted records remain server-side until deletion or other retention handling applies.</p>
-  <h2 id="analytics">Landing analytics boundary</h2><p>Plausible requests are transformed before transport. CardCompass removes query parameters and fragments, blanks referrer data, filters event names and retains only placement, step, variant and outcome properties. Form emails, names, spend answers, selected cards and free-text details are not permitted analytics properties. Waitlist attribution is separate: first-touch UTM/referrer-path information can be stored locally and sent to Supabase when an application begins.</p>
-  <h2 id="controls">Operational controls visible in the codebase</h2><ul><li>Authenticated Gemini proxy requests and a per-user request quota.</li><li>An allow-list of Gemini model identifiers and a request-size bound.</li><li>Supabase row-level security for user-owned tables and a protected waitlist operator workflow.</li><li>Only last four card digits are used in current add-card and statement-matching flows.</li><li>Input validation and length bounds on public waitlist RPC parameters.</li><li>Query stripping and property allow-listing at the analytics transport boundary.</li></ul>
-  <h2 id="launch-gate">Security launch gate</h2><p>Before broad acquisition, the operator must apply <code>20260815090910_remove_legacy_card_secrets.sql</code> through the controlled deployment process and verify in the target Supabase project that the legacy columns and RPC signatures are absent. Broad acquisition remains paused until that migration is applied and verified; the repository migration alone is not evidence of live database state.</p>
-  <h2 id="limits">What we do not claim</h2><p>This page is not a penetration-test report, audit opinion or promise that incidents are impossible. CardCompass does not claim an independently audited security or compliance status. Security depends on the application, hosting configuration, providers, user device and continued maintenance. Any material incident or suspected vulnerability should be reported promptly.</p>
-  <h2 id="deletion">Deletion and security contact</h2><p>The current product does not provide a self-service deletion button. Request deletion of waitlist or product records at <a href="mailto:support@cardcompass.in">support@cardcompass.in</a>. Clear local browser/app data separately to remove cached statement PDF password material. Use the same address for a suspected vulnerability; include reproduction details without sending live secrets, OTPs or full financial credentials.</p>
-</article><aside class="side-nav" aria-label="On this page"><p>On this page</p><a href="#flow">Data flow</a><a href="#gmail">Gmail</a><a href="#passwords">PDF passwords</a><a href="#providers">Providers</a><a href="#supabase">Persistence</a><a href="#analytics">Analytics</a><a href="#launch-gate">Launch gate</a><a href="#limits">Limits</a></aside></div></div></main>
-<footer class="site-footer"><div class="shell footer-grid"><div><a class="wordmark" href="/"><span class="wordmark-mark">CC</span><span>CardCompass</span></a><p>Card choice, with the reasoning attached.</p></div><nav class="footer-links" aria-label="Legal"><a href="/privacy/">Privacy</a><a href="/terms/">Terms</a><a href="/data-security/">Data &amp; security</a><a href="/recommendation-disclaimer/">Recommendation disclaimer</a></nav><p class="footer-copy">© 2026 CardCompass</p></div></footer></body></html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Data &amp; Security | CardCompass</title>
+    <meta
+      name="description"
+      content="A concrete map of CardCompass Gmail, PDF, Gemini, Supabase, analytics and deletion boundaries."
+    />
+    <link rel="canonical" href="https://cardcompass.in/data-security/" />
+    <meta property="og:title" content="CardCompass Data &amp; Security" />
+    <meta
+      property="og:description"
+      content="See what runs locally, what crosses providers and what is stored."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://cardcompass.in/data-security/" />
+    <meta
+      property="og:image"
+      content="https://cardcompass.in/img/social-preview.png"
+    />
+    <meta
+      property="og:image:alt"
+      content="CardCompass decision receipt showing an inspectable credit-card choice."
+    />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:image"
+      content="https://cardcompass.in/img/social-preview.png"
+    />
+    <meta
+      name="twitter:image:alt"
+      content="CardCompass decision receipt showing an inspectable credit-card choice."
+    />
+    <meta name="theme-color" content="#0B1015" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/resources.css" />
+    <link rel="icon" href="/img/favicon.png" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebPage",
+        "name": "CardCompass Data and Security",
+        "url": "https://cardcompass.in/data-security/",
+        "dateModified": "2026-08-15",
+        "isPartOf": {
+          "@type": "WebSite",
+          "name": "CardCompass",
+          "url": "https://cardcompass.in/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <div class="shell nav-row">
+        <a class="wordmark" href="/"
+          ><span class="wordmark-mark">CC</span><span>CardCompass</span></a
+        >
+        <nav class="nav-links" aria-label="Primary">
+          <a href="/privacy/">Privacy</a
+          ><a class="button button-primary" href="/#apply">Join waitlist</a>
+        </nav>
+      </div>
+    </header>
+    <main id="main">
+      <section class="resource-hero">
+        <div class="shell">
+          <nav class="breadcrumb" aria-label="Breadcrumb">
+            <a href="/">Home</a> / Data &amp; security
+          </nav>
+          <p class="eyebrow">Trust / implementation map</p>
+          <h1>Data &amp; security</h1>
+          <p class="lede">
+            Security language should match the system that exists. This page
+            maps the current application boundaries without claiming a
+            certification or pretending statement processing stays entirely
+            on-device.
+          </p>
+          <p class="updated">Implementation reviewed: 15 August 2026</p>
+        </div>
+      </section>
+      <div class="resource-main">
+        <div class="shell content-layout">
+          <article class="content">
+            <h2 id="flow">The statement-processing path</h2>
+            <ol>
+              <li>
+                <strong>Authorisation:</strong> Google OAuth requests profile
+                access, <code>gmail.readonly</code> and
+                <code>user.birthday.read</code>.
+              </li>
+              <li>
+                <strong>Search:</strong> the app searches Gmail for
+                statement-like messages with PDF attachments and stores message
+                ID, subject, sender, date and attachment metadata in Supabase.
+              </li>
+              <li>
+                <strong>Download:</strong> matching PDF attachment bytes are
+                downloaded to the running app for processing.
+              </li>
+              <li>
+                <strong>Unlock and extract:</strong> the app tries bank password
+                patterns or asks for a statement PDF password, then extracts
+                text from the PDF.
+              </li>
+              <li>
+                <strong>AI parsing:</strong> pruned statement text is sent
+                through an authenticated Supabase edge-function proxy to Google
+                Gemini.
+              </li>
+              <li>
+                <strong>Persistence:</strong> structured statement, transaction,
+                card and processing-status records are written to Supabase.
+              </li>
+            </ol>
+            <h2 id="gmail">Read-only is specific, not invisible</h2>
+            <p>
+              The Gmail scope is read-only: it does not authorise CardCompass to
+              send, edit or delete email. It still authorises the app to search
+              matching mail, read metadata and download a PDF attachment. The
+              current Gmail <code>messages.get</code> call uses the default full
+              format, which retrieves each matching full parsed message into app
+              memory. CardCompass then uses headers and attachment identifiers
+              and does not intentionally persist the message body. The app
+              narrows its query to PDFs and statement-like subjects, but a user
+              should treat connected-statement processing as access to sensitive
+              financial records.
+            </p>
+            <h2 id="passwords">Password boundary</h2>
+            <p>
+              The current UI does not request a full primary account number
+              (PAN), CVV, PIN, OTP or banking password. It can ask for a
+              statement PDF password. A working PDF password and a learned
+              password pattern are cached locally in browser/app preferences,
+              keyed to the bank and user email. The current code does not
+              deliberately send that password to Supabase or Google Gemini.
+            </p>
+            <div class="notice">
+              <p>
+                <strong>Local does not mean magically secure.</strong>
+                Browser/app preferences are accessible within the local
+                application environment and are not described here as
+                hardware-backed or independently encrypted. Use a trusted
+                device, and clear the site's or app's stored data to remove
+                local password preferences.
+              </p>
+            </div>
+            <h2 id="providers">Provider boundaries</h2>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Provider</th>
+                  <th>Current role</th>
+                  <th>Data crossing the boundary</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Google OAuth/Gmail/People</td>
+                  <td>
+                    Sign-in, statement-email access, optional birthday lookup
+                  </td>
+                  <td>
+                    Account/profile identifiers, authorised Gmail metadata/PDF,
+                    birthday when available
+                  </td>
+                </tr>
+                <tr>
+                  <td>Supabase</td>
+                  <td>
+                    Authentication, database, RPCs and authenticated Gemini
+                    proxy
+                  </td>
+                  <td>
+                    Account/profile, email metadata, card, statement,
+                    transaction and waitlist data; statement-text proxy requests
+                  </td>
+                </tr>
+                <tr>
+                  <td>Google Gemini</td>
+                  <td>
+                    Convert extracted statement text into structured statement
+                    and transaction fields
+                  </td>
+                  <td>
+                    Pruned statement text and instructions sent by the proxy
+                  </td>
+                </tr>
+                <tr>
+                  <td>Plausible</td>
+                  <td>Limited landing-page analytics</td>
+                  <td>
+                    Query-stripped page URL and allow-listed event context
+                  </td>
+                </tr>
+                <tr>
+                  <td>Google Fonts / jsDelivr</td>
+                  <td>Hosted fonts / exact-pinned Supabase browser module</td>
+                  <td>Normal asset requests such as IP address and user agent; no waitlist form fields are intentionally included</td>
+                </tr>
+              </tbody>
+            </table>
+            <h2 id="supabase">Data stored in Supabase</h2>
+            <p>
+              The application attempts to persist profile data including date of
+              birth. If a user-profile row or update is unavailable, DOB may
+              remain in app memory and the product may request it again.
+              Supabase can also hold cards in a user's wallet and last four
+              digits; statement totals, dates, balances and rewards;
+              transactions including dates, amounts, merchant descriptions and
+              categories; Gmail processing metadata; and waitlist applications
+              and consent/attribution fields. The current UI does not request or
+              send PAN or card expiry. This repository includes a hardening
+              migration for logical active-schema removal of legacy PAN/expiry
+              columns and older RPC signatures; until it is applied and verified in
+              the deployed Supabase project, the live backend may still retain
+              those legacy columns or RPCs. Provider backups and write-ahead logs
+              (WAL) remain subject to provider retention and restore policies; this
+              is not a claim of immediate physical erasure from every retained
+              copy. Row-level policies are intended to
+              separate signed-in user records, and the public waitlist uses
+              narrow RPCs rather than direct table access.
+            </p>
+            <p>
+              The current statement pipeline processes PDF bytes in the app and
+              does not upload the original PDF file through the repository path.
+              Extracted records remain server-side until deletion or other
+              retention handling applies.
+            </p>
+            <h2 id="analytics">Landing analytics boundary</h2>
+            <p>
+              Plausible requests are transformed before transport. CardCompass
+              removes query parameters and fragments, blanks referrer data,
+              filters event names and retains only placement, step, variant and
+              outcome properties. Form emails, names, spend answers, selected
+              cards and free-text details are not permitted analytics
+              properties. Waitlist attribution is separate: first-touch
+              UTM/referrer-path information can be stored locally and sent to
+              Supabase when an application begins.
+            </p>
+            <h2 id="controls">Operational controls visible in the codebase</h2>
+            <ul>
+              <li>
+                Authenticated Gemini proxy requests and a per-user request
+                quota.
+              </li>
+              <li>
+                An allow-list of Gemini model identifiers and a request-size
+                bound.
+              </li>
+              <li>
+                Supabase row-level security for user-owned tables and a
+                protected waitlist operator workflow.
+              </li>
+              <li>
+                Only last four card digits are used in current add-card and
+                statement-matching flows.
+              </li>
+              <li>
+                Input validation and length bounds on public waitlist RPC
+                parameters.
+              </li>
+              <li>
+                Query stripping and property allow-listing at the analytics
+                transport boundary.
+              </li>
+            </ul>
+            <h2 id="launch-gate">Security launch gate</h2>
+            <p>
+              Before broad acquisition, the operator must apply
+              <code>20260815090910_remove_legacy_card_secrets.sql</code> through
+              the controlled deployment process and verify in the target
+              Supabase project that the legacy columns and RPC signatures are
+              absent. Broad acquisition remains paused until that migration is
+              applied and verified; the repository migration alone is not
+              evidence of live database state.
+            </p>
+            <h2 id="limits">What we do not claim</h2>
+            <p>
+              This page is not a penetration-test report, audit opinion or
+              promise that incidents are impossible. CardCompass does not claim
+              an independently audited security or compliance status. Security
+              depends on the application, hosting configuration, providers, user
+              device and continued maintenance. Any material incident or
+              suspected vulnerability should be reported promptly.
+            </p>
+            <h2 id="deletion">Deletion and security contact</h2>
+            <p>
+              The current product does not provide a self-service deletion
+              button. Request deletion of waitlist or product records at
+              <a href="mailto:support@cardcompass.in">support@cardcompass.in</a
+              >. Clear local browser/app data separately to remove cached
+              statement PDF password material. Use the same address for a
+              suspected vulnerability; include reproduction details without
+              sending live secrets, OTPs or full financial credentials.
+            </p>
+          </article>
+          <aside class="side-nav" aria-label="On this page">
+            <p>On this page</p>
+            <a href="#flow">Data flow</a><a href="#gmail">Gmail</a
+            ><a href="#passwords">PDF passwords</a
+            ><a href="#providers">Providers</a
+            ><a href="#supabase">Persistence</a
+            ><a href="#analytics">Analytics</a
+            ><a href="#launch-gate">Launch gate</a><a href="#limits">Limits</a>
+          </aside>
+        </div>
+      </div>
+    </main>
+    <footer class="site-footer">
+      <div class="shell footer-grid">
+        <div>
+          <a class="wordmark" href="/"
+            ><span class="wordmark-mark">CC</span><span>CardCompass</span></a
+          >
+          <p>Card choice, with the reasoning attached.</p>
+        </div>
+        <nav class="footer-links" aria-label="Legal">
+          <a href="/privacy/">Privacy</a><a href="/terms/">Terms</a
+          ><a href="/data-security/">Data &amp; security</a
+          ><a href="/recommendation-disclaimer/">Recommendation disclaimer</a>
+        </nav>
+        <p class="footer-copy">© 2026 CardCompass</p>
+      </div>
+    </footer>
+  </body>
+</html>

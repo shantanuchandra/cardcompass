@@ -56,6 +56,7 @@ test('best-card comparison applies the remaining cap before selecting a winner',
         { name: 'High rate, low cap', grossValue: 200, estimatedValue: 100, capApplied: true },
         { name: 'Lower rate, open cap', grossValue: 120, estimatedValue: 120, capApplied: false },
       ],
+      winners: ['Lower rate, open cap'],
     },
   );
 });
@@ -72,6 +73,27 @@ test('best-card comparison rejects missing and negative inputs', () => {
     }),
     /rate/i,
   );
+});
+
+test('best-card comparison supports two cards and reports every tied maximum', () => {
+  const uncapped = calculateCardComparison({
+    amount: 1000,
+    cards: [
+      { name: 'Card A', ratePercent: 5, capRemaining: '' },
+      { name: 'Card B', ratePercent: 5, capRemaining: '' },
+    ],
+  });
+  assert.deepEqual(uncapped.winners, ['Card A', 'Card B']);
+
+  const capped = calculateCardComparison({
+    amount: 1000,
+    cards: [
+      { name: 'Card A', ratePercent: 10, capRemaining: 50 },
+      { name: 'Card B', ratePercent: 5, capRemaining: 50 },
+      { name: 'Card C', ratePercent: 1, capRemaining: '' },
+    ],
+  });
+  assert.deepEqual(capped.winners, ['Card A', 'Card B']);
 });
 
 test('milestone tracker distinguishes reached, on-track, and shortfall projections', () => {
@@ -198,11 +220,13 @@ test('utility pages are substantive applications with assumptions and attributed
 
     assert.ok(visibleText.length > 1800, `${source} should not be thin content`);
     assert.match(html, /<form\b[^>]*data-tool-form/);
-    assert.match(html, /<section class="tool-output"[^>]*aria-live="polite" hidden><\/section>/);
+    assert.match(html, /<form\b[\s\S]*?method="post"[\s\S]*?action="\/tool-unavailable\/"[\s\S]*?>/i);
+    assert.match(html, /<noscript>/i);
+    assert.match(html, /<section\b[\s\S]*?class="tool-output"[\s\S]*?aria-live="polite"[\s\S]*?hidden[\s\S]*?><\/section>/);
     assert.match(html, /How this estimate works/i);
     assert.match(html, /What this does not include/i);
     assert.match(html, /Author:\s*CardCompass product team/i);
-    assert.match(html, /Reviewed by:\s*CardCompass engineering/i);
+    assert.match(html, /Reviewed by:\s*CardCompass\s+engineering/i);
     assert.match(html, /Last updated:\s*15 August 2026/i);
     assert.match(html, /href="https:\/\/www\.rbi\.org\.in\/[^"]+"/i);
     assert.match(html, /href="\/recommendation-disclaimer\/"/i);
@@ -215,4 +239,9 @@ test('utility pages are substantive applications with assumptions and attributed
 
   const css = await readFile(new URL('../../landing/resources.css', import.meta.url), 'utf8');
   assert.doesNotMatch(css, /\.tool-output\[hidden\]\s*\{[^}]*display\s*:\s*block/);
+});
+
+test('best-card form allows the third card to be omitted', async () => {
+  const html = await readFile(new URL('../../landing/tools/best-card/index.html', import.meta.url), 'utf8');
+  assert.doesNotMatch(html.match(/<input[^>]*name="card_3_name"[^>]*>/)?.[0] || '', /\brequired\b/);
 });

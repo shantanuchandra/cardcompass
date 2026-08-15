@@ -37,15 +37,15 @@ test('homepage and each public route have canonical social metadata and valid JS
     const html = await landingFile(directory === '.' ? 'index.html' : `${directory}/index.html`);
     const canonical = `${siteOrigin}${route}`;
 
-    assert.match(html, new RegExp(`<link rel="canonical" href="${canonical.replaceAll('/', '\\/')}"`));
-    assert.match(html, new RegExp(`<meta property="og:url" content="${canonical.replaceAll('/', '\\/')}"`));
-    assert.match(html, /<meta property="og:image" content="https:\/\/cardcompass\.in\/img\/social-preview\.png">/);
-    assert.match(html, /<meta property="og:image:alt" content="[^"]+">/);
-    assert.match(html, /<meta property="og:image:width" content="1200">/);
-    assert.match(html, /<meta property="og:image:height" content="630">/);
-    assert.match(html, /<meta name="twitter:card" content="summary_large_image">/);
-    assert.match(html, /<meta name="twitter:image" content="https:\/\/cardcompass\.in\/img\/social-preview\.png">/);
-    assert.match(html, /<meta name="twitter:image:alt" content="[^"]+">/);
+    assert.match(html, new RegExp(`<link[^>]*rel="canonical"[^>]*href="${canonical.replaceAll('/', '\\/')}"`));
+    assert.match(html, new RegExp(`<meta[^>]*property="og:url"[^>]*content="${canonical.replaceAll('/', '\\/')}"`));
+    assert.match(html, /<meta\s+property="og:image"\s+content="https:\/\/cardcompass\.in\/img\/social-preview\.png"\s*\/?>/);
+    assert.match(html, /<meta\s+property="og:image:alt"\s+content="[^"]+"\s*\/?>/);
+    assert.match(html, /<meta\s+property="og:image:width"\s+content="1200"\s*\/?>/);
+    assert.match(html, /<meta\s+property="og:image:height"\s+content="630"\s*\/?>/);
+    assert.match(html, /<meta\s+name="twitter:card"\s+content="summary_large_image"\s*\/?>/);
+    assert.match(html, /<meta\s+name="twitter:image"\s+content="https:\/\/cardcompass\.in\/img\/social-preview\.png"\s*\/?>/);
+    assert.match(html, /<meta\s+name="twitter:image:alt"\s+content="[^"]+"\s*\/?>/);
     assert.ok(schemas(html).length > 0, `${route} needs JSON-LD`);
   }
 });

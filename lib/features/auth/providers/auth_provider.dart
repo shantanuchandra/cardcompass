@@ -4,6 +4,26 @@ import '../../../core/providers/supabase_provider.dart';
 
 enum AuthStatus { loading, authenticated, unauthenticated }
 
+/// Supabase must redirect back to the deployed Flutter base, not the public
+/// landing root. The origin itself remains subject to Supabase's redirect URL
+/// allow-list in every environment.
+Uri oauthRedirectUri(Uri current) {
+  final production =
+      current.scheme == 'https' && current.host == 'cardcompass.in';
+  final local =
+      (current.scheme == 'http' || current.scheme == 'https') &&
+      (current.host == '127.0.0.1' || current.host == 'localhost');
+  if (!production && !local) {
+    throw StateError('OAuth redirect origin is not allow-listed.');
+  }
+  return Uri(
+    scheme: current.scheme,
+    host: current.host,
+    port: current.hasPort ? current.port : null,
+    path: '/app/',
+  );
+}
+
 class AuthNotifier extends AsyncNotifier<AuthStatus> {
   @override
   Future<AuthStatus> build() async {
@@ -19,13 +39,17 @@ class AuthNotifier extends AsyncNotifier<AuthStatus> {
   Future<void> signInWithGoogle() async {
     state = const AsyncValue.loading();
     try {
-      await ref.read(supabaseClientProvider).auth.signInWithOAuth(
-        OAuthProvider.google,
-        redirectTo: Uri.base.origin,
-        scopes: 'email profile https://www.googleapis.com/auth/gmail.readonly '
-            'https://www.googleapis.com/auth/user.birthday.read',
-        queryParams: const {'access_type': 'offline', 'prompt': 'consent'},
-      );
+      await ref
+          .read(supabaseClientProvider)
+          .auth
+          .signInWithOAuth(
+            OAuthProvider.google,
+            redirectTo: oauthRedirectUri(Uri.base).toString(),
+            scopes:
+                'email profile https://www.googleapis.com/auth/gmail.readonly '
+                'https://www.googleapis.com/auth/user.birthday.read',
+            queryParams: const {'access_type': 'offline', 'prompt': 'consent'},
+          );
       // Auth state resolves via the onAuthStateChange stream after Supabase
       // redirects back with the session; authStateProvider triggers a rebuild.
     } catch (e, st) {
@@ -39,4 +63,6 @@ class AuthNotifier extends AsyncNotifier<AuthStatus> {
   }
 }
 
-final authNotifierProvider = AsyncNotifierProvider<AuthNotifier, AuthStatus>(AuthNotifier.new);
+final authNotifierProvider = AsyncNotifierProvider<AuthNotifier, AuthStatus>(
+  AuthNotifier.new,
+);

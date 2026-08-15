@@ -68,7 +68,7 @@
       </a>
       <nav aria-label="Primary navigation">
         <a class="nav-link" href="#proof">Product</a>
-        <a class="button button-small button-outline" href="#waitlist" data-waitlist-entry="nav">Join waitlist</a>
+        <a class="button button-small button-outline" href="#apply" data-waitlist-entry="nav">Join waitlist</a>
       </nav>
     </div>
   </header>
@@ -95,6 +95,7 @@
                 <p>Start with your email. The next step takes about a minute.</p>
               </div>
               <form id="joinForm" method="post" action="/waitlist-unavailable/" novalidate data-placement="hero">
+                <div class="honeypot" aria-hidden="true"><label for="website">Website</label><input id="website" name="website" tabindex="-1" autocomplete="off"></div>
                 <label for="email">Email address</label>
                 <div class="field-action-row">
                   <input id="email" name="email" type="email" inputmode="email" autocomplete="email" maxlength="254" placeholder="you@example.com" aria-describedby="emailError" required aria-required="true">
@@ -176,7 +177,7 @@
 
                 <label class="check-row" for="marketingConsent">
                   <input id="marketingConsent" name="marketing_consent" type="checkbox">
-                  <span>Email me occasional CardCompass product updates. Optional; you can unsubscribe.</span>
+                  <span>Request occasional CardCompass product updates. Optional; email ownership must be verified before marketing, and you can unsubscribe.</span>
                 </label>
                 <button class="button button-primary button-full" type="submit" id="qualificationButton">Complete my application</button>
                 <p class="form-status" id="qualificationStatus" role="status"></p>
@@ -335,11 +336,12 @@
       <div class="shell final-cta-inner reveal">
         <p class="mono-label">Founding 100</p>
         <h2>Make the next card choice with the caveats in view.</h2>
-        <a class="button button-primary" href="#waitlist" data-waitlist-entry="bottom">Apply for early access</a>
+        <a class="button button-primary" href="#apply" data-waitlist-entry="bottom">Apply for early access</a>
       </div>
     </section>
   </main>
 
+  <section class="section-pad" aria-labelledby="resources-title"><div class="shell"><p class="mono-label">Free resources</p><h2 id="resources-title">Try the decision tools</h2><p><a href="/tools/best-card/">Best-card calculator</a> · <a href="/tools/milestone-tracker/">Milestone tracker</a> · <a href="/tools/movie-offers/">Movie-offer calculator</a></p></div></section>
   <footer class="site-footer">
     <div class="shell footer-grid">
       <div><a class="wordmark" href="/"><span class="wordmark-mark" aria-hidden="true">CC</span><span>CardCompass</span></a><p>Card choice, with the reasoning attached.</p></div>

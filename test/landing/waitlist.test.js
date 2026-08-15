@@ -7,6 +7,9 @@ import {
   extractEnrichmentToken,
   isValidEmail,
   validateQualification,
+  persistEnrichmentSession,
+  restoreEnrichmentSession,
+  clearEnrichmentSession,
 } from '../../landing/waitlist.js';
 
 test('email validation rejects malformed and overlong addresses', () => {
@@ -42,6 +45,7 @@ test('join payload matches the public RPC contract exactly', () => {
       p_referrer_path: '/best-credit-card/',
       p_landing_variant: 'receipt_v1',
       p_privacy_consent: true,
+      p_website: null,
     },
   );
 });
@@ -120,4 +124,31 @@ test('join response accepts only a success row with a valid opaque token', () =>
   assert.equal(extractEnrichmentToken([{ status: 'accepted', enrichment_token: token }]), token);
   assert.throws(() => extractEnrichmentToken([{ status: 'accepted', enrichment_token: 'short' }]));
   assert.throws(() => extractEnrichmentToken([{ status: 'rejected', enrichment_token: token }]));
+});
+
+test('enrichment token survives same-session refresh, expires, and clears', () => {
+  let value = null;
+  const storage = { getItem: () => value, setItem: (_key, next) => { value = next; }, removeItem: () => { value = null; } };
+  const now = Date.parse('2026-08-15T12:00:00Z');
+  const token = 'a'.repeat(64);
+  persistEnrichmentSession(storage, token, now);
+  assert.equal(restoreEnrichmentSession(storage, now + 1000), token);
+  assert.equal(restoreEnrichmentSession(storage, now + (31 * 60 * 1000)), null);
+  persistEnrichmentSession(storage, token, now);
+  clearEnrichmentSession(storage);
+  assert.equal(restoreEnrichmentSession(storage, now), null);
+});
+
+test('join receipt resumes after refresh and supplies enrich before one-time clear', () => {
+  let value = null;
+  const storage = { getItem: () => value, setItem: (_key, next) => { value = next; }, removeItem: () => { value = null; } };
+  const token = extractEnrichmentToken([{ status: 'accepted', enrichment_token: 'b'.repeat(64) }]);
+  persistEnrichmentSession(storage, token, 1000);
+  const resumed = restoreEnrichmentSession(storage, 2000);
+  assert.equal(buildEnrichmentPayload({
+    token: resumed, cardCount: '3-6', monthlySpendBand: '50k-1l',
+    primaryGoal: 'maximize_rewards',
+  }).p_enrichment_token, token);
+  clearEnrichmentSession(storage);
+  assert.equal(restoreEnrichmentSession(storage, 2000), null);
 });

@@ -333,4 +333,60 @@ void main() {
         ? 'Run with --dart-define=SUPABASE_SERVICE_ROLE_KEY=<local service-role key>.'
         : false,
   );
+
+  test(
+    'public marketing choice remains requested and unverified',
+    () async {
+      final join = await client.rpc(
+        'join_waitlist',
+        params: {'p_email': email, 'p_privacy_consent': true, 'p_website': ''},
+      );
+      final token =
+          ((join as List).single as Map<String, dynamic>)['enrichment_token']
+              as String;
+      await client.rpc(
+        'enrich_waitlist',
+        params: {
+          'p_enrichment_token': token,
+          'p_card_count': '3-6',
+          'p_monthly_spend_band': '50k-1l',
+          'p_primary_goal': 'maximize_rewards',
+          'p_marketing_consent': true,
+        },
+      );
+      final row = await serviceClient
+          .from('operator_waitlist_ranked')
+          .select('marketing_consent_requested_at,marketing_consent_at')
+          .eq('email', email)
+          .single();
+      expect(row['marketing_consent_requested_at'], isNotNull);
+      expect(row['marketing_consent_at'], isNull);
+    },
+    skip: serviceRoleKey.isEmpty
+        ? 'Run with --dart-define=SUPABASE_SERVICE_ROLE_KEY=<local service-role key>.'
+        : false,
+  );
+
+  test(
+    'honeypot keeps the success shape without creating a lead',
+    () async {
+      final result = await client.rpc(
+        'join_waitlist',
+        params: {
+          'p_email': email,
+          'p_privacy_consent': true,
+          'p_website': 'https://bot.example',
+        },
+      );
+      expect((result as List).single['status'], 'accepted');
+      final rows = await serviceClient
+          .from('operator_waitlist_ranked')
+          .select('id')
+          .eq('email', email);
+      expect(rows, isEmpty);
+    },
+    skip: serviceRoleKey.isEmpty
+        ? 'Run with --dart-define=SUPABASE_SERVICE_ROLE_KEY=<local service-role key>.'
+        : false,
+  );
 }

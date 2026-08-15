@@ -4,9 +4,9 @@
 
 Update every Friday and at **every 25 qualified leads**. Keep a frozen weekly snapshot so later definition changes do not rewrite history. Report counts beside percentages; never show a rate without its denominator.
 
-A **waitlist start** is the allow-listed `Waitlist Started` event. A **submitted application** is accepted enrichment (previous scorecards called this a completed application). A **qualified lead** is a submitted application that meets the current, pre-declared cohort rule (initial default: 3–6 or 7+ cards, a selected spend band, selected primary goal and a credible card-choice problem). An **activated invitee** completes the first-value action defined before the cohort is sent. Initial first value: wallet setup plus one inspectable card decision with its caveat/source viewed.
+A **waitlist start** is the allow-listed `Waitlist Started` event. A **completed application** is a database row with non-null `enriched_at`, counted from the service-role operator view. The browser-side `Enrichment Submitted` event is diagnostic only: duplicate joins receive decoy success-shaped responses, so it must never be used as the completion numerator. A **qualified lead** is a completed application that meets the current, pre-declared cohort rule (initial default: 3–6 or 7+ cards, a selected spend band, selected primary goal and a credible card-choice problem). `legacy-6-plus` is excluded until requalification. An **activated invitee** completes the first-value action defined before the cohort is sent. Initial first value: wallet setup plus one inspectable card decision with its caveat/source viewed.
 
-The overall application completion rate is Plausible-only and is not source-segmented: Plausible records starts without query attribution, while source is persisted in Supabase only on submitted applications. Never infer source-level starts or completion rates by joining those systems.
+The overall application completion rate reconciles Plausible starts with database `enriched_at` completions and is not source-segmented. Query attribution remains in Supabase; analytics accepts only closed, known experiment variants. Never infer source-level starts or completion rates by joining individual visitors across those systems.
 
 ## Core formulas and thresholds
 

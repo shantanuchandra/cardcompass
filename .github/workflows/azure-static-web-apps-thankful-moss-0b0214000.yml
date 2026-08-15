@@ -28,6 +28,17 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Run landing, GTM, and static migration tests
+        run: node --test test/landing/*.test.js test/gtm/*.test.js test/supabase/*_test.js
+
+      - name: Analyze Flutter
+        # Existing repository-wide lint debt and the legacy widget harness are
+        # tracked separately; new compile errors in owned runtime/test paths fail.
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings lib test/core test/features
+
+      - name: Run focused Flutter tests
+        run: flutter test test/core test/features
+
       - name: Write dart_defines.json from secrets
         run: |
           cat > dart_defines.json <<EOF
@@ -38,6 +49,12 @@ jobs:
           }
           EOF
 
+      - name: Validate browser Supabase configuration
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: node scripts/write-landing-env.mjs /tmp/cardcompass-public-env.js
+
       - name: Build Flutter web
         run: flutter build web --release --base-href /app/ --dart-define-from-file=dart_defines.json
 
@@ -46,6 +63,7 @@ jobs:
           mkdir -p deploy
           # Landing page at root (/)
           cp -r landing/* deploy/
+          rm -f deploy/design-system.html deploy/design-system.css
           # Flutter app under /app/
           cp -r build/web deploy/app
           # Azure SWA routing config

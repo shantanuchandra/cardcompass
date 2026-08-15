@@ -21,19 +21,13 @@ DROP FUNCTION IF EXISTS public.update_user_card(
 );
 DROP FUNCTION IF EXISTS public.get_user_cards(uuid);
 
--- Take an exclusive lock, overwrite any historical values, then remove the
--- storage columns in the same transaction. The explicit overwrite prevents
--- old values from surviving in the live row version while the DDL completes.
+-- Rehearse this ACCESS EXCLUSIVE lock in staging and confirm a provider backup
+-- before production. DROP removes the values from the logical active schema;
+-- physical remnants in backups or WAL follow the provider retention policy.
 LOCK TABLE public.user_cards IN ACCESS EXCLUSIVE MODE;
-UPDATE public.user_cards
-SET card_number = NULL,
-    expiry_date = NULL
-WHERE card_number IS NOT NULL
-   OR expiry_date IS NOT NULL;
-
 ALTER TABLE public.user_cards
   DROP COLUMN IF EXISTS card_number,
   DROP COLUMN IF EXISTS expiry_date;
 
 COMMENT ON TABLE public.user_cards IS
-  'User-owned credit cards linked to catalog; stores last four digits only, never PAN or expiry.';
+  'Active schema stores catalog identity and last four digits only; legacy PAN/expiry columns were logically removed.';

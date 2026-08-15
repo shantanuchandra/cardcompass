@@ -35,11 +35,10 @@ export function calculateCardComparison({ amount, cards }) {
     };
   });
 
-  const winner = comparisons.reduce((best, current) => (
-    current.estimatedValue > best.estimatedValue ? current : best
-  ));
+  const maximum = Math.max(...comparisons.map((card) => card.estimatedValue));
+  const winners = comparisons.filter((card) => card.estimatedValue === maximum).map((card) => card.name);
 
-  return { amount: purchaseAmount, winner: winner.name, comparisons };
+  return { amount: purchaseAmount, winner: winners[0], winners, comparisons };
 }
 
 export function calculateMilestone({ target, currentSpend, plannedSpend = 0, daysRemaining }) {
@@ -165,7 +164,9 @@ export function renderBestCardResult(documentRef, output, result) {
   }
   output.append(
     textElement(documentRef, 'p', 'Illustrative result', 'mono-label'),
-    textElement(documentRef, 'h2', `${result.winner} leads for this purchase`),
+    textElement(documentRef, 'h2', result.winners?.length > 1
+      ? `${result.winners.join(' and ')} tie for this purchase`
+      : `${result.winner} leads for this purchase`),
     grid,
     textElement(
       documentRef,
@@ -250,7 +251,7 @@ function setupBestCard(form) {
           name: form.elements.namedItem(`card_${index}_name`).value,
           ratePercent: formNumber(form, `card_${index}_rate`),
           capRemaining: formNumber(form, `card_${index}_cap`),
-        })),
+        })).filter((card) => card.name.trim()),
       });
       renderBestCardResult(document, output, result);
     } catch (error) { renderToolError(document, output, error); }

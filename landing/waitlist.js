@@ -22,6 +22,10 @@ const UTM_LIMITS = {
   utm_content: 150,
 };
 const ATTRIBUTION_KEY = 'cardcompass:first-touch:v1';
+const ENRICHMENT_SESSION_KEY = 'cardcompass:enrichment-session:v1';
+const FIRST_TOUCH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const ENRICHMENT_TTL_MS = 30 * 60 * 1000;
+const ANALYTICS_VARIANTS = new Set(['receipt_v1']);
 
 function clean(value) {
   if (typeof value !== 'string') return null;
@@ -49,7 +53,7 @@ export function isValidEmail(value) {
   return Boolean(email && email.length <= 254 && EMAIL_RE.test(email));
 }
 
-export function buildJoinPayload({ email, privacyConsent, source, attribution = {} }) {
+export function buildJoinPayload({ email, privacyConsent, source, website = '', attribution = {} }) {
   return {
     p_email: String(email ?? '').trim().toLowerCase(),
     p_source: cleanSlug(attribution.source) || cleanSlug(source),
@@ -61,6 +65,7 @@ export function buildJoinPayload({ email, privacyConsent, source, attribution = 
     p_referrer_path: attribution.referrer_path ?? null,
     p_landing_variant: attribution.landing_variant ?? null,
     p_privacy_consent: privacyConsent === true,
+    p_website: clean(website),
   };
 }
 
@@ -142,15 +147,29 @@ function validStoredAttribution(value) {
   if (Object.entries(UTM_LIMITS).some(([key, limit]) => value[key] !== null && cleanWithin(value[key], limit) !== value[key])) return null;
   if (value.referrer_path !== null && (!value.referrer_path.startsWith('/') || value.referrer_path.length > 512)) return null;
   if (value.landing_variant !== null && cleanSlug(value.landing_variant) !== value.landing_variant) return null;
-  return { source: value.source ?? null, ...value };
+  return {
+    source: value.source ?? null,
+    utm_source: value.utm_source,
+    utm_medium: value.utm_medium,
+    utm_campaign: value.utm_campaign,
+    utm_term: value.utm_term,
+    utm_content: value.utm_content,
+    referrer_path: value.referrer_path,
+    landing_variant: value.landing_variant,
+  };
 }
 
-export function captureFirstTouch({ locationHref, referrer = '', variant, storage }) {
+export function captureFirstTouch({ locationHref, referrer = '', variant, storage, now = Date.now() }) {
   try {
     const stored = storage?.getItem(ATTRIBUTION_KEY);
     if (stored) {
-      const parsed = validStoredAttribution(JSON.parse(stored));
-      if (parsed) return parsed;
+      const decoded = JSON.parse(stored);
+      const wrapped = decoded?.attribution ? decoded : { captured_at: Number.NaN, attribution: decoded };
+      const parsed = validStoredAttribution(wrapped.attribution);
+      if (parsed && Number.isFinite(wrapped.captured_at) && now - wrapped.captured_at <= FIRST_TOUCH_TTL_MS) {
+        return parsed;
+      }
+      storage?.removeItem(ATTRIBUTION_KEY);
     }
   } catch {
     // Storage can be unavailable in private browsing; attribution remains in memory.
@@ -175,11 +194,40 @@ export function captureFirstTouch({ locationHref, referrer = '', variant, storag
   };
 
   try {
-    storage?.setItem(ATTRIBUTION_KEY, JSON.stringify(attribution));
+    storage?.setItem(ATTRIBUTION_KEY, JSON.stringify({ captured_at: now, attribution }));
   } catch {
     // The RPC still receives this in-memory first touch when persistence is blocked.
   }
   return attribution;
+}
+
+export function clearFirstTouch(storage) {
+  try { storage?.removeItem(ATTRIBUTION_KEY); } catch { /* Storage is optional. */ }
+}
+
+export function analyticsVariant(value) {
+  return ANALYTICS_VARIANTS.has(value) ? value : 'unknown';
+}
+
+export function persistEnrichmentSession(storage, token, now = Date.now()) {
+  if (!TOKEN_RE.test(String(token ?? '').toLowerCase())) return false;
+  try {
+    storage?.setItem(ENRICHMENT_SESSION_KEY, JSON.stringify({ token: token.toLowerCase(), expires_at: now + ENRICHMENT_TTL_MS }));
+    return true;
+  } catch { return false; }
+}
+
+export function restoreEnrichmentSession(storage, now = Date.now()) {
+  try {
+    const value = JSON.parse(storage?.getItem(ENRICHMENT_SESSION_KEY) || 'null');
+    if (TOKEN_RE.test(value?.token) && Number.isFinite(value?.expires_at) && value.expires_at > now) return value.token;
+  } catch { /* Treat malformed storage as expired. */ }
+  clearEnrichmentSession(storage);
+  return null;
+}
+
+export function clearEnrichmentSession(storage) {
+  try { storage?.removeItem(ENRICHMENT_SESSION_KEY); } catch { /* Storage is optional. */ }
 }
 
 export function stripAnalyticsUrl(value) {
@@ -222,7 +270,7 @@ export function sanitizeAnalyticsPayload(payload) {
 }
 
 export function buildPlausibleEvent(name, context = {}, currentUrl) {
-  if (!EVENT_NAMES.has(name)) return null;
+  if (name !== 'pageview' && !EVENT_NAMES.has(name)) return null;
   const options = { props: safeAnalyticsProps(context) };
   const strippedUrl = stripAnalyticsUrl(currentUrl);
   if (strippedUrl) options.url = strippedUrl;

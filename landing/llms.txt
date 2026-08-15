@@ -28,7 +28,7 @@ CardCompass is being built for people managing several Indian credit cards. It a
 
 ### Card and statement organisation
 
-Signed-in users can associate cards from the CardCompass catalog with their account. Current UI flows use catalog identity, last four digits, optional holder/limit fields, and statement/due dates; they do not ask for or send a full primary account number (PAN), card expiry, CVV, PIN, OTP or banking password. This repository includes a hardening migration intended to erase and drop legacy PAN/expiry columns and remove older RPC signatures. Until it is applied and verified in the deployed Supabase project, the live backend may still retain those legacy columns or RPCs. Broad acquisition is gated on verifying that deployment.
+Signed-in users can associate cards from the CardCompass catalog with their account. Current UI flows use catalog identity, last four digits, optional holder/limit fields, and statement/due dates; they do not ask for or send a full primary account number (PAN), card expiry, CVV, PIN, OTP or banking password. This repository includes a hardening migration for logical active-schema removal of legacy PAN/expiry columns and older RPC signatures. Until it is applied and verified in the deployed Supabase project, the live backend may still retain those legacy columns or RPCs. Provider backups and write-ahead logs (WAL) follow provider retention; this is not a claim of immediate physical erasure from every retained copy. Broad acquisition is gated on verifying that deployment.
 
 ### Gmail read-only statement import
 

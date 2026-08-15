@@ -34,7 +34,7 @@ test('operating scorecard defines computable formulas and thresholds', async () 
     scorecard,
     /Source-qualified rate\s*=\s*qualified submitted applications from source\s*\/\s*submitted applications from source/i,
   );
-  assert.match(scorecard, /overall application completion rate.*Plausible-only/i);
+  assert.match(scorecard, /overall application completion rate.*Plausible starts.*database `enriched_at`/i);
   assert.match(scorecard, /not source-segmented/i);
   assert.match(scorecard, /each activated user.*days 8[–-]14 after their own activation date/i);
   assert.match(scorecard, /Source-qualified rate[\s\S]*≥ overall rate[\s\S]*< 15 percentage points below overall[\s\S]*≥ 15 percentage points below overall/i);

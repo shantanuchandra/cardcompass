@@ -11,6 +11,9 @@ DROP VIEW IF EXISTS public.operator_waitlist_ranked;
 DROP FUNCTION IF EXISTS public.join_waitlist(
   text, text, text, text, text, text, text, text, text, boolean
 );
+DROP FUNCTION IF EXISTS public.join_waitlist(
+  text, text, text, text, text, text, text, text, text, boolean, text
+);
 DROP FUNCTION IF EXISTS public.enrich_waitlist(
   text, text, text, text, text, text, text[], boolean
 );
@@ -78,9 +81,9 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1
     FROM public.waitlist
-    WHERE email = 'legacy-band@example.com' AND card_count = '7+'
+    WHERE email = 'legacy-band@example.com' AND card_count = 'legacy-6-plus'
   ) THEN
-    RAISE EXCEPTION 'legacy card count was not upgraded after dropping its old constraint';
+    RAISE EXCEPTION 'ambiguous legacy card count was not preserved for requalification';
   END IF;
 
   BEGIN

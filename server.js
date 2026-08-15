@@ -10,7 +10,6 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT      = Number(process.argv[2]) || 8080;
 const landingRoot = path.join(__dirname, 'landing');
-const loginRoot = path.join(__dirname, 'login');
 const appRoot = path.join(__dirname, 'build', 'web');
 
 const SENSITIVE_BASENAMES = new Set([
@@ -107,10 +106,7 @@ export const SUPABASE_ANON = ${JSON.stringify(env.SUPABASE_ANON_KEY || '')};
   // these roots are never candidates for static serving.
   let publicRoot = landingRoot;
   let publicPath = url;
-  if (url === '/login' || url.startsWith('/login/')) {
-    publicRoot = loginRoot;
-    publicPath = url.slice('/login'.length) || '/';
-  } else if (url === '/app' || url.startsWith('/app/')) {
+  if (url === '/app' || url.startsWith('/app/')) {
     publicRoot = appRoot;
     publicPath = url.slice('/app'.length) || '/';
   }
@@ -146,6 +142,5 @@ export const SUPABASE_ANON = ${JSON.stringify(env.SUPABASE_ANON_KEY || '')};
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`[CardCompass] http://localhost:${PORT}`);
-  console.log(`  /login  → login page`);
   console.log(`  /       → landing page`);
 });
