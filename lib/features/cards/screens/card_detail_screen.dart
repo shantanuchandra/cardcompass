@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/brand_tokens.dart';
 import '../../../core/theme/category_display.dart';
+import '../../../core/theme/brand_components.dart';
 import '../../../core/providers/repository_providers.dart';
 import '../../../core/providers/supabase_provider.dart';
 import '../../../shared/models/user_card.dart';
@@ -13,7 +14,7 @@ import '../../../shared/models/statement.dart';
 
 // ─── providers ───────────────────────────────────────────────────────────────
 
-final _cardDetailProvider = FutureProvider.family<UserCard?, String>((
+final cardDetailProvider = FutureProvider.family<UserCard?, String>((
   ref,
   cardId,
 ) async {
@@ -27,7 +28,7 @@ final _cardDetailProvider = FutureProvider.family<UserCard?, String>((
   }
 });
 
-final _cardTransactionsProvider =
+final cardTransactionsProvider =
     FutureProvider.family<List<Transaction>, String>((ref, cardId) async {
       final user = ref.watch(currentUserProvider);
       if (user == null) return [];
@@ -36,7 +37,7 @@ final _cardTransactionsProvider =
           .getTransactions(userId: user.id, userCardId: cardId, limit: 15);
     });
 
-final _cardStatementProvider = FutureProvider.family<Statement?, String>((
+final cardStatementProvider = FutureProvider.family<Statement?, String>((
   ref,
   cardId,
 ) async {
@@ -48,7 +49,7 @@ final _cardStatementProvider = FutureProvider.family<Statement?, String>((
   return map[cardId];
 });
 
-final _cardMonthSpendProvider = FutureProvider.family<double, String>((
+final cardMonthSpendProvider = FutureProvider.family<double, String>((
   ref,
   cardId,
 ) async {
@@ -78,7 +79,7 @@ class CardDetailScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final cardAsync = ref.watch(_cardDetailProvider(cardId));
+    final cardAsync = ref.watch(cardDetailProvider(cardId));
 
     return Scaffold(
       backgroundColor: BrandColors.paper,
@@ -136,109 +137,157 @@ class _CardDetailBody extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final txnsAsync = ref.watch(_cardTransactionsProvider(cardId));
-    final stmtAsync = ref.watch(_cardStatementProvider(cardId));
-    final spendAsync = ref.watch(_cardMonthSpendProvider(cardId));
+    final txnsAsync = ref.watch(cardTransactionsProvider(cardId));
+    final stmtAsync = ref.watch(cardStatementProvider(cardId));
+    final spendAsync = ref.watch(cardMonthSpendProvider(cardId));
 
     return RefreshIndicator(
       color: BrandColors.focusDark,
       backgroundColor: BrandColors.paper,
       onRefresh: () async {
-        ref.invalidate(_cardDetailProvider(cardId));
-        ref.invalidate(_cardTransactionsProvider(cardId));
-        ref.invalidate(_cardStatementProvider(cardId));
-        ref.invalidate(_cardMonthSpendProvider(cardId));
+        ref.invalidate(cardDetailProvider(cardId));
+        ref.invalidate(cardTransactionsProvider(cardId));
+        ref.invalidate(cardStatementProvider(cardId));
+        ref.invalidate(cardMonthSpendProvider(cardId));
       },
       child: ListView(
-        padding: const EdgeInsets.all(BrandSpacing.md),
+        padding: const EdgeInsets.symmetric(vertical: BrandSpacing.md),
         children: [
-          // Credit card visual — cap at 480px so it doesn't stretch full-width on desktop
-          Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 480),
-              child: _CreditCardWidget(card: card),
-            ),
-          ),
-          const SizedBox(height: BrandSpacing.lg),
-
-          // Stats row: utilization + month spend
-          Row(
-            children: [
-              Expanded(
-                child: stmtAsync.when(
-                  loading: () => _StatCardSkeleton(),
-                  error: (_, _e) => _StatCard(label: 'Utilization', value: '–'),
-                  data: (stmt) {
-                    if (stmt == null ||
-                        card.creditLimit == null ||
-                        card.creditLimit! <= 0) {
-                      return _StatCard(label: 'Utilization', value: '–');
-                    }
-                    final pct = (stmt.closingBalance / card.creditLimit!) * 100;
-                    return _UtilizationCard(
-                      used: stmt.closingBalance,
-                      limit: card.creditLimit!,
-                      pct: pct.clamp(0, 100),
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(width: BrandSpacing.sm),
-              Expanded(
-                child: spendAsync.when(
-                  loading: () => _StatCardSkeleton(),
-                  error: (_, _e) => _StatCard(label: 'This Month', value: '–'),
-                  data: (spend) => _StatCard(
-                    label: 'This Month',
-                    value: _fmt(spend),
-                    icon: Icons.trending_up_rounded,
-                    iconColor: BrandColors.focusDark,
+          BrandContentFrame(
+            mode: BrandContentMode.fullWidthData,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const _SectionHeader(title: 'Card summary'),
+                const SizedBox(height: BrandSpacing.sm),
+                Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 480),
+                    child: _CreditCardWidget(card: card),
                   ),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: BrandSpacing.md),
-
-          // Bill panel
-          stmtAsync.when(
-            loading: () => _BillPanelSkeleton(),
-            error: (_, _e) => const SizedBox.shrink(),
-            data: (stmt) =>
-                stmt != null ? _BillPanel(stmt: stmt) : const SizedBox.shrink(),
-          ),
-          const SizedBox(height: BrandSpacing.md),
-
-          // Recent transactions
-          _SectionHeader(title: 'Recent Transactions'),
-          const SizedBox(height: BrandSpacing.sm),
-          txnsAsync.when(
-            loading: () => const Center(
-              child: Padding(
-                padding: EdgeInsets.all(BrandSpacing.lg),
-                child: CircularProgressIndicator(color: BrandColors.focusDark),
-              ),
-            ),
-            error: (e, _) => Center(
-              child: Text(
-                'Could not load transactions',
-                style: TextStyle(
-                  fontFamily: 'Manrope',
-                  color: BrandColors.mutedInk,
-                  fontSize: 13,
+                const SizedBox(height: BrandSpacing.md),
+                _DetailStatsRow(
+                  utilization: stmtAsync.when(
+                    loading: _StatCardSkeleton.new,
+                    error: (_, _) =>
+                        const _StatCard(label: 'Utilization', value: '–'),
+                    data: (stmt) {
+                      if (stmt == null ||
+                          card.creditLimit == null ||
+                          card.creditLimit! <= 0) {
+                        return const _StatCard(
+                          label: 'Utilization',
+                          value: '–',
+                        );
+                      }
+                      final pct =
+                          (stmt.closingBalance / card.creditLimit!) * 100;
+                      return _UtilizationCard(
+                        used: stmt.closingBalance,
+                        limit: card.creditLimit!,
+                        pct: pct.clamp(0, 100),
+                      );
+                    },
+                  ),
+                  monthSpend: spendAsync.when(
+                    loading: _StatCardSkeleton.new,
+                    error: (_, _) =>
+                        const _StatCard(label: 'This Month', value: '–'),
+                    data: (spend) => _StatCard(
+                      label: 'This Month',
+                      value: _fmt(spend),
+                      icon: Icons.trending_up_rounded,
+                      iconColor: BrandColors.focusDark,
+                    ),
+                  ),
                 ),
-              ),
+                const SizedBox(height: BrandSpacing.lg),
+                const _SectionHeader(title: 'Best uses'),
+                const SizedBox(height: BrandSpacing.sm),
+                const BrandSurface(
+                  child: Text(
+                    'Use this card where it earns your strongest rewards. We will surface verified benefit details as statements arrive.',
+                  ),
+                ),
+                const SizedBox(height: BrandSpacing.lg),
+                const _SectionHeader(title: 'Milestone'),
+                const SizedBox(height: BrandSpacing.sm),
+                BrandSurface(
+                  child: Text(
+                    card.statementDate != null || card.dueDate != null
+                        ? 'Statement closes on the ${card.statementDate ?? '—'}th; payment is due on the ${card.dueDate ?? '—'}th.'
+                        : 'Add a statement to track billing milestones here.',
+                  ),
+                ),
+                const SizedBox(height: BrandSpacing.lg),
+                const _SectionHeader(title: 'Current bill'),
+                const SizedBox(height: BrandSpacing.sm),
+                stmtAsync.when(
+                  loading: _BillPanelSkeleton.new,
+                  error: (_, _) => const BrandSurface(
+                    child: Text('Current bill could not be loaded.'),
+                  ),
+                  data: (stmt) => stmt != null
+                      ? _BillPanel(stmt: stmt)
+                      : const BrandSurface(
+                          child: Text(
+                            'No current bill yet. Import a statement to see what is due.',
+                          ),
+                        ),
+                ),
+                const SizedBox(height: BrandSpacing.lg),
+                ExpansionTile(
+                  key: const PageStorageKey('rewards-fees'),
+                  title: const Text('Rewards & fees'),
+                  subtitle: const Text('Open for costs and reward information'),
+                  children: [
+                    ListTile(
+                      title: const Text('Annual fee'),
+                      trailing: Text(
+                        card.annualFee == null
+                            ? 'Not listed'
+                            : _fmt(card.annualFee!),
+                      ),
+                    ),
+                    const ListTile(
+                      title: Text('Reward information'),
+                      subtitle: Text(
+                        'Verified rewards and fee waivers will appear here.',
+                      ),
+                    ),
+                  ],
+                ),
+                ExpansionTile(
+                  key: const PageStorageKey('card-history'),
+                  title: const Text('History'),
+                  subtitle: const Text('Open recent transactions'),
+                  children: [
+                    txnsAsync.when(
+                      loading: () => const Padding(
+                        padding: EdgeInsets.all(BrandSpacing.lg),
+                        child: CircularProgressIndicator(
+                          color: BrandColors.focusDark,
+                        ),
+                      ),
+                      error: (_, _) => const Padding(
+                        padding: EdgeInsets.all(BrandSpacing.md),
+                        child: Text('Could not load transactions'),
+                      ),
+                      data: (txns) => txns.isEmpty
+                          ? _EmptyTransactions()
+                          : Column(
+                              children: txns
+                                  .map((t) => _TxnTile(txn: t))
+                                  .toList(),
+                            ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: BrandSpacing.xxl),
+              ],
             ),
-            data: (txns) {
-              if (txns.isEmpty) {
-                return _EmptyTransactions();
-              }
-              return Column(
-                children: txns.map((t) => _TxnTile(txn: t)).toList(),
-              );
-            },
           ),
-          const SizedBox(height: BrandSpacing.xxl),
         ],
       ),
     );
@@ -251,6 +300,38 @@ class _CardDetailBody extends ConsumerWidget {
   ).format(v);
 }
 
+class _DetailStatsRow extends StatelessWidget {
+  const _DetailStatsRow({required this.utilization, required this.monthSpend});
+
+  final Widget utilization;
+  final Widget monthSpend;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final stack =
+          constraints.maxWidth < 600 ||
+          MediaQuery.textScalerOf(context).scale(14) >= 21;
+      if (stack) {
+        return Column(
+          children: [
+            SizedBox(width: double.infinity, child: utilization),
+            const SizedBox(height: BrandSpacing.sm),
+            SizedBox(width: double.infinity, child: monthSpend),
+          ],
+        );
+      }
+      return Row(
+        children: [
+          Expanded(child: utilization),
+          const SizedBox(width: BrandSpacing.sm),
+          Expanded(child: monthSpend),
+        ],
+      );
+    },
+  );
+}
+
 // ─── credit card visual ───────────────────────────────────────────────────────
 
 class _CreditCardWidget extends StatelessWidget {
@@ -259,124 +340,130 @@ class _CreditCardWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AspectRatio(
-      aspectRatio: 1.586, // standard credit card ratio
-      child: Container(
-        decoration: BoxDecoration(
-          color: BrandColors.paperDeep,
-          borderRadius: BorderRadius.circular(BrandRadius.overlay),
-          border: Border(
-            left: BorderSide(
-              color: AppTheme.issuerColor(card.bankCode),
-              width: 7,
-            ),
+    final largeText = MediaQuery.textScalerOf(context).scale(14) >= 21;
+    final cardContent = Container(
+      decoration: BoxDecoration(
+        color: BrandColors.paperDeep,
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
+        border: Border(
+          left: BorderSide(
+            color: AppTheme.issuerColor(card.bankCode),
+            width: 7,
           ),
         ),
-        child: Stack(
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(BrandSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: largeText ? MainAxisSize.min : MainAxisSize.max,
           children: [
-            Padding(
-              padding: const EdgeInsets.all(BrandSpacing.md),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Top row: bank name + network
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            Wrap(
+              spacing: BrandSpacing.sm,
+              runSpacing: BrandSpacing.xs,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  card.bank ?? '',
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: BrandColors.ink,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                _NetworkBadge(network: card.network),
+              ],
+            ),
+            if (!largeText)
+              const Spacer()
+            else
+              const SizedBox(height: BrandSpacing.lg),
+            FittedBox(
+              alignment: Alignment.centerLeft,
+              fit: BoxFit.scaleDown,
+              child: Text(
+                card.maskedNumber.isNotEmpty
+                    ? card.maskedNumber
+                    : '••••  ••••  ••••  ••••',
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: BrandColors.ink,
+                  letterSpacing: 2,
+                ),
+              ),
+            ),
+            const SizedBox(height: BrandSpacing.md),
+            ResponsiveValueRow(
+              spacing: BrandSpacing.md,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _CardLabel(label: 'CARD HOLDER'),
+                    Text(
+                      card.cardHolderName ?? 'YOUR NAME',
+                      style: TextStyle(
+                        fontFamily: 'Manrope',
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: BrandColors.ink,
+                      ),
+                    ),
+                  ],
+                ),
+                if (card.creditLimit != null)
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
+                      _CardLabel(label: 'LIMIT'),
                       Text(
-                        card.bank ?? '',
+                        NumberFormat.compactCurrency(
+                          locale: 'en_IN',
+                          symbol: '₹',
+                          decimalDigits: 0,
+                        ).format(card.creditLimit),
                         style: TextStyle(
                           fontFamily: 'Manrope',
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
                           color: BrandColors.ink,
-                          letterSpacing: 0.5,
                         ),
                       ),
-                      _NetworkBadge(network: card.network),
                     ],
                   ),
-                  const Spacer(),
-                  // Card number
-                  Text(
-                    card.maskedNumber.isNotEmpty
-                        ? card.maskedNumber
-                        : '••••  ••••  ••••  ••••',
-                    style: TextStyle(
-                      fontFamily: 'Manrope',
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: BrandColors.ink,
-                      letterSpacing: 2,
-                    ),
-                  ),
-                  const SizedBox(height: BrandSpacing.md),
-                  // Bottom row: name + credit limit
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'CARD HOLDER',
-                            style: TextStyle(
-                              fontFamily: 'Manrope',
-                              fontSize: 9,
-                              color: BrandColors.mutedInk,
-                              letterSpacing: 1,
-                            ),
-                          ),
-                          Text(
-                            card.cardHolderName ?? 'YOUR NAME',
-                            style: TextStyle(
-                              fontFamily: 'Manrope',
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: BrandColors.ink,
-                            ),
-                          ),
-                        ],
-                      ),
-                      if (card.creditLimit != null)
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text(
-                              'LIMIT',
-                              style: TextStyle(
-                                fontFamily: 'Manrope',
-                                fontSize: 9,
-                                color: BrandColors.mutedInk,
-                                letterSpacing: 1,
-                              ),
-                            ),
-                            Text(
-                              NumberFormat.compactCurrency(
-                                locale: 'en_IN',
-                                symbol: '₹',
-                                decimalDigits: 0,
-                              ).format(card.creditLimit),
-                              style: TextStyle(
-                                fontFamily: 'Manrope',
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: BrandColors.ink,
-                              ),
-                            ),
-                          ],
-                        ),
-                    ],
-                  ),
-                ],
-              ),
+              ],
             ),
           ],
         ),
       ),
     );
+    return largeText
+        ? cardContent
+        : AspectRatio(aspectRatio: 1.586, child: cardContent);
   }
+}
+
+class _CardLabel extends StatelessWidget {
+  const _CardLabel({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Text(
+    label,
+    style: TextStyle(
+      fontFamily: 'Manrope',
+      fontSize: 9,
+      color: BrandColors.mutedInk,
+      letterSpacing: 1,
+    ),
+  );
 }
 
 class _NetworkBadge extends StatelessWidget {

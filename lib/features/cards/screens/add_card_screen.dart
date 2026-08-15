@@ -2,8 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/theme/brand_tokens.dart';
+import '../../../core/theme/brand_components.dart';
 import '../../../core/providers/repository_providers.dart';
 import '../../../core/providers/supabase_provider.dart';
+
+typedef CardCatalogSearch =
+    Future<List<Map<String, dynamic>>> Function(String query);
+
+final cardCatalogSearchProvider = Provider<CardCatalogSearch>((ref) {
+  return ref.read(cardsRepositoryProvider).searchCatalog;
+});
 
 class AddCardScreen extends ConsumerStatefulWidget {
   const AddCardScreen({super.key});
@@ -40,7 +48,7 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
     }
     setState(() => _loading = true);
     try {
-      final r = await ref.read(cardsRepositoryProvider).searchCatalog(q.trim());
+      final r = await ref.read(cardCatalogSearchProvider)(q.trim());
       setState(() {
         _results = r;
         _loading = false;
@@ -55,6 +63,11 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
 
   Future<void> _save() async {
     if (_selected == null) return;
+    final lastFour = _lastFour.text.trim();
+    if (lastFour.isNotEmpty && !RegExp(r'^\d{4}$').hasMatch(lastFour)) {
+      setState(() => _error = 'Enter exactly four digits or leave this blank');
+      return;
+    }
     final user = ref.read(currentUserProvider);
     if (user == null) return;
     setState(() {
@@ -101,153 +114,256 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
           onPressed: () => context.pop(),
         ),
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(BrandSpacing.md),
-        children: [
-          // Step 1: search catalog
-          if (_selected == null) ...[
-            Text(
-              'Search your card',
-              style: TextStyle(
-                fontFamily: 'Manrope',
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-                color: BrandColors.ink,
+      body: BrandContentFrame(
+        child: ListView(
+          padding: const EdgeInsets.symmetric(vertical: BrandSpacing.md),
+          children: [
+            const _AddCardProgress(),
+            const SizedBox(height: BrandSpacing.lg),
+            // Step 1: search catalog
+            if (_selected == null) ...[
+              Text(
+                'Search your card',
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: BrandColors.ink,
+                ),
               ),
-            ),
-            const SizedBox(height: BrandSpacing.sm),
-            TextField(
-              controller: _search,
-              autofocus: true,
-              decoration: const InputDecoration(
-                hintText: 'e.g. HDFC Regalia, Axis Ace...',
-                prefixIcon: Icon(
-                  Icons.search_rounded,
+              const SizedBox(height: BrandSpacing.sm),
+              TextField(
+                key: const Key('card-search'),
+                controller: _search,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  hintText: 'e.g. HDFC Regalia, Axis Ace...',
+                  prefixIcon: Icon(
+                    Icons.search_rounded,
+                    color: BrandColors.mutedInk,
+                  ),
+                ),
+                onChanged: _searchCards,
+              ),
+              const SizedBox(height: BrandSpacing.sm),
+              if (_loading)
+                const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(BrandSpacing.lg),
+                    child: CircularProgressIndicator(
+                      color: BrandColors.focusDark,
+                      strokeWidth: 2,
+                    ),
+                  ),
+                )
+              else
+                ..._results.map(
+                  (card) => _CatalogTile(
+                    card: card,
+                    onTap: () => setState(() {
+                      _selected = card;
+                    }),
+                  ),
+                ),
+            ],
+
+            // Step 2: details
+            if (_selected != null) ...[
+              Container(
+                padding: const EdgeInsets.all(BrandSpacing.md),
+                decoration: BoxDecoration(
+                  color: BrandColors.focusDark.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(BrandRadius.card),
+                  border: Border.all(
+                    color: BrandColors.focusDark.withValues(alpha: 0.3),
+                  ),
+                ),
+                child: _SelectedCatalogCard(
+                  card: _selected!,
+                  onChange: () => setState(() => _selected = null),
+                ),
+              ),
+              const SizedBox(height: BrandSpacing.lg),
+              Text(
+                'Card details (optional)',
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: BrandColors.ink,
+                ),
+              ),
+              const SizedBox(height: BrandSpacing.sm),
+              TextField(
+                key: const Key('last-four'),
+                controller: _lastFour,
+                keyboardType: TextInputType.number,
+                maxLength: 4,
+                decoration: const InputDecoration(
+                  labelText: 'Last 4 digits',
+                  hintText: '1234',
+                  counterText: '',
+                ),
+              ),
+              const SizedBox(height: BrandSpacing.xs),
+              Text(
+                'Optional — helps match statements to this card. We never ask for the full card number.',
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 12,
+                  height: 1.4,
                   color: BrandColors.mutedInk,
                 ),
               ),
-              onChanged: _searchCards,
-            ),
-            const SizedBox(height: BrandSpacing.sm),
-            if (_loading)
-              const Center(
-                child: Padding(
-                  padding: EdgeInsets.all(BrandSpacing.lg),
-                  child: CircularProgressIndicator(
-                    color: BrandColors.focusDark,
-                    strokeWidth: 2,
-                  ),
-                ),
-              )
-            else
-              ..._results.map(
-                (card) => _CatalogTile(
-                  card: card,
-                  onTap: () => setState(() {
-                    _selected = card;
-                  }),
+              const SizedBox(height: BrandSpacing.sm),
+              TextField(
+                controller: _holderName,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(labelText: 'Cardholder name'),
+              ),
+              const SizedBox(height: BrandSpacing.xs),
+              Text(
+                'Optional — used only to label this card for you.',
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 12,
+                  height: 1.4,
+                  color: BrandColors.mutedInk,
                 ),
               ),
-          ],
-
-          // Step 2: details
-          if (_selected != null) ...[
-            Container(
-              padding: const EdgeInsets.all(BrandSpacing.md),
-              decoration: BoxDecoration(
-                color: BrandColors.focusDark.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(BrandRadius.card),
-                border: Border.all(
-                  color: BrandColors.focusDark.withValues(alpha: 0.3),
-                ),
-              ),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.check_circle_rounded,
-                    color: BrandColors.focusDark,
-                    size: 20,
-                  ),
-                  const SizedBox(width: BrandSpacing.sm),
-                  Expanded(
-                    child: Text(
-                      '${_selected!['card_name']} · ${_selected!['bank']}',
-                      style: TextStyle(
-                        fontFamily: 'Manrope',
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: BrandColors.ink,
-                      ),
+              const SizedBox(height: BrandSpacing.lg),
+              if (_error != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: BrandSpacing.sm),
+                  child: Text(
+                    _error!,
+                    style: TextStyle(
+                      fontFamily: 'Manrope',
+                      fontSize: 12,
+                      color: BrandColors.error,
                     ),
                   ),
-                  TextButton(
-                    onPressed: () => setState(() {
-                      _selected = null;
-                    }),
-                    child: const Text('Change'),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: BrandSpacing.lg),
-            Text(
-              'Card details (optional)',
-              style: TextStyle(
-                fontFamily: 'Manrope',
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-                color: BrandColors.ink,
-              ),
-            ),
-            const SizedBox(height: BrandSpacing.sm),
-            TextField(
-              controller: _lastFour,
-              keyboardType: TextInputType.number,
-              maxLength: 4,
-              decoration: const InputDecoration(
-                labelText: 'Last 4 digits',
-                hintText: '1234',
-                counterText: '',
-              ),
-            ),
-            const SizedBox(height: BrandSpacing.sm),
-            TextField(
-              controller: _holderName,
-              textCapitalization: TextCapitalization.words,
-              decoration: const InputDecoration(labelText: 'Cardholder name'),
-            ),
-            const SizedBox(height: BrandSpacing.lg),
-            if (_error != null)
-              Padding(
-                padding: const EdgeInsets.only(bottom: BrandSpacing.sm),
-                child: Text(
-                  _error!,
-                  style: TextStyle(
-                    fontFamily: 'Manrope',
-                    fontSize: 12,
-                    color: BrandColors.error,
-                  ),
+                ),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _saving ? null : _save,
+                  child: _saving
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: BrandColors.ink,
+                          ),
+                        )
+                      : const Text('Add card'),
                 ),
               ),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: _saving ? null : _save,
-                child: _saving
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: BrandColors.ink,
-                        ),
-                      )
-                    : const Text('Add Card'),
-              ),
-            ),
+            ],
           ],
-        ],
+        ),
       ),
+    );
+  }
+}
+
+class _AddCardProgress extends StatelessWidget {
+  const _AddCardProgress();
+
+  @override
+  Widget build(BuildContext context) {
+    final compact = MediaQuery.textScalerOf(context).scale(14) >= 21;
+    return Semantics(
+      label: 'Add card progress: search, then confirm',
+      child: ExcludeSemantics(
+        child: compact
+            ? Wrap(
+                spacing: BrandSpacing.sm,
+                runSpacing: BrandSpacing.xs,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  _step('1 Search', active: true),
+                  const Icon(Icons.arrow_forward_rounded, size: 18),
+                  _step('2 Confirm'),
+                ],
+              )
+            : Row(
+                children: [
+                  _step('1 Search', active: true),
+                  const Expanded(
+                    child: Divider(
+                      indent: BrandSpacing.sm,
+                      endIndent: BrandSpacing.sm,
+                    ),
+                  ),
+                  _step('2 Confirm'),
+                ],
+              ),
+      ),
+    );
+  }
+
+  Widget _step(String label, {bool active = false}) => Text(
+    label,
+    style: TextStyle(
+      fontFamily: 'Manrope',
+      fontSize: 12,
+      fontWeight: FontWeight.w700,
+      color: active ? BrandColors.ink : BrandColors.mutedInk,
+    ),
+  );
+}
+
+class _SelectedCatalogCard extends StatelessWidget {
+  const _SelectedCatalogCard({required this.card, required this.onChange});
+
+  final Map<String, dynamic> card;
+  final VoidCallback onChange;
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedCard = Text(
+      '${card['card_name']} · ${card['bank']}',
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        fontFamily: 'Manrope',
+        fontSize: 14,
+        fontWeight: FontWeight.w600,
+        color: BrandColors.ink,
+      ),
+    );
+    final icon = const Icon(
+      Icons.check_circle_rounded,
+      color: BrandColors.focusDark,
+      size: 20,
+    );
+    final change = TextButton(onPressed: onChange, child: const Text('Change'));
+    final compact = MediaQuery.textScalerOf(context).scale(14) >= 21;
+    if (compact) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              icon,
+              const SizedBox(width: BrandSpacing.sm),
+              Expanded(child: selectedCard),
+            ],
+          ),
+          Align(alignment: Alignment.centerRight, child: change),
+        ],
+      );
+    }
+    return Row(
+      children: [
+        icon,
+        const SizedBox(width: BrandSpacing.sm),
+        Expanded(child: selectedCard),
+        change,
+      ],
     );
   }
 }
