@@ -5,6 +5,12 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   final source = File('lib/core/router/app_router.dart').readAsStringSync();
   final appSource = File('lib/app.dart').readAsStringSync();
+  final brandComponentsSource = File(
+    'lib/core/theme/brand_components.dart',
+  ).readAsStringSync();
+  final loginScreenSource = File(
+    'lib/features/auth/screens/login_screen.dart',
+  ).readAsStringSync();
 
   test('desktop and mobile navigation use semantic brand roles', () {
     expect(source, contains('BrandColors.inkSoft'));
@@ -28,5 +34,13 @@ void main() {
 
   test('app root wraps every screen in a single SelectionArea', () {
     expect(appSource, contains('SelectionArea('));
+  });
+
+  test('BrandSectionHeader does not nest its own SelectionArea', () {
+    expect(brandComponentsSource, isNot(contains('SelectionArea(')));
+  });
+
+  test('login screen does not nest its own SelectionArea', () {
+    expect(loginScreenSource, isNot(contains('SelectionArea(')));
   });
 }

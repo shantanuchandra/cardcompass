@@ -112,54 +112,52 @@ class BrandSectionHeader extends StatelessWidget {
   final bool editorial;
 
   @override
-  Widget build(BuildContext context) => SelectionArea(
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Text(
+        eyebrow.toUpperCase(),
+        style: TextStyle(
+          fontFamily: 'Manrope',
+          fontSize: 10,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 1.3,
+          color: BrandColors.mutedInk,
+        ),
+      ),
+      const SizedBox(height: BrandSpacing.sm),
+      Text(
+        title,
+        style: editorial
+            ? TextStyle(
+                fontFamily: 'Fraunces',
+                fontSize: 28,
+                fontWeight: FontWeight.w600,
+                height: 1.08,
+                color: BrandColors.ink,
+              )
+            : TextStyle(
+                fontFamily: 'Manrope',
+                fontSize: 24,
+                fontWeight: FontWeight.w700,
+                height: 1.1,
+                color: BrandColors.ink,
+              ),
+      ),
+      if (description != null) ...[
+        const SizedBox(height: BrandSpacing.sm),
         Text(
-          eyebrow.toUpperCase(),
+          description!,
           style: TextStyle(
             fontFamily: 'Manrope',
-            fontSize: 10,
-            fontWeight: FontWeight.w800,
-            letterSpacing: 1.3,
+            fontSize: 14,
+            height: 1.5,
             color: BrandColors.mutedInk,
           ),
         ),
-        const SizedBox(height: BrandSpacing.sm),
-        Text(
-          title,
-          style: editorial
-              ? TextStyle(
-                  fontFamily: 'Fraunces',
-                  fontSize: 28,
-                  fontWeight: FontWeight.w600,
-                  height: 1.08,
-                  color: BrandColors.ink,
-                )
-              : TextStyle(
-                  fontFamily: 'Manrope',
-                  fontSize: 24,
-                  fontWeight: FontWeight.w700,
-                  height: 1.1,
-                  color: BrandColors.ink,
-                ),
-        ),
-        if (description != null) ...[
-          const SizedBox(height: BrandSpacing.sm),
-          Text(
-            description!,
-            style: TextStyle(
-              fontFamily: 'Manrope',
-              fontSize: 14,
-              height: 1.5,
-              color: BrandColors.mutedInk,
-            ),
-          ),
-        ],
       ],
-    ),
+    ],
   );
 }
 

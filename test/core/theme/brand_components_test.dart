@@ -42,10 +42,12 @@ void main() {
   ) async {
     await tester.pumpWidget(
       host(
-        const BrandSectionHeader(
-          eyebrow: 'YOUR WALLET',
-          title: 'Make the next swipe count.',
-          description: 'Recommendations explain the rule behind the result.',
+        SelectionArea(
+          child: BrandSectionHeader(
+            eyebrow: 'YOUR WALLET',
+            title: 'Make the next swipe count.',
+            description: 'Recommendations explain the rule behind the result.',
+          ),
         ),
       ),
     );
