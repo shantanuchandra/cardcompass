@@ -139,7 +139,7 @@ class GmailSyncService {
         ? (DateTime.tryParse(dateHeader) ?? _fromInternalDate(message))
         : _fromInternalDate(message);
 
-    final attachment = _findPdfAttachment(message.payload?.parts);
+    final attachment = findPdfAttachment(message.payload?.parts);
 
     return GmailSearchResult(
       messageId: id,
@@ -161,20 +161,56 @@ class GmailSyncService {
         : DateTime.now();
   }
 
-  ({bool found, String? attachmentId, String? filename}) _findPdfAttachment(
+  /// Filename substrings (case-insensitive) that mark a PDF as an ancillary
+  /// document rather than the statement itself — e.g. HSBC attaches both
+  /// "Most Important Terms & Conditions.pdf" and the real, password-protected
+  /// statement PDF to the same email.
+  static const _ancillaryDocumentKeywords = [
+    'terms',
+    'condition',
+    'mitc',
+    'disclosure',
+  ];
+
+  /// Picks which PDF attachment on an email is the actual statement, when a
+  /// message carries more than one (see [_ancillaryDocumentKeywords] above).
+  /// With zero or one PDF candidate there's nothing to disambiguate, so this
+  /// matches every bank's email format that attaches just the statement.
+  ({bool found, String? attachmentId, String? filename}) findPdfAttachment(
     List<gmail.MessagePart>? parts,
   ) {
-    if (parts == null) return (found: false, attachmentId: null, filename: null);
+    final candidates = _collectPdfAttachments(parts);
+    if (candidates.isEmpty) {
+      return (found: false, attachmentId: null, filename: null);
+    }
+    if (candidates.length == 1) {
+      final only = candidates.first;
+      return (found: true, attachmentId: only.body?.attachmentId, filename: only.filename);
+    }
+
+    final likelyStatements = candidates.where((part) {
+      final name = part.filename!.toLowerCase();
+      return !_ancillaryDocumentKeywords.any(name.contains);
+    }).toList();
+
+    final chosen = likelyStatements.length == 1 ? likelyStatements.first : candidates.first;
+    return (found: true, attachmentId: chosen.body?.attachmentId, filename: chosen.filename);
+  }
+
+  /// Recursively gathers every PDF attachment part under [parts], however
+  /// deeply nested (e.g. inside a `multipart/related` sub-container).
+  List<gmail.MessagePart> _collectPdfAttachments(List<gmail.MessagePart>? parts) {
+    if (parts == null) return [];
+    final found = <gmail.MessagePart>[];
     for (final part in parts) {
       if (part.filename != null &&
           part.filename!.isNotEmpty &&
           part.filename!.toLowerCase().endsWith('.pdf')) {
-        return (found: true, attachmentId: part.body?.attachmentId, filename: part.filename);
+        found.add(part);
       }
-      final nested = _findPdfAttachment(part.parts);
-      if (nested.found) return nested;
+      found.addAll(_collectPdfAttachments(part.parts));
     }
-    return (found: false, attachmentId: null, filename: null);
+    return found;
   }
 
   /// Downloads and base64url-decodes a Gmail attachment's raw bytes.
