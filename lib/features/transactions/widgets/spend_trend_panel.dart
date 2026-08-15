@@ -1,15 +1,19 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/theme/brand_tokens.dart';
 import '../providers/transactions_provider.dart';
 
 class SpendTrendPanel extends StatefulWidget {
   final SpendTrend trend;
   final String caption;
 
-  const SpendTrendPanel({super.key, required this.trend, required this.caption});
+  const SpendTrendPanel({
+    super.key,
+    required this.trend,
+    required this.caption,
+  });
 
   @override
   State<SpendTrendPanel> createState() => _SpendTrendPanelState();
@@ -20,16 +24,22 @@ class _SpendTrendPanelState extends State<SpendTrendPanel> {
 
   @override
   Widget build(BuildContext context) {
-    final fmt = NumberFormat.compactCurrency(locale: 'en_IN', symbol: '₹', decimalDigits: 0);
+    final fmt = NumberFormat.compactCurrency(
+      locale: 'en_IN',
+      symbol: '₹',
+      decimalDigits: 0,
+    );
 
     return AnimatedSize(
       duration: const Duration(milliseconds: 250),
       curve: Curves.easeInOut,
       child: Container(
         decoration: BoxDecoration(
-          color: AppColors.surface1,
+          color: BrandColors.paper,
           borderRadius: BorderRadius.circular(AppRadius.lg),
-          border: Border.all(color: AppColors.neonCyan.withValues(alpha: 0.15)),
+          border: Border.all(
+            color: BrandColors.focusDark.withValues(alpha: 0.15),
+          ),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -37,21 +47,43 @@ class _SpendTrendPanelState extends State<SpendTrendPanel> {
             // Header row — always visible
             InkWell(
               onTap: () => setState(() => _expanded = !_expanded),
-              borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.lg)),
+              borderRadius: BorderRadius.vertical(
+                top: Radius.circular(AppRadius.lg),
+              ),
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, AppSpacing.sm),
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.md,
+                  AppSpacing.sm,
+                  AppSpacing.md,
+                  AppSpacing.sm,
+                ),
                 child: Row(
                   children: [
-                    Text('Spend Trend',
-                        style: GoogleFonts.spaceGrotesk(
-                            fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
+                    Text(
+                      'Spend Trend',
+                      style: TextStyle(
+                        fontFamily: 'Manrope',
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: BrandColors.mutedInk,
+                      ),
+                    ),
                     const SizedBox(width: AppSpacing.xs),
-                    Text(widget.caption,
-                        style: GoogleFonts.inter(fontSize: 11, color: AppColors.textMuted)),
+                    Text(
+                      widget.caption,
+                      style: TextStyle(
+                        fontFamily: 'Manrope',
+                        fontSize: 11,
+                        color: BrandColors.mutedInk,
+                      ),
+                    ),
                     const Spacer(),
                     Icon(
-                      _expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
-                      size: 18, color: AppColors.textMuted,
+                      _expanded
+                          ? Icons.expand_less_rounded
+                          : Icons.expand_more_rounded,
+                      size: 18,
+                      color: BrandColors.mutedInk,
                     ),
                   ],
                 ),
@@ -64,35 +96,49 @@ class _SpendTrendPanelState extends State<SpendTrendPanel> {
                 Padding(
                   padding: const EdgeInsets.all(AppSpacing.md),
                   child: Center(
-                    child: Text('No spend data for this period',
-                        style: GoogleFonts.inter(fontSize: 13, color: AppColors.textMuted)),
+                    child: Text(
+                      'No spend data for this period',
+                      style: TextStyle(
+                        fontFamily: 'Manrope',
+                        fontSize: 13,
+                        color: BrandColors.mutedInk,
+                      ),
+                    ),
                   ),
                 )
               else ...[
                 // Quick stats row
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, 0),
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.md,
+                    AppSpacing.sm,
+                    AppSpacing.md,
+                    0,
+                  ),
                   child: Row(
                     children: [
                       _StatChip(
                         label: 'Daily avg',
                         value: fmt.format(widget.trend.dailyAverage),
-                        color: AppColors.neonCyan,
+                        color: BrandColors.focusDark,
                       ),
                       if (widget.trend.peakLabel != null) ...[
                         const SizedBox(width: AppSpacing.sm),
                         _StatChip(
                           label: 'Peak',
                           value: widget.trend.peakLabel!,
-                          color: AppColors.warning,
+                          color: BrandColors.rewardInk,
                         ),
                       ],
                       if (widget.trend.percentVsPrior != null) ...[
                         const SizedBox(width: AppSpacing.sm),
                         _StatChip(
                           label: 'vs prior',
-                          value: '${widget.trend.percentVsPrior! >= 0 ? '+' : ''}${widget.trend.percentVsPrior!.toStringAsFixed(0)}%',
-                          color: widget.trend.percentVsPrior! >= 0 ? AppColors.error : AppColors.success,
+                          value:
+                              '${widget.trend.percentVsPrior! >= 0 ? '+' : ''}${widget.trend.percentVsPrior!.toStringAsFixed(0)}%',
+                          color: widget.trend.percentVsPrior! >= 0
+                              ? BrandColors.error
+                              : BrandColors.successInk,
                         ),
                       ],
                     ],
@@ -100,11 +146,13 @@ class _SpendTrendPanelState extends State<SpendTrendPanel> {
                 ),
                 // Line chart
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(AppSpacing.xs, AppSpacing.sm, AppSpacing.md, AppSpacing.sm),
-                  child: SizedBox(
-                    height: 120,
-                    child: _buildChart(),
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.xs,
+                    AppSpacing.sm,
+                    AppSpacing.md,
+                    AppSpacing.sm,
                   ),
+                  child: SizedBox(height: 120, child: _buildChart()),
                 ),
               ],
             ],
@@ -117,31 +165,48 @@ class _SpendTrendPanelState extends State<SpendTrendPanel> {
   Widget _buildChart() {
     final points = widget.trend.points;
     final maxY = points.fold(0.0, (m, p) => p.total > m ? p.total : m);
-    final spots = points.asMap().entries.map((e) => FlSpot(e.key.toDouble(), e.value.total)).toList();
+    final spots = points
+        .asMap()
+        .entries
+        .map((e) => FlSpot(e.key.toDouble(), e.value.total))
+        .toList();
 
     return LineChart(
       LineChartData(
         gridData: FlGridData(
           show: true,
           drawVerticalLine: false,
-          getDrawingHorizontalLine: (_) => FlLine(color: AppColors.surface2, strokeWidth: 1),
+          getDrawingHorizontalLine: (_) =>
+              FlLine(color: BrandColors.paperDeep, strokeWidth: 1),
         ),
         titlesData: FlTitlesData(
-          leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          leftTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
+          rightTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
+          topTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
           bottomTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: points.length <= 14,
               reservedSize: 22,
-              interval: points.length <= 7 ? 1 : (points.length / 5).ceilToDouble(),
+              interval: points.length <= 7
+                  ? 1
+                  : (points.length / 5).ceilToDouble(),
               getTitlesWidget: (value, _) {
                 final idx = value.toInt();
                 if (idx < 0 || idx >= points.length) return const SizedBox();
                 final d = points[idx].date;
                 return Text(
                   '${d.day}/${d.month}',
-                  style: GoogleFonts.inter(fontSize: 9, color: AppColors.textMuted),
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 9,
+                    color: BrandColors.mutedInk,
+                  ),
                 );
               },
             ),
@@ -155,13 +220,15 @@ class _SpendTrendPanelState extends State<SpendTrendPanel> {
             spots: spots,
             isCurved: true,
             curveSmoothness: 0.35,
-            color: AppColors.neonCyan,
+            color: BrandColors.focusDark,
             barWidth: 2,
             dotData: FlDotData(
               show: points.length <= 10,
               getDotPainter: (_, __, ___, ____) => FlDotCirclePainter(
-                radius: 3, color: AppColors.neonCyan,
-                strokeWidth: 1.5, strokeColor: AppColors.surfaceVoid,
+                radius: 3,
+                color: BrandColors.focusDark,
+                strokeWidth: 1.5,
+                strokeColor: BrandColors.paper,
               ),
             ),
             belowBarData: BarAreaData(
@@ -170,8 +237,8 @@ class _SpendTrendPanelState extends State<SpendTrendPanel> {
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
                 colors: [
-                  AppColors.neonCyan.withValues(alpha: 0.18),
-                  AppColors.neonCyan.withValues(alpha: 0.0),
+                  BrandColors.focusDark.withValues(alpha: 0.18),
+                  BrandColors.focusDark.withValues(alpha: 0.0),
                 ],
               ),
             ),
@@ -179,13 +246,18 @@ class _SpendTrendPanelState extends State<SpendTrendPanel> {
         ],
         lineTouchData: LineTouchData(
           touchTooltipData: LineTouchTooltipData(
-            getTooltipColor: (_) => AppColors.surface2,
+            getTooltipColor: (_) => BrandColors.paperDeep,
             getTooltipItems: (spots) => spots.map((s) {
               final idx = s.spotIndex;
               final p = points[idx];
               return LineTooltipItem(
                 '₹${NumberFormat.compact().format(p.total)}',
-                GoogleFonts.spaceGrotesk(fontSize: 11, color: AppColors.neonCyan, fontWeight: FontWeight.w600),
+                TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 11,
+                  color: BrandColors.focusDark,
+                  fontWeight: FontWeight.w600,
+                ),
               );
             }).toList(),
           ),
@@ -199,7 +271,11 @@ class _StatChip extends StatelessWidget {
   final String label;
   final String value;
   final Color color;
-  const _StatChip({required this.label, required this.value, required this.color});
+  const _StatChip({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -213,9 +289,24 @@ class _StatChip extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(label, style: GoogleFonts.inter(fontSize: 10, color: AppColors.textMuted)),
+          Text(
+            label,
+            style: TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 10,
+              color: BrandColors.mutedInk,
+            ),
+          ),
           const SizedBox(width: 4),
-          Text(value, style: GoogleFonts.spaceGrotesk(fontSize: 11, fontWeight: FontWeight.w700, color: color)),
+          Text(
+            value,
+            style: TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: color,
+            ),
+          ),
         ],
       ),
     );
