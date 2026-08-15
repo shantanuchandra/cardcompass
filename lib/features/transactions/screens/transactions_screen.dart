@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
-import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/brand_tokens.dart';
 import '../../../core/theme/category_display.dart';
 import '../providers/transactions_provider.dart';
@@ -67,7 +66,7 @@ class TransactionsScreen extends ConsumerWidget {
                 size: 48,
                 color: BrandColors.mutedInk,
               ),
-              const SizedBox(height: AppSpacing.md),
+              const SizedBox(height: BrandSpacing.md),
               Text(
                 'Couldn\'t load ledger',
                 style: TextStyle(
@@ -77,7 +76,7 @@ class TransactionsScreen extends ConsumerWidget {
                   color: BrandColors.ink,
                 ),
               ),
-              const SizedBox(height: AppSpacing.xs),
+              const SizedBox(height: BrandSpacing.xs),
               Text(
                 '$e',
                 style: TextStyle(
@@ -87,7 +86,7 @@ class TransactionsScreen extends ConsumerWidget {
                 ),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: AppSpacing.md),
+              const SizedBox(height: BrandSpacing.md),
               FilledButton.icon(
                 onPressed: () =>
                     ref.read(txnsNotifierProvider.notifier).refresh(),
@@ -135,9 +134,9 @@ class _LedgerBodyState extends ConsumerState<_LedgerBody> {
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(
-                AppSpacing.md,
-                AppSpacing.sm,
-                AppSpacing.md,
+                BrandSpacing.md,
+                BrandSpacing.sm,
+                BrandSpacing.md,
                 0,
               ),
               child: Row(
@@ -147,13 +146,13 @@ class _LedgerBodyState extends ConsumerState<_LedgerBody> {
                     value: _fmtCompact.format(s.totalSpend),
                     color: BrandColors.ink,
                   ),
-                  const SizedBox(width: AppSpacing.sm),
+                  const SizedBox(width: BrandSpacing.sm),
                   _KpiTile(
                     label: 'Rewards',
                     value: _fmtCompact.format(s.totalRewards),
                     color: BrandColors.successInk,
                   ),
-                  const SizedBox(width: AppSpacing.sm),
+                  const SizedBox(width: BrandSpacing.sm),
                   _KpiTile(
                     label: 'Top',
                     value: s.topCategory ?? '—',
@@ -169,9 +168,9 @@ class _LedgerBodyState extends ConsumerState<_LedgerBody> {
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(
-                AppSpacing.md,
-                AppSpacing.sm,
-                AppSpacing.md,
+                BrandSpacing.md,
+                BrandSpacing.sm,
+                BrandSpacing.md,
                 0,
               ),
               child: Row(
@@ -186,7 +185,7 @@ class _LedgerBodyState extends ConsumerState<_LedgerBody> {
                     onTap: () => setState(() => _showFilters = !_showFilters),
                     icon: Icons.tune_rounded,
                   ),
-                  const SizedBox(width: AppSpacing.xs),
+                  const SizedBox(width: BrandSpacing.xs),
                   _GroupingPill(
                     grouping: s.grouping,
                     onChanged: (g) =>
@@ -220,9 +219,9 @@ class _LedgerBodyState extends ConsumerState<_LedgerBody> {
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.md,
-                  AppSpacing.sm,
-                  AppSpacing.md,
+                  BrandSpacing.md,
+                  BrandSpacing.sm,
+                  BrandSpacing.md,
                   0,
                 ),
                 child: SpendTrendPanel(trend: trend, caption: s.filter.label),
@@ -241,7 +240,7 @@ class _LedgerBodyState extends ConsumerState<_LedgerBody> {
                       size: 48,
                       color: BrandColors.mutedInk,
                     ),
-                    const SizedBox(height: AppSpacing.md),
+                    const SizedBox(height: BrandSpacing.md),
                     Text(
                       'No transactions',
                       style: TextStyle(
@@ -251,7 +250,7 @@ class _LedgerBodyState extends ConsumerState<_LedgerBody> {
                         color: BrandColors.ink,
                       ),
                     ),
-                    const SizedBox(height: AppSpacing.xs),
+                    const SizedBox(height: BrandSpacing.xs),
                     Text(
                       'Try adjusting your filters',
                       style: TextStyle(
@@ -267,10 +266,10 @@ class _LedgerBodyState extends ConsumerState<_LedgerBody> {
           else
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(
-                AppSpacing.md,
-                AppSpacing.sm,
-                AppSpacing.md,
-                AppSpacing.lg,
+                BrandSpacing.md,
+                BrandSpacing.sm,
+                BrandSpacing.md,
+                BrandSpacing.lg,
               ),
               sliver: SliverList(
                 delegate: SliverChildBuilderDelegate(
@@ -331,15 +330,15 @@ class _FilterPanel extends StatelessWidget {
 
     return Container(
       margin: const EdgeInsets.fromLTRB(
-        AppSpacing.md,
-        AppSpacing.sm,
-        AppSpacing.md,
+        BrandSpacing.md,
+        BrandSpacing.sm,
+        BrandSpacing.md,
         0,
       ),
-      padding: const EdgeInsets.all(AppSpacing.md),
+      padding: const EdgeInsets.all(BrandSpacing.md),
       decoration: BoxDecoration(
         color: BrandColors.paper,
-        borderRadius: BorderRadius.circular(AppRadius.md),
+        borderRadius: BorderRadius.circular(BrandRadius.card),
         border: Border.all(color: BrandColors.mutedInk.withValues(alpha: 0.1)),
       ),
       child: Column(
@@ -355,9 +354,9 @@ class _FilterPanel extends StatelessWidget {
               fontWeight: FontWeight.w500,
             ),
           ),
-          const SizedBox(height: AppSpacing.xs),
+          const SizedBox(height: BrandSpacing.xs),
           Wrap(
-            spacing: AppSpacing.xs,
+            spacing: BrandSpacing.xs,
             children: [
               _DateChip(
                 label: 'This month',
@@ -399,7 +398,7 @@ class _FilterPanel extends StatelessWidget {
           ),
           // Card filter
           if (state.cards.length > 1) ...[
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: BrandSpacing.sm),
             Text(
               'Card',
               style: TextStyle(
@@ -409,9 +408,9 @@ class _FilterPanel extends StatelessWidget {
                 fontWeight: FontWeight.w500,
               ),
             ),
-            const SizedBox(height: AppSpacing.xs),
+            const SizedBox(height: BrandSpacing.xs),
             Wrap(
-              spacing: AppSpacing.xs,
+              spacing: BrandSpacing.xs,
               children: [
                 _DateChip(
                   label: 'All cards',
@@ -430,7 +429,7 @@ class _FilterPanel extends StatelessWidget {
           ],
           // Category filter
           if (cats.isNotEmpty) ...[
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: BrandSpacing.sm),
             Text(
               'Category',
               style: TextStyle(
@@ -440,9 +439,9 @@ class _FilterPanel extends StatelessWidget {
                 fontWeight: FontWeight.w500,
               ),
             ),
-            const SizedBox(height: AppSpacing.xs),
+            const SizedBox(height: BrandSpacing.xs),
             Wrap(
-              spacing: AppSpacing.xs,
+              spacing: BrandSpacing.xs,
               children: [
                 _DateChip(
                   label: 'All',
@@ -504,7 +503,7 @@ class _GroupHeader extends StatelessWidget {
       displayLabel = cards.firstWhere((c) => c.id == label).displayName;
     }
     return Padding(
-      padding: const EdgeInsets.fromLTRB(0, AppSpacing.md, 0, AppSpacing.xs),
+      padding: const EdgeInsets.fromLTRB(0, BrandSpacing.md, 0, BrandSpacing.xs),
       child: Row(
         children: [
           Text(
@@ -549,12 +548,12 @@ class _TxnRow extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.only(bottom: 6),
       padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.md,
+        horizontal: BrandSpacing.md,
         vertical: 11,
       ),
       decoration: BoxDecoration(
         color: BrandColors.paper,
-        borderRadius: BorderRadius.circular(AppRadius.md),
+        borderRadius: BorderRadius.circular(BrandRadius.card),
         border: Border.all(color: BrandColors.mutedInk.withValues(alpha: 0.07)),
       ),
       child: Row(
@@ -564,11 +563,11 @@ class _TxnRow extends StatelessWidget {
             height: 38,
             decoration: BoxDecoration(
               color: catColor.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(AppRadius.sm),
+              borderRadius: BorderRadius.circular(BrandRadius.control),
             ),
             child: Icon(_categoryIcon(txn.category), size: 17, color: catColor),
           ),
-          const SizedBox(width: AppSpacing.sm),
+          const SizedBox(width: BrandSpacing.sm),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -664,12 +663,12 @@ class _KpiTile extends StatelessWidget {
     return Expanded(
       child: Container(
         padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.sm,
-          vertical: AppSpacing.sm,
+          horizontal: BrandSpacing.sm,
+          vertical: BrandSpacing.sm,
         ),
         decoration: BoxDecoration(
           color: BrandColors.ledger,
-          borderRadius: BorderRadius.circular(AppRadius.md),
+          borderRadius: BorderRadius.circular(BrandRadius.card),
           border: Border.all(color: color.withValues(alpha: 0.2)),
         ),
         child: Column(
@@ -827,7 +826,7 @@ class _DateChip extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        margin: const EdgeInsets.only(bottom: AppSpacing.xs),
+        margin: const EdgeInsets.only(bottom: BrandSpacing.xs),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
           color: active

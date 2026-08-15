@@ -120,7 +120,12 @@ class _DashboardAppBar extends ConsumerWidget {
       expandedHeight: 0,
       toolbarHeight: 72,
       flexibleSpace: Padding(
-        padding: const EdgeInsets.fromLTRB(AppSpacing.md, 0, AppSpacing.md, 0),
+        padding: const EdgeInsets.fromLTRB(
+          BrandSpacing.md,
+          0,
+          BrandSpacing.md,
+          0,
+        ),
         child: Row(
           children: [
             Expanded(
@@ -170,7 +175,7 @@ class _DashboardAppBar extends ConsumerWidget {
                       color: BrandColors.focusDark,
                     ),
             ),
-            const SizedBox(width: AppSpacing.sm),
+            const SizedBox(width: BrandSpacing.sm),
             // Avatar
             CircleAvatar(
               radius: 20,
@@ -262,8 +267,8 @@ class _SyncRangeDialogState extends State<_SyncRangeDialog> {
     return Center(
       child: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md,
-          vertical: AppSpacing.xl,
+          horizontal: BrandSpacing.md,
+          vertical: BrandSpacing.xl,
         ),
         child: ConstrainedBox(
           constraints: BoxConstraints(maxWidth: isDesktop ? 460 : 420),
@@ -272,7 +277,7 @@ class _SyncRangeDialogState extends State<_SyncRangeDialog> {
             child: Container(
               decoration: BoxDecoration(
                 color: BrandColors.paper,
-                borderRadius: BorderRadius.circular(AppRadius.xl),
+                borderRadius: BorderRadius.circular(BrandRadius.overlay),
                 border: Border.all(
                   color: BrandColors.mutedInk.withValues(alpha: 0.12),
                 ),
@@ -296,9 +301,9 @@ class _SyncRangeDialogState extends State<_SyncRangeDialog> {
                   // Header
                   Padding(
                     padding: const EdgeInsets.fromLTRB(
-                      AppSpacing.lg,
-                      AppSpacing.lg,
-                      AppSpacing.sm,
+                      BrandSpacing.lg,
+                      BrandSpacing.lg,
+                      BrandSpacing.sm,
                       0,
                     ),
                     child: Row(
@@ -308,8 +313,10 @@ class _SyncRangeDialogState extends State<_SyncRangeDialog> {
                           width: 40,
                           height: 40,
                           decoration: BoxDecoration(
-                            gradient: AppTheme.cyanFadeGradient,
-                            borderRadius: BorderRadius.circular(AppRadius.md),
+                            color: BrandColors.signal,
+                            borderRadius: BorderRadius.circular(
+                              BrandRadius.card,
+                            ),
                           ),
                           child: const Icon(
                             Icons.sync_rounded,
@@ -317,7 +324,7 @@ class _SyncRangeDialogState extends State<_SyncRangeDialog> {
                             color: BrandColors.ink,
                           ),
                         ),
-                        const SizedBox(width: AppSpacing.sm),
+                        const SizedBox(width: BrandSpacing.sm),
                         Expanded(
                           child: Padding(
                             padding: const EdgeInsets.only(top: 2),
@@ -356,10 +363,10 @@ class _SyncRangeDialogState extends State<_SyncRangeDialog> {
                       ],
                     ),
                   ),
-                  const SizedBox(height: AppSpacing.md),
+                  const SizedBox(height: BrandSpacing.md),
                   Padding(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.lg,
+                      horizontal: BrandSpacing.lg,
                     ),
                     child: Text(
                       'LOOK BACK',
@@ -372,17 +379,17 @@ class _SyncRangeDialogState extends State<_SyncRangeDialog> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: AppSpacing.sm),
+                  const SizedBox(height: BrandSpacing.sm),
                   Padding(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.lg,
+                      horizontal: BrandSpacing.lg,
                     ),
                     child: GridView.count(
                       crossAxisCount: 3,
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
-                      mainAxisSpacing: AppSpacing.sm,
-                      crossAxisSpacing: AppSpacing.sm,
+                      mainAxisSpacing: BrandSpacing.sm,
+                      crossAxisSpacing: BrandSpacing.sm,
                       childAspectRatio: 1.7,
                       children: _options.map((opt) {
                         final selected = opt.days == _selectedDays;
@@ -394,22 +401,22 @@ class _SyncRangeDialogState extends State<_SyncRangeDialog> {
                       }).toList(),
                     ),
                   ),
-                  const SizedBox(height: AppSpacing.md),
+                  const SizedBox(height: BrandSpacing.md),
                   Padding(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.lg,
+                      horizontal: BrandSpacing.lg,
                     ),
                     child: AnimatedSwitcher(
                       duration: 200.ms,
                       child: Container(
                         key: ValueKey(_selectedDays),
                         padding: const EdgeInsets.symmetric(
-                          horizontal: AppSpacing.sm,
-                          vertical: AppSpacing.sm,
+                          horizontal: BrandSpacing.sm,
+                          vertical: BrandSpacing.sm,
                         ),
                         decoration: BoxDecoration(
                           color: BrandColors.paperDeep,
-                          borderRadius: BorderRadius.circular(AppRadius.md),
+                          borderRadius: BorderRadius.circular(BrandRadius.card),
                         ),
                         child: Row(
                           children: [
@@ -434,13 +441,13 @@ class _SyncRangeDialogState extends State<_SyncRangeDialog> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: AppSpacing.lg),
+                  const SizedBox(height: BrandSpacing.lg),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(
-                      AppSpacing.lg,
+                      BrandSpacing.lg,
                       0,
-                      AppSpacing.lg,
-                      AppSpacing.lg,
+                      BrandSpacing.lg,
+                      BrandSpacing.lg,
                     ),
                     child: Row(
                       children: [
@@ -450,7 +457,7 @@ class _SyncRangeDialogState extends State<_SyncRangeDialog> {
                             child: const Text('Cancel'),
                           ),
                         ),
-                        const SizedBox(width: AppSpacing.sm),
+                        const SizedBox(width: BrandSpacing.sm),
                         Expanded(
                           flex: 2,
                           child: ElevatedButton.icon(
@@ -488,7 +495,7 @@ class _RangeChip extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(AppRadius.md),
+        borderRadius: BorderRadius.circular(BrandRadius.card),
         child: AnimatedContainer(
           duration: 180.ms,
           curve: Curves.easeOut,
@@ -496,7 +503,7 @@ class _RangeChip extends StatelessWidget {
             color: selected
                 ? BrandColors.focusDark.withValues(alpha: 0.15)
                 : BrandColors.paperDeep,
-            borderRadius: BorderRadius.circular(AppRadius.md),
+            borderRadius: BorderRadius.circular(BrandRadius.card),
             border: Border.all(
               color: selected
                   ? BrandColors.focusDark
@@ -577,7 +584,7 @@ class _DashboardContent extends StatelessWidget {
           _KpiRow(
             data: data,
           ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.1),
-          const SizedBox(height: AppSpacing.lg),
+          const SizedBox(height: BrandSpacing.lg),
           IntrinsicHeight(
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -588,17 +595,17 @@ class _DashboardContent extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       cardsSection,
-                      const SizedBox(height: AppSpacing.lg),
+                      const SizedBox(height: BrandSpacing.lg),
                       billsSection,
                     ],
                   ),
                 ),
-                const SizedBox(width: AppSpacing.lg),
+                const SizedBox(width: BrandSpacing.lg),
                 Expanded(flex: 2, child: transactionsSection),
               ],
             ),
           ),
-          const SizedBox(height: AppSpacing.xxl),
+          const SizedBox(height: BrandSpacing.xxl),
         ]),
       );
     }
@@ -608,15 +615,15 @@ class _DashboardContent extends StatelessWidget {
         _KpiRow(
           data: data,
         ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.1),
-        const SizedBox(height: AppSpacing.lg),
+        const SizedBox(height: BrandSpacing.lg),
         cardsSection,
-        const SizedBox(height: AppSpacing.lg),
+        const SizedBox(height: BrandSpacing.lg),
         if (data.latestStatements.isNotEmpty) ...[
           billsSection,
-          const SizedBox(height: AppSpacing.lg),
+          const SizedBox(height: BrandSpacing.lg),
         ],
         transactionsSection,
-        const SizedBox(height: AppSpacing.xxl),
+        const SizedBox(height: BrandSpacing.xxl),
       ]),
     );
   }
@@ -630,7 +637,7 @@ class _KpiRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+      padding: const EdgeInsets.symmetric(horizontal: BrandSpacing.md),
       child: Row(
         children: [
           Expanded(
@@ -641,7 +648,7 @@ class _KpiRow extends StatelessWidget {
               color: BrandColors.focusDark,
             ),
           ),
-          const SizedBox(width: AppSpacing.sm),
+          const SizedBox(width: BrandSpacing.sm),
           Expanded(
             child: _KpiCard(
               label: 'Rewards',
@@ -650,7 +657,7 @@ class _KpiRow extends StatelessWidget {
               color: BrandColors.reward,
             ),
           ),
-          const SizedBox(width: AppSpacing.sm),
+          const SizedBox(width: BrandSpacing.sm),
           Expanded(
             child: _KpiCard(
               label: 'Total Limit',
@@ -681,17 +688,17 @@ class _KpiCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(AppSpacing.md),
+      padding: const EdgeInsets.all(BrandSpacing.md),
       decoration: BoxDecoration(
         color: BrandColors.ledger,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
         border: Border.all(color: color.withValues(alpha: 0.2), width: 1),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(icon, size: 18, color: color),
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: BrandSpacing.sm),
           Text(
             value,
             style: const TextStyle(
@@ -732,10 +739,10 @@ class _SectionHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(
-        AppSpacing.md,
+        BrandSpacing.md,
         0,
-        AppSpacing.md,
-        AppSpacing.sm,
+        BrandSpacing.md,
+        BrandSpacing.sm,
       ),
       child: Row(
         children: [
@@ -810,7 +817,7 @@ class _CardsCarouselState extends ConsumerState<_CardsCarousel> {
             : constraints.maxWidth * 0.6;
         final cardHeight = cardWidth / _cardAspectRatio;
         final viewportFraction =
-            ((cardWidth + AppSpacing.sm) / constraints.maxWidth).clamp(
+            ((cardWidth + BrandSpacing.sm) / constraints.maxWidth).clamp(
               0.3,
               0.9,
             );
@@ -855,8 +862,10 @@ class _CardsCarouselState extends ConsumerState<_CardsCarousel> {
                         );
                   return Padding(
                     padding: EdgeInsets.only(
-                      left: i == 0 ? AppSpacing.md : AppSpacing.sm,
-                      right: i == itemCount - 1 ? AppSpacing.md : AppSpacing.sm,
+                      left: i == 0 ? BrandSpacing.md : BrandSpacing.sm,
+                      right: i == itemCount - 1
+                          ? BrandSpacing.md
+                          : BrandSpacing.sm,
                     ),
                     child: SizedBox(width: cardWidth, child: tile),
                   );
@@ -864,7 +873,7 @@ class _CardsCarouselState extends ConsumerState<_CardsCarousel> {
               ),
             ),
             if (itemCount > 1) ...[
-              const SizedBox(height: AppSpacing.sm),
+              const SizedBox(height: BrandSpacing.sm),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: List.generate(
@@ -878,7 +887,7 @@ class _CardsCarouselState extends ConsumerState<_CardsCarousel> {
                       color: i == _current
                           ? BrandColors.focusDark
                           : BrandColors.mutedInk.withValues(alpha: 0.4),
-                      borderRadius: BorderRadius.circular(AppRadius.pill),
+                      borderRadius: BorderRadius.circular(BrandRadius.pill),
                     ),
                   ),
                 ),
@@ -904,14 +913,14 @@ class _PendingBankTile extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: BrandColors.paperDeep,
-        borderRadius: BorderRadius.circular(AppRadius.xl),
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
         border: Border.all(
           color: BrandColors.rewardInk.withValues(alpha: 0.4),
           width: 1.5,
           style: BorderStyle.solid,
         ),
       ),
-      padding: const EdgeInsets.all(AppSpacing.lg),
+      padding: const EdgeInsets.all(BrandSpacing.lg),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -953,7 +962,7 @@ class _PendingBankTile extends StatelessWidget {
             size: 28,
             color: BrandColors.mutedInk.withValues(alpha: 0.5),
           ),
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: BrandSpacing.sm),
           Text(
             'Which card is this?',
             style: TextStyle(
@@ -1044,12 +1053,12 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
     return Dialog(
       backgroundColor: BrandColors.paper,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppRadius.xl),
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
       ),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 420, maxHeight: 480),
         child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.lg),
+          padding: const EdgeInsets.all(BrandSpacing.lg),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1072,7 +1081,7 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
                   color: BrandColors.mutedInk,
                 ),
               ),
-              const SizedBox(height: AppSpacing.md),
+              const SizedBox(height: BrandSpacing.md),
               TextField(
                 autofocus: true,
                 decoration: InputDecoration(
@@ -1081,11 +1090,13 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
                 ),
                 onChanged: _search,
               ),
-              const SizedBox(height: AppSpacing.sm),
+              const SizedBox(height: BrandSpacing.sm),
               Flexible(
                 child: _loading
                     ? const Padding(
-                        padding: EdgeInsets.symmetric(vertical: AppSpacing.xl),
+                        padding: EdgeInsets.symmetric(
+                          vertical: BrandSpacing.xl,
+                        ),
                         child: Center(
                           child: CircularProgressIndicator(strokeWidth: 2),
                         ),
@@ -1093,7 +1104,7 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
                     : _error != null
                     ? Padding(
                         padding: const EdgeInsets.symmetric(
-                          vertical: AppSpacing.lg,
+                          vertical: BrandSpacing.lg,
                         ),
                         child: Text(
                           _error!,
@@ -1107,7 +1118,7 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
                     : _options.isEmpty
                     ? Padding(
                         padding: const EdgeInsets.symmetric(
-                          vertical: AppSpacing.lg,
+                          vertical: BrandSpacing.lg,
                         ),
                         child: Text(
                           'No matching card found. Try a different search.',
@@ -1160,7 +1171,7 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
                         },
                       ),
               ),
-              const SizedBox(height: AppSpacing.sm),
+              const SizedBox(height: BrandSpacing.sm),
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton(
@@ -1185,7 +1196,7 @@ class _CreditCardTile extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: BrandColors.paperDeep,
-        borderRadius: BorderRadius.circular(AppRadius.xl),
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
         border: Border(
           left: BorderSide(
             color: AppTheme.issuerColor(card.bankCode),
@@ -1193,7 +1204,7 @@ class _CreditCardTile extends StatelessWidget {
           ),
         ),
       ),
-      padding: const EdgeInsets.all(AppSpacing.lg),
+      padding: const EdgeInsets.all(BrandSpacing.lg),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1234,7 +1245,7 @@ class _CreditCardTile extends StatelessWidget {
                 letterSpacing: 2,
               ),
             ),
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: BrandSpacing.sm),
           Row(
             children: [
               Expanded(
@@ -1282,12 +1293,12 @@ class _BillsPanel extends StatelessWidget {
 
     if (pending.isEmpty) {
       return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+        padding: const EdgeInsets.symmetric(horizontal: BrandSpacing.md),
         child: Container(
-          padding: const EdgeInsets.all(AppSpacing.md),
+          padding: const EdgeInsets.all(BrandSpacing.md),
           decoration: BoxDecoration(
             color: BrandColors.successInk.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(AppRadius.lg),
+            borderRadius: BorderRadius.circular(BrandRadius.overlay),
             border: Border.all(
               color: BrandColors.successInk.withValues(alpha: 0.25),
             ),
@@ -1299,7 +1310,7 @@ class _BillsPanel extends StatelessWidget {
                 color: BrandColors.successInk,
                 size: 20,
               ),
-              const SizedBox(width: AppSpacing.sm),
+              const SizedBox(width: BrandSpacing.sm),
               Text(
                 'All bills paid — you\'re good!',
                 style: TextStyle(
@@ -1321,16 +1332,16 @@ class _BillsPanel extends StatelessWidget {
         final isOverdue = stmt.isOverdue;
         return Padding(
           padding: const EdgeInsets.fromLTRB(
-            AppSpacing.md,
+            BrandSpacing.md,
             0,
-            AppSpacing.md,
-            AppSpacing.sm,
+            BrandSpacing.md,
+            BrandSpacing.sm,
           ),
           child: Container(
-            padding: const EdgeInsets.all(AppSpacing.md),
+            padding: const EdgeInsets.all(BrandSpacing.md),
             decoration: BoxDecoration(
               color: BrandColors.paper,
-              borderRadius: BorderRadius.circular(AppRadius.lg),
+              borderRadius: BorderRadius.circular(BrandRadius.overlay),
               border: Border.all(
                 color: isOverdue
                     ? BrandColors.error.withValues(alpha: 0.4)
@@ -1392,7 +1403,7 @@ class _RecentTransactions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+      padding: const EdgeInsets.symmetric(horizontal: BrandSpacing.md),
       child: Column(
         children: transactions.asMap().entries.map((entry) {
           final txn = entry.value;
@@ -1419,14 +1430,14 @@ class _TransactionRow extends StatelessWidget {
     final color = isDebit ? BrandColors.ink : BrandColors.successInk;
 
     return Container(
-      margin: const EdgeInsets.only(bottom: AppSpacing.xs + 2),
+      margin: const EdgeInsets.only(bottom: BrandSpacing.xs + 2),
       padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.md,
+        horizontal: BrandSpacing.md,
         vertical: 12,
       ),
       decoration: BoxDecoration(
         color: BrandColors.paper,
-        borderRadius: BorderRadius.circular(AppRadius.md),
+        borderRadius: BorderRadius.circular(BrandRadius.card),
         border: Border.all(color: BrandColors.mutedInk.withValues(alpha: 0.08)),
       ),
       child: Row(
@@ -1437,7 +1448,7 @@ class _TransactionRow extends StatelessWidget {
             height: 40,
             decoration: BoxDecoration(
               color: _categoryColor(txn.category).withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(AppRadius.sm),
+              borderRadius: BorderRadius.circular(BrandRadius.control),
             ),
             child: Icon(
               _categoryIcon(txn.category),
@@ -1445,7 +1456,7 @@ class _TransactionRow extends StatelessWidget {
               color: _categoryColor(txn.category),
             ),
           ),
-          const SizedBox(width: AppSpacing.sm),
+          const SizedBox(width: BrandSpacing.sm),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1511,12 +1522,12 @@ class _AddFirstCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+      padding: const EdgeInsets.symmetric(horizontal: BrandSpacing.md),
       child: Container(
-        padding: const EdgeInsets.all(AppSpacing.xl),
+        padding: const EdgeInsets.all(BrandSpacing.xl),
         decoration: BoxDecoration(
           color: BrandColors.paper,
-          borderRadius: BorderRadius.circular(AppRadius.xl),
+          borderRadius: BorderRadius.circular(BrandRadius.overlay),
           border: Border.all(
             color: BrandColors.focusDark.withValues(alpha: 0.2),
           ),
@@ -1528,7 +1539,7 @@ class _AddFirstCard extends ConsumerWidget {
               height: 56,
               decoration: BoxDecoration(
                 color: BrandColors.focusDark.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(AppRadius.md),
+                borderRadius: BorderRadius.circular(BrandRadius.card),
               ),
               child: const Icon(
                 Icons.add_card_rounded,
@@ -1536,7 +1547,7 @@ class _AddFirstCard extends ConsumerWidget {
                 color: BrandColors.focusDark,
               ),
             ),
-            const SizedBox(height: AppSpacing.md),
+            const SizedBox(height: BrandSpacing.md),
             Text(
               'Add your first card',
               style: TextStyle(
@@ -1546,7 +1557,7 @@ class _AddFirstCard extends ConsumerWidget {
                 color: BrandColors.ink,
               ),
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: BrandSpacing.sm),
             Text(
               'Connect your credit cards to see\nspend insights and reward tracking.',
               textAlign: TextAlign.center,
@@ -1557,7 +1568,7 @@ class _AddFirstCard extends ConsumerWidget {
                 height: 1.5,
               ),
             ),
-            const SizedBox(height: AppSpacing.lg),
+            const SizedBox(height: BrandSpacing.lg),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
@@ -1577,12 +1588,12 @@ class _EmptyTransactions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+      padding: const EdgeInsets.symmetric(horizontal: BrandSpacing.md),
       child: Container(
-        padding: const EdgeInsets.all(AppSpacing.xl),
+        padding: const EdgeInsets.all(BrandSpacing.xl),
         decoration: BoxDecoration(
           color: BrandColors.paper,
-          borderRadius: BorderRadius.circular(AppRadius.lg),
+          borderRadius: BorderRadius.circular(BrandRadius.overlay),
           border: Border.all(
             color: BrandColors.mutedInk.withValues(alpha: 0.1),
           ),
@@ -1609,7 +1620,7 @@ class _DashboardSkeleton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.all(AppSpacing.md),
+      padding: const EdgeInsets.all(BrandSpacing.md),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1619,20 +1630,20 @@ class _DashboardSkeleton extends StatelessWidget {
               3,
               (_) => Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.only(right: AppSpacing.sm),
-                  child: _SkeletonBox(height: 90, radius: AppRadius.lg),
+                  padding: const EdgeInsets.only(right: BrandSpacing.sm),
+                  child: _SkeletonBox(height: 90, radius: BrandRadius.overlay),
                 ),
               ),
             ),
           ),
-          const SizedBox(height: AppSpacing.lg),
-          _SkeletonBox(height: 200, radius: AppRadius.xl),
-          const SizedBox(height: AppSpacing.lg),
+          const SizedBox(height: BrandSpacing.lg),
+          _SkeletonBox(height: 200, radius: BrandRadius.overlay),
+          const SizedBox(height: BrandSpacing.lg),
           ...List.generate(
             5,
             (_) => Padding(
-              padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-              child: _SkeletonBox(height: 64, radius: AppRadius.md),
+              padding: const EdgeInsets.only(bottom: BrandSpacing.sm),
+              child: _SkeletonBox(height: 64, radius: BrandRadius.card),
             ),
           ),
         ],
@@ -1690,7 +1701,7 @@ class _ErrorState extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.xl),
+        padding: const EdgeInsets.all(BrandSpacing.xl),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1699,7 +1710,7 @@ class _ErrorState extends ConsumerWidget {
               size: 48,
               color: BrandColors.mutedInk,
             ),
-            const SizedBox(height: AppSpacing.md),
+            const SizedBox(height: BrandSpacing.md),
             Text(
               'Couldn\'t load dashboard',
               style: TextStyle(
@@ -1709,7 +1720,7 @@ class _ErrorState extends ConsumerWidget {
                 color: BrandColors.ink,
               ),
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: BrandSpacing.sm),
             Text(
               error.toString(),
               textAlign: TextAlign.center,
@@ -1719,7 +1730,7 @@ class _ErrorState extends ConsumerWidget {
                 color: BrandColors.mutedInk,
               ),
             ),
-            const SizedBox(height: AppSpacing.lg),
+            const SizedBox(height: BrandSpacing.lg),
             ElevatedButton.icon(
               onPressed: () => ref.invalidate(dashboardProvider),
               icon: const Icon(Icons.refresh, size: 18),

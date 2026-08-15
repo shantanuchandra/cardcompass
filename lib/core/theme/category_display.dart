@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'app_theme.dart';
+import 'brand_tokens.dart';
 
 /// Single source of truth for how each of the 16 transaction categories is
 /// displayed (icon + color) — replaces three previously-independent,
@@ -25,26 +25,40 @@ IconData categoryIcon(String? category) {
     case 'food':
     case 'dining': // legacy alias — see file doc comment
       return Icons.restaurant_rounded;
-    case 'fuel': return Icons.local_gas_station_rounded;
+    case 'fuel':
+      return Icons.local_gas_station_rounded;
     case 'grocery':
     case 'groceries': // legacy alias — see file doc comment
       return Icons.local_grocery_store_rounded;
-    case 'entertainment': return Icons.theaters_rounded;
-    case 'travel': return Icons.flight_rounded;
-    case 'shopping': return Icons.shopping_bag_rounded;
-    case 'utilities': return Icons.bolt_rounded;
-    case 'insurance': return Icons.shield_rounded;
+    case 'entertainment':
+      return Icons.theaters_rounded;
+    case 'travel':
+      return Icons.flight_rounded;
+    case 'shopping':
+      return Icons.shopping_bag_rounded;
+    case 'utilities':
+      return Icons.bolt_rounded;
+    case 'insurance':
+      return Icons.shield_rounded;
     case 'medical':
     case 'health': // legacy alias — see file doc comment
       return Icons.medical_services_rounded;
-    case 'education': return Icons.school_rounded;
-    case 'investment': return Icons.trending_up_rounded;
-    case 'transport': return Icons.directions_car_rounded;
-    case 'rental': return Icons.home_work_rounded;
-    case 'subscription': return Icons.subscriptions_rounded;
-    case 'gift': return Icons.card_giftcard_rounded;
-    case 'other': return Icons.receipt_rounded;
-    default: return Icons.receipt_rounded;
+    case 'education':
+      return Icons.school_rounded;
+    case 'investment':
+      return Icons.trending_up_rounded;
+    case 'transport':
+      return Icons.directions_car_rounded;
+    case 'rental':
+      return Icons.home_work_rounded;
+    case 'subscription':
+      return Icons.subscriptions_rounded;
+    case 'gift':
+      return Icons.card_giftcard_rounded;
+    case 'other':
+      return Icons.receipt_rounded;
+    default:
+      return Icons.receipt_rounded;
   }
 }
 
@@ -52,26 +66,40 @@ Color categoryColor(String? category) {
   switch (category?.toLowerCase()) {
     case 'food':
     case 'dining': // legacy alias — see file doc comment
-      return AppColors.warning;
-    case 'fuel': return const Color(0xFFF97316);
+      return BrandColors.rewardInk;
+    case 'fuel':
+      return const Color(0xFFF97316);
     case 'grocery':
     case 'groceries': // legacy alias — see file doc comment
-      return AppColors.success;
-    case 'entertainment': return const Color(0xFFEC4899);
-    case 'travel': return const Color(0xFF38BDF8);
-    case 'shopping': return AppColors.violet;
-    case 'utilities': return const Color(0xFFFBBF24);
-    case 'insurance': return const Color(0xFF64748B);
+      return BrandColors.successInk;
+    case 'entertainment':
+      return const Color(0xFFEC4899);
+    case 'travel':
+      return const Color(0xFF38BDF8);
+    case 'shopping':
+      return BrandColors.rewardInk;
+    case 'utilities':
+      return const Color(0xFFFBBF24);
+    case 'insurance':
+      return const Color(0xFF64748B);
     case 'medical':
     case 'health': // legacy alias — see file doc comment
       return const Color(0xFFEF4444);
-    case 'education': return const Color(0xFF6366F1);
-    case 'investment': return const Color(0xFF10B981);
-    case 'transport': return const Color(0xFF0EA5E9);
-    case 'rental': return const Color(0xFF8B5CF6);
-    case 'subscription': return const Color(0xFFA855F7);
-    case 'gift': return const Color(0xFFF472B6);
-    case 'other': return AppColors.textSecondary;
-    default: return AppColors.textSecondary;
+    case 'education':
+      return const Color(0xFF6366F1);
+    case 'investment':
+      return const Color(0xFF10B981);
+    case 'transport':
+      return const Color(0xFF0EA5E9);
+    case 'rental':
+      return BrandColors.focusDark;
+    case 'subscription':
+      return BrandColors.rewardInk;
+    case 'gift':
+      return const Color(0xFFF472B6);
+    case 'other':
+      return BrandColors.mutedInk;
+    default:
+      return BrandColors.mutedInk;
   }
 }

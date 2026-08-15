@@ -1,7 +1,6 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/brand_tokens.dart';
 import '../providers/transactions_provider.dart';
 
@@ -36,7 +35,7 @@ class _SpendTrendPanelState extends State<SpendTrendPanel> {
       child: Container(
         decoration: BoxDecoration(
           color: BrandColors.paper,
-          borderRadius: BorderRadius.circular(AppRadius.lg),
+          borderRadius: BorderRadius.circular(BrandRadius.overlay),
           border: Border.all(
             color: BrandColors.focusDark.withValues(alpha: 0.15),
           ),
@@ -48,14 +47,14 @@ class _SpendTrendPanelState extends State<SpendTrendPanel> {
             InkWell(
               onTap: () => setState(() => _expanded = !_expanded),
               borderRadius: BorderRadius.vertical(
-                top: Radius.circular(AppRadius.lg),
+                top: Radius.circular(BrandRadius.overlay),
               ),
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.md,
-                  AppSpacing.sm,
-                  AppSpacing.md,
-                  AppSpacing.sm,
+                  BrandSpacing.md,
+                  BrandSpacing.sm,
+                  BrandSpacing.md,
+                  BrandSpacing.sm,
                 ),
                 child: Row(
                   children: [
@@ -68,7 +67,7 @@ class _SpendTrendPanelState extends State<SpendTrendPanel> {
                         color: BrandColors.mutedInk,
                       ),
                     ),
-                    const SizedBox(width: AppSpacing.xs),
+                    const SizedBox(width: BrandSpacing.xs),
                     Text(
                       widget.caption,
                       style: TextStyle(
@@ -94,7 +93,7 @@ class _SpendTrendPanelState extends State<SpendTrendPanel> {
               const Divider(height: 1, color: Color(0xFF1A2236)),
               if (widget.trend.points.isEmpty)
                 Padding(
-                  padding: const EdgeInsets.all(AppSpacing.md),
+                  padding: const EdgeInsets.all(BrandSpacing.md),
                   child: Center(
                     child: Text(
                       'No spend data for this period',
@@ -110,9 +109,9 @@ class _SpendTrendPanelState extends State<SpendTrendPanel> {
                 // Quick stats row
                 Padding(
                   padding: const EdgeInsets.fromLTRB(
-                    AppSpacing.md,
-                    AppSpacing.sm,
-                    AppSpacing.md,
+                    BrandSpacing.md,
+                    BrandSpacing.sm,
+                    BrandSpacing.md,
                     0,
                   ),
                   child: Row(
@@ -123,7 +122,7 @@ class _SpendTrendPanelState extends State<SpendTrendPanel> {
                         color: BrandColors.focusDark,
                       ),
                       if (widget.trend.peakLabel != null) ...[
-                        const SizedBox(width: AppSpacing.sm),
+                        const SizedBox(width: BrandSpacing.sm),
                         _StatChip(
                           label: 'Peak',
                           value: widget.trend.peakLabel!,
@@ -131,7 +130,7 @@ class _SpendTrendPanelState extends State<SpendTrendPanel> {
                         ),
                       ],
                       if (widget.trend.percentVsPrior != null) ...[
-                        const SizedBox(width: AppSpacing.sm),
+                        const SizedBox(width: BrandSpacing.sm),
                         _StatChip(
                           label: 'vs prior',
                           value:
@@ -147,10 +146,10 @@ class _SpendTrendPanelState extends State<SpendTrendPanel> {
                 // Line chart
                 Padding(
                   padding: const EdgeInsets.fromLTRB(
-                    AppSpacing.xs,
-                    AppSpacing.sm,
-                    AppSpacing.md,
-                    AppSpacing.sm,
+                    BrandSpacing.xs,
+                    BrandSpacing.sm,
+                    BrandSpacing.md,
+                    BrandSpacing.sm,
                   ),
                   child: SizedBox(height: 120, child: _buildChart()),
                 ),
@@ -283,7 +282,7 @@ class _StatChip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(AppRadius.sm),
+        borderRadius: BorderRadius.circular(BrandRadius.control),
         border: Border.all(color: color.withValues(alpha: 0.25)),
       ),
       child: Row(

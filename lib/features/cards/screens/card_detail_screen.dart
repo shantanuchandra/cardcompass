@@ -150,7 +150,7 @@ class _CardDetailBody extends ConsumerWidget {
         ref.invalidate(_cardMonthSpendProvider(cardId));
       },
       child: ListView(
-        padding: const EdgeInsets.all(AppSpacing.md),
+        padding: const EdgeInsets.all(BrandSpacing.md),
         children: [
           // Credit card visual — cap at 480px so it doesn't stretch full-width on desktop
           Center(
@@ -159,7 +159,7 @@ class _CardDetailBody extends ConsumerWidget {
               child: _CreditCardWidget(card: card),
             ),
           ),
-          const SizedBox(height: AppSpacing.lg),
+          const SizedBox(height: BrandSpacing.lg),
 
           // Stats row: utilization + month spend
           Row(
@@ -183,7 +183,7 @@ class _CardDetailBody extends ConsumerWidget {
                   },
                 ),
               ),
-              const SizedBox(width: AppSpacing.sm),
+              const SizedBox(width: BrandSpacing.sm),
               Expanded(
                 child: spendAsync.when(
                   loading: () => _StatCardSkeleton(),
@@ -198,7 +198,7 @@ class _CardDetailBody extends ConsumerWidget {
               ),
             ],
           ),
-          const SizedBox(height: AppSpacing.md),
+          const SizedBox(height: BrandSpacing.md),
 
           // Bill panel
           stmtAsync.when(
@@ -207,15 +207,15 @@ class _CardDetailBody extends ConsumerWidget {
             data: (stmt) =>
                 stmt != null ? _BillPanel(stmt: stmt) : const SizedBox.shrink(),
           ),
-          const SizedBox(height: AppSpacing.md),
+          const SizedBox(height: BrandSpacing.md),
 
           // Recent transactions
           _SectionHeader(title: 'Recent Transactions'),
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: BrandSpacing.sm),
           txnsAsync.when(
             loading: () => const Center(
               child: Padding(
-                padding: EdgeInsets.all(AppSpacing.lg),
+                padding: EdgeInsets.all(BrandSpacing.lg),
                 child: CircularProgressIndicator(color: BrandColors.focusDark),
               ),
             ),
@@ -238,7 +238,7 @@ class _CardDetailBody extends ConsumerWidget {
               );
             },
           ),
-          const SizedBox(height: AppSpacing.xxl),
+          const SizedBox(height: BrandSpacing.xxl),
         ],
       ),
     );
@@ -264,7 +264,7 @@ class _CreditCardWidget extends StatelessWidget {
       child: Container(
         decoration: BoxDecoration(
           color: BrandColors.paperDeep,
-          borderRadius: BorderRadius.circular(AppRadius.lg),
+          borderRadius: BorderRadius.circular(BrandRadius.overlay),
           border: Border(
             left: BorderSide(
               color: AppTheme.issuerColor(card.bankCode),
@@ -275,7 +275,7 @@ class _CreditCardWidget extends StatelessWidget {
         child: Stack(
           children: [
             Padding(
-              padding: const EdgeInsets.all(AppSpacing.md),
+              padding: const EdgeInsets.all(BrandSpacing.md),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -310,7 +310,7 @@ class _CreditCardWidget extends StatelessWidget {
                       letterSpacing: 2,
                     ),
                   ),
-                  const SizedBox(height: AppSpacing.md),
+                  const SizedBox(height: BrandSpacing.md),
                   // Bottom row: name + credit limit
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -477,10 +477,10 @@ class _UtilizationCard extends StatelessWidget {
         : BrandColors.successInk;
 
     return Container(
-      padding: const EdgeInsets.all(AppSpacing.md),
+      padding: const EdgeInsets.all(BrandSpacing.md),
       decoration: BoxDecoration(
         color: BrandColors.paper,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
         border: Border.all(color: BrandColors.mutedInk.withValues(alpha: 0.12)),
       ),
       child: Column(
@@ -495,7 +495,7 @@ class _UtilizationCard extends StatelessWidget {
               fontWeight: FontWeight.w500,
             ),
           ),
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: BrandSpacing.sm),
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
@@ -517,7 +517,7 @@ class _UtilizationCard extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(width: AppSpacing.sm),
+              const SizedBox(width: BrandSpacing.sm),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -618,10 +618,10 @@ class _StatCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(AppSpacing.md),
+      padding: const EdgeInsets.all(BrandSpacing.md),
       decoration: BoxDecoration(
         color: BrandColors.paper,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
         border: Border.all(color: BrandColors.mutedInk.withValues(alpha: 0.12)),
       ),
       child: Column(
@@ -636,12 +636,12 @@ class _StatCard extends StatelessWidget {
               fontWeight: FontWeight.w500,
             ),
           ),
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: BrandSpacing.sm),
           Row(
             children: [
               if (icon != null) ...[
                 Icon(icon, size: 18, color: iconColor ?? BrandColors.focusDark),
-                const SizedBox(width: AppSpacing.xs),
+                const SizedBox(width: BrandSpacing.xs),
               ],
               Text(
                 value,
@@ -665,10 +665,10 @@ class _StatCardSkeleton extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       height: 76,
-      padding: const EdgeInsets.all(AppSpacing.md),
+      padding: const EdgeInsets.all(BrandSpacing.md),
       decoration: BoxDecoration(
         color: BrandColors.paper,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
         border: Border.all(color: BrandColors.mutedInk.withValues(alpha: 0.08)),
       ),
     );
@@ -701,10 +701,10 @@ class _BillPanel extends StatelessWidget {
         : 'Due in $daysLeft day${daysLeft == 1 ? '' : 's'}';
 
     return Container(
-      padding: const EdgeInsets.all(AppSpacing.md),
+      padding: const EdgeInsets.all(BrandSpacing.md),
       decoration: BoxDecoration(
         color: BrandColors.paper,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
         border: Border.all(
           color: stmt.isPaid
               ? BrandColors.successInk.withValues(alpha: 0.3)
@@ -764,7 +764,7 @@ class _BillPanel extends StatelessWidget {
                 ),
                 decoration: BoxDecoration(
                   color: statusColor.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(AppRadius.pill),
+                  borderRadius: BorderRadius.circular(BrandRadius.pill),
                 ),
                 child: Text(
                   statusLabel,
@@ -777,7 +777,7 @@ class _BillPanel extends StatelessWidget {
                 ),
               ),
               if (stmt.minimumPayment > 0) ...[
-                const SizedBox(height: AppSpacing.xs),
+                const SizedBox(height: BrandSpacing.xs),
                 Text(
                   'Min ₹${NumberFormat.compact().format(stmt.minimumPayment)}',
                   style: TextStyle(
@@ -802,7 +802,7 @@ class _BillPanelSkeleton extends StatelessWidget {
       height: 80,
       decoration: BoxDecoration(
         color: BrandColors.paper,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
         border: Border.all(color: BrandColors.mutedInk.withValues(alpha: 0.08)),
       ),
     );
@@ -842,14 +842,14 @@ class _TxnTile extends StatelessWidget {
     final amountPrefix = isDebit ? '−' : '+';
 
     return Container(
-      margin: const EdgeInsets.only(bottom: AppSpacing.xs),
+      margin: const EdgeInsets.only(bottom: BrandSpacing.xs),
       padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.md,
-        vertical: AppSpacing.sm + 2,
+        horizontal: BrandSpacing.md,
+        vertical: BrandSpacing.sm + 2,
       ),
       decoration: BoxDecoration(
         color: BrandColors.paper,
-        borderRadius: BorderRadius.circular(AppRadius.md),
+        borderRadius: BorderRadius.circular(BrandRadius.card),
         border: Border.all(color: BrandColors.mutedInk.withValues(alpha: 0.08)),
       ),
       child: Row(
@@ -859,7 +859,7 @@ class _TxnTile extends StatelessWidget {
             height: 36,
             decoration: BoxDecoration(
               color: BrandColors.paperDeep,
-              borderRadius: BorderRadius.circular(AppRadius.sm),
+              borderRadius: BorderRadius.circular(BrandRadius.control),
             ),
             child: Icon(
               _categoryIcon(txn.category),
@@ -867,7 +867,7 @@ class _TxnTile extends StatelessWidget {
               color: BrandColors.mutedInk,
             ),
           ),
-          const SizedBox(width: AppSpacing.sm),
+          const SizedBox(width: BrandSpacing.sm),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -916,7 +916,7 @@ class _EmptyTransactions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(AppSpacing.xl),
+      padding: const EdgeInsets.all(BrandSpacing.xl),
       alignment: Alignment.center,
       child: Column(
         children: [
@@ -925,7 +925,7 @@ class _EmptyTransactions extends StatelessWidget {
             size: 40,
             color: BrandColors.mutedInk,
           ),
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: BrandSpacing.sm),
           Text(
             'No transactions yet',
             style: TextStyle(

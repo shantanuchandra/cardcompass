@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/brand_tokens.dart';
 import '../../../core/providers/supabase_provider.dart';
 import '../../auth/providers/auth_provider.dart';
@@ -29,14 +28,14 @@ class SettingsScreen extends ConsumerWidget {
         ),
       ),
       body: ListView(
-        padding: const EdgeInsets.all(AppSpacing.md),
+        padding: const EdgeInsets.all(BrandSpacing.md),
         children: [
           // Profile card
           Container(
-            padding: const EdgeInsets.all(AppSpacing.md),
+            padding: const EdgeInsets.all(BrandSpacing.md),
             decoration: BoxDecoration(
               color: BrandColors.paper,
-              borderRadius: BorderRadius.circular(AppRadius.lg),
+              borderRadius: BorderRadius.circular(BrandRadius.overlay),
               border: Border.all(
                 color: BrandColors.mutedInk.withValues(alpha: 0.12),
               ),
@@ -59,7 +58,7 @@ class SettingsScreen extends ConsumerWidget {
                         )
                       : null,
                 ),
-                const SizedBox(width: AppSpacing.md),
+                const SizedBox(width: BrandSpacing.md),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -87,7 +86,7 @@ class SettingsScreen extends ConsumerWidget {
               ],
             ),
           ),
-          const SizedBox(height: AppSpacing.lg),
+          const SizedBox(height: BrandSpacing.lg),
 
           _SettingsTile(
             icon: Icons.notifications_outlined,
@@ -111,7 +110,7 @@ class SettingsScreen extends ConsumerWidget {
             subtitle: 'Version 2.0.0',
             onTap: () {},
           ),
-          const SizedBox(height: AppSpacing.lg),
+          const SizedBox(height: BrandSpacing.lg),
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
@@ -199,15 +198,15 @@ class _SettingsTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: AppSpacing.xs + 2),
+      margin: const EdgeInsets.only(bottom: BrandSpacing.xs + 2),
       child: ListTile(
         onTap: onTap,
         contentPadding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md,
-          vertical: AppSpacing.xs,
+          horizontal: BrandSpacing.md,
+          vertical: BrandSpacing.xs,
         ),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadius.md),
+          borderRadius: BorderRadius.circular(BrandRadius.card),
           side: BorderSide(color: BrandColors.mutedInk.withValues(alpha: 0.08)),
         ),
         tileColor: BrandColors.paper,
@@ -216,7 +215,7 @@ class _SettingsTile extends StatelessWidget {
           height: 36,
           decoration: BoxDecoration(
             color: BrandColors.paperDeep,
-            borderRadius: BorderRadius.circular(AppRadius.sm),
+            borderRadius: BorderRadius.circular(BrandRadius.control),
           ),
           child: Icon(icon, size: 18, color: BrandColors.mutedInk),
         ),

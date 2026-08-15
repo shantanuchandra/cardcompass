@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/providers/repository_providers.dart';
 import '../../../../core/providers/supabase_provider.dart';
-import '../../../../core/theme/app_theme.dart';
 import '../../../../core/theme/brand_tokens.dart';
 import '../domain/movie_deal_candidate.dart';
 import '../domain/movie_deal_rule.dart';
@@ -150,7 +149,7 @@ class MovieDealsResults extends ConsumerWidget {
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: BrandColors.paper,
-                borderRadius: BorderRadius.circular(AppRadius.md),
+                borderRadius: BorderRadius.circular(BrandRadius.card),
                 border: Border.all(color: BrandColors.paperDeep),
               ),
               child: Column(
@@ -188,7 +187,7 @@ class MovieDealsResults extends ConsumerWidget {
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: BrandColors.paper,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
         border: Border.all(color: BrandColors.paperDeep),
       ),
       child: Text(
@@ -203,7 +202,7 @@ class MovieDealsResults extends ConsumerWidget {
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: BrandColors.paper,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
         border: Border.all(color: BrandColors.error.withValues(alpha: 0.3)),
       ),
       child: Column(
@@ -266,7 +265,7 @@ class _CandidatePanelState extends State<_CandidatePanel> {
       decoration: BoxDecoration(
         color: BrandColors.paper,
         border: Border.all(color: borderColor, width: 1.2),
-        borderRadius: BorderRadius.circular(AppRadius.lg),
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

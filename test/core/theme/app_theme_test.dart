@@ -18,11 +18,13 @@ void main() {
     expect(theme.appBarTheme.backgroundColor, BrandColors.ink);
   });
 
-  test('legacy theme entry point resolves to the editorial system', () {
-    expect(AppTheme.dark.scaffoldBackgroundColor, BrandColors.ink);
-    expect(AppColors.neonCyan, BrandColors.signal);
-    expect(AppRadius.card, BrandRadius.card);
-  });
+  test(
+    'issuer identity colors remain factual and separate from UI accents',
+    () {
+      expect(AppTheme.issuerColor('hdfc'), const Color(0xFF004C8F));
+      expect(AppTheme.issuerColor('unknown'), BrandColors.mutedInk);
+    },
+  );
 
   test('primary controls use compact editorial geometry', () {
     final theme = AppTheme.editorial;

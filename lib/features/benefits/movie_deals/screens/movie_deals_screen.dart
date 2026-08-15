@@ -2,7 +2,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../../core/theme/app_theme.dart';
 import '../../../../core/theme/brand_tokens.dart';
 import '../domain/movie_platform_aliases.dart';
 import '../domain/movie_ticket_request.dart';
@@ -142,7 +141,7 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
     return Container(
       decoration: BoxDecoration(
         color: BrandColors.paper,
-        borderRadius: BorderRadius.circular(AppRadius.xl),
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
         border: Border.all(color: BrandColors.paperDeep),
       ),
       child: Padding(
@@ -406,7 +405,7 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: BrandColors.paper,
-        borderRadius: BorderRadius.circular(AppRadius.md),
+        borderRadius: BorderRadius.circular(BrandRadius.card),
         border: Border.all(color: BrandColors.paperDeep),
       ),
       child: Row(
@@ -471,7 +470,7 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
           disabledBackgroundColor: BrandColors.paperDeep,
           padding: const EdgeInsets.symmetric(vertical: 16),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AppRadius.md),
+            borderRadius: BorderRadius.circular(BrandRadius.card),
           ),
         ),
       ),

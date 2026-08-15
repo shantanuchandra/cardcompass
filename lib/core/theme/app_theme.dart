@@ -3,63 +3,7 @@ import 'package:flutter/services.dart';
 
 import 'brand_tokens.dart';
 
-/// Compatibility names for screens still being migrated to semantic tokens.
-/// New UI should use [BrandColors] directly.
-abstract final class AppColors {
-  static const surfaceVoid = BrandColors.ink;
-  static const surface1 = BrandColors.inkSoft;
-  static const surface2 = Color(0xFF202B31);
-  static const surface3 = Color(0xFF2A363B);
-  static const surfaceCard = BrandColors.inkSoft;
-
-  static const neonCyan = BrandColors.signal;
-  static const neonCyanDim = BrandColors.focusDark;
-  static const violet = BrandColors.reward;
-  static const violetDim = BrandColors.rewardInk;
-  static const neonGreen = BrandColors.successInk;
-
-  static const success = BrandColors.signal;
-  static const error = BrandColors.error;
-  static const warning = BrandColors.reward;
-
-  static const textPrimary = BrandColors.paper;
-  static const textSecondary = BrandColors.mutedPaper;
-  static const textMuted = Color(0xFF71807F);
-  static const textInverse = BrandColors.ink;
-
-  static const hdfc = Color(0xFF004C8F);
-  static const sbi = Color(0xFF22409A);
-  static const icici = Color(0xFFB02A37);
-  static const axis = Color(0xFF800020);
-  static const kotak = Color(0xFFED1C24);
-  static const visa = Color(0xFF1A1F71);
-  static const mastercard = Color(0xFFEB001B);
-  static const rupay = Color(0xFF0066CC);
-  static const amex = Color(0xFF006FCF);
-}
-
-abstract final class AppSpacing {
-  static const xs = BrandSpacing.xs;
-  static const sm = BrandSpacing.sm;
-  static const md = BrandSpacing.md;
-  static const lg = BrandSpacing.lg;
-  static const xl = BrandSpacing.xl;
-  static const xxl = BrandSpacing.xxl;
-}
-
-abstract final class AppRadius {
-  static const sm = BrandRadius.control;
-  static const md = BrandRadius.card;
-  static const lg = BrandRadius.overlay;
-  static const xl = BrandRadius.overlay;
-  static const xxl = BrandRadius.overlay;
-  static const card = BrandRadius.card;
-  static const pill = BrandRadius.pill;
-}
-
 abstract final class AppTheme {
-  static ThemeData get dark => editorial;
-
   static ThemeData get editorial {
     final base = ThemeData(useMaterial3: true, brightness: Brightness.dark);
     const scheme = ColorScheme.dark(
@@ -388,106 +332,13 @@ abstract final class AppTheme {
     );
   }
 
-  /// Transitional helpers retained until all feature widgets use surfaces.
-  static List<BoxShadow> neonGlow({
-    Color color = BrandColors.ink,
-    double spread = 8,
-  }) => [
-    BoxShadow(
-      color: BrandColors.ink.withValues(alpha: .12),
-      blurRadius: spread,
-      offset: const Offset(0, 4),
-    ),
-  ];
-
-  static const cyanGradient = LinearGradient(
-    colors: [BrandColors.signal, BrandColors.focusDark],
-  );
-  static const cyanFadeGradient = LinearGradient(
-    colors: [BrandColors.signal, BrandColors.focusDark],
-  );
-
-  static LinearGradient cardGradient(String bankCode) {
-    final stops =
-        _bankGradients[bankCode.toLowerCase()] ?? _bankGradients['default']!;
-    return LinearGradient(
-      colors: stops,
-      begin: Alignment.bottomLeft,
-      end: Alignment.topRight,
-    );
-  }
-
   static Color issuerColor(String bankCode) => switch (bankCode.toLowerCase()) {
-        'hdfc' => AppColors.hdfc,
-        'sbi' => AppColors.sbi,
-        'icici' => AppColors.icici,
-        'axis' => AppColors.axis,
-        'kotak' => AppColors.kotak,
-        'amex' => AppColors.amex,
-        _ => BrandColors.mutedInk,
-      };
-
-  static final _bankGradients = <String, List<Color>>{
-    'hdfc': [
-      const Color(0xFF0D47A1),
-      const Color(0xFF1565C0),
-      const Color(0xFF42A5F5),
-    ],
-    'sbi': [
-      const Color(0xFF0D47A1),
-      const Color(0xFF1565C0),
-      const Color(0xFF42A5F5),
-    ],
-    'icici': [
-      const Color(0xFF7B0000),
-      const Color(0xFFB71C1C),
-      const Color(0xFFE57373),
-    ],
-    'axis': [
-      const Color(0xFF38006B),
-      const Color(0xFF6A1B4D),
-      const Color(0xFFCE93D8),
-    ],
-    'kotak': [
-      const Color(0xFF7B0000),
-      const Color(0xFFBF360C),
-      const Color(0xFFFF7043),
-    ],
-    'amex': [
-      const Color(0xFF01579B),
-      const Color(0xFF0277BD),
-      const Color(0xFF4FC3F7),
-    ],
-    'bpcl': [
-      const Color(0xFF1B5E20),
-      const Color(0xFF2E7D32),
-      const Color(0xFF66BB6A),
-    ],
-    'indusind': [
-      const Color(0xFF38006B),
-      const Color(0xFF6A1B9A),
-      const Color(0xFFBA68C8),
-    ],
-    'yes': [
-      const Color(0xFF1A237E),
-      const Color(0xFF283593),
-      const Color(0xFF5C6BC0),
-    ],
-    'rbl': [
-      const Color(0xFF880E4F),
-      const Color(0xFFAD1457),
-      const Color(0xFFF06292),
-    ],
-    'idfc': [
-      const Color(0xFF004D40),
-      const Color(0xFF00695C),
-      const Color(0xFF26A69A),
-    ],
-    'bob': [
-      const Color(0xFF3E2723),
-      const Color(0xFF6D4C41),
-      const Color(0xFFA1887F),
-    ],
-    'default': [BrandColors.inkSoft, BrandColors.focusDark, BrandColors.signal],
+    'hdfc' => const Color(0xFF004C8F),
+    'sbi' => const Color(0xFF22409A),
+    'icici' => const Color(0xFFB02A37),
+    'axis' => const Color(0xFF800020),
+    'kotak' => const Color(0xFFED1C24),
+    'amex' => const Color(0xFF006FCF),
+    _ => BrandColors.mutedInk,
   };
 }

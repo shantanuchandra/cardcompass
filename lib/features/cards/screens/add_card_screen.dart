@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/brand_tokens.dart';
 import '../../../core/providers/repository_providers.dart';
 import '../../../core/providers/supabase_provider.dart';
@@ -103,7 +102,7 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
         ),
       ),
       body: ListView(
-        padding: const EdgeInsets.all(AppSpacing.md),
+        padding: const EdgeInsets.all(BrandSpacing.md),
         children: [
           // Step 1: search catalog
           if (_selected == null) ...[
@@ -116,7 +115,7 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
                 color: BrandColors.ink,
               ),
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: BrandSpacing.sm),
             TextField(
               controller: _search,
               autofocus: true,
@@ -129,11 +128,11 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
               ),
               onChanged: _searchCards,
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: BrandSpacing.sm),
             if (_loading)
               const Center(
                 child: Padding(
-                  padding: EdgeInsets.all(AppSpacing.lg),
+                  padding: EdgeInsets.all(BrandSpacing.lg),
                   child: CircularProgressIndicator(
                     color: BrandColors.focusDark,
                     strokeWidth: 2,
@@ -154,10 +153,10 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
           // Step 2: details
           if (_selected != null) ...[
             Container(
-              padding: const EdgeInsets.all(AppSpacing.md),
+              padding: const EdgeInsets.all(BrandSpacing.md),
               decoration: BoxDecoration(
                 color: BrandColors.focusDark.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(AppRadius.md),
+                borderRadius: BorderRadius.circular(BrandRadius.card),
                 border: Border.all(
                   color: BrandColors.focusDark.withValues(alpha: 0.3),
                 ),
@@ -169,7 +168,7 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
                     color: BrandColors.focusDark,
                     size: 20,
                   ),
-                  const SizedBox(width: AppSpacing.sm),
+                  const SizedBox(width: BrandSpacing.sm),
                   Expanded(
                     child: Text(
                       '${_selected!['card_name']} · ${_selected!['bank']}',
@@ -190,7 +189,7 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
                 ],
               ),
             ),
-            const SizedBox(height: AppSpacing.lg),
+            const SizedBox(height: BrandSpacing.lg),
             Text(
               'Card details (optional)',
               style: TextStyle(
@@ -200,7 +199,7 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
                 color: BrandColors.ink,
               ),
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: BrandSpacing.sm),
             TextField(
               controller: _lastFour,
               keyboardType: TextInputType.number,
@@ -211,16 +210,16 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
                 counterText: '',
               ),
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: BrandSpacing.sm),
             TextField(
               controller: _holderName,
               textCapitalization: TextCapitalization.words,
               decoration: const InputDecoration(labelText: 'Cardholder name'),
             ),
-            const SizedBox(height: AppSpacing.lg),
+            const SizedBox(height: BrandSpacing.lg),
             if (_error != null)
               Padding(
-                padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                padding: const EdgeInsets.only(bottom: BrandSpacing.sm),
                 child: Text(
                   _error!,
                   style: TextStyle(
@@ -263,14 +262,14 @@ class _CatalogTile extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        margin: const EdgeInsets.only(bottom: AppSpacing.xs + 2),
+        margin: const EdgeInsets.only(bottom: BrandSpacing.xs + 2),
         padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md,
+          horizontal: BrandSpacing.md,
           vertical: 12,
         ),
         decoration: BoxDecoration(
           color: BrandColors.paper,
-          borderRadius: BorderRadius.circular(AppRadius.md),
+          borderRadius: BorderRadius.circular(BrandRadius.card),
           border: Border.all(
             color: BrandColors.mutedInk.withValues(alpha: 0.1),
           ),

@@ -58,10 +58,10 @@ class CardsScreen extends ConsumerWidget {
                 backgroundColor: BrandColors.paper,
                 onRefresh: () => ref.refresh(_userCardsProvider.future),
                 child: ListView.separated(
-                  padding: const EdgeInsets.all(AppSpacing.md),
+                  padding: const EdgeInsets.all(BrandSpacing.md),
                   itemCount: cards.length,
                   separatorBuilder: (_, _a) =>
-                      const SizedBox(height: AppSpacing.sm),
+                      const SizedBox(height: BrandSpacing.sm),
                   itemBuilder: (_, i) =>
                       _CardListTile(card: cards[i], ref: ref),
                 ),
@@ -82,12 +82,12 @@ class _CardListTile extends StatelessWidget {
       onTap: () => Navigator.of(context).push(
         MaterialPageRoute(builder: (_) => CardDetailScreen(cardId: card.id)),
       ),
-      borderRadius: BorderRadius.circular(AppRadius.lg),
+      borderRadius: BorderRadius.circular(BrandRadius.overlay),
       child: Container(
-        padding: const EdgeInsets.all(AppSpacing.md),
+        padding: const EdgeInsets.all(BrandSpacing.md),
         decoration: BoxDecoration(
           color: BrandColors.paper,
-          borderRadius: BorderRadius.circular(AppRadius.lg),
+          borderRadius: BorderRadius.circular(BrandRadius.overlay),
           border: Border.all(
             color: BrandColors.mutedInk.withValues(alpha: 0.12),
           ),
@@ -113,7 +113,7 @@ class _CardListTile extends StatelessWidget {
                 color: BrandColors.ink,
               ),
             ),
-            const SizedBox(width: AppSpacing.md),
+            const SizedBox(width: BrandSpacing.md),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -154,7 +154,7 @@ class _CardListTile extends StatelessWidget {
                   color: BrandColors.ink,
                 ),
               ),
-            const SizedBox(width: AppSpacing.xs),
+            const SizedBox(width: BrandSpacing.xs),
             const Icon(
               Icons.chevron_right_rounded,
               size: 18,
@@ -172,7 +172,7 @@ class _EmptyCards extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.xl),
+        padding: const EdgeInsets.all(BrandSpacing.xl),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -181,7 +181,7 @@ class _EmptyCards extends ConsumerWidget {
               size: 56,
               color: BrandColors.mutedInk,
             ),
-            const SizedBox(height: AppSpacing.md),
+            const SizedBox(height: BrandSpacing.md),
             Text(
               'No cards yet',
               style: TextStyle(
@@ -191,7 +191,7 @@ class _EmptyCards extends ConsumerWidget {
                 color: BrandColors.ink,
               ),
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: BrandSpacing.sm),
             Text(
               'Add your credit cards to track spend,\nrewards, and upcoming bills.',
               textAlign: TextAlign.center,
@@ -202,7 +202,7 @@ class _EmptyCards extends ConsumerWidget {
                 height: 1.5,
               ),
             ),
-            const SizedBox(height: AppSpacing.xl),
+            const SizedBox(height: BrandSpacing.xl),
             ElevatedButton.icon(
               onPressed: () => context.go('/app/cards/add'),
               icon: const Icon(Icons.add, size: 18),

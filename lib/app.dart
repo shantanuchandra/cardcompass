@@ -19,10 +19,12 @@ class CardCompassApp extends ConsumerWidget {
     return MaterialApp.router(
       title: 'CardCompass',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.dark,
+      theme: AppTheme.editorial,
       routerConfig: router,
       builder: (context, child) => MediaQuery(
-        data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(1.0)),
+        data: MediaQuery.of(
+          context,
+        ).copyWith(textScaler: const TextScaler.linear(1.0)),
         child: child!,
       ),
     );

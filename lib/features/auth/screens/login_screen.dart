@@ -6,7 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/brand_tokens.dart';
 import '../providers/auth_provider.dart';
 
@@ -100,7 +99,7 @@ class _LoginViewState extends State<LoginView> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.surfaceVoid,
+      backgroundColor: BrandColors.ink,
       body: Stack(
         children: [
           const Positioned.fill(child: CustomPaint(painter: _GridPainter())),
@@ -199,8 +198,9 @@ class _Header extends StatelessWidget {
             child: Text(
               'CardCompass',
               overflow: TextOverflow.ellipsis,
-              style: GoogleFonts.inter(
-                color: AppColors.textPrimary,
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                color: BrandColors.paper,
                 fontSize: 14,
                 fontWeight: FontWeight.w700,
               ),
@@ -209,8 +209,9 @@ class _Header extends StatelessWidget {
           if (constraints.maxWidth >= 460)
             Text(
               'Secure sign-in',
-              style: GoogleFonts.inter(
-                color: AppColors.textSecondary,
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                color: BrandColors.mutedPaper,
                 fontSize: 12,
               ),
             ),
@@ -422,8 +423,9 @@ class _LoginColumn extends StatelessWidget {
           const SizedBox(height: 18),
           Text(
             'Compare the cards you already own and understand the calculation behind every recommendation.',
-            style: GoogleFonts.inter(
-              color: AppColors.textSecondary,
+            style: TextStyle(
+              fontFamily: 'Manrope',
+              color: BrandColors.mutedPaper,
               fontSize: 16,
               height: 1.65,
             ),
@@ -480,7 +482,8 @@ class _LoginColumn extends StatelessWidget {
                       const SizedBox(height: 8),
                       Text(
                         'Continue with the Google account connected to CardCompass.',
-                        style: GoogleFonts.inter(
+                        style: TextStyle(
+                          fontFamily: 'Manrope',
                           color: const Color(0xFF526064),
                           fontSize: 12,
                           height: 1.45,
@@ -490,7 +493,8 @@ class _LoginColumn extends StatelessWidget {
                         const SizedBox(height: 12),
                         Text(
                           'Sign-in failed. Check your connection and try again.',
-                          style: GoogleFonts.inter(
+                          style: TextStyle(
+                            fontFamily: 'Manrope',
                             color: const Color(0xFFB3261E),
                             fontSize: 12,
                           ),
@@ -665,8 +669,8 @@ class _ProofColumn extends StatelessWidget {
                       minimumSize: const Size(0, 38),
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       foregroundColor: selected
-                          ? AppColors.textInverse
-                          : AppColors.textSecondary,
+                          ? BrandColors.ink
+                          : BrandColors.mutedPaper,
                       backgroundColor: selected
                           ? const Color(0xFF62D8CE)
                           : const Color(0x0AF4F0E6),
@@ -1039,7 +1043,7 @@ class _LegalLink extends StatelessWidget {
   Widget build(BuildContext context) => TextButton(
     onPressed: () => onOpen(destination),
     style: TextButton.styleFrom(
-      foregroundColor: dark ? const Color(0xFF536064) : AppColors.textSecondary,
+      foregroundColor: dark ? const Color(0xFF536064) : BrandColors.mutedPaper,
       padding: const EdgeInsets.symmetric(horizontal: 5),
       minimumSize: const Size(44, 36),
       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -1091,7 +1095,8 @@ class _PermissionRow extends StatelessWidget {
         Expanded(
           child: Text(
             value,
-            style: GoogleFonts.inter(
+            style: TextStyle(
+              fontFamily: 'Manrope',
               color: const Color(0xFF202A2D),
               fontSize: 11,
               fontWeight: FontWeight.w600,
@@ -1140,7 +1145,8 @@ class _GoogleSignInButton extends StatelessWidget {
                     'Continue with Google',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: GoogleFonts.inter(
+                    style: TextStyle(
+                      fontFamily: 'Manrope',
                       color: const Color(0xFF182124),
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
