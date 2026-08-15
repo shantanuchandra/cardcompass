@@ -5,6 +5,13 @@
 // the backfill across other users' data, and a service-role client can.
 // Skips the service-role assertion if SUPABASE_SERVICE_ROLE_KEY isn't
 // provided (following the pattern in test/supabase/waitlist_security_contract_test.dart).
+//
+// User A gets one seeded transaction (card_catalog -> user_cards ->
+// transactions, matching the pattern in
+// test/supabase/get_uncategorized_transactions_test.dart and
+// test/supabase/transactions_category_check_test.dart) so the
+// service-role assertion below can check actual returned content,
+// not just that the call didn't throw.
 import 'package:flutter_test/flutter_test.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -24,6 +31,30 @@ void main() {
       password: 'test-password-1234',
     );
     userAId = authA.user!.id;
+
+    final catalog = await regularClient
+        .from('card_catalog')
+        .select('id')
+        .limit(1)
+        .single();
+    final card = await regularClient
+        .from('user_cards')
+        .insert({
+          'user_id': userAId,
+          'catalog_card_id': catalog['id'],
+        })
+        .select('id')
+        .single();
+    final userACardId = card['id'] as String;
+
+    await regularClient.from('transactions').insert({
+      'user_id': userAId,
+      'user_card_id': userACardId,
+      'amount': 100,
+      'description': 'backfill privileged-path fixture transaction',
+      'transaction_date': DateTime.now().toIso8601String(),
+      'category': 'other',
+    });
 
     final secondClient = SupabaseClient(
       'http://127.0.0.1:54321',
@@ -52,9 +83,18 @@ void main() {
       return; // documented skip, no service-role key available
     }
     final serviceClient = SupabaseClient('http://127.0.0.1:54321', serviceRoleKey);
-    await expectLater(
-      serviceClient.from('transactions').select().eq('user_id', userAId),
-      completes,
+    final result = await serviceClient
+        .from('transactions')
+        .select()
+        .eq('user_id', userAId);
+    // Not just "didn't throw" — actually contains the fixture row seeded
+    // in setUpAll, proving the service-role client genuinely sees user
+    // A's data rather than e.g. an empty result that would also satisfy
+    // a bare `completes` check.
+    expect(result, isNotEmpty);
+    expect(
+      result.map((row) => row['description']),
+      contains('backfill privileged-path fixture transaction'),
     );
   });
 }
