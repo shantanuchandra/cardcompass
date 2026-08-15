@@ -241,6 +241,7 @@ class AppSideRail extends StatelessWidget {
                   selected: selected,
                   button: true,
                   label: item.label,
+                  onTap: () => onTap(i),
                   child: ExcludeSemantics(
                     child: InkWell(
                       borderRadius: BorderRadius.circular(BrandRadius.control),
@@ -369,6 +370,7 @@ class AppBottomNav extends StatelessWidget {
                   selected: selected,
                   button: true,
                   label: item.label,
+                  onTap: () => onTap(i),
                   child: ExcludeSemantics(
                     child: InkWell(
                       onTap: () => onTap(i),

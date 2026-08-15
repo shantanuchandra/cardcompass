@@ -68,3 +68,26 @@ $ flutter build web --no-wasm-dry-run
 $ git diff --check
 (no output; passed)
 ```
+
+## Review round 3
+
+- Restored the semantic tap handler to the parent navigation nodes for both the desktop rail and mobile bottom navigation. The visible InkWell remains excluded from semantics, so each item still has exactly one announcement.
+- Added rendered semantics tests for mobile and rail Transactions actions. Each test asserts the exact single label, tap action availability, selected state, and that invoking the screen-reader tap reaches the expected tab callback/rendered destination.
+- The 390 px / 2× wrapping test remains in the router suite.
+
+### Command evidence
+
+```text
+$ flutter test test/core/router/app_shell_brand_test.dart
+00:00 +9: All tests passed!
+
+$ flutter analyze lib/core/router/app_router.dart lib/core/router/app_tab_selection.dart lib/core/router/browser_history.dart lib/core/router/browser_history_stub.dart lib/core/router/browser_history_web.dart test/core/router/app_shell_brand_test.dart
+Analyzing 6 items...
+No issues found!
+
+$ flutter build web --no-wasm-dry-run
+✓ Built build/web
+
+$ git diff --check
+(no output; passed)
+```

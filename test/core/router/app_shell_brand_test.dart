@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui' show Tristate;
 
 import 'package:cardcompass/core/router/app_router.dart';
 import 'package:cardcompass/core/router/app_tab_selection.dart';
@@ -110,6 +111,54 @@ void main() {
 
     final label = tester.widget<Text>(find.text('Dashboard').last);
     expect(label.style?.fontSize, 14);
+  });
+
+  testWidgets('mobile semantic item announces once and activates its tab', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    await tester.pumpWidget(const MaterialApp(home: _MobileNavHarness()));
+
+    final node = tester.getSemantics(find.text('Transactions'));
+    expect(node.label, 'Transactions');
+    expect(node.flagsCollection.isSelected, Tristate.isFalse);
+    expect(node.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
+    tester.semantics.tap(find.semantics.byLabel('Transactions'));
+    await tester.pump();
+    expect(find.text('Rendered destination: transactions'), findsOneWidget);
+    expect(
+      tester.getSemantics(find.text('Transactions')).flagsCollection.isSelected,
+      Tristate.isTrue,
+    );
+    semantics.dispose();
+  });
+
+  testWidgets('rail semantic item announces once and activates its tab', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    var selectedIndex = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AppSideRail(
+            selectedIndex: selectedIndex,
+            onTap: (index) => selectedIndex = index,
+          ),
+        ),
+      ),
+    );
+
+    final node = tester.getSemantics(find.text('Transactions'));
+    expect(node.label, 'Transactions');
+    expect(
+      tester.getSemantics(find.text('Dashboard')).flagsCollection.isSelected,
+      Tristate.isTrue,
+    );
+    expect(node.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
+    tester.semantics.tap(find.semantics.byLabel('Transactions'));
+    expect(selectedIndex, 2);
+    semantics.dispose();
   });
 
   testWidgets('mobile Transactions label stays whole at 390px and 2x text', (
