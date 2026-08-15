@@ -42,6 +42,11 @@ void main() {
       expect(isValidCategory('FOOD'), isTrue);
       expect(isValidCategory('Food'), isTrue);
     });
+
+    test('tolerates leading/trailing whitespace (Gemini output may include incidental padding)', () {
+      expect(isValidCategory(' food '), isTrue);
+      expect(isValidCategory('  travel'), isTrue);
+    });
   });
 
   group('keywordCategoryFor — covers the 13 categories with deterministic '
@@ -154,6 +159,32 @@ void main() {
       );
       expect(result.category, 'other');
       expect(result.source, CategorizationSource.unresolved);
+    });
+
+    test('empty merchantName and description falls through to other/unresolved '
+        'without throwing', () {
+      final result = categorize(
+        merchantName: '',
+        description: '',
+        geminiCategory: null,
+        merchantLookup: (_) => null,
+      );
+      expect(result.category, 'other');
+      expect(result.source, CategorizationSource.unresolved);
+    });
+
+    test('a whitespace-padded Gemini category is both accepted and stored '
+        'trimmed — the padding must not survive into the stored category '
+        'string, since a downstream equality check (DB constraint, UI '
+        'lookup) against the bare category name would otherwise fail', () {
+      final result = categorize(
+        merchantName: 'Some New Merchant',
+        description: 'SOME NEW MERCHANT XYZ',
+        geminiCategory: ' food ',
+        merchantLookup: (_) => null,
+      );
+      expect(result.category, 'food');
+      expect(result.source, CategorizationSource.geminiValidated);
     });
 
     test('calling categorize twice with the same never-before-seen merchant '

@@ -28,10 +28,11 @@ String normalizeMerchantName(String raw) {
 /// Whether [category] (case-insensitive) is one of the 16 categories this
 /// app recognizes. Used to decide whether to trust Gemini's own per-transaction
 /// category guess (see `categorize`) rather than assuming its prompt
-/// instructions were followed exactly.
+/// instructions were followed exactly. Trims incidental whitespace before
+/// comparing, since Gemini's raw output may include leading/trailing spaces.
 bool isValidCategory(String? category) {
   if (category == null || category.isEmpty) return false;
-  return validCategories.contains(category.toLowerCase());
+  return validCategories.contains(category.trim().toLowerCase());
 }
 
 /// Keyword phrases that, if found anywhere in a transaction description,
@@ -123,7 +124,7 @@ CategorizationResult categorize({
   }
 
   if (isValidCategory(geminiCategory)) {
-    return CategorizationResult(geminiCategory!.toLowerCase(), CategorizationSource.geminiValidated);
+    return CategorizationResult(geminiCategory!.trim().toLowerCase(), CategorizationSource.geminiValidated);
   }
 
   final keywordMatch = keywordCategoryFor(description);
