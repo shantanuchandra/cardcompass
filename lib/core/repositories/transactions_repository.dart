@@ -1,6 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../shared/models/transaction.dart';
 import '../services/mcc_resolver.dart';
+import '../services/transaction_categorizer.dart' show validCategories;
 
 String? parseMerchantCategoryRow(Map<String, dynamic>? row) {
   return row?['category'] as String?;
@@ -128,5 +129,51 @@ class TransactionsRepository {
               'user_id,user_card_id,transaction_date,description,amount',
           ignoreDuplicates: true,
         );
+  }
+
+  /// Assembled as ONE .or(...) expression (matching the precedent in
+  /// SupabaseMovieDealsDataSource._buildWidenedOrExpression) rather than
+  /// chained separate filter calls, which PostgREST would combine as AND
+  /// instead of the OR this needs. Reuses [validCategories] from
+  /// transaction_categorizer.dart rather than restating the 16-category
+  /// list here, so the two can't drift apart.
+  static String _buildUncategorizedOrExpression() {
+    final quotedCategories = validCategories.map((c) => '"$c"').join(',');
+    return 'category.is.null,'
+        'category.eq.other,'
+        'category.not.in.($quotedCategories)';
+  }
+
+  /// Every transaction for [userId] whose category needs backfilling —
+  /// NULL, exactly 'other', or any value outside the 16 valid categories
+  /// (catches legacy vocabulary like 'dining'/'bills'/'transfer' in one
+  /// condition). Used by CategoryBackfillService (a later task).
+  Future<List<Transaction>> getUncategorizedTransactions(
+    String userId,
+  ) async {
+    final data = await _db
+        .from('transactions')
+        .select()
+        .eq('user_id', userId)
+        .or(_buildUncategorizedOrExpression());
+    return (data as List)
+        .map((e) => Transaction.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Updates just the category and metadata for an existing transaction by
+  /// id — used by the backfill job. `addTransaction`'s upsert with
+  /// ignoreDuplicates can't be reused here: it silently no-ops on a
+  /// dedup-key conflict rather than updating, which is exactly what a
+  /// backfill needs to do for a row that already exists.
+  Future<void> updateTransactionCategory({
+    required String transactionId,
+    required String category,
+    required Map<String, dynamic> metadata,
+  }) async {
+    await _db.from('transactions').update({
+      'category': category,
+      'metadata': metadata,
+    }).eq('id', transactionId);
   }
 }
