@@ -13,6 +13,7 @@ const EVENT_NAMES = new Set([
   'Recommendation Preview Changed',
 ]);
 const EVENT_PROP_KEYS = new Set(['placement', 'step', 'variant', 'outcome']);
+const ANALYTICS_DOMAIN = 'cardcompass.in';
 const UTM_LIMITS = {
   utm_source: 100,
   utm_medium: 100,
@@ -200,24 +201,21 @@ function safeAnalyticsProps(props) {
 }
 
 export function sanitizeAnalyticsPayload(payload) {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return payload;
-  const safe = {};
-  for (const [key, value] of Object.entries(payload)) {
-    if (key === 'r' || key === 'ref' || key.startsWith('utm_')) continue;
-    if (key === 'u') {
-      const strippedUrl = stripAnalyticsUrl(value);
-      if (strippedUrl) safe.u = strippedUrl;
-      continue;
-    }
-    if (key === 'p') {
-      const parsed = typeof value === 'string' ? (() => {
-        try { return JSON.parse(value); } catch { return {}; }
-      })() : value;
-      safe.p = safeAnalyticsProps(parsed);
-      continue;
-    }
-    safe[key] = value;
+  const safe = { d: ANALYTICS_DOMAIN, r: '' };
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return safe;
+
+  if (payload.n === 'pageview' || EVENT_NAMES.has(payload.n)) safe.n = payload.n;
+
+  const strippedUrl = stripAnalyticsUrl(payload.u);
+  if (strippedUrl) safe.u = strippedUrl;
+
+  if (Object.hasOwn(payload, 'p')) {
+    const parsed = typeof payload.p === 'string' ? (() => {
+      try { return JSON.parse(payload.p); } catch { return {}; }
+    })() : payload.p;
+    safe.p = safeAnalyticsProps(parsed);
   }
+
   return safe;
 }
 

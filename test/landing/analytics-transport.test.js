@@ -17,7 +17,11 @@ test('analytics transport suppresses implicit pageviews and forwards one sanitiz
   const implicit = {
     n: 'pageview',
     u: 'https://cardcompass.in/?utm_source=newsletter&email=private%40example.com#token',
+    d: 'cardcompass.in',
     r: 'https://search.example/?q=private',
+    email: 'private@example.com',
+    name: 'Private Person',
+    m: { email: 'private@example.com' },
     p: { email: 'private@example.com', placement: 'hero' },
   };
   await transport.fetch(PLAUSIBLE_ENDPOINT, {
@@ -41,6 +45,8 @@ test('analytics transport suppresses implicit pageviews and forwards one sanitiz
   assert.deepEqual(JSON.parse(calls[0].init.body), {
     n: 'pageview',
     u: 'https://cardcompass.in/',
+    d: 'cardcompass.in',
+    r: '',
     p: { placement: 'hero' },
   });
 });
@@ -59,9 +65,19 @@ test('analytics transport recognizes Request-like endpoints, sanitizes events, a
     body: JSON.stringify({
       n: 'Enrichment Submitted',
       u: 'https://cardcompass.in/apply/?utm_campaign=launch&ref=private',
+      d: 'cardcompass.in',
       ref: 'private-referrer',
       utm_source: 'newsletter',
-      p: { placement: 'hero', outcome: 'accepted', name: 'Private Person' },
+      email: 'private@example.com',
+      name: 'Private Person',
+      m: { email: 'private@example.com', privateMetadata: true },
+      unknown: { nested: { email: 'private@example.com' } },
+      p: {
+        placement: 'hero',
+        outcome: 'accepted',
+        name: 'Private Person',
+        metadata: { email: 'private@example.com' },
+      },
     }),
   });
 
@@ -74,6 +90,8 @@ test('analytics transport recognizes Request-like endpoints, sanitizes events, a
   assert.deepEqual(JSON.parse(calls[0].init.body), {
     n: 'Enrichment Submitted',
     u: 'https://cardcompass.in/apply/',
+    d: 'cardcompass.in',
+    r: '',
     p: { placement: 'hero', outcome: 'accepted' },
   });
   assert.equal(calls[1].input, otherInput);

@@ -67,20 +67,28 @@ test('Plausible request transform removes URL attribution, referrer, and unsafe 
     sanitizeAnalyticsPayload({
       n: 'Enrichment Submitted',
       u: 'https://cardcompass.in/?utm_source=campaign&utm_medium=email&utm_campaign=founding&ref=partner',
+      d: 'cardcompass.in',
       r: 'https://search.example/results?q=private+person',
       ref: 'private-ref',
       utm_source: 'campaign',
+      email: 'private@example.com',
+      name: 'Private Person',
+      m: { email: 'private@example.com', campaign: 'founding' },
+      unknown: { nested: { email: 'private@example.com' } },
       p: {
         placement: 'hero',
         outcome: 'accepted',
         email: 'private@example.com',
         cardCount: '7+',
         utm_campaign: 'founding',
+        metadata: { email: 'private@example.com' },
       },
     }),
     {
       n: 'Enrichment Submitted',
       u: 'https://cardcompass.in/',
+      d: 'cardcompass.in',
+      r: '',
       p: { placement: 'hero', outcome: 'accepted' },
     },
   );
