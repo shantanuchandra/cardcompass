@@ -1,4 +1,5 @@
 import 'package:cardcompass/core/theme/brand_components.dart';
+import 'package:cardcompass/core/theme/app_theme.dart';
 import 'package:cardcompass/core/theme/brand_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,7 +8,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   Widget host(Widget child) => MaterialApp(
-    theme: ThemeData.light(),
+    theme: AppTheme.work,
     home: Scaffold(body: child),
   );
 
@@ -95,5 +96,108 @@ void main() {
     );
     expect(semantics.properties.label, 'Recommended');
     expect(find.text('Recommended'), findsOneWidget);
+  });
+
+  testWidgets('disabled action row announces unavailable and has no chevron', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      host(const BrandActionRow(title: 'Notifications', unavailable: true)),
+    );
+
+    expect(find.text('Coming soon'), findsOneWidget);
+    expect(find.byIcon(Icons.chevron_right_rounded), findsNothing);
+    expect(
+      tester.getSemantics(find.byType(BrandActionRow)),
+      matchesSemantics(
+        label: 'Notifications, unavailable',
+        isButton: true,
+        hasEnabledState: true,
+        isEnabled: false,
+      ),
+    );
+  });
+
+  testWidgets('state view exposes a minimum-size recovery action', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      host(
+        BrandStateView(
+          title: 'No matching cards',
+          message: 'Try a different category.',
+          icon: Icons.search_off_rounded,
+          actionLabel: 'Clear filters',
+          onAction: () {},
+        ),
+      ),
+    );
+
+    expect(find.text('No matching cards'), findsOneWidget);
+    expect(find.text('Try a different category.'), findsOneWidget);
+    expect(find.byIcon(Icons.search_off_rounded), findsOneWidget);
+    expect(
+      tester
+          .getSize(find.widgetWithText(OutlinedButton, 'Clear filters'))
+          .height,
+      greaterThanOrEqualTo(44),
+    );
+  });
+
+  testWidgets('page header and metric establish a clear summary hierarchy', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      host(
+        const Column(
+          children: [
+            BrandPageHeader(
+              eyebrow: 'Wallet overview',
+              title: 'Your rewards at a glance',
+              description: 'A concise summary of your earning potential.',
+            ),
+            BrandMetric(label: 'Potential reward', value: '₹1,200'),
+          ],
+        ),
+      ),
+    );
+
+    expect(find.text('WALLET OVERVIEW'), findsOneWidget);
+    expect(find.text('Your rewards at a glance'), findsOneWidget);
+    expect(find.text('Potential reward'), findsOneWidget);
+    expect(find.text('₹1,200'), findsOneWidget);
+  });
+
+  test('action row requires exactly one interaction state', () {
+    expect(() => BrandActionRow(title: 'Notifications'), throwsAssertionError);
+    expect(
+      () => BrandActionRow(
+        title: 'Notifications',
+        unavailable: true,
+        onTap: () {},
+      ),
+      throwsAssertionError,
+    );
+  });
+
+  testWidgets('evidence strip uses readable evidence type sizes', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      host(
+        const BrandEvidenceStrip(
+          rows: [BrandEvidence(label: 'Expected return', value: '₹120')],
+        ),
+      ),
+    );
+
+    expect(
+      tester.widget<Text>(find.text('EXPECTED RETURN')).style!.fontSize,
+      12,
+    );
+    expect(
+      tester.widget<Text>(find.text('₹120')).style!.fontSize,
+      greaterThanOrEqualTo(14),
+    );
   });
 }

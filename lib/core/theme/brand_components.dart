@@ -163,6 +163,311 @@ class BrandSectionHeader extends StatelessWidget {
   );
 }
 
+/// Keeps prose and forms comfortably readable while permitting wider data
+/// layouts where comparison and tabular views need it.
+enum BrandContentMode { constrained, fullWidthData }
+
+class BrandContentFrame extends StatelessWidget {
+  const BrandContentFrame({
+    super.key,
+    required this.child,
+    this.mode = BrandContentMode.constrained,
+  });
+
+  final Widget child;
+  final BrandContentMode mode;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final horizontalPadding = constraints.maxWidth >= 768
+          ? BrandSpacing.xl
+          : BrandSpacing.md;
+      final contentWidth = switch (mode) {
+        BrandContentMode.constrained => 960.0,
+        BrandContentMode.fullWidthData => 1440.0,
+      };
+      return Padding(
+        padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: contentWidth),
+            child: child,
+          ),
+        ),
+      );
+    },
+  );
+}
+
+class BrandPageHeader extends StatelessWidget {
+  const BrandPageHeader({
+    super.key,
+    required this.title,
+    this.eyebrow,
+    this.description,
+    this.trailing,
+  });
+
+  final String title;
+  final String? eyebrow;
+  final String? description;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final text = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (eyebrow != null) ...[
+          Text(
+            eyebrow!.toUpperCase(),
+            style: theme.textTheme.labelMedium?.copyWith(
+              fontWeight: FontWeight.w800,
+              letterSpacing: 1.1,
+            ),
+          ),
+          const SizedBox(height: BrandSpacing.sm),
+        ],
+        Text(title, style: theme.textTheme.displaySmall),
+        if (description != null) ...[
+          const SizedBox(height: BrandSpacing.sm),
+          Text(description!, style: theme.textTheme.bodyLarge),
+        ],
+      ],
+    );
+    if (trailing == null) return SelectionArea(child: text);
+
+    return SelectionArea(
+      child: ResponsiveValueRow(
+        spacing: BrandSpacing.lg,
+        children: [text, trailing!],
+      ),
+    );
+  }
+}
+
+class BrandMetric extends StatelessWidget {
+  const BrandMetric({
+    super.key,
+    required this.label,
+    required this.value,
+    this.supportingText,
+  });
+
+  final String label;
+  final String value;
+  final String? supportingText;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Semantics(
+      label: '$label: $value',
+      child: ExcludeSemantics(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(label, style: theme.textTheme.labelMedium),
+            const SizedBox(height: BrandSpacing.xs),
+            Text(
+              value,
+              style: theme.textTheme.headlineLarge?.copyWith(
+                fontFamily: 'IBM Plex Mono',
+              ),
+            ),
+            if (supportingText != null) ...[
+              const SizedBox(height: BrandSpacing.xs),
+              Text(supportingText!, style: theme.textTheme.bodySmall),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class ResponsiveValueRow extends StatelessWidget {
+  const ResponsiveValueRow({
+    super.key,
+    required this.children,
+    this.spacing = BrandSpacing.md,
+  });
+
+  final List<Widget> children;
+  final double spacing;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final usesLargeText = MediaQuery.textScalerOf(context).scale(14) >= 21;
+      final stack = constraints.maxWidth < 600 || usesLargeText;
+      if (stack) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          spacing: spacing,
+          children: children,
+        );
+      }
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: children,
+      );
+    },
+  );
+}
+
+class BrandActionRow extends StatelessWidget {
+  const BrandActionRow({
+    super.key,
+    required this.title,
+    this.description,
+    this.leading,
+    this.onTap,
+    this.unavailable = false,
+  }) : assert(
+         (onTap != null) != unavailable,
+         'Provide either onTap or unavailable: true.',
+       );
+
+  final String title;
+  final String? description;
+  final Widget? leading;
+  final VoidCallback? onTap;
+  final bool unavailable;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final foreground = unavailable
+        ? theme.colorScheme.onSurface.withValues(alpha: .65)
+        : theme.colorScheme.onSurface;
+    final content = Row(
+      children: [
+        if (leading != null) ...[
+          IconTheme(
+            data: IconThemeData(color: foreground),
+            child: leading!,
+          ),
+          const SizedBox(width: BrandSpacing.compact),
+        ],
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                title,
+                style: theme.textTheme.titleMedium?.copyWith(color: foreground),
+              ),
+              if (description != null) ...[
+                const SizedBox(height: BrandSpacing.xs),
+                Text(description!, style: theme.textTheme.bodySmall),
+              ],
+            ],
+          ),
+        ),
+        if (unavailable)
+          Text('Coming soon', style: theme.textTheme.labelMedium)
+        else
+          Icon(Icons.chevron_right_rounded, color: foreground),
+      ],
+    );
+
+    return Semantics(
+      label: unavailable ? '$title, unavailable' : title,
+      button: true,
+      enabled: !unavailable,
+      child: ExcludeSemantics(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(BrandRadius.control),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: BrandSpacing.sm,
+                  vertical: BrandSpacing.compact,
+                ),
+                child: content,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class BrandStateView extends StatelessWidget {
+  const BrandStateView({
+    super.key,
+    required this.title,
+    required this.message,
+    required this.icon,
+    this.actionLabel,
+    this.onAction,
+  }) : assert(
+         (actionLabel == null) == (onAction == null),
+         'Provide both actionLabel and onAction, or neither.',
+       );
+
+  final String title;
+  final String message;
+  final IconData icon;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Semantics(
+      liveRegion: true,
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 480),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 40, color: theme.colorScheme.primary),
+              const SizedBox(height: BrandSpacing.md),
+              Text(
+                title,
+                style: theme.textTheme.headlineMedium,
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: BrandSpacing.sm),
+              Text(
+                message,
+                style: theme.textTheme.bodyMedium,
+                textAlign: TextAlign.center,
+              ),
+              if (actionLabel != null) ...[
+                const SizedBox(height: BrandSpacing.lg),
+                OutlinedButton(
+                  onPressed: onAction,
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(44, 44),
+                  ),
+                  child: Text(actionLabel!),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class BrandEvidence {
   const BrandEvidence({required this.label, required this.value});
   final String label;
@@ -197,7 +502,7 @@ class BrandEvidenceStrip extends StatelessWidget {
                     row.label.toUpperCase(),
                     style: TextStyle(
                       fontFamily: 'Manrope',
-                      fontSize: 9,
+                      fontSize: 12,
                       fontWeight: FontWeight.w800,
                       letterSpacing: 1,
                       color: BrandColors.mutedPaper,
