@@ -47,7 +47,9 @@ app.*.map.json
 
 # Secrets / credentials - never commit these
 .env
-.env.*
+.env.local
+.env.*.local
+# .env.example is intentionally committed as a template
 *.local
 *.pem
 *.key
@@ -60,3 +62,11 @@ dart_defines.json
 db_cluster*
 *.sql.gz
 *.dump
+
+# Flutter build artifacts (not source)
+/build/
+.dart_tool/
+
+# Platform directories not used (web-only app)
+android/
+ios/

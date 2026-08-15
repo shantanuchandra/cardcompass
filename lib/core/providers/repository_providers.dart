@@ -1,24 +1,24 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:cardcompass/core/repositories/card_repository.dart';
-import 'package:cardcompass/core/repositories/transaction_repository.dart';
-import 'package:cardcompass/core/repositories/statement_repository.dart';
-import 'package:cardcompass/core/repositories/supabase_card_repository.dart';
-import 'package:cardcompass/core/repositories/supabase_transaction_repository.dart';
-import 'package:cardcompass/core/repositories/supabase_statement_repository.dart';
+import '../repositories/cards_repository.dart';
+import '../repositories/transactions_repository.dart';
+import '../repositories/statements_repository.dart';
+import '../repositories/movie_deals_repository.dart';
+import 'supabase_provider.dart';
 
-/// Provider for CardRepository
-/// For now using Supabase implementation, can be switched based on configuration
-final cardRepositoryProvider = Provider<CardRepository>((ref) {
-  return SupabaseCardRepository();
+final cardsRepositoryProvider = Provider<CardsRepository>((ref) {
+  return CardsRepository(ref.watch(supabaseClientProvider));
 });
 
-/// Provider for TransactionRepository
-/// Using Supabase implementation
-final transactionRepositoryProvider = Provider<TransactionRepository>((ref) {
-  return SupabaseTransactionRepository();
+final transactionsRepositoryProvider = Provider<TransactionsRepository>((ref) {
+  return TransactionsRepository(ref.watch(supabaseClientProvider));
 });
 
-/// Provider for StatementRepository
-final statementRepositoryProvider = Provider<StatementRepository>((ref) {
-  return SupabaseStatementRepository();
+final statementsRepositoryProvider = Provider<StatementsRepository>((ref) {
+  return StatementsRepository(ref.watch(supabaseClientProvider));
+});
+
+final movieDealsRepositoryProvider = Provider<MovieDealsRepository>((ref) {
+  return MovieDealsSupabaseRepository(
+    SupabaseMovieDealsDataSource(ref.watch(supabaseClientProvider)),
+  );
 });

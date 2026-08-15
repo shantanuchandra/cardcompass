@@ -1,144 +1,315 @@
-import 'package:riverpod_annotation/riverpod_annotation.dart';
-import 'package:cardcompass/core/repositories/transaction_repository.dart';
-import 'package:cardcompass/core/providers/service_providers.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/providers/repository_providers.dart';
+import '../../../core/providers/supabase_provider.dart';
+import '../../../core/services/bank_market.dart';
+import '../../../core/services/card_normalizer_service.dart';
+import '../../../core/services/eligible_spend.dart';
 import '../../../shared/models/transaction.dart';
+import '../../../shared/models/user_card.dart';
 
-part 'transactions_provider.g.dart';
+enum TxnGrouping { flat, byCard, byCategory, byDate }
 
-@riverpod
-class TransactionsNotifier extends _$TransactionsNotifier {
-  late final TransactionRepository _transactionRepository;
-  String? _currentUserId;
+class TxnFilter {
+  final String? cardId;
+  final DateTime? from;
+  final DateTime? to;
+  final String? category;
 
+  const TxnFilter({this.cardId, this.from, this.to, this.category});
+
+  TxnFilter copyWith({
+    Object? cardId = _sentinel,
+    Object? from = _sentinel,
+    Object? to = _sentinel,
+    Object? category = _sentinel,
+  }) {
+    return TxnFilter(
+      cardId: cardId == _sentinel ? this.cardId : cardId as String?,
+      from: from == _sentinel ? this.from : from as DateTime?,
+      to: to == _sentinel ? this.to : to as DateTime?,
+      category: category == _sentinel ? this.category : category as String?,
+    );
+  }
+
+  static const _sentinel = Object();
+
+  String get label {
+    final parts = <String>[];
+    if (from != null && to != null) {
+      parts.add('${_mon(from!)} – ${_mon(to!)}');
+    } else if (from != null) {
+      parts.add('From ${_mon(from!)}');
+    }
+    if (category != null) parts.add(category!);
+    return parts.isEmpty ? 'All time' : parts.join(' · ');
+  }
+
+  static String _mon(DateTime d) => '${d.day} ${_months[d.month - 1]}';
+  static const _months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+}
+
+class TrendPoint {
+  final DateTime date;
+  final double total;
+  const TrendPoint(this.date, this.total);
+}
+
+class SpendTrend {
+  final List<TrendPoint> points;
+  final double dailyAverage;
+  final String? peakLabel;
+  final double? percentVsPrior;
+
+  const SpendTrend({
+    required this.points,
+    required this.dailyAverage,
+    this.peakLabel,
+    this.percentVsPrior,
+  });
+}
+
+class TxnsState {
+  final List<Transaction> all;
+  final List<UserCard> cards;
+  final TxnFilter filter;
+  final TxnGrouping grouping;
+
+  const TxnsState({
+    this.all = const [],
+    this.cards = const [],
+    this.filter = const TxnFilter(),
+    this.grouping = TxnGrouping.flat,
+  });
+
+  TxnsState copyWith({
+    List<Transaction>? all,
+    List<UserCard>? cards,
+    TxnFilter? filter,
+    TxnGrouping? grouping,
+  }) => TxnsState(
+    all: all ?? this.all,
+    cards: cards ?? this.cards,
+    filter: filter ?? this.filter,
+    grouping: grouping ?? this.grouping,
+  );
+
+  List<Transaction> get filtered {
+    var txns = all;
+    if (filter.cardId != null)
+      txns = txns.where((t) => t.userCardId == filter.cardId).toList();
+    if (filter.from != null)
+      txns = txns
+          .where((t) => !t.transactionDate.isBefore(filter.from!))
+          .toList();
+    if (filter.to != null)
+      txns = txns
+          .where(
+            (t) => !t.transactionDate.isAfter(
+              filter.to!.add(const Duration(days: 1)),
+            ),
+          )
+          .toList();
+    if (filter.category != null)
+      txns = txns
+          .where(
+            (t) => t.category?.toLowerCase() == filter.category!.toLowerCase(),
+          )
+          .toList();
+    return txns;
+  }
+
+  double get totalSpend =>
+      filtered.where(isEligibleRetailSpend).fold(0, (s, t) => s + t.amount);
+  double get totalRewards =>
+      filtered.fold(0, (s, t) => s + (t.rewardEarned ?? 0));
+  String? get topCategory {
+    final map = <String, double>{};
+    for (final t in filtered) {
+      if (isEligibleRetailSpend(t) && t.category != null) {
+        map[t.category!] = (map[t.category!] ?? 0) + t.amount;
+      }
+    }
+    if (map.isEmpty) return null;
+    return map.entries.reduce((a, b) => a.value > b.value ? a : b).key;
+  }
+
+  /// Whether [txn] is a foreign-currency charge relative to its card's
+  /// issuing bank's market currency. Resolves the card's bank name once
+  /// per lookup (cards list is small — far fewer cards than transactions)
+  /// rather than joining bank name into every transaction row at the
+  /// database level. Returns false if the card can't be found or its
+  /// bank's market currency can't be resolved (currencyForBank returns
+  /// null for an unrecognized bank) — a transaction is only flagged
+  /// international when there's a concrete, resolved market to compare
+  /// against.
+  bool isTransactionInternational(Transaction txn) {
+    final card = cards.where((c) => c.id == txn.userCardId).firstOrNull;
+    if (card?.bank == null) return false;
+    final normalizedBank = CardNormalizerService.normalizeBankName(card!.bank!);
+    final marketCurrency = currencyForBank(normalizedBank);
+    if (marketCurrency == null) return false;
+    return txn.isInternational(marketCurrency);
+  }
+
+  Map<String, List<Transaction>> get grouped {
+    final txns = filtered;
+    switch (grouping) {
+      case TxnGrouping.flat:
+        return {'All': txns};
+      case TxnGrouping.byCard:
+        final m = <String, List<Transaction>>{};
+        for (final t in txns) {
+          (m[t.userCardId] ??= []).add(t);
+        }
+        return m;
+      case TxnGrouping.byCategory:
+        final m = <String, List<Transaction>>{};
+        for (final t in txns) {
+          (m[t.category ?? 'Other'] ??= []).add(t);
+        }
+        return m;
+      case TxnGrouping.byDate:
+        final m = <String, List<Transaction>>{};
+        for (final t in txns) {
+          final d = t.transactionDate.toLocal();
+          final key = '${d.day} ${_TxnsState._months[d.month - 1]} ${d.year}';
+          (m[key] ??= []).add(t);
+        }
+        return m;
+    }
+  }
+
+  SpendTrend get spendTrend {
+    final txns = filtered.where(isEligibleRetailSpend).toList();
+    if (txns.isEmpty) return const SpendTrend(points: [], dailyAverage: 0);
+
+    // bucket by day
+    final byDay = <String, double>{};
+    final dayMap = <String, DateTime>{};
+    for (final t in txns) {
+      final d = t.transactionDate.toLocal();
+      final key =
+          '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+      byDay[key] = (byDay[key] ?? 0) + t.amount;
+      dayMap[key] = DateTime(d.year, d.month, d.day);
+    }
+    final keys = byDay.keys.toList()..sort();
+    final points = keys.map((k) => TrendPoint(dayMap[k]!, byDay[k]!)).toList();
+
+    final total = points.fold(0.0, (s, p) => s + p.total);
+    final avg = points.isEmpty ? 0.0 : total / points.length;
+
+    TrendPoint? peak;
+    for (final p in points) {
+      if (peak == null || p.total > peak.total) peak = p;
+    }
+    String? peakLabel;
+    if (peak != null) {
+      final d = peak.date;
+      peakLabel = '${d.day} ${_TxnsState._months[d.month - 1]}';
+    }
+
+    // prior period comparison
+    double? percentVsPrior;
+    if (filter.from != null && filter.to != null) {
+      final duration = filter.to!.difference(filter.from!);
+      final priorFrom = filter.from!.subtract(duration);
+      final priorTo = filter.from!.subtract(const Duration(days: 1));
+      final priorTotal = all
+          .where(
+            (t) =>
+                isEligibleRetailSpend(t) &&
+                !t.transactionDate.isBefore(priorFrom) &&
+                !t.transactionDate.isAfter(
+                  priorTo.add(const Duration(days: 1)),
+                ),
+          )
+          .fold(0.0, (s, t) => s + t.amount);
+      if (priorTotal > 0) {
+        percentVsPrior = (total - priorTotal) / priorTotal * 100;
+      }
+    }
+
+    return SpendTrend(
+      points: points,
+      dailyAverage: avg,
+      peakLabel: peakLabel,
+      percentVsPrior: percentVsPrior,
+    );
+  }
+}
+
+// ignore: library_private_types_in_public_api
+class _TxnsState {
+  static const _months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+}
+
+class TxnsNotifier extends AsyncNotifier<TxnsState> {
   @override
-  List<Transaction> build() {
-    _transactionRepository = ref.watch(transactionRepositoryProvider);
-    return [];
+  Future<TxnsState> build() async {
+    final user = ref.watch(currentUserProvider);
+    if (user == null) return const TxnsState();
+
+    final txnRepo = ref.read(transactionsRepositoryProvider);
+    final cardsRepo = ref.read(cardsRepositoryProvider);
+
+    final results = await Future.wait([
+      txnRepo.getTransactions(userId: user.id, limit: 500),
+      cardsRepo.getUserCards(user.id),
+    ]);
+
+    return TxnsState(
+      all: results[0] as List<Transaction>,
+      cards: results[1] as List<UserCard>,
+      filter: _defaultThisMonthFilter(),
+    );
   }
 
-  Future<void> loadUserTransactions(String userId, {
-    int? limit,
-    DateTime? startDate,
-    DateTime? endDate,
-    String? category,
-    String? cardId,
-  }) async {
-    try {
-      _currentUserId = userId;      
-      state = await _transactionRepository.getUserTransactions(
-        userId,
-        limit: limit,
-        startDate: startDate,
-        endDate: endDate,
-        category: category,
-        userCardId: cardId,
-      );
-    } catch (e) {
-      print('Error loading user transactions: $e');
-      state = [];
-    }
+  TxnFilter _defaultThisMonthFilter() {
+    final now = DateTime.now();
+    return TxnFilter(from: DateTime(now.year, now.month, 1));
   }
 
-  // Automatically refresh transactions when user changes
-  void setUserId(String? userId) {
-    if (userId != null && userId != _currentUserId) {
-      loadUserTransactions(userId);
-    } else if (userId == null) {
-      // Clear transactions when user logs out
-      state = [];
-      _currentUserId = null;
-    }
+  void setFilter(TxnFilter filter) {
+    state = state.whenData((s) => s.copyWith(filter: filter));
   }
 
-  Future<void> addTransaction(Transaction transaction) async {
-    try {
-      await _transactionRepository.addTransaction(transaction);
-      if (_currentUserId != null) {
-        await loadUserTransactions(_currentUserId!);
-      }
-    } catch (e) {
-      print('Error adding transaction: $e');
-    }
+  void setGrouping(TxnGrouping g) {
+    state = state.whenData((s) => s.copyWith(grouping: g));
   }
 
-  Future<void> updateTransaction(Transaction updatedTransaction) async {
-    try {
-      await _transactionRepository.updateTransaction(updatedTransaction);
-      if (_currentUserId != null) {
-        await loadUserTransactions(_currentUserId!);
-      }
-    } catch (e) {
-      print('Error updating transaction: $e');
-    }
-  }
-
-  Future<void> removeTransaction(String transactionId) async {
-    try {
-      await _transactionRepository.deleteTransaction(transactionId);
-      if (_currentUserId != null) {
-        await loadUserTransactions(_currentUserId!);
-      }
-    } catch (e) {
-      print('Error removing transaction: $e');
-    }
+  Future<void> refresh() async {
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(build);
   }
 }
 
-// Provider for recent transactions (last 7 days)
-@riverpod
-List<Transaction> recentTransactions(Ref ref) {
-  final transactions = ref.watch(transactionsProvider);
-  final sevenDaysAgo = DateTime.now().subtract(const Duration(days: 7));
-  return transactions.where((transaction) => transaction.transactionDate.isAfter(sevenDaysAgo)).take(3).toList();
-}
-
-// Provider for total spending this month
-@riverpod
-double monthlySpending(Ref ref) {
-  final transactions = ref.watch(transactionsProvider);
-  final now = DateTime.now();
-  final firstDayOfMonth = DateTime(now.year, now.month, 1);
-  
-  return transactions
-      .where((transaction) => 
-          transaction.transactionDate.isAfter(firstDayOfMonth) && 
-          transaction.type == TransactionType.debit)
-      .fold(0.0, (sum, transaction) => sum + transaction.amount);
-}
-
-// Provider for total rewards earned this month
-@riverpod
-double monthlyRewards(Ref ref) {
-  final transactions = ref.watch(transactionsProvider);
-  final now = DateTime.now();
-  final firstDayOfMonth = DateTime(now.year, now.month, 1);
-  
-  return transactions
-      .where((transaction) => 
-          transaction.transactionDate.isAfter(firstDayOfMonth) && 
-          transaction.rewardEarned != null)
-      .fold(0.0, (sum, transaction) => sum + (transaction.rewardEarned ?? 0.0));
-}
-
-// Provider for transaction by category
-@riverpod
-Map<TransactionCategory, double> transactionsByCategory(Ref ref) {
-  final transactions = ref.watch(transactionsProvider);
-  final Map<TransactionCategory, double> categoryTotals = {};
-  
-  for (final transaction in transactions) {
-    if (transaction.type == TransactionType.debit) {
-      categoryTotals[transaction.category] = 
-          (categoryTotals[transaction.category] ?? 0.0) + transaction.amount;
-    }
-  }
-  
-  return categoryTotals;
-}
-
-// Provider that loads user transactions when explicitly requested
-@riverpod
-List<Transaction> userTransactionsForAnalytics(Ref ref, String? userId) {
-  if (userId == null) return [];
-  return ref.watch(transactionsProvider);
-}
+final txnsNotifierProvider = AsyncNotifierProvider<TxnsNotifier, TxnsState>(
+  TxnsNotifier.new,
+);

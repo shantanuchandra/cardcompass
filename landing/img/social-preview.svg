@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">CardCompass social preview</title>
+  <desc id="desc">CardCompass headline beside an illustrative decision receipt.</desc>
+  <rect width="1200" height="630" fill="#0B1015"/>
+  <circle cx="1110" cy="540" r="310" fill="none" stroke="#3FE0D0" stroke-opacity=".12" stroke-width="2"/>
+  <circle cx="1110" cy="540" r="244" fill="none" stroke="#FFB547" stroke-opacity=".11" stroke-width="2"/>
+  <g transform="translate(74 68)">
+    <circle cx="28" cy="28" r="27" fill="none" stroke="#3FE0D0" stroke-width="2"/>
+    <text x="28" y="34" text-anchor="middle" fill="#3FE0D0" font-family="Arial, sans-serif" font-size="14" font-weight="700">CC</text>
+    <text x="70" y="37" fill="#F4F0E6" font-family="Arial, sans-serif" font-size="28" font-weight="700">CardCompass</text>
+  </g>
+  <g transform="translate(74 190)">
+    <text fill="#3FE0D0" font-family="Courier New, monospace" font-size="17" font-weight="700" letter-spacing="2">CARD CHOICE, WITH THE REASONING ATTACHED</text>
+    <text y="77" fill="#F4F0E6" font-family="Georgia, serif" font-size="64" font-weight="700">Know the best card</text>
+    <text y="145" fill="#F4F0E6" font-family="Georgia, serif" font-size="64" font-weight="700">before you pay.</text>
+    <text y="206" fill="#B8C2BF" font-family="Arial, sans-serif" font-size="24">Compare value, caps and milestone context.</text>
+    <g transform="translate(0 255)">
+      <rect width="322" height="56" rx="28" fill="#3FE0D0"/>
+      <text x="161" y="36" text-anchor="middle" fill="#0B1015" font-family="Arial, sans-serif" font-size="19" font-weight="700">cardcompass.in</text>
+    </g>
+  </g>
+  <g transform="translate(790 86) rotate(2 155 225)">
+    <rect x="8" y="10" width="316" height="456" rx="12" fill="#000" opacity=".28"/>
+    <rect width="316" height="456" rx="12" fill="#F4F0E6"/>
+    <text x="24" y="35" fill="#0B1015" font-family="Courier New, monospace" font-size="13" font-weight="700">DECISION RECEIPT / DEMO</text>
+    <line x1="24" y1="54" x2="292" y2="54" stroke="#0B1015" stroke-dasharray="5 5" opacity=".38"/>
+    <text x="24" y="88" fill="#687278" font-family="Arial, sans-serif" font-size="14">PURCHASE</text>
+    <text x="24" y="115" fill="#0B1015" font-family="Arial, sans-serif" font-size="21" font-weight="700">₹4,000 · Shopping</text>
+    <rect x="24" y="140" width="268" height="96" rx="8" fill="#DDE7E1"/>
+    <text x="42" y="169" fill="#687278" font-family="Courier New, monospace" font-size="12">BEST FIT</text>
+    <text x="42" y="200" fill="#0B1015" font-family="Georgia, serif" font-size="24" font-weight="700">Example Card B</text>
+    <text x="42" y="223" fill="#0B1015" font-family="Arial, sans-serif" font-size="15">Estimated value ₹120</text>
+    <text x="24" y="276" fill="#687278" font-family="Arial, sans-serif" font-size="13">RATE</text>
+    <text x="292" y="276" text-anchor="end" fill="#0B1015" font-family="Courier New, monospace" font-size="14">3%</text>
+    <line x1="24" y1="292" x2="292" y2="292" stroke="#0B1015" opacity=".18"/>
+    <text x="24" y="321" fill="#687278" font-family="Arial, sans-serif" font-size="13">CAP CHECK</text>
+    <text x="292" y="321" text-anchor="end" fill="#0B1015" font-family="Courier New, monospace" font-size="14">₹500 left</text>
+    <line x1="24" y1="337" x2="292" y2="337" stroke="#0B1015" opacity=".18"/>
+    <text x="24" y="369" fill="#687278" font-family="Arial, sans-serif" font-size="13">SOURCE</text>
+    <text x="292" y="369" text-anchor="end" fill="#0B1015" font-family="Courier New, monospace" font-size="13">ATTACHED</text>
+    <rect x="24" y="394" width="268" height="38" rx="5" fill="#FFB547"/>
+    <text x="158" y="419" text-anchor="middle" fill="#0B1015" font-family="Arial, sans-serif" font-size="14" font-weight="700">VERIFY ISSUER TERMS</text>
+  </g>
+</svg>

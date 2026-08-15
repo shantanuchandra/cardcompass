@@ -1,0 +1,12 @@
+{
+  "name": "cardcompass-web",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js 8080"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

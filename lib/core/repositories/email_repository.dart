@@ -50,6 +50,7 @@ class EmailRepository implements EmailRepositoryInterface {
     required String emailId,
     required bool processed,
     String? statementId,
+    String? bankDetected,
   }) async {
     try {
       final updateData = <String, dynamic>{
@@ -59,6 +60,9 @@ class EmailRepository implements EmailRepositoryInterface {
       if (statementId != null) {
         updateData['statement_id'] = statementId;
       }
+      if (bankDetected != null) {
+        updateData['bank_detected'] = bankDetected;
+      }
 
       await _supabase
           .from('emails')
@@ -67,21 +71,6 @@ class EmailRepository implements EmailRepositoryInterface {
           .eq('email_id', emailId);
     } catch (e) {
       throw Exception('Failed to update email status: $e');
-    }
-  }
-
-  /// Get emails for a user
-  Future<List<Map<String, dynamic>>> getUserEmails(String userId) async {
-    try {
-      final response = await _supabase
-          .from('emails')
-          .select('*')
-          .eq('user_id', userId)
-          .order('received_date', ascending: false);
-
-      return List<Map<String, dynamic>>.from(response);
-    } catch (e) {
-      throw Exception('Failed to fetch user emails: $e');
     }
   }
 
@@ -102,24 +91,9 @@ class EmailRepository implements EmailRepositoryInterface {
     }
   }
 
-  /// Check if email has been successfully processed
-  Future<bool> isEmailProcessed(String userId, String emailId) async {
-    try {
-      final response = await _supabase
-          .from('emails')
-          .select('processed')
-          .eq('user_id', userId)
-          .eq('email_id', emailId)
-          .maybeSingle();
-
-      if (response == null) return false;
-      return response['processed'] == true;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  /// Get unprocessed emails
+  /// Get emails with attachments that haven't been processed into a
+  /// statement yet, for the given user.
+  @override
   Future<List<Map<String, dynamic>>> getUnprocessedEmails(String userId) async {
     try {
       final response = await _supabase
@@ -127,6 +101,7 @@ class EmailRepository implements EmailRepositoryInterface {
           .select('*')
           .eq('user_id', userId)
           .eq('processed', false)
+          .eq('has_attachments', true)
           .order('received_date', ascending: false);
 
       return List<Map<String, dynamic>>.from(response);
@@ -135,22 +110,95 @@ class EmailRepository implements EmailRepositoryInterface {
     }
   }
 
-  /// Get emails by bank
-  Future<List<Map<String, dynamic>>> getEmailsByBank({
+  /// Looks up which card the user has previously assigned emails from this
+  /// bank to, via already-resolved emails' statement_id -> statements.user_card_id.
+  /// Two separate queries (not a PostgREST embedded join) because
+  /// emails.statement_id is a plain TEXT column, not a declared foreign key,
+  /// so there's no schema relationship for PostgREST to embed across.
+  /// Returns null if this bank has never been resolved before, meaning the
+  /// caller should ask the user to clarify instead of guessing.
+  Future<String?> findPreviouslyAssignedCard({
     required String userId,
-    required String bankName,
+    required String bankDetected,
   }) async {
-    try {
-      final response = await _supabase
-          .from('emails')
-          .select('*')
-          .eq('user_id', userId)
-          .eq('bank_detected', bankName)
-          .order('received_date', ascending: false);
+    final emailRows = await _supabase
+        .from('emails')
+        .select('statement_id')
+        .eq('user_id', userId)
+        .eq('bank_detected', bankDetected)
+        .eq('processed', true)
+        .not('statement_id', 'is', null)
+        .order('created_at', ascending: false)
+        .limit(1);
 
-      return List<Map<String, dynamic>>.from(response);
-    } catch (e) {
-      throw Exception('Failed to fetch emails by bank: $e');
-    }
+    if (emailRows.isEmpty) return null;
+    final statementId = emailRows.first['statement_id'] as String?;
+    if (statementId == null) return null;
+
+    final statementRows = await _supabase
+        .from('statements')
+        .select('user_card_id')
+        .eq('id', statementId)
+        .limit(1);
+
+    if (statementRows.isEmpty) return null;
+    return statementRows.first['user_card_id'] as String?;
+  }
+
+  /// Marks an email as needing the user to manually pick which card its
+  /// statement belongs to (its bank didn't match any card on file, and no
+  /// prior resolution for that bank exists yet). Merges into the existing
+  /// metadata rather than replacing it — it still holds attachmentId/
+  /// attachmentFilename, which processing needs once the bank is resolved.
+  Future<void> markNeedsCardAssignment({
+    required String userId,
+    required String emailId,
+    required String bankDetected,
+  }) async {
+    final existing = await getEmailById(userId: userId, emailId: emailId);
+    final metadata = Map<String, dynamic>.from(
+      existing?['metadata'] as Map<String, dynamic>? ?? {},
+    );
+    metadata['needsCardAssignment'] = true;
+
+    await _supabase
+        .from('emails')
+        .update({
+          'processed': false,
+          'bank_detected': bankDetected,
+          'metadata': metadata,
+        })
+        .eq('user_id', userId)
+        .eq('email_id', emailId);
+  }
+
+  /// Fetches a single email row by its Gmail message id, or null if not found.
+  Future<Map<String, dynamic>?> getEmailById({
+    required String userId,
+    required String emailId,
+  }) async {
+    final rows = await _supabase
+        .from('emails')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('email_id', emailId)
+        .limit(1);
+    if (rows.isEmpty) return null;
+    return rows.first;
+  }
+
+  /// Emails whose statement bank couldn't be matched to any card and has
+  /// never been resolved before — surfaced to the user for one-time
+  /// clarification (see [markNeedsCardAssignment]).
+  Future<List<Map<String, dynamic>>> getEmailsNeedingCardAssignment(String userId) async {
+    final response = await _supabase
+        .from('emails')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('processed', false)
+        .contains('metadata', {'needsCardAssignment': true})
+        .order('received_date', ascending: false);
+
+    return List<Map<String, dynamic>>.from(response);
   }
 }

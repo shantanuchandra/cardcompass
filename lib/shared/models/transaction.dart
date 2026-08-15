@@ -1,282 +1,104 @@
-import 'package:hive/hive.dart';
-import 'package:json_annotation/json_annotation.dart';
+enum TransactionType { debit, credit, refund, fee, interest, reward }
 
-part 'transaction.g.dart';
-
-/// Transaction category enumeration
-enum TransactionCategory {
-  food,
-  fuel,
-  grocery,
-  entertainment,
-  travel,
-  shopping,
-  utilities,
-  insurance,
-  medical,
-  education,
-  investment,
-  transport,
-  rental,
-  subscription,
-  gift,
-  other
-}
-
-/// Transaction type enumeration
-enum TransactionType {
-  debit,
-  credit,
-  refund,
-  fee,
-  interest,
-  reward
-}
-
-/// Source of a transaction — either parsed from a monthly PDF statement,
-/// or captured in near-real-time from an instant bank alert email.
-enum TransactionSource {
-  statement,   // from monthly PDF via enhanced_gmail_service
-  alertEmail,  // from instant debit/spend alert email body
-  manual,      // user-entered manually
-}
-
-/// Transaction model class
-@HiveType(typeId: 4)
-@JsonSerializable()
-class Transaction extends HiveObject {
-  @HiveField(0)
+class Transaction {
   final String id;
-  @HiveField(1)
   final String userId;
-  
-  @HiveField(17)
-  final String? userCardId;  // References user_cards table
-  
-  @HiveField(3)
+  final String userCardId;
   final double amount;
-
-  @HiveField(4)
   final String currency;
-
-  @HiveField(5)
   final String description;
-
-  @HiveField(6)
   final String? merchantName;
-
-  @HiveField(7)
-  final TransactionCategory category;
-
-  @HiveField(8)
-  final TransactionType type;
-
-  @HiveField(9)
+  final String? category;
+  final TransactionType transactionType;
   final DateTime transactionDate;
-
-  @HiveField(10)
   final String? location;
-
-  @HiveField(11)
   final double? rewardEarned;
-
-  @HiveField(12)
   final String? rewardType;
-
-  @HiveField(13)
-  final Map<String, dynamic> metadata;
-
-  @HiveField(14)
   final String? statementId;
-
-  @HiveField(15)
-  final bool isRecurring;
-
-  @HiveField(16)
+  final String? mccCode;
+  final String? mccDescription;
+  final String? mccSource;
+  final double? mccConfidence;
+  final DateTime? mccVerifiedAt;
+  final Map<String, dynamic> metadata;
   final DateTime createdAt;
 
-  /// Where this transaction came from (statement PDF vs. alert email).
-  @HiveField(18)
-  final TransactionSource source;
-
-  /// The Gmail message ID of the alert email, used for deduplication.
-  /// Null for statement-sourced transactions.
-  @HiveField(19)
-  final String? alertEmailId;
-
-  Transaction({
+  const Transaction({
     required this.id,
     required this.userId,
-    this.userCardId,  // References user_cards table
+    required this.userCardId,
     required this.amount,
     this.currency = 'INR',
     required this.description,
     this.merchantName,
-    this.category = TransactionCategory.other,
-    this.type = TransactionType.debit,
+    this.category,
+    required this.transactionType,
     required this.transactionDate,
     this.location,
     this.rewardEarned,
     this.rewardType,
-    this.metadata = const {},
     this.statementId,
-    this.isRecurring = false,
+    this.mccCode,
+    this.mccDescription,
+    this.mccSource,
+    this.mccConfidence,
+    this.mccVerifiedAt,
+    this.metadata = const {},
     required this.createdAt,
-    this.source = TransactionSource.statement,
-    this.alertEmailId,
   });
 
-  /// Get category as display string
-  String get categoryString => category.toString().split('.').last;
-  
-  /// Get transaction type as display string  
-  String get typeString => type.toString().split('.').last;
-  /// Create a copy of this transaction with updated fields
-  Transaction copyWith({
-    String? id,
-    String? userId,
-    String? userCardId,
-    double? amount,
-    String? currency,
-    String? description,
-    String? merchantName,
-    TransactionCategory? category,
-    TransactionType? type,
-    DateTime? transactionDate,
-    String? location,
-    double? rewardEarned,
-    String? rewardType,
-    Map<String, dynamic>? metadata,
-    String? statementId,
-    bool? isRecurring,
-    DateTime? createdAt,
-    TransactionSource? source,
-    String? alertEmailId,
-  }) {    return Transaction(
-      id: id ?? this.id,
-      userId: userId ?? this.userId,
-      userCardId: userCardId ?? this.userCardId,
-      amount: amount ?? this.amount,
-      currency: currency ?? this.currency,
-      description: description ?? this.description,
-      merchantName: merchantName ?? this.merchantName,
-      category: category ?? this.category,
-      type: type ?? this.type,
-      transactionDate: transactionDate ?? this.transactionDate,
-      location: location ?? this.location,
-      rewardEarned: rewardEarned ?? this.rewardEarned,
-      rewardType: rewardType ?? this.rewardType,
-      metadata: metadata ?? this.metadata,
-      statementId: statementId ?? this.statementId,
-      isRecurring: isRecurring ?? this.isRecurring,
-      createdAt: createdAt ?? this.createdAt,
-      source: source ?? this.source,
-      alertEmailId: alertEmailId ?? this.alertEmailId,
-    );
-  }
+  bool get isDebit => transactionType == TransactionType.debit;
 
-  /// Convert to JSON
-  Map<String, dynamic> toJson() {
-    final json = _$TransactionToJson(this);    // Handle Supabase column naming - ensure proper mapping between camelCase and snake_case
-    // This addresses the schema cache issue by explicitly setting snake_case column names
-    final adaptedJson = <String, dynamic>{
-      'id': json['id'],
-      'user_id': json['userId'],
-      'user_card_id': json['userCardId'],  // Reference to user_cards table
-      'amount': json['amount'],
-      'currency': json['currency'] ?? 'INR',
-      'description': json['description'],
-      'merchant_name': json['merchantName'],
-      'category': json['category']?.toString().split('.').last,
-      'transaction_type': json['type']?.toString().split('.').last,
-      'transaction_date': json['transactionDate'],
-      'location': json['location'],
-      'reward_earned': json['rewardEarned'],
-      'reward_type': json['rewardType'],
-      'statement_id': json['statementId'],
-      'metadata': json['metadata'] ?? {},
-      'created_at': json['createdAt'] ?? DateTime.now().toIso8601String(),
-      'updated_at': DateTime.now().toIso8601String(),
-      'source': (json['source'] as TransactionSource? ?? source).toString().split('.').last,
-      'alert_email_id': json['alertEmailId'],
-    };
-    
-    // Remove null values to prevent issues with NOT NULL constraints
-    adaptedJson.removeWhere((key, value) => value == null);
-    
-    return adaptedJson;
-  }
-  /// Create from JSON
+  /// Whether this transaction's currency differs from [bankMarketCurrency]
+  /// — the currency the issuing bank's statements are normally denominated
+  /// in (see `currencyForBank` in bank_market.dart). A foreign-currency
+  /// charge (e.g. a USD hotel booking on an otherwise-INR statement) is
+  /// international; a same-currency charge isn't. Independent of
+  /// `category` — a transaction can be both "food" and international.
+  bool isInternational(String bankMarketCurrency) => currency != bankMarketCurrency;
+
   factory Transaction.fromJson(Map<String, dynamic> json) {
-    // Handle conversion from snake_case to camelCase and different field names
-    final transactionType = json['transaction_type'] ?? json['type'] ?? 'debit';
-    final category = json['category'] ?? 'other';
-    
-    TransactionType type;
-    try {
-      type = TransactionType.values.firstWhere(
-        (e) => e.toString().split('.').last == transactionType,
-        orElse: () => TransactionType.debit,
-      );
-    } catch (_) {
-      type = TransactionType.debit;
-    }
-    
-    TransactionCategory transactionCategory;
-    try {
-      transactionCategory = TransactionCategory.values.firstWhere(
-        (e) => e.toString().split('.').last == category,
-        orElse: () => TransactionCategory.other,
-      );
-    } catch (_) {
-      transactionCategory = TransactionCategory.other;
-    }
-      return Transaction(
-      id: json['id'],
-      userId: json['user_id'],
-      userCardId: json['user_card_id'],
-      amount: double.tryParse(json['amount']?.toString() ?? '0') ?? 0,
-      currency: json['currency'] ?? 'INR',
-      description: json['description'] ?? '',
-      merchantName: json['merchant_name'],
-      category: transactionCategory,
-      type: type,
-      transactionDate: json['transaction_date'] != null
-          ? DateTime.parse(json['transaction_date'])
-          : DateTime.now(),
-      location: json['location'],
-      rewardEarned: json['reward_earned']?.toDouble(),
-      rewardType: json['reward_type'],
-      metadata: json['metadata'] ?? {},
-      statementId: json['statement_id'],
-      isRecurring: json['is_recurring'] ?? false,
-      createdAt: json['created_at'] != null
-          ? DateTime.parse(json['created_at'])
-          : DateTime.now(),
-      source: _sourceFromString(json['source']),
-      alertEmailId: json['alert_email_id'],
+    return Transaction(
+      id: json['id'] as String,
+      userId: json['user_id'] as String,
+      userCardId: json['user_card_id'] as String,
+      amount: (json['amount'] as num).toDouble(),
+      currency: json['currency'] as String? ?? 'INR',
+      description: json['description'] as String,
+      merchantName: json['merchant_name'] as String?,
+      category: json['category'] as String?,
+      transactionType: _parseType(json['transaction_type'] as String?),
+      transactionDate: DateTime.parse(json['transaction_date'] as String),
+      location: json['location'] as String?,
+      rewardEarned: (json['reward_earned'] as num?)?.toDouble(),
+      rewardType: json['reward_type'] as String?,
+      statementId: json['statement_id'] as String?,
+      mccCode: json['mcc_code'] as String?,
+      mccDescription: json['mcc_description'] as String?,
+      mccSource: json['mcc_source'] as String?,
+      mccConfidence: (json['mcc_confidence'] as num?)?.toDouble(),
+      mccVerifiedAt: json['mcc_verified_at'] != null
+          ? DateTime.parse(json['mcc_verified_at'] as String)
+          : null,
+      metadata: (json['metadata'] as Map<String, dynamic>?) ?? {},
+      createdAt: DateTime.parse(json['created_at'] as String),
     );
   }
 
-  static TransactionSource _sourceFromString(dynamic raw) {
-    final s = raw?.toString() ?? 'statement';
-    return TransactionSource.values.firstWhere(
-      (e) => e.toString().split('.').last == s,
-      orElse: () => TransactionSource.statement,
-    );
+  static TransactionType _parseType(String? type) {
+    switch (type) {
+      case 'credit':
+        return TransactionType.credit;
+      case 'refund':
+        return TransactionType.refund;
+      case 'fee':
+        return TransactionType.fee;
+      case 'interest':
+        return TransactionType.interest;
+      case 'reward':
+        return TransactionType.reward;
+      default:
+        return TransactionType.debit;
+    }
   }
-
-  @override
-  String toString() {
-    return 'Transaction(id: $id, amount: $amount, description: $description, date: $transactionDate)';
-  }
-
-  @override
-  bool operator ==(Object other) {
-    if (identical(this, other)) return true;
-    return other is Transaction && other.id == id;
-  }
-
-  @override
-  int get hashCode => id.hashCode;
 }

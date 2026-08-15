@@ -22,10 +22,6 @@ Future<http.Response> sendGeminiRequest(Map<String, dynamic> payload) async {
     );
   }
 
-  final response = await http.post(
-    Uri.parse(AIConfig.geminiGenerateUrl),
-    headers: AIConfig.geminiHeaders,
-    body: jsonEncode(payload),
-  );
-  return response;
+  throw UnsupportedError(
+      'sendGeminiRequest is only implemented for web in this project.');
 }

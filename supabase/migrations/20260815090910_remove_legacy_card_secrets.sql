@@ -1,0 +1,33 @@
+-- Remove the legacy capability to store or exchange primary account numbers
+-- and card expiry values. Current application flows use catalog identity and
+-- last four digits only.
+
+-- Revoke every historical overload before dropping it so no caller retains a
+-- window of access during the transactional migration.
+REVOKE ALL ON FUNCTION public.associate_user_with_card(
+  uuid, uuid, text, text, text, text, numeric, integer, integer
+) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.update_user_card(
+  uuid, uuid, text, numeric, text, text, integer, integer
+) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.get_user_cards(uuid)
+  FROM PUBLIC, anon, authenticated, service_role;
+
+DROP FUNCTION IF EXISTS public.associate_user_with_card(
+  uuid, uuid, text, text, text, text, numeric, integer, integer
+);
+DROP FUNCTION IF EXISTS public.update_user_card(
+  uuid, uuid, text, numeric, text, text, integer, integer
+);
+DROP FUNCTION IF EXISTS public.get_user_cards(uuid);
+
+-- Rehearse this ACCESS EXCLUSIVE lock in staging and confirm a provider backup
+-- before production. DROP removes the values from the logical active schema;
+-- physical remnants in backups or WAL follow the provider retention policy.
+LOCK TABLE public.user_cards IN ACCESS EXCLUSIVE MODE;
+ALTER TABLE public.user_cards
+  DROP COLUMN IF EXISTS card_number,
+  DROP COLUMN IF EXISTS expiry_date;
+
+COMMENT ON TABLE public.user_cards IS
+  'Active schema stores catalog identity and last four digits only; legacy PAN/expiry columns were logically removed.';

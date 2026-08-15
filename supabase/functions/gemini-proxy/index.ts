@@ -88,24 +88,41 @@ serve(async (request) => {
       });
     }
 
-    const apiKey = Deno.env.get("GEMINI_API_KEY");
-    if (!apiKey) throw new Error("GEMINI_API_KEY is not configured");
+    // Each Gemini free-tier key has its own small daily request quota
+    // (observed: 20/day on gemini-2.5-flash). GEMINI_API_KEY, _2, _3, _4...
+    // are separate keys/projects, so a 429 on one doesn't mean the others
+    // are exhausted too — try each in turn before giving up.
+    const apiKeys = [Deno.env.get("GEMINI_API_KEY")];
+    for (let i = 2; ; i++) {
+      const key = Deno.env.get(`GEMINI_API_KEY_${i}`);
+      if (!key) break;
+      apiKeys.push(key);
+    }
+    const configuredKeys = apiKeys.filter((k): k is string => !!k);
+    if (configuredKeys.length === 0) {
+      throw new Error("No GEMINI_API_KEY is configured");
+    }
 
-    // Some models (observed: gemini-3.5-flash) can hang with no response for
-    // well over a minute. Bound the upstream call so the client's fallback
-    // chain gets a timely error instead of stalling on a dead connection.
-    const upstream = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(25_000),
-      },
-    );
+    let upstream: Response | null = null;
+    for (const apiKey of configuredKeys) {
+      // Some models (observed: gemini-3.5-flash) can hang with no response
+      // for well over a minute. Bound the upstream call so the client's
+      // fallback chain gets a timely error instead of stalling on a dead
+      // connection.
+      upstream = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(25_000),
+        },
+      );
+      if (upstream.status !== 429) break;
+    }
 
-    return new Response(await upstream.text(), {
-      status: upstream.status,
+    return new Response(await upstream!.text(), {
+      status: upstream!.status,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
