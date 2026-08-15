@@ -77,6 +77,15 @@ abstract final class AppTheme {
     final textButtonForeground = isDark
         ? BrandColors.signal
         : BrandColors.focusDark;
+    final inputEnabledBorder = isDark
+        ? BrandColors.mutedPaper
+        : BrandColors.ruleOnPaper;
+    final inputFocusedBorder = isDark
+        ? BrandColors.signal
+        : BrandColors.focusDark;
+    // The semantic error red exceeds the 3:1 non-text contrast threshold on
+    // both input fills, so it remains consistent between themes.
+    const inputErrorBorder = BrandColors.error;
 
     final textTheme = base.textTheme
         .apply(fontFamily: 'Manrope')
@@ -269,15 +278,15 @@ abstract final class AppTheme {
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(BrandRadius.control),
-          borderSide: const BorderSide(color: BrandColors.ruleOnPaper),
+          borderSide: BorderSide(color: inputEnabledBorder),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(BrandRadius.control),
-          borderSide: const BorderSide(color: BrandColors.focusDark, width: 2),
+          borderSide: BorderSide(color: inputFocusedBorder, width: 2),
         ),
         errorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(BrandRadius.control),
-          borderSide: const BorderSide(color: BrandColors.error),
+          borderSide: const BorderSide(color: inputErrorBorder),
         ),
         hintStyle: TextStyle(
           fontFamily: 'Manrope',

@@ -85,6 +85,22 @@ void main() {
     );
   });
 
+  test('marketing input boundaries use dark-surface contrast colors', () {
+    final work = AppTheme.work.inputDecorationTheme;
+    final marketing = AppTheme.marketing.inputDecorationTheme;
+
+    BorderSide sideOf(InputBorder border) =>
+        (border as OutlineInputBorder).borderSide;
+
+    expect(sideOf(work.enabledBorder!).color, BrandColors.ruleOnPaper);
+    expect(sideOf(work.focusedBorder!).color, BrandColors.focusDark);
+    expect(sideOf(work.errorBorder!).color, BrandColors.error);
+
+    expect(sideOf(marketing.enabledBorder!).color, BrandColors.mutedPaper);
+    expect(sideOf(marketing.focusedBorder!).color, BrandColors.signal);
+    expect(sideOf(marketing.errorBorder!).color, BrandColors.error);
+  });
+
   test('navigation labels use the 12 pixel typography minimum', () {
     final label = AppTheme.work.navigationBarTheme.labelTextStyle!.resolve({})!;
 
