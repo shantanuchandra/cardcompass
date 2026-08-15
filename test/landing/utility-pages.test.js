@@ -6,7 +6,39 @@ import {
   calculateCardComparison,
   calculateMilestone,
   calculateMovieOffer,
+  renderBestCardResult,
+  renderToolError,
 } from '../../landing/tools/tools.js';
+
+class FakeClassList {
+  constructor() { this.values = new Set(); }
+  add(...values) { values.forEach((value) => this.values.add(value)); }
+  remove(...values) { values.forEach((value) => this.values.delete(value)); }
+}
+
+class FakeNode {
+  constructor(tagName) {
+    this.tagName = tagName.toUpperCase();
+    this.children = [];
+    this.textContent = '';
+    this.className = '';
+    this.classList = new FakeClassList();
+    this.hidden = false;
+  }
+  append(...nodes) { this.children.push(...nodes); }
+  replaceChildren(...nodes) { this.children = [...nodes]; this.textContent = ''; }
+  set innerHTML(_) { throw new Error('Unsafe innerHTML boundary reached'); }
+}
+
+const fakeDocument = { createElement: (tagName) => new FakeNode(tagName) };
+
+function descendantTags(node) {
+  return [node.tagName, ...node.children.flatMap(descendantTags)];
+}
+
+function descendantText(node) {
+  return [node.textContent, ...node.children.map(descendantText)].join(' ');
+}
 
 test('best-card comparison applies the remaining cap before selecting a winner', () => {
   assert.deepEqual(
@@ -50,7 +82,7 @@ test('milestone tracker distinguishes reached, on-track, and shortfall projectio
       remainingNow: 28000,
       projectedSpend: 80000,
       projectedGap: 20000,
-      dailyPace: 2000,
+      dailyPace: 1428.57,
       status: 'shortfall',
     },
   );
@@ -99,6 +131,57 @@ test('movie-offer estimate applies offer type, cap, remaining use, and fees', ()
   );
 });
 
+test('movie BOGO redemptions limit eligible pairs while percent and fixed offers apply once', () => {
+  const bogo = (remainingUses) => calculateMovieOffer({
+    ticketPrice: 400,
+    ticketCount: 6,
+    offerType: 'bogo',
+    savingsCap: 2000,
+    remainingUses,
+  }).estimatedSavings;
+  assert.equal(bogo(0), 0);
+  assert.equal(bogo(1), 400);
+  assert.equal(bogo(2), 800);
+
+  for (const offerType of ['percent', 'fixed']) {
+    const input = {
+      ticketPrice: 400,
+      ticketCount: 4,
+      offerType,
+      offerValue: offerType === 'percent' ? 25 : 300,
+      savingsCap: 2000,
+    };
+    assert.equal(
+      calculateMovieOffer({ ...input, remainingUses: 1 }).estimatedSavings,
+      calculateMovieOffer({ ...input, remainingUses: 2 }).estimatedSavings,
+    );
+  }
+
+  assert.throws(() => calculateMovieOffer({
+    ticketPrice: 400,
+    ticketCount: 2,
+    offerType: 'bogo',
+    savingsCap: 400,
+    remainingUses: 1.5,
+  }), /whole number/i);
+});
+
+test('result and error renderers keep malicious user values as text nodes', () => {
+  const output = new FakeNode('section');
+  const attack = '<img src=x onerror="globalThis.pwned=true">';
+
+  renderBestCardResult(fakeDocument, output, {
+    winner: attack,
+    comparisons: [{ name: attack, grossValue: 10, estimatedValue: 10, capApplied: false }],
+  });
+  assert.match(descendantText(output), /<img src=x onerror=/);
+  assert.ok(!descendantTags(output).includes('IMG'));
+
+  renderToolError(fakeDocument, output, new Error(attack));
+  assert.match(descendantText(output), /<img src=x onerror=/);
+  assert.ok(!descendantTags(output).includes('IMG'));
+});
+
 test('utility pages are substantive applications with assumptions and attributed waitlist links', async () => {
   const pages = [
     ['best-card', 'best-card'],
@@ -118,6 +201,11 @@ test('utility pages are substantive applications with assumptions and attributed
     assert.match(html, /<section class="tool-output"[^>]*aria-live="polite" hidden><\/section>/);
     assert.match(html, /How this estimate works/i);
     assert.match(html, /What this does not include/i);
+    assert.match(html, /Author:\s*CardCompass product team/i);
+    assert.match(html, /Reviewed by:\s*CardCompass engineering/i);
+    assert.match(html, /Last updated:\s*15 August 2026/i);
+    assert.match(html, /href="https:\/\/www\.rbi\.org\.in\/[^"]+"/i);
+    assert.match(html, /href="\/recommendation-disclaimer\/"/i);
     assert.match(
       html,
       new RegExp(`href="/\\?source=${source}&amp;landing_variant=${source}#apply"`),

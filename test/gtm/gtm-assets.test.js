@@ -30,6 +30,15 @@ test('operating scorecard defines computable formulas and thresholds', async () 
   }
   assert.match(scorecard, /every 25 qualified leads/i);
   assert.match(scorecard, /stop|pause/i);
+  assert.match(
+    scorecard,
+    /Source-qualified rate\s*=\s*qualified submitted applications from source\s*\/\s*submitted applications from source/i,
+  );
+  assert.match(scorecard, /overall application completion rate.*Plausible-only/i);
+  assert.match(scorecard, /not source-segmented/i);
+  assert.match(scorecard, /each activated user.*days 8[–-]14 after their own activation date/i);
+  assert.match(scorecard, /Source-qualified rate[\s\S]*≥ overall rate[\s\S]*< 15 percentage points below overall[\s\S]*≥ 15 percentage points below overall/i);
+  assert.match(scorecard, /Interview coverage[\s\S]*20–40%[\s\S]*10–<20% or >40%[\s\S]*<10%/i);
 });
 
 test('invitation file contains three copy-ready personalized email templates', async () => {

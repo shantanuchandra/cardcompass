@@ -4,34 +4,36 @@
 
 Update every Friday and at **every 25 qualified leads**. Keep a frozen weekly snapshot so later definition changes do not rewrite history. Report counts beside percentages; never show a rate without its denominator.
 
-A **waitlist start** is the allow-listed `Waitlist Started` event. A **completed application** is accepted enrichment. A **qualified lead** is a completed application that meets the current, pre-declared cohort rule (initial default: 3–6 or 7+ cards, a selected spend band, selected primary goal and a credible card-choice problem). An **activated invitee** completes the first-value action defined before the cohort is sent. Initial first value: wallet setup plus one inspectable card decision with its caveat/source viewed.
+A **waitlist start** is the allow-listed `Waitlist Started` event. A **submitted application** is accepted enrichment (previous scorecards called this a completed application). A **qualified lead** is a submitted application that meets the current, pre-declared cohort rule (initial default: 3–6 or 7+ cards, a selected spend band, selected primary goal and a credible card-choice problem). An **activated invitee** completes the first-value action defined before the cohort is sent. Initial first value: wallet setup plus one inspectable card decision with its caveat/source viewed.
+
+The overall application completion rate is Plausible-only and is not source-segmented: Plausible records starts without query attribution, while source is persisted in Supabase only on submitted applications. Never infer source-level starts or completion rates by joining those systems.
 
 ## Core formulas and thresholds
 
 | Metric | Formula | Continue | Watch / change | Stop / pause |
 |---|---|---:|---:|---:|
-| Application completion rate | **Application completion rate = completed applications / waitlist starts** | ≥ 55% | 35–54% | &lt; 35% for 2 weeks |
-| Qualified lead rate | **Qualified lead rate = qualified leads / completed applications** | ≥ 45% | 25–44% | &lt; 25% across 25 completed applications |
-| Invite activation rate | **Invite activation rate = activated invitees / invites sent** | ≥ 60% | 40–59% | &lt; 40% for 2 cohorts |
-| Week-2 retention | **Week-2 retention = invitees active in week 2 / activated invitees** | ≥ 40% | 25–39% | &lt; 25% for 2 mature cohorts |
-| Second-decision rate | users completing a second real decision within 14 days / activated invitees | ≥ 35% | 20–34% | &lt; 20% for 2 mature cohorts |
-| Source-qualified rate | qualified leads from source / completed applications from source | ≥ overall rate | within 10 points below | &gt;15 points below after 20 completions |
-| Founder support load | total founder support minutes / activated invitees | ≤ 30 min | 31–60 min | &gt;60 min for a cohort |
-| Trust issue rate | invitees reporting a material source/privacy/incorrect-rule issue / activated invitees | &lt; 10% and no high severity open | 10–20% | any unresolved high-severity issue or &gt;20% |
-| Interview coverage | completed learning interviews / activated invitees | 20–35% | 10–19% | &lt;10% |
+| Application completion rate | **Application completion rate = completed applications / waitlist starts** (a completed application is a submitted application) | ≥ 55% | ≥ 35% and &lt; 55% | &lt; 35% for 2 weeks |
+| Qualified lead rate | **Qualified lead rate = qualified leads / completed applications** (submitted applications) | ≥ 45% | ≥ 25% and &lt; 45% | &lt; 25% across 25 submitted applications |
+| Invite activation rate | **Invite activation rate = activated invitees / invites sent** | ≥ 60% | ≥ 40% and &lt; 60% | &lt; 40% for 2 cohorts |
+| Week-2 retention | **Week-2 retention = invitees active in week 2 / activated invitees** who have individually matured | ≥ 40% | ≥ 25% and &lt; 40% | &lt; 25% for 2 mature samples |
+| Second-decision rate | users completing a second real decision within 14 days / mature activated users | ≥ 35% | ≥ 20% and &lt; 35% | &lt; 20% for 2 mature samples |
+| Source-qualified rate | **Source-qualified rate = qualified submitted applications from source / submitted applications from source** | ≥ overall rate | below overall but < 15 percentage points below overall | ≥ 15 percentage points below overall after 20 submissions |
+| Founder support load | total founder support minutes / activated invitees | ≤ 30 min | &gt; 30 and ≤ 60 min | &gt; 60 min for a cohort |
+| Trust issue rate | invitees reporting a material source/privacy/incorrect-rule issue / activated invitees | &lt; 10% and no high severity open | ≥ 10% and ≤ 20%, with no high severity open | &gt; 20% or any unresolved high-severity issue |
+| Interview coverage | completed learning interviews / activated invitees | 20–40% | 10–<20% or >40% | <10% |
 
-“Active in week 2” means at least one meaningful session on days 8–14 after activation that reaches a saved/inspectable decision, statement review or milestone/movie-deal action; merely opening an email does not count.
+Each activated user becomes denominator-eligible on day 14, and is counted active only for a meaningful session on days 8–14 after their own activation date that reaches a saved/inspectable decision, statement review or milestone/movie-deal action; merely opening an email does not count. This rolling per-user maturity rule avoids delaying early invitees until every member of an arbitrary send cohort matures.
 
 ## Weekly scorecard template
 
 | Field | This week | Cumulative | Threshold status | Evidence / decision |
 |---|---:|---:|---|---|
 | Waitlist starts |  |  |  |  |
-| Completed applications |  |  |  |  |
+| Submitted applications |  |  |  |  |
 | Qualified leads |  |  |  |  |
 | Invites sent (cohort ID) |  |  |  |  |
 | Activated invitees |  |  |  |  |
-| Mature Week-2 cohort denominator |  |  |  |  |
+| Mature activated-user denominator |  |  |  |  |
 | Week-2 active invitees |  |  |  |  |
 | Second decisions within 14 days |  |  |  |  |
 | Founder support minutes |  |  |  |  |
@@ -43,14 +45,14 @@ A **waitlist start** is the allow-listed `Waitlist Started` event. A **completed
 
 Use the acquisition source and landing variant persisted with the waitlist record. Do not use query-bearing URLs from analytics; landing analytics deliberately strips query parameters.
 
-| Source | Starts | Completed | Qualified | Completion rate | Qualified rate | Invited | Activated | Week-2 active | Decision |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| Founder network |  |  |  |  |  |  |  |  |  |
-| Reddit/community (name) |  |  |  |  |  |  |  |  |  |
-| Search utility: best card |  |  |  |  |  |  |  |  |  |
-| Search utility: milestone tracker |  |  |  |  |  |  |  |  |  |
-| Search utility: movie offers |  |  |  |  |  |  |  |  |  |
-| Referral |  |  |  |  |  |  |  |  |  |
+| Source | Submitted | Qualified | Source-qualified rate | Invited | Activated | Week-2 active | Decision |
+|---|---:|---:|---:|---:|---:|---:|---|
+| Founder network |  |  |  |  |  |  |  |
+| Reddit/community (name) |  |  |  |  |  |  |  |
+| Search utility: best card |  |  |  |  |  |  |  |
+| Search utility: milestone tracker |  |  |  |  |  |  |  |
+| Search utility: movie offers |  |  |  |  |  |  |  |
+| Referral |  |  |  |  |  |  |  |
 
 ## Cohort log
 
@@ -58,7 +60,7 @@ Use the acquisition source and landing variant persisted with the waitlist recor
 |---|---|---|---:|---:|---|---:|---:|---|---|
 | F100-01 |  |  | 10–15 |  |  |  |  |  |  |
 
-A cohort becomes mature for Week-2 retention only after every member has passed day 14. Never mix people who have not had the observation window into the denominator.
+Maturity is individual, not cohort-wide. Add each activated user to the Week-2 denominator after that user passes day 14; never include someone who has not yet had the full observation window.
 
 ## Every-25 review record
 
@@ -88,7 +90,7 @@ Treat clicks, impressions and upvotes as diagnostic context. A post succeeds whe
 
 ## Worked formula example
 
-If a week has 80 waitlist starts, 48 completed applications and 24 qualified leads:
+If a week has 80 waitlist starts, 48 submitted applications and 24 qualified leads:
 
 - Application completion rate = 48 / 80 = 60% → continue.
 - Qualified lead rate = 24 / 48 = 50% → continue.

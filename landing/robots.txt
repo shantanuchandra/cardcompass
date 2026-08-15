@@ -2,3 +2,4 @@ User-agent: *
 Allow: /
 
 Sitemap: https://cardcompass.in/sitemap.xml
+# LLM information: https://cardcompass.in/llms.txt

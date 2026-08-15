@@ -40,7 +40,12 @@ test('each public route has absolute canonical, social metadata, and valid JSON-
     assert.match(html, new RegExp(`<link rel="canonical" href="${canonical.replaceAll('/', '\\/')}"`));
     assert.match(html, new RegExp(`<meta property="og:url" content="${canonical.replaceAll('/', '\\/')}"`));
     assert.match(html, /<meta property="og:image" content="https:\/\/cardcompass\.in\/landing\/img\/social-preview\.png">/);
+    assert.match(html, /<meta property="og:image:alt" content="[^"]+">/);
+    assert.match(html, /<meta property="og:image:width" content="1200">/);
+    assert.match(html, /<meta property="og:image:height" content="630">/);
     assert.match(html, /<meta name="twitter:card" content="summary_large_image">/);
+    assert.match(html, /<meta name="twitter:image" content="https:\/\/cardcompass\.in\/landing\/img\/social-preview\.png">/);
+    assert.match(html, /<meta name="twitter:image:alt" content="[^"]+">/);
     assert.ok(schemas(html).length > 0, `${route} needs JSON-LD`);
   }
 });
@@ -54,6 +59,9 @@ test('legal pages disclose the implemented processing boundaries without unsuppo
     /gmail\.readonly/i,
     /user\.birthday\.read/i,
     /message ID/i,
+    /full parsed message/i,
+    /app memory/i,
+    /does not intentionally persist (?:the )?message body/i,
     /PDF attachment/i,
     /statement text/i,
     /Supabase/i,
@@ -71,6 +79,13 @@ test('legal pages disclose the implemented processing boundaries without unsuppo
     /banking password/i,
     /statement PDF password/i,
     /locally/i,
+    /legacy[^.]*card_number/i,
+    /legacy[^.]*expiry/i,
+    /RPC/i,
+    /hardening target/i,
+    /attempts to store (?:the )?date of birth/i,
+    /remain in memory/i,
+    /requested again/i,
   ]) {
     assert.match(combined, expected);
   }
@@ -100,6 +115,7 @@ test('robots and sitemap expose only canonical public routes', async () => {
   assert.deepEqual(locations, [
     'https://cardcompass.in/',
     ...routes.map(([, route]) => `${siteOrigin}${route}`),
+    'https://cardcompass.in/llms.txt',
   ]);
   assert.equal(new Set(locations).size, locations.length);
 });
@@ -110,7 +126,24 @@ test('machine-readable product page removes contradicted privacy and performance
   assert.match(llm, /Supabase/i);
   assert.match(llm, /Google Gemini/i);
   assert.match(llm, /transaction and statement records/i);
+  assert.match(llm, /full parsed message/i);
+  assert.match(llm, /does not intentionally persist (?:the )?message body/i);
+  assert.match(llm, /legacy[^.]*card_number/i);
+  assert.match(llm, /hardening target/i);
+  assert.match(llm, /attempts to store (?:the )?date of birth/i);
+  assert.match(llm, /may remain in memory/i);
+  assert.match(llm, /matching statement PDF/i);
+  assert.doesNotMatch(llm, /selected statement PDF/i);
   assert.doesNotMatch(llm, /processed locally on-device|No transaction data is stored|Full DPDPA|99\.2%|₹50,000\+|real-time benefit rules/i);
+});
+
+test('llms.txt is a byte-for-byte public alias of llm.txt and is declared for crawlers', async () => {
+  const llm = await landingFile('llm.txt');
+  const llms = await landingFile('llms.txt');
+  const robots = await landingFile('robots.txt');
+
+  assert.equal(llms, llm);
+  assert.match(robots, /^# LLM information: https:\/\/cardcompass\.in\/llms\.txt$/m);
 });
 
 test('social preview is a 1200 by 630 PNG asset', async () => {
