@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   final source = File('lib/core/router/app_router.dart').readAsStringSync();
+  final appSource = File('lib/app.dart').readAsStringSync();
 
   test('desktop and mobile navigation use semantic brand roles', () {
     expect(source, contains('BrandColors.inkSoft'));
@@ -23,5 +24,9 @@ void main() {
     );
     expect(source, contains('height: 68'));
     expect(source, contains('Semantics('));
+  });
+
+  test('app root wraps every screen in a single SelectionArea', () {
+    expect(appSource, contains('SelectionArea('));
   });
 }
