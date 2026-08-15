@@ -282,7 +282,7 @@ class BrandMetric extends StatelessWidget {
             ),
             if (supportingText != null) ...[
               const SizedBox(height: BrandSpacing.xs),
-              Text(supportingText!, style: theme.textTheme.bodySmall),
+              Text(supportingText!, style: theme.textTheme.bodyMedium),
             ],
           ],
         ),
@@ -310,17 +310,24 @@ class ResponsiveValueRow extends StatelessWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
-          spacing: spacing,
-          children: children,
+          children: _childrenWithSpacing(vertical: true),
         );
       }
       return Row(
         crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: children,
+        mainAxisSize: MainAxisSize.min,
+        children: _childrenWithSpacing(),
       );
     },
   );
+
+  List<Widget> _childrenWithSpacing({bool vertical = false}) => [
+    for (var index = 0; index < children.length; index++) ...[
+      if (index > 0)
+        vertical ? SizedBox(height: spacing) : SizedBox(width: spacing),
+      children[index],
+    ],
+  ];
 }
 
 class BrandActionRow extends StatelessWidget {
@@ -368,7 +375,12 @@ class BrandActionRow extends StatelessWidget {
               ),
               if (description != null) ...[
                 const SizedBox(height: BrandSpacing.xs),
-                Text(description!, style: theme.textTheme.bodySmall),
+                Text(
+                  description!,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: foreground,
+                  ),
+                ),
               ],
             ],
           ),

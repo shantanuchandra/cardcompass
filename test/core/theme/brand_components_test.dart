@@ -168,6 +168,41 @@ void main() {
     expect(find.text('₹1,200'), findsOneWidget);
   });
 
+  testWidgets('metric supporting text and action descriptions stay at 14px', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      host(
+        Column(
+          children: [
+            const BrandMetric(
+              label: 'Potential reward',
+              value: '₹1,200',
+              supportingText: 'Based on your selected category',
+            ),
+            BrandActionRow(
+              title: 'Manage cards',
+              description: 'Update your wallet',
+              onTap: () {},
+            ),
+          ],
+        ),
+      ),
+    );
+
+    expect(
+      tester
+          .widget<Text>(find.text('Based on your selected category'))
+          .style!
+          .fontSize,
+      14,
+    );
+    expect(
+      tester.widget<Text>(find.text('Update your wallet')).style!.fontSize,
+      14,
+    );
+  });
+
   test('action row requires exactly one interaction state', () {
     expect(() => BrandActionRow(title: 'Notifications'), throwsAssertionError);
     expect(

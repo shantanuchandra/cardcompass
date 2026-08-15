@@ -59,59 +59,134 @@ void main() {
     );
   });
 
-  testWidgets('content frame can expand data views without stretching prose', (
+  testWidgets('ResponsiveValueRow applies its requested horizontal spacing', (
     tester,
   ) async {
     await pumpBrand(
       tester,
-      width: 1600,
-      child: const BrandContentFrame(
-        mode: BrandContentMode.fullWidthData,
-        child: Text('Data view'),
+      width: 1280,
+      child: const ResponsiveValueRow(
+        spacing: 40,
+        children: [
+          Text('One', key: Key('spaced-one')),
+          Text('Two', key: Key('spaced-two')),
+        ],
       ),
     );
 
-    expect(
-      tester.getSize(find.byType(BrandContentFrame)).width,
-      greaterThan(1200),
-    );
+    final one = tester.getRect(find.byKey(const Key('spaced-one')));
+    final two = tester.getRect(find.byKey(const Key('spaced-two')));
+    expect(two.left - one.right, 40);
   });
 
   testWidgets(
-    'constrained content frame keeps prose readable on wide screens',
+    'content frame gives data and prose their intended inner widths',
     (tester) async {
       await pumpBrand(
         tester,
         width: 1600,
-        child: const BrandContentFrame(
-          child: SizedBox(
-            key: Key('prose-width'),
-            width: double.infinity,
-            child: Text('Measured prose'),
-          ),
+        child: const Column(
+          children: [
+            BrandContentFrame(
+              mode: BrandContentMode.fullWidthData,
+              child: SizedBox(
+                key: Key('data-width'),
+                width: double.infinity,
+                child: Text('Data view'),
+              ),
+            ),
+            BrandContentFrame(
+              child: SizedBox(
+                key: Key('prose-width'),
+                width: double.infinity,
+                child: Text('Measured prose'),
+              ),
+            ),
+          ],
         ),
       );
 
-      expect(
-        tester.getSize(find.byKey(const Key('prose-width'))).width,
-        lessThan(1100),
-      );
+      expect(tester.getSize(find.byKey(const Key('data-width'))).width, 1440);
+      expect(tester.getSize(find.byKey(const Key('prose-width'))).width, 960);
     },
   );
 
   for (final width in [390.0, 768.0, 1280.0]) {
     for (final textScale in [1.0, 1.5, 2.0]) {
       testWidgets(
-        'content frame remains usable at ${width.toInt()}px / $textScale×',
+        'shared primitives remain responsive at ${width.toInt()}px / $textScale×',
         (tester) async {
           await pumpBrand(
             tester,
             width: width,
             textScale: textScale,
-            child: const BrandContentFrame(child: Text('Readable content')),
+            child: SingleChildScrollView(
+              child: BrandContentFrame(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const BrandPageHeader(
+                      eyebrow: 'Wallet',
+                      title: 'Rewards overview',
+                      description: 'See your next best card.',
+                      trailing: Text('Manage'),
+                    ),
+                    const SizedBox(height: 24),
+                    const BrandMetric(
+                      label: 'Potential reward',
+                      value: '₹1,200',
+                      supportingText: 'For your selected category',
+                    ),
+                    const SizedBox(height: 24),
+                    BrandActionRow(
+                      title: 'Manage cards',
+                      description: 'Update your wallet',
+                      onTap: () {},
+                    ),
+                    const BrandActionRow(
+                      title: 'Notifications',
+                      unavailable: true,
+                    ),
+                    const SizedBox(height: 24),
+                    BrandStateView(
+                      title: 'No matching cards',
+                      message: 'Try a different category.',
+                      icon: Icons.search_off_rounded,
+                      actionLabel: 'Clear filters',
+                      onAction: () {},
+                    ),
+                    const SizedBox(height: 24),
+                    const BrandEvidenceStrip(
+                      rows: [
+                        BrandEvidence(label: 'Expected return', value: '₹120'),
+                      ],
+                    ),
+                    const SizedBox(height: 24),
+                    const ResponsiveValueRow(
+                      children: [
+                        Text('First value', key: Key('matrix-first')),
+                        Text('Second value', key: Key('matrix-second')),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
           );
 
-          expect(find.text('Readable content'), findsOneWidget);
+          final first = tester.getTopLeft(
+            find.byKey(const Key('matrix-first')),
+          );
+          final second = tester.getTopLeft(
+            find.byKey(const Key('matrix-second')),
+          );
+          final shouldStack = width < 600 || textScale >= 1.5;
+          if (shouldStack) {
+            expect(second.dy, greaterThan(first.dy));
+          } else {
+            expect(second.dy, first.dy);
+            expect(second.dx, greaterThan(first.dx));
+          }
           expect(tester.takeException(), isNull);
         },
       );
