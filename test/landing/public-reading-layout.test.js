@@ -34,6 +34,22 @@ test('legal pages provide a mobile contents disclosure', async () => {
   }
 });
 
+test('mobile legal content can shrink below table and code min-content widths', async () => {
+  const css = await read('landing/resources.css');
+  const mobileRule = css.match(/@media\s*\(max-width:\s*820px\)\s*\{[\s\S]*?(?=\n\})/)?.[0] || '';
+
+  assert.match(
+    mobileRule,
+    /\.content-layout\s*,\s*\.tool-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s,
+  );
+});
+
+test('long inline code identifiers wrap inside legal content', async () => {
+  const css = await read('landing/resources.css');
+
+  assert.match(css, /\.content\s+code\s*\{[^}]*overflow-wrap:\s*anywhere/s);
+});
+
 test('public reading styles use readable body type and line length', async () => {
   const css = await read('landing/resources.css');
   assert.match(css, /body\s*\{[^}]*font-size:\s*(?:15|16)px/s);

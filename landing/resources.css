@@ -80,6 +80,7 @@ img { max-width: 100%; }
 .content h3 { margin: 30px 0 8px; font-size: 1.05rem; }
 .content p, .content li { color: #273239; }
 .content strong { color: var(--ink); }
+.content code { overflow-wrap: anywhere; }
 .content ul, .content ol { padding-left: 1.25rem; }
 .content li + li { margin-top: 0.55rem; }
 .notice {
@@ -157,7 +158,7 @@ img { max-width: 100%; }
 .footer-copy { font: 500 0.75rem/1.5 "IBM Plex Mono", monospace; }
 
 @media (max-width: 820px) {
-  .content-layout, .tool-grid { grid-template-columns: 1fr; }
+  .content-layout, .tool-grid { grid-template-columns: minmax(0, 1fr); }
   .side-nav { display: none; }
   .side-nav-disclosure { display: block; }
   .tool-output { position: static; }
