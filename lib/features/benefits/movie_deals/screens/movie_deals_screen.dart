@@ -2,8 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_fonts/google_fonts.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/theme/brand_tokens.dart';
 import '../domain/movie_platform_aliases.dart';
 import '../domain/movie_ticket_request.dart';
 import 'movie_deals_results.dart';
@@ -26,8 +25,16 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
   // (movie_platform_aliases.dart), never a hardcoded guess at what
   // "sounds right" for movies. toSet().toList() dedupes "Zomato" (which
   // both "zomato" and "district" alias to) into one entry.
-  static final _platforms = moviePlatformAliases.values.toSet().toList()..sort();
-  static const _cinemas = ['PVR Cinemas', 'INOX', 'Cinepolis', 'Moviemax', 'SRS Cinemas', 'Wave Cinemas'];
+  static final _platforms = moviePlatformAliases.values.toSet().toList()
+    ..sort();
+  static const _cinemas = [
+    'PVR Cinemas',
+    'INOX',
+    'Cinepolis',
+    'Moviemax',
+    'SRS Cinemas',
+    'Wave Cinemas',
+  ];
   static const _ticketOptions = [2, 3, 4, 6];
   static const _priceOptions = [200, 250, 300, 400];
 
@@ -70,15 +77,19 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
       children: [
         Row(
           children: [
-            const Icon(Icons.local_movies_outlined, size: 24, color: AppColors.neonCyan),
+            const Icon(
+              Icons.local_movies_outlined,
+              size: 24,
+              color: BrandColors.focusDark,
+            ),
             const SizedBox(width: 12),
             Text(
               'MOVIE TICKET OPTIMIZER',
-              style: GoogleFonts.spaceGrotesk(
-                fontWeight: FontWeight.bold,
-                letterSpacing: 1.0,
-                fontSize: 16,
-                color: AppColors.textPrimary,
+              style: const TextStyle(
+                fontFamily: 'Fraunces',
+                fontWeight: FontWeight.w600,
+                fontSize: 22,
+                color: BrandColors.ink,
               ),
             ),
           ],
@@ -86,26 +97,35 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
         const SizedBox(height: 8),
         Text(
           'Query ticket combinations across major platforms and calculate optimal savings route.',
-          style: GoogleFonts.inter(color: AppColors.textSecondary, fontSize: 12, height: 1.4),
+          style: TextStyle(
+            fontFamily: 'Manrope',
+            color: BrandColors.mutedInk,
+            fontSize: 12,
+            height: 1.4,
+          ),
         ),
         const SizedBox(height: 12),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
           decoration: BoxDecoration(
-            color: AppColors.surface1,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.neonCyan.withValues(alpha: 0.25), width: 1.2),
+            color: BrandColors.reward,
+            borderRadius: BorderRadius.circular(BrandRadius.label),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.bolt, size: 14, color: AppColors.neonCyan),
+              const Icon(
+                Icons.confirmation_number_outlined,
+                size: 14,
+                color: BrandColors.ink,
+              ),
               const SizedBox(width: 4),
               Text(
-                'AI RULE OPTIMIZATION ENGINE',
-                style: GoogleFonts.spaceGrotesk(
+                'RULES-BASED OFFER CHECK',
+                style: TextStyle(
+                  fontFamily: 'Manrope',
                   fontSize: 9,
-                  color: AppColors.neonCyan,
+                  color: BrandColors.ink,
                   fontWeight: FontWeight.bold,
                   letterSpacing: 0.5,
                 ),
@@ -120,9 +140,9 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
   Widget _buildInputForm() {
     return Container(
       decoration: BoxDecoration(
-        color: AppColors.surface1,
-        borderRadius: BorderRadius.circular(AppRadius.xl),
-        border: Border.all(color: AppColors.surface3),
+        color: BrandColors.paper,
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
+        border: Border.all(color: BrandColors.paperDeep),
       ),
       child: Padding(
         padding: const EdgeInsets.all(20.0),
@@ -131,7 +151,13 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
           children: [
             Text(
               'TICKET SPECIFICATIONS',
-              style: GoogleFonts.spaceGrotesk(fontWeight: FontWeight.bold, color: AppColors.textPrimary, fontSize: 11, letterSpacing: 1.0),
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                fontWeight: FontWeight.bold,
+                color: BrandColors.ink,
+                fontSize: 11,
+                letterSpacing: 1.0,
+              ),
             ),
             const SizedBox(height: 18),
             Row(
@@ -140,11 +166,20 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
                   child: TextField(
                     controller: _ticketCountController,
                     keyboardType: TextInputType.number,
-                    style: GoogleFonts.inter(color: AppColors.textPrimary),
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(2)],
+                    style: TextStyle(
+                      fontFamily: 'Manrope',
+                      color: BrandColors.ink,
+                    ),
+                    inputFormatters: [
+                      FilteringTextInputFormatter.digitsOnly,
+                      LengthLimitingTextInputFormatter(2),
+                    ],
                     decoration: const InputDecoration(
                       labelText: 'Tickets',
-                      prefixIcon: Icon(Icons.confirmation_number_outlined, color: AppColors.neonCyan),
+                      prefixIcon: Icon(
+                        Icons.confirmation_number_outlined,
+                        color: BrandColors.focusDark,
+                      ),
                     ),
                     onChanged: (_) => setState(() {}),
                   ),
@@ -154,11 +189,20 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
                   child: TextField(
                     controller: _priceController,
                     keyboardType: TextInputType.number,
-                    style: GoogleFonts.inter(color: AppColors.textPrimary),
-                    inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9]')), LengthLimitingTextInputFormatter(5)],
+                    style: TextStyle(
+                      fontFamily: 'Manrope',
+                      color: BrandColors.ink,
+                    ),
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r'[0-9]')),
+                      LengthLimitingTextInputFormatter(5),
+                    ],
                     decoration: const InputDecoration(
                       labelText: 'Price (₹)',
-                      prefixIcon: Icon(Icons.currency_rupee, color: AppColors.neonCyan),
+                      prefixIcon: Icon(
+                        Icons.currency_rupee,
+                        color: BrandColors.focusDark,
+                      ),
                     ),
                     onChanged: (_) => setState(() {}),
                   ),
@@ -180,12 +224,20 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
             const SizedBox(height: 12),
             Row(
               children: [
-                const Icon(Icons.info_outline, size: 14, color: AppColors.textMuted),
+                const Icon(
+                  Icons.info_outline,
+                  size: 14,
+                  color: BrandColors.mutedInk,
+                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     'Cinema filtering is not yet supported — no current benefit data is tied to a specific cinema chain.',
-                    style: GoogleFonts.inter(color: AppColors.textMuted, fontSize: 10),
+                    style: TextStyle(
+                      fontFamily: 'Manrope',
+                      color: BrandColors.mutedInk,
+                      fontSize: 10,
+                    ),
                   ),
                 ),
               ],
@@ -200,20 +252,41 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
     return DropdownButtonFormField<String>(
       initialValue: _selectedPlatform,
       isExpanded: true,
-      dropdownColor: AppColors.surface1,
+      dropdownColor: BrandColors.paper,
       decoration: const InputDecoration(
         labelText: 'Platform',
-        prefixIcon: Icon(Icons.smartphone_outlined, color: AppColors.neonCyan),
+        prefixIcon: Icon(
+          Icons.smartphone_outlined,
+          color: BrandColors.focusDark,
+        ),
       ),
       items: [
         DropdownMenuItem<String>(
           value: null,
-          child: Text('ANY PLATFORM', overflow: TextOverflow.ellipsis, style: GoogleFonts.spaceGrotesk(fontSize: 10, color: AppColors.textSecondary)),
+          child: Text(
+            'ANY PLATFORM',
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 10,
+              color: BrandColors.mutedInk,
+            ),
+          ),
         ),
-        ..._platforms.map((p) => DropdownMenuItem<String>(
-              value: p,
-              child: Text(p.toUpperCase(), overflow: TextOverflow.ellipsis, style: GoogleFonts.spaceGrotesk(fontSize: 10, color: AppColors.textPrimary)),
-            )),
+        ..._platforms.map(
+          (p) => DropdownMenuItem<String>(
+            value: p,
+            child: Text(
+              p.toUpperCase(),
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                fontSize: 10,
+                color: BrandColors.ink,
+              ),
+            ),
+          ),
+        ),
       ],
       onChanged: (value) => setState(() => _selectedPlatform = value),
     );
@@ -223,20 +296,41 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
     return DropdownButtonFormField<String>(
       initialValue: _selectedCinema,
       isExpanded: true,
-      dropdownColor: AppColors.surface1,
+      dropdownColor: BrandColors.paper,
       decoration: const InputDecoration(
         labelText: 'Cinema',
-        prefixIcon: Icon(Icons.theater_comedy_outlined, color: AppColors.neonCyan),
+        prefixIcon: Icon(
+          Icons.theater_comedy_outlined,
+          color: BrandColors.focusDark,
+        ),
       ),
       items: [
         DropdownMenuItem<String>(
           value: null,
-          child: Text('ANY CINEMA', overflow: TextOverflow.ellipsis, style: GoogleFonts.spaceGrotesk(fontSize: 10, color: AppColors.textSecondary)),
+          child: Text(
+            'ANY CINEMA',
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 10,
+              color: BrandColors.mutedInk,
+            ),
+          ),
         ),
-        ..._cinemas.map((c) => DropdownMenuItem<String>(
-              value: c,
-              child: Text(c.toUpperCase(), overflow: TextOverflow.ellipsis, style: GoogleFonts.spaceGrotesk(fontSize: 10, color: AppColors.textPrimary)),
-            )),
+        ..._cinemas.map(
+          (c) => DropdownMenuItem<String>(
+            value: c,
+            child: Text(
+              c.toUpperCase(),
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                fontSize: 10,
+                color: BrandColors.ink,
+              ),
+            ),
+          ),
+        ),
       ],
       onChanged: (value) => setState(() => _selectedCinema = value),
     );
@@ -253,12 +347,21 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
             children: _ticketOptions.map((n) {
               final selected = int.tryParse(_ticketCountController.text) == n;
               return ChoiceChip(
-                label: Text('$n TICKETS', style: GoogleFonts.spaceGrotesk(fontSize: 9, fontWeight: FontWeight.bold, color: selected ? Colors.black : AppColors.textSecondary)),
-                selectedColor: AppColors.neonCyan,
-                backgroundColor: AppColors.surfaceVoid,
+                label: Text(
+                  '$n TICKETS',
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 9,
+                    fontWeight: FontWeight.bold,
+                    color: selected ? Colors.black : BrandColors.mutedInk,
+                  ),
+                ),
+                selectedColor: BrandColors.focusDark,
+                backgroundColor: BrandColors.paper,
                 selected: selected,
                 showCheckmark: false,
-                onSelected: (_) => setState(() => _ticketCountController.text = '$n'),
+                onSelected: (_) =>
+                    setState(() => _ticketCountController.text = '$n'),
               );
             }).toList(),
           ),
@@ -269,11 +372,20 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
             spacing: 6,
             runSpacing: 6,
             children: _priceOptions.map((p) {
-              final selected = double.tryParse(_priceController.text) == p.toDouble();
+              final selected =
+                  double.tryParse(_priceController.text) == p.toDouble();
               return ChoiceChip(
-                label: Text('₹$p', style: GoogleFonts.spaceGrotesk(fontSize: 9, fontWeight: FontWeight.bold, color: selected ? Colors.black : AppColors.textSecondary)),
-                selectedColor: AppColors.neonCyan,
-                backgroundColor: AppColors.surfaceVoid,
+                label: Text(
+                  '₹$p',
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 9,
+                    fontWeight: FontWeight.bold,
+                    color: selected ? Colors.black : BrandColors.mutedInk,
+                  ),
+                ),
+                selectedColor: BrandColors.focusDark,
+                backgroundColor: BrandColors.paper,
                 selected: selected,
                 showCheckmark: false,
                 onSelected: (_) => setState(() => _priceController.text = '$p'),
@@ -292,17 +404,31 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: AppColors.surfaceVoid,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        border: Border.all(color: AppColors.surface3),
+        color: BrandColors.paper,
+        borderRadius: BorderRadius.circular(BrandRadius.card),
+        border: Border.all(color: BrandColors.paperDeep),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text('TOTAL BASE AMOUNT:', style: GoogleFonts.spaceGrotesk(fontWeight: FontWeight.bold, color: AppColors.textSecondary, fontSize: 10, letterSpacing: 0.5)),
+          Text(
+            'TOTAL BASE AMOUNT:',
+            style: TextStyle(
+              fontFamily: 'Manrope',
+              fontWeight: FontWeight.bold,
+              color: BrandColors.mutedInk,
+              fontSize: 10,
+              letterSpacing: 0.5,
+            ),
+          ),
           Text(
             total > 0 ? '₹${total.toStringAsFixed(0)}' : '₹0',
-            style: GoogleFonts.spaceGrotesk(fontWeight: FontWeight.bold, color: AppColors.neonCyan, fontSize: 16),
+            style: TextStyle(
+              fontFamily: 'Manrope',
+              fontWeight: FontWeight.bold,
+              color: BrandColors.focusDark,
+              fontSize: 16,
+            ),
           ),
         ],
       ),
@@ -318,24 +444,34 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
       child: ElevatedButton.icon(
         onPressed: _formValid
             ? () => setState(() {
-                  _submittedRequest = MovieTicketRequest(
-                    numberOfTickets: tickets,
-                    pricePerTicket: price,
-                    preferredPlatform: _selectedPlatform,
-                    preferredCinema: _selectedCinema,
-                  );
-                })
+                _submittedRequest = MovieTicketRequest(
+                  numberOfTickets: tickets,
+                  pricePerTicket: price,
+                  preferredPlatform: _selectedPlatform,
+                  preferredCinema: _selectedCinema,
+                );
+              })
             : null,
         icon: const Icon(Icons.bolt, color: Colors.black, size: 16),
         label: Text(
-          total > 0 ? 'OPTIMIZE DEALS • ₹${total.toStringAsFixed(0)}' : 'OPTIMIZE DEALS',
-          style: GoogleFonts.spaceGrotesk(fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.0, color: Colors.black),
+          total > 0
+              ? 'OPTIMIZE DEALS • ₹${total.toStringAsFixed(0)}'
+              : 'OPTIMIZE DEALS',
+          style: TextStyle(
+            fontFamily: 'Manrope',
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1.0,
+            color: Colors.black,
+          ),
         ),
         style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.neonCyan,
-          disabledBackgroundColor: AppColors.surface3,
+          backgroundColor: BrandColors.focusDark,
+          disabledBackgroundColor: BrandColors.paperDeep,
           padding: const EdgeInsets.symmetric(vertical: 16),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadius.md)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(BrandRadius.card),
+          ),
         ),
       ),
     );

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_fonts/google_fonts.dart';
-import '../../../core/theme/app_theme.dart';
+import '../../../core/theme/brand_tokens.dart';
 import '../../../core/providers/supabase_provider.dart';
 import '../../auth/providers/auth_provider.dart';
 
@@ -11,56 +10,83 @@ class SettingsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(currentUserProvider);
-    final name = user?.userMetadata?['full_name'] as String? ?? user?.email ?? 'User';
+    final name =
+        user?.userMetadata?['full_name'] as String? ?? user?.email ?? 'User';
     final email = user?.email ?? '';
     final avatar = user?.userMetadata?['avatar_url'] as String?;
 
     return Scaffold(
-      backgroundColor: AppColors.surfaceVoid,
+      backgroundColor: BrandColors.paper,
       appBar: AppBar(
-        title: Text('Settings',
-            style: GoogleFonts.spaceGrotesk(fontSize: 20, fontWeight: FontWeight.w700)),
+        title: Text(
+          'Settings',
+          style: TextStyle(
+            fontFamily: 'Manrope',
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
       ),
       body: ListView(
-        padding: const EdgeInsets.all(AppSpacing.md),
+        padding: const EdgeInsets.all(BrandSpacing.md),
         children: [
           // Profile card
           Container(
-            padding: const EdgeInsets.all(AppSpacing.md),
+            padding: const EdgeInsets.all(BrandSpacing.md),
             decoration: BoxDecoration(
-              color: AppColors.surface1,
-              borderRadius: BorderRadius.circular(AppRadius.lg),
-              border: Border.all(color: AppColors.textMuted.withValues(alpha: 0.12)),
+              color: BrandColors.paper,
+              borderRadius: BorderRadius.circular(BrandRadius.overlay),
+              border: Border.all(
+                color: BrandColors.mutedInk.withValues(alpha: 0.12),
+              ),
             ),
             child: Row(
               children: [
                 CircleAvatar(
                   radius: 28,
-                  backgroundColor: AppColors.surface2,
+                  backgroundColor: BrandColors.paperDeep,
                   backgroundImage: avatar != null ? NetworkImage(avatar) : null,
                   child: avatar == null
-                      ? Text(name[0].toUpperCase(),
-                          style: GoogleFonts.spaceGrotesk(
-                              fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.neonCyan))
+                      ? Text(
+                          name[0].toUpperCase(),
+                          style: TextStyle(
+                            fontFamily: 'Manrope',
+                            fontSize: 20,
+                            fontWeight: FontWeight.w700,
+                            color: BrandColors.focusDark,
+                          ),
+                        )
                       : null,
                 ),
-                const SizedBox(width: AppSpacing.md),
+                const SizedBox(width: BrandSpacing.md),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(name,
-                          style: GoogleFonts.inter(
-                              fontSize: 15, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
-                      Text(email,
-                          style: GoogleFonts.inter(fontSize: 12, color: AppColors.textMuted)),
+                      Text(
+                        name,
+                        style: TextStyle(
+                          fontFamily: 'Manrope',
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: BrandColors.ink,
+                        ),
+                      ),
+                      Text(
+                        email,
+                        style: TextStyle(
+                          fontFamily: 'Manrope',
+                          fontSize: 12,
+                          color: BrandColors.mutedInk,
+                        ),
+                      ),
                     ],
                   ),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: AppSpacing.lg),
+          const SizedBox(height: BrandSpacing.lg),
 
           _SettingsTile(
             icon: Icons.notifications_outlined,
@@ -84,7 +110,7 @@ class SettingsScreen extends ConsumerWidget {
             subtitle: 'Version 2.0.0',
             onTap: () {},
           ),
-          const SizedBox(height: AppSpacing.lg),
+          const SizedBox(height: BrandSpacing.lg),
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
@@ -92,16 +118,38 @@ class SettingsScreen extends ConsumerWidget {
                 final confirm = await showDialog<bool>(
                   context: context,
                   builder: (_) => AlertDialog(
-                    title: Text('Sign out?',
-                        style: GoogleFonts.spaceGrotesk(fontSize: 18, fontWeight: FontWeight.w700)),
-                    content: Text('You\'ll need to sign in again to access your data.',
-                        style: GoogleFonts.inter(fontSize: 14, color: AppColors.textSecondary)),
+                    title: Text(
+                      'Sign out?',
+                      style: TextStyle(
+                        fontFamily: 'Manrope',
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    content: Text(
+                      'You\'ll need to sign in again to access your data.',
+                      style: TextStyle(
+                        fontFamily: 'Manrope',
+                        fontSize: 14,
+                        color: BrandColors.mutedInk,
+                      ),
+                    ),
                     actions: [
-                      TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
                       TextButton(
-                          onPressed: () => Navigator.pop(context, true),
-                          child: Text('Sign out',
-                              style: GoogleFonts.inter(color: AppColors.error, fontWeight: FontWeight.w600))),
+                        onPressed: () => Navigator.pop(context, false),
+                        child: const Text('Cancel'),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        child: Text(
+                          'Sign out',
+                          style: TextStyle(
+                            fontFamily: 'Manrope',
+                            color: BrandColors.error,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                 );
@@ -109,10 +157,21 @@ class SettingsScreen extends ConsumerWidget {
                   await ref.read(authNotifierProvider.notifier).signOut();
                 }
               },
-              icon: const Icon(Icons.logout_rounded, size: 18, color: AppColors.error),
-              label: Text('Sign out', style: GoogleFonts.inter(color: AppColors.error, fontWeight: FontWeight.w600)),
+              icon: const Icon(
+                Icons.logout_rounded,
+                size: 18,
+                color: BrandColors.error,
+              ),
+              label: Text(
+                'Sign out',
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  color: BrandColors.error,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
               style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: AppColors.error, width: 1),
+                side: const BorderSide(color: BrandColors.error, width: 1),
                 minimumSize: const Size(0, 48),
               ),
             ),
@@ -130,35 +189,60 @@ class _SettingsTile extends StatelessWidget {
   final VoidCallback onTap;
 
   const _SettingsTile({
-    required this.icon, required this.title, this.subtitle, required this.onTap,
+    required this.icon,
+    required this.title,
+    this.subtitle,
+    required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: AppSpacing.xs + 2),
+      margin: const EdgeInsets.only(bottom: BrandSpacing.xs + 2),
       child: ListTile(
         onTap: onTap,
-        contentPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.xs),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: BrandSpacing.md,
+          vertical: BrandSpacing.xs,
+        ),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadius.md),
-          side: BorderSide(color: AppColors.textMuted.withValues(alpha: 0.08)),
+          borderRadius: BorderRadius.circular(BrandRadius.card),
+          side: BorderSide(color: BrandColors.mutedInk.withValues(alpha: 0.08)),
         ),
-        tileColor: AppColors.surface1,
+        tileColor: BrandColors.paper,
         leading: Container(
-          width: 36, height: 36,
+          width: 36,
+          height: 36,
           decoration: BoxDecoration(
-            color: AppColors.surface2,
-            borderRadius: BorderRadius.circular(AppRadius.sm),
+            color: BrandColors.paperDeep,
+            borderRadius: BorderRadius.circular(BrandRadius.control),
           ),
-          child: Icon(icon, size: 18, color: AppColors.textSecondary),
+          child: Icon(icon, size: 18, color: BrandColors.mutedInk),
         ),
-        title: Text(title,
-            style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w500, color: AppColors.textPrimary)),
+        title: Text(
+          title,
+          style: TextStyle(
+            fontFamily: 'Manrope',
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            color: BrandColors.ink,
+          ),
+        ),
         subtitle: subtitle != null
-            ? Text(subtitle!, style: GoogleFonts.inter(fontSize: 12, color: AppColors.textMuted))
+            ? Text(
+                subtitle!,
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 12,
+                  color: BrandColors.mutedInk,
+                ),
+              )
             : null,
-        trailing: const Icon(Icons.chevron_right_rounded, size: 18, color: AppColors.textMuted),
+        trailing: const Icon(
+          Icons.chevron_right_rounded,
+          size: 18,
+          color: BrandColors.mutedInk,
+        ),
       ),
     );
   }

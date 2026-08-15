@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/theme/brand_tokens.dart';
 import '../../../core/theme/category_display.dart';
 import '../../../core/providers/supabase_provider.dart';
 import '../../../core/providers/repository_providers.dart';
@@ -15,8 +15,16 @@ import '../../cards/screens/card_detail_screen.dart';
 import '../providers/dashboard_provider.dart';
 import '../providers/gmail_sync_provider.dart';
 
-final _currencyFmt = NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 0);
-final _shortCurrency = NumberFormat.compactCurrency(locale: 'en_IN', symbol: '₹', decimalDigits: 1);
+final _currencyFmt = NumberFormat.currency(
+  locale: 'en_IN',
+  symbol: '₹',
+  decimalDigits: 0,
+);
+final _shortCurrency = NumberFormat.compactCurrency(
+  locale: 'en_IN',
+  symbol: '₹',
+  decimalDigits: 1,
+);
 
 class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});
@@ -29,21 +37,26 @@ class DashboardScreen extends ConsumerWidget {
     final isDesktop = MediaQuery.sizeOf(context).width >= 1024;
 
     return Scaffold(
-      backgroundColor: AppColors.surfaceVoid,
+      backgroundColor: BrandColors.paper,
       body: RefreshIndicator(
-        color: AppColors.neonCyan,
-        backgroundColor: AppColors.surface1,
+        color: BrandColors.focusDark,
+        backgroundColor: BrandColors.paper,
         onRefresh: () => ref.refresh(dashboardProvider.future),
         child: Center(
           child: ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: isDesktop ? 1120 : double.infinity),
+            constraints: BoxConstraints(
+              maxWidth: isDesktop ? 1120 : double.infinity,
+            ),
             child: CustomScrollView(
               slivers: [
                 _DashboardAppBar(user: user),
                 dashAsync.when(
-                  loading: () => const SliverFillRemaining(child: _DashboardSkeleton()),
-                  error: (e, _) => SliverFillRemaining(child: _ErrorState(error: e)),
-                  data: (data) => _DashboardContent(data: data, isDesktop: isDesktop),
+                  loading: () =>
+                      const SliverFillRemaining(child: _DashboardSkeleton()),
+                  error: (e, _) =>
+                      SliverFillRemaining(child: _ErrorState(error: e)),
+                  data: (data) =>
+                      _DashboardContent(data: data, isDesktop: isDesktop),
                 ),
               ],
             ),
@@ -61,10 +74,16 @@ class _DashboardAppBar extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final name = (user?.userMetadata?['full_name'] as String?)?.split(' ').first ?? 'there';
+    final name =
+        (user?.userMetadata?['full_name'] as String?)?.split(' ').first ??
+        'there';
     final avatar = user?.userMetadata?['avatar_url'] as String?;
     final hour = DateTime.now().hour;
-    final greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+    final greeting = hour < 12
+        ? 'Good morning'
+        : hour < 17
+        ? 'Good afternoon'
+        : 'Good evening';
     final syncState = ref.watch(gmailSyncProvider);
 
     ref.listen(gmailSyncProvider, (previous, next) {
@@ -87,21 +106,26 @@ class _DashboardAppBar extends ConsumerWidget {
           ref.invalidate(pendingCardAssignmentsProvider);
         },
         error: (error, _) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Gmail sync failed: $error')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Gmail sync failed: $error')));
         },
       );
     });
 
     return SliverAppBar(
-      backgroundColor: AppColors.surfaceVoid,
+      backgroundColor: BrandColors.paper,
       floating: true,
       snap: true,
       expandedHeight: 0,
       toolbarHeight: 72,
       flexibleSpace: Padding(
-        padding: const EdgeInsets.fromLTRB(AppSpacing.md, 0, AppSpacing.md, 0),
+        padding: const EdgeInsets.fromLTRB(
+          BrandSpacing.md,
+          0,
+          BrandSpacing.md,
+          0,
+        ),
         child: Row(
           children: [
             Expanded(
@@ -111,15 +135,21 @@ class _DashboardAppBar extends ConsumerWidget {
                 children: [
                   Text(
                     '$greeting, $name',
-                    style: GoogleFonts.inter(
-                      fontSize: 13, color: AppColors.textSecondary, fontWeight: FontWeight.w400,
+                    style: TextStyle(
+                      fontFamily: 'Manrope',
+                      fontSize: 13,
+                      color: BrandColors.mutedInk,
+                      fontWeight: FontWeight.w400,
                     ),
                   ),
                   Text(
                     'CardCompass',
-                    style: GoogleFonts.spaceGrotesk(
-                      fontSize: 22, fontWeight: FontWeight.w800,
-                      color: AppColors.textPrimary, letterSpacing: -0.5,
+                    style: TextStyle(
+                      fontFamily: 'Manrope',
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                      color: BrandColors.ink,
+                      letterSpacing: -0.5,
                     ),
                   ),
                 ],
@@ -137,22 +167,30 @@ class _DashboardAppBar extends ConsumerWidget {
                       height: 20,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        color: AppColors.neonCyan,
+                        color: BrandColors.focusDark,
                       ),
                     )
-                  : const Icon(Icons.sync_rounded, color: AppColors.neonCyan),
+                  : const Icon(
+                      Icons.sync_rounded,
+                      color: BrandColors.focusDark,
+                    ),
             ),
-            const SizedBox(width: AppSpacing.sm),
+            const SizedBox(width: BrandSpacing.sm),
             // Avatar
             CircleAvatar(
               radius: 20,
-              backgroundColor: AppColors.surface2,
+              backgroundColor: BrandColors.paperDeep,
               backgroundImage: avatar != null ? NetworkImage(avatar) : null,
               child: avatar == null
-                  ? Text(name[0].toUpperCase(),
-                      style: GoogleFonts.spaceGrotesk(
-                        fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.neonCyan,
-                      ))
+                  ? Text(
+                      name[0].toUpperCase(),
+                      style: TextStyle(
+                        fontFamily: 'Manrope',
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: BrandColors.focusDark,
+                      ),
+                    )
                   : null,
             ),
           ],
@@ -176,7 +214,10 @@ void _showSyncRangeDialog(BuildContext context, WidgetRef ref) {
       },
     ),
     transitionBuilder: (context, animation, _, child) {
-      final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
+      final curved = CurvedAnimation(
+        parent: animation,
+        curve: Curves.easeOutCubic,
+      );
       return FadeTransition(
         opacity: curved,
         child: ScaleTransition(
@@ -225,19 +266,24 @@ class _SyncRangeDialogState extends State<_SyncRangeDialog> {
     final isDesktop = MediaQuery.sizeOf(context).width >= 1024;
     return Center(
       child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.xl),
+        padding: const EdgeInsets.symmetric(
+          horizontal: BrandSpacing.md,
+          vertical: BrandSpacing.xl,
+        ),
         child: ConstrainedBox(
           constraints: BoxConstraints(maxWidth: isDesktop ? 460 : 420),
           child: Material(
             color: Colors.transparent,
             child: Container(
               decoration: BoxDecoration(
-                color: AppColors.surface1,
-                borderRadius: BorderRadius.circular(AppRadius.xl),
-                border: Border.all(color: AppColors.textMuted.withValues(alpha: 0.12)),
+                color: BrandColors.paper,
+                borderRadius: BorderRadius.circular(BrandRadius.overlay),
+                border: Border.all(
+                  color: BrandColors.mutedInk.withValues(alpha: 0.12),
+                ),
                 boxShadow: [
                   BoxShadow(
-                    color: AppColors.neonCyan.withValues(alpha: 0.08),
+                    color: BrandColors.focusDark.withValues(alpha: 0.08),
                     blurRadius: 40,
                     spreadRadius: -8,
                   ),
@@ -254,7 +300,12 @@ class _SyncRangeDialogState extends State<_SyncRangeDialog> {
                 children: [
                   // Header
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.lg, AppSpacing.sm, 0),
+                    padding: const EdgeInsets.fromLTRB(
+                      BrandSpacing.lg,
+                      BrandSpacing.lg,
+                      BrandSpacing.sm,
+                      0,
+                    ),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -262,12 +313,18 @@ class _SyncRangeDialogState extends State<_SyncRangeDialog> {
                           width: 40,
                           height: 40,
                           decoration: BoxDecoration(
-                            gradient: AppTheme.cyanFadeGradient,
-                            borderRadius: BorderRadius.circular(AppRadius.md),
+                            color: BrandColors.signal,
+                            borderRadius: BorderRadius.circular(
+                              BrandRadius.card,
+                            ),
                           ),
-                          child: const Icon(Icons.sync_rounded, size: 20, color: AppColors.textInverse),
+                          child: const Icon(
+                            Icons.sync_rounded,
+                            size: 20,
+                            color: BrandColors.ink,
+                          ),
                         ),
-                        const SizedBox(width: AppSpacing.sm),
+                        const SizedBox(width: BrandSpacing.sm),
                         Expanded(
                           child: Padding(
                             padding: const EdgeInsets.only(top: 2),
@@ -276,14 +333,21 @@ class _SyncRangeDialogState extends State<_SyncRangeDialog> {
                               children: [
                                 Text(
                                   'Sync from Gmail',
-                                  style: GoogleFonts.spaceGrotesk(
-                                    fontSize: 17, fontWeight: FontWeight.w700, color: AppColors.textPrimary,
+                                  style: TextStyle(
+                                    fontFamily: 'Manrope',
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w700,
+                                    color: BrandColors.ink,
                                   ),
                                 ),
                                 const SizedBox(height: 2),
                                 Text(
                                   'Import credit card statements',
-                                  style: GoogleFonts.inter(fontSize: 12.5, color: AppColors.textSecondary),
+                                  style: TextStyle(
+                                    fontFamily: 'Manrope',
+                                    fontSize: 12.5,
+                                    color: BrandColors.mutedInk,
+                                  ),
                                 ),
                               ],
                             ),
@@ -292,32 +356,40 @@ class _SyncRangeDialogState extends State<_SyncRangeDialog> {
                         IconButton(
                           onPressed: () => Navigator.of(context).pop(),
                           icon: const Icon(Icons.close_rounded, size: 20),
-                          color: AppColors.textMuted,
+                          color: BrandColors.mutedInk,
                           tooltip: 'Close',
                           visualDensity: VisualDensity.compact,
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: AppSpacing.md),
+                  const SizedBox(height: BrandSpacing.md),
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: BrandSpacing.lg,
+                    ),
                     child: Text(
                       'LOOK BACK',
-                      style: GoogleFonts.inter(
-                        fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.textMuted, letterSpacing: 1.0,
+                      style: TextStyle(
+                        fontFamily: 'Manrope',
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: BrandColors.mutedInk,
+                        letterSpacing: 1.0,
                       ),
                     ),
                   ),
-                  const SizedBox(height: AppSpacing.sm),
+                  const SizedBox(height: BrandSpacing.sm),
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: BrandSpacing.lg,
+                    ),
                     child: GridView.count(
                       crossAxisCount: 3,
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
-                      mainAxisSpacing: AppSpacing.sm,
-                      crossAxisSpacing: AppSpacing.sm,
+                      mainAxisSpacing: BrandSpacing.sm,
+                      crossAxisSpacing: BrandSpacing.sm,
                       childAspectRatio: 1.7,
                       children: _options.map((opt) {
                         final selected = opt.days == _selectedDays;
@@ -329,26 +401,39 @@ class _SyncRangeDialogState extends State<_SyncRangeDialog> {
                       }).toList(),
                     ),
                   ),
-                  const SizedBox(height: AppSpacing.md),
+                  const SizedBox(height: BrandSpacing.md),
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: BrandSpacing.lg,
+                    ),
                     child: AnimatedSwitcher(
                       duration: 200.ms,
                       child: Container(
                         key: ValueKey(_selectedDays),
-                        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.sm),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: BrandSpacing.sm,
+                          vertical: BrandSpacing.sm,
+                        ),
                         decoration: BoxDecoration(
-                          color: AppColors.surface2,
-                          borderRadius: BorderRadius.circular(AppRadius.md),
+                          color: BrandColors.paperDeep,
+                          borderRadius: BorderRadius.circular(BrandRadius.card),
                         ),
                         child: Row(
                           children: [
-                            const Icon(Icons.info_outline_rounded, size: 15, color: AppColors.textMuted),
+                            const Icon(
+                              Icons.info_outline_rounded,
+                              size: 15,
+                              color: BrandColors.mutedInk,
+                            ),
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
                                 'Fetches statement emails from $_friendlyRange',
-                                style: GoogleFonts.inter(fontSize: 12.5, color: AppColors.textSecondary),
+                                style: TextStyle(
+                                  fontFamily: 'Manrope',
+                                  fontSize: 12.5,
+                                  color: BrandColors.mutedInk,
+                                ),
                               ),
                             ),
                           ],
@@ -356,9 +441,14 @@ class _SyncRangeDialogState extends State<_SyncRangeDialog> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: AppSpacing.lg),
+                  const SizedBox(height: BrandSpacing.lg),
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.lg),
+                    padding: const EdgeInsets.fromLTRB(
+                      BrandSpacing.lg,
+                      0,
+                      BrandSpacing.lg,
+                      BrandSpacing.lg,
+                    ),
                     child: Row(
                       children: [
                         Expanded(
@@ -367,7 +457,7 @@ class _SyncRangeDialogState extends State<_SyncRangeDialog> {
                             child: const Text('Cancel'),
                           ),
                         ),
-                        const SizedBox(width: AppSpacing.sm),
+                        const SizedBox(width: BrandSpacing.sm),
                         Expanded(
                           flex: 2,
                           child: ElevatedButton.icon(
@@ -393,7 +483,11 @@ class _RangeChip extends StatelessWidget {
   final String label;
   final bool selected;
   final VoidCallback onTap;
-  const _RangeChip({required this.label, required this.selected, required this.onTap});
+  const _RangeChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -401,25 +495,30 @@ class _RangeChip extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(AppRadius.md),
+        borderRadius: BorderRadius.circular(BrandRadius.card),
         child: AnimatedContainer(
           duration: 180.ms,
           curve: Curves.easeOut,
           decoration: BoxDecoration(
-            color: selected ? AppColors.neonCyan.withValues(alpha: 0.15) : AppColors.surface2,
-            borderRadius: BorderRadius.circular(AppRadius.md),
+            color: selected
+                ? BrandColors.focusDark.withValues(alpha: 0.15)
+                : BrandColors.paperDeep,
+            borderRadius: BorderRadius.circular(BrandRadius.card),
             border: Border.all(
-              color: selected ? AppColors.neonCyan : AppColors.textMuted.withValues(alpha: 0.18),
+              color: selected
+                  ? BrandColors.focusDark
+                  : BrandColors.mutedInk.withValues(alpha: 0.18),
               width: selected ? 1.5 : 1,
             ),
           ),
           child: Center(
             child: Text(
               label,
-              style: GoogleFonts.spaceGrotesk(
+              style: TextStyle(
+                fontFamily: 'Manrope',
                 fontSize: 14,
                 fontWeight: FontWeight.w700,
-                color: selected ? AppColors.neonCyan : AppColors.textSecondary,
+                color: selected ? BrandColors.focusDark : BrandColors.mutedInk,
               ),
             ),
           ),
@@ -442,11 +541,15 @@ class _DashboardContent extends StatelessWidget {
         : Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _SectionHeader(title: 'Your Cards', action: 'Manage', onTap: () {}),
-              _CardsCarousel(cards: data.cards, statements: data.latestStatements)
-                  .animate(delay: 100.ms)
-                  .fadeIn()
-                  .slideX(begin: 0.05),
+              _SectionHeader(
+                title: 'Your Cards',
+                action: 'Manage',
+                onTap: () {},
+              ),
+              _CardsCarousel(
+                cards: data.cards,
+                statements: data.latestStatements,
+              ).animate(delay: 100.ms).fadeIn().slideX(begin: 0.05),
             ],
           );
 
@@ -455,9 +558,10 @@ class _DashboardContent extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _SectionHeader(title: 'Bills Due', action: null, onTap: null),
-              _BillsPanel(cards: data.cards, statements: data.latestStatements)
-                  .animate(delay: 150.ms)
-                  .fadeIn(),
+              _BillsPanel(
+                cards: data.cards,
+                statements: data.latestStatements,
+              ).animate(delay: 150.ms).fadeIn(),
             ],
           )
         : const SizedBox.shrink();
@@ -468,17 +572,19 @@ class _DashboardContent extends StatelessWidget {
         _SectionHeader(title: 'Recent Spend', action: 'View All', onTap: () {}),
         data.recentTransactions.isEmpty
             ? _EmptyTransactions().animate(delay: 200.ms).fadeIn()
-            : _RecentTransactions(transactions: data.recentTransactions)
-                .animate(delay: 200.ms)
-                .fadeIn(),
+            : _RecentTransactions(
+                transactions: data.recentTransactions,
+              ).animate(delay: 200.ms).fadeIn(),
       ],
     );
 
     if (isDesktop) {
       return SliverList(
         delegate: SliverChildListDelegate([
-          _KpiRow(data: data).animate().fadeIn(duration: 400.ms).slideY(begin: 0.1),
-          const SizedBox(height: AppSpacing.lg),
+          _KpiRow(
+            data: data,
+          ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.1),
+          const SizedBox(height: BrandSpacing.lg),
           IntrinsicHeight(
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -489,33 +595,35 @@ class _DashboardContent extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       cardsSection,
-                      const SizedBox(height: AppSpacing.lg),
+                      const SizedBox(height: BrandSpacing.lg),
                       billsSection,
                     ],
                   ),
                 ),
-                const SizedBox(width: AppSpacing.lg),
+                const SizedBox(width: BrandSpacing.lg),
                 Expanded(flex: 2, child: transactionsSection),
               ],
             ),
           ),
-          const SizedBox(height: AppSpacing.xxl),
+          const SizedBox(height: BrandSpacing.xxl),
         ]),
       );
     }
 
     return SliverList(
       delegate: SliverChildListDelegate([
-        _KpiRow(data: data).animate().fadeIn(duration: 400.ms).slideY(begin: 0.1),
-        const SizedBox(height: AppSpacing.lg),
+        _KpiRow(
+          data: data,
+        ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.1),
+        const SizedBox(height: BrandSpacing.lg),
         cardsSection,
-        const SizedBox(height: AppSpacing.lg),
+        const SizedBox(height: BrandSpacing.lg),
         if (data.latestStatements.isNotEmpty) ...[
           billsSection,
-          const SizedBox(height: AppSpacing.lg),
+          const SizedBox(height: BrandSpacing.lg),
         ],
         transactionsSection,
-        const SizedBox(height: AppSpacing.xxl),
+        const SizedBox(height: BrandSpacing.xxl),
       ]),
     );
   }
@@ -529,29 +637,35 @@ class _KpiRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+      padding: const EdgeInsets.symmetric(horizontal: BrandSpacing.md),
       child: Row(
         children: [
-          Expanded(child: _KpiCard(
-            label: 'This Month',
-            value: _shortCurrency.format(data.monthlySpend),
-            icon: Icons.trending_up_rounded,
-            color: AppColors.neonCyan,
-          )),
-          const SizedBox(width: AppSpacing.sm),
-          Expanded(child: _KpiCard(
-            label: 'Rewards',
-            value: _shortCurrency.format(data.rewardsEarned),
-            icon: Icons.star_rounded,
-            color: AppColors.violet,
-          )),
-          const SizedBox(width: AppSpacing.sm),
-          Expanded(child: _KpiCard(
-            label: 'Total Limit',
-            value: _shortCurrency.format(data.totalCreditLimit),
-            icon: Icons.account_balance_wallet_rounded,
-            color: AppColors.neonGreen,
-          )),
+          Expanded(
+            child: _KpiCard(
+              label: 'This Month',
+              value: _shortCurrency.format(data.monthlySpend),
+              icon: Icons.trending_up_rounded,
+              color: BrandColors.focusDark,
+            ),
+          ),
+          const SizedBox(width: BrandSpacing.sm),
+          Expanded(
+            child: _KpiCard(
+              label: 'Rewards',
+              value: _shortCurrency.format(data.rewardsEarned),
+              icon: Icons.star_rounded,
+              color: BrandColors.reward,
+            ),
+          ),
+          const SizedBox(width: BrandSpacing.sm),
+          Expanded(
+            child: _KpiCard(
+              label: 'Total Limit',
+              value: _shortCurrency.format(data.totalCreditLimit),
+              icon: Icons.account_balance_wallet_rounded,
+              color: BrandColors.successInk,
+            ),
+          ),
         ],
       ),
     );
@@ -564,32 +678,44 @@ class _KpiCard extends StatelessWidget {
   final IconData icon;
   final Color color;
 
-  const _KpiCard({required this.label, required this.value, required this.icon, required this.color});
+  const _KpiCard({
+    required this.label,
+    required this.value,
+    required this.icon,
+    required this.color,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(AppSpacing.md),
+      padding: const EdgeInsets.all(BrandSpacing.md),
       decoration: BoxDecoration(
-        color: AppColors.surface1,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
+        color: BrandColors.ledger,
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
         border: Border.all(color: color.withValues(alpha: 0.2), width: 1),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(icon, size: 18, color: color),
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: BrandSpacing.sm),
           Text(
             value,
-            style: GoogleFonts.spaceGrotesk(
-              fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textPrimary,
+            style: const TextStyle(
+              fontFamily: 'IBM Plex Mono',
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+              color: BrandColors.ink,
             ),
           ),
           const SizedBox(height: 2),
           Text(
             label,
-            style: GoogleFonts.inter(fontSize: 11, color: AppColors.textMuted),
+            style: TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 11,
+              color: BrandColors.mutedInk,
+            ),
           ),
         ],
       ),
@@ -603,18 +729,30 @@ class _SectionHeader extends StatelessWidget {
   final String? action;
   final VoidCallback? onTap;
 
-  const _SectionHeader({required this.title, required this.action, required this.onTap});
+  const _SectionHeader({
+    required this.title,
+    required this.action,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(AppSpacing.md, 0, AppSpacing.md, AppSpacing.sm),
+      padding: const EdgeInsets.fromLTRB(
+        BrandSpacing.md,
+        0,
+        BrandSpacing.md,
+        BrandSpacing.sm,
+      ),
       child: Row(
         children: [
           Text(
             title,
-            style: GoogleFonts.spaceGrotesk(
-              fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary,
+            style: const TextStyle(
+              fontFamily: 'Fraunces',
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: BrandColors.ink,
             ),
           ),
           const Spacer(),
@@ -622,11 +760,18 @@ class _SectionHeader extends StatelessWidget {
             TextButton(
               onPressed: onTap,
               style: TextButton.styleFrom(
-                padding: EdgeInsets.zero, minimumSize: Size.zero, tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                padding: EdgeInsets.zero,
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
               child: Text(
                 action!,
-                style: GoogleFonts.inter(fontSize: 13, color: AppColors.neonCyan, fontWeight: FontWeight.w500),
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 13,
+                  color: BrandColors.focusDark,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
             ),
         ],
@@ -671,15 +816,23 @@ class _CardsCarouselState extends ConsumerState<_CardsCarousel> {
             ? _maxCardWidth
             : constraints.maxWidth * 0.6;
         final cardHeight = cardWidth / _cardAspectRatio;
-        final viewportFraction = ((cardWidth + AppSpacing.sm) / constraints.maxWidth).clamp(0.3, 0.9);
+        final viewportFraction =
+            ((cardWidth + BrandSpacing.sm) / constraints.maxWidth).clamp(
+              0.3,
+              0.9,
+            );
 
         // Only replace the controller when the viewport math actually
         // changes (e.g. window resize) — recreating it on every rebuild
         // (which happens whenever pendingCardAssignmentsProvider refreshes)
         // resets the user's scroll position back to page 0 mid-swipe.
-        if (_controller == null || _controllerViewportFraction != viewportFraction) {
+        if (_controller == null ||
+            _controllerViewportFraction != viewportFraction) {
           _controller?.dispose();
-          _controller = PageController(viewportFraction: viewportFraction, initialPage: _current);
+          _controller = PageController(
+            viewportFraction: viewportFraction,
+            initialPage: _current,
+          );
           _controllerViewportFraction = viewportFraction;
         }
 
@@ -695,19 +848,24 @@ class _CardsCarouselState extends ConsumerState<_CardsCarousel> {
                 itemBuilder: (context, i) {
                   final isPending = i >= widget.cards.length;
                   final tile = isPending
-                      ? _PendingBankTile(email: pending[i - widget.cards.length])
+                      ? _PendingBankTile(
+                          email: pending[i - widget.cards.length],
+                        )
                       : GestureDetector(
                           onTap: () => Navigator.of(context).push(
                             MaterialPageRoute(
-                              builder: (_) => CardDetailScreen(cardId: widget.cards[i].id),
+                              builder: (_) =>
+                                  CardDetailScreen(cardId: widget.cards[i].id),
                             ),
                           ),
                           child: _CreditCardTile(card: widget.cards[i]),
                         );
                   return Padding(
                     padding: EdgeInsets.only(
-                      left: i == 0 ? AppSpacing.md : AppSpacing.sm,
-                      right: i == itemCount - 1 ? AppSpacing.md : AppSpacing.sm,
+                      left: i == 0 ? BrandSpacing.md : BrandSpacing.sm,
+                      right: i == itemCount - 1
+                          ? BrandSpacing.md
+                          : BrandSpacing.sm,
                     ),
                     child: SizedBox(width: cardWidth, child: tile),
                   );
@@ -715,19 +873,24 @@ class _CardsCarouselState extends ConsumerState<_CardsCarousel> {
               ),
             ),
             if (itemCount > 1) ...[
-              const SizedBox(height: AppSpacing.sm),
+              const SizedBox(height: BrandSpacing.sm),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(itemCount, (i) => AnimatedContainer(
-                  duration: 250.ms,
-                  width: i == _current ? 20 : 6,
-                  height: 6,
-                  margin: const EdgeInsets.symmetric(horizontal: 3),
-                  decoration: BoxDecoration(
-                    color: i == _current ? AppColors.neonCyan : AppColors.textMuted.withValues(alpha: 0.4),
-                    borderRadius: BorderRadius.circular(AppRadius.pill),
+                children: List.generate(
+                  itemCount,
+                  (i) => AnimatedContainer(
+                    duration: 250.ms,
+                    width: i == _current ? 20 : 6,
+                    height: 6,
+                    margin: const EdgeInsets.symmetric(horizontal: 3),
+                    decoration: BoxDecoration(
+                      color: i == _current
+                          ? BrandColors.focusDark
+                          : BrandColors.mutedInk.withValues(alpha: 0.4),
+                      borderRadius: BorderRadius.circular(BrandRadius.pill),
+                    ),
                   ),
-                )),
+                ),
               ),
             ],
           ],
@@ -749,15 +912,15 @@ class _PendingBankTile extends StatelessWidget {
     final bankDetected = email['bank_detected'] as String? ?? 'Unknown bank';
     return Container(
       decoration: BoxDecoration(
-        color: AppColors.surface2,
-        borderRadius: BorderRadius.circular(AppRadius.xl),
+        color: BrandColors.paperDeep,
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
         border: Border.all(
-          color: AppColors.warning.withValues(alpha: 0.4),
+          color: BrandColors.rewardInk.withValues(alpha: 0.4),
           width: 1.5,
           style: BorderStyle.solid,
         ),
       ),
-      padding: const EdgeInsets.all(AppSpacing.lg),
+      padding: const EdgeInsets.all(BrandSpacing.lg),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -766,7 +929,13 @@ class _PendingBankTile extends StatelessWidget {
               Expanded(
                 child: Text(
                   bankDetected,
-                  style: GoogleFonts.inter(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w500, letterSpacing: 0.5),
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 12,
+                    color: BrandColors.mutedInk,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 0.5,
+                  ),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
@@ -775,20 +944,32 @@ class _PendingBankTile extends StatelessWidget {
                 child: Container(
                   padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(
-                    color: AppColors.warning.withValues(alpha: 0.15),
+                    color: BrandColors.rewardInk.withValues(alpha: 0.15),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.priority_high_rounded, size: 16, color: AppColors.warning),
+                  child: const Icon(
+                    Icons.priority_high_rounded,
+                    size: 16,
+                    color: BrandColors.rewardInk,
+                  ),
                 ),
               ),
             ],
           ),
           const Spacer(),
-          Icon(Icons.help_outline_rounded, size: 28, color: AppColors.textMuted.withValues(alpha: 0.5)),
-          const SizedBox(height: AppSpacing.sm),
+          Icon(
+            Icons.help_outline_rounded,
+            size: 28,
+            color: BrandColors.mutedInk.withValues(alpha: 0.5),
+          ),
+          const SizedBox(height: BrandSpacing.sm),
           Text(
             'Which card is this?',
-            style: GoogleFonts.inter(fontSize: 13, color: AppColors.textMuted),
+            style: TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 13,
+              color: BrandColors.mutedInk,
+            ),
           ),
         ],
       ),
@@ -800,7 +981,8 @@ void _showBankResolveDialog(BuildContext context, Map<String, dynamic> email) {
   final bankDetected = email['bank_detected'] as String? ?? '';
   showDialog<void>(
     context: context,
-    builder: (dialogContext) => _BankResolveDialog(email: email, bankDetected: bankDetected),
+    builder: (dialogContext) =>
+        _BankResolveDialog(email: email, bankDetected: bankDetected),
   );
 }
 
@@ -831,16 +1013,29 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
       final results = await ref
           .read(cardsRepositoryProvider)
           .searchCatalogForBank(widget.bankDetected, query: query);
-      if (mounted) setState(() { _options = results; _loading = false; });
+      if (mounted)
+        setState(() {
+          _options = results;
+          _loading = false;
+        });
     } catch (e) {
-      if (mounted) setState(() { _error = e.toString(); _loading = false; });
+      if (mounted)
+        setState(() {
+          _error = e.toString();
+          _loading = false;
+        });
     }
   }
 
   Future<void> _resolve(Map<String, dynamic> catalogEntry) async {
-    setState(() { _resolving = true; _error = null; });
+    setState(() {
+      _resolving = true;
+      _error = null;
+    });
     try {
-      await ref.read(cardAssignmentProvider.notifier).resolveWithCatalogEntry(
+      await ref
+          .read(cardAssignmentProvider.notifier)
+          .resolveWithCatalogEntry(
             email: widget.email,
             catalogCardId: catalogEntry['id'] as String,
           );
@@ -856,26 +1051,37 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
   @override
   Widget build(BuildContext context) {
     return Dialog(
-      backgroundColor: AppColors.surface1,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadius.xl)),
+      backgroundColor: BrandColors.paper,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
+      ),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 420, maxHeight: 480),
         child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.lg),
+          padding: const EdgeInsets.all(BrandSpacing.lg),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 'Which card is this?',
-                style: GoogleFonts.spaceGrotesk(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: BrandColors.ink,
+                ),
               ),
               const SizedBox(height: 2),
               Text(
                 widget.bankDetected,
-                style: GoogleFonts.inter(fontSize: 12.5, color: AppColors.textSecondary),
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 12.5,
+                  color: BrandColors.mutedInk,
+                ),
               ),
-              const SizedBox(height: AppSpacing.md),
+              const SizedBox(height: BrandSpacing.md),
               TextField(
                 autofocus: true,
                 decoration: InputDecoration(
@@ -884,54 +1090,88 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
                 ),
                 onChanged: _search,
               ),
-              const SizedBox(height: AppSpacing.sm),
+              const SizedBox(height: BrandSpacing.sm),
               Flexible(
                 child: _loading
                     ? const Padding(
-                        padding: EdgeInsets.symmetric(vertical: AppSpacing.xl),
-                        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                        padding: EdgeInsets.symmetric(
+                          vertical: BrandSpacing.xl,
+                        ),
+                        child: Center(
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
                       )
                     : _error != null
-                        ? Padding(
-                            padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
-                            child: Text(_error!, style: GoogleFonts.inter(fontSize: 12, color: AppColors.error)),
-                          )
-                        : _options.isEmpty
-                            ? Padding(
-                                padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
-                                child: Text(
-                                  'No matching card found. Try a different search.',
-                                  style: GoogleFonts.inter(fontSize: 12.5, color: AppColors.textMuted),
-                                ),
-                              )
-                            : ListView.builder(
-                                shrinkWrap: true,
-                                itemCount: _options.length,
-                                itemBuilder: (context, i) {
-                                  final entry = _options[i];
-                                  return ListTile(
-                                    dense: true,
-                                    contentPadding: EdgeInsets.zero,
-                                    title: Text(
-                                      entry['card_name'] as String? ?? '',
-                                      style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
-                                    ),
-                                    subtitle: Text(
-                                      entry['bank'] as String? ?? '',
-                                      style: GoogleFonts.inter(fontSize: 12, color: AppColors.textMuted),
-                                    ),
-                                    trailing: _resolving
-                                        ? const SizedBox(
-                                            width: 16, height: 16,
-                                            child: CircularProgressIndicator(strokeWidth: 2),
-                                          )
-                                        : const Icon(Icons.chevron_right_rounded, color: AppColors.textMuted),
-                                    onTap: _resolving ? null : () => _resolve(entry),
-                                  );
-                                },
+                    ? Padding(
+                        padding: const EdgeInsets.symmetric(
+                          vertical: BrandSpacing.lg,
+                        ),
+                        child: Text(
+                          _error!,
+                          style: TextStyle(
+                            fontFamily: 'Manrope',
+                            fontSize: 12,
+                            color: BrandColors.error,
+                          ),
+                        ),
+                      )
+                    : _options.isEmpty
+                    ? Padding(
+                        padding: const EdgeInsets.symmetric(
+                          vertical: BrandSpacing.lg,
+                        ),
+                        child: Text(
+                          'No matching card found. Try a different search.',
+                          style: TextStyle(
+                            fontFamily: 'Manrope',
+                            fontSize: 12.5,
+                            color: BrandColors.mutedInk,
+                          ),
+                        ),
+                      )
+                    : ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: _options.length,
+                        itemBuilder: (context, i) {
+                          final entry = _options[i];
+                          return ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(
+                              entry['card_name'] as String? ?? '',
+                              style: TextStyle(
+                                fontFamily: 'Manrope',
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: BrandColors.ink,
                               ),
+                            ),
+                            subtitle: Text(
+                              entry['bank'] as String? ?? '',
+                              style: TextStyle(
+                                fontFamily: 'Manrope',
+                                fontSize: 12,
+                                color: BrandColors.mutedInk,
+                              ),
+                            ),
+                            trailing: _resolving
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(
+                                    Icons.chevron_right_rounded,
+                                    color: BrandColors.mutedInk,
+                                  ),
+                            onTap: _resolving ? null : () => _resolve(entry),
+                          );
+                        },
+                      ),
               ),
-              const SizedBox(height: AppSpacing.sm),
+              const SizedBox(height: BrandSpacing.sm),
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton(
@@ -953,27 +1193,18 @@ class _CreditCardTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final gradient = AppTheme.cardGradient(card.bankCode);
     return Container(
       decoration: BoxDecoration(
-        gradient: gradient,
-        borderRadius: BorderRadius.circular(AppRadius.xl),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.10), width: 1),
-        boxShadow: [
-          BoxShadow(
-            color: gradient.colors.last.withValues(alpha: 0.45),
-            blurRadius: 20,
-            spreadRadius: 1,
-            offset: const Offset(0, 8),
+        color: BrandColors.paperDeep,
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
+        border: Border(
+          left: BorderSide(
+            color: AppTheme.issuerColor(card.bankCode),
+            width: 7,
           ),
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.35),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        ),
       ),
-      padding: const EdgeInsets.all(AppSpacing.lg),
+      padding: const EdgeInsets.all(BrandSpacing.lg),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -982,16 +1213,22 @@ class _CreditCardTile extends StatelessWidget {
               Expanded(
                 child: Text(
                   card.bank ?? '',
-                  style: GoogleFonts.inter(
-                    fontSize: 12, color: Colors.white.withValues(alpha: 0.7), fontWeight: FontWeight.w500,
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 12,
+                    color: BrandColors.mutedInk,
+                    fontWeight: FontWeight.w500,
                     letterSpacing: 0.5,
                   ),
                 ),
               ),
               Text(
                 card.network ?? '',
-                style: GoogleFonts.inter(
-                  fontSize: 12, color: Colors.white.withValues(alpha: 0.7), fontWeight: FontWeight.w600,
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 12,
+                  color: BrandColors.mutedInk,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ],
@@ -1000,18 +1237,25 @@ class _CreditCardTile extends StatelessWidget {
           if (card.lastFourDigits != null)
             Text(
               '••••  ••••  ••••  ${card.lastFourDigits}',
-              style: GoogleFonts.spaceGrotesk(
-                fontSize: 16, color: Colors.white, fontWeight: FontWeight.w600, letterSpacing: 2,
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                fontSize: 16,
+                color: BrandColors.ink,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 2,
               ),
             ),
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: BrandSpacing.sm),
           Row(
             children: [
               Expanded(
                 child: Text(
                   card.displayName,
-                  style: GoogleFonts.inter(
-                    fontSize: 14, color: Colors.white, fontWeight: FontWeight.w600,
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 14,
+                    color: BrandColors.ink,
+                    fontWeight: FontWeight.w600,
                   ),
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -1019,8 +1263,11 @@ class _CreditCardTile extends StatelessWidget {
               if (card.creditLimit != null)
                 Text(
                   _currencyFmt.format(card.creditLimit),
-                  style: GoogleFonts.inter(
-                    fontSize: 13, color: Colors.white.withValues(alpha: 0.85), fontWeight: FontWeight.w500,
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 13,
+                    color: BrandColors.ink,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
             ],
@@ -1046,21 +1293,32 @@ class _BillsPanel extends StatelessWidget {
 
     if (pending.isEmpty) {
       return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+        padding: const EdgeInsets.symmetric(horizontal: BrandSpacing.md),
         child: Container(
-          padding: const EdgeInsets.all(AppSpacing.md),
+          padding: const EdgeInsets.all(BrandSpacing.md),
           decoration: BoxDecoration(
-            color: AppColors.success.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(AppRadius.lg),
-            border: Border.all(color: AppColors.success.withValues(alpha: 0.25)),
+            color: BrandColors.successInk.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(BrandRadius.overlay),
+            border: Border.all(
+              color: BrandColors.successInk.withValues(alpha: 0.25),
+            ),
           ),
           child: Row(
             children: [
-              const Icon(Icons.check_circle_rounded, color: AppColors.success, size: 20),
-              const SizedBox(width: AppSpacing.sm),
+              const Icon(
+                Icons.check_circle_rounded,
+                color: BrandColors.successInk,
+                size: 20,
+              ),
+              const SizedBox(width: BrandSpacing.sm),
               Text(
                 'All bills paid — you\'re good!',
-                style: GoogleFonts.inter(fontSize: 14, color: AppColors.success, fontWeight: FontWeight.w500),
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 14,
+                  color: BrandColors.successInk,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
             ],
           ),
@@ -1073,16 +1331,21 @@ class _BillsPanel extends StatelessWidget {
         final stmt = statements[card.id]!;
         final isOverdue = stmt.isOverdue;
         return Padding(
-          padding: const EdgeInsets.fromLTRB(AppSpacing.md, 0, AppSpacing.md, AppSpacing.sm),
+          padding: const EdgeInsets.fromLTRB(
+            BrandSpacing.md,
+            0,
+            BrandSpacing.md,
+            BrandSpacing.sm,
+          ),
           child: Container(
-            padding: const EdgeInsets.all(AppSpacing.md),
+            padding: const EdgeInsets.all(BrandSpacing.md),
             decoration: BoxDecoration(
-              color: AppColors.surface1,
-              borderRadius: BorderRadius.circular(AppRadius.lg),
+              color: BrandColors.paper,
+              borderRadius: BorderRadius.circular(BrandRadius.overlay),
               border: Border.all(
                 color: isOverdue
-                    ? AppColors.error.withValues(alpha: 0.4)
-                    : AppColors.warning.withValues(alpha: 0.25),
+                    ? BrandColors.error.withValues(alpha: 0.4)
+                    : BrandColors.rewardInk.withValues(alpha: 0.25),
               ),
             ),
             child: Row(
@@ -1093,14 +1356,22 @@ class _BillsPanel extends StatelessWidget {
                     children: [
                       Text(
                         card.displayName,
-                        style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                        style: TextStyle(
+                          fontFamily: 'Manrope',
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: BrandColors.ink,
+                        ),
                       ),
                       const SizedBox(height: 2),
                       Text(
                         'Due ${DateFormat('d MMM').format(stmt.dueDate)}',
-                        style: GoogleFonts.inter(
+                        style: TextStyle(
+                          fontFamily: 'Manrope',
                           fontSize: 12,
-                          color: isOverdue ? AppColors.error : AppColors.textSecondary,
+                          color: isOverdue
+                              ? BrandColors.error
+                              : BrandColors.mutedInk,
                         ),
                       ),
                     ],
@@ -1108,9 +1379,11 @@ class _BillsPanel extends StatelessWidget {
                 ),
                 Text(
                   _currencyFmt.format(stmt.outstanding),
-                  style: GoogleFonts.spaceGrotesk(
-                    fontSize: 16, fontWeight: FontWeight.w700,
-                    color: isOverdue ? AppColors.error : AppColors.textPrimary,
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: isOverdue ? BrandColors.error : BrandColors.ink,
                   ),
                 ),
               ],
@@ -1130,7 +1403,7 @@ class _RecentTransactions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+      padding: const EdgeInsets.symmetric(horizontal: BrandSpacing.md),
       child: Column(
         children: transactions.asMap().entries.map((entry) {
           final txn = entry.value;
@@ -1151,41 +1424,62 @@ class _TransactionRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDebit = txn.isDebit;
-    final amount = isDebit ? '-${_currencyFmt.format(txn.amount)}' : '+${_currencyFmt.format(txn.amount)}';
-    final color = isDebit ? AppColors.textPrimary : AppColors.success;
+    final amount = isDebit
+        ? '-${_currencyFmt.format(txn.amount)}'
+        : '+${_currencyFmt.format(txn.amount)}';
+    final color = isDebit ? BrandColors.ink : BrandColors.successInk;
 
     return Container(
-      margin: const EdgeInsets.only(bottom: AppSpacing.xs + 2),
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: 12),
+      margin: const EdgeInsets.only(bottom: BrandSpacing.xs + 2),
+      padding: const EdgeInsets.symmetric(
+        horizontal: BrandSpacing.md,
+        vertical: 12,
+      ),
       decoration: BoxDecoration(
-        color: AppColors.surface1,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        border: Border.all(color: AppColors.textMuted.withValues(alpha: 0.08)),
+        color: BrandColors.paper,
+        borderRadius: BorderRadius.circular(BrandRadius.card),
+        border: Border.all(color: BrandColors.mutedInk.withValues(alpha: 0.08)),
       ),
       child: Row(
         children: [
           // Category icon
           Container(
-            width: 40, height: 40,
+            width: 40,
+            height: 40,
             decoration: BoxDecoration(
               color: _categoryColor(txn.category).withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(AppRadius.sm),
+              borderRadius: BorderRadius.circular(BrandRadius.control),
             ),
-            child: Icon(_categoryIcon(txn.category), size: 18, color: _categoryColor(txn.category)),
+            child: Icon(
+              _categoryIcon(txn.category),
+              size: 18,
+              color: _categoryColor(txn.category),
+            ),
           ),
-          const SizedBox(width: AppSpacing.sm),
+          const SizedBox(width: BrandSpacing.sm),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   txn.merchantName ?? txn.description,
-                  style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w500, color: AppColors.textPrimary),
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: BrandColors.ink,
+                  ),
                   overflow: TextOverflow.ellipsis,
                 ),
                 Text(
-                  DateFormat('d MMM · hh:mm a').format(txn.transactionDate.toLocal()),
-                  style: GoogleFonts.inter(fontSize: 11, color: AppColors.textMuted),
+                  DateFormat(
+                    'd MMM · hh:mm a',
+                  ).format(txn.transactionDate.toLocal()),
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 11,
+                    color: BrandColors.mutedInk,
+                  ),
                 ),
               ],
             ),
@@ -1195,14 +1489,21 @@ class _TransactionRow extends StatelessWidget {
             children: [
               Text(
                 amount,
-                style: GoogleFonts.spaceGrotesk(
-                  fontSize: 14, fontWeight: FontWeight.w700, color: color,
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: color,
                 ),
               ),
               if ((txn.rewardEarned ?? 0) > 0)
                 Text(
                   '+${txn.rewardEarned!.toStringAsFixed(0)} pts',
-                  style: GoogleFonts.inter(fontSize: 10, color: AppColors.violet),
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 10,
+                    color: BrandColors.reward,
+                  ),
                 ),
             ],
           ),
@@ -1221,38 +1522,53 @@ class _AddFirstCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+      padding: const EdgeInsets.symmetric(horizontal: BrandSpacing.md),
       child: Container(
-        padding: const EdgeInsets.all(AppSpacing.xl),
+        padding: const EdgeInsets.all(BrandSpacing.xl),
         decoration: BoxDecoration(
-          color: AppColors.surface1,
-          borderRadius: BorderRadius.circular(AppRadius.xl),
-          border: Border.all(color: AppColors.neonCyan.withValues(alpha: 0.2)),
+          color: BrandColors.paper,
+          borderRadius: BorderRadius.circular(BrandRadius.overlay),
+          border: Border.all(
+            color: BrandColors.focusDark.withValues(alpha: 0.2),
+          ),
         ),
         child: Column(
           children: [
             Container(
-              width: 56, height: 56,
+              width: 56,
+              height: 56,
               decoration: BoxDecoration(
-                color: AppColors.neonCyan.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(AppRadius.md),
+                color: BrandColors.focusDark.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(BrandRadius.card),
               ),
-              child: const Icon(Icons.add_card_rounded, size: 28, color: AppColors.neonCyan),
+              child: const Icon(
+                Icons.add_card_rounded,
+                size: 28,
+                color: BrandColors.focusDark,
+              ),
             ),
-            const SizedBox(height: AppSpacing.md),
+            const SizedBox(height: BrandSpacing.md),
             Text(
               'Add your first card',
-              style: GoogleFonts.spaceGrotesk(
-                fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary,
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: BrandColors.ink,
               ),
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: BrandSpacing.sm),
             Text(
               'Connect your credit cards to see\nspend insights and reward tracking.',
               textAlign: TextAlign.center,
-              style: GoogleFonts.inter(fontSize: 13, color: AppColors.textSecondary, height: 1.5),
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                fontSize: 13,
+                color: BrandColors.mutedInk,
+                height: 1.5,
+              ),
             ),
-            const SizedBox(height: AppSpacing.lg),
+            const SizedBox(height: BrandSpacing.lg),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
@@ -1272,18 +1588,24 @@ class _EmptyTransactions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+      padding: const EdgeInsets.symmetric(horizontal: BrandSpacing.md),
       child: Container(
-        padding: const EdgeInsets.all(AppSpacing.xl),
+        padding: const EdgeInsets.all(BrandSpacing.xl),
         decoration: BoxDecoration(
-          color: AppColors.surface1,
-          borderRadius: BorderRadius.circular(AppRadius.lg),
-          border: Border.all(color: AppColors.textMuted.withValues(alpha: 0.1)),
+          color: BrandColors.paper,
+          borderRadius: BorderRadius.circular(BrandRadius.overlay),
+          border: Border.all(
+            color: BrandColors.mutedInk.withValues(alpha: 0.1),
+          ),
         ),
         child: Center(
           child: Text(
             'No transactions yet this month',
-            style: GoogleFonts.inter(fontSize: 13, color: AppColors.textMuted),
+            style: TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 13,
+              color: BrandColors.mutedInk,
+            ),
           ),
         ),
       ),
@@ -1298,26 +1620,32 @@ class _DashboardSkeleton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.all(AppSpacing.md),
+      padding: const EdgeInsets.all(BrandSpacing.md),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // KPI row skeleton
           Row(
-            children: List.generate(3, (_) => Expanded(
-              child: Padding(
-                padding: const EdgeInsets.only(right: AppSpacing.sm),
-                child: _SkeletonBox(height: 90, radius: AppRadius.lg),
+            children: List.generate(
+              3,
+              (_) => Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(right: BrandSpacing.sm),
+                  child: _SkeletonBox(height: 90, radius: BrandRadius.overlay),
+                ),
               ),
-            )),
+            ),
           ),
-          const SizedBox(height: AppSpacing.lg),
-          _SkeletonBox(height: 200, radius: AppRadius.xl),
-          const SizedBox(height: AppSpacing.lg),
-          ...List.generate(5, (_) => Padding(
-            padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-            child: _SkeletonBox(height: 64, radius: AppRadius.md),
-          )),
+          const SizedBox(height: BrandSpacing.lg),
+          _SkeletonBox(height: 200, radius: BrandRadius.overlay),
+          const SizedBox(height: BrandSpacing.lg),
+          ...List.generate(
+            5,
+            (_) => Padding(
+              padding: const EdgeInsets.only(bottom: BrandSpacing.sm),
+              child: _SkeletonBox(height: 64, radius: BrandRadius.card),
+            ),
+          ),
         ],
       ),
     );
@@ -1333,12 +1661,17 @@ class _SkeletonBox extends StatefulWidget {
   State<_SkeletonBox> createState() => _SkeletonBoxState();
 }
 
-class _SkeletonBoxState extends State<_SkeletonBox> with SingleTickerProviderStateMixin {
-  late final _ctrl = AnimationController(vsync: this, duration: 1200.ms)..repeat(reverse: true);
+class _SkeletonBoxState extends State<_SkeletonBox>
+    with SingleTickerProviderStateMixin {
+  late final _ctrl = AnimationController(vsync: this, duration: 1200.ms)
+    ..repeat(reverse: true);
   late final _anim = CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut);
 
   @override
-  void dispose() { _ctrl.dispose(); super.dispose(); }
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1347,7 +1680,11 @@ class _SkeletonBoxState extends State<_SkeletonBox> with SingleTickerProviderSta
       builder: (_, __) => Container(
         height: widget.height,
         decoration: BoxDecoration(
-          color: Color.lerp(AppColors.surface1, AppColors.surface3, _anim.value),
+          color: Color.lerp(
+            BrandColors.paper,
+            BrandColors.paperDeep,
+            _anim.value,
+          ),
           borderRadius: BorderRadius.circular(widget.radius),
         ),
       ),
@@ -1364,23 +1701,36 @@ class _ErrorState extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.xl),
+        padding: const EdgeInsets.all(BrandSpacing.xl),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.cloud_off_rounded, size: 48, color: AppColors.textMuted),
-            const SizedBox(height: AppSpacing.md),
+            const Icon(
+              Icons.cloud_off_rounded,
+              size: 48,
+              color: BrandColors.mutedInk,
+            ),
+            const SizedBox(height: BrandSpacing.md),
             Text(
               'Couldn\'t load dashboard',
-              style: GoogleFonts.spaceGrotesk(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: BrandColors.ink,
+              ),
             ),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: BrandSpacing.sm),
             Text(
               error.toString(),
               textAlign: TextAlign.center,
-              style: GoogleFonts.inter(fontSize: 12, color: AppColors.textMuted),
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                fontSize: 12,
+                color: BrandColors.mutedInk,
+              ),
             ),
-            const SizedBox(height: AppSpacing.lg),
+            const SizedBox(height: BrandSpacing.lg),
             ElevatedButton.icon(
               onPressed: () => ref.invalidate(dashboardProvider),
               icon: const Icon(Icons.refresh, size: 18),

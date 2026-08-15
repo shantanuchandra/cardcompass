@@ -141,7 +141,9 @@ export const SUPABASE_ANON = ${JSON.stringify(env.SUPABASE_ANON_KEY || '')};
 
   const ext  = path.extname(filePath);
   const mime = MIME[ext] || 'application/octet-stream';
-  res.writeHead(200, { 'Content-Type': mime });
+  const headers = { 'Content-Type': mime };
+  if (publicRoot === appRoot) headers['Cache-Control'] = 'no-store';
+  res.writeHead(200, headers);
   if (req.method === 'HEAD') res.end();
   else fs.createReadStream(realFilePath).pipe(res);
 });

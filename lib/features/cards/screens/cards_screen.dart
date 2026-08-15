@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/theme/brand_tokens.dart';
 import '../../../core/providers/repository_providers.dart';
 import '../../../core/providers/supabase_provider.dart';
 import '../../../shared/models/user_card.dart';
@@ -23,10 +23,16 @@ class CardsScreen extends ConsumerWidget {
     final cardsAsync = ref.watch(_userCardsProvider);
 
     return Scaffold(
-      backgroundColor: AppColors.surfaceVoid,
+      backgroundColor: BrandColors.paper,
       appBar: AppBar(
-        title: Text('My Cards',
-            style: GoogleFonts.spaceGrotesk(fontSize: 20, fontWeight: FontWeight.w700)),
+        title: Text(
+          'My Cards',
+          style: TextStyle(
+            fontFamily: 'Manrope',
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.add_rounded),
@@ -36,19 +42,28 @@ class CardsScreen extends ConsumerWidget {
         ],
       ),
       body: cardsAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator(color: AppColors.neonCyan)),
-        error: (e, _) => Center(child: Text('Error: $e', style: GoogleFonts.inter(color: AppColors.error))),
+        loading: () => const Center(
+          child: CircularProgressIndicator(color: BrandColors.focusDark),
+        ),
+        error: (e, _) => Center(
+          child: Text(
+            'Error: $e',
+            style: TextStyle(fontFamily: 'Manrope', color: BrandColors.error),
+          ),
+        ),
         data: (cards) => cards.isEmpty
             ? _EmptyCards()
             : RefreshIndicator(
-                color: AppColors.neonCyan,
-                backgroundColor: AppColors.surface1,
+                color: BrandColors.focusDark,
+                backgroundColor: BrandColors.paper,
                 onRefresh: () => ref.refresh(_userCardsProvider.future),
                 child: ListView.separated(
-                  padding: const EdgeInsets.all(AppSpacing.md),
+                  padding: const EdgeInsets.all(BrandSpacing.md),
                   itemCount: cards.length,
-                  separatorBuilder: (_, _a) => const SizedBox(height: AppSpacing.sm),
-                  itemBuilder: (_, i) => _CardListTile(card: cards[i], ref: ref),
+                  separatorBuilder: (_, _a) =>
+                      const SizedBox(height: BrandSpacing.sm),
+                  itemBuilder: (_, i) =>
+                      _CardListTile(card: cards[i], ref: ref),
                 ),
               ),
       ),
@@ -65,51 +80,88 @@ class _CardListTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return InkWell(
       onTap: () => Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => CardDetailScreen(cardId: card.id),
-        ),
+        MaterialPageRoute(builder: (_) => CardDetailScreen(cardId: card.id)),
       ),
-      borderRadius: BorderRadius.circular(AppRadius.lg),
+      borderRadius: BorderRadius.circular(BrandRadius.overlay),
       child: Container(
-      padding: const EdgeInsets.all(AppSpacing.md),
-      decoration: BoxDecoration(
-        color: AppColors.surface1,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
-        border: Border.all(color: AppColors.textMuted.withValues(alpha: 0.12)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 44, height: 44,
-            decoration: BoxDecoration(
-              gradient: AppTheme.cardGradient(card.bankCode),
-              borderRadius: BorderRadius.circular(AppRadius.sm),
-            ),
-            child: const Icon(Icons.credit_card, size: 22, color: Colors.white),
+        padding: const EdgeInsets.all(BrandSpacing.md),
+        decoration: BoxDecoration(
+          color: BrandColors.paper,
+          borderRadius: BorderRadius.circular(BrandRadius.overlay),
+          border: Border.all(
+            color: BrandColors.mutedInk.withValues(alpha: 0.12),
           ),
-          const SizedBox(width: AppSpacing.md),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(card.displayName,
-                    style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
-                Text(card.lastFourDigits != null ? '••••  ${card.lastFourDigits}' : card.bank ?? '',
-                    style: GoogleFonts.inter(fontSize: 12, color: AppColors.textMuted)),
-              ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: BrandColors.paperDeep,
+                borderRadius: BorderRadius.circular(BrandRadius.control),
+                border: Border(
+                  left: BorderSide(
+                    color: AppTheme.issuerColor(card.bankCode),
+                    width: 4,
+                  ),
+                ),
+              ),
+              child: const Icon(
+                Icons.credit_card,
+                size: 22,
+                color: BrandColors.ink,
+              ),
             ),
-          ),
-          if (card.creditLimit != null)
-            Text(
-              NumberFormat.compactCurrency(locale: 'en_IN', symbol: '₹', decimalDigits: 0)
-                  .format(card.creditLimit),
-              style: GoogleFonts.spaceGrotesk(
-                  fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+            const SizedBox(width: BrandSpacing.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    card.displayName,
+                    style: TextStyle(
+                      fontFamily: 'Manrope',
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: BrandColors.ink,
+                    ),
+                  ),
+                  Text(
+                    card.lastFourDigits != null
+                        ? '••••  ${card.lastFourDigits}'
+                        : card.bank ?? '',
+                    style: TextStyle(
+                      fontFamily: 'Manrope',
+                      fontSize: 12,
+                      color: BrandColors.mutedInk,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          const SizedBox(width: AppSpacing.xs),
-          const Icon(Icons.chevron_right_rounded, size: 18, color: AppColors.textMuted),
-        ],
-      ),
+            if (card.creditLimit != null)
+              Text(
+                NumberFormat.compactCurrency(
+                  locale: 'en_IN',
+                  symbol: '₹',
+                  decimalDigits: 0,
+                ).format(card.creditLimit),
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: BrandColors.ink,
+                ),
+              ),
+            const SizedBox(width: BrandSpacing.xs),
+            const Icon(
+              Icons.chevron_right_rounded,
+              size: 18,
+              color: BrandColors.mutedInk,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -120,20 +172,37 @@ class _EmptyCards extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.xl),
+        padding: const EdgeInsets.all(BrandSpacing.xl),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.credit_card_off_rounded, size: 56, color: AppColors.textMuted),
-            const SizedBox(height: AppSpacing.md),
-            Text('No cards yet',
-                style: GoogleFonts.spaceGrotesk(
-                    fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
-            const SizedBox(height: AppSpacing.sm),
-            Text('Add your credit cards to track spend,\nrewards, and upcoming bills.',
-                textAlign: TextAlign.center,
-                style: GoogleFonts.inter(fontSize: 14, color: AppColors.textSecondary, height: 1.5)),
-            const SizedBox(height: AppSpacing.xl),
+            const Icon(
+              Icons.credit_card_off_rounded,
+              size: 56,
+              color: BrandColors.mutedInk,
+            ),
+            const SizedBox(height: BrandSpacing.md),
+            Text(
+              'No cards yet',
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+                color: BrandColors.ink,
+              ),
+            ),
+            const SizedBox(height: BrandSpacing.sm),
+            Text(
+              'Add your credit cards to track spend,\nrewards, and upcoming bills.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                fontSize: 14,
+                color: BrandColors.mutedInk,
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: BrandSpacing.xl),
             ElevatedButton.icon(
               onPressed: () => context.go('/app/cards/add'),
               icon: const Icon(Icons.add, size: 18),

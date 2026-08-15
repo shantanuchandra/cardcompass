@@ -1,10 +1,9 @@
 // lib/features/benefits/movie_deals/screens/movie_deals_results.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_fonts/google_fonts.dart';
 import '../../../../core/providers/repository_providers.dart';
 import '../../../../core/providers/supabase_provider.dart';
-import '../../../../core/theme/app_theme.dart';
+import '../../../../core/theme/brand_tokens.dart';
 import '../domain/movie_deal_candidate.dart';
 import '../domain/movie_deal_rule.dart';
 import '../domain/movie_ticket_request.dart';
@@ -24,37 +23,53 @@ class MovieDealsResults extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(movieDealsSearchProvider(request));
     return async.when(
-      data: (recommendation) => _buildRecommendation(context, ref, recommendation),
+      data: (recommendation) =>
+          _buildRecommendation(context, ref, recommendation),
       loading: () => const Center(
-        child: Padding(padding: EdgeInsets.all(32.0), child: CircularProgressIndicator()),
+        child: Padding(
+          padding: EdgeInsets.all(32.0),
+          child: CircularProgressIndicator(),
+        ),
       ),
       error: (error, stack) => _buildRetryCard(context, ref),
     );
   }
 
   Widget _buildRecommendation(
-      BuildContext context, WidgetRef ref, MovieDealsRecommendation recommendation) {
+    BuildContext context,
+    WidgetRef ref,
+    MovieDealsRecommendation recommendation,
+  ) {
     if (recommendation.status == MovieDealsStatus.unavailable) {
       return _buildRetryCard(context, ref);
     }
 
-    final rewardMultiplierCandidates =
-        recommendation.candidates.where((c) => c.rule.offerType == MovieDealOfferType.rewardMultiplier).toList();
+    final rewardMultiplierCandidates = recommendation.candidates
+        .where((c) => c.rule.offerType == MovieDealOfferType.rewardMultiplier)
+        .toList();
 
     final hasAnyGuaranteed =
-        recommendation.bestGuaranteedOwned != null || recommendation.bestGuaranteedOverall != null;
+        recommendation.bestGuaranteedOwned != null ||
+        recommendation.bestGuaranteedOverall != null;
     final hasAnyPotential =
-        recommendation.bestPotentialOwned != null || recommendation.bestPotentialOverall != null;
+        recommendation.bestPotentialOwned != null ||
+        recommendation.bestPotentialOverall != null;
 
-    if (!hasAnyGuaranteed && !hasAnyPotential && rewardMultiplierCandidates.isEmpty) {
+    if (!hasAnyGuaranteed &&
+        !hasAnyPotential &&
+        rewardMultiplierCandidates.isEmpty) {
       return _buildNoDealCard(context);
     }
 
-    final ownedWinner = recommendation.bestGuaranteedOwned ?? recommendation.bestPotentialOwned;
-    final overallWinner = recommendation.bestGuaranteedOverall ?? recommendation.bestPotentialOverall;
+    final ownedWinner =
+        recommendation.bestGuaranteedOwned ?? recommendation.bestPotentialOwned;
+    final overallWinner =
+        recommendation.bestGuaranteedOverall ??
+        recommendation.bestPotentialOverall;
     final ownedIsGuaranteed = recommendation.bestGuaranteedOwned != null;
     final overallIsGuaranteed = recommendation.bestGuaranteedOverall != null;
-    final sharedWinner = ownedWinner != null &&
+    final sharedWinner =
+        ownedWinner != null &&
         overallWinner != null &&
         ownedWinner.cardId == overallWinner.cardId &&
         ownedWinner.benefitId == overallWinner.benefitId &&
@@ -62,7 +77,8 @@ class MovieDealsResults extends ConsumerWidget {
 
     Future<void> Function()? confirmCallbackFor(MovieDealCandidate candidate) {
       if (request.preferredPlatform == null) return null;
-      if (candidate.platformConfidence == MovieDealPlatformConfidence.explicit) return null;
+      if (candidate.platformConfidence == MovieDealPlatformConfidence.explicit)
+        return null;
       // Read once, not force-unwrapped: the button that invokes this closure
       // fires later than the search itself, so the session could have
       // expired or the user signed out in between — falling back to "no
@@ -70,7 +86,9 @@ class MovieDealsResults extends ConsumerWidget {
       // (preferredPlatform, platformConfidence) rather than crashing.
       final userId = ref.read(currentUserProvider)?.id;
       if (userId == null) return null;
-      return () => ref.read(movieDealsRepositoryProvider).confirmPlatform(
+      return () => ref
+          .read(movieDealsRepositoryProvider)
+          .confirmPlatform(
             benefitId: candidate.benefitId,
             platform: request.preferredPlatform!,
             userId: userId,
@@ -82,7 +100,9 @@ class MovieDealsResults extends ConsumerWidget {
       children: [
         if (ownedWinner != null)
           _CandidatePanel(
-            heading: ownedIsGuaranteed ? 'BEST CARD YOU OWN' : 'POTENTIAL — YOU OWN THIS CARD',
+            heading: ownedIsGuaranteed
+                ? 'BEST CARD YOU OWN'
+                : 'POTENTIAL — YOU OWN THIS CARD',
             candidate: ownedWinner,
             isPotential: !ownedIsGuaranteed,
             trailingLabel: sharedWinner ? 'Also best overall' : null,
@@ -91,7 +111,9 @@ class MovieDealsResults extends ConsumerWidget {
         if (ownedWinner != null && !sharedWinner) const SizedBox(height: 16),
         if (overallWinner != null && !sharedWinner)
           _CandidatePanel(
-            heading: overallIsGuaranteed ? 'BEST CARD OVERALL' : 'POTENTIAL — BEST OVERALL',
+            heading: overallIsGuaranteed
+                ? 'BEST CARD OVERALL'
+                : 'POTENTIAL — BEST OVERALL',
             candidate: overallWinner,
             isOwned: false,
             isPotential: !overallIsGuaranteed,
@@ -111,31 +133,51 @@ class MovieDealsResults extends ConsumerWidget {
       children: [
         Text(
           'REWARD RATE — NOT A DIRECT DISCOUNT',
-          style: GoogleFonts.spaceGrotesk(fontWeight: FontWeight.bold, color: AppColors.textMuted, fontSize: 10, letterSpacing: 0.5),
+          style: TextStyle(
+            fontFamily: 'Manrope',
+            fontWeight: FontWeight.bold,
+            color: BrandColors.mutedInk,
+            fontSize: 10,
+            letterSpacing: 0.5,
+          ),
         ),
         const SizedBox(height: 8),
-        ...candidates.map((c) => Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppColors.surface1,
-                  borderRadius: BorderRadius.circular(AppRadius.md),
-                  border: Border.all(color: AppColors.surface3),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '${c.rule.cardName ?? c.title} — earns via this card\'s points program',
-                      style: GoogleFonts.spaceGrotesk(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 13),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(c.explanation, style: GoogleFonts.inter(color: AppColors.textSecondary, fontSize: 12)),
-                  ],
-                ),
+        ...candidates.map(
+          (c) => Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: BrandColors.paper,
+                borderRadius: BorderRadius.circular(BrandRadius.card),
+                border: Border.all(color: BrandColors.paperDeep),
               ),
-            )),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${c.rule.cardName ?? c.title} — earns via this card\'s points program',
+                    style: TextStyle(
+                      fontFamily: 'Manrope',
+                      color: BrandColors.ink,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    c.explanation,
+                    style: TextStyle(
+                      fontFamily: 'Manrope',
+                      color: BrandColors.mutedInk,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ],
     );
   }
@@ -144,13 +186,13 @@ class MovieDealsResults extends ConsumerWidget {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: AppColors.surface1,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
-        border: Border.all(color: AppColors.surface3),
+        color: BrandColors.paper,
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
+        border: Border.all(color: BrandColors.paperDeep),
       ),
       child: Text(
         'No verified eligible deal for this search. Try a different platform or ticket count.',
-        style: GoogleFonts.inter(color: AppColors.textSecondary),
+        style: TextStyle(fontFamily: 'Manrope', color: BrandColors.mutedInk),
       ),
     );
   }
@@ -159,16 +201,20 @@ class MovieDealsResults extends ConsumerWidget {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: AppColors.surface1,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
-        border: Border.all(color: AppColors.error.withValues(alpha: 0.3)),
+        color: BrandColors.paper,
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
+        border: Border.all(color: BrandColors.error.withValues(alpha: 0.3)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             'Movie deals data is unavailable right now.',
-            style: GoogleFonts.inter(color: AppColors.textPrimary, fontWeight: FontWeight.w600),
+            style: TextStyle(
+              fontFamily: 'Manrope',
+              color: BrandColors.ink,
+              fontWeight: FontWeight.w600,
+            ),
           ),
           const SizedBox(height: 12),
           ElevatedButton(
@@ -210,26 +256,39 @@ class _CandidatePanelState extends State<_CandidatePanel> {
     final candidate = widget.candidate;
     final owned = widget.isOwned ?? candidate.isOwned;
     final borderColor = widget.isPotential
-        ? AppColors.textMuted.withValues(alpha: 0.3)
-        : (owned ? AppColors.neonCyan.withValues(alpha: 0.25) : AppColors.violet.withValues(alpha: 0.25));
+        ? BrandColors.mutedInk.withValues(alpha: 0.3)
+        : (owned
+              ? BrandColors.focusDark.withValues(alpha: 0.25)
+              : BrandColors.reward.withValues(alpha: 0.25));
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.surface1,
+        color: BrandColors.paper,
         border: Border.all(color: borderColor, width: 1.2),
-        borderRadius: BorderRadius.circular(AppRadius.lg),
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             widget.heading,
-            style: GoogleFonts.spaceGrotesk(fontWeight: FontWeight.bold, color: AppColors.textSecondary, fontSize: 11, letterSpacing: 0.5),
+            style: TextStyle(
+              fontFamily: 'Manrope',
+              fontWeight: FontWeight.bold,
+              color: BrandColors.mutedInk,
+              fontSize: 11,
+              letterSpacing: 0.5,
+            ),
           ),
           const SizedBox(height: 8),
           Text(
             candidate.rule.cardName ?? candidate.title,
-            style: GoogleFonts.spaceGrotesk(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 14),
+            style: TextStyle(
+              fontFamily: 'Manrope',
+              color: BrandColors.ink,
+              fontWeight: FontWeight.bold,
+              fontSize: 14,
+            ),
           ),
           const SizedBox(height: 8),
           if (widget.isPotential)
@@ -238,39 +297,68 @@ class _CandidatePanelState extends State<_CandidatePanel> {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: AppColors.warning.withValues(alpha: 0.15),
+                  color: BrandColors.rewardInk.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
                   'Potential — remaining balance not verified',
-                  style: GoogleFonts.inter(fontSize: 10, color: AppColors.warning),
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 10,
+                    color: BrandColors.rewardInk,
+                  ),
                 ),
               ),
             ),
-          if (candidate.platformConfidence != MovieDealPlatformConfidence.explicit)
+          if (candidate.platformConfidence !=
+              MovieDealPlatformConfidence.explicit)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: AppColors.textMuted.withValues(alpha: 0.15),
+                  color: BrandColors.mutedInk.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
                   'Platform not confirmed for this offer',
-                  style: GoogleFonts.inter(fontSize: 10, color: AppColors.textSecondary),
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 10,
+                    color: BrandColors.mutedInk,
+                  ),
                 ),
               ),
             ),
-          Text(candidate.explanation, style: GoogleFonts.inter(color: AppColors.textSecondary, fontSize: 12)),
+          Text(
+            candidate.explanation,
+            style: TextStyle(
+              fontFamily: 'Manrope',
+              color: BrandColors.mutedInk,
+              fontSize: 12,
+            ),
+          ),
           const SizedBox(height: 8),
           Text(
             '₹${candidate.grossAmount.toStringAsFixed(0)} → ₹${candidate.finalAmount.toStringAsFixed(0)} · Save ₹${candidate.savings.toStringAsFixed(0)}',
-            style: GoogleFonts.spaceGrotesk(fontWeight: FontWeight.bold, color: AppColors.neonCyan, fontSize: 13),
+            style: TextStyle(
+              fontFamily: 'Manrope',
+              fontWeight: FontWeight.bold,
+              color: BrandColors.focusDark,
+              fontSize: 13,
+            ),
           ),
           if (widget.trailingLabel != null) ...[
             const SizedBox(height: 8),
-            Text(widget.trailingLabel!, style: GoogleFonts.inter(fontSize: 11, color: AppColors.textMuted, fontStyle: FontStyle.italic)),
+            Text(
+              widget.trailingLabel!,
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                fontSize: 11,
+                color: BrandColors.mutedInk,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
           ],
           if (widget.onConfirmPlatform != null && !_confirmed) ...[
             const SizedBox(height: 12),
@@ -284,7 +372,14 @@ class _CandidatePanelState extends State<_CandidatePanel> {
           ],
           if (_confirmed) ...[
             const SizedBox(height: 12),
-            Text('Thanks — this helps other users.', style: GoogleFonts.inter(fontSize: 11, color: AppColors.neonCyan)),
+            Text(
+              'Thanks — this helps other users.',
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                fontSize: 11,
+                color: BrandColors.focusDark,
+              ),
+            ),
           ],
         ],
       ),

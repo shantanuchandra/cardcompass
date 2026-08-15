@@ -72,3 +72,4 @@ android/
 ios/
 .playwright-mcp/*
 .superpowers/brainstorm/
+.worktrees/

@@ -1,9 +1,9 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/theme/brand_tokens.dart';
 import '../../../core/theme/category_display.dart';
 import '../../../core/providers/repository_providers.dart';
 import '../../../core/providers/supabase_provider.dart';
@@ -13,7 +13,10 @@ import '../../../shared/models/statement.dart';
 
 // ─── providers ───────────────────────────────────────────────────────────────
 
-final _cardDetailProvider = FutureProvider.family<UserCard?, String>((ref, cardId) async {
+final _cardDetailProvider = FutureProvider.family<UserCard?, String>((
+  ref,
+  cardId,
+) async {
   final user = ref.watch(currentUserProvider);
   if (user == null) return null;
   final cards = await ref.read(cardsRepositoryProvider).getUserCards(user.id);
@@ -26,37 +29,45 @@ final _cardDetailProvider = FutureProvider.family<UserCard?, String>((ref, cardI
 
 final _cardTransactionsProvider =
     FutureProvider.family<List<Transaction>, String>((ref, cardId) async {
-  final user = ref.watch(currentUserProvider);
-  if (user == null) return [];
-  return ref.read(transactionsRepositoryProvider).getTransactions(
-        userId: user.id,
-        userCardId: cardId,
-        limit: 15,
-      );
-});
+      final user = ref.watch(currentUserProvider);
+      if (user == null) return [];
+      return ref
+          .read(transactionsRepositoryProvider)
+          .getTransactions(userId: user.id, userCardId: cardId, limit: 15);
+    });
 
-final _cardStatementProvider =
-    FutureProvider.family<Statement?, String>((ref, cardId) async {
+final _cardStatementProvider = FutureProvider.family<Statement?, String>((
+  ref,
+  cardId,
+) async {
   final user = ref.watch(currentUserProvider);
   if (user == null) return null;
-  final map = await ref.read(statementsRepositoryProvider).getLatestStatementPerCard(user.id);
+  final map = await ref
+      .read(statementsRepositoryProvider)
+      .getLatestStatementPerCard(user.id);
   return map[cardId];
 });
 
-final _cardMonthSpendProvider =
-    FutureProvider.family<double, String>((ref, cardId) async {
+final _cardMonthSpendProvider = FutureProvider.family<double, String>((
+  ref,
+  cardId,
+) async {
   final user = ref.watch(currentUserProvider);
   if (user == null) return 0;
   final now = DateTime.now();
   final start = DateTime(now.year, now.month, 1);
-  final txns = await ref.read(transactionsRepositoryProvider).getTransactions(
+  final txns = await ref
+      .read(transactionsRepositoryProvider)
+      .getTransactions(
         userId: user.id,
         userCardId: cardId,
         from: start,
         to: now,
         limit: 500,
       );
-  return txns.where((t) => t.isDebit).fold<double>(0.0, (sum, t) => sum + t.amount);
+  return txns
+      .where((t) => t.isDebit)
+      .fold<double>(0.0, (sum, t) => sum + t.amount);
 });
 
 // ─── screen ──────────────────────────────────────────────────────────────────
@@ -70,26 +81,45 @@ class CardDetailScreen extends ConsumerWidget {
     final cardAsync = ref.watch(_cardDetailProvider(cardId));
 
     return Scaffold(
-      backgroundColor: AppColors.surfaceVoid,
+      backgroundColor: BrandColors.paper,
       appBar: AppBar(
-        backgroundColor: AppColors.surfaceVoid,
+        backgroundColor: BrandColors.paper,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_rounded),
           onPressed: () => Navigator.of(context).pop(),
         ),
         title: cardAsync.maybeWhen(
-          data: (c) => Text(c?.displayName ?? 'Card Detail',
-              style: GoogleFonts.spaceGrotesk(fontSize: 18, fontWeight: FontWeight.w700)),
+          data: (c) => Text(
+            c?.displayName ?? 'Card Detail',
+            style: TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
           orElse: () => const SizedBox.shrink(),
         ),
       ),
       body: cardAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator(color: AppColors.neonCyan)),
-        error: (e, _) => Center(child: Text('Error: $e', style: GoogleFonts.inter(color: AppColors.error))),
+        loading: () => const Center(
+          child: CircularProgressIndicator(color: BrandColors.focusDark),
+        ),
+        error: (e, _) => Center(
+          child: Text(
+            'Error: $e',
+            style: TextStyle(fontFamily: 'Manrope', color: BrandColors.error),
+          ),
+        ),
         data: (card) {
           if (card == null) {
             return Center(
-              child: Text('Card not found', style: GoogleFonts.inter(color: AppColors.textMuted)),
+              child: Text(
+                'Card not found',
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  color: BrandColors.mutedInk,
+                ),
+              ),
             );
           }
           return _CardDetailBody(card: card, cardId: cardId);
@@ -111,8 +141,8 @@ class _CardDetailBody extends ConsumerWidget {
     final spendAsync = ref.watch(_cardMonthSpendProvider(cardId));
 
     return RefreshIndicator(
-      color: AppColors.neonCyan,
-      backgroundColor: AppColors.surface1,
+      color: BrandColors.focusDark,
+      backgroundColor: BrandColors.paper,
       onRefresh: () async {
         ref.invalidate(_cardDetailProvider(cardId));
         ref.invalidate(_cardTransactionsProvider(cardId));
@@ -120,7 +150,7 @@ class _CardDetailBody extends ConsumerWidget {
         ref.invalidate(_cardMonthSpendProvider(cardId));
       },
       child: ListView(
-        padding: const EdgeInsets.all(AppSpacing.md),
+        padding: const EdgeInsets.all(BrandSpacing.md),
         children: [
           // Credit card visual — cap at 480px so it doesn't stretch full-width on desktop
           Center(
@@ -129,7 +159,7 @@ class _CardDetailBody extends ConsumerWidget {
               child: _CreditCardWidget(card: card),
             ),
           ),
-          const SizedBox(height: AppSpacing.lg),
+          const SizedBox(height: BrandSpacing.lg),
 
           // Stats row: utilization + month spend
           Row(
@@ -139,7 +169,9 @@ class _CardDetailBody extends ConsumerWidget {
                   loading: () => _StatCardSkeleton(),
                   error: (_, _e) => _StatCard(label: 'Utilization', value: '–'),
                   data: (stmt) {
-                    if (stmt == null || card.creditLimit == null || card.creditLimit! <= 0) {
+                    if (stmt == null ||
+                        card.creditLimit == null ||
+                        card.creditLimit! <= 0) {
                       return _StatCard(label: 'Utilization', value: '–');
                     }
                     final pct = (stmt.closingBalance / card.creditLimit!) * 100;
@@ -151,7 +183,7 @@ class _CardDetailBody extends ConsumerWidget {
                   },
                 ),
               ),
-              const SizedBox(width: AppSpacing.sm),
+              const SizedBox(width: BrandSpacing.sm),
               Expanded(
                 child: spendAsync.when(
                   loading: () => _StatCardSkeleton(),
@@ -160,35 +192,42 @@ class _CardDetailBody extends ConsumerWidget {
                     label: 'This Month',
                     value: _fmt(spend),
                     icon: Icons.trending_up_rounded,
-                    iconColor: AppColors.neonCyan,
+                    iconColor: BrandColors.focusDark,
                   ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: AppSpacing.md),
+          const SizedBox(height: BrandSpacing.md),
 
           // Bill panel
           stmtAsync.when(
             loading: () => _BillPanelSkeleton(),
             error: (_, _e) => const SizedBox.shrink(),
-            data: (stmt) => stmt != null ? _BillPanel(stmt: stmt) : const SizedBox.shrink(),
+            data: (stmt) =>
+                stmt != null ? _BillPanel(stmt: stmt) : const SizedBox.shrink(),
           ),
-          const SizedBox(height: AppSpacing.md),
+          const SizedBox(height: BrandSpacing.md),
 
           // Recent transactions
           _SectionHeader(title: 'Recent Transactions'),
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: BrandSpacing.sm),
           txnsAsync.when(
             loading: () => const Center(
               child: Padding(
-                padding: EdgeInsets.all(AppSpacing.lg),
-                child: CircularProgressIndicator(color: AppColors.neonCyan),
+                padding: EdgeInsets.all(BrandSpacing.lg),
+                child: CircularProgressIndicator(color: BrandColors.focusDark),
               ),
             ),
             error: (e, _) => Center(
-              child: Text('Could not load transactions',
-                  style: GoogleFonts.inter(color: AppColors.textMuted, fontSize: 13)),
+              child: Text(
+                'Could not load transactions',
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  color: BrandColors.mutedInk,
+                  fontSize: 13,
+                ),
+              ),
             ),
             data: (txns) {
               if (txns.isEmpty) {
@@ -199,14 +238,17 @@ class _CardDetailBody extends ConsumerWidget {
               );
             },
           ),
-          const SizedBox(height: AppSpacing.xxl),
+          const SizedBox(height: BrandSpacing.xxl),
         ],
       ),
     );
   }
 
-  static String _fmt(double v) =>
-      NumberFormat.compactCurrency(locale: 'en_IN', symbol: '₹', decimalDigits: 0).format(v);
+  static String _fmt(double v) => NumberFormat.compactCurrency(
+    locale: 'en_IN',
+    symbol: '₹',
+    decimalDigits: 0,
+  ).format(v);
 }
 
 // ─── credit card visual ───────────────────────────────────────────────────────
@@ -217,43 +259,23 @@ class _CreditCardWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final gradient = AppTheme.cardGradient(card.bankCode);
-
     return AspectRatio(
       aspectRatio: 1.586, // standard credit card ratio
       child: Container(
         decoration: BoxDecoration(
-          gradient: gradient,
-          borderRadius: BorderRadius.circular(AppRadius.lg),
-          border: Border.all(
-            color: Colors.white.withValues(alpha: 0.12),
-            width: 1,
+          color: BrandColors.paperDeep,
+          borderRadius: BorderRadius.circular(BrandRadius.overlay),
+          border: Border(
+            left: BorderSide(
+              color: AppTheme.issuerColor(card.bankCode),
+              width: 7,
+            ),
           ),
-          boxShadow: [
-            BoxShadow(
-              color: gradient.colors.last.withValues(alpha: 0.5),
-              blurRadius: 24,
-              spreadRadius: 2,
-              offset: const Offset(0, 8),
-            ),
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.4),
-              blurRadius: 12,
-              offset: const Offset(0, 4),
-            ),
-          ],
         ),
         child: Stack(
           children: [
-            // Subtle circuit pattern overlay
-            Positioned.fill(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(AppRadius.lg),
-                child: CustomPaint(painter: _CircuitPainter()),
-              ),
-            ),
             Padding(
-              padding: const EdgeInsets.all(AppSpacing.md),
+              padding: const EdgeInsets.all(BrandSpacing.md),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -263,10 +285,11 @@ class _CreditCardWidget extends StatelessWidget {
                     children: [
                       Text(
                         card.bank ?? '',
-                        style: GoogleFonts.spaceGrotesk(
+                        style: TextStyle(
+                          fontFamily: 'Manrope',
                           fontSize: 14,
                           fontWeight: FontWeight.w700,
-                          color: Colors.white,
+                          color: BrandColors.ink,
                           letterSpacing: 0.5,
                         ),
                       ),
@@ -279,14 +302,15 @@ class _CreditCardWidget extends StatelessWidget {
                     card.maskedNumber.isNotEmpty
                         ? card.maskedNumber
                         : '••••  ••••  ••••  ••••',
-                    style: GoogleFonts.spaceGrotesk(
+                    style: TextStyle(
+                      fontFamily: 'Manrope',
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
-                      color: Colors.white,
+                      color: BrandColors.ink,
                       letterSpacing: 2,
                     ),
                   ),
-                  const SizedBox(height: AppSpacing.md),
+                  const SizedBox(height: BrandSpacing.md),
                   // Bottom row: name + credit limit
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -295,17 +319,22 @@ class _CreditCardWidget extends StatelessWidget {
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('CARD HOLDER',
-                              style: GoogleFonts.inter(
-                                  fontSize: 9,
-                                  color: Colors.white70,
-                                  letterSpacing: 1)),
+                          Text(
+                            'CARD HOLDER',
+                            style: TextStyle(
+                              fontFamily: 'Manrope',
+                              fontSize: 9,
+                              color: BrandColors.mutedInk,
+                              letterSpacing: 1,
+                            ),
+                          ),
                           Text(
                             card.cardHolderName ?? 'YOUR NAME',
-                            style: GoogleFonts.spaceGrotesk(
+                            style: TextStyle(
+                              fontFamily: 'Manrope',
                               fontSize: 13,
                               fontWeight: FontWeight.w600,
-                              color: Colors.white,
+                              color: BrandColors.ink,
                             ),
                           ),
                         ],
@@ -314,19 +343,26 @@ class _CreditCardWidget extends StatelessWidget {
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
-                            Text('LIMIT',
-                                style: GoogleFonts.inter(
-                                    fontSize: 9,
-                                    color: Colors.white70,
-                                    letterSpacing: 1)),
+                            Text(
+                              'LIMIT',
+                              style: TextStyle(
+                                fontFamily: 'Manrope',
+                                fontSize: 9,
+                                color: BrandColors.mutedInk,
+                                letterSpacing: 1,
+                              ),
+                            ),
                             Text(
                               NumberFormat.compactCurrency(
-                                      locale: 'en_IN', symbol: '₹', decimalDigits: 0)
-                                  .format(card.creditLimit),
-                              style: GoogleFonts.spaceGrotesk(
+                                locale: 'en_IN',
+                                symbol: '₹',
+                                decimalDigits: 0,
+                              ).format(card.creditLimit),
+                              style: TextStyle(
+                                fontFamily: 'Manrope',
                                 fontSize: 13,
                                 fontWeight: FontWeight.w600,
-                                color: Colors.white,
+                                color: BrandColors.ink,
                               ),
                             ),
                           ],
@@ -351,9 +387,16 @@ class _NetworkBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final n = (network ?? '').toLowerCase();
     if (n == 'visa') {
-      return Text('VISA',
-          style: GoogleFonts.spaceGrotesk(
-              fontSize: 18, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: 1));
+      return Text(
+        'VISA',
+        style: TextStyle(
+          fontFamily: 'Manrope',
+          fontSize: 18,
+          fontWeight: FontWeight.w800,
+          color: Colors.white,
+          letterSpacing: 1,
+        ),
+      );
     }
     if (n == 'mastercard') {
       return SizedBox(
@@ -364,66 +407,53 @@ class _NetworkBadge extends StatelessWidget {
             Positioned(
               left: 0,
               child: Container(
-                  width: 24,
-                  height: 24,
-                  decoration: const BoxDecoration(
-                      color: Color(0xFFEB001B), shape: BoxShape.circle)),
+                width: 24,
+                height: 24,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFEB001B),
+                  shape: BoxShape.circle,
+                ),
+              ),
             ),
             Positioned(
               right: 0,
               child: Container(
-                  width: 24,
-                  height: 24,
-                  decoration:
-                      BoxDecoration(color: Colors.orange.withValues(alpha: 0.85), shape: BoxShape.circle)),
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.85),
+                  shape: BoxShape.circle,
+                ),
+              ),
             ),
           ],
         ),
       );
     }
     if (n == 'rupay') {
-      return Text('RuPay',
-          style: GoogleFonts.spaceGrotesk(
-              fontSize: 14, fontWeight: FontWeight.w700, color: Colors.white));
+      return Text(
+        'RuPay',
+        style: TextStyle(
+          fontFamily: 'Manrope',
+          fontSize: 14,
+          fontWeight: FontWeight.w700,
+          color: Colors.white,
+        ),
+      );
     }
     if (n == 'amex') {
-      return Text('AMEX',
-          style: GoogleFonts.spaceGrotesk(
-              fontSize: 14, fontWeight: FontWeight.w700, color: Colors.white));
+      return Text(
+        'AMEX',
+        style: TextStyle(
+          fontFamily: 'Manrope',
+          fontSize: 14,
+          fontWeight: FontWeight.w700,
+          color: Colors.white,
+        ),
+      );
     }
     return const SizedBox.shrink();
   }
-}
-
-// Subtle geometric circuit lines painted on the card background
-class _CircuitPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.06)
-      ..strokeWidth = 1
-      ..style = PaintingStyle.stroke;
-
-    final path = Path();
-    path.moveTo(size.width * 0.6, 0);
-    path.lineTo(size.width * 0.6, size.height * 0.3);
-    path.lineTo(size.width * 0.85, size.height * 0.3);
-    path.moveTo(size.width * 0.85, size.height * 0.3);
-    path.lineTo(size.width * 0.85, size.height * 0.6);
-    path.moveTo(size.width * 0.6, size.height * 0.3);
-    path.lineTo(size.width * 0.45, size.height * 0.3);
-    path.lineTo(size.width * 0.45, size.height * 0.7);
-    path.lineTo(size.width * 0.7, size.height * 0.7);
-    canvas.drawPath(path, paint);
-
-    canvas.drawCircle(
-        Offset(size.width * 0.85, size.height * 0.6), 4, paint..style = PaintingStyle.fill);
-    canvas.drawCircle(
-        Offset(size.width * 0.45, size.height * 0.7), 3, paint);
-  }
-
-  @override
-  bool shouldRepaint(_CircuitPainter _) => false;
 }
 
 // ─── utilization card ─────────────────────────────────────────────────────────
@@ -432,29 +462,40 @@ class _UtilizationCard extends StatelessWidget {
   final double used;
   final double limit;
   final double pct;
-  const _UtilizationCard({required this.used, required this.limit, required this.pct});
+  const _UtilizationCard({
+    required this.used,
+    required this.limit,
+    required this.pct,
+  });
 
   @override
   Widget build(BuildContext context) {
     final color = pct > 80
-        ? AppColors.error
+        ? BrandColors.error
         : pct > 50
-            ? AppColors.warning
-            : AppColors.success;
+        ? BrandColors.rewardInk
+        : BrandColors.successInk;
 
     return Container(
-      padding: const EdgeInsets.all(AppSpacing.md),
+      padding: const EdgeInsets.all(BrandSpacing.md),
       decoration: BoxDecoration(
-        color: AppColors.surface1,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
-        border: Border.all(color: AppColors.textMuted.withValues(alpha: 0.12)),
+        color: BrandColors.paper,
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
+        border: Border.all(color: BrandColors.mutedInk.withValues(alpha: 0.12)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Utilization',
-              style: GoogleFonts.inter(fontSize: 11, color: AppColors.textMuted, fontWeight: FontWeight.w500)),
-          const SizedBox(height: AppSpacing.sm),
+          Text(
+            'Utilization',
+            style: TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 11,
+              color: BrandColors.mutedInk,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: BrandSpacing.sm),
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
@@ -466,26 +507,40 @@ class _UtilizationCard extends StatelessWidget {
                   child: Center(
                     child: Text(
                       '${pct.round()}%',
-                      style: GoogleFonts.spaceGrotesk(
-                          fontSize: 9, fontWeight: FontWeight.w700, color: color),
+                      style: TextStyle(
+                        fontFamily: 'Manrope',
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
+                        color: color,
+                      ),
                     ),
                   ),
                 ),
               ),
-              const SizedBox(width: AppSpacing.sm),
+              const SizedBox(width: BrandSpacing.sm),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       _fmt(used),
-                      style: GoogleFonts.spaceGrotesk(
-                          fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                      style: TextStyle(
+                        fontFamily: 'Manrope',
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: BrandColors.ink,
+                      ),
                       overflow: TextOverflow.ellipsis,
                     ),
-                    Text('of ${_fmt(limit)}',
-                        style: GoogleFonts.inter(fontSize: 10, color: AppColors.textMuted),
-                        overflow: TextOverflow.ellipsis),
+                    Text(
+                      'of ${_fmt(limit)}',
+                      style: TextStyle(
+                        fontFamily: 'Manrope',
+                        fontSize: 10,
+                        color: BrandColors.mutedInk,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ],
                 ),
               ),
@@ -496,8 +551,11 @@ class _UtilizationCard extends StatelessWidget {
     );
   }
 
-  static String _fmt(double v) =>
-      NumberFormat.compactCurrency(locale: 'en_IN', symbol: '₹', decimalDigits: 0).format(v);
+  static String _fmt(double v) => NumberFormat.compactCurrency(
+    locale: 'en_IN',
+    symbol: '₹',
+    decimalDigits: 0,
+  ).format(v);
 }
 
 class _RingPainter extends CustomPainter {
@@ -513,21 +571,29 @@ class _RingPainter extends CustomPainter {
     final rect = Rect.fromCircle(center: Offset(cx, cy), radius: r);
 
     canvas.drawArc(
-        rect, -math.pi / 2, 2 * math.pi, false,
-        Paint()
-          ..color = AppColors.surface3
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 5
-          ..strokeCap = StrokeCap.round);
+      rect,
+      -math.pi / 2,
+      2 * math.pi,
+      false,
+      Paint()
+        ..color = BrandColors.paperDeep
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 5
+        ..strokeCap = StrokeCap.round,
+    );
 
     if (pct > 0) {
       canvas.drawArc(
-          rect, -math.pi / 2, 2 * math.pi * pct, false,
-          Paint()
-            ..color = color
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 5
-            ..strokeCap = StrokeCap.round);
+        rect,
+        -math.pi / 2,
+        2 * math.pi * pct,
+        false,
+        Paint()
+          ..color = color
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 5
+          ..strokeCap = StrokeCap.round,
+      );
     }
   }
 
@@ -542,32 +608,50 @@ class _StatCard extends StatelessWidget {
   final String value;
   final IconData? icon;
   final Color? iconColor;
-  const _StatCard({required this.label, required this.value, this.icon, this.iconColor});
+  const _StatCard({
+    required this.label,
+    required this.value,
+    this.icon,
+    this.iconColor,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(AppSpacing.md),
+      padding: const EdgeInsets.all(BrandSpacing.md),
       decoration: BoxDecoration(
-        color: AppColors.surface1,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
-        border: Border.all(color: AppColors.textMuted.withValues(alpha: 0.12)),
+        color: BrandColors.paper,
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
+        border: Border.all(color: BrandColors.mutedInk.withValues(alpha: 0.12)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label,
-              style: GoogleFonts.inter(fontSize: 11, color: AppColors.textMuted, fontWeight: FontWeight.w500)),
-          const SizedBox(height: AppSpacing.sm),
+          Text(
+            label,
+            style: TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 11,
+              color: BrandColors.mutedInk,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: BrandSpacing.sm),
           Row(
             children: [
               if (icon != null) ...[
-                Icon(icon, size: 18, color: iconColor ?? AppColors.neonCyan),
-                const SizedBox(width: AppSpacing.xs),
+                Icon(icon, size: 18, color: iconColor ?? BrandColors.focusDark),
+                const SizedBox(width: BrandSpacing.xs),
               ],
-              Text(value,
-                  style: GoogleFonts.spaceGrotesk(
-                      fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+              Text(
+                value,
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: BrandColors.ink,
+                ),
+              ),
             ],
           ),
         ],
@@ -581,11 +665,11 @@ class _StatCardSkeleton extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       height: 76,
-      padding: const EdgeInsets.all(AppSpacing.md),
+      padding: const EdgeInsets.all(BrandSpacing.md),
       decoration: BoxDecoration(
-        color: AppColors.surface1,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
-        border: Border.all(color: AppColors.textMuted.withValues(alpha: 0.08)),
+        color: BrandColors.paper,
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
+        border: Border.all(color: BrandColors.mutedInk.withValues(alpha: 0.08)),
       ),
     );
   }
@@ -603,30 +687,30 @@ class _BillPanel extends StatelessWidget {
     final daysLeft = stmt.dueDate.difference(now).inDays;
     final isOverdue = daysLeft < 0;
     final statusColor = stmt.isPaid
-        ? AppColors.success
+        ? BrandColors.successInk
         : isOverdue
-            ? AppColors.error
-            : daysLeft <= 3
-                ? AppColors.warning
-                : AppColors.textSecondary;
+        ? BrandColors.error
+        : daysLeft <= 3
+        ? BrandColors.rewardInk
+        : BrandColors.mutedInk;
 
     final statusLabel = stmt.isPaid
         ? 'Paid'
         : isOverdue
-            ? 'Overdue'
-            : 'Due in $daysLeft day${daysLeft == 1 ? '' : 's'}';
+        ? 'Overdue'
+        : 'Due in $daysLeft day${daysLeft == 1 ? '' : 's'}';
 
     return Container(
-      padding: const EdgeInsets.all(AppSpacing.md),
+      padding: const EdgeInsets.all(BrandSpacing.md),
       decoration: BoxDecoration(
-        color: AppColors.surface1,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
+        color: BrandColors.paper,
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
         border: Border.all(
           color: stmt.isPaid
-              ? AppColors.success.withValues(alpha: 0.3)
+              ? BrandColors.successInk.withValues(alpha: 0.3)
               : isOverdue
-                  ? AppColors.error.withValues(alpha: 0.3)
-                  : AppColors.textMuted.withValues(alpha: 0.12),
+              ? BrandColors.error.withValues(alpha: 0.3)
+              : BrandColors.mutedInk.withValues(alpha: 0.12),
         ),
       ),
       child: Row(
@@ -635,20 +719,37 @@ class _BillPanel extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Bill Due',
-                    style: GoogleFonts.inter(
-                        fontSize: 11, color: AppColors.textMuted, fontWeight: FontWeight.w500)),
+                Text(
+                  'Bill Due',
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 11,
+                    color: BrandColors.mutedInk,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
                 const SizedBox(height: 4),
                 Text(
-                  NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 0)
-                      .format(stmt.outstanding),
-                  style: GoogleFonts.spaceGrotesk(
-                      fontSize: 22, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                  NumberFormat.currency(
+                    locale: 'en_IN',
+                    symbol: '₹',
+                    decimalDigits: 0,
+                  ).format(stmt.outstanding),
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 22,
+                    fontWeight: FontWeight.w700,
+                    color: BrandColors.ink,
+                  ),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   DateFormat('d MMM yyyy').format(stmt.dueDate),
-                  style: GoogleFonts.inter(fontSize: 12, color: AppColors.textSecondary),
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 12,
+                    color: BrandColors.mutedInk,
+                  ),
                 ),
               ],
             ),
@@ -657,19 +758,34 @@ class _BillPanel extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
                 decoration: BoxDecoration(
                   color: statusColor.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(AppRadius.pill),
+                  borderRadius: BorderRadius.circular(BrandRadius.pill),
                 ),
-                child: Text(statusLabel,
-                    style: GoogleFonts.inter(
-                        fontSize: 12, fontWeight: FontWeight.w600, color: statusColor)),
+                child: Text(
+                  statusLabel,
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: statusColor,
+                  ),
+                ),
               ),
               if (stmt.minimumPayment > 0) ...[
-                const SizedBox(height: AppSpacing.xs),
-                Text('Min ₹${NumberFormat.compact().format(stmt.minimumPayment)}',
-                    style: GoogleFonts.inter(fontSize: 11, color: AppColors.textMuted)),
+                const SizedBox(height: BrandSpacing.xs),
+                Text(
+                  'Min ₹${NumberFormat.compact().format(stmt.minimumPayment)}',
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 11,
+                    color: BrandColors.mutedInk,
+                  ),
+                ),
               ],
             ],
           ),
@@ -685,9 +801,9 @@ class _BillPanelSkeleton extends StatelessWidget {
     return Container(
       height: 80,
       decoration: BoxDecoration(
-        color: AppColors.surface1,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
-        border: Border.all(color: AppColors.textMuted.withValues(alpha: 0.08)),
+        color: BrandColors.paper,
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
+        border: Border.all(color: BrandColors.mutedInk.withValues(alpha: 0.08)),
       ),
     );
   }
@@ -701,9 +817,15 @@ class _SectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(title,
-        style: GoogleFonts.spaceGrotesk(
-            fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textPrimary));
+    return Text(
+      title,
+      style: TextStyle(
+        fontFamily: 'Manrope',
+        fontSize: 15,
+        fontWeight: FontWeight.w700,
+        color: BrandColors.ink,
+      ),
+    );
   }
 }
 
@@ -716,16 +838,19 @@ class _TxnTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDebit = txn.isDebit;
-    final amountColor = isDebit ? AppColors.textPrimary : AppColors.success;
+    final amountColor = isDebit ? BrandColors.ink : BrandColors.successInk;
     final amountPrefix = isDebit ? '−' : '+';
 
     return Container(
-      margin: const EdgeInsets.only(bottom: AppSpacing.xs),
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm + 2),
+      margin: const EdgeInsets.only(bottom: BrandSpacing.xs),
+      padding: const EdgeInsets.symmetric(
+        horizontal: BrandSpacing.md,
+        vertical: BrandSpacing.sm + 2,
+      ),
       decoration: BoxDecoration(
-        color: AppColors.surface1,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        border: Border.all(color: AppColors.textMuted.withValues(alpha: 0.08)),
+        color: BrandColors.paper,
+        borderRadius: BorderRadius.circular(BrandRadius.card),
+        border: Border.all(color: BrandColors.mutedInk.withValues(alpha: 0.08)),
       ),
       child: Row(
         children: [
@@ -733,35 +858,51 @@ class _TxnTile extends StatelessWidget {
             width: 36,
             height: 36,
             decoration: BoxDecoration(
-              color: AppColors.surface3,
-              borderRadius: BorderRadius.circular(AppRadius.sm),
+              color: BrandColors.paperDeep,
+              borderRadius: BorderRadius.circular(BrandRadius.control),
             ),
-            child: Icon(_categoryIcon(txn.category), size: 18, color: AppColors.textSecondary),
+            child: Icon(
+              _categoryIcon(txn.category),
+              size: 18,
+              color: BrandColors.mutedInk,
+            ),
           ),
-          const SizedBox(width: AppSpacing.sm),
+          const SizedBox(width: BrandSpacing.sm),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   txn.merchantName ?? txn.description,
-                  style: GoogleFonts.inter(
-                      fontSize: 13, fontWeight: FontWeight.w500, color: AppColors.textPrimary),
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: BrandColors.ink,
+                  ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
                 Text(
                   DateFormat('d MMM').format(txn.transactionDate) +
                       (txn.category != null ? '  ·  ${txn.category}' : ''),
-                  style: GoogleFonts.inter(fontSize: 11, color: AppColors.textMuted),
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 11,
+                    color: BrandColors.mutedInk,
+                  ),
                 ),
               ],
             ),
           ),
           Text(
             '$amountPrefix₹${NumberFormat.compact(locale: 'en_IN').format(txn.amount)}',
-            style: GoogleFonts.spaceGrotesk(
-                fontSize: 14, fontWeight: FontWeight.w700, color: amountColor),
+            style: TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: amountColor,
+            ),
           ),
         ],
       ),
@@ -775,14 +916,24 @@ class _EmptyTransactions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(AppSpacing.xl),
+      padding: const EdgeInsets.all(BrandSpacing.xl),
       alignment: Alignment.center,
       child: Column(
         children: [
-          const Icon(Icons.receipt_long_outlined, size: 40, color: AppColors.textMuted),
-          const SizedBox(height: AppSpacing.sm),
-          Text('No transactions yet',
-              style: GoogleFonts.inter(fontSize: 14, color: AppColors.textMuted)),
+          const Icon(
+            Icons.receipt_long_outlined,
+            size: 40,
+            color: BrandColors.mutedInk,
+          ),
+          const SizedBox(height: BrandSpacing.sm),
+          Text(
+            'No transactions yet',
+            style: TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 14,
+              color: BrandColors.mutedInk,
+            ),
+          ),
         ],
       ),
     );
