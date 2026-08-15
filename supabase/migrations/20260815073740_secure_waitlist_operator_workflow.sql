@@ -68,8 +68,14 @@ merged AS (
       FILTER (WHERE monthly_spend_band IS NOT NULL))[1] AS monthly_spend_band,
     (array_agg(problem_detail ORDER BY created_at ASC, id ASC)
       FILTER (WHERE problem_detail IS NOT NULL))[1] AS problem_detail,
-    (array_agg(top_cards ORDER BY created_at ASC, id ASC)
-      FILTER (WHERE top_cards IS NOT NULL))[1] AS top_cards,
+    (
+      SELECT candidate.top_cards
+      FROM ranked AS candidate
+      WHERE candidate.survivor_id = ranked.survivor_id
+        AND candidate.top_cards IS NOT NULL
+      ORDER BY candidate.created_at ASC, candidate.id ASC
+      LIMIT 1
+    ) AS top_cards,
     (array_agg(acquisition_source ORDER BY created_at ASC, id ASC)
       FILTER (WHERE acquisition_source IS NOT NULL))[1] AS acquisition_source,
     (array_agg(landing_variant ORDER BY created_at ASC, id ASC)

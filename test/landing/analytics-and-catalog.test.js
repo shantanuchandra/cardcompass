@@ -99,8 +99,8 @@ test('success-shaped enrichment produces a decoy-neutral receipt and event', () 
 
   assert.deepEqual(receipt, {
     eyebrow: 'Details received',
-    title: 'You’re on the waitlist.',
-    body: 'We’ve received this step. Keep an eye on your inbox for early-access updates.',
+    title: 'Application step processed.',
+    body: 'If these details matched an active application, they were processed. Keep an eye on your inbox for early-access updates.',
     eventName: 'Enrichment Submitted',
   });
   assert.doesNotMatch(JSON.stringify(receipt), /qualified|saved|reviewed|selected/i);

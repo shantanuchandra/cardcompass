@@ -10,6 +10,7 @@ import {
   persistEnrichmentSession,
   restoreEnrichmentSession,
   clearEnrichmentSession,
+  buildApplicationReceipt,
 } from '../../landing/waitlist.js';
 
 test('email validation rejects malformed and overlong addresses', () => {
@@ -151,4 +152,10 @@ test('join receipt resumes after refresh and supplies enrich before one-time cle
   }).p_enrichment_token, token);
   clearEnrichmentSession(storage);
   assert.equal(restoreEnrichmentSession(storage, 2000), null);
+});
+
+test('enrichment receipt stays neutral when a duplicate decoy token stores no details', () => {
+  const receipt = buildApplicationReceipt(true);
+  assert.match(receipt.body, /If these details matched an active application, they were processed\./i);
+  assert.doesNotMatch(receipt.body, /We(?:'|’)ve received this step/i);
 });

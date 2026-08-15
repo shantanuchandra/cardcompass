@@ -123,8 +123,8 @@ export function buildApplicationReceipt(rpcAccepted) {
   if (rpcAccepted !== true) throw new Error('Enrichment was not accepted.');
   return {
     eyebrow: 'Details received',
-    title: 'You’re on the waitlist.',
-    body: 'We’ve received this step. Keep an eye on your inbox for early-access updates.',
+    title: 'Application step processed.',
+    body: 'If these details matched an active application, they were processed. Keep an eye on your inbox for early-access updates.',
     eventName: 'Enrichment Submitted',
   };
 }

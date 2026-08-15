@@ -82,17 +82,30 @@ CREATE OR REPLACE FUNCTION public.enrich_waitlist(
 DECLARE v_token text := lower(btrim(p_enrichment_token)); v_hash text;
 BEGIN
   IF v_token IS NULL OR v_token !~ '^[0-9a-f]{64}$' THEN RETURN false; END IF;
-  IF p_card_count NOT IN ('1-2','3-6','7+')
+  IF p_card_count IS NULL
+     OR p_monthly_spend_band IS NULL
+     OR p_primary_goal IS NULL
+     OR p_card_count NOT IN ('1-2','3-6','7+')
      OR p_monthly_spend_band NOT IN ('under-25k','25k-50k','50k-1l','1l-plus')
      OR p_primary_goal NOT IN ('maximize_rewards','track_benefits','simplify_card_choices')
      OR char_length(COALESCE(p_name,'')) > 100 OR char_length(COALESCE(p_problem_detail,'')) > 500
-     OR (p_top_cards IS NOT NULL AND cardinality(p_top_cards) > 2) THEN
+     OR (p_top_cards IS NOT NULL AND (
+       cardinality(p_top_cards) > 2
+       OR EXISTS (
+         SELECT 1 FROM unnest(p_top_cards) AS card_name
+         WHERE card_name IS NULL
+            OR char_length(btrim(card_name)) NOT BETWEEN 1 AND 100
+       )
+     )) THEN
     RAISE EXCEPTION 'waitlist enrichment is invalid' USING ERRCODE = '22023';
   END IF;
   v_hash := encode(extensions.digest(v_token, 'sha256'), 'hex');
   UPDATE public.waitlist SET name = nullif(btrim(p_name), ''), card_count = p_card_count,
     monthly_spend_band = p_monthly_spend_band, primary_goal = p_primary_goal,
-    problem_detail = nullif(btrim(p_problem_detail), ''), top_cards = p_top_cards,
+    problem_detail = nullif(btrim(p_problem_detail), ''),
+    top_cards = CASE WHEN p_top_cards IS NULL THEN NULL ELSE ARRAY(
+      SELECT btrim(card_name) FROM unnest(p_top_cards) AS card_name
+    ) END,
     marketing_consent_requested_at = CASE WHEN p_marketing_consent THEN COALESCE(marketing_consent_requested_at, now()) ELSE marketing_consent_requested_at END,
     enriched_at = now(), enrichment_token_hash = NULL WHERE enrichment_token_hash = v_hash;
   RETURN true;
