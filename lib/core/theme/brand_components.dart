@@ -2,6 +2,59 @@ import 'package:flutter/material.dart';
 
 import 'brand_tokens.dart';
 
+class BrandCompassMark extends StatelessWidget {
+  const BrandCompassMark({super.key, this.size = 28});
+  final double size;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: 'CardCompass',
+    image: true,
+    child: ExcludeSemantics(
+      child: SizedBox.square(
+        dimension: size,
+        child: CustomPaint(painter: const _BrandCompassPainter()),
+      ),
+    ),
+  );
+}
+
+class _BrandCompassPainter extends CustomPainter {
+  const _BrandCompassPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = size.center(Offset.zero);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Offset.zero & size,
+        Radius.circular(size.width * .24),
+      ),
+      Paint()..color = BrandColors.ink,
+    );
+    canvas.drawCircle(
+      center,
+      size.width * .3,
+      Paint()..color = BrandColors.signal,
+    );
+    final needle = Path()
+      ..moveTo(center.dx + size.width * .2, center.dy - size.height * .27)
+      ..lineTo(center.dx + size.width * .06, center.dy + size.height * .08)
+      ..lineTo(center.dx - size.width * .2, center.dy + size.height * .27)
+      ..lineTo(center.dx - size.width * .06, center.dy - size.height * .08)
+      ..close();
+    canvas.drawPath(needle, Paint()..color = BrandColors.ink);
+    canvas.drawCircle(
+      center,
+      size.width * .045,
+      Paint()..color = BrandColors.paper,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
 enum BrandSurfaceTone { paper, ledger, evidence }
 
 class BrandSurface extends StatelessWidget {
