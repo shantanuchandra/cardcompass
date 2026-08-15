@@ -48,37 +48,38 @@ class MovieDealsResults extends ConsumerWidget {
         .where((c) => c.rule.offerType == MovieDealOfferType.rewardMultiplier)
         .toList();
 
-    final hasAnyGuaranteed =
-        recommendation.bestGuaranteedOwned != null ||
-        recommendation.bestGuaranteedOverall != null;
-    final hasAnyPotential =
-        recommendation.bestPotentialOwned != null ||
-        recommendation.bestPotentialOverall != null;
-
-    if (!hasAnyGuaranteed &&
-        !hasAnyPotential &&
-        rewardMultiplierCandidates.isEmpty) {
-      return _buildNoDealCard(context);
-    }
-
-    final ownedWinner =
-        recommendation.bestGuaranteedOwned ?? recommendation.bestPotentialOwned;
-    final overallWinner =
-        recommendation.bestGuaranteedOverall ??
+    final directCandidates = recommendation.candidates
+        .where((c) => c.rule.offerType != MovieDealOfferType.rewardMultiplier)
+        .toList();
+    final guaranteedWinner =
+        recommendation.bestGuaranteedOwned ??
+        recommendation.bestGuaranteedOverall;
+    final potentialWinner =
+        recommendation.bestPotentialOwned ??
         recommendation.bestPotentialOverall;
-    final ownedIsGuaranteed = recommendation.bestGuaranteedOwned != null;
-    final overallIsGuaranteed = recommendation.bestGuaranteedOverall != null;
-    final sharedWinner =
-        ownedWinner != null &&
-        overallWinner != null &&
-        ownedWinner.cardId == overallWinner.cardId &&
-        ownedWinner.benefitId == overallWinner.benefitId &&
-        ownedIsGuaranteed == overallIsGuaranteed;
+    final winner = guaranteedWinner ?? potentialWinner;
+    final winnerIsPotential =
+        guaranteedWinner == null && potentialWinner != null;
+
+    if (winner == null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildNoDealCard(context),
+          if (rewardMultiplierCandidates.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            _buildRewardMultiplierSection(rewardMultiplierCandidates),
+          ],
+        ],
+      );
+    }
 
     Future<void> Function()? confirmCallbackFor(MovieDealCandidate candidate) {
       if (request.preferredPlatform == null) return null;
-      if (candidate.platformConfidence == MovieDealPlatformConfidence.explicit)
+      if (candidate.platformConfidence ==
+          MovieDealPlatformConfidence.explicit) {
         return null;
+      }
       // Read once, not force-unwrapped: the button that invokes this closure
       // fires later than the search itself, so the session could have
       // expired or the user signed out in between — falling back to "no
@@ -95,34 +96,54 @@ class MovieDealsResults extends ConsumerWidget {
           );
     }
 
+    final alternatives = directCandidates
+        .where(
+          (candidate) =>
+              candidate.cardId != winner.cardId ||
+              candidate.benefitId != winner.benefitId,
+        )
+        .toList();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (ownedWinner != null)
-          _CandidatePanel(
-            heading: ownedIsGuaranteed
-                ? 'BEST CARD YOU OWN'
-                : 'POTENTIAL — YOU OWN THIS CARD',
-            candidate: ownedWinner,
-            isPotential: !ownedIsGuaranteed,
-            trailingLabel: sharedWinner ? 'Also best overall' : null,
-            onConfirmPlatform: confirmCallbackFor(ownedWinner),
-          ),
-        if (ownedWinner != null && !sharedWinner) const SizedBox(height: 16),
-        if (overallWinner != null && !sharedWinner)
-          _CandidatePanel(
-            heading: overallIsGuaranteed
-                ? 'BEST CARD OVERALL'
-                : 'POTENTIAL — BEST OVERALL',
-            candidate: overallWinner,
-            isOwned: false,
-            isPotential: !overallIsGuaranteed,
-            onConfirmPlatform: confirmCallbackFor(overallWinner),
-          ),
+        _RecommendationCard(
+          candidate: winner,
+          request: request,
+          isPotential: winnerIsPotential,
+          onConfirmPlatform: confirmCallbackFor(winner),
+        ),
+        if (alternatives.isNotEmpty) ...[
+          const SizedBox(height: 20),
+          _buildAlternatives(alternatives),
+        ],
         if (rewardMultiplierCandidates.isNotEmpty) ...[
-          const SizedBox(height: 24),
+          const SizedBox(height: 20),
           _buildRewardMultiplierSection(rewardMultiplierCandidates),
         ],
+      ],
+    );
+  }
+
+  Widget _buildAlternatives(List<MovieDealCandidate> candidates) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Other eligible options',
+          style: TextStyle(
+            fontFamily: 'Manrope',
+            fontWeight: FontWeight.bold,
+            color: BrandColors.mutedInk,
+            fontSize: 11,
+            letterSpacing: 0.5,
+          ),
+        ),
+        const SizedBox(height: 8),
+        ...candidates.map(
+          (candidate) =>
+              _AlternativeRow(candidate: candidate, request: request),
+        ),
       ],
     );
   }
@@ -132,7 +153,7 @@ class MovieDealsResults extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'REWARD RATE — NOT A DIRECT DISCOUNT',
+          'Reward rate — not a ticket-price saving',
           style: TextStyle(
             fontFamily: 'Manrope',
             fontWeight: FontWeight.bold,
@@ -191,8 +212,12 @@ class MovieDealsResults extends ConsumerWidget {
         border: Border.all(color: BrandColors.paperDeep),
       ),
       child: Text(
-        'No verified eligible deal for this search. Try a different platform or ticket count.',
-        style: TextStyle(fontFamily: 'Manrope', color: BrandColors.mutedInk),
+        'No eligible ticket-saving option',
+        style: TextStyle(
+          fontFamily: 'Manrope',
+          color: BrandColors.ink,
+          fontWeight: FontWeight.w600,
+        ),
       ),
     );
   }
@@ -227,162 +252,335 @@ class MovieDealsResults extends ConsumerWidget {
   }
 }
 
-class _CandidatePanel extends StatefulWidget {
-  const _CandidatePanel({
-    required this.heading,
+class _RecommendationCard extends StatefulWidget {
+  const _RecommendationCard({
     required this.candidate,
-    this.isOwned,
-    this.isPotential = false,
-    this.trailingLabel,
+    required this.request,
+    required this.isPotential,
     this.onConfirmPlatform,
   });
 
-  final String heading;
   final MovieDealCandidate candidate;
-  final bool? isOwned;
+  final MovieTicketRequest request;
   final bool isPotential;
-  final String? trailingLabel;
   final Future<void> Function()? onConfirmPlatform;
 
   @override
-  State<_CandidatePanel> createState() => _CandidatePanelState();
+  State<_RecommendationCard> createState() => _RecommendationCardState();
 }
 
-class _CandidatePanelState extends State<_CandidatePanel> {
+class _RecommendationCardState extends State<_RecommendationCard> {
   bool _confirmed = false;
 
   @override
   Widget build(BuildContext context) {
     final candidate = widget.candidate;
-    final owned = widget.isOwned ?? candidate.isOwned;
+    final effectiveTicketPrice =
+        candidate.finalAmount / widget.request.numberOfTickets;
+    final owned = candidate.isOwned;
     final borderColor = widget.isPotential
         ? BrandColors.mutedInk.withValues(alpha: 0.3)
         : (owned
               ? BrandColors.focusDark.withValues(alpha: 0.25)
               : BrandColors.reward.withValues(alpha: 0.25));
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: BrandColors.paper,
-        border: Border.all(color: borderColor, width: 1.2),
+    return Material(
+      color: BrandColors.paper,
+      shape: RoundedRectangleBorder(
+        side: BorderSide(color: borderColor, width: 1.2),
         borderRadius: BorderRadius.circular(BrandRadius.overlay),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            widget.heading,
-            style: TextStyle(
-              fontFamily: 'Manrope',
-              fontWeight: FontWeight.bold,
-              color: BrandColors.mutedInk,
-              fontSize: 11,
-              letterSpacing: 0.5,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            candidate.rule.cardName ?? candidate.title,
-            style: TextStyle(
-              fontFamily: 'Manrope',
-              color: BrandColors.ink,
-              fontWeight: FontWeight.bold,
-              fontSize: 14,
-            ),
-          ),
-          const SizedBox(height: 8),
-          if (widget.isPotential)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: BrandColors.rewardInk.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  'Potential — remaining balance not verified',
-                  style: TextStyle(
-                    fontFamily: 'Manrope',
-                    fontSize: 10,
-                    color: BrandColors.rewardInk,
-                  ),
-                ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Best option',
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                fontWeight: FontWeight.bold,
+                color: BrandColors.mutedInk,
+                fontSize: 11,
+                letterSpacing: 0.5,
               ),
             ),
-          if (candidate.platformConfidence !=
-              MovieDealPlatformConfidence.explicit)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: BrandColors.mutedInk.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  'Platform not confirmed for this offer',
-                  style: TextStyle(
-                    fontFamily: 'Manrope',
-                    fontSize: 10,
-                    color: BrandColors.mutedInk,
-                  ),
-                ),
-              ),
-            ),
-          Text(
-            candidate.explanation,
-            style: TextStyle(
-              fontFamily: 'Manrope',
-              color: BrandColors.mutedInk,
-              fontSize: 12,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            '₹${candidate.grossAmount.toStringAsFixed(0)} → ₹${candidate.finalAmount.toStringAsFixed(0)} · Save ₹${candidate.savings.toStringAsFixed(0)}',
-            style: TextStyle(
-              fontFamily: 'Manrope',
-              fontWeight: FontWeight.bold,
-              color: BrandColors.focusDark,
-              fontSize: 13,
-            ),
-          ),
-          if (widget.trailingLabel != null) ...[
             const SizedBox(height: 8),
             Text(
-              widget.trailingLabel!,
+              candidate.rule.cardName ?? candidate.title,
               style: TextStyle(
                 fontFamily: 'Manrope',
-                fontSize: 11,
-                color: BrandColors.mutedInk,
-                fontStyle: FontStyle.italic,
+                color: BrandColors.ink,
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
               ),
             ),
-          ],
-          if (widget.onConfirmPlatform != null && !_confirmed) ...[
-            const SizedBox(height: 12),
-            TextButton(
-              onPressed: () async {
-                await widget.onConfirmPlatform!();
-                if (mounted) setState(() => _confirmed = true);
-              },
-              child: const Text('Did this work here? Let us know'),
-            ),
-          ],
-          if (_confirmed) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
             Text(
-              'Thanks — this helps other users.',
+              widget.isPotential
+                  ? 'Potential option — check availability before booking.'
+                  : (owned
+                        ? 'A verified offer on a card you own.'
+                        : 'Available on a card you do not currently own.'),
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                color: BrandColors.mutedInk,
+                fontSize: 12,
+              ),
+            ),
+            const SizedBox(height: 16),
+            _ResultMetric(
+              label: 'Expected saving',
+              value: '₹${candidate.savings.toStringAsFixed(0)}',
+            ),
+            const SizedBox(height: 12),
+            _ResultMetric(
+              label: 'Effective ticket price',
+              value: '₹${effectiveTicketPrice.toStringAsFixed(0)} per ticket',
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Why this is recommended',
               style: TextStyle(
                 fontFamily: 'Manrope',
                 fontSize: 11,
-                color: BrandColors.focusDark,
+                fontWeight: FontWeight.bold,
+                color: BrandColors.mutedInk,
+                letterSpacing: 0.4,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              candidate.explanation,
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                color: BrandColors.mutedInk,
+                fontSize: 12,
+              ),
+            ),
+            const SizedBox(height: 8),
+            if (widget.isPotential)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: BrandColors.rewardInk.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    'Potential — remaining balance not verified',
+                    style: TextStyle(
+                      fontFamily: 'Manrope',
+                      fontSize: 10,
+                      color: BrandColors.rewardInk,
+                    ),
+                  ),
+                ),
+              ),
+            if (candidate.platformConfidence !=
+                MovieDealPlatformConfidence.explicit)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: BrandColors.mutedInk.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    'Platform not confirmed for this offer',
+                    style: TextStyle(
+                      fontFamily: 'Manrope',
+                      fontSize: 10,
+                      color: BrandColors.mutedInk,
+                    ),
+                  ),
+                ),
+              ),
+            _CalculationDisclosure(candidate: candidate),
+            if (widget.onConfirmPlatform != null && !_confirmed) ...[
+              const SizedBox(height: 12),
+              TextButton(
+                onPressed: () async {
+                  await widget.onConfirmPlatform!();
+                  if (mounted) setState(() => _confirmed = true);
+                },
+                child: const Text('Did this work here? Let us know'),
+              ),
+            ],
+            if (_confirmed) ...[
+              const SizedBox(height: 12),
+              Text(
+                'Thanks — this helps other users.',
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 11,
+                  color: BrandColors.focusDark,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ResultMetric extends StatelessWidget {
+  const _ResultMetric({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        label,
+        style: TextStyle(
+          fontFamily: 'Manrope',
+          fontSize: 11,
+          fontWeight: FontWeight.bold,
+          color: BrandColors.mutedInk,
+          letterSpacing: 0.4,
+        ),
+      ),
+      const SizedBox(height: 2),
+      Text(
+        value,
+        style: TextStyle(
+          fontFamily: 'Manrope',
+          fontSize: 18,
+          fontWeight: FontWeight.bold,
+          color: BrandColors.focusDark,
+        ),
+      ),
+    ],
+  );
+}
+
+class _AlternativeRow extends StatelessWidget {
+  const _AlternativeRow({required this.candidate, required this.request});
+
+  final MovieDealCandidate candidate;
+  final MovieTicketRequest request;
+
+  @override
+  Widget build(BuildContext context) {
+    final price = candidate.finalAmount / request.numberOfTickets;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: BrandColors.paper,
+          border: Border.all(color: BrandColors.paperDeep),
+          borderRadius: BorderRadius.circular(BrandRadius.card),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              candidate.rule.cardName ?? candidate.title,
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                fontWeight: FontWeight.bold,
+                color: BrandColors.ink,
+                fontSize: 13,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Save ₹${candidate.savings.toStringAsFixed(0)} · ₹${price.toStringAsFixed(0)} per ticket',
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                color: BrandColors.mutedInk,
+                fontSize: 12,
               ),
             ),
           ],
-        ],
+        ),
       ),
+    );
+  }
+}
+
+class _CalculationDisclosure extends StatelessWidget {
+  const _CalculationDisclosure({required this.candidate});
+
+  final MovieDealCandidate candidate;
+
+  @override
+  Widget build(BuildContext context) {
+    final rule = candidate.rule;
+    final caps = [
+      if (rule.perTransactionCap != null)
+        'Up to ₹${rule.perTransactionCap!.toStringAsFixed(0)} per booking',
+      if (rule.cycleAmountCap != null)
+        'Up to ₹${rule.cycleAmountCap!.toStringAsFixed(0)} in this cycle',
+      if (rule.annualCap != null)
+        'Up to ₹${rule.annualCap!.toStringAsFixed(0)} each year',
+    ];
+    return ExpansionTile(
+      tilePadding: EdgeInsets.zero,
+      childrenPadding: const EdgeInsets.only(bottom: 8),
+      title: const Text('Show calculation'),
+      children: [
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Booking total',
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontWeight: FontWeight.bold,
+                  color: BrandColors.mutedInk,
+                ),
+              ),
+              Text(
+                '₹${candidate.grossAmount.toStringAsFixed(0)} − ₹${candidate.savings.toStringAsFixed(0)} = ₹${candidate.finalAmount.toStringAsFixed(0)}',
+                style: TextStyle(
+                  fontFamily: 'IBM Plex Mono',
+                  color: BrandColors.ink,
+                  fontSize: 12,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                candidate.platformConfidence ==
+                        MovieDealPlatformConfidence.explicit
+                    ? 'Eligibility: verified for this search.'
+                    : 'Eligibility: platform confirmation is still needed.',
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  color: BrandColors.mutedInk,
+                  fontSize: 12,
+                ),
+              ),
+              if (caps.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Offer cap: ${caps.join('; ')}.',
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    color: BrandColors.mutedInk,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
