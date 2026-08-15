@@ -17,7 +17,7 @@
   --font-display: "Fraunces", Georgia, serif;
   --font-body: "Manrope", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", monospace;
-  --shell: min(1180px, calc(100vw - 40px));
+  --shell: min(1440px, calc(100vw - clamp(40px, 4vw, 64px)));
   --shadow: 0 26px 70px rgba(3, 7, 10, 0.2);
 }
 
@@ -155,7 +155,7 @@ img { display: block; max-width: 100%; }
   max-width: 720px;
   margin: 0;
   color: var(--paper);
-  font-size: clamp(48px, 6.1vw, 84px);
+  font-size: clamp(46px, 5.2vw, 72px);
   font-weight: 700;
   line-height: 0.98;
   letter-spacing: -0.055em;
