@@ -58,25 +58,33 @@ class _SpendTrendPanelState extends State<SpendTrendPanel> {
                 ),
                 child: Row(
                   children: [
-                    Text(
-                      'Spend Trend',
-                      style: TextStyle(
-                        fontFamily: 'Manrope',
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: BrandColors.mutedInk,
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'Spend Trend',
+                            style: TextStyle(
+                              fontFamily: 'Manrope',
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: BrandColors.mutedInk,
+                            ),
+                          ),
+                          Text(
+                            widget.caption,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontFamily: 'Manrope',
+                              fontSize: 11,
+                              color: BrandColors.mutedInk,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(width: BrandSpacing.xs),
-                    Text(
-                      widget.caption,
-                      style: TextStyle(
-                        fontFamily: 'Manrope',
-                        fontSize: 11,
-                        color: BrandColors.mutedInk,
-                      ),
-                    ),
-                    const Spacer(),
                     Icon(
                       _expanded
                           ? Icons.expand_less_rounded
@@ -114,23 +122,22 @@ class _SpendTrendPanelState extends State<SpendTrendPanel> {
                     BrandSpacing.md,
                     0,
                   ),
-                  child: Row(
+                  child: Wrap(
+                    spacing: BrandSpacing.sm,
+                    runSpacing: BrandSpacing.xs,
                     children: [
                       _StatChip(
                         label: 'Daily avg',
                         value: fmt.format(widget.trend.dailyAverage),
                         color: BrandColors.focusDark,
                       ),
-                      if (widget.trend.peakLabel != null) ...[
-                        const SizedBox(width: BrandSpacing.sm),
+                      if (widget.trend.peakLabel != null)
                         _StatChip(
                           label: 'Peak',
                           value: widget.trend.peakLabel!,
                           color: BrandColors.rewardInk,
                         ),
-                      ],
-                      if (widget.trend.percentVsPrior != null) ...[
-                        const SizedBox(width: BrandSpacing.sm),
+                      if (widget.trend.percentVsPrior != null)
                         _StatChip(
                           label: 'vs prior',
                           value:
@@ -139,7 +146,6 @@ class _SpendTrendPanelState extends State<SpendTrendPanel> {
                               ? BrandColors.error
                               : BrandColors.successInk,
                         ),
-                      ],
                     ],
                   ),
                 ),
@@ -223,7 +229,7 @@ class _SpendTrendPanelState extends State<SpendTrendPanel> {
             barWidth: 2,
             dotData: FlDotData(
               show: points.length <= 10,
-              getDotPainter: (_, __, ___, ____) => FlDotCirclePainter(
+              getDotPainter: (_, _, _, _) => FlDotCirclePainter(
                 radius: 3,
                 color: BrandColors.focusDark,
                 strokeWidth: 1.5,
@@ -285,7 +291,8 @@ class _StatChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(BrandRadius.control),
         border: Border.all(color: color.withValues(alpha: 0.25)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
@@ -296,7 +303,7 @@ class _StatChip extends StatelessWidget {
               color: BrandColors.mutedInk,
             ),
           ),
-          const SizedBox(width: 4),
+          const SizedBox(height: 2),
           Text(
             value,
             style: TextStyle(

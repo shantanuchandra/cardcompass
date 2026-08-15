@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import '../../../core/theme/brand_components.dart';
 import '../../../core/theme/brand_tokens.dart';
-import '../../../core/theme/category_display.dart';
 import '../providers/transactions_provider.dart';
 import '../widgets/spend_trend_panel.dart';
 import '../../../shared/models/transaction.dart';
@@ -57,48 +57,12 @@ class TransactionsScreen extends ConsumerWidget {
         loading: () => const Center(
           child: CircularProgressIndicator(color: BrandColors.focusDark),
         ),
-        error: (e, _) => Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(
-                Icons.cloud_off_rounded,
-                size: 48,
-                color: BrandColors.mutedInk,
-              ),
-              const SizedBox(height: BrandSpacing.md),
-              Text(
-                'Couldn\'t load ledger',
-                style: TextStyle(
-                  fontFamily: 'Manrope',
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                  color: BrandColors.ink,
-                ),
-              ),
-              const SizedBox(height: BrandSpacing.xs),
-              Text(
-                '$e',
-                style: TextStyle(
-                  fontFamily: 'Manrope',
-                  fontSize: 12,
-                  color: BrandColors.mutedInk,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: BrandSpacing.md),
-              FilledButton.icon(
-                onPressed: () =>
-                    ref.read(txnsNotifierProvider.notifier).refresh(),
-                icon: const Icon(Icons.refresh_rounded, size: 16),
-                label: const Text('Retry'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: BrandColors.focusDark,
-                  foregroundColor: BrandColors.paper,
-                ),
-              ),
-            ],
-          ),
+        error: (_, _) => BrandStateView(
+          title: 'Could not load your ledger.',
+          message: 'Check your connection and try again.',
+          icon: Icons.cloud_off_rounded,
+          actionLabel: 'Try again',
+          onAction: () => ref.read(txnsNotifierProvider.notifier).refresh(),
         ),
         data: (state) => _LedgerBody(state: state),
       ),
@@ -115,7 +79,41 @@ class _LedgerBody extends ConsumerStatefulWidget {
 }
 
 class _LedgerBodyState extends ConsumerState<_LedgerBody> {
-  bool _showFilters = false;
+  int _activeFilterCount(TxnFilter filter) =>
+      (filter.from != null || filter.to != null ? 1 : 0) +
+      (filter.cardId != null ? 1 : 0) +
+      (filter.category != null ? 1 : 0);
+
+  void _openFilters(BuildContext context, TxnsState state) {
+    void onChanged(TxnFilter filter) {
+      ref.read(txnsNotifierProvider.notifier).setFilter(filter);
+      Navigator.of(context).pop();
+    }
+
+    final panel = _FilterPanel(state: state, onChanged: onChanged);
+    if (MediaQuery.sizeOf(context).width < 600) {
+      showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: BrandColors.paper,
+        builder: (context) => SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.only(bottom: BrandSpacing.lg),
+            child: panel,
+          ),
+        ),
+      );
+      return;
+    }
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: BrandColors.paper,
+        title: const Text('Filters'),
+        content: SingleChildScrollView(child: panel),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -124,98 +122,15 @@ class _LedgerBodyState extends ConsumerState<_LedgerBody> {
     final grouped = s.grouped;
     final trend = s.spendTrend;
 
-    return RefreshIndicator(
-      color: BrandColors.focusDark,
-      backgroundColor: BrandColors.paper,
-      onRefresh: () => ref.read(txnsNotifierProvider.notifier).refresh(),
-      child: CustomScrollView(
-        slivers: [
-          // ── Summary KPI tiles ──────────────────────────────────────────
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(
-                BrandSpacing.md,
-                BrandSpacing.sm,
-                BrandSpacing.md,
-                0,
-              ),
-              child: Row(
-                children: [
-                  _KpiTile(
-                    label: 'Spent',
-                    value: _fmtCompact.format(s.totalSpend),
-                    color: BrandColors.ink,
-                  ),
-                  const SizedBox(width: BrandSpacing.sm),
-                  _KpiTile(
-                    label: 'Rewards',
-                    value: _fmtCompact.format(s.totalRewards),
-                    color: BrandColors.successInk,
-                  ),
-                  const SizedBox(width: BrandSpacing.sm),
-                  _KpiTile(
-                    label: 'Top',
-                    value: s.topCategory ?? '—',
-                    color: BrandColors.reward,
-                    capitalize: true,
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          // ── Filter bar ────────────────────────────────────────────────
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(
-                BrandSpacing.md,
-                BrandSpacing.sm,
-                BrandSpacing.md,
-                0,
-              ),
-              child: Row(
-                children: [
-                  _FilterPill(
-                    label: s.filter.label,
-                    active:
-                        s.filter.from != null ||
-                        s.filter.to != null ||
-                        s.filter.category != null ||
-                        s.filter.cardId != null,
-                    onTap: () => setState(() => _showFilters = !_showFilters),
-                    icon: Icons.tune_rounded,
-                  ),
-                  const SizedBox(width: BrandSpacing.xs),
-                  _GroupingPill(
-                    grouping: s.grouping,
-                    onChanged: (g) =>
-                        ref.read(txnsNotifierProvider.notifier).setGrouping(g),
-                  ),
-                  const Spacer(),
-                  Text(
-                    '${filtered.length} txns',
-                    style: TextStyle(
-                      fontFamily: 'Manrope',
-                      fontSize: 11,
-                      color: BrandColors.mutedInk,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          if (_showFilters)
-            SliverToBoxAdapter(
-              child: _FilterPanel(
-                state: s,
-                onChanged: (f) =>
-                    ref.read(txnsNotifierProvider.notifier).setFilter(f),
-              ),
-            ),
-
-          // ── Spend trend chart ─────────────────────────────────────────
-          if (trend.points.isNotEmpty)
+    return BrandContentFrame(
+      mode: BrandContentMode.fullWidthData,
+      child: RefreshIndicator(
+        color: BrandColors.focusDark,
+        backgroundColor: BrandColors.paper,
+        onRefresh: () => ref.read(txnsNotifierProvider.notifier).refresh(),
+        child: CustomScrollView(
+          slivers: [
+            // ── Summary ───────────────────────────────────────────────────
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(
@@ -224,91 +139,183 @@ class _LedgerBodyState extends ConsumerState<_LedgerBody> {
                   BrandSpacing.md,
                   0,
                 ),
-                child: SpendTrendPanel(trend: trend, caption: s.filter.label),
+                child: BrandSurface(
+                  tone: BrandSurfaceTone.ledger,
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final stack =
+                          constraints.maxWidth < 600 ||
+                          MediaQuery.textScalerOf(context).scale(14) >= 21;
+                      final primary = BrandMetric(
+                        label: 'Total spend',
+                        value: _fmtCompact.format(s.totalSpend),
+                        supportingText: '${filtered.length} transactions',
+                      );
+                      final support = _SupportingMetrics(
+                        rewards: _fmtCompact.format(s.totalRewards),
+                        topCategory: s.topCategory ?? '—',
+                      );
+                      return stack
+                          ? Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                primary,
+                                const SizedBox(height: BrandSpacing.md),
+                                support,
+                              ],
+                            )
+                          : Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(child: primary),
+                                const SizedBox(width: BrandSpacing.xl),
+                                support,
+                              ],
+                            );
+                    },
+                  ),
+                ),
               ),
             ),
 
-          // ── Transaction list ──────────────────────────────────────────
-          if (filtered.isEmpty)
-            SliverFillRemaining(
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
+            // ── Filter bar ────────────────────────────────────────────────
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  BrandSpacing.md,
+                  BrandSpacing.sm,
+                  BrandSpacing.md,
+                  0,
+                ),
+                child: Wrap(
+                  runSpacing: BrandSpacing.xs,
+                  spacing: BrandSpacing.xs,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    const Icon(
-                      Icons.receipt_long_outlined,
-                      size: 48,
-                      color: BrandColors.mutedInk,
+                    _FilterPill(
+                      label: 'Filters',
+                      summary: _activeFilterCount(s.filter) == 0
+                          ? 'All time'
+                          : '${_activeFilterCount(s.filter)} active',
+                      active: _activeFilterCount(s.filter) > 0,
+                      onTap: () => _openFilters(context, s),
+                      icon: Icons.tune_rounded,
                     ),
-                    const SizedBox(height: BrandSpacing.md),
-                    Text(
-                      'No transactions',
-                      style: TextStyle(
-                        fontFamily: 'Manrope',
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: BrandColors.ink,
-                      ),
+                    _GroupingPill(
+                      grouping: s.grouping,
+                      onChanged: (g) => ref
+                          .read(txnsNotifierProvider.notifier)
+                          .setGrouping(g),
                     ),
-                    const SizedBox(height: BrandSpacing.xs),
-                    Text(
-                      'Try adjusting your filters',
-                      style: TextStyle(
-                        fontFamily: 'Manrope',
-                        fontSize: 13,
-                        color: BrandColors.mutedInk,
-                      ),
-                    ),
+                    _CountPill(count: filtered.length),
                   ],
                 ),
               ),
-            )
-          else
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(
-                BrandSpacing.md,
-                BrandSpacing.sm,
-                BrandSpacing.md,
-                BrandSpacing.lg,
-              ),
-              sliver: SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) {
-                    final entries = grouped.entries.toList();
-                    int cursor = 0;
-                    for (final entry in entries) {
-                      // Group header (only if not flat)
-                      if (s.grouping != TxnGrouping.flat) {
-                        if (index == cursor)
-                          return _GroupHeader(
-                            label: entry.key,
-                            txns: entry.value,
-                            cards: s.cards,
-                          );
-                        cursor++;
-                      }
-                      for (final txn in entry.value) {
-                        if (index == cursor) {
-                          return _TxnRow(
-                            txn: txn,
-                            isInternational: s.isTransactionInternational(txn),
-                          );
-                        }
-                        cursor++;
-                      }
-                    }
-                    return null;
-                  },
-                  childCount: s.grouping == TxnGrouping.flat
-                      ? filtered.length
-                      : grouped.entries.fold<int>(
-                          0,
-                          (sum, e) => sum + 1 + e.value.length,
-                        ),
+            ),
+
+            // ── Spend trend chart ─────────────────────────────────────────
+            if (trend.points.isNotEmpty)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    BrandSpacing.md,
+                    BrandSpacing.sm,
+                    BrandSpacing.md,
+                    0,
+                  ),
+                  child: SpendTrendPanel(trend: trend, caption: s.filter.label),
                 ),
               ),
-            ),
-        ],
+
+            // ── Transaction list ──────────────────────────────────────────
+            if (filtered.isEmpty)
+              SliverFillRemaining(
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.receipt_long_outlined,
+                        size: 48,
+                        color: BrandColors.mutedInk,
+                      ),
+                      const SizedBox(height: BrandSpacing.md),
+                      Text(
+                        'No transactions',
+                        style: TextStyle(
+                          fontFamily: 'Manrope',
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: BrandColors.ink,
+                        ),
+                      ),
+                      const SizedBox(height: BrandSpacing.xs),
+                      Text(
+                        'Try adjusting your filters',
+                        style: TextStyle(
+                          fontFamily: 'Manrope',
+                          fontSize: 13,
+                          color: BrandColors.mutedInk,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(
+                  BrandSpacing.md,
+                  BrandSpacing.sm,
+                  BrandSpacing.md,
+                  BrandSpacing.lg,
+                ),
+                sliver: SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      final entries = grouped.entries.toList();
+                      int cursor = 0;
+                      for (final entry in entries) {
+                        // Group header (only if not flat)
+                        if (s.grouping != TxnGrouping.flat) {
+                          if (index == cursor) {
+                            return _GroupHeader(
+                              label: entry.key,
+                              txns: entry.value,
+                              cards: s.cards,
+                            );
+                          }
+                          cursor++;
+                        }
+                        for (final txn in entry.value) {
+                          if (index == cursor) {
+                            return _TxnRow(
+                              txn: txn,
+                              isInternational: s.isTransactionInternational(
+                                txn,
+                              ),
+                              cardName: s.cards
+                                  .where((card) => card.id == txn.userCardId)
+                                  .firstOrNull
+                                  ?.displayName,
+                            );
+                          }
+                          cursor++;
+                        }
+                      }
+                      return null;
+                    },
+                    childCount: s.grouping == TxnGrouping.flat
+                        ? filtered.length
+                        : grouped.entries.fold<int>(
+                            0,
+                            (sum, e) => sum + 1 + e.value.length,
+                          ),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -329,12 +336,7 @@ class _FilterPanel extends StatelessWidget {
     final now = DateTime.now();
 
     return Container(
-      margin: const EdgeInsets.fromLTRB(
-        BrandSpacing.md,
-        BrandSpacing.sm,
-        BrandSpacing.md,
-        0,
-      ),
+      margin: const EdgeInsets.symmetric(horizontal: BrandSpacing.md),
       padding: const EdgeInsets.all(BrandSpacing.md),
       decoration: BoxDecoration(
         color: BrandColors.paper,
@@ -503,7 +505,12 @@ class _GroupHeader extends StatelessWidget {
       displayLabel = cards.firstWhere((c) => c.id == label).displayName;
     }
     return Padding(
-      padding: const EdgeInsets.fromLTRB(0, BrandSpacing.md, 0, BrandSpacing.xs),
+      padding: const EdgeInsets.fromLTRB(
+        0,
+        BrandSpacing.md,
+        0,
+        BrandSpacing.xs,
+      ),
       child: Row(
         children: [
           Text(
@@ -531,186 +538,235 @@ class _GroupHeader extends StatelessWidget {
   }
 }
 
-class _TxnRow extends StatelessWidget {
+class _TxnRow extends StatefulWidget {
+  const _TxnRow({
+    required this.txn,
+    this.isInternational = false,
+    this.cardName,
+  });
+
   final Transaction txn;
   final bool isInternational;
-  const _TxnRow({required this.txn, this.isInternational = false});
+  final String? cardName;
+
+  @override
+  State<_TxnRow> createState() => _TxnRowState();
+}
+
+class _TxnRowState extends State<_TxnRow> {
+  bool _showDetails = false;
 
   @override
   Widget build(BuildContext context) {
-    final isDebit = txn.isDebit;
-    final amountStr = isDebit
+    final txn = widget.txn;
+    final amount = txn.isDebit
         ? '-${_fmt.format(txn.amount)}'
         : '+${_fmt.format(txn.amount)}';
-    final amountColor = isDebit ? BrandColors.ink : BrandColors.successInk;
-    final catColor = _categoryColor(txn.category);
+    final amountColor = txn.isDebit ? BrandColors.ink : BrandColors.successInk;
+    final hasDetails =
+        widget.isInternational ||
+        (txn.rewardEarned != null && txn.rewardEarned! > 0);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.symmetric(
-        horizontal: BrandSpacing.md,
-        vertical: 11,
-      ),
+      padding: const EdgeInsets.all(BrandSpacing.md),
       decoration: BoxDecoration(
         color: BrandColors.paper,
         borderRadius: BorderRadius.circular(BrandRadius.card),
-        border: Border.all(color: BrandColors.mutedInk.withValues(alpha: 0.07)),
+        border: Border.all(color: BrandColors.mutedInk.withValues(alpha: .07)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: catColor.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(BrandRadius.control),
-            ),
-            child: Icon(_categoryIcon(txn.category), size: 17, color: catColor),
-          ),
-          const SizedBox(width: BrandSpacing.sm),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Flexible(
-                      child: Text(
-                        txn.merchantName ?? txn.description,
-                        style: TextStyle(
-                          fontFamily: 'Manrope',
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                          color: BrandColors.ink,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    if (isInternational)
-                      Padding(
-                        padding: const EdgeInsets.only(left: 4),
-                        child: Icon(
-                          Icons.public,
-                          size: 12,
-                          color: BrandColors.mutedInk,
-                        ),
-                      ),
-                  ],
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final stackAmount =
+                  constraints.maxWidth < 420 ||
+                  MediaQuery.textScalerOf(context).scale(14) >= 21;
+              final merchant = Text(
+                txn.merchantName ?? txn.description,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: BrandColors.ink,
                 ),
-                Text(
-                  DateFormat(
-                    'd MMM · h:mm a',
-                  ).format(txn.transactionDate.toLocal()),
-                  style: TextStyle(
-                    fontFamily: 'Manrope',
-                    fontSize: 11,
-                    color: BrandColors.mutedInk,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                amountStr,
+              );
+              final amountText = Text(
+                amount,
                 style: TextStyle(
                   fontFamily: 'IBM Plex Mono',
-                  fontSize: 13,
+                  fontSize: 14,
                   fontWeight: FontWeight.w700,
                   color: amountColor,
                 ),
-              ),
-              if (txn.rewardEarned != null && txn.rewardEarned! > 0)
-                Text(
-                  '+${_fmt.format(txn.rewardEarned)} pts',
-                  style: TextStyle(
-                    fontFamily: 'Manrope',
-                    fontSize: 10,
-                    color: BrandColors.successInk,
-                  ),
-                ),
-            ],
+              );
+              return stackAmount
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        merchant,
+                        const SizedBox(height: 2),
+                        amountText,
+                      ],
+                    )
+                  : Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(child: merchant),
+                        const SizedBox(width: BrandSpacing.sm),
+                        amountText,
+                      ],
+                    );
+            },
           ),
+          const SizedBox(height: BrandSpacing.xs),
+          Text(
+            DateFormat('d MMM · h:mm a').format(txn.transactionDate.toLocal()),
+            style: const TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 12,
+              color: BrandColors.mutedInk,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            widget.cardName ?? 'Unlinked card',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 12,
+              color: BrandColors.mutedInk,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            txn.category ?? 'Other',
+            style: const TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 12,
+              color: BrandColors.mutedInk,
+            ),
+          ),
+          if (hasDetails) ...[
+            const SizedBox(height: BrandSpacing.xs),
+            TextButton.icon(
+              onPressed: () => setState(() => _showDetails = !_showDetails),
+              icon: Icon(
+                _showDetails
+                    ? Icons.expand_less_rounded
+                    : Icons.expand_more_rounded,
+                size: 18,
+              ),
+              label: Text(_showDetails ? 'Hide details' : 'Details'),
+            ),
+          ],
+          if (_showDetails) ...[
+            if (widget.isInternational)
+              const Text(
+                'International transaction',
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 12,
+                  color: BrandColors.mutedInk,
+                ),
+              ),
+            if (txn.rewardEarned != null && txn.rewardEarned! > 0)
+              Text(
+                '+${_fmt.format(txn.rewardEarned)} reward points',
+                style: const TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 12,
+                  color: BrandColors.successInk,
+                ),
+              ),
+          ],
         ],
       ),
     );
   }
+}
 
-  static Color _categoryColor(String? cat) => categoryColor(cat);
+class _SupportingMetrics extends StatelessWidget {
+  const _SupportingMetrics({required this.rewards, required this.topCategory});
 
-  static IconData _categoryIcon(String? cat) => categoryIcon(cat);
+  final String rewards;
+  final String topCategory;
+
+  @override
+  Widget build(BuildContext context) => Wrap(
+    spacing: BrandSpacing.lg,
+    runSpacing: BrandSpacing.sm,
+    children: [
+      _SupportingMetric(label: 'Rewards earned', value: rewards),
+      _SupportingMetric(label: 'Top category', value: topCategory),
+    ],
+  );
+}
+
+class _SupportingMetric extends StatelessWidget {
+  const _SupportingMetric({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Text(
+        label,
+        style: const TextStyle(
+          fontFamily: 'Manrope',
+          fontSize: 12,
+          color: BrandColors.mutedInk,
+        ),
+      ),
+      const SizedBox(height: 2),
+      Text(
+        value,
+        style: const TextStyle(
+          fontFamily: 'IBM Plex Mono',
+          fontSize: 14,
+          fontWeight: FontWeight.w700,
+          color: BrandColors.ink,
+        ),
+      ),
+    ],
+  );
+}
+
+class _CountPill extends StatelessWidget {
+  const _CountPill({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) => Text(
+    '$count txns',
+    style: const TextStyle(
+      fontFamily: 'Manrope',
+      fontSize: 12,
+      color: BrandColors.mutedInk,
+    ),
+  );
 }
 
 // ── Shared pill/chip widgets ─────────────────────────────────────────────────
 
-class _KpiTile extends StatelessWidget {
-  final String label;
-  final String value;
-  final Color color;
-  final bool capitalize;
-  const _KpiTile({
-    required this.label,
-    required this.value,
-    required this.color,
-    this.capitalize = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.symmetric(
-          horizontal: BrandSpacing.sm,
-          vertical: BrandSpacing.sm,
-        ),
-        decoration: BoxDecoration(
-          color: BrandColors.ledger,
-          borderRadius: BorderRadius.circular(BrandRadius.card),
-          border: Border.all(color: color.withValues(alpha: 0.2)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              label,
-              style: TextStyle(
-                fontFamily: 'Manrope',
-                fontSize: 10,
-                color: BrandColors.mutedInk,
-              ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              capitalize
-                  ? (value.isNotEmpty
-                        ? value[0].toUpperCase() + value.substring(1)
-                        : value)
-                  : value,
-              style: TextStyle(
-                fontFamily: 'Manrope',
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-                color: color,
-              ),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _FilterPill extends StatelessWidget {
   final String label;
+  final String summary;
   final bool active;
   final VoidCallback onTap;
   final IconData icon;
   const _FilterPill({
     required this.label,
+    required this.summary,
     required this.active,
     required this.onTap,
     required this.icon,
@@ -718,40 +774,58 @@ class _FilterPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: active
-              ? BrandColors.focusDark.withValues(alpha: 0.12)
-              : BrandColors.paper,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
+    final compact = MediaQuery.textScalerOf(context).scale(11) >= 16.5;
+    return Semantics(
+      button: true,
+      label: '$label, $summary',
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
             color: active
-                ? BrandColors.focusDark.withValues(alpha: 0.4)
-                : BrandColors.mutedInk.withValues(alpha: 0.2),
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              icon,
-              size: 13,
-              color: active ? BrandColors.focusDark : BrandColors.mutedInk,
+                ? BrandColors.focusDark.withValues(alpha: 0.12)
+                : BrandColors.paper,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: active
+                  ? BrandColors.focusDark.withValues(alpha: 0.4)
+                  : BrandColors.mutedInk.withValues(alpha: 0.2),
             ),
-            const SizedBox(width: 4),
-            Text(
-              label,
-              style: TextStyle(
-                fontFamily: 'Manrope',
-                fontSize: 11,
-                fontWeight: FontWeight.w500,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 13,
                 color: active ? BrandColors.focusDark : BrandColors.mutedInk,
               ),
-            ),
-          ],
+              const SizedBox(width: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                  color: active ? BrandColors.focusDark : BrandColors.mutedInk,
+                ),
+              ),
+              if (!compact) ...[
+                const SizedBox(width: 4),
+                Text(
+                  summary,
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 11,
+                    color: active
+                        ? BrandColors.focusDark
+                        : BrandColors.mutedInk,
+                  ),
+                ),
+              ],
+            ],
+          ),
         ),
       ),
     );
