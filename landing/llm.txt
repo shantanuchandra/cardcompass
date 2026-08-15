@@ -1,89 +1,63 @@
-# CardCompass — AI-Powered Credit Card Rewards Optimizer for India
+# CardCompass
 
-> This file is a machine-readable product description following the llm.txt convention.
-> It provides structured information about CardCompass for AI/LLM consumption.
+> Machine-readable product and source guide. Public claims here are limited to behavior visible in the current product and landing implementation.
 
-## Product Overview
+## Product
 
-**Name:** CardCompass
-**Version:** 2.0.1
-**Category:** Personal Finance / AI-Powered Fintech
-**Market:** India
-**Platform:** Mobile App (Flutter — iOS & Android) + Web Landing Page
+- Name: CardCompass
+- Website: https://cardcompass.in/
+- Market: India
+- Category: credit-card reward decision support
+- Status: early access / waitlist
+- Support and data requests: support@cardcompass.in
 
-CardCompass is an AI-powered credit card rewards optimizer designed specifically for the Indian market. It automatically analyzes credit card statements using Gemini AI, identifies which card earns the most rewards for each purchase category, and provides personalized recommendations to maximize reward earnings.
+CardCompass is being built for people managing several Indian credit cards. It aims to present a card choice with estimated value, caps, milestone context, caveats, source and verification date. Recommendations are informational estimates, not financial advice or issuer guarantees.
 
-## Problem Statement
+## Public pages
 
-Indian credit card users leave an estimated ₹50,000+ in rewards unclaimed annually because:
-- 183+ unique credit cards exist in India, each with different rules, caps, and quirks
-- 72% of users use the wrong card for at least half their purchases
-- Rotating categories, milestone bonuses, and complex earn-rate structures make manual optimization impossible
-- Reward point redemption rates vary dramatically (1 point = ₹0.15 to ₹1.50 depending on the method)
+- Product and waitlist: https://cardcompass.in/
+- Privacy: https://cardcompass.in/privacy/
+- Terms: https://cardcompass.in/terms/
+- Data and security: https://cardcompass.in/data-security/
+- Recommendation disclaimer: https://cardcompass.in/recommendation-disclaimer/
+- Best-card purchase calculator: https://cardcompass.in/tools/best-card/
+- Milestone tracker calculator: https://cardcompass.in/tools/milestone-tracker/
+- Movie-offer savings calculator: https://cardcompass.in/tools/movie-offers/
 
-## Core Features
+## Current product flows
 
-### 1. Smart Card Matching
-Cross-references user's cards against 50+ spending categories with real-time benefit rules, caps, and accelerated earn rates. For every purchase, tells the user exactly which card earns the most.
+### Card and statement organisation
 
-### 2. Gmail Statement Auto-Sync
-Connects to user's Gmail account via OAuth. Automatically scans for bank statement emails, downloads PDF attachments, unlocks encrypted statements, and extracts transaction data — no manual entry required.
+Signed-in users can associate cards from the CardCompass catalog with their account. Current application flows use catalog identity, last four digits, optional holder/limit fields, and statement/due dates; they do not ask users to enter a full card number, CVV, PIN, OTP or banking password.
 
-### 3. AI Transaction Analysis (Gemini AI)
-Uses Google's Gemini AI to read and normalize transaction data from messy, inconsistent bank statement PDFs. Handles OCR, encrypted PDFs, multiple bank formats, and categorizes transactions automatically.
+### Gmail read-only statement import
 
-### 4. Movie Ticket Engine
-Dedicated rule engine for BOGO (Buy One Get One) movie deals — the most complex benefit category in Indian credit cards. Covers BookMyShow, PVR, and other platforms.
+Google OAuth requests Gmail read-only access (`gmail.readonly`) and birthday read access (`user.birthday.read`) in addition to profile scopes. The app searches for statement-like emails with PDF attachments, reads matching email/attachment metadata and downloads a selected statement PDF for processing. Read-only access does not authorise sending, editing or deleting Gmail messages.
 
-### 5. Milestone Tracking
-Tracks spending milestones that unlock accelerated earn rates or bonus reward points (e.g., "Spend ₹1L in a quarter for 2x points on all categories").
+### PDF extraction and password handling
 
-### 6. 183+ Indian Credit Card Database
-Comprehensive database of every major Indian credit card — HDFC, SBI, ICICI, Axis, Kotak, RBL, IndusInd, and more — with every benefit rule, cap, and condition.
+PDF text is extracted in the running app. A password-protected statement can use date-of-birth/card-pattern candidates or a statement PDF password entered by the user. Successful statement PDF passwords and learned patterns are cached locally in app/browser preferences by the current code. The original PDF is not uploaded through the current statement repository path.
 
-### 7. Spend Analytics
-Visual breakdown of spending patterns across categories, cards, and time periods. Shows optimization opportunities and missed rewards.
+### Gemini processing
 
-## Technical Architecture
+Extracted and pruned statement text is sent through an authenticated Supabase edge-function proxy to the Google Gemini Generative Language API. Gemini returns structured statement and transaction data. This AI processing is not solely local or on-device.
 
-- **Frontend:** Flutter (Dart) — cross-platform iOS, Android, Web
-- **State Management:** Riverpod
-- **Backend:** Supabase (PostgreSQL + Auth + Storage)
-- **AI Engine:** Google Gemini 3.5 Flash (via Generative Language API)
-- **Authentication:** Google OAuth + Supabase Auth
-- **Local Storage:** Hive (encrypted local cache)
-- **Email Integration:** Gmail API (OAuth2 scopes: gmail.readonly)
+### Supabase persistence
 
-## Supported Banks (India)
+Supabase provides authentication, database storage, waitlist RPCs and the Gemini proxy. It stores account/profile, Gmail processing metadata, card, transaction and statement records for product users. It separately stores waitlist email, application answers, consent timestamps and attribution fields for early-access operations.
 
-HDFC Bank, SBI Cards, ICICI Bank, Axis Bank, Kotak Mahindra, RBL Bank, IndusInd Bank, IDFC First, American Express, Citi Bank, Standard Chartered, Yes Bank, AU Small Finance Bank, Federal Bank, Bank of Baroda
+### Analytics
 
-## Data Privacy
+The public landing page uses Plausible. CardCompass strips query parameters and URL fragments before analytics transport, blanks referrer data and allow-lists non-sensitive event context. Waitlist attribution is handled separately and submitted to Supabase when the visitor joins.
 
-- Statement data is processed locally on-device using AI
-- No transaction data is stored on external servers
-- Gmail access uses read-only scopes
-- Supabase stores only user preferences and card configurations
-- Full DPDPA (India's Digital Personal Data Protection Act) compliance
+## Calculator limits
 
-## Key Metrics
+The public calculators use arithmetic based on visitor inputs. They do not query issuers or confirm merchant category, eligibility, benefit inventory, posting, cap state or reward fulfilment. Official issuer and merchant terms remain authoritative.
 
-- 183+ Indian credit cards supported
-- 50+ spending categories mapped
-- 10+ banks integrated
-- 99.2% AI transaction extraction accuracy
-- ₹50,000+ average annual savings potential per multi-card user
+## API
 
-## Contact
-
-- Website: https://cardcompass.in
-- Support: support@cardcompass.in
-
-## API / Integration
-
-CardCompass does not currently offer a public API. The product is a consumer-facing mobile application.
+CardCompass does not currently offer a public developer API.
 
 ---
 
-*Last updated: 2026-07-14*
-*Format: llm.txt v1.0*
+Last reviewed: 2026-08-15
