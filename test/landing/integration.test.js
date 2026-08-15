@@ -83,6 +83,9 @@ test('local server serves landing, app, and generated environment roots without 
   for (const route of ['/', '/style.css', '/privacy/', '/tools/tools.js', '/llms.txt', '/img/social-preview.png', '/app/server-allowlist-test.txt', '/env.js']) {
     const response = await fetch(`http://127.0.0.1:${port}${route}`);
     assert.equal(response.status, 200, route);
+    if (route.startsWith('/app/')) {
+      assert.equal(response.headers.get('cache-control'), 'no-store');
+    }
   }
 
   for (const loginPath of ['/login', '/login/']) {
