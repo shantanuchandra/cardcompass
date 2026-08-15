@@ -3,7 +3,6 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/router/app_tab_selection.dart';
@@ -107,10 +106,18 @@ class _DashboardAppBar extends ConsumerWidget {
           ref.invalidate(dashboardProvider);
           ref.invalidate(pendingCardAssignmentsProvider);
         },
-        error: (error, _) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('Gmail sync failed: $error')));
+        error: (_, _) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text(
+                'Couldn\'t sync Gmail. Check your connection and try again.',
+              ),
+              action: SnackBarAction(
+                label: 'Try again',
+                onPressed: () => _showSyncRangeDialog(context, ref),
+              ),
+            ),
+          );
         },
       );
     });
@@ -681,7 +688,7 @@ class _DashboardOverview extends StatelessWidget {
                 'Add a credit card to see spending, limits, and rewards in one place.',
             icon: Icons.add_card_rounded,
             actionLabel: 'Add a card',
-            onAction: () => context.go('/app/cards/add'),
+            onAction: () => AppTabSelection.of(context).select(AppTab.cards),
           ),
         ),
       );

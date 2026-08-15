@@ -42,16 +42,46 @@ final _fixture = DashboardData(
   rewardsEarned: 75,
 );
 
+final _cardlessFixture = DashboardData(
+  cards: const [],
+  recentTransactions: const [],
+  latestStatements: const {},
+  totalCreditLimit: 0,
+  monthlySpend: 0,
+  rewardsEarned: 0,
+);
+
+class _FailingGmailSyncNotifier extends GmailSyncNotifier {
+  @override
+  Future<GmailSyncResult?> build() async {
+    throw StateError('internal Gmail credential must not be displayed');
+  }
+}
+
 Future<void> _pumpDashboard(
   WidgetTester tester, {
   required ValueNotifier<AppTab> selectedAppTab,
+  DashboardData? data,
+  bool failDashboard = false,
+  bool failGmailSync = false,
+  VoidCallback? onDashboardLoad,
 }) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
         currentUserProvider.overrideWithValue(null),
         pendingCardAssignmentsProvider.overrideWith((ref) async => []),
-        dashboardProvider.overrideWith((ref) async => _fixture),
+        dashboardProvider.overrideWith((ref) async {
+          onDashboardLoad?.call();
+          if (failDashboard) {
+            throw StateError(
+              'internal dashboard request must not be displayed',
+            );
+          }
+          return data ?? _fixture;
+        }),
+        if (failGmailSync)
+          gmailSyncProvider.overrideWith(_FailingGmailSyncNotifier.new),
       ],
       child: MaterialApp(
         theme: AppTheme.work,
@@ -109,5 +139,79 @@ void main() {
     await tester.tap(find.text('View all transactions'));
     expect(selectedAppTab.value, AppTab.transactions);
     await tester.pump(const Duration(milliseconds: 300));
+  });
+
+  testWidgets('cardless dashboard focuses one setup action for Cards', (
+    tester,
+  ) async {
+    final selectedAppTab = ValueNotifier(AppTab.dashboard);
+    addTearDown(selectedAppTab.dispose);
+    await _pumpDashboard(
+      tester,
+      selectedAppTab: selectedAppTab,
+      data: _cardlessFixture,
+    );
+
+    expect(find.text('Build your dashboard'), findsOneWidget);
+    expect(find.byKey(const Key('primary-spend-metric')), findsNothing);
+    await tester.tap(find.text('Add a card'));
+    expect(selectedAppTab.value, AppTab.cards);
+  });
+
+  testWidgets('dashboard failures redact internal details and offer Retry', (
+    tester,
+  ) async {
+    final selectedAppTab = ValueNotifier(AppTab.dashboard);
+    var dashboardLoads = 0;
+    addTearDown(selectedAppTab.dispose);
+    await _pumpDashboard(
+      tester,
+      selectedAppTab: selectedAppTab,
+      failDashboard: true,
+      onDashboardLoad: () => dashboardLoads++,
+    );
+
+    expect(find.text("Couldn't load dashboard"), findsOneWidget);
+    expect(find.text('Check your connection and try again.'), findsOneWidget);
+    expect(find.textContaining('internal dashboard request'), findsNothing);
+    expect(find.text('Retry'), findsOneWidget);
+    expect(dashboardLoads, 1);
+
+    await tester.tap(find.text('Retry'));
+    await tester.pumpAndSettle();
+    expect(dashboardLoads, 2);
+  });
+
+  testWidgets('primary recent-spending action selects Transactions', (
+    tester,
+  ) async {
+    final selectedAppTab = ValueNotifier(AppTab.dashboard);
+    addTearDown(selectedAppTab.dispose);
+    await _pumpDashboard(tester, selectedAppTab: selectedAppTab);
+
+    await tester.tap(find.text('Review recent spending'));
+    expect(selectedAppTab.value, AppTab.transactions);
+  });
+
+  testWidgets('Gmail sync failures never render internal exception text', (
+    tester,
+  ) async {
+    final selectedAppTab = ValueNotifier(AppTab.dashboard);
+    addTearDown(selectedAppTab.dispose);
+    await _pumpDashboard(
+      tester,
+      selectedAppTab: selectedAppTab,
+      failGmailSync: true,
+    );
+
+    expect(
+      find.textContaining('internal Gmail credential must not be displayed'),
+      findsNothing,
+    );
+    expect(
+      find.text("Couldn't sync Gmail. Check your connection and try again."),
+      findsOneWidget,
+    );
+    expect(find.text('Try again'), findsOneWidget);
   });
 }
