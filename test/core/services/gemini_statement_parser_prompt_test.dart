@@ -25,5 +25,11 @@ void main() {
       expect(prompt, contains('actual currency'));
       expect(prompt, isNot(contains('"currency": "INR"')));
     });
+
+    test('interpolates bankName into both the intro sentence (uppercased) '
+        'and the BANK: label (as-given)', () {
+      expect(prompt, contains('HDFC BANK')); // intro sentence, .toUpperCase()
+      expect(prompt, contains('BANK: HDFC Bank')); // label line, raw
+    });
   });
 }
