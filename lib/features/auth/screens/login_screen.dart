@@ -3,7 +3,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/theme/brand_tokens.dart';
@@ -403,7 +402,8 @@ class _LoginColumn extends StatelessWidget {
           RichText(
             key: const Key('login-headline'),
             text: TextSpan(
-              style: GoogleFonts.manrope(
+              style: const TextStyle(
+                fontFamily: 'Manrope',
                 color: BrandColors.paper,
                 fontSize: 48,
                 height: .98,
@@ -461,22 +461,24 @@ class _LoginColumn extends StatelessWidget {
                     children: [
                       Text(
                         'CARDHOLDER ACCESS · PRIVATE',
-                        style: GoogleFonts.ibmPlexMono(
-                          color: const Color(0xFF397B76),
+                        style: const TextStyle(
+                          fontFamily: 'IBM Plex Mono',
+                          color: Color(0xFF397B76),
                           fontSize: 9,
-                          fontWeight: FontWeight.w700,
+                          fontWeight: FontWeight.w600,
                           letterSpacing: 1.25,
                         ),
                       ),
                       const SizedBox(height: 11),
                       Text(
                         'Your wallet,\nready when you are.',
-                        style: GoogleFonts.fraunces(
-                          color: const Color(0xFF141B1E),
+                        style: const TextStyle(
+                          fontFamily: 'Fraunces',
+                          color: Color(0xFF141B1E),
                           fontSize: 29,
                           height: 1.02,
                           letterSpacing: -.8,
-                          fontWeight: FontWeight.w700,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                       const SizedBox(height: 8),
@@ -533,8 +535,9 @@ class _LoginColumn extends StatelessWidget {
                         color: const Color(0xFF142124),
                         child: Text(
                           'NEVER REQUESTED · CVV / PIN / OTP / BANK PASSWORD',
-                          style: GoogleFonts.ibmPlexMono(
-                            color: const Color(0xFFBCE9E4),
+                          style: const TextStyle(
+                            fontFamily: 'IBM Plex Mono',
+                            color: Color(0xFFBCE9E4),
                             fontSize: 8.5,
                             height: 1.4,
                             letterSpacing: .35,
@@ -622,8 +625,9 @@ class _ProofColumn extends StatelessWidget {
                             alignment: Alignment.topLeft,
                             child: Text(
                               'One purchase. One clear\ndecision.',
-                              style: GoogleFonts.fraunces(
-                                color: const Color(0xFFF3F0E8),
+                              style: const TextStyle(
+                                fontFamily: 'Fraunces',
+                                color: Color(0xFFF3F0E8),
                                 fontSize: 29,
                                 height: 1.15,
                                 fontWeight: FontWeight.w600,
@@ -645,8 +649,9 @@ class _ProofColumn extends StatelessWidget {
                     ),
                     child: Text(
                       'ILLUSTRATIVE',
-                      style: GoogleFonts.ibmPlexMono(
-                        color: const Color(0xFFFFB547),
+                      style: const TextStyle(
+                        fontFamily: 'IBM Plex Mono',
+                        color: Color(0xFFFFB547),
                         fontSize: 9,
                         letterSpacing: 1.08,
                       ),
@@ -736,8 +741,9 @@ class _Receipt extends StatelessWidget {
               ],
             ),
             child: DefaultTextStyle(
-              style: GoogleFonts.manrope(
-                color: const Color(0xFF0B1015),
+              style: const TextStyle(
+                fontFamily: 'Manrope',
+                color: Color(0xFF0B1015),
                 fontSize: 11,
               ),
               child: Column(
@@ -769,9 +775,10 @@ class _Receipt extends StatelessWidget {
                         ),
                         Text(
                           scenario.amount,
-                          style: GoogleFonts.ibmPlexMono(
+                          style: const TextStyle(
+                            fontFamily: 'IBM Plex Mono',
                             fontSize: 25,
-                            fontWeight: FontWeight.w700,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
                       ],
@@ -809,7 +816,8 @@ class _Receipt extends StatelessWidget {
                         const SizedBox(height: 2),
                         Text(
                           scenario.card,
-                          style: GoogleFonts.fraunces(
+                          style: const TextStyle(
+                            fontFamily: 'Fraunces',
                             fontSize: 27,
                             height: 1.15,
                             fontWeight: FontWeight.w600,
@@ -832,10 +840,11 @@ class _Receipt extends StatelessWidget {
                             ),
                             Text(
                               scenario.value,
-                              style: GoogleFonts.ibmPlexMono(
-                                color: const Color(0xFF9B5A00),
+                              style: const TextStyle(
+                                fontFamily: 'IBM Plex Mono',
+                                color: Color(0xFF9B5A00),
                                 fontSize: 27,
-                                fontWeight: FontWeight.w700,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
                           ],
@@ -867,8 +876,9 @@ class _Receipt extends StatelessWidget {
                   Text(
                     'This preview demonstrates the decision format. It is not a live recommendation or financial advice.',
                     textAlign: TextAlign.center,
-                    style: GoogleFonts.manrope(
-                      color: const Color(0xFF777C79),
+                    style: const TextStyle(
+                      fontFamily: 'Manrope',
+                      color: Color(0xFF777C79),
                       fontSize: 8,
                       height: 1.5,
                     ),
@@ -894,8 +904,9 @@ class _VerificationLine extends StatelessWidget {
         width: 86,
         child: Text(
           label,
-          style: GoogleFonts.ibmPlexMono(
-            color: const Color(0xFF3FE0D0),
+          style: const TextStyle(
+            fontFamily: 'IBM Plex Mono',
+            color: Color(0xFF3FE0D0),
             fontSize: 8,
           ),
         ),
@@ -904,10 +915,11 @@ class _VerificationLine extends StatelessWidget {
         child: Text(
           value,
           textAlign: TextAlign.right,
-          style: GoogleFonts.ibmPlexMono(
-            color: const Color(0xFFF4F0E6),
+          style: const TextStyle(
+            fontFamily: 'IBM Plex Mono',
+            color: Color(0xFFF4F0E6),
             fontSize: 8,
-            fontWeight: FontWeight.w500,
+            fontWeight: FontWeight.w400,
           ),
         ),
       ),
@@ -1004,8 +1016,9 @@ class _Kicker extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Text(
     text,
-    style: GoogleFonts.ibmPlexMono(
-      color: const Color(0xFF62D8CE),
+    style: const TextStyle(
+      fontFamily: 'IBM Plex Mono',
+      color: Color(0xFF62D8CE),
       fontSize: 10,
       fontWeight: FontWeight.w600,
       letterSpacing: 1.4,
@@ -1020,7 +1033,8 @@ class _Mono extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Text(
     text,
-    style: GoogleFonts.ibmPlexMono(
+    style: TextStyle(
+      fontFamily: 'IBM Plex Mono',
       color: color,
       fontSize: 8,
       letterSpacing: .8,
@@ -1085,8 +1099,9 @@ class _PermissionRow extends StatelessWidget {
           width: 94,
           child: Text(
             label,
-            style: GoogleFonts.ibmPlexMono(
-              color: const Color(0xFF637174),
+            style: const TextStyle(
+              fontFamily: 'IBM Plex Mono',
+              color: Color(0xFF637174),
               fontSize: 8.5,
               letterSpacing: .65,
             ),

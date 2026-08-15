@@ -11,8 +11,14 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('app respects platform text scaling', (tester) async {
+    const routedChildKey = Key('scaled-routed-child');
     final router = GoRouter(
-      routes: [GoRoute(path: '/', builder: (_, _) => const SizedBox.shrink())],
+      routes: [
+        GoRoute(
+          path: '/',
+          builder: (_, _) => const SizedBox(key: routedChildKey),
+        ),
+      ],
     );
     addTearDown(router.dispose);
 
@@ -27,7 +33,7 @@ void main() {
     );
 
     expect(
-      MediaQuery.textScalerOf(tester.element(find.byType(MaterialApp))),
+      MediaQuery.textScalerOf(tester.element(find.byKey(routedChildKey))),
       const TextScaler.linear(2),
     );
   });
@@ -58,15 +64,43 @@ void main() {
     expect(AppTheme.marketing.brightness, Brightness.dark);
   });
 
-  test('editorial theme uses the canonical brand roles', () {
+  test('themes keep surface, text, and controls contrast-safe', () {
+    final work = AppTheme.work;
+    final marketing = AppTheme.marketing;
+
+    expect(work.cardTheme.color, BrandColors.paper);
+    expect(work.dialogTheme.backgroundColor, BrandColors.paper);
+    expect(work.textTheme.bodyMedium?.color, BrandColors.ink);
+    expect(
+      work.textButtonTheme.style?.foregroundColor?.resolve({}),
+      BrandColors.focusDark,
+    );
+
+    expect(marketing.cardTheme.color, BrandColors.inkSoft);
+    expect(marketing.dialogTheme.backgroundColor, BrandColors.inkSoft);
+    expect(marketing.textTheme.bodyMedium?.color, BrandColors.paper);
+    expect(
+      marketing.textButtonTheme.style?.foregroundColor?.resolve({}),
+      BrandColors.signal,
+    );
+  });
+
+  test('navigation labels use the 12 pixel typography minimum', () {
+    final label = AppTheme.work.navigationBarTheme.labelTextStyle!.resolve({})!;
+
+    expect(label.fontFamily, 'Manrope');
+    expect(label.fontSize, 12);
+  });
+
+  test('editorial compatibility theme uses dark semantic brand roles', () {
     final theme = AppTheme.editorial;
 
     expect(theme.scaffoldBackgroundColor, BrandColors.ink);
     expect(theme.colorScheme.primary, BrandColors.signal);
     expect(theme.colorScheme.secondary, BrandColors.reward);
-    expect(theme.colorScheme.surface, BrandColors.paper);
-    expect(theme.colorScheme.onSurface, BrandColors.ink);
-    expect(theme.cardTheme.color, BrandColors.paper);
+    expect(theme.colorScheme.surface, BrandColors.inkSoft);
+    expect(theme.colorScheme.onSurface, BrandColors.paper);
+    expect(theme.cardTheme.color, BrandColors.inkSoft);
     expect(theme.appBarTheme.backgroundColor, BrandColors.ink);
   });
 

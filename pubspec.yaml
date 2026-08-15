@@ -27,7 +27,6 @@ dependencies:
   googleapis: ^16.0.0
 
   # UI & Fonts
-  google_fonts: ^6.2.1
   flutter_animate: ^4.5.0
   fl_chart: ^0.70.2
 

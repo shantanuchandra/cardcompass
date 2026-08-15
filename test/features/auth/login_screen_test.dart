@@ -49,6 +49,26 @@ void main() {
     expect(root.toPlainText(), 'Continue to your\nCardCompass wallet.');
   });
 
+  testWidgets('login uses bundled font families and available weights', (
+    tester,
+  ) async {
+    await _setSurface(tester, const Size(1440, 1000));
+    await tester.pumpWidget(_testApp());
+    await tester.pump();
+
+    final accessLabel = tester.widget<Text>(
+      find.text('CARDHOLDER ACCESS · PRIVATE'),
+    );
+    expect(accessLabel.style?.fontFamily, 'IBM Plex Mono');
+    expect(accessLabel.style?.fontWeight, FontWeight.w600);
+
+    final folioHeading = tester.widget<Text>(
+      find.text('Your wallet,\nready when you are.'),
+    );
+    expect(folioHeading.style?.fontFamily, 'Fraunces');
+    expect(folioHeading.style?.fontWeight, FontWeight.w600);
+  });
+
   testWidgets('desktop login keeps authentication left of the product proof', (
     tester,
   ) async {

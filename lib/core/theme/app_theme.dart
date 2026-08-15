@@ -27,12 +27,12 @@ abstract final class AppTheme {
             onSecondary: BrandColors.ink,
             secondaryContainer: BrandColors.paperDeep,
             onSecondaryContainer: BrandColors.ink,
-            surface: BrandColors.paper,
-            onSurface: BrandColors.ink,
+            surface: BrandColors.inkSoft,
+            onSurface: BrandColors.paper,
             surfaceContainerLowest: BrandColors.ink,
             surfaceContainerLow: BrandColors.inkSoft,
-            surfaceContainer: BrandColors.paper,
-            surfaceContainerHigh: BrandColors.paperDeep,
+            surfaceContainer: BrandColors.inkSoft,
+            surfaceContainerHigh: BrandColors.inkSoft,
             error: BrandColors.error,
             onError: BrandColors.ink,
             outline: BrandColors.mutedInk,
@@ -69,6 +69,14 @@ abstract final class AppTheme {
         ? BrandColors.signal
         : BrandColors.focusDark;
     final buttonForeground = isDark ? BrandColors.ink : BrandColors.paper;
+    final surface = isDark ? BrandColors.inkSoft : BrandColors.paper;
+    final surfaceForeground = isDark ? BrandColors.paper : BrandColors.ink;
+    final surfaceOutline = isDark
+        ? BrandColors.ruleOnInk
+        : BrandColors.ruleOnPaper;
+    final textButtonForeground = isDark
+        ? BrandColors.signal
+        : BrandColors.focusDark;
 
     final textTheme = base.textTheme
         .apply(fontFamily: 'Manrope')
@@ -203,12 +211,12 @@ abstract final class AppTheme {
         iconTheme: IconThemeData(color: foreground),
       ),
       cardTheme: CardThemeData(
-        color: BrandColors.paper,
+        color: surface,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(BrandRadius.card),
-          side: const BorderSide(color: BrandColors.ruleOnPaper),
+          side: BorderSide(color: surfaceOutline),
         ),
         margin: EdgeInsets.zero,
       ),
@@ -241,7 +249,7 @@ abstract final class AppTheme {
       ),
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
-          foregroundColor: BrandColors.focusDark,
+          foregroundColor: textButtonForeground,
           textStyle: TextStyle(
             fontFamily: 'Manrope',
             fontSize: 14,
@@ -251,7 +259,7 @@ abstract final class AppTheme {
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: BrandColors.white,
+        fillColor: isDark ? BrandColors.inkSoft : BrandColors.white,
         contentPadding: const EdgeInsets.symmetric(
           horizontal: BrandSpacing.md,
           vertical: 14,
@@ -274,12 +282,12 @@ abstract final class AppTheme {
         hintStyle: TextStyle(
           fontFamily: 'Manrope',
           fontSize: 14,
-          color: BrandColors.mutedInk,
+          color: mutedForeground,
         ),
         labelStyle: TextStyle(
           fontFamily: 'Manrope',
           fontSize: 14,
-          color: BrandColors.mutedInk,
+          color: mutedForeground,
         ),
       ),
       bottomNavigationBarTheme: const BottomNavigationBarThemeData(
@@ -303,7 +311,7 @@ abstract final class AppTheme {
         labelTextStyle: WidgetStateProperty.resolveWith(
           (states) => TextStyle(
             fontFamily: 'Manrope',
-            fontSize: 11,
+            fontSize: 12,
             fontWeight: FontWeight.w700,
             color: states.contains(WidgetState.selected)
                 ? BrandColors.signal
@@ -317,15 +325,15 @@ abstract final class AppTheme {
         space: 1,
       ),
       chipTheme: ChipThemeData(
-        backgroundColor: BrandColors.paperDeep,
-        selectedColor: BrandColors.ledger,
+        backgroundColor: surface,
+        selectedColor: isDark ? BrandColors.focusDark : BrandColors.ledger,
         labelStyle: TextStyle(
           fontFamily: 'Manrope',
           fontSize: 12,
           fontWeight: FontWeight.w700,
-          color: BrandColors.ink,
+          color: surfaceForeground,
         ),
-        side: const BorderSide(color: BrandColors.ruleOnPaper),
+        side: BorderSide(color: surfaceOutline),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(BrandRadius.pill),
         ),
@@ -335,11 +343,11 @@ abstract final class AppTheme {
         ),
       ),
       snackBarTheme: SnackBarThemeData(
-        backgroundColor: BrandColors.paper,
+        backgroundColor: surface,
         contentTextStyle: TextStyle(
           fontFamily: 'Manrope',
           fontSize: 14,
-          color: BrandColors.ink,
+          color: surfaceForeground,
         ),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(BrandRadius.card),
@@ -347,14 +355,14 @@ abstract final class AppTheme {
         behavior: SnackBarBehavior.floating,
       ),
       dialogTheme: DialogThemeData(
-        backgroundColor: BrandColors.paper,
+        backgroundColor: surface,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(BrandRadius.overlay),
         ),
       ),
-      bottomSheetTheme: const BottomSheetThemeData(
-        backgroundColor: BrandColors.paper,
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: surface,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(
