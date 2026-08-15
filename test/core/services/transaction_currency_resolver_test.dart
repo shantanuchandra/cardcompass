@@ -14,6 +14,14 @@ void main() {
       );
     });
 
+    test('a non-INR value is trusted even if not a real currency code — '
+        'validation is intentionally out of scope, see doc comment', () {
+      expect(
+        resolveTransactionCurrency(geminiCurrency: 'XYZ', bankMarketCurrency: 'INR'),
+        'XYZ',
+      );
+    });
+
     test('overrides a bare "INR" value when the bank resolves to a '
         'non-INR market — the core INR-distrust logic', () {
       expect(
