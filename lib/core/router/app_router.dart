@@ -241,59 +241,61 @@ class AppSideRail extends StatelessWidget {
                   selected: selected,
                   button: true,
                   label: item.label,
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(BrandRadius.control),
-                    onTap: () => onTap(i),
-                    child: Container(
-                      constraints: const BoxConstraints(minHeight: 48),
-                      decoration: BoxDecoration(
-                        color: selected
-                            ? BrandColors.signal
-                            : Colors.transparent,
-                        borderRadius: BorderRadius.circular(
-                          BrandRadius.control,
+                  child: ExcludeSemantics(
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(BrandRadius.control),
+                      onTap: () => onTap(i),
+                      child: Container(
+                        constraints: const BoxConstraints(minHeight: 48),
+                        decoration: BoxDecoration(
+                          color: selected
+                              ? BrandColors.signal
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(
+                            BrandRadius.control,
+                          ),
                         ),
-                      ),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 12,
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            selected ? item.activeIcon : item.icon,
-                            size: 19,
-                            color: selected
-                                ? BrandColors.ink
-                                : BrandColors.mutedPaper,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              item.label,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontFamily: 'Manrope',
-                                fontSize: 14,
-                                fontWeight: FontWeight.w700,
-                                color: selected
-                                    ? BrandColors.ink
-                                    : BrandColors.mutedPaper,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 12,
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              selected ? item.activeIcon : item.icon,
+                              size: 19,
+                              color: selected
+                                  ? BrandColors.ink
+                                  : BrandColors.mutedPaper,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                item.label,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontFamily: 'Manrope',
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700,
+                                  color: selected
+                                      ? BrandColors.ink
+                                      : BrandColors.mutedPaper,
+                                ),
                               ),
                             ),
-                          ),
-                          if (selected) ...[
-                            const SizedBox(width: 8),
-                            Container(
-                              width: 5,
-                              height: 5,
-                              decoration: const BoxDecoration(
-                                color: BrandColors.ink,
-                                shape: BoxShape.circle,
+                            if (selected) ...[
+                              const SizedBox(width: 8),
+                              Container(
+                                width: 5,
+                                height: 5,
+                                decoration: const BoxDecoration(
+                                  color: BrandColors.ink,
+                                  shape: BoxShape.circle,
+                                ),
                               ),
-                            ),
+                            ],
                           ],
-                        ],
+                        ),
                       ),
                     ),
                   ),
@@ -346,6 +348,9 @@ class AppBottomNav extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final labelHeight = MediaQuery.textScalerOf(context).scale(14) * 2;
+    final navigationHeight = (labelHeight + 44).clamp(76.0, 132.0);
+
     return Container(
       decoration: const BoxDecoration(
         color: BrandColors.inkSoft,
@@ -354,7 +359,7 @@ class AppBottomNav extends StatelessWidget {
       child: SafeArea(
         top: false,
         child: SizedBox(
-          height: 76,
+          height: navigationHeight,
           child: Row(
             children: List.generate(_items.length, (i) {
               final item = _items[i];
@@ -364,34 +369,39 @@ class AppBottomNav extends StatelessWidget {
                   selected: selected,
                   button: true,
                   label: item.label,
-                  child: InkWell(
-                    onTap: () => onTap(i),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          selected ? item.activeIcon : item.icon,
-                          size: 20,
-                          color: selected
-                              ? BrandColors.signal
-                              : BrandColors.mutedPaper,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          item.label,
-                          style: TextStyle(
-                            fontFamily: 'Manrope',
-                            fontSize: 14,
-                            letterSpacing: -0.6,
-                            height: 1,
-                            overflow: TextOverflow.ellipsis,
-                            fontWeight: FontWeight.w700,
+                  child: ExcludeSemantics(
+                    child: InkWell(
+                      onTap: () => onTap(i),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            selected ? item.activeIcon : item.icon,
+                            size: 20,
                             color: selected
                                 ? BrandColors.signal
                                 : BrandColors.mutedPaper,
                           ),
-                        ),
-                      ],
+                          const SizedBox(height: 4),
+                          Text(
+                            item.label,
+                            style: TextStyle(
+                              fontFamily: 'Manrope',
+                              fontSize: 14,
+                              letterSpacing: -0.6,
+                              height: 1,
+                              overflow: TextOverflow.visible,
+                              fontWeight: FontWeight.w700,
+                              color: selected
+                                  ? BrandColors.signal
+                                  : BrandColors.mutedPaper,
+                            ),
+                            maxLines: 2,
+                            softWrap: true,
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),

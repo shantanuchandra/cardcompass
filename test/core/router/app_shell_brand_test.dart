@@ -4,6 +4,7 @@ import 'package:cardcompass/core/router/app_router.dart';
 import 'package:cardcompass/core/router/app_tab_selection.dart';
 import 'package:cardcompass/features/dashboard/screens/dashboard_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _TabHarness extends StatefulWidget {
@@ -70,7 +71,7 @@ void main() {
 
   test('navigation keeps existing routing behavior and accessible targets', () {
     expect(source, contains("replaceBrowserHistory('#\${_kTabPaths[i]}')"));
-    expect(source, contains('height: 76'));
+    expect(source, contains('height: navigationHeight'));
     expect(source, contains('Semantics('));
   });
 
@@ -109,6 +110,45 @@ void main() {
 
     final label = tester.widget<Text>(find.text('Dashboard').last);
     expect(label.style?.fontSize, 14);
+  });
+
+  testWidgets('mobile Transactions label stays whole at 390px and 2x text', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: const MediaQueryData(textScaler: TextScaler.linear(2)),
+          child: const _MobileNavHarness(),
+        ),
+      ),
+    );
+
+    final label = tester.widget<Text>(find.text('Transactions'));
+    final paragraph = tester.renderObject<RenderParagraph>(
+      find.text('Transactions'),
+    );
+    expect(label.style?.fontSize, 14);
+    expect(label.maxLines, 2);
+    expect(label.overflow, isNot(TextOverflow.ellipsis));
+    expect(
+      paragraph
+          .getBoxesForSelection(
+            const TextSelection(baseOffset: 0, extentOffset: 12),
+          )
+          .length,
+      greaterThanOrEqualTo(2),
+    );
+    expect(paragraph.size.height, greaterThanOrEqualTo(48));
+    expect(
+      tester.getSemantics(find.text('Transactions')).label,
+      'Transactions',
+    );
+    expect(tester.takeException(), isNull);
+    semantics.dispose();
   });
 
   testWidgets('Dashboard section actions select their rendered app tabs', (

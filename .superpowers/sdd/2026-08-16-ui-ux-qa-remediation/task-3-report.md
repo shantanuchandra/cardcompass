@@ -45,3 +45,26 @@ $ git diff --check
 $ flutter build web --no-wasm-dry-run
 ✓ Built build/web
 ```
+
+## Review round 2
+
+- The 14 px mobile labels now allow two lines instead of using ellipsis. The bottom-navigation height grows with the active text scale, preserving the icon, full label, and tap target at large accessibility text sizes.
+- Navigation item semantics exclude the visual child labels, so the action node announces exactly `Transactions` rather than a duplicated label.
+- Added a 390 px, 2× text-scale rendered geometry test. It asserts that the Transactions label remains 14 px, occupies both needed text boxes, is not ellipsized, has sufficient height, and retains the exact semantic label without rendering exceptions.
+
+### Command evidence
+
+```text
+$ flutter test test/core/router/app_shell_brand_test.dart
+00:00 +7: All tests passed!
+
+$ flutter analyze lib/core/router/app_router.dart lib/core/router/app_tab_selection.dart lib/core/router/browser_history.dart lib/core/router/browser_history_stub.dart lib/core/router/browser_history_web.dart test/core/router/app_shell_brand_test.dart
+Analyzing 6 items...
+No issues found!
+
+$ flutter build web --no-wasm-dry-run
+✓ Built build/web
+
+$ git diff --check
+(no output; passed)
+```
