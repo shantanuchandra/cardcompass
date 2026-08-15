@@ -417,6 +417,16 @@ abstract final class AppTheme {
     );
   }
 
+  static Color issuerColor(String bankCode) => switch (bankCode.toLowerCase()) {
+        'hdfc' => AppColors.hdfc,
+        'sbi' => AppColors.sbi,
+        'icici' => AppColors.icici,
+        'axis' => AppColors.axis,
+        'kotak' => AppColors.kotak,
+        'amex' => AppColors.amex,
+        _ => BrandColors.mutedInk,
+      };
+
   static final _bankGradients = <String, List<Color>>{
     'hdfc': [
       const Color(0xFF0D47A1),
