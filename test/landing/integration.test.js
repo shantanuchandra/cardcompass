@@ -49,6 +49,19 @@ test('public deploy-root documents and modules use root asset URLs', async () =>
   }
 });
 
+test('desktop landing shell uses a 1440px cap and a three-line hero lockup', async () => {
+  const css = await landingFile('style.css');
+  const html = await landingFile('index.html');
+
+  assert.match(
+    css,
+    /--shell:\s*min\(1440px, calc\(100vw - clamp\(40px, 4vw, 64px\)\)\);/,
+  );
+  assert.match(css, /\.hero h1\s*\{[^}]*font-size:\s*clamp\(46px, 5\.2vw, 72px\);/s);
+  assert.match(html, /Know the best card<br>in your wallet <em>before you pay\.<\/em>/);
+  assert.match(css, /--shell:\s*min\(100% - 28px, 620px\);/);
+});
+
 test('local server serves landing, app, and generated environment roots without legacy login', async (t) => {
   const appFixture = new URL('../../build/web/server-allowlist-test.txt', import.meta.url);
   await mkdir(new URL('../../build/web/', import.meta.url), { recursive: true });
