@@ -164,6 +164,8 @@ Every data-backed page defines:
 
 Responsiveness uses both available width and effective text scale. A desktop-width viewport at 200% scale may choose a narrower composition.
 
+Authenticated data-heavy surfaces may offer a full-width presentation when horizontal space materially improves comparison, charts, tables, or multi-card scanning. Reading, form, legal, and recommendation-explanation content keeps a readable maximum measure inside that full-width shell. Full-width behavior must be automatic where clearly beneficial or exposed through one persistent user control; it must never stretch prose indiscriminately.
+
 ## Error handling and content rules
 
 - User-facing errors state the problem, consequence, and next action.
