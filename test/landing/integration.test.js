@@ -27,6 +27,7 @@ test('homepage retains waitlist anchors and exposes the utility CTA apply target
   assert.match(html, /\bid="apply"/);
   assert.doesNotMatch(html, /href="#waitlist"/);
   assert.match(html, /href="#apply"/);
+  assert.match(html, /<script type="module" src="\/oauth-callback\.js"><\/script>/);
 });
 
 test('public deploy-root documents and modules use root asset URLs', async () => {
