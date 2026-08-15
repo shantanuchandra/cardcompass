@@ -1,259 +1,318 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="en" data-landing-variant="receipt_v1">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CardCompass — Every Swipe, Optimised.</title>
-  <meta name="description" content="CardCompass uses Gemini AI to read your credit card statements and tell you the best card to swipe — for every purchase. 183+ Indian credit cards.">
-  <link rel="alternate" type="text/markdown" href="/llm.txt" title="Machine-readable product information">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CardCompass — Know the best card before you pay</title>
+  <meta name="description" content="CardCompass helps Indian multi-card users compare rewards, caps, and milestones before choosing a card. Join the qualified early-access waitlist.">
+  <meta name="theme-color" content="#0B1015">
+  <meta property="og:title" content="CardCompass — Know the best card before you pay">
+  <meta property="og:description" content="A clearer card choice, with the value and caveats shown together.">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="/landing/img/app-recommendations.png">
+  <link rel="alternate" type="text/markdown" href="/landing/llm.txt" title="Machine-readable product information">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/landing/style.css">
-  <link rel="icon" type="image/png" href="img/favicon.png">
+  <link rel="icon" type="image/png" href="/landing/img/favicon.png">
+  <script defer data-domain="cardcompass.in" src="https://plausible.io/js/script.js"></script>
 </head>
 <body>
+  <a class="skip-link" href="#main">Skip to main content</a>
 
-  <!-- BLOBS -->
-  <svg class="blob-bg" viewBox="0 0 1400 900" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-    <defs><filter id="blob-blur"><feGaussianBlur stdDeviation="80"/></filter></defs>
-    <g filter="url(#blob-blur)" opacity="0.3">
-      <circle cx="250" cy="350" r="220" fill="#00F5FF">
-        <animate attributeName="cx" values="250;450;300;250" dur="22s" repeatCount="indefinite"/>
-        <animate attributeName="cy" values="350;250;450;350" dur="18s" repeatCount="indefinite"/>
-      </circle>
-      <circle cx="1100" cy="200" r="180" fill="#8B5CF6">
-        <animate attributeName="cx" values="1100;900;1050;1100" dur="20s" repeatCount="indefinite"/>
-        <animate attributeName="cy" values="200;400;250;200" dur="24s" repeatCount="indefinite"/>
-      </circle>
-    </g>
-  </svg>
-
-  <!-- NAV -->
-  <nav class="nav" id="nav">
-    <div class="nav-inner">
-      <a href="/" class="nav-logo">CardCompass</a>
-      <a href="/app/" class="btn btn-nav magnetic">Sign In</a>
+  <header class="site-header" id="siteHeader">
+    <div class="shell nav-row">
+      <a class="wordmark" href="/" aria-label="CardCompass home">
+        <span class="wordmark-mark" aria-hidden="true">CC</span>
+        <span>CardCompass</span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a class="nav-link" href="#proof">Product</a>
+        <a class="button button-small button-outline" href="#waitlist" data-waitlist-entry="nav">Join waitlist</a>
+      </nav>
     </div>
-  </nav>
+  </header>
 
-  <!-- HERO -->
-  <section class="hero" id="hero">
-    <div class="hero-content">
-      <div class="hero-badge">
-        <span class="pulse-dot"></span>
-        Early Access Open
-      </div>
-      <h1>
-        Your Cards Are Leaving<br>
-        <span class="gradient-text">₹50,000+</span><br>
-        On the Table.
-      </h1>
-      <p class="hero-subtitle">
-        CardCompass uses Gemini AI to read your credit card statements and tell you the best card to swipe — for every purchase, every merchant, every day.
-      </p>
-      <form class="waitlist-form" id="heroForm" novalidate>
-        <div class="form-row">
-          <div class="input-wrap">
-            <input
-              type="email"
-              id="heroEmail"
-              name="email"
-              placeholder="your@email.com"
-              autocomplete="email"
-              required
-            >
-            <span class="input-error" id="heroEmailError"></span>
+  <main id="main">
+    <section class="hero" id="waitlist" aria-labelledby="hero-title">
+      <div class="shell hero-grid">
+        <div class="hero-copy reveal">
+          <p class="eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span> Founding 100 early access</p>
+          <h1 id="hero-title">Know the best card in your wallet <em>before you pay.</em></h1>
+          <p class="hero-lede">CardCompass is built for people juggling several Indian credit cards. Compare the likely return, caps, and milestones behind a card choice—without keeping every rule in your head.</p>
+
+          <div class="waitlist-panel" aria-labelledby="waitlist-title">
+            <div class="step-meter" aria-label="Waitlist progress">
+              <span class="step-meter-item is-current" data-step-marker="1"><b>1</b> Reserve your place</span>
+              <span class="step-meter-line" aria-hidden="true"></span>
+              <span class="step-meter-item" data-step-marker="2"><b>2</b> Tell us what you need</span>
+            </div>
+
+            <div id="waitlistStepOne">
+              <div class="panel-heading">
+                <p class="mono-label">Qualified early access</p>
+                <h2 id="waitlist-title">Apply to the Founding 100</h2>
+                <p>Start with your email. The next step takes about a minute.</p>
+              </div>
+              <form id="joinForm" novalidate data-placement="hero">
+                <label for="email">Email address</label>
+                <div class="field-action-row">
+                  <input id="email" name="email" type="email" inputmode="email" autocomplete="email" maxlength="254" placeholder="you@example.com" aria-describedby="emailError">
+                  <button class="button button-primary" type="submit" id="joinButton">Continue</button>
+                </div>
+                <p class="field-error" id="emailError" aria-live="polite"></p>
+                <label class="check-row" for="privacyConsent">
+                  <input id="privacyConsent" name="privacy_consent" type="checkbox" aria-describedby="privacyError">
+                  <span>I agree to the <a href="/privacy/">privacy notice</a> and to CardCompass using my details to manage this waitlist.</span>
+                </label>
+                <p class="field-error" id="privacyError" aria-live="polite"></p>
+                <p class="form-note">No payment details. Joining the waitlist does not guarantee an invitation.</p>
+              </form>
+            </div>
+
+            <div id="waitlistStepTwo" hidden>
+              <div class="panel-heading">
+                <p class="mono-label">Step 2 of 2</p>
+                <h2>Help us understand your card setup</h2>
+                <p>These answers help us prioritise early access. Required fields are marked.</p>
+              </div>
+              <form id="qualificationForm" novalidate>
+                <div class="field-grid field-grid-two">
+                  <div class="field-group">
+                    <label for="name">Name <span>(optional)</span></label>
+                    <input id="name" name="name" autocomplete="name" maxlength="100">
+                    <p class="field-error" id="nameError"></p>
+                  </div>
+                  <div class="field-group">
+                    <label for="cardCount">Cards you hold <b>Required</b></label>
+                    <select id="cardCount" name="card_count" aria-describedby="cardCountError">
+                      <option value="">Choose a range</option>
+                      <option value="1-2">1–2 cards</option>
+                      <option value="3-6">3–6 cards</option>
+                      <option value="7+">7+ cards</option>
+                    </select>
+                    <p class="field-error" id="cardCountError"></p>
+                  </div>
+                  <div class="field-group">
+                    <label for="monthlySpendBand">Monthly card spend <b>Required</b></label>
+                    <select id="monthlySpendBand" name="monthly_spend_band" aria-describedby="monthlySpendBandError">
+                      <option value="">Choose a range</option>
+                      <option value="under-25k">Under ₹25,000</option>
+                      <option value="25k-50k">₹25,000–₹50,000</option>
+                      <option value="50k-1l">₹50,000–₹1 lakh</option>
+                      <option value="1l-plus">₹1 lakh+</option>
+                    </select>
+                    <p class="field-error" id="monthlySpendBandError"></p>
+                  </div>
+                  <div class="field-group">
+                    <label for="primaryGoal">What matters most? <b>Required</b></label>
+                    <select id="primaryGoal" name="primary_goal" aria-describedby="primaryGoalError">
+                      <option value="">Choose one goal</option>
+                      <option value="maximize_rewards">Maximise rewards</option>
+                      <option value="track_benefits">Track benefits and milestones</option>
+                      <option value="simplify_card_choices">Make card choices simpler</option>
+                    </select>
+                    <p class="field-error" id="primaryGoalError"></p>
+                  </div>
+                </div>
+
+                <div class="field-group card-picker">
+                  <label for="cardSearch">Top cards in your wallet <span>(optional, up to two)</span></label>
+                  <div class="selected-cards" id="selectedCards" aria-live="polite"></div>
+                  <input id="cardSearch" type="text" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="cardSuggestions" aria-describedby="topCardsError" placeholder="Search bank or card name">
+                  <ul class="suggestions" id="cardSuggestions" role="listbox" hidden></ul>
+                  <p class="field-hint">Suggestions come from the current CardCompass card catalog.</p>
+                  <p class="field-error" id="topCardsError"></p>
+                </div>
+
+                <div class="field-group">
+                  <label for="problemDetail">What makes choosing a card difficult? <span>(optional)</span></label>
+                  <textarea id="problemDetail" name="problem_detail" rows="3" maxlength="500" aria-describedby="problemDetailError problemCounter"></textarea>
+                  <div class="field-meta">
+                    <p class="field-error" id="problemDetailError"></p>
+                    <p class="character-count" id="problemCounter">0 / 500</p>
+                  </div>
+                </div>
+
+                <label class="check-row" for="marketingConsent">
+                  <input id="marketingConsent" name="marketing_consent" type="checkbox">
+                  <span>Email me occasional CardCompass product updates. Optional; you can unsubscribe.</span>
+                </label>
+                <button class="button button-primary button-full" type="submit" id="qualificationButton">Complete my application</button>
+                <p class="form-status" id="qualificationStatus" role="status"></p>
+              </form>
+            </div>
+
+            <div class="success-state" id="waitlistSuccess" role="status" hidden>
+              <span class="success-check" aria-hidden="true">✓</span>
+              <p class="mono-label">Application received</p>
+              <h2>You’re on the qualified waitlist.</h2>
+              <p>We’ll review your answers for Founding 100 early access. If selected, you’ll hear from us by email.</p>
+            </div>
           </div>
-          <button type="submit" class="btn btn-primary magnetic" id="heroSubmitBtn" disabled>
-            Get Early Access
-          </button>
         </div>
-        <p class="form-hint">No spam. Unsubscribe any time.</p>
-      </form>
-      <div class="hero-social-proof">
-        183+ credit cards · 10+ Indian banks
-      </div>
-    </div>
-  </section>
 
-  <!-- HOW IT WORKS -->
-  <section class="how-it-works section-pad" id="how-it-works">
-    <div class="container">
-      <h2 class="section-title fade-in">How It Works</h2>
-      <p class="section-subtitle fade-in">Three steps. Zero effort.</p>
-      <div class="steps">
-        <div class="step fade-in">
-          <div class="step-number">01</div>
-          <h3>Connect Gmail</h3>
-          <p>Securely link your inbox with Google OAuth. Read-only access — we only look for bank statement emails.</p>
-        </div>
-        <div class="step-arrow" aria-hidden="true">→</div>
-        <div class="step fade-in">
-          <div class="step-number">02</div>
-          <h3>AI Reads Your Statements</h3>
-          <p>Gemini AI unlocks and reads your PDFs — 15+ bank formats, encrypted statements, 99.2% extraction accuracy.</p>
-        </div>
-        <div class="step-arrow" aria-hidden="true">→</div>
-        <div class="step fade-in">
-          <div class="step-number">03</div>
-          <h3>Best Card, Every Time</h3>
-          <p>For every merchant and category, CardCompass tells you exactly which card earns the most rewards.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- STATS -->
-  <section class="stats section-pad" id="stats">
-    <div class="container">
-      <div class="stats-grid">
-        <div class="stat fade-in">
-          <div class="stat-number" data-count="183">0</div>
-          <div class="stat-label">Credit cards supported</div>
-        </div>
-        <div class="stat fade-in">
-          <div class="stat-number" data-count="50">0</div>
-          <div class="stat-label">Spending categories</div>
-        </div>
-        <div class="stat fade-in">
-          <div class="stat-value gradient-text">₹50k+</div>
-          <div class="stat-label">Average annual savings</div>
-        </div>
-        <div class="stat fade-in">
-          <div class="stat-value gradient-text">99.2%</div>
-          <div class="stat-label">AI extraction accuracy</div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- FEATURES -->
-  <section class="features section-pad" id="features">
-    <div class="container">
-      <h2 class="section-title fade-in">Built for India's Cards</h2>
-      <p class="section-subtitle fade-in">The rules are complex. We handle them so you don't have to.</p>
-      <div class="features-grid">
-        <div class="feature-card fade-in">
-          <div class="feature-icon">🎬</div>
-          <h3>Movie Ticket Engine</h3>
-          <p>BOGO deals on BookMyShow and PVR are the most complex benefit in Indian credit cards. We've mapped every rule.</p>
-        </div>
-        <div class="feature-card fade-in">
-          <div class="feature-icon">🏆</div>
-          <h3>Milestone Tracking</h3>
-          <p>Know exactly how far you are from unlocking accelerated earn rates or bonus points this quarter.</p>
-        </div>
-        <div class="feature-card fade-in">
-          <div class="feature-icon">🔔</div>
-          <h3>Proactive Nudges</h3>
-          <p>"You're ₹4,000 away from your Amazon Pay milestone — spend before the 25th." No other app can do this.</p>
-        </div>
-        <div class="feature-card fade-in">
-          <div class="feature-icon">📊</div>
-          <h3>Spend Analytics</h3>
-          <p>Visual breakdown of rewards earned, missed, and upcoming — across all your cards and categories.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- FAQ -->
-  <section class="faq section-pad" id="faq">
-    <div class="container">
-      <h2 class="section-title fade-in">Common Questions</h2>
-      <div class="faq-list">
-        <details class="faq-item fade-in">
-          <summary>Is my Gmail data safe?</summary>
-          <p>CardCompass uses read-only OAuth — we can only read emails, never send or delete. We scan only for bank statement emails. No email content is stored on our servers.</p>
-        </details>
-        <details class="faq-item fade-in">
-          <summary>What data does CardCompass store?</summary>
-          <p>We store your card configurations and transaction categories — not raw transaction data or statement PDFs. Everything is processed in-memory and discarded after extraction.</p>
-        </details>
-        <details class="faq-item fade-in">
-          <summary>Which banks are supported?</summary>
-          <p>HDFC, SBI, ICICI, Axis, Kotak, RBL, IndusInd, IDFC First, Amex, Citi, Standard Chartered, Yes Bank, AU Small Finance, Federal Bank, and Bank of Baroda — with more added regularly.</p>
-        </details>
-        <details class="faq-item fade-in">
-          <summary>Does this work with encrypted PDF statements?</summary>
-          <p>Yes. CardCompass auto-guesses statement passwords using your birthday and other common formats that Indian banks use.</p>
-        </details>
-        <details class="faq-item fade-in">
-          <summary>Is CardCompass free?</summary>
-          <p>Early access is completely free. We'll introduce premium features later — early access users will get a special rate.</p>
-        </details>
-      </div>
-    </div>
-  </section>
-
-  <!-- BOTTOM WAITLIST -->
-  <section class="bottom-waitlist section-pad" id="bottom-waitlist">
-    <div class="container">
-      <h2 class="section-title fade-in">Ready to stop leaving money on the table?</h2>
-      <p class="section-subtitle fade-in">Join the waitlist — free, no spam, cancel any time.</p>
-      <form class="waitlist-form waitlist-form--bottom" id="bottomForm" novalidate>
-        <div class="form-row">
-          <div class="input-wrap">
-            <input
-              type="email"
-              id="bottomEmail"
-              name="email"
-              placeholder="your@email.com"
-              autocomplete="email"
-              required
-            >
-            <span class="input-error" id="bottomEmailError"></span>
+        <div class="receipt-stage reveal" aria-labelledby="receipt-heading">
+          <div class="receipt-stage-heading">
+            <div>
+              <p class="mono-label">Interactive preview</p>
+              <h2 id="receipt-heading">One purchase. One clear decision.</h2>
+            </div>
+            <span class="illustrative-tag">Illustrative</span>
           </div>
-          <button type="submit" class="btn btn-primary magnetic" id="bottomSubmitBtn" disabled>
-            Get Early Access
-          </button>
-        </div>
-      </form>
-    </div>
-  </section>
 
-  <!-- FOOTER -->
-  <footer class="footer">
-    <div class="container footer-inner">
-      <span class="footer-logo">CardCompass</span>
-      <div class="footer-links">
-        <a href="/app/">Sign In</a>
-        <a href="mailto:support@cardcompass.in">Support</a>
-        <a href="/llm.txt">llm.txt</a>
+          <div class="scenario-tabs" role="group" aria-label="Choose an illustrative purchase">
+            <button class="scenario-tab is-active" type="button" data-scenario="groceries" aria-pressed="true">Groceries</button>
+            <button class="scenario-tab" type="button" data-scenario="dining" aria-pressed="false">Dining</button>
+            <button class="scenario-tab" type="button" data-scenario="movies" aria-pressed="false">Movies</button>
+          </div>
+
+          <article class="decision-receipt" id="decisionReceipt" aria-live="polite">
+            <div class="receipt-topline">
+              <span>CARD CHOICE / DEMO</span>
+              <span id="receiptNumber">CC-0815-01</span>
+            </div>
+            <div class="receipt-merchant">
+              <p id="receiptMerchant">Neighbourhood grocery</p>
+              <strong id="receiptAmount">₹2,400</strong>
+            </div>
+            <div class="receipt-rule" aria-hidden="true"><span></span><b>BEST FIT</b><span></span></div>
+            <div class="receipt-choice">
+              <p>Use this card</p>
+              <h3 id="receiptCard">Example Cashback Card</h3>
+              <div class="receipt-value">
+                <span>Illustrative value</span>
+                <strong id="receiptReturn">₹120</strong>
+              </div>
+            </div>
+            <dl class="receipt-ledger">
+              <div><dt>Example earn</dt><dd id="receiptRate">5% cashback</dd></div>
+              <div><dt>What to check</dt><dd id="receiptCaveat">Category eligibility and monthly cashback cap</dd></div>
+              <div><dt>Why it wins</dt><dd id="receiptReason">Higher example return than the other cards in this demo wallet</dd></div>
+            </dl>
+            <div class="receipt-verification">
+              <p><span>Source</span><b id="receiptSource">Illustrative rule set—not live issuer data</b></p>
+              <p><span>Demo updated</span><b id="receiptVerified">15 Aug 2026</b></p>
+            </div>
+            <p class="receipt-disclaimer">This preview demonstrates the decision format. It is not a live recommendation or financial advice.</p>
+          </article>
+        </div>
       </div>
-      <span class="footer-copy">© 2026 CardCompass. All rights reserved.</span>
+    </section>
+
+    <section class="ledger-band" aria-label="The CardCompass difference">
+      <div class="shell ledger-grid">
+        <div class="ledger-intro reveal">
+          <p class="mono-label">The problem with “best card” lists</p>
+          <h2>The headline rate is only the first line of the calculation.</h2>
+        </div>
+        <dl class="ledger-facts reveal">
+          <div><dt>Caps</dt><dd>A strong rate can stop earning after a monthly or transaction limit.</dd></div>
+          <div><dt>Milestones</dt><dd>The right choice can depend on how close you are to a spend threshold.</dd></div>
+          <div><dt>Exclusions</dt><dd>Merchant, category, channel, and payment method can change eligibility.</dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <section class="process section-pad" aria-labelledby="process-title">
+      <div class="shell">
+        <div class="section-heading reveal">
+          <p class="mono-label">Built around the moment of payment</p>
+          <h2 id="process-title">A recommendation you can inspect, not just accept.</h2>
+          <p>CardCompass brings the decision and its caveats into one place, so the reasoning stays visible.</p>
+        </div>
+        <ol class="process-list">
+          <li class="reveal"><span>01</span><div><h3>Know your wallet</h3><p>Add the cards you actually hold, so the comparison starts with relevant choices.</p></div></li>
+          <li class="reveal"><span>02</span><div><h3>Compare the rules</h3><p>Evaluate rates alongside caps, milestones, and offer conditions—not in isolation.</p></div></li>
+          <li class="reveal"><span>03</span><div><h3>See the receipt</h3><p>Get the chosen card, likely value, caveat, source, and verification date together.</p></div></li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="product-proof section-pad" id="proof" aria-labelledby="proof-title">
+      <div class="shell">
+        <div class="section-heading reveal">
+          <p class="mono-label">Current product captures</p>
+          <h2 id="proof-title">The decision sits inside a wider view of your cards.</h2>
+          <p>These are captures of the current CardCompass app, not concept renders.</p>
+        </div>
+        <div class="capture-grid">
+          <figure class="capture capture-wide reveal">
+            <div class="capture-frame"><img src="/landing/img/app-dashboard.png" alt="Current CardCompass dashboard showing card and spending information" loading="lazy" width="1024" height="1024"></div>
+            <figcaption><span>Current capture 01</span><strong>Your card activity, in context</strong></figcaption>
+          </figure>
+          <figure class="capture capture-offset reveal">
+            <div class="capture-frame"><img src="/landing/img/app-recommendations.png" alt="Current CardCompass recommendations screen showing a card comparison" loading="lazy" width="1024" height="1024"></div>
+            <figcaption><span>Current capture 02</span><strong>Recommendations with the reasoning visible</strong></figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="trust section-pad" aria-labelledby="trust-title">
+      <div class="shell trust-grid">
+        <div class="section-heading reveal">
+          <p class="mono-label">Trust is a product requirement</p>
+          <h2 id="trust-title">Clear about what we know, what we store, and what can change.</h2>
+        </div>
+        <div class="trust-list reveal">
+          <article><span aria-hidden="true">↗</span><div><h3>Sources stay attached</h3><p>The decision format is designed to show the rule source and when it was checked.</p></div></article>
+          <article><span aria-hidden="true">≈</span><div><h3>Caveats stay visible</h3><p>Caps and conditions belong beside the return—not buried after the recommendation.</p></div></article>
+          <article><span aria-hidden="true">○</span><div><h3>Waitlist data has one job</h3><p>We use your email and application answers to manage early access. Marketing emails require a separate, optional choice.</p></div></article>
+          <article><span aria-hidden="true">✓</span><div><h3>No certainty theatre</h3><p>Issuer terms can change. CardCompass recommendations are informational and should be checked before acting.</p></div></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="faq section-pad" aria-labelledby="faq-title">
+      <div class="shell faq-grid">
+        <div class="section-heading reveal">
+          <p class="mono-label">Before you apply</p>
+          <h2 id="faq-title">A few useful details.</h2>
+        </div>
+        <div class="faq-list reveal">
+          <details>
+            <summary>Who is Founding 100 early access for?</summary>
+            <p>We are prioritising people who actively use multiple Indian credit cards and regularly compare rewards, benefits, or milestones. Applying does not guarantee selection.</p>
+          </details>
+          <details>
+            <summary>Why do you ask about my cards and spend range?</summary>
+            <p>Those answers help us understand whether the current early-access experience fits your needs. You can name up to two cards, but that field is optional.</p>
+          </details>
+          <details>
+            <summary>Will I receive marketing email?</summary>
+            <p>Only if you select the separate product-updates checkbox. We may still email about your waitlist application or invitation.</p>
+          </details>
+          <details>
+            <summary>Is the interactive receipt a real recommendation?</summary>
+            <p>No. It is explicitly illustrative and demonstrates how CardCompass intends to present a decision. It does not use your cards or live issuer rules.</p>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <section class="final-cta">
+      <div class="shell final-cta-inner reveal">
+        <p class="mono-label">Founding 100</p>
+        <h2>Make the next card choice with the caveats in view.</h2>
+        <a class="button button-primary" href="#waitlist" data-waitlist-entry="bottom">Apply for early access</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell footer-grid">
+      <div><a class="wordmark" href="/"><span class="wordmark-mark" aria-hidden="true">CC</span><span>CardCompass</span></a><p>Card choice, with the reasoning attached.</p></div>
+      <nav aria-label="Legal">
+        <a href="/privacy/">Privacy</a>
+        <a href="/terms/">Terms</a>
+        <a href="/data-security/">Data security</a>
+        <a href="/recommendation-disclaimer/">Recommendation disclaimer</a>
+      </nav>
+      <p class="footer-copy">© 2026 CardCompass</p>
     </div>
   </footer>
-
-  <!-- ENRICHMENT MODAL -->
-  <div class="modal-overlay" id="modalOverlay" aria-hidden="true">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
-      <button class="modal-close" id="modalClose" aria-label="Close">✕</button>
-      <div class="modal-icon">🎉</div>
-      <h2 class="modal-title" id="modalTitle">You're on the list!</h2>
-      <p class="modal-subtitle">Help us personalise your experience (optional)</p>
-      <form class="modal-form" id="modalForm">
-        <input
-          type="text"
-          id="modalName"
-          name="name"
-          placeholder="Your name"
-          autocomplete="name"
-        >
-        <select id="modalCardCount" name="card_count">
-          <option value="" disabled>How many credit cards do you hold?</option>
-          <option value="1-2">1–2 cards</option>
-          <option value="3-5">3–5 cards</option>
-          <option value="6+">6+ cards</option>
-        </select>
-        <div class="modal-actions">
-          <button type="submit" class="btn btn-primary">Save</button>
-          <button type="button" class="btn btn-ghost" id="modalSkip">Skip</button>
-        </div>
-      </form>
-    </div>
-  </div>
 
   <script type="module" src="/landing/script.js"></script>
 </body>

@@ -1,0 +1,892 @@
+[
+  {
+    "id": "9c5d7d2c-556f-483c-a4b2-f88b7f3654de",
+    "bank": "AU Small Finance Bank",
+    "card_name": "Zenith"
+  },
+  {
+    "id": "99b1492c-7a69-4ae8-af62-0a67397e02ed",
+    "bank": "Axis Bank",
+    "card_name": "Ace"
+  },
+  {
+    "id": "20571292-2601-4a9e-a6e3-780d1ff2bbf5",
+    "bank": "Axis Bank",
+    "card_name": "Airtel"
+  },
+  {
+    "id": "e8d7476a-fede-4312-bd60-b08fa81f0bc5",
+    "bank": "Axis Bank",
+    "card_name": "Atlas"
+  },
+  {
+    "id": "520b5eca-8779-409a-b34b-ddb881b94fd7",
+    "bank": "Axis Bank",
+    "card_name": "Aura"
+  },
+  {
+    "id": "36880bd3-167f-4415-a4bc-d7ee977ee6ab",
+    "bank": "Axis Bank",
+    "card_name": "Axis Horizon"
+  },
+  {
+    "id": "6c776689-5eb6-4b02-a70f-f2ac65138fbe",
+    "bank": "Axis Bank",
+    "card_name": "Card Protection"
+  },
+  {
+    "id": "db5afc43-dbce-44b8-a1fb-73138b25ae60",
+    "bank": "Axis Bank",
+    "card_name": "Cashback"
+  },
+  {
+    "id": "03404fb2-ea89-4c9e-bcd2-4c43e0dc216c",
+    "bank": "Axis Bank",
+    "card_name": "Fibe"
+  },
+  {
+    "id": "53682ccf-4b67-4a60-b7f5-66252a743252",
+    "bank": "Axis Bank",
+    "card_name": "Flipkart Axisbank"
+  },
+  {
+    "id": "0e21eb8b-89b1-48be-9304-7fe97603e8dd",
+    "bank": "Axis Bank",
+    "card_name": "Flipkart Super Elite"
+  },
+  {
+    "id": "65c08cbe-190d-4987-af39-9649b1bc9fa5",
+    "bank": "Axis Bank",
+    "card_name": "Freecharge"
+  },
+  {
+    "id": "111093d6-2de6-4b2e-8359-ed88c4e89113",
+    "bank": "Axis Bank",
+    "card_name": "Freecharge Plus"
+  },
+  {
+    "id": "f73c07e2-3385-4330-ba2b-1409d2c1ee8a",
+    "bank": "Axis Bank",
+    "card_name": "Indianoil"
+  },
+  {
+    "id": "6a1e4174-085a-4504-9f84-ded22397597b",
+    "bank": "Axis Bank",
+    "card_name": "Lic Platinum"
+  },
+  {
+    "id": "fadf4a52-9a57-494e-aad9-4831e3ebe034",
+    "bank": "Axis Bank",
+    "card_name": "Lic Signature"
+  },
+  {
+    "id": "928c4412-cbf6-4ced-98e2-247fc60cf126",
+    "bank": "Axis Bank",
+    "card_name": "Lifetime Free"
+  },
+  {
+    "id": "225b6ff1-996c-4b51-b916-5e6360234506",
+    "bank": "Axis Bank",
+    "card_name": "Miles More"
+  },
+  {
+    "id": "7efeaeea-4c98-48e9-bdae-0b97e74755dc",
+    "bank": "Axis Bank",
+    "card_name": "My Zone"
+  },
+  {
+    "id": "57a75a5c-d1bb-4feb-bff1-ac48bd607ce1",
+    "bank": "Axis Bank",
+    "card_name": "My Zone Easy"
+  },
+  {
+    "id": "c517e8fd-9aff-4bfa-acf4-54324a60c28e",
+    "bank": "Axis Bank",
+    "card_name": "Neo"
+  },
+  {
+    "id": "fd676985-458e-439e-91c8-b35864df67b5",
+    "bank": "Axis Bank",
+    "card_name": "Platinum"
+  },
+  {
+    "id": "7622af63-fa1b-40b8-a190-5dfa3e2a9856",
+    "bank": "Axis Bank",
+    "card_name": "Pride Platinum"
+  },
+  {
+    "id": "79271379-fd33-456f-9aaa-748b53867db7",
+    "bank": "Axis Bank",
+    "card_name": "Privilege Easy"
+  },
+  {
+    "id": "c0039ce6-4dbb-4607-a979-1c7caded41d4",
+    "bank": "Axis Bank",
+    "card_name": "Reserve"
+  },
+  {
+    "id": "da8bea02-8ad0-470f-9a96-12f7b51c1569",
+    "bank": "Axis Bank",
+    "card_name": "Rupay"
+  },
+  {
+    "id": "3e1b6454-cdf8-40f5-aada-f90c6433936d",
+    "bank": "Axis Bank",
+    "card_name": "Samsung Infinite"
+  },
+  {
+    "id": "58587502-c1b7-4be9-86b6-40f5e02c8a94",
+    "bank": "Axis Bank",
+    "card_name": "Samsung Signature"
+  },
+  {
+    "id": "27cb90e5-1712-47e8-a0ac-0c26947e8216",
+    "bank": "Axis Bank",
+    "card_name": "Select"
+  },
+  {
+    "id": "07ba715a-26cb-4c75-9e0d-d53af47fc002",
+    "bank": "Axis Bank",
+    "card_name": "Shoppers Stop"
+  },
+  {
+    "id": "4d8e01c7-d9fb-413a-8c4e-10dbb9442e6c",
+    "bank": "Axis Bank",
+    "card_name": "Spicejet Voyage"
+  },
+  {
+    "id": "7863c954-a59e-48f8-8828-f4a566cc1279",
+    "bank": "Axis Bank",
+    "card_name": "Spicejet Voyage Black"
+  },
+  {
+    "id": "9962426b-0f53-4c68-b36a-20585fb417f9",
+    "bank": "Axis Bank",
+    "card_name": "Vistara"
+  },
+  {
+    "id": "6476d325-6db6-4179-b3f9-ebecb7d5db27",
+    "bank": "Axis Bank",
+    "card_name": "Vistara Infinite"
+  },
+  {
+    "id": "291b0eda-fc20-44bb-a093-932466076ab6",
+    "bank": "Axis Bank",
+    "card_name": "Vistara Signature"
+  },
+  {
+    "id": "de25a2a7-2fc2-48f1-8478-2adcebb5fcc6",
+    "bank": "HDFC Bank",
+    "card_name": "Cashback Credit Cards"
+  },
+  {
+    "id": "1122e933-b0cd-4fa2-86c7-d015ea8f25c0",
+    "bank": "HDFC Bank",
+    "card_name": "Diners Club Black"
+  },
+  {
+    "id": "5bae308d-143f-4d68-bd5b-c56a5566c62e",
+    "bank": "HDFC Bank",
+    "card_name": "Diners Club Black Metal Edition"
+  },
+  {
+    "id": "8cf9e034-2cc5-416c-9e3c-65c8ee31e591",
+    "bank": "HDFC Bank",
+    "card_name": "Diners Club Rewardz"
+  },
+  {
+    "id": "e37e570a-0782-4653-8bd7-dd59a95bb029",
+    "bank": "HDFC Bank",
+    "card_name": "Diners Privilege"
+  },
+  {
+    "id": "245a9579-aa2b-4161-9b9c-2776cd4ae5f7",
+    "bank": "HDFC Bank",
+    "card_name": "Freedom Card New"
+  },
+  {
+    "id": "d33ef169-3c4a-4883-9252-e03554de835b",
+    "bank": "HDFC Bank",
+    "card_name": "Harley Davidson Diners Club"
+  },
+  {
+    "id": "e1bbb520-4ddb-431a-b56e-ce578eb625a0",
+    "bank": "HDFC Bank",
+    "card_name": "Hog Diners Club"
+  },
+  {
+    "id": "faea3719-9fac-4425-9afe-c00f9cd80a60",
+    "bank": "HDFC Bank",
+    "card_name": "Indianoil"
+  },
+  {
+    "id": "87bb8875-99ca-41e9-aadf-4b13060d99f0",
+    "bank": "HDFC Bank",
+    "card_name": "Infinia"
+  },
+  {
+    "id": "ad94f78f-adfe-40df-ae3d-69d432aa37f3",
+    "bank": "HDFC Bank",
+    "card_name": "Irctc"
+  },
+  {
+    "id": "bc210283-9090-4a6c-b6e0-e8fedc680ffe",
+    "bank": "HDFC Bank",
+    "card_name": "Marriott Bonvoy"
+  },
+  {
+    "id": "d0549ba6-91f3-4ab9-9858-b0ac02b74c5f",
+    "bank": "HDFC Bank",
+    "card_name": "Millennia Cc New"
+  },
+  {
+    "id": "bb6453d2-42c2-4b31-9fae-ade8e2262655",
+    "bank": "HDFC Bank",
+    "card_name": "Paytm"
+  },
+  {
+    "id": "f0a0707a-1b4e-4f43-b09e-916ee88a4958",
+    "bank": "HDFC Bank",
+    "card_name": "Paytm Digital"
+  },
+  {
+    "id": "ad746d8f-254b-4004-8bff-35372b98c7e7",
+    "bank": "HDFC Bank",
+    "card_name": "Paytm Mobile"
+  },
+  {
+    "id": "ff603e5e-7539-4e55-b700-1e7a3c9c1e83",
+    "bank": "HDFC Bank",
+    "card_name": "Paytm Select"
+  },
+  {
+    "id": "b2a8d427-3d3e-4bff-bafb-6c32a1297aaf",
+    "bank": "HDFC Bank",
+    "card_name": "Pixel Go"
+  },
+  {
+    "id": "26fea5be-0558-4fa0-bbd3-0c0ecb36a5ee",
+    "bank": "HDFC Bank",
+    "card_name": "Pixel Play"
+  },
+  {
+    "id": "96fc1be5-1b23-48e2-b54e-3405e2efabf2",
+    "bank": "HDFC Bank",
+    "card_name": "Platinum Times"
+  },
+  {
+    "id": "0c5720b3-0d7f-40c8-9c42-b54efbaf5a03",
+    "bank": "HDFC Bank",
+    "card_name": "Regalia Gold"
+  },
+  {
+    "id": "233884c7-75ac-4b0b-abb1-49d72bfd27da",
+    "bank": "HDFC Bank",
+    "card_name": "Rupay"
+  },
+  {
+    "id": "6cb4d89e-b572-4dcb-bc57-1c0fcffcaca2",
+    "bank": "HDFC Bank",
+    "card_name": "Shoppers Stop"
+  },
+  {
+    "id": "4d6ac8c7-edd5-4d1a-84ed-f4abccfb9a95",
+    "bank": "HDFC Bank",
+    "card_name": "Shoppers Stop Black"
+  },
+  {
+    "id": "70886874-05b0-447c-834b-577e2ffe90d9",
+    "bank": "HDFC Bank",
+    "card_name": "Swiggy"
+  },
+  {
+    "id": "dbad796f-2a42-4add-b238-5ee8b5d258c3",
+    "bank": "HDFC Bank",
+    "card_name": "Tata Neu Infinity"
+  },
+  {
+    "id": "ff5219bd-4bd9-4351-82f7-2f371248aa34",
+    "bank": "HDFC Bank",
+    "card_name": "Tata Neu Plus"
+  },
+  {
+    "id": "a05e6bcc-24d1-479d-ad89-271a1e857274",
+    "bank": "HDFC Bank",
+    "card_name": "Track Your"
+  },
+  {
+    "id": "322d1be9-05f1-402f-8a08-837a62cfa731",
+    "bank": "HDFC Bank",
+    "card_name": "Upi Rupay"
+  },
+  {
+    "id": "6e426864-a6cb-4aca-82c9-ec7776b5b398",
+    "bank": "ICICI Bank",
+    "card_name": "Accelero Card"
+  },
+  {
+    "id": "1fec2e05-3eb9-4087-8c51-6ab04f5bb0a0",
+    "bank": "ICICI Bank",
+    "card_name": "Amazon Pay"
+  },
+  {
+    "id": "fdb145c1-4f8b-4f9b-8360-2d9e60aa75f2",
+    "bank": "ICICI Bank",
+    "card_name": "Coral Rupay"
+  },
+  {
+    "id": "502d04d4-f6ce-4886-a82c-c696d00ea9db",
+    "bank": "ICICI Bank",
+    "card_name": "Coral Rupay Card"
+  },
+  {
+    "id": "bd960470-96c5-4c89-95d6-49fe6dedfadc",
+    "bank": "ICICI Bank",
+    "card_name": "Emeralde Private Metal"
+  },
+  {
+    "id": "8cbddc7f-14bc-46e5-a724-be6ab724cb84",
+    "bank": "ICICI Bank",
+    "card_name": "Hpcl Coral"
+  },
+  {
+    "id": "e02b5994-fab0-4469-b33e-e84b4362c331",
+    "bank": "ICICI Bank",
+    "card_name": "Hpcl Coral American Express"
+  },
+  {
+    "id": "c43adf88-177f-482c-a047-4b3bb4b8effb",
+    "bank": "ICICI Bank",
+    "card_name": "Hpcl Coral Amex Key Privilages"
+  },
+  {
+    "id": "ceda338d-1f20-45a5-8751-688ea9fecc00",
+    "bank": "ICICI Bank",
+    "card_name": "Hpcl Platinium Details"
+  },
+  {
+    "id": "b6cd92fe-fdf2-4c71-9372-dfb031716e32",
+    "bank": "ICICI Bank",
+    "card_name": "Key Privileges"
+  },
+  {
+    "id": "5f4552d8-4762-43f8-a932-477312a8bcac",
+    "bank": "ICICI Bank",
+    "card_name": "Manchester Platinum Card"
+  },
+  {
+    "id": "99a721fd-44ef-43aa-892f-31136fce4c20",
+    "bank": "ICICI Bank",
+    "card_name": "Normal"
+  },
+  {
+    "id": "477911dd-6da7-40e6-b48c-25668bec79c2",
+    "bank": "ICICI Bank",
+    "card_name": "Platinum"
+  },
+  {
+    "id": "cf7b2b91-3e91-4d76-9d2c-0fde2ffd9c55",
+    "bank": "ICICI Bank",
+    "card_name": "Platinum Card"
+  },
+  {
+    "id": "6eb1990d-11cc-4d1f-a673-9e038dea69a5",
+    "bank": "ICICI Bank",
+    "card_name": "Rupay"
+  },
+  {
+    "id": "91686bbe-f6db-4bb6-91f8-e99dd28d5e7a",
+    "bank": "ICICI Bank",
+    "card_name": "Signature"
+  },
+  {
+    "id": "0333b43e-24af-4583-b5fc-7593c4c40d2d",
+    "bank": "ICICI Bank",
+    "card_name": "Times Black Icici"
+  },
+  {
+    "id": "15e70722-cd7a-450a-806d-2ce003387405",
+    "bank": "IDFC First Bank",
+    "card_name": "Power Plus"
+  },
+  {
+    "id": "b054db9a-f5b0-4f4c-becc-bb3b2688ac39",
+    "bank": "IDFC FIRST Bank",
+    "card_name": "Ashva"
+  },
+  {
+    "id": "e707c038-4328-41c3-a90a-13c313bdf4a6",
+    "bank": "IDFC FIRST Bank",
+    "card_name": "Classic"
+  },
+  {
+    "id": "d7dd203b-f84e-4c26-b8b0-b4c1f0002b7a",
+    "bank": "IDFC FIRST Bank",
+    "card_name": "Firstprivatecreditcard"
+  },
+  {
+    "id": "c35d7eb0-2869-49b6-9037-8cf661153178",
+    "bank": "IDFC FIRST Bank",
+    "card_name": "Lic"
+  },
+  {
+    "id": "77fd17bf-c9ff-4373-9755-ba375381fc63",
+    "bank": "IDFC FIRST Bank",
+    "card_name": "Lic Classic"
+  },
+  {
+    "id": "2ba8b967-aae6-4120-8ab0-348c2958dc36",
+    "bank": "IDFC FIRST Bank",
+    "card_name": "Mayura"
+  },
+  {
+    "id": "5f3c8cab-e169-46d1-bf78-a8b2ede0e958",
+    "bank": "IDFC FIRST Bank",
+    "card_name": "Millennia"
+  },
+  {
+    "id": "3fcafe44-5947-4d46-9fa8-8dd93d061a22",
+    "bank": "IDFC FIRST Bank",
+    "card_name": "Secured Rupay"
+  },
+  {
+    "id": "b7b384d9-2eb9-43c7-a26f-b484b1e060c7",
+    "bank": "IDFC FIRST Bank",
+    "card_name": "Select"
+  },
+  {
+    "id": "b5a851c9-c586-4a5c-8b5a-6f8746472233",
+    "bank": "IDFC FIRST Bank",
+    "card_name": "Vistara"
+  },
+  {
+    "id": "b71803f9-2120-4ee3-8f99-5c1e9313953f",
+    "bank": "IDFC FIRST Bank",
+    "card_name": "Wealth"
+  },
+  {
+    "id": "b9bae2e3-da4e-4b11-b650-6d6d7cd25c09",
+    "bank": "IDFC FIRST Bank",
+    "card_name": "Wow"
+  },
+  {
+    "id": "6bcdb548-7321-4e80-bf94-52357923e5ed",
+    "bank": "Kotak Bank",
+    "card_name": "811 Dream Different"
+  },
+  {
+    "id": "4487eed0-5a18-4285-8c65-2772ea27eb68",
+    "bank": "Kotak Bank",
+    "card_name": "Biz"
+  },
+  {
+    "id": "fab01239-9bfb-4741-b212-eae254d729fe",
+    "bank": "Kotak Bank",
+    "card_name": "Commercial"
+  },
+  {
+    "id": "1eadd9e5-d953-4119-8756-62a3fdba2a49",
+    "bank": "Kotak Bank",
+    "card_name": "Indian Oil"
+  },
+  {
+    "id": "e88363b7-4749-470c-b437-75108a1b3add",
+    "bank": "Kotak Bank",
+    "card_name": "Indigo Kotak"
+  },
+  {
+    "id": "c3395741-c868-4db7-af2b-b6dba6678b65",
+    "bank": "Kotak Bank",
+    "card_name": "Indigo Kotak Xl"
+  },
+  {
+    "id": "beb56e25-f5b9-47d1-93e9-f6261f9e49d2",
+    "bank": "Kotak Bank",
+    "card_name": "Kotak 811"
+  },
+  {
+    "id": "29983404-afcb-4188-ae9d-8dbc7b1eeea0",
+    "bank": "Kotak Bank",
+    "card_name": "Kotak Solitaire"
+  },
+  {
+    "id": "e664f01c-e625-4e14-87ce-79f6e620ebc2",
+    "bank": "Kotak Bank",
+    "card_name": "Kotak Upi Rupay"
+  },
+  {
+    "id": "95babb0d-a72a-434a-a33e-8b6209bb33a4",
+    "bank": "Kotak Bank",
+    "card_name": "Metro"
+  },
+  {
+    "id": "31cedc97-ad1f-47f4-9b1f-f0d506a31336",
+    "bank": "Kotak Bank",
+    "card_name": "Mojo Platinum"
+  },
+  {
+    "id": "0f5bc8b6-b578-4813-b05f-e0c0f0d93537",
+    "bank": "Kotak Bank",
+    "card_name": "Myntra Kotak"
+  },
+  {
+    "id": "98c6496f-caad-45e7-b2f4-d2a8d7fcd345",
+    "bank": "Kotak Bank",
+    "card_name": "Privy League Signature"
+  },
+  {
+    "id": "b324b722-d483-40f0-b5e1-699607cd26ff",
+    "bank": "Kotak Bank",
+    "card_name": "Purchase"
+  },
+  {
+    "id": "2b6ade09-379a-4a15-83fb-70e3262a1c6e",
+    "bank": "Kotak Bank",
+    "card_name": "Pvr Gold"
+  },
+  {
+    "id": "90c05e44-4574-4701-aba3-87ddd2cddaef",
+    "bank": "Kotak Bank",
+    "card_name": "Pvr Inox Kotak"
+  },
+  {
+    "id": "ad862119-e44f-4564-bd61-042f9df07d5c",
+    "bank": "Kotak Bank",
+    "card_name": "Pvr Platinum"
+  },
+  {
+    "id": "fb59a170-4093-4599-9a43-d240f6e9b5ca",
+    "bank": "Kotak Bank",
+    "card_name": "Royale Signature"
+  },
+  {
+    "id": "35444f8b-77fb-4fef-8f98-53625d26155a",
+    "bank": "Kotak Bank",
+    "card_name": "Understanding The Annual Percentage Rate In"
+  },
+  {
+    "id": "7f75d63e-f3aa-42fe-a70f-06352976d75b",
+    "bank": "Kotak Bank",
+    "card_name": "Urbane Gold"
+  },
+  {
+    "id": "e56c2bdf-60ab-4c95-a32e-760ee7e96dc6",
+    "bank": "Kotak Bank",
+    "card_name": "Wealth Management Infinite"
+  },
+  {
+    "id": "6eaec9fe-7bd6-4e0b-958d-4f5dc28ba327",
+    "bank": "Kotak Bank",
+    "card_name": "White"
+  },
+  {
+    "id": "a0ddc0a8-a535-40c2-bd2d-2469dce26f55",
+    "bank": "Kotak Bank",
+    "card_name": "White Reserve"
+  },
+  {
+    "id": "b0e49160-e2e2-45de-a85b-b7ad42145109",
+    "bank": "Kotak Bank",
+    "card_name": "Zen Signature"
+  },
+  {
+    "id": "412c0e4e-27e6-4232-8c71-7315adf17b92",
+    "bank": "Punjab National Bank",
+    "card_name": "Punjab National Bank"
+  },
+  {
+    "id": "42907524-5691-4976-bfd9-3e3510ad45bf",
+    "bank": "SBI Card",
+    "card_name": "Air India Sbi Platinum Card"
+  },
+  {
+    "id": "bc939af9-ac22-436f-935f-4cc8b41fb194",
+    "bank": "SBI Card",
+    "card_name": "Air India Sbi Signature Card"
+  },
+  {
+    "id": "9eac9da5-1327-4526-9f1c-5562fc76aac0",
+    "bank": "SBI Card",
+    "card_name": "Apollo"
+  },
+  {
+    "id": "ac20b181-88aa-48a5-98d0-79e05eb09837",
+    "bank": "SBI Card",
+    "card_name": "Apollo Select"
+  },
+  {
+    "id": "8d28afff-c61b-472e-b8a1-b1f473ee60e1",
+    "bank": "SBI Card",
+    "card_name": "Bpcl"
+  },
+  {
+    "id": "87cde037-271f-4196-b089-26708b973f6b",
+    "bank": "SBI Card",
+    "card_name": "Bpcl Octane"
+  },
+  {
+    "id": "a0b1e8a5-6ebf-4c32-81e3-06decfd1deb3",
+    "bank": "SBI Card",
+    "card_name": "Cashback"
+  },
+  {
+    "id": "b5ff643d-5cbb-4bce-a8db-943299046b5e",
+    "bank": "SBI Card",
+    "card_name": "Central Bank Of India Elite Card"
+  },
+  {
+    "id": "a28bb13e-c0ef-43ef-8f31-02ad09359023",
+    "bank": "SBI Card",
+    "card_name": "Central Bank Of India Prime Card"
+  },
+  {
+    "id": "cf2b2520-5bd0-4d1f-914b-aa9730234cb8",
+    "bank": "SBI Card",
+    "card_name": "City Union Bank Prime"
+  },
+  {
+    "id": "adeca5f9-6ff3-432f-a15e-46f4092a39a1",
+    "bank": "SBI Card",
+    "card_name": "Club Vistara"
+  },
+  {
+    "id": "9922dc90-a104-4231-8890-b7a92de3311e",
+    "bank": "SBI Card",
+    "card_name": "Club Vistara Prime"
+  },
+  {
+    "id": "48d1dfc1-0a1d-45ed-9f38-7fe18ebc8eae",
+    "bank": "SBI Card",
+    "card_name": "Doctors"
+  },
+  {
+    "id": "0112dece-ebd3-4252-9731-48b28b7d9c48",
+    "bank": "SBI Card",
+    "card_name": "Doctors Ima"
+  },
+  {
+    "id": "6acbfb1d-8103-4b37-ba3f-df0634dfafac",
+    "bank": "SBI Card",
+    "card_name": "Elite"
+  },
+  {
+    "id": "168943ca-a608-4fc9-a2fb-9ed4314d010b",
+    "bank": "SBI Card",
+    "card_name": "Elite Advantage"
+  },
+  {
+    "id": "4c6d2809-21fc-4e53-98c5-8a29f1824fb8",
+    "bank": "SBI Card",
+    "card_name": "Etihad Guest"
+  },
+  {
+    "id": "c0370d94-2d08-4ffe-b9c7-53c0a6461221",
+    "bank": "SBI Card",
+    "card_name": "Hc Prime"
+  },
+  {
+    "id": "99e14e50-5866-4911-b609-118f1028fa9f",
+    "bank": "SBI Card",
+    "card_name": "Irctc Sbi Platinum Card"
+  },
+  {
+    "id": "3ebebf59-f93a-48be-875d-d0937990f23c",
+    "bank": "SBI Card",
+    "card_name": "Karnataka Bank Prime"
+  },
+  {
+    "id": "35d64b24-5d4c-4e50-b37a-58a0a68b4f49",
+    "bank": "SBI Card",
+    "card_name": "Karur Vysya Bank Elite"
+  },
+  {
+    "id": "61c768db-b95d-4999-9bf9-f54f0d2ac39b",
+    "bank": "SBI Card",
+    "card_name": "Karur Vysya Bank Gold"
+  },
+  {
+    "id": "3057bac8-6d49-45a2-bc87-22a22b0fa7dd",
+    "bank": "SBI Card",
+    "card_name": "Karur Vysya Bank Prime"
+  },
+  {
+    "id": "91fbd8ee-7e2c-410f-9ed9-a8be769554b7",
+    "bank": "SBI Card",
+    "card_name": "Karur Vysya Bank Sbi Platinum"
+  },
+  {
+    "id": "a9983853-a4eb-4b65-afdb-2d4f4139b68a",
+    "bank": "SBI Card",
+    "card_name": "Karur Vysya Bank Sbi Signature"
+  },
+  {
+    "id": "ba08f2f4-9a45-478f-8b34-212d9e3f86f1",
+    "bank": "SBI Card",
+    "card_name": "Krisflyer"
+  },
+  {
+    "id": "c9310237-3090-4f5f-b0af-2baa67765978",
+    "bank": "SBI Card",
+    "card_name": "Krisflyer Apex"
+  },
+  {
+    "id": "7c6c176b-7488-4352-9308-aead50435e1c",
+    "bank": "SBI Card",
+    "card_name": "Lifestyle Hc"
+  },
+  {
+    "id": "27fe3a64-329d-4b04-9069-e5addef1eb1f",
+    "bank": "SBI Card",
+    "card_name": "Lifestyle Hc Select"
+  },
+  {
+    "id": "e94f14df-5584-4b60-bd8d-09972189c2c5",
+    "bank": "SBI Card",
+    "card_name": "Max"
+  },
+  {
+    "id": "9c5a6c57-6dc5-4be3-94fc-f76cb20478a6",
+    "bank": "SBI Card",
+    "card_name": "Max Prime"
+  },
+  {
+    "id": "ef9f7440-585b-459f-a803-efecd3683ee9",
+    "bank": "SBI Card",
+    "card_name": "Max Select"
+  },
+  {
+    "id": "bece57bd-950a-4c06-8874-58c895e02a7c",
+    "bank": "SBI Card",
+    "card_name": "Miles"
+  },
+  {
+    "id": "2ba4e2ce-fc6e-44f8-893f-22a29d3133f8",
+    "bank": "SBI Card",
+    "card_name": "Miles Elite"
+  },
+  {
+    "id": "1f6f5c25-d8d6-4372-9553-48b6e6d4f55c",
+    "bank": "SBI Card",
+    "card_name": "Miles Prime"
+  },
+  {
+    "id": "3a29e646-e04c-42b1-b7ac-324a77d7f117",
+    "bank": "SBI Card",
+    "card_name": "Ola Money"
+  },
+  {
+    "id": "82a4b05f-7b18-4458-b8b8-e837796a9187",
+    "bank": "SBI Card",
+    "card_name": "Paytm"
+  },
+  {
+    "id": "ed181e7c-eaa5-4f88-ab8f-a557196fe94f",
+    "bank": "SBI Card",
+    "card_name": "Paytm Select"
+  },
+  {
+    "id": "89dcfea6-3e98-4ca7-8d93-b70da431f46c",
+    "bank": "SBI Card",
+    "card_name": "Prime"
+  },
+  {
+    "id": "f7e0d27a-ed7b-4685-b0fd-44d7d6d06fae",
+    "bank": "SBI Card",
+    "card_name": "Prime Advantage"
+  },
+  {
+    "id": "de07de35-d1f0-423c-b729-fcb4ab34e293",
+    "bank": "SBI Card",
+    "card_name": "Psb Elite"
+  },
+  {
+    "id": "ad2f0d28-d292-4431-952f-d67cace94639",
+    "bank": "SBI Card",
+    "card_name": "Psb Prime"
+  },
+  {
+    "id": "7b7cdb45-af99-4731-99d4-8c0d290206a5",
+    "bank": "SBI Card",
+    "card_name": "Pulse"
+  },
+  {
+    "id": "d69c6de5-0fa2-4d15-a6a4-eeaa2cb0c4dd",
+    "bank": "SBI Card",
+    "card_name": "Reliance"
+  },
+  {
+    "id": "303ed9ad-9651-4e5b-8a85-7a46cae5f0f7",
+    "bank": "SBI Card",
+    "card_name": "Reliance Prime"
+  },
+  {
+    "id": "de17a2a5-d337-4092-a472-7a08d260eec4",
+    "bank": "SBI Card",
+    "card_name": "Simplyclick"
+  },
+  {
+    "id": "181d5009-fe91-43e8-a6e9-eb220b87340a",
+    "bank": "SBI Card",
+    "card_name": "Simplyclick Advantage"
+  },
+  {
+    "id": "e64391dd-5b8f-453c-b327-c6e4edec7935",
+    "bank": "SBI Card",
+    "card_name": "South India Bank Sbi Platinum Card"
+  },
+  {
+    "id": "c2cae9f6-19ce-4871-90f9-6e8cb719f9eb",
+    "bank": "SBI Card",
+    "card_name": "South Indian Bank Prime"
+  },
+  {
+    "id": "bca593d3-f3c8-4693-b2a7-dce0ebfc4bbd",
+    "bank": "SBI Card",
+    "card_name": "Spar"
+  },
+  {
+    "id": "6c97db9d-069c-4e71-9b94-564978cf579c",
+    "bank": "SBI Card",
+    "card_name": "Spar Prime"
+  },
+  {
+    "id": "2192610a-37dd-483e-b236-186795fd27d5",
+    "bank": "SBI Card",
+    "card_name": "Spar Select"
+  },
+  {
+    "id": "722655d4-7a7e-4a99-8b93-93befbc16b4b",
+    "bank": "SBI Card",
+    "card_name": "Tata Neu Infinity"
+  },
+  {
+    "id": "a667b8f7-deb4-4e48-86b3-c5c97f93fd1b",
+    "bank": "SBI Card",
+    "card_name": "Tata Neu Plus"
+  },
+  {
+    "id": "f5664f9f-88de-4ab5-8d11-194f0aed510a",
+    "bank": "SBI Card",
+    "card_name": "Titan"
+  },
+  {
+    "id": "1083c7ef-f193-474b-8720-04df22edb524",
+    "bank": "SBI Card",
+    "card_name": "Uco Bank Elite"
+  },
+  {
+    "id": "ec6a65fa-6169-4a58-9dcf-50c53bee2e65",
+    "bank": "SBI Card",
+    "card_name": "Uco Bank Prime"
+  },
+  {
+    "id": "9eaa2bc7-611d-4768-9fc7-08391c26c6cd",
+    "bank": "SBI Card",
+    "card_name": "Unnati"
+  },
+  {
+    "id": "c1a54b65-d089-43b5-a27a-3709c47c9cc2",
+    "bank": "SBI Card",
+    "card_name": "Yatra"
+  }
+]
