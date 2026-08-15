@@ -3,12 +3,24 @@ import 'package:cardcompass/core/services/gemini_statement_parser.dart';
 
 void main() {
   group('buildTransactionsPrompt', () {
+    test('requests the full transaction-type vocabulary', () {
+      final prompt = buildTransactionsPrompt(bankName: 'HDFC Bank');
+      expect(
+        prompt,
+        contains('debit|credit|refund|fee|interest|reward|cash_withdrawal'),
+      );
+    });
     final prompt = buildTransactionsPrompt(bankName: 'HDFC Bank');
 
     test('contains the corrected 16-category vocabulary', () {
-      expect(prompt, contains('food|fuel|grocery|entertainment|travel|shopping|'
+      expect(
+        prompt,
+        contains(
+          'food|fuel|grocery|entertainment|travel|shopping|'
           'utilities|insurance|medical|education|investment|transport|'
-          'rental|subscription|gift|other'));
+          'rental|subscription|gift|other',
+        ),
+      );
     });
 
     test('does not contain any of the old, wrong vocabulary values as '
@@ -16,8 +28,15 @@ void main() {
       // These words might legitimately appear elsewhere in the prompt (e.g.
       // "payment" in general instructional text), so check the specific
       // category-vocabulary line doesn't contain the old pipe-delimited list.
-      expect(prompt, isNot(contains('shopping|dining|travel|fuel|entertainment|'
-          'bills|transfer|fee|payment|cash|other')));
+      expect(
+        prompt,
+        isNot(
+          contains(
+            'shopping|dining|travel|fuel|entertainment|'
+            'bills|transfer|fee|payment|cash|other',
+          ),
+        ),
+      );
     });
 
     test('instructs Gemini to report the observed currency, not assume '

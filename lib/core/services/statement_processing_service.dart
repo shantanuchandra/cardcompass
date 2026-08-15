@@ -13,6 +13,7 @@ import 'parsing_logger.dart';
 import 'transaction_categorizer.dart';
 import 'bank_market.dart';
 import 'transaction_currency_resolver.dart';
+import 'transaction_type_normalizer.dart';
 
 enum EmailOutcome { succeeded, needsPassword, needsCardAssignment, failed }
 
@@ -58,20 +59,20 @@ class StatementProcessingService {
     required String userEmail,
     required String userName,
     Map<String, String> forcedCardIdByBank = const {},
-  })  : _gmailService = gmailService,
-        _emailRepo = EmailRepository(),
-        _statementsRepo = StatementsRepository(supabaseClient),
-        _transactionsRepo = TransactionsRepository(supabaseClient),
-        _cardsRepo = CardsRepository(supabaseClient),
-        _userId = userId,
-        _userEmail = userEmail,
-        _userName = userName,
-        _forcedCardIdByBank = forcedCardIdByBank;
+  }) : _gmailService = gmailService,
+       _emailRepo = EmailRepository(),
+       _statementsRepo = StatementsRepository(supabaseClient),
+       _transactionsRepo = TransactionsRepository(supabaseClient),
+       _cardsRepo = CardsRepository(supabaseClient),
+       _userId = userId,
+       _userEmail = userEmail,
+       _userName = userName,
+       _forcedCardIdByBank = forcedCardIdByBank;
 
   Future<void> _warmMerchantCategoryCache(String normalizedMerchantName) async {
     if (_merchantCategoryCache.containsKey(normalizedMerchantName)) return;
-    _merchantCategoryCache[normalizedMerchantName] =
-        await _transactionsRepo.lookupMerchantCategory(normalizedMerchantName);
+    _merchantCategoryCache[normalizedMerchantName] = await _transactionsRepo
+        .lookupMerchantCategory(normalizedMerchantName);
   }
 
   Future<StatementProcessingResult> processUnprocessedEmails() async {
@@ -127,16 +128,25 @@ class StatementProcessingService {
     required String emailId,
     required String userCardId,
   }) async {
-    final email = await _emailRepo.getEmailById(userId: _userId, emailId: emailId);
+    final email = await _emailRepo.getEmailById(
+      userId: _userId,
+      emailId: emailId,
+    );
     if (email == null) {
-      ParsingLogger.error('Statement Processing: Email $emailId not found for targeted reprocess', null);
+      ParsingLogger.error(
+        'Statement Processing: Email $emailId not found for targeted reprocess',
+        null,
+      );
       return EmailOutcome.failed;
     }
 
     final userCards = await _cardsRepo.getUserCards(_userId);
     final userCard = userCards.where((c) => c.id == userCardId).firstOrNull;
     if (userCard == null) {
-      ParsingLogger.error('Statement Processing: Card $userCardId not found for targeted reprocess', null);
+      ParsingLogger.error(
+        'Statement Processing: Card $userCardId not found for targeted reprocess',
+        null,
+      );
       return EmailOutcome.failed;
     }
 
@@ -150,6 +160,7 @@ class StatementProcessingService {
       return EmailOutcome.failed;
     }
   }
+
   Future<EmailOutcome> _processOne(
     Map<String, dynamic> email,
     List<UserCard> userCards,
@@ -161,14 +172,20 @@ class StatementProcessingService {
     final attachmentId = metadata['attachmentId'] as String?;
 
     if (attachmentId == null) {
-      ParsingLogger.warning('Statement Processing: No attachment id for email $emailId, skipping');
+      ParsingLogger.warning(
+        'Statement Processing: No attachment id for email $emailId, skipping',
+      );
       return EmailOutcome.failed;
     }
 
-    final bankName = CardNormalizerService.normalizeBankName(sender.isNotEmpty ? sender : subject);
+    final bankName = CardNormalizerService.normalizeBankName(
+      sender.isNotEmpty ? sender : subject,
+    );
 
     if (userCards.isEmpty) {
-      ParsingLogger.warning('Statement Processing: No cards on file for user, skipping email $emailId');
+      ParsingLogger.warning(
+        'Statement Processing: No cards on file for user, skipping email $emailId',
+      );
       return EmailOutcome.failed;
     }
 
@@ -189,13 +206,15 @@ class StatementProcessingService {
     // same-bank cards either.
     if (candidates.isEmpty) {
       final forcedCardId = _forcedCardIdByBank[bankName];
-      final previousCardId = forcedCardId ??
+      final previousCardId =
+          forcedCardId ??
           await _emailRepo.findPreviouslyAssignedCard(
             userId: _userId,
             bankDetected: bankName,
           );
-      final previousCard =
-          previousCardId == null ? null : userCards.where((c) => c.id == previousCardId).firstOrNull;
+      final previousCard = previousCardId == null
+          ? null
+          : userCards.where((c) => c.id == previousCardId).firstOrNull;
       if (previousCard != null) {
         return _processOneWithCard(email, previousCard);
       }
@@ -233,10 +252,14 @@ class StatementProcessingService {
     // batch wouldn't reflect that yet.
     final freshCards = await _cardsRepo.getUserCards(_userId);
     final candidateIds = staleCandidates.map((c) => c.id).toSet();
-    final candidates = freshCards.where((c) => candidateIds.contains(c.id)).toList();
+    final candidates = freshCards
+        .where((c) => candidateIds.contains(c.id))
+        .toList();
 
     if (attachmentId == null) {
-      ParsingLogger.warning('Statement Processing: No attachment id for email $emailId, skipping');
+      ParsingLogger.warning(
+        'Statement Processing: No attachment id for email $emailId, skipping',
+      );
       return EmailOutcome.failed;
     }
 
@@ -244,12 +267,16 @@ class StatementProcessingService {
     try {
       pdfBytes = await _gmailService.downloadAttachment(emailId, attachmentId);
     } catch (e) {
-      ParsingLogger.error('Statement Processing: Failed to download attachment for $emailId', e);
+      ParsingLogger.error(
+        'Statement Processing: Failed to download attachment for $emailId',
+        e,
+      );
       return EmailOutcome.failed;
     }
 
     final resolver = PdfPasswordResolver();
-    final googleAccessToken = Supabase.instance.client.auth.currentSession?.providerToken ?? '';
+    final googleAccessToken =
+        Supabase.instance.client.auth.currentSession?.providerToken ?? '';
 
     final text = await resolver.extractText(
       pdfBytes: pdfBytes,
@@ -290,7 +317,11 @@ class StatementProcessingService {
     // record the real last-4 this statement just revealed.
     if (matched == null && last4 != null && last4.isNotEmpty) {
       final unverified = candidates
-          .where((c) => c.lastFourDigits == null || c.lastFourDigits == CardsRepository.placeholderLastFour)
+          .where(
+            (c) =>
+                c.lastFourDigits == null ||
+                c.lastFourDigits == CardsRepository.placeholderLastFour,
+          )
           .toList();
       if (unverified.length == 1) {
         matched = unverified.first;
@@ -333,17 +364,24 @@ class StatementProcessingService {
     final fileName = metadata['attachmentFilename'] as String?;
 
     if (attachmentId == null) {
-      ParsingLogger.warning('Statement Processing: No attachment id for email $emailId, skipping');
+      ParsingLogger.warning(
+        'Statement Processing: No attachment id for email $emailId, skipping',
+      );
       return EmailOutcome.failed;
     }
 
-    final bankName = CardNormalizerService.normalizeBankName(sender.isNotEmpty ? sender : subject);
+    final bankName = CardNormalizerService.normalizeBankName(
+      sender.isNotEmpty ? sender : subject,
+    );
 
     Uint8List pdfBytes;
     try {
       pdfBytes = await _gmailService.downloadAttachment(emailId, attachmentId);
     } catch (e) {
-      ParsingLogger.error('Statement Processing: Failed to download attachment for $emailId', e);
+      ParsingLogger.error(
+        'Statement Processing: Failed to download attachment for $emailId',
+        e,
+      );
       return EmailOutcome.failed;
     }
 
@@ -418,7 +456,7 @@ class StatementProcessingService {
       final statementDate = statementInfo['statement_date'] != null
           ? DateTime.parse(statementInfo['statement_date'] as String)
           : GeminiStatementParser.extractStatementDateFromText(pdfText) ??
-              DateTime.parse(email['received_date'] as String);
+                DateTime.parse(email['received_date'] as String);
       final dueDate = statementInfo['due_date'] != null
           ? DateTime.parse(statementInfo['due_date'] as String)
           : statementDate.add(const Duration(days: 20));
@@ -430,10 +468,14 @@ class StatementProcessingService {
         statementDate: statementDate,
         dueDate: dueDate,
         totalAmount: (statementInfo['total_amount'] as num?)?.toDouble() ?? 0,
-        minimumPayment: (statementInfo['minimum_payment'] as num?)?.toDouble() ?? 0,
-        closingBalance: (statementInfo['closing_balance'] as num?)?.toDouble() ?? 0,
-        availableCredit: (statementInfo['available_credit'] as num?)?.toDouble() ?? 0,
-        rewardsEarned: (statementInfo['rewards_earned'] as num?)?.toDouble() ?? 0,
+        minimumPayment:
+            (statementInfo['minimum_payment'] as num?)?.toDouble() ?? 0,
+        closingBalance:
+            (statementInfo['closing_balance'] as num?)?.toDouble() ?? 0,
+        availableCredit:
+            (statementInfo['available_credit'] as num?)?.toDouble() ?? 0,
+        rewardsEarned:
+            (statementInfo['rewards_earned'] as num?)?.toDouble() ?? 0,
         transactionCount: transactions.length,
       );
 
@@ -441,13 +483,17 @@ class StatementProcessingService {
 
       for (final txn in transactions) {
         final amount = (txn['amount'] as num?)?.toDouble() ?? 0;
-        final type = txn['type'] as String? ?? 'debit';
         final description =
             txn['description'] as String? ?? 'Unknown transaction';
+        final type = TransactionTypeNormalizer.normalize(
+          parserType: txn['type'] as String?,
+          description: description,
+        );
         final rawMerchantName = txn['merchantName'] as String?;
         final merchantForCategorization = rawMerchantName ?? description;
-        final normalizedMerchant =
-            normalizeMerchantName(merchantForCategorization);
+        final normalizedMerchant = normalizeMerchantName(
+          merchantForCategorization,
+        );
 
         await _warmMerchantCategoryCache(normalizedMerchant);
         final categorization = categorize(
@@ -466,8 +512,9 @@ class StatementProcessingService {
           userCardId: userCardId,
           amount: amount.abs(),
           description: description,
-          transactionDate:
-              txn['date'] != null ? DateTime.parse(txn['date'] as String) : statementDate,
+          transactionDate: txn['date'] != null
+              ? DateTime.parse(txn['date'] as String)
+              : statementDate,
           currency: currency,
           merchantName: rawMerchantName,
           category: categorization.category,
@@ -476,6 +523,7 @@ class StatementProcessingService {
           statementId: statement.id,
           metadata: {
             'category_source': categorization.source.name,
+            'normalized_transaction_type': type,
           },
         );
       }
@@ -503,7 +551,10 @@ class StatementProcessingService {
 
       return EmailOutcome.succeeded;
     } catch (e) {
-      ParsingLogger.error('Statement Processing: Failed to parse/store statement for $emailId', e);
+      ParsingLogger.error(
+        'Statement Processing: Failed to parse/store statement for $emailId',
+        e,
+      );
       return EmailOutcome.failed;
     }
   }

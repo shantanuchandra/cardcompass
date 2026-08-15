@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/providers/repository_providers.dart';
 import '../../../core/providers/supabase_provider.dart';
+import '../../../core/services/eligible_spend.dart';
 import '../../../shared/models/transaction.dart';
 import '../../../shared/models/user_card.dart';
 
@@ -42,7 +43,20 @@ class TxnFilter {
   }
 
   static String _mon(DateTime d) => '${d.day} ${_months[d.month - 1]}';
-  static const _months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  static const _months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
 }
 
 class TrendPoint {
@@ -92,19 +106,37 @@ class TxnsState {
 
   List<Transaction> get filtered {
     var txns = all;
-    if (filter.cardId != null) txns = txns.where((t) => t.userCardId == filter.cardId).toList();
-    if (filter.from != null) txns = txns.where((t) => !t.transactionDate.isBefore(filter.from!)).toList();
-    if (filter.to != null) txns = txns.where((t) => !t.transactionDate.isAfter(filter.to!.add(const Duration(days: 1)))).toList();
-    if (filter.category != null) txns = txns.where((t) => t.category?.toLowerCase() == filter.category!.toLowerCase()).toList();
+    if (filter.cardId != null)
+      txns = txns.where((t) => t.userCardId == filter.cardId).toList();
+    if (filter.from != null)
+      txns = txns
+          .where((t) => !t.transactionDate.isBefore(filter.from!))
+          .toList();
+    if (filter.to != null)
+      txns = txns
+          .where(
+            (t) => !t.transactionDate.isAfter(
+              filter.to!.add(const Duration(days: 1)),
+            ),
+          )
+          .toList();
+    if (filter.category != null)
+      txns = txns
+          .where(
+            (t) => t.category?.toLowerCase() == filter.category!.toLowerCase(),
+          )
+          .toList();
     return txns;
   }
 
-  double get totalSpend => filtered.where((t) => t.isDebit).fold(0, (s, t) => s + t.amount);
-  double get totalRewards => filtered.fold(0, (s, t) => s + (t.rewardEarned ?? 0));
+  double get totalSpend =>
+      filtered.where(isEligibleRetailSpend).fold(0, (s, t) => s + t.amount);
+  double get totalRewards =>
+      filtered.fold(0, (s, t) => s + (t.rewardEarned ?? 0));
   String? get topCategory {
     final map = <String, double>{};
     for (final t in filtered) {
-      if (t.isDebit && t.category != null) {
+      if (isEligibleRetailSpend(t) && t.category != null) {
         map[t.category!] = (map[t.category!] ?? 0) + t.amount;
       }
     }
@@ -119,11 +151,15 @@ class TxnsState {
         return {'All': txns};
       case TxnGrouping.byCard:
         final m = <String, List<Transaction>>{};
-        for (final t in txns) { (m[t.userCardId] ??= []).add(t); }
+        for (final t in txns) {
+          (m[t.userCardId] ??= []).add(t);
+        }
         return m;
       case TxnGrouping.byCategory:
         final m = <String, List<Transaction>>{};
-        for (final t in txns) { (m[t.category ?? 'Other'] ??= []).add(t); }
+        for (final t in txns) {
+          (m[t.category ?? 'Other'] ??= []).add(t);
+        }
         return m;
       case TxnGrouping.byDate:
         final m = <String, List<Transaction>>{};
@@ -137,7 +173,7 @@ class TxnsState {
   }
 
   SpendTrend get spendTrend {
-    final txns = filtered.where((t) => t.isDebit).toList();
+    final txns = filtered.where(isEligibleRetailSpend).toList();
     if (txns.isEmpty) return const SpendTrend(points: [], dailyAverage: 0);
 
     // bucket by day
@@ -145,7 +181,8 @@ class TxnsState {
     final dayMap = <String, DateTime>{};
     for (final t in txns) {
       final d = t.transactionDate.toLocal();
-      final key = '${d.year}-${d.month.toString().padLeft(2,'0')}-${d.day.toString().padLeft(2,'0')}';
+      final key =
+          '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
       byDay[key] = (byDay[key] ?? 0) + t.amount;
       dayMap[key] = DateTime(d.year, d.month, d.day);
     }
@@ -156,7 +193,9 @@ class TxnsState {
     final avg = points.isEmpty ? 0.0 : total / points.length;
 
     TrendPoint? peak;
-    for (final p in points) { if (peak == null || p.total > peak.total) peak = p; }
+    for (final p in points) {
+      if (peak == null || p.total > peak.total) peak = p;
+    }
     String? peakLabel;
     if (peak != null) {
       final d = peak.date;
@@ -169,11 +208,16 @@ class TxnsState {
       final duration = filter.to!.difference(filter.from!);
       final priorFrom = filter.from!.subtract(duration);
       final priorTo = filter.from!.subtract(const Duration(days: 1));
-      final priorTotal = all.where((t) =>
-        t.isDebit &&
-        !t.transactionDate.isBefore(priorFrom) &&
-        !t.transactionDate.isAfter(priorTo.add(const Duration(days: 1)))
-      ).fold(0.0, (s, t) => s + t.amount);
+      final priorTotal = all
+          .where(
+            (t) =>
+                isEligibleRetailSpend(t) &&
+                !t.transactionDate.isBefore(priorFrom) &&
+                !t.transactionDate.isAfter(
+                  priorTo.add(const Duration(days: 1)),
+                ),
+          )
+          .fold(0.0, (s, t) => s + t.amount);
       if (priorTotal > 0) {
         percentVsPrior = (total - priorTotal) / priorTotal * 100;
       }
@@ -190,7 +234,20 @@ class TxnsState {
 
 // ignore: library_private_types_in_public_api
 class _TxnsState {
-  static const _months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  static const _months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
 }
 
 class TxnsNotifier extends AsyncNotifier<TxnsState> {
@@ -233,4 +290,6 @@ class TxnsNotifier extends AsyncNotifier<TxnsState> {
   }
 }
 
-final txnsNotifierProvider = AsyncNotifierProvider<TxnsNotifier, TxnsState>(TxnsNotifier.new);
+final txnsNotifierProvider = AsyncNotifierProvider<TxnsNotifier, TxnsState>(
+  TxnsNotifier.new,
+);

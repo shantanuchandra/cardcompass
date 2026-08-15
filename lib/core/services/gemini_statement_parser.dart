@@ -35,7 +35,7 @@ JSON OUTPUT (return ONLY this array, no markdown blocks):
     "currency": "the actual currency code observed on this line (e.g. INR, AED, USD) — only assume INR if no marker is visible",
     "merchantName": "Primary merchant name",
     "category": "food|fuel|grocery|entertainment|travel|shopping|utilities|insurance|medical|education|investment|transport|rental|subscription|gift|other",
-    "type": "debit|credit",
+    "type": "debit|credit|refund|fee|interest|reward|cash_withdrawal",
     "reward_points": number or null (reward/loyalty points earned for this transaction, 0 if none),
     "reference": "transaction reference if clearly visible"
   }
@@ -106,18 +106,19 @@ ANALYZE THE STATEMENT:''';
         'contents': [
           {
             'parts': [
-              {'text': '$prompt\n\n$cleanedText'}
-            ]
-          }
+              {'text': '$prompt\n\n$cleanedText'},
+            ],
+          },
         ],
-        'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 2048}
+        'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 2048},
       };
 
       final response = await _callGemini(requestBody, maxRetries: 3);
 
       if (response != null && response.statusCode == 200) {
         final decoded = json.decode(response.body);
-        final content = decoded['candidates']?[0]?['content']?['parts']?[0]?['text'];
+        final content =
+            decoded['candidates']?[0]?['content']?['parts']?[0]?['text'];
 
         if (content != null) {
           try {
@@ -128,16 +129,25 @@ ANALYZE THE STATEMENT:''';
             result['bank_name'] = normBank;
             if (result['card_name'] != null) {
               result['card_name'] = CardNormalizerService.normalizeCardName(
-                  result['card_name'].toString(), normBank);
+                result['card_name'].toString(),
+                normBank,
+              );
             } else {
               result['card_name'] = CardNormalizerService.normalizeCardName(
-                  '$normBank Credit Card', normBank);
+                '$normBank Credit Card',
+                normBank,
+              );
             }
 
-            ParsingLogger.summary('Gemini Parser: Successfully parsed statement info');
+            ParsingLogger.summary(
+              'Gemini Parser: Successfully parsed statement info',
+            );
             return result;
           } catch (e) {
-            ParsingLogger.error('Gemini Parser: Failed to parse JSON response', e);
+            ParsingLogger.error(
+              'Gemini Parser: Failed to parse JSON response',
+              e,
+            );
           }
         }
       }
@@ -156,8 +166,10 @@ ANALYZE THE STATEMENT:''';
   /// which silently collided every such statement onto one upsert row
   /// (statements are keyed on user_card_id + statement_date).
   static DateTime? extractStatementDateFromText(String pdfText) {
-    final dateMatch = RegExp(r'statement date[:\s]*(\d{2}[-/]\d{2}[-/]\d{4})', caseSensitive: false)
-        .firstMatch(pdfText);
+    final dateMatch = RegExp(
+      r'statement date[:\s]*(\d{2}[-/]\d{2}[-/]\d{4})',
+      caseSensitive: false,
+    ).firstMatch(pdfText);
     if (dateMatch == null) return null;
     try {
       final parts = dateMatch.group(1)!.split(RegExp(r'[-/]'));
@@ -171,34 +183,46 @@ ANALYZE THE STATEMENT:''';
     }
   }
 
-  static Map<String, dynamic> _fallbackStatementParsing(String pdfText, String bankName) {
+  static Map<String, dynamic> _fallbackStatementParsing(
+    String pdfText,
+    String bankName,
+  ) {
     final Map<String, dynamic> statementInfo = {};
-    statementInfo['bank_name'] = CardNormalizerService.normalizeBankName(bankName);
+    statementInfo['bank_name'] = CardNormalizerService.normalizeBankName(
+      bankName,
+    );
 
-    final dateMatch = RegExp(r'statement date[:\s]*(\d{2}[-/]\d{2}[-/]\d{4})', caseSensitive: false)
-        .firstMatch(pdfText);
+    final dateMatch = RegExp(
+      r'statement date[:\s]*(\d{2}[-/]\d{2}[-/]\d{4})',
+      caseSensitive: false,
+    ).firstMatch(pdfText);
     if (dateMatch != null) {
       statementInfo['statement_date'] = _convertDateFormat(dateMatch.group(1)!);
     }
 
-    final dueDateMatch = RegExp(r'due date[:\s]*(\d{2}[-/]\d{2}[-/]\d{4})', caseSensitive: false)
-        .firstMatch(pdfText);
+    final dueDateMatch = RegExp(
+      r'due date[:\s]*(\d{2}[-/]\d{2}[-/]\d{4})',
+      caseSensitive: false,
+    ).firstMatch(pdfText);
     if (dueDateMatch != null) {
       statementInfo['due_date'] = _convertDateFormat(dueDateMatch.group(1)!);
     }
 
     final amountMatch = RegExp(
-            r'total[:\s]*(?:amount|outstanding)[:\s]*(?:rs\.?|₹)?\s*([\d,]+\.?\d*)',
-            caseSensitive: false)
-        .firstMatch(pdfText);
+      r'total[:\s]*(?:amount|outstanding)[:\s]*(?:rs\.?|₹)?\s*([\d,]+\.?\d*)',
+      caseSensitive: false,
+    ).firstMatch(pdfText);
     if (amountMatch != null) {
-      statementInfo['total_amount'] = double.tryParse(amountMatch.group(1)!.replaceAll(',', '')) ?? 0.0;
+      statementInfo['total_amount'] =
+          double.tryParse(amountMatch.group(1)!.replaceAll(',', '')) ?? 0.0;
     }
 
     statementInfo['currency'] = 'INR';
     statementInfo['card_type'] = 'credit';
-    statementInfo['card_name'] =
-        CardNormalizerService.normalizeCardName('$bankName Credit Card', statementInfo['bank_name']);
+    statementInfo['card_name'] = CardNormalizerService.normalizeCardName(
+      '$bankName Credit Card',
+      statementInfo['bank_name'],
+    );
 
     return statementInfo;
   }
@@ -230,18 +254,19 @@ ANALYZE THE STATEMENT:''';
         'contents': [
           {
             'parts': [
-              {'text': '$prompt\n\n$cleanedText'}
-            ]
-          }
+              {'text': '$prompt\n\n$cleanedText'},
+            ],
+          },
         ],
-        'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 8192}
+        'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 8192},
       };
 
       final response = await _callGemini(requestBody, maxRetries: 3);
 
       if (response != null && response.statusCode == 200) {
         final decoded = json.decode(response.body);
-        final content = decoded['candidates']?[0]?['content']?['parts']?[0]?['text'];
+        final content =
+            decoded['candidates']?[0]?['content']?['parts']?[0]?['text'];
 
         if (content != null) {
           try {
@@ -255,10 +280,15 @@ ANALYZE THE STATEMENT:''';
               return m;
             }).toList();
 
-            ParsingLogger.summary('Gemini Parser: Successfully parsed ${transactions.length} transactions');
+            ParsingLogger.summary(
+              'Gemini Parser: Successfully parsed ${transactions.length} transactions',
+            );
             return transactions;
           } catch (e) {
-            ParsingLogger.error('Gemini Parser: Failed to parse JSON response', e);
+            ParsingLogger.error(
+              'Gemini Parser: Failed to parse JSON response',
+              e,
+            );
           }
         }
       }
@@ -281,11 +311,15 @@ ANALYZE THE STATEMENT:''';
     while (attempt < maxRetries) {
       attempt++;
       try {
-        ParsingLogger.summary('Gemini Parser: API call attempt $attempt/$maxRetries');
+        ParsingLogger.summary(
+          'Gemini Parser: API call attempt $attempt/$maxRetries',
+        );
         final response = await sendGeminiRequest(requestBody);
 
         if (AIConfig.isRateLimitError(response.statusCode, response.body)) {
-          ParsingLogger.warning('Gemini Parser: Rate limit detected (Status: ${response.statusCode})');
+          ParsingLogger.warning(
+            'Gemini Parser: Rate limit detected (Status: ${response.statusCode})',
+          );
           if (attempt < maxRetries) {
             await Future.delayed(const Duration(seconds: 15));
             continue;
@@ -295,7 +329,10 @@ ANALYZE THE STATEMENT:''';
 
         return response;
       } catch (e) {
-        ParsingLogger.error('Gemini Parser: API call error on attempt $attempt', e);
+        ParsingLogger.error(
+          'Gemini Parser: API call error on attempt $attempt',
+          e,
+        );
         if (attempt < maxRetries) {
           await Future.delayed(const Duration(seconds: 10));
         }
@@ -356,7 +393,8 @@ ANALYZE THE STATEMENT:''';
 
     if (bestCutIndex > 3500) {
       ParsingLogger.summary(
-          'Text Pruning: PDF statement text reduced from ${cleaned.length} to $bestCutIndex characters');
+        'Text Pruning: PDF statement text reduced from ${cleaned.length} to $bestCutIndex characters',
+      );
       cleaned = cleaned.substring(0, bestCutIndex);
     }
 
@@ -373,14 +411,17 @@ ANALYZE THE STATEMENT:''';
     final leaks = <Map<String, dynamic>>[];
 
     final dateRegex = RegExp(
-        r'\b\d{2}[-/.]\d{2}[-/.]\d{2,4}\b|\b\d{2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{2,4}\b',
-        caseSensitive: false);
+      r'\b\d{2}[-/.]\d{2}[-/.]\d{2,4}\b|\b\d{2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{2,4}\b',
+      caseSensitive: false,
+    );
     final currencyRegex = RegExp(
-        r'(?:Rs\.?|₹|INR)\s*[\d,]+\.?\d*|\b[\d,]+\.\d{2}\s*(?:CR|DR|Cr|Dr|C|D)\b',
-        caseSensitive: false);
+      r'(?:Rs\.?|₹|INR)\s*[\d,]+\.?\d*|\b[\d,]+\.\d{2}\s*(?:CR|DR|Cr|Dr|C|D)\b',
+      caseSensitive: false,
+    );
     final merchantRegex = RegExp(
-        r'swiggy|zomato|amazon|flipkart|uber|ola|petrol|payment received|paytm|gpay|phonepe|netflix|spotify|interest charged|finance charge',
-        caseSensitive: false);
+      r'swiggy|zomato|amazon|flipkart|uber|ola|petrol|payment received|paytm|gpay|phonepe|netflix|spotify|interest charged|finance charge',
+      caseSensitive: false,
+    );
 
     for (int i = 0; i < lines.length; i++) {
       final line = lines[i].trim();
@@ -438,7 +479,9 @@ ANALYZE THE STATEMENT:''';
           text = text.substring(0, text.length - 1).trim();
         }
         text += ']';
-        ParsingLogger.summary('JSON Healing: Recovered incomplete JSON array and appended "]"');
+        ParsingLogger.summary(
+          'JSON Healing: Recovered incomplete JSON array and appended "]"',
+        );
       }
     } else if (text.startsWith('{')) {
       if (!text.endsWith('}')) {
@@ -451,7 +494,9 @@ ANALYZE THE STATEMENT:''';
         if (openBraces > closeBraces) {
           text += '}' * (openBraces - closeBraces);
         }
-        ParsingLogger.summary('JSON Healing: Recovered incomplete JSON object by closing open braces');
+        ParsingLogger.summary(
+          'JSON Healing: Recovered incomplete JSON object by closing open braces',
+        );
       }
     }
     return text;
