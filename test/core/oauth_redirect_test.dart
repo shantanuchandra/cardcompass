@@ -11,6 +11,13 @@ void main() {
     );
   });
 
+  test('www production host redirects OAuth to the canonical app origin', () {
+    expect(
+      oauthRedirectUri(Uri.parse('https://www.cardcompass.in/app/#/login')),
+      Uri.parse('https://cardcompass.in/app/'),
+    );
+  });
+
   test('local callback keeps its allow-listed origin and app path', () {
     expect(
       oauthRedirectUri(Uri.parse('http://127.0.0.1:8080/app/')),
