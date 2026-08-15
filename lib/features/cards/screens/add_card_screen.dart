@@ -26,7 +26,8 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
   Map<String, dynamic>? _selected;
   bool _loading = false;
   bool _saving = false;
-  String? _error;
+  String? _requestError;
+  String? _lastFourError;
 
   final _lastFour = TextEditingController();
   final _holderName = TextEditingController();
@@ -52,11 +53,12 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
       setState(() {
         _results = r;
         _loading = false;
+        _requestError = null;
       });
-    } catch (e) {
+    } catch (_) {
       setState(() {
         _loading = false;
-        _error = e.toString();
+        _requestError = 'Could not search the card catalogue. Try again.';
       });
     }
   }
@@ -65,14 +67,17 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
     if (_selected == null) return;
     final lastFour = _lastFour.text.trim();
     if (lastFour.isNotEmpty && !RegExp(r'^\d{4}$').hasMatch(lastFour)) {
-      setState(() => _error = 'Enter exactly four digits or leave this blank');
+      setState(
+        () => _lastFourError = 'Enter exactly four digits or leave this blank',
+      );
       return;
     }
     final user = ref.read(currentUserProvider);
     if (user == null) return;
     setState(() {
       _saving = true;
-      _error = null;
+      _lastFourError = null;
+      _requestError = null;
     });
     try {
       await ref
@@ -88,10 +93,10 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
                 : _holderName.text.trim(),
           );
       if (mounted) context.pop();
-    } catch (e) {
+    } catch (_) {
       setState(() {
         _saving = false;
-        _error = e.toString();
+        _requestError = 'Could not add this card. Try again.';
       });
     }
   }
@@ -118,7 +123,11 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
         child: ListView(
           padding: const EdgeInsets.symmetric(vertical: BrandSpacing.md),
           children: [
-            const _AddCardProgress(),
+            _AddCardProgress(
+              currentStep: _selected == null
+                  ? AddCardStep.search
+                  : AddCardStep.confirm,
+            ),
             const SizedBox(height: BrandSpacing.lg),
             // Step 1: search catalog
             if (_selected == null) ...[
@@ -165,6 +174,21 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
                     }),
                   ),
                 ),
+              if (_requestError != null) ...[
+                const SizedBox(height: BrandSpacing.sm),
+                Text(
+                  _requestError!,
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 14,
+                    color: BrandColors.error,
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => _searchCards(_search.text),
+                  child: const Text('Retry search'),
+                ),
+              ],
             ],
 
             // Step 2: details
@@ -194,15 +218,28 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
                 ),
               ),
               const SizedBox(height: BrandSpacing.sm),
-              TextField(
-                key: const Key('last-four'),
-                controller: _lastFour,
-                keyboardType: TextInputType.number,
-                maxLength: 4,
-                decoration: const InputDecoration(
-                  labelText: 'Last 4 digits',
-                  hintText: '1234',
-                  counterText: '',
+              Semantics(
+                key: const Key('last-four-field'),
+                container: true,
+                label: _lastFourError == null
+                    ? 'Last 4 digits'
+                    : 'Last 4 digits. Error: $_lastFourError',
+                child: TextField(
+                  key: const Key('last-four'),
+                  controller: _lastFour,
+                  keyboardType: TextInputType.number,
+                  maxLength: 4,
+                  onChanged: (_) {
+                    if (_lastFourError != null) {
+                      setState(() => _lastFourError = null);
+                    }
+                  },
+                  decoration: InputDecoration(
+                    labelText: 'Last 4 digits',
+                    hintText: '1234',
+                    counterText: '',
+                    errorText: _lastFourError,
+                  ),
                 ),
               ),
               const SizedBox(height: BrandSpacing.xs),
@@ -232,14 +269,14 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
                 ),
               ),
               const SizedBox(height: BrandSpacing.lg),
-              if (_error != null)
+              if (_requestError != null)
                 Padding(
                   padding: const EdgeInsets.only(bottom: BrandSpacing.sm),
                   child: Text(
-                    _error!,
+                    _requestError!,
                     style: TextStyle(
                       fontFamily: 'Manrope',
-                      fontSize: 12,
+                      fontSize: 14,
                       color: BrandColors.error,
                     ),
                   ),
@@ -268,14 +305,20 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
   }
 }
 
+enum AddCardStep { search, confirm }
+
 class _AddCardProgress extends StatelessWidget {
-  const _AddCardProgress();
+  const _AddCardProgress({required this.currentStep});
+
+  final AddCardStep currentStep;
 
   @override
   Widget build(BuildContext context) {
     final compact = MediaQuery.textScalerOf(context).scale(14) >= 21;
+    final confirming = currentStep == AddCardStep.confirm;
     return Semantics(
-      label: 'Add card progress: search, then confirm',
+      label:
+          'Add card progress. Current step: ${confirming ? 'Confirm' : 'Search'}',
       child: ExcludeSemantics(
         child: compact
             ? Wrap(
@@ -283,21 +326,21 @@ class _AddCardProgress extends StatelessWidget {
                 runSpacing: BrandSpacing.xs,
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  _step('1 Search', active: true),
+                  _step('1 Search', active: !confirming),
                   const Icon(Icons.arrow_forward_rounded, size: 18),
-                  _step('2 Confirm'),
+                  _step('2 Confirm', active: confirming),
                 ],
               )
             : Row(
                 children: [
-                  _step('1 Search', active: true),
+                  _step('1 Search', active: !confirming),
                   const Expanded(
                     child: Divider(
                       indent: BrandSpacing.sm,
                       endIndent: BrandSpacing.sm,
                     ),
                   ),
-                  _step('2 Confirm'),
+                  _step('2 Confirm', active: confirming),
                 ],
               ),
       ),
@@ -325,8 +368,6 @@ class _SelectedCatalogCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final selectedCard = Text(
       '${card['card_name']} · ${card['bank']}',
-      maxLines: 2,
-      overflow: TextOverflow.ellipsis,
       style: TextStyle(
         fontFamily: 'Manrope',
         fontSize: 14,

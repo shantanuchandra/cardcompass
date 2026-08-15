@@ -1,4 +1,5 @@
 import 'package:cardcompass/core/theme/app_theme.dart';
+import 'package:cardcompass/core/providers/supabase_provider.dart';
 import 'package:cardcompass/features/cards/screens/add_card_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -14,6 +15,7 @@ Future<void> pumpAddCard(WidgetTester tester, {double textScale = 1}) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
+        currentUserProvider.overrideWithValue(null),
         cardCatalogSearchProvider.overrideWithValue(
           (query) async => [_catalogCard],
         ),
@@ -45,6 +47,18 @@ void main() {
     expect(find.text('2 Confirm'), findsOneWidget);
   });
 
+  testWidgets('progress marks Confirm as the current step after selection', (
+    tester,
+  ) async {
+    await pumpAddCard(tester);
+    await reachConfirmStep(tester);
+
+    expect(
+      find.bySemanticsLabel('Add card progress. Current step: Confirm'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('last four explains optional use and rejects non-four digits', (
     tester,
   ) async {
@@ -65,6 +79,62 @@ void main() {
       find.text('Enter exactly four digits or leave this blank'),
       findsOneWidget,
     );
+  });
+
+  testWidgets(
+    'last four keeps blank and valid values clear, but marks invalid input inline',
+    (tester) async {
+      await pumpAddCard(tester);
+      await reachConfirmStep(tester);
+      final input = find.byKey(const Key('last-four'));
+
+      await tester.tap(find.text('Add card'));
+      expect(tester.widget<TextField>(input).decoration!.errorText, isNull);
+
+      await tester.enterText(input, '1234');
+      await tester.tap(find.text('Add card'));
+      expect(tester.widget<TextField>(input).decoration!.errorText, isNull);
+
+      await tester.enterText(input, '12');
+      await tester.tap(find.text('Add card'));
+      await tester.pump();
+      expect(
+        tester.widget<TextField>(input).decoration!.errorText,
+        'Enter exactly four digits or leave this blank',
+      );
+      expect(
+        find.text('Enter exactly four digits or leave this blank'),
+        findsOneWidget,
+      );
+      expect(
+        tester.getSemantics(find.byKey(const Key('last-four-field'))).label,
+        contains('Enter exactly four digits or leave this blank'),
+      );
+    },
+  );
+
+  testWidgets('catalogue errors are actionable and do not expose internals', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          cardCatalogSearchProvider.overrideWithValue(
+            (query) async => throw StateError('private catalog connection'),
+          ),
+        ],
+        child: MaterialApp(theme: AppTheme.work, home: const AddCardScreen()),
+      ),
+    );
+    await tester.enterText(find.byKey(const Key('card-search')), 'astra');
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Could not search the card catalogue. Try again.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('private catalog connection'), findsNothing);
+    expect(find.text('Retry search'), findsOneWidget);
   });
 
   testWidgets('changing selection keeps the search query available', (

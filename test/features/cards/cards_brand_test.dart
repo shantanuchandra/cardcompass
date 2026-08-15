@@ -50,4 +50,30 @@ void main() {
     expect(find.text('₹2.5L limit'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'card load failures keep backend details private and offer retry',
+    (tester) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            currentUserProvider.overrideWithValue(null),
+            userCardsProvider.overrideWith(
+              (ref) async =>
+                  throw StateError('private card repository failure'),
+            ),
+          ],
+          child: MaterialApp(theme: AppTheme.work, home: const CardsScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Could not load your cards.'), findsOneWidget);
+      expect(find.text('Try again'), findsOneWidget);
+      expect(
+        find.textContaining('private card repository failure'),
+        findsNothing,
+      );
+    },
+  );
 }

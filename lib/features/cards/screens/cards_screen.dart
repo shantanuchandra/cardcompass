@@ -46,10 +46,23 @@ class CardsScreen extends ConsumerWidget {
         loading: () => const Center(
           child: CircularProgressIndicator(color: BrandColors.focusDark),
         ),
-        error: (e, _) => Center(
-          child: Text(
-            'Error: $e',
-            style: TextStyle(fontFamily: 'Manrope', color: BrandColors.error),
+        error: (_, _) => Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Could not load your cards.',
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 14,
+                  color: BrandColors.error,
+                ),
+              ),
+              TextButton(
+                onPressed: () => ref.invalidate(userCardsProvider),
+                child: const Text('Try again'),
+              ),
+            ],
           ),
         ),
         data: (cards) => cards.isEmpty
@@ -115,8 +128,6 @@ class _CardListTile extends StatelessWidget {
                       fontWeight: FontWeight.w600,
                       color: BrandColors.ink,
                     ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: BrandSpacing.xs),
                   Text(

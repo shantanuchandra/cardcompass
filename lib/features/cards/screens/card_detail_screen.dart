@@ -89,26 +89,36 @@ class CardDetailScreen extends ConsumerWidget {
           icon: const Icon(Icons.arrow_back_rounded),
           onPressed: () => Navigator.of(context).pop(),
         ),
-        title: cardAsync.maybeWhen(
-          data: (c) => Text(
-            c?.displayName ?? 'Card Detail',
-            style: TextStyle(
-              fontFamily: 'Manrope',
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-            ),
+        title: const Text(
+          'Card details',
+          style: TextStyle(
+            fontFamily: 'Manrope',
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
           ),
-          orElse: () => const SizedBox.shrink(),
         ),
       ),
       body: cardAsync.when(
         loading: () => const Center(
           child: CircularProgressIndicator(color: BrandColors.focusDark),
         ),
-        error: (e, _) => Center(
-          child: Text(
-            'Error: $e',
-            style: TextStyle(fontFamily: 'Manrope', color: BrandColors.error),
+        error: (_, _) => Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Could not load this card.',
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 14,
+                  color: BrandColors.error,
+                ),
+              ),
+              TextButton(
+                onPressed: () => ref.invalidate(cardDetailProvider(cardId)),
+                child: const Text('Try again'),
+              ),
+            ],
           ),
         ),
         data: (card) {
@@ -133,7 +143,8 @@ class CardDetailScreen extends ConsumerWidget {
 class _CardDetailBody extends ConsumerWidget {
   final UserCard card;
   final String cardId;
-  const _CardDetailBody({required this.card, required this.cardId});
+  final _historyAnchorKey = GlobalKey();
+  _CardDetailBody({required this.card, required this.cardId});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -160,10 +171,40 @@ class _CardDetailBody extends ConsumerWidget {
               children: [
                 const _SectionHeader(title: 'Card summary'),
                 const SizedBox(height: BrandSpacing.sm),
+                Text(
+                  card.displayName,
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    color: BrandColors.ink,
+                  ),
+                ),
+                const SizedBox(height: BrandSpacing.sm),
                 Center(
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 480),
                     child: _CreditCardWidget(card: card),
+                  ),
+                ),
+                const SizedBox(height: BrandSpacing.sm),
+                Semantics(
+                  label: 'Review transaction history',
+                  button: true,
+                  child: ElevatedButton.icon(
+                    key: const Key('review-history'),
+                    onPressed: () {
+                      final historyContext = _historyAnchorKey.currentContext;
+                      if (historyContext != null) {
+                        Scrollable.ensureVisible(
+                          historyContext,
+                          duration: const Duration(milliseconds: 200),
+                          curve: Curves.easeOut,
+                        );
+                      }
+                    },
+                    icon: const Icon(Icons.receipt_long_outlined),
+                    label: const Text('Review history'),
                   ),
                 ),
                 const SizedBox(height: BrandSpacing.md),
@@ -207,17 +248,15 @@ class _CardDetailBody extends ConsumerWidget {
                 const SizedBox(height: BrandSpacing.sm),
                 const BrandSurface(
                   child: Text(
-                    'Use this card where it earns your strongest rewards. We will surface verified benefit details as statements arrive.',
+                    'No verified benefit rules are available for this card yet. Add verified card rules before using it for reward recommendations.',
                   ),
                 ),
                 const SizedBox(height: BrandSpacing.lg),
                 const _SectionHeader(title: 'Milestone'),
                 const SizedBox(height: BrandSpacing.sm),
-                BrandSurface(
+                const BrandSurface(
                   child: Text(
-                    card.statementDate != null || card.dueDate != null
-                        ? 'Statement closes on the ${card.statementDate ?? '—'}th; payment is due on the ${card.dueDate ?? '—'}th.'
-                        : 'Add a statement to track billing milestones here.',
+                    'No verified milestone data is available for this card.',
                   ),
                 ),
                 const SizedBox(height: BrandSpacing.lg),
@@ -225,8 +264,13 @@ class _CardDetailBody extends ConsumerWidget {
                 const SizedBox(height: BrandSpacing.sm),
                 stmtAsync.when(
                   loading: _BillPanelSkeleton.new,
-                  error: (_, _) => const BrandSurface(
-                    child: Text('Current bill could not be loaded.'),
+                  error: (_, _) => BrandSurface(
+                    child: _RetryMessage(
+                      message: 'Could not load the current bill.',
+                      actionLabel: 'Retry bill',
+                      onRetry: () =>
+                          ref.invalidate(cardStatementProvider(cardId)),
+                    ),
                   ),
                   data: (stmt) => stmt != null
                       ? _BillPanel(stmt: stmt)
@@ -259,7 +303,7 @@ class _CardDetailBody extends ConsumerWidget {
                   ],
                 ),
                 ExpansionTile(
-                  key: const PageStorageKey('card-history'),
+                  key: _historyAnchorKey,
                   title: const Text('History'),
                   subtitle: const Text('Open recent transactions'),
                   children: [
@@ -270,9 +314,14 @@ class _CardDetailBody extends ConsumerWidget {
                           color: BrandColors.focusDark,
                         ),
                       ),
-                      error: (_, _) => const Padding(
-                        padding: EdgeInsets.all(BrandSpacing.md),
-                        child: Text('Could not load transactions'),
+                      error: (_, _) => Padding(
+                        padding: const EdgeInsets.all(BrandSpacing.md),
+                        child: _RetryMessage(
+                          message: 'Could not load transactions.',
+                          actionLabel: 'Retry history',
+                          onRetry: () =>
+                              ref.invalidate(cardTransactionsProvider(cardId)),
+                        ),
                       ),
                       data: (txns) => txns.isEmpty
                           ? _EmptyTransactions()
@@ -298,6 +347,28 @@ class _CardDetailBody extends ConsumerWidget {
     symbol: '₹',
     decimalDigits: 0,
   ).format(v);
+}
+
+class _RetryMessage extends StatelessWidget {
+  const _RetryMessage({
+    required this.message,
+    required this.actionLabel,
+    required this.onRetry,
+  });
+
+  final String message;
+  final String actionLabel;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Text(message),
+      TextButton(onPressed: onRetry, child: Text(actionLabel)),
+    ],
+  );
 }
 
 class _DetailStatsRow extends StatelessWidget {
@@ -380,20 +451,17 @@ class _CreditCardWidget extends StatelessWidget {
               const Spacer()
             else
               const SizedBox(height: BrandSpacing.lg),
-            FittedBox(
-              alignment: Alignment.centerLeft,
-              fit: BoxFit.scaleDown,
-              child: Text(
-                card.maskedNumber.isNotEmpty
-                    ? card.maskedNumber
-                    : '••••  ••••  ••••  ••••',
-                style: TextStyle(
-                  fontFamily: 'Manrope',
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: BrandColors.ink,
-                  letterSpacing: 2,
-                ),
+            Text(
+              card.maskedNumber.isNotEmpty
+                  ? card.maskedNumber
+                  : '••••  ••••  ••••  ••••',
+              softWrap: true,
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: BrandColors.ink,
+                letterSpacing: 2,
               ),
             ),
             const SizedBox(height: BrandSpacing.md),
@@ -409,7 +477,7 @@ class _CreditCardWidget extends StatelessWidget {
                       card.cardHolderName ?? 'YOUR NAME',
                       style: TextStyle(
                         fontFamily: 'Manrope',
-                        fontSize: 13,
+                        fontSize: 14,
                         fontWeight: FontWeight.w600,
                         color: BrandColors.ink,
                       ),
@@ -430,7 +498,7 @@ class _CreditCardWidget extends StatelessWidget {
                         ).format(card.creditLimit),
                         style: TextStyle(
                           fontFamily: 'Manrope',
-                          fontSize: 13,
+                          fontSize: 14,
                           fontWeight: FontWeight.w600,
                           color: BrandColors.ink,
                         ),
@@ -459,7 +527,7 @@ class _CardLabel extends StatelessWidget {
     label,
     style: TextStyle(
       fontFamily: 'Manrope',
-      fontSize: 9,
+      fontSize: 12,
       color: BrandColors.mutedInk,
       letterSpacing: 1,
     ),
@@ -577,7 +645,7 @@ class _UtilizationCard extends StatelessWidget {
             'Utilization',
             style: TextStyle(
               fontFamily: 'Manrope',
-              fontSize: 11,
+              fontSize: 12,
               color: BrandColors.mutedInk,
               fontWeight: FontWeight.w500,
             ),
@@ -596,7 +664,7 @@ class _UtilizationCard extends StatelessWidget {
                       '${pct.round()}%',
                       style: TextStyle(
                         fontFamily: 'Manrope',
-                        fontSize: 9,
+                        fontSize: 12,
                         fontWeight: FontWeight.w700,
                         color: color,
                       ),
@@ -613,20 +681,18 @@ class _UtilizationCard extends StatelessWidget {
                       _fmt(used),
                       style: TextStyle(
                         fontFamily: 'Manrope',
-                        fontSize: 13,
+                        fontSize: 14,
                         fontWeight: FontWeight.w700,
                         color: BrandColors.ink,
                       ),
-                      overflow: TextOverflow.ellipsis,
                     ),
                     Text(
                       'of ${_fmt(limit)}',
                       style: TextStyle(
                         fontFamily: 'Manrope',
-                        fontSize: 10,
+                        fontSize: 12,
                         color: BrandColors.mutedInk,
                       ),
-                      overflow: TextOverflow.ellipsis,
                     ),
                   ],
                 ),
@@ -718,7 +784,7 @@ class _StatCard extends StatelessWidget {
             label,
             style: TextStyle(
               fontFamily: 'Manrope',
-              fontSize: 11,
+              fontSize: 12,
               color: BrandColors.mutedInk,
               fontWeight: FontWeight.w500,
             ),
@@ -787,6 +853,78 @@ class _BillPanel extends StatelessWidget {
         ? 'Overdue'
         : 'Due in $daysLeft day${daysLeft == 1 ? '' : 's'}';
 
+    final billDetails = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          'Bill Due',
+          style: TextStyle(
+            fontFamily: 'Manrope',
+            fontSize: 12,
+            color: BrandColors.mutedInk,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          NumberFormat.currency(
+            locale: 'en_IN',
+            symbol: '₹',
+            decimalDigits: 0,
+          ).format(stmt.outstanding),
+          style: TextStyle(
+            fontFamily: 'Manrope',
+            fontSize: 22,
+            fontWeight: FontWeight.w700,
+            color: BrandColors.ink,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          DateFormat('d MMM yyyy').format(stmt.dueDate),
+          style: TextStyle(
+            fontFamily: 'Manrope',
+            fontSize: 12,
+            color: BrandColors.mutedInk,
+          ),
+        ),
+      ],
+    );
+    final paymentStatus = Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            color: statusColor.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(BrandRadius.pill),
+          ),
+          child: Text(
+            statusLabel,
+            style: TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: statusColor,
+            ),
+          ),
+        ),
+        if (stmt.minimumPayment > 0) ...[
+          const SizedBox(height: BrandSpacing.xs),
+          Text(
+            'Min ₹${NumberFormat.compact().format(stmt.minimumPayment)}',
+            style: TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 12,
+              color: BrandColors.mutedInk,
+            ),
+          ),
+        ],
+      ],
+    );
+
     return Container(
       padding: const EdgeInsets.all(BrandSpacing.md),
       decoration: BoxDecoration(
@@ -800,83 +938,28 @@ class _BillPanel extends StatelessWidget {
               : BrandColors.mutedInk.withValues(alpha: 0.12),
         ),
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final stack =
+              constraints.maxWidth < 420 ||
+              MediaQuery.textScalerOf(context).scale(14) >= 21;
+          if (stack) {
+            return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'Bill Due',
-                  style: TextStyle(
-                    fontFamily: 'Manrope',
-                    fontSize: 11,
-                    color: BrandColors.mutedInk,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  NumberFormat.currency(
-                    locale: 'en_IN',
-                    symbol: '₹',
-                    decimalDigits: 0,
-                  ).format(stmt.outstanding),
-                  style: TextStyle(
-                    fontFamily: 'Manrope',
-                    fontSize: 22,
-                    fontWeight: FontWeight.w700,
-                    color: BrandColors.ink,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  DateFormat('d MMM yyyy').format(stmt.dueDate),
-                  style: TextStyle(
-                    fontFamily: 'Manrope',
-                    fontSize: 12,
-                    color: BrandColors.mutedInk,
-                  ),
-                ),
+                billDetails,
+                const SizedBox(height: BrandSpacing.sm),
+                Align(alignment: Alignment.centerLeft, child: paymentStatus),
               ],
-            ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
+            );
+          }
+          return Row(
             children: [
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 4,
-                ),
-                decoration: BoxDecoration(
-                  color: statusColor.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(BrandRadius.pill),
-                ),
-                child: Text(
-                  statusLabel,
-                  style: TextStyle(
-                    fontFamily: 'Manrope',
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: statusColor,
-                  ),
-                ),
-              ),
-              if (stmt.minimumPayment > 0) ...[
-                const SizedBox(height: BrandSpacing.xs),
-                Text(
-                  'Min ₹${NumberFormat.compact().format(stmt.minimumPayment)}',
-                  style: TextStyle(
-                    fontFamily: 'Manrope',
-                    fontSize: 11,
-                    color: BrandColors.mutedInk,
-                  ),
-                ),
-              ],
+              Expanded(child: billDetails),
+              paymentStatus,
             ],
-          ),
-        ],
+          );
+        },
       ),
     );
   }
@@ -963,19 +1046,17 @@ class _TxnTile extends StatelessWidget {
                   txn.merchantName ?? txn.description,
                   style: TextStyle(
                     fontFamily: 'Manrope',
-                    fontSize: 13,
+                    fontSize: 14,
                     fontWeight: FontWeight.w500,
                     color: BrandColors.ink,
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                 ),
                 Text(
                   DateFormat('d MMM').format(txn.transactionDate) +
                       (txn.category != null ? '  ·  ${txn.category}' : ''),
                   style: TextStyle(
                     fontFamily: 'Manrope',
-                    fontSize: 11,
+                    fontSize: 12,
                     color: BrandColors.mutedInk,
                   ),
                 ),
