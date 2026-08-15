@@ -290,7 +290,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--focus); outline:
 .decision-steps p { margin: 0; color: var(--muted-ink); font-size: 14px; line-height: 1.5; }
 .concept-disclosure { grid-column: 1 / -1; margin-top: 4px; border-top: 1px solid rgba(11, 16, 21, 0.28); border-bottom: 1px solid rgba(11, 16, 21, 0.28); }
 .concept-disclosure summary { min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 0; color: var(--ink); font-size: 14px; font-weight: 700; cursor: pointer; }
-.concept-disclosure summary span { color: var(--teal-text); font-family: var(--font-mono); font-size: 12px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
+.concept-disclosure summary span { color: var(--teal-text); font-family: var(--font-mono); font-size: 14px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
 .concept-disclosure > p { max-width: 720px; margin: 0 0 16px; color: var(--muted-ink); font-size: 14px; }
 .concept-disclosure .capture-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; padding-bottom: 20px; }
 .capture { margin: 0; }

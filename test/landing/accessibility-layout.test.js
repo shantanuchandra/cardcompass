@@ -75,4 +75,9 @@ test('public landing actions explicitly meet readable copy and target-size floor
     assert.match(declarations, /font-size:\s*(?:1[4-9]|[2-9]\d)px/, `${selector} needs 14px action copy`);
     assert.match(declarations, /min-(?:height|block-size):\s*(?:4[4-9]|[5-9]\d)px/, `${selector} needs a 44px target`);
   }
+
+  for (const selector of ['.concept-disclosure summary span']) {
+    const declarations = rule(css, selector);
+    assert.match(declarations, /font-size:\s*(?:1[4-9]|[2-9]\d)px/, `${selector} cannot undercut its action's readable copy`);
+  }
 });
