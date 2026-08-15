@@ -114,6 +114,15 @@ test('Azure Static Web Apps config protects public pages without rewriting app a
   assert.equal(config.responseOverrides['404'].rewrite, '/404.html');
 });
 
+test('Azure CSP permits the deployed Flutter WebAssembly engine and CanvasKit module', async () => {
+  const config = JSON.parse(await readFile(new URL('staticwebapp.config.json', repoRoot), 'utf8'));
+  const policy = config.globalHeaders['Content-Security-Policy'];
+
+  assert.match(policy, /script-src[^;]*'wasm-unsafe-eval'/);
+  assert.match(policy, /script-src[^;]*https:\/\/www\.gstatic\.com/);
+  assert.match(policy, /connect-src[^;]*https:\/\/www\.gstatic\.com/);
+});
+
 test('deployment environment module serializes public Supabase values as inert JavaScript strings', async () => {
   const child = spawn(process.execPath, ['scripts/write-landing-env.mjs'], {
     cwd: new URL('../..', import.meta.url),
