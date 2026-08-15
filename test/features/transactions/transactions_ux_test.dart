@@ -150,43 +150,43 @@ void main() {
     expect(primary.style!.fontSize, greaterThan(rewards.style!.fontSize!));
   });
 
-  testWidgets(
-    'reordered rows do not inherit another transaction details state',
-    (tester) async {
-      await pumpLedger(
-        tester,
-        width: 768,
-        load: () async =>
-            TxnsState(all: [_transaction, _travelTransaction], cards: [_card]),
-      );
+  testWidgets('reordered rows retain their own expanded details state', (
+    tester,
+  ) async {
+    await pumpLedger(
+      tester,
+      width: 768,
+      load: () async =>
+          TxnsState(all: [_travelTransaction, _transaction], cards: [_card]),
+    );
 
-      await tester.scrollUntilVisible(
-        find.text('Details').first,
-        400,
-        scrollable: find.byType(Scrollable).last,
-      );
-      await tester.tap(find.text('Details').first);
-      await tester.pumpAndSettle();
-      expect(find.text('+36 pts'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Details').last,
+      400,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.tap(find.text('Details').last);
+    await tester.pumpAndSettle();
+    expect(find.text('+36 pts'), findsOneWidget);
 
-      await tester.scrollUntilVisible(
-        find.text('Filters'),
-        -400,
-        scrollable: find.byType(Scrollable).last,
-      );
-      await tester.tap(find.text('Filters'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Travel').last);
-      await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('Filters'),
+      -400,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.tap(find.text('Filters'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Dining').last);
+    await tester.pumpAndSettle();
 
-      await tester.scrollUntilVisible(
-        find.text(_travelTransaction.merchantName!),
-        400,
-        scrollable: find.byType(Scrollable).last,
-      );
-      expect(find.text('+17 pts'), findsNothing);
-    },
-  );
+    await tester.scrollUntilVisible(
+      find.text(_transaction.merchantName!),
+      400,
+      scrollable: find.byType(Scrollable).last,
+    );
+    expect(find.text('+36 pts'), findsOneWidget);
+    expect(find.text('+17 pts'), findsNothing);
+  });
 
   testWidgets('rewards use points rather than currency labels', (tester) async {
     await pumpLedger(tester, width: 768);

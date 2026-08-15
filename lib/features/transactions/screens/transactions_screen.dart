@@ -85,6 +85,24 @@ class _LedgerBodyState extends ConsumerState<_LedgerBody> {
       (filter.cardId != null ? 1 : 0) +
       (filter.category != null ? 1 : 0);
 
+  int? _indexForTransactionKey(
+    Key key,
+    Map<String, List<Transaction>> grouped,
+    TxnGrouping grouping,
+  ) {
+    if (key is! ValueKey<String>) return null;
+
+    var index = 0;
+    for (final entry in grouped.entries) {
+      if (grouping != TxnGrouping.flat) index++;
+      for (final transaction in entry.value) {
+        if (transaction.id == key.value) return index;
+        index++;
+      }
+    }
+    return null;
+  }
+
   void _openFilters(BuildContext context, TxnsState state) {
     void onChanged(TxnFilter filter) {
       ref.read(txnsNotifierProvider.notifier).setFilter(filter);
@@ -307,6 +325,8 @@ class _LedgerBodyState extends ConsumerState<_LedgerBody> {
                       }
                       return null;
                     },
+                    findChildIndexCallback: (key) =>
+                        _indexForTransactionKey(key, grouped, s.grouping),
                     childCount: s.grouping == TxnGrouping.flat
                         ? filtered.length
                         : grouped.entries.fold<int>(
