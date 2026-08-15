@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT      = Number(process.argv[2]) || 8080;
+const landingRoot = path.join(__dirname, 'landing');
 
 // ── Load env vars ────────────────────────────────────────────────────────────
 // Production: set SUPABASE_URL and SUPABASE_ANON_KEY in the deployment platform.
@@ -54,7 +55,17 @@ const MIME = {
 
 // ── Server ───────────────────────────────────────────────────────────────────
 const server = http.createServer((req, res) => {
-  const url = req.url.split('?')[0];
+  let url;
+  try {
+    url = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+  } catch {
+    res.writeHead(400); res.end('Bad request'); return;
+  }
+
+  const segments = url.split('/');
+  if (url.includes('\0') || segments.includes('..') || segments.includes('.')) {
+    res.writeHead(403); res.end('Forbidden'); return;
+  }
 
   // Block direct access to .env and server internals
   if (url === '/.env' || url === '/server.js') {
@@ -72,15 +83,20 @@ export const SUPABASE_ANON = ${JSON.stringify(env.SUPABASE_ANON_KEY || '')};
     return;
   }
 
-  // Static file serving
-  let filePath = path.join(__dirname, url === '/' ? '/landing/index.html' : url);
+  // Serve repository routes first (for existing app assets), then mirror the
+  // production deploy root from landing/ for public pages and assets.
+  const relativePath = url.replace(/^\/+/, '');
+  const candidates = url === '/'
+    ? [path.join(landingRoot, 'index.html')]
+    : [path.join(__dirname, relativePath), path.join(landingRoot, relativePath)];
+  let filePath = candidates.find((candidate) => candidate.startsWith(`${__dirname}${path.sep}`) && fs.existsSync(candidate));
 
   // Directory → index.html
-  if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory()) {
+  if (filePath && fs.statSync(filePath).isDirectory()) {
     filePath = path.join(filePath, 'index.html');
   }
 
-  if (!fs.existsSync(filePath)) {
+  if (!filePath || !filePath.startsWith(`${__dirname}${path.sep}`) || !fs.existsSync(filePath)) {
     res.writeHead(404); res.end('Not found'); return;
   }
 

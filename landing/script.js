@@ -1,6 +1,6 @@
 import { SUPABASE_URL, SUPABASE_ANON } from '/env.js';
-import { installAnalyticsTransport } from '/landing/analytics.js';
-import { activeOptionForEnter, closeComboboxState } from '/landing/combobox.js';
+import { installAnalyticsTransport } from '/analytics.js';
+import { activeOptionForEnter, closeComboboxState } from '/combobox.js';
 import {
   buildApplicationReceipt,
   buildEnrichmentPayload,
@@ -13,7 +13,7 @@ import {
   searchCards,
   stripAnalyticsUrl,
   validateQualification,
-} from '/landing/waitlist.js';
+} from '/waitlist.js';
 
 let supabaseClientPromise = null;
 
@@ -24,15 +24,16 @@ async function getSupabaseClient() {
   return supabaseClientPromise;
 }
 
-const landingVariant = document.documentElement.dataset.landingVariant || 'receipt_v1';
+const pageLandingVariant = document.documentElement.dataset.landingVariant || 'receipt_v1';
 let attributionStorage = null;
 try { attributionStorage = window.localStorage; } catch { /* Storage is optional. */ }
 const attribution = captureFirstTouch({
   locationHref: window.location.href,
   referrer: document.referrer,
-  variant: landingVariant,
+  variant: pageLandingVariant,
   storage: attributionStorage,
 });
+const landingVariant = attribution.landing_variant || pageLandingVariant;
 
 window.plausible = window.plausible || function plausible() {
   (window.plausible.q = window.plausible.q || []).push(arguments);
@@ -380,7 +381,7 @@ cardSearch.addEventListener('keydown', (event) => {
   }
 });
 
-fetch('/landing/card-catalog.json', { cache: 'force-cache' })
+fetch('/card-catalog.json', { cache: 'force-cache' })
   .then((response) => response.ok ? response.json() : Promise.reject(new Error('catalog unavailable')))
   .then((cards) => { cardCatalog = Array.isArray(cards) ? cards : []; })
   .catch(() => { cardCatalog = []; });

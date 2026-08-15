@@ -9,12 +9,53 @@
   <meta property="og:title" content="CardCompass — Know the best card before you pay">
   <meta property="og:description" content="A clearer card choice, with the value and caveats shown together.">
   <meta property="og:type" content="website">
-  <link rel="alternate" type="text/markdown" href="/landing/llm.txt" title="Machine-readable product information">
+  <meta property="og:url" content="https://cardcompass.in/">
+  <meta property="og:image" content="https://cardcompass.in/img/social-preview.png">
+  <meta property="og:image:alt" content="CardCompass decision receipt showing an inspectable credit-card choice.">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://cardcompass.in/img/social-preview.png">
+  <meta name="twitter:image:alt" content="CardCompass decision receipt showing an inspectable credit-card choice.">
+  <link rel="canonical" href="https://cardcompass.in/">
+  <link rel="alternate" type="text/markdown" href="/llms.txt" title="Machine-readable product information">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/landing/style.css">
-  <link rel="icon" type="image/png" href="/landing/img/favicon.png">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" type="image/png" href="/img/favicon.png">
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Organization",
+          "@id": "https://cardcompass.in/#organization",
+          "name": "CardCompass",
+          "url": "https://cardcompass.in/",
+          "email": "support@cardcompass.in"
+        },
+        {
+          "@type": "WebSite",
+          "@id": "https://cardcompass.in/#website",
+          "name": "CardCompass",
+          "url": "https://cardcompass.in/",
+          "publisher": { "@id": "https://cardcompass.in/#organization" }
+        },
+        {
+          "@type": "SoftwareApplication",
+          "@id": "https://cardcompass.in/#application",
+          "name": "CardCompass",
+          "url": "https://cardcompass.in/",
+          "applicationCategory": "FinanceApplication",
+          "operatingSystem": "Web",
+          "description": "Credit-card reward decision support for people managing multiple Indian credit cards.",
+          "publisher": { "@id": "https://cardcompass.in/#organization" },
+          "isPartOf": { "@id": "https://cardcompass.in/#website" }
+        }
+      ]
+    }
+  </script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to main content</a>
@@ -40,7 +81,7 @@
           <h1 id="hero-title">Know the best card in your wallet <em>before you pay.</em></h1>
           <p class="hero-lede">CardCompass is built for people juggling several Indian credit cards. Compare the likely return, caps, and milestones behind a card choice—without keeping every rule in your head.</p>
 
-          <div class="waitlist-panel" aria-labelledby="waitlist-title">
+          <div class="waitlist-panel" id="apply" aria-labelledby="waitlist-title">
             <div class="step-meter" aria-label="Waitlist progress">
               <span class="step-meter-item is-current" data-step-marker="1"><b>1</b> Reserve your place</span>
               <span class="step-meter-line" aria-hidden="true"></span>
@@ -237,11 +278,11 @@
         </div>
         <div class="capture-grid">
           <figure class="capture capture-wide reveal">
-            <div class="capture-frame"><img src="/landing/img/app-dashboard.png" alt="Illustrative early concept for a possible card overview interface" loading="lazy" width="1024" height="1024"></div>
+            <div class="capture-frame"><img src="/img/app-dashboard.png" alt="Illustrative early concept for a possible card overview interface" loading="lazy" width="1024" height="1024"></div>
             <figcaption><span>Illustrative early concept 01</span><strong>Possible card overview direction</strong></figcaption>
           </figure>
           <figure class="capture capture-offset reveal">
-            <div class="capture-frame"><img src="/landing/img/app-recommendations.png" alt="Illustrative early concept for a possible card comparison interface" loading="lazy" width="1024" height="1024"></div>
+            <div class="capture-frame"><img src="/img/app-recommendations.png" alt="Illustrative early concept for a possible card comparison interface" loading="lazy" width="1024" height="1024"></div>
             <figcaption><span>Illustrative early concept 02</span><strong>Possible comparison direction</strong></figcaption>
           </figure>
         </div>
@@ -312,6 +353,6 @@
     </div>
   </footer>
 
-  <script type="module" src="/landing/script.js"></script>
+  <script type="module" src="/script.js"></script>
 </body>
 </html>

@@ -28,7 +28,7 @@ CardCompass is being built for people managing several Indian credit cards. It a
 
 ### Card and statement organisation
 
-Signed-in users can associate cards from the CardCompass catalog with their account. Current UI flows use catalog identity, last four digits, optional holder/limit fields, and statement/due dates; they do not ask users to enter a full primary account number (PAN), CVV, PIN, OTP or banking password. The legacy backend schema still includes `card_number` and `expiry_date` fields, and older RPC capability can accept or expose them. Removing that legacy storage/RPC capability is a hardening target.
+Signed-in users can associate cards from the CardCompass catalog with their account. Current UI and backend card records use catalog identity, last four digits, optional holder/limit fields, and statement/due dates. They do not ask for or store a full primary account number (PAN), card expiry, CVV, PIN, OTP or banking password. Historical RPCs that accepted or returned PAN or card expiry have been removed.
 
 ### Gmail read-only statement import
 

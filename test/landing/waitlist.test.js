@@ -46,6 +46,18 @@ test('join payload matches the public RPC contract exactly', () => {
   );
 });
 
+test('first-touch utility source overrides the on-page waitlist placement in join_waitlist', () => {
+  assert.equal(
+    buildJoinPayload({
+      email: 'person@example.com',
+      privacyConsent: true,
+      source: 'landing_hero',
+      attribution: { source: 'best-card', landing_variant: 'best-card' },
+    }).p_source,
+    'best-card',
+  );
+});
+
 test('qualification requires every scoring field', () => {
   assert.deepEqual(
     validateQualification({

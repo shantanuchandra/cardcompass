@@ -52,7 +52,7 @@ export function isValidEmail(value) {
 export function buildJoinPayload({ email, privacyConsent, source, attribution = {} }) {
   return {
     p_email: String(email ?? '').trim().toLowerCase(),
-    p_source: cleanSlug(source),
+    p_source: cleanSlug(attribution.source) || cleanSlug(source),
     p_utm_source: attribution.utm_source ?? null,
     p_utm_medium: attribution.utm_medium ?? null,
     p_utm_campaign: attribution.utm_campaign ?? null,
@@ -138,10 +138,11 @@ function validStoredAttribution(value) {
   if (!value || typeof value !== 'object') return null;
   const keys = [...Object.keys(UTM_LIMITS), 'referrer_path', 'landing_variant'];
   if (!keys.every((key) => Object.hasOwn(value, key))) return null;
+  if (Object.hasOwn(value, 'source') && value.source !== null && cleanSlug(value.source) !== value.source) return null;
   if (Object.entries(UTM_LIMITS).some(([key, limit]) => value[key] !== null && cleanWithin(value[key], limit) !== value[key])) return null;
   if (value.referrer_path !== null && (!value.referrer_path.startsWith('/') || value.referrer_path.length > 512)) return null;
   if (value.landing_variant !== null && cleanSlug(value.landing_variant) !== value.landing_variant) return null;
-  return value;
+  return { source: value.source ?? null, ...value };
 }
 
 export function captureFirstTouch({ locationHref, referrer = '', variant, storage }) {
@@ -163,13 +164,14 @@ export function captureFirstTouch({ locationHref, referrer = '', variant, storag
   }
 
   const attribution = {
+    source: cleanSlug(url.searchParams.get('source')),
     utm_source: cleanWithin(url.searchParams.get('utm_source'), UTM_LIMITS.utm_source),
     utm_medium: cleanWithin(url.searchParams.get('utm_medium'), UTM_LIMITS.utm_medium),
     utm_campaign: cleanWithin(url.searchParams.get('utm_campaign'), UTM_LIMITS.utm_campaign),
     utm_term: cleanWithin(url.searchParams.get('utm_term'), UTM_LIMITS.utm_term),
     utm_content: cleanWithin(url.searchParams.get('utm_content'), UTM_LIMITS.utm_content),
     referrer_path: referrerPath(referrer),
-    landing_variant: cleanSlug(variant),
+    landing_variant: cleanSlug(url.searchParams.get('landing_variant')) || cleanSlug(variant),
   };
 
   try {

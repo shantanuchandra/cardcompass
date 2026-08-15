@@ -32,22 +32,36 @@ function schemas(html) {
     .map(([, json]) => JSON.parse(json));
 }
 
-test('each public route has absolute canonical, social metadata, and valid JSON-LD', async () => {
-  for (const [directory, route] of routes) {
-    const html = await landingFile(`${directory}/index.html`);
+test('homepage and each public route have canonical social metadata and valid JSON-LD', async () => {
+  for (const [directory, route] of [['.', '/'], ...routes]) {
+    const html = await landingFile(directory === '.' ? 'index.html' : `${directory}/index.html`);
     const canonical = `${siteOrigin}${route}`;
 
     assert.match(html, new RegExp(`<link rel="canonical" href="${canonical.replaceAll('/', '\\/')}"`));
     assert.match(html, new RegExp(`<meta property="og:url" content="${canonical.replaceAll('/', '\\/')}"`));
-    assert.match(html, /<meta property="og:image" content="https:\/\/cardcompass\.in\/landing\/img\/social-preview\.png">/);
+    assert.match(html, /<meta property="og:image" content="https:\/\/cardcompass\.in\/img\/social-preview\.png">/);
     assert.match(html, /<meta property="og:image:alt" content="[^"]+">/);
     assert.match(html, /<meta property="og:image:width" content="1200">/);
     assert.match(html, /<meta property="og:image:height" content="630">/);
     assert.match(html, /<meta name="twitter:card" content="summary_large_image">/);
-    assert.match(html, /<meta name="twitter:image" content="https:\/\/cardcompass\.in\/landing\/img\/social-preview\.png">/);
+    assert.match(html, /<meta name="twitter:image" content="https:\/\/cardcompass\.in\/img\/social-preview\.png">/);
     assert.match(html, /<meta name="twitter:image:alt" content="[^"]+">/);
     assert.ok(schemas(html).length > 0, `${route} needs JSON-LD`);
   }
+});
+
+test('homepage schema describes the organization, website, and software without unsupported claims', async () => {
+  const html = await landingFile('index.html');
+  const graph = schemas(html).flatMap((schema) => schema['@graph'] || [schema]);
+
+  assert.ok(graph.some((entry) => entry['@type'] === 'Organization' && entry.url === 'https://cardcompass.in/'));
+  assert.ok(graph.some((entry) => entry['@type'] === 'WebSite' && entry.url === 'https://cardcompass.in/'));
+  const software = graph.find((entry) => entry['@type'] === 'SoftwareApplication');
+  assert.equal(software?.applicationCategory, 'FinanceApplication');
+  for (const unsupported of ['aggregateRating', 'review', 'offers', 'downloadUrl']) {
+    assert.equal(Object.hasOwn(software, unsupported), false);
+  }
+  assert.match(html, /<link rel="alternate" type="text\/markdown" href="\/llms\.txt"/);
 });
 
 test('legal pages disclose the implemented processing boundaries without unsupported compliance claims', async () => {
@@ -79,10 +93,6 @@ test('legal pages disclose the implemented processing boundaries without unsuppo
     /banking password/i,
     /statement PDF password/i,
     /locally/i,
-    /legacy[^.]*card_number/i,
-    /legacy[^.]*expiry/i,
-    /RPC/i,
-    /hardening target/i,
     /attempts to store (?:the )?date of birth/i,
     /remain in memory/i,
     /requested again/i,
@@ -128,8 +138,7 @@ test('machine-readable product page removes contradicted privacy and performance
   assert.match(llm, /transaction and statement records/i);
   assert.match(llm, /full parsed message/i);
   assert.match(llm, /does not intentionally persist (?:the )?message body/i);
-  assert.match(llm, /legacy[^.]*card_number/i);
-  assert.match(llm, /hardening target/i);
+  assert.doesNotMatch(llm, /legacy[^.]*card_number|legacy[^.]*expiry|hardening target/i);
   assert.match(llm, /attempts to store (?:the )?date of birth/i);
   assert.match(llm, /may remain in memory/i);
   assert.match(llm, /matching statement PDF/i);

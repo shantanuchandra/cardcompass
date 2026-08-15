@@ -40,8 +40,6 @@ CREATE TABLE IF NOT EXISTS user_cards (
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   catalog_card_id UUID NOT NULL REFERENCES card_catalog(id) ON DELETE CASCADE,
   last_four_digits TEXT,
-  card_number TEXT, -- Should be encrypted in production
-  expiry_date TEXT, -- Format: MM/YY
   card_holder_name TEXT,
   credit_limit DECIMAL(12,2),
   statement_date INTEGER CHECK (statement_date >= 1 AND statement_date <= 31),

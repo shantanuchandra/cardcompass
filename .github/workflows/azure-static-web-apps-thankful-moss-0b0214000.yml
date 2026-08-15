@@ -54,6 +54,12 @@ jobs:
           # Azure SWA routing config
           cp staticwebapp.config.json deploy/
 
+      - name: Generate landing environment module
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: node scripts/write-landing-env.mjs deploy/env.js
+
       - name: Build And Deploy
         id: builddeploy
         uses: Azure/static-web-apps-deploy@v1
