@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -5,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/router/app_tab_selection.dart';
+import '../../../core/theme/brand_components.dart';
 import '../../../core/theme/brand_tokens.dart';
 import '../../../core/theme/category_display.dart';
 import '../../../core/providers/supabase_provider.dart';
@@ -44,18 +47,16 @@ class DashboardScreen extends ConsumerWidget {
         backgroundColor: BrandColors.paper,
         onRefresh: () => ref.refresh(dashboardProvider.future),
         child: Center(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxWidth: isDesktop ? 1120 : double.infinity,
-            ),
+          child: BrandContentFrame(
+            mode: BrandContentMode.fullWidthData,
             child: CustomScrollView(
               slivers: [
                 _DashboardAppBar(user: user),
                 dashAsync.when(
                   loading: () =>
                       const SliverFillRemaining(child: _DashboardSkeleton()),
-                  error: (e, _) =>
-                      SliverFillRemaining(child: _ErrorState(error: e)),
+                  error: (_, _) =>
+                      const SliverFillRemaining(child: _ErrorState()),
                   data: (data) =>
                       _DashboardContent(data: data, isDesktop: isDesktop),
                 ),
@@ -114,87 +115,92 @@ class _DashboardAppBar extends ConsumerWidget {
       );
     });
 
-    return SliverAppBar(
-      backgroundColor: BrandColors.paper,
-      floating: true,
-      snap: true,
-      expandedHeight: 0,
-      toolbarHeight: 72,
-      flexibleSpace: Padding(
-        padding: const EdgeInsets.fromLTRB(
-          BrandSpacing.md,
-          0,
-          BrandSpacing.md,
-          0,
+    final usesLargeText = MediaQuery.textScalerOf(context).scale(14) >= 21;
+
+    final identity = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '$greeting, $name',
+          style: const TextStyle(
+            fontFamily: 'Manrope',
+            fontSize: 13,
+            color: BrandColors.mutedInk,
+            fontWeight: FontWeight.w400,
+          ),
         ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '$greeting, $name',
-                    style: TextStyle(
-                      fontFamily: 'Manrope',
-                      fontSize: 13,
-                      color: BrandColors.mutedInk,
-                      fontWeight: FontWeight.w400,
-                    ),
+        Text(
+          'CardCompass',
+          style: const TextStyle(
+            fontFamily: 'Manrope',
+            fontSize: 22,
+            fontWeight: FontWeight.w800,
+            color: BrandColors.ink,
+            letterSpacing: -0.5,
+          ),
+        ),
+      ],
+    );
+    final controls = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          tooltip: 'Sync Gmail',
+          onPressed: syncState.isLoading
+              ? null
+              : () => _showSyncRangeDialog(context, ref),
+          icon: syncState.isLoading
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: BrandColors.focusDark,
                   ),
-                  Text(
-                    'CardCompass',
-                    style: TextStyle(
-                      fontFamily: 'Manrope',
-                      fontSize: 22,
-                      fontWeight: FontWeight.w800,
-                      color: BrandColors.ink,
-                      letterSpacing: -0.5,
-                    ),
+                )
+              : const Icon(Icons.sync_rounded, color: BrandColors.focusDark),
+        ),
+        const SizedBox(width: BrandSpacing.sm),
+        CircleAvatar(
+          radius: 20,
+          backgroundColor: BrandColors.paperDeep,
+          backgroundImage: avatar != null ? NetworkImage(avatar) : null,
+          child: avatar == null
+              ? Text(
+                  name[0].toUpperCase(),
+                  style: const TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: BrandColors.focusDark,
                   ),
-                ],
-              ),
-            ),
-            // Sync Gmail button
-            IconButton(
-              tooltip: 'Sync Gmail',
-              onPressed: syncState.isLoading
-                  ? null
-                  : () => _showSyncRangeDialog(context, ref),
-              icon: syncState.isLoading
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: BrandColors.focusDark,
-                      ),
-                    )
-                  : const Icon(
-                      Icons.sync_rounded,
-                      color: BrandColors.focusDark,
-                    ),
-            ),
-            const SizedBox(width: BrandSpacing.sm),
-            // Avatar
-            CircleAvatar(
-              radius: 20,
-              backgroundColor: BrandColors.paperDeep,
-              backgroundImage: avatar != null ? NetworkImage(avatar) : null,
-              child: avatar == null
-                  ? Text(
-                      name[0].toUpperCase(),
-                      style: TextStyle(
-                        fontFamily: 'Manrope',
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: BrandColors.focusDark,
-                      ),
-                    )
-                  : null,
-            ),
-          ],
+                )
+              : null,
+        ),
+      ],
+    );
+
+    return SliverToBoxAdapter(
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.all(BrandSpacing.md),
+          child: usesLargeText
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    identity,
+                    const SizedBox(height: BrandSpacing.sm),
+                    controls,
+                  ],
+                )
+              : Row(
+                  children: [
+                    Expanded(child: identity),
+                    controls,
+                  ],
+                ),
         ),
       ),
     );
@@ -538,13 +544,13 @@ class _DashboardContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cardsSection = data.cards.isEmpty
-        ? _AddFirstCard().animate(delay: 100.ms).fadeIn()
+        ? const SizedBox.shrink()
         : Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               DashboardSectionHeader(
                 title: 'Your Cards',
-                action: 'Manage',
+                action: 'Manage cards',
                 onTap: () => AppTabSelection.of(context).select(AppTab.cards),
               ),
               _CardsCarousel(
@@ -571,12 +577,24 @@ class _DashboardContent extends StatelessWidget {
           )
         : const SizedBox.shrink();
 
+    final statementsUnavailable = data.cards.isEmpty
+        ? const SizedBox.shrink()
+        : const Padding(
+            padding: EdgeInsets.symmetric(horizontal: BrandSpacing.md),
+            child: BrandActionRow(
+              title: 'Statement history',
+              description: 'Statement history is not available here yet.',
+              leading: Icon(Icons.description_outlined),
+              unavailable: true,
+            ),
+          );
+
     final transactionsSection = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         DashboardSectionHeader(
           title: 'Recent Spend',
-          action: 'View All',
+          action: 'View all transactions',
           onTap: () => AppTabSelection.of(context).select(AppTab.transactions),
         ),
         data.recentTransactions.isEmpty
@@ -590,7 +608,7 @@ class _DashboardContent extends StatelessWidget {
     if (isDesktop) {
       return SliverList(
         delegate: SliverChildListDelegate([
-          _KpiRow(
+          _DashboardOverview(
             data: data,
           ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.1),
           const SizedBox(height: BrandSpacing.lg),
@@ -606,6 +624,10 @@ class _DashboardContent extends StatelessWidget {
                       cardsSection,
                       const SizedBox(height: BrandSpacing.lg),
                       billsSection,
+                      if (data.latestStatements.isEmpty) ...[
+                        const SizedBox(height: BrandSpacing.lg),
+                        statementsUnavailable,
+                      ],
                     ],
                   ),
                 ),
@@ -621,7 +643,7 @@ class _DashboardContent extends StatelessWidget {
 
     return SliverList(
       delegate: SliverChildListDelegate([
-        _KpiRow(
+        _DashboardOverview(
           data: data,
         ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.1),
         const SizedBox(height: BrandSpacing.lg),
@@ -631,6 +653,10 @@ class _DashboardContent extends StatelessWidget {
           billsSection,
           const SizedBox(height: BrandSpacing.lg),
         ],
+        if (data.latestStatements.isEmpty && data.cards.isNotEmpty) ...[
+          statementsUnavailable,
+          const SizedBox(height: BrandSpacing.lg),
+        ],
         transactionsSection,
         const SizedBox(height: BrandSpacing.xxl),
       ]),
@@ -638,96 +664,119 @@ class _DashboardContent extends StatelessWidget {
   }
 }
 
-// ─── KPI Row ────────────────────────────────────────────────────────────────
-class _KpiRow extends StatelessWidget {
+// ─── Decision overview ──────────────────────────────────────────────────────
+class _DashboardOverview extends StatelessWidget {
   final DashboardData data;
-  const _KpiRow({required this.data});
+  const _DashboardOverview({required this.data});
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: BrandSpacing.md),
-      child: Row(
-        children: [
-          Expanded(
-            child: _KpiCard(
-              label: 'This Month',
-              value: _shortCurrency.format(data.monthlySpend),
-              icon: Icons.trending_up_rounded,
-              color: BrandColors.focusDark,
+    if (data.cards.isEmpty) {
+      return BrandContentFrame(
+        child: Padding(
+          padding: const EdgeInsets.only(top: BrandSpacing.md),
+          child: BrandStateView(
+            title: 'Build your dashboard',
+            message:
+                'Add a credit card to see spending, limits, and rewards in one place.',
+            icon: Icons.add_card_rounded,
+            actionLabel: 'Add a card',
+            onAction: () => context.go('/app/cards/add'),
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        BrandContentFrame(
+          child: Padding(
+            padding: const EdgeInsets.only(top: BrandSpacing.md),
+            child: const BrandPageHeader(
+              eyebrow: 'Wallet briefing',
+              title: 'Your next money move',
+              description:
+                  'Review what you have spent before your next statement closes.',
             ),
           ),
-          const SizedBox(width: BrandSpacing.sm),
-          Expanded(
-            child: _KpiCard(
-              label: 'Rewards',
-              value: _shortCurrency.format(data.rewardsEarned),
-              icon: Icons.star_rounded,
-              color: BrandColors.reward,
-            ),
+        ),
+        const SizedBox(height: BrandSpacing.sm),
+        BrandContentFrame(
+          child: BrandActionRow(
+            title: 'Review recent spending',
+            description:
+                'See the latest purchases and rewards across your cards.',
+            leading: const Icon(Icons.receipt_long_rounded),
+            onTap: () =>
+                AppTabSelection.of(context).select(AppTab.transactions),
           ),
-          const SizedBox(width: BrandSpacing.sm),
-          Expanded(
-            child: _KpiCard(
-              label: 'Total Limit',
-              value: _shortCurrency.format(data.totalCreditLimit),
-              icon: Icons.account_balance_wallet_rounded,
-              color: BrandColors.successInk,
-            ),
-          ),
-        ],
-      ),
+        ),
+        const SizedBox(height: BrandSpacing.lg),
+        BrandContentFrame(
+          mode: BrandContentMode.fullWidthData,
+          child: _DashboardMetrics(data: data),
+        ),
+      ],
     );
   }
 }
 
-class _KpiCard extends StatelessWidget {
-  final String label;
-  final String value;
-  final IconData icon;
-  final Color color;
-
-  const _KpiCard({
-    required this.label,
-    required this.value,
-    required this.icon,
-    required this.color,
-  });
+class _DashboardMetrics extends StatelessWidget {
+  final DashboardData data;
+  const _DashboardMetrics({required this.data});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(BrandSpacing.md),
-      decoration: BoxDecoration(
-        color: BrandColors.ledger,
-        borderRadius: BorderRadius.circular(BrandRadius.overlay),
-        border: Border.all(color: color.withValues(alpha: 0.2), width: 1),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, size: 18, color: color),
-          const SizedBox(height: BrandSpacing.sm),
-          Text(
-            value,
-            style: const TextStyle(
-              fontFamily: 'IBM Plex Mono',
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-              color: BrandColors.ink,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(BrandSpacing.lg),
+          decoration: BoxDecoration(
+            color: BrandColors.ledger,
+            borderRadius: BorderRadius.circular(BrandRadius.overlay),
+            border: Border.all(
+              color: BrandColors.focusDark.withValues(alpha: 0.25),
             ),
           ),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            style: TextStyle(
-              fontFamily: 'Manrope',
-              fontSize: 11,
-              color: BrandColors.mutedInk,
-            ),
+          child: BrandMetric(
+            key: const Key('primary-spend-metric'),
+            label: 'This month\'s spend',
+            value: _shortCurrency.format(data.monthlySpend),
+            supportingText: 'Across your active cards',
           ),
-        ],
-      ),
+        ),
+        const SizedBox(height: BrandSpacing.md),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(BrandSpacing.md),
+          decoration: BoxDecoration(
+            color: BrandColors.paper,
+            borderRadius: BorderRadius.circular(BrandRadius.overlay),
+            border: Border.all(color: BrandColors.ruleOnPaper),
+          ),
+          child: ResponsiveValueRow(
+            spacing: BrandSpacing.xl,
+            children: [
+              BrandMetric(
+                key: const Key('supporting-rewards-metric'),
+                label: 'Rewards earned',
+                value: _shortCurrency.format(data.rewardsEarned),
+                supportingText: 'This month',
+              ),
+              BrandMetric(
+                key: const Key('supporting-limit-metric'),
+                label: 'Total credit limit',
+                value: _shortCurrency.format(data.totalCreditLimit),
+                supportingText:
+                    'Across ${data.cards.length} card${data.cards.length == 1 ? '' : 's'}',
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
@@ -747,6 +796,36 @@ class DashboardSectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final usesLargeText = MediaQuery.textScalerOf(context).scale(14) >= 21;
+    final titleWidget = Text(
+      title,
+      style: const TextStyle(
+        fontFamily: 'Fraunces',
+        fontSize: 16,
+        fontWeight: FontWeight.w700,
+        color: BrandColors.ink,
+      ),
+    );
+    final actionWidget = action == null
+        ? null
+        : TextButton(
+            onPressed: onTap,
+            style: TextButton.styleFrom(
+              padding: EdgeInsets.zero,
+              minimumSize: const Size(44, 44),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: Text(
+              action!,
+              style: const TextStyle(
+                fontFamily: 'Manrope',
+                fontSize: 13,
+                color: BrandColors.focusDark,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          );
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         BrandSpacing.md,
@@ -754,37 +833,17 @@ class DashboardSectionHeader extends StatelessWidget {
         BrandSpacing.md,
         BrandSpacing.sm,
       ),
-      child: Row(
-        children: [
-          Text(
-            title,
-            style: const TextStyle(
-              fontFamily: 'Fraunces',
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-              color: BrandColors.ink,
-            ),
-          ),
-          const Spacer(),
-          if (action != null)
-            TextButton(
-              onPressed: onTap,
-              style: TextButton.styleFrom(
-                padding: EdgeInsets.zero,
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              child: Text(
-                action!,
-                style: TextStyle(
-                  fontFamily: 'Manrope',
-                  fontSize: 13,
-                  color: BrandColors.focusDark,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final stack = usesLargeText || constraints.maxWidth < 440;
+          if (stack) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [titleWidget, ?actionWidget],
+            );
+          }
+          return Row(children: [titleWidget, const Spacer(), ?actionWidget]);
+        },
       ),
     );
   }
@@ -825,7 +884,10 @@ class _CardsCarouselState extends ConsumerState<_CardsCarousel> {
         final cardWidth = constraints.maxWidth * 0.6 > _maxCardWidth
             ? _maxCardWidth
             : constraints.maxWidth * 0.6;
-        final cardHeight = cardWidth / _cardAspectRatio;
+        final usesLargeText = MediaQuery.textScalerOf(context).scale(14) >= 21;
+        final cardHeight = math
+            .max(cardWidth / _cardAspectRatio, usesLargeText ? 340.0 : 180.0)
+            .toDouble();
         final viewportFraction =
             ((cardWidth + BrandSpacing.sm) / constraints.maxWidth).clamp(
               0.3,
@@ -1529,73 +1591,6 @@ class _TransactionRow extends StatelessWidget {
   static IconData _categoryIcon(String? cat) => categoryIcon(cat);
 }
 
-// ─── Empty / Placeholder States ──────────────────────────────────────────────
-class _AddFirstCard extends ConsumerWidget {
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: BrandSpacing.md),
-      child: Container(
-        padding: const EdgeInsets.all(BrandSpacing.xl),
-        decoration: BoxDecoration(
-          color: BrandColors.paper,
-          borderRadius: BorderRadius.circular(BrandRadius.overlay),
-          border: Border.all(
-            color: BrandColors.focusDark.withValues(alpha: 0.2),
-          ),
-        ),
-        child: Column(
-          children: [
-            Container(
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                color: BrandColors.focusDark.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(BrandRadius.card),
-              ),
-              child: const Icon(
-                Icons.add_card_rounded,
-                size: 28,
-                color: BrandColors.focusDark,
-              ),
-            ),
-            const SizedBox(height: BrandSpacing.md),
-            Text(
-              'Add your first card',
-              style: TextStyle(
-                fontFamily: 'Manrope',
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-                color: BrandColors.ink,
-              ),
-            ),
-            const SizedBox(height: BrandSpacing.sm),
-            Text(
-              'Connect your credit cards to see\nspend insights and reward tracking.',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontFamily: 'Manrope',
-                fontSize: 13,
-                color: BrandColors.mutedInk,
-                height: 1.5,
-              ),
-            ),
-            const SizedBox(height: BrandSpacing.lg),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () => context.go('/app/cards/add'),
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('Add Card'),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _EmptyTransactions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
@@ -1631,7 +1626,7 @@ class _DashboardSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(BrandSpacing.md),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1706,49 +1701,19 @@ class _SkeletonBoxState extends State<_SkeletonBox>
 
 // ─── Error State ─────────────────────────────────────────────────────────────
 class _ErrorState extends ConsumerWidget {
-  final Object error;
-  const _ErrorState({required this.error});
+  const _ErrorState();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return Center(
+    return BrandContentFrame(
       child: Padding(
         padding: const EdgeInsets.all(BrandSpacing.xl),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(
-              Icons.cloud_off_rounded,
-              size: 48,
-              color: BrandColors.mutedInk,
-            ),
-            const SizedBox(height: BrandSpacing.md),
-            Text(
-              'Couldn\'t load dashboard',
-              style: TextStyle(
-                fontFamily: 'Manrope',
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-                color: BrandColors.ink,
-              ),
-            ),
-            const SizedBox(height: BrandSpacing.sm),
-            Text(
-              error.toString(),
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontFamily: 'Manrope',
-                fontSize: 12,
-                color: BrandColors.mutedInk,
-              ),
-            ),
-            const SizedBox(height: BrandSpacing.lg),
-            ElevatedButton.icon(
-              onPressed: () => ref.invalidate(dashboardProvider),
-              icon: const Icon(Icons.refresh, size: 18),
-              label: const Text('Retry'),
-            ),
-          ],
+        child: BrandStateView(
+          title: 'Couldn\'t load dashboard',
+          message: 'Check your connection and try again.',
+          icon: Icons.cloud_off_rounded,
+          actionLabel: 'Retry',
+          onAction: () => ref.invalidate(dashboardProvider),
         ),
       ),
     );
