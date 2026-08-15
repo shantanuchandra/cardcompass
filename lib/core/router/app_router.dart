@@ -1,4 +1,3 @@
-import 'package:web/web.dart' as web;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -15,6 +14,7 @@ import '../theme/brand_components.dart';
 import '../theme/brand_tokens.dart';
 import '../../app.dart' show navigatorKey;
 import 'app_tab_selection.dart';
+import 'browser_history.dart';
 
 const _kTabPaths = [
   '/app',
@@ -124,7 +124,7 @@ class _AppShell extends ConsumerWidget {
         void onTap(int i) {
           _tabIndexNotifier.value = i;
           // Keep browser URL in sync without triggering a GoRouter navigation
-          web.window.history.replaceState(null, '', '#${_kTabPaths[i]}');
+          replaceBrowserHistory('#${_kTabPaths[i]}');
         }
 
         final isDesktop =
@@ -134,7 +134,7 @@ class _AppShell extends ConsumerWidget {
             ? Scaffold(
                 body: Row(
                   children: [
-                    _SideRail(selectedIndex: tabIndex, onTap: onTap),
+                    AppSideRail(selectedIndex: tabIndex, onTap: onTap),
                     Expanded(
                       child: IndexedStack(index: tabIndex, children: _bodies),
                     ),
@@ -143,7 +143,7 @@ class _AppShell extends ConsumerWidget {
               )
             : Scaffold(
                 body: IndexedStack(index: tabIndex, children: _bodies),
-                bottomNavigationBar: _BottomNav(
+                bottomNavigationBar: AppBottomNav(
                   selectedIndex: tabIndex,
                   onTap: onTap,
                 ),
@@ -158,10 +158,14 @@ class _AppShell extends ConsumerWidget {
   }
 }
 
-class _SideRail extends StatelessWidget {
+class AppSideRail extends StatelessWidget {
   final int selectedIndex;
   final ValueChanged<int> onTap;
-  const _SideRail({required this.selectedIndex, required this.onTap});
+  const AppSideRail({
+    super.key,
+    required this.selectedIndex,
+    required this.onTap,
+  });
 
   static const _items = [
     (
@@ -209,14 +213,17 @@ class _SideRail extends StatelessWidget {
                 children: [
                   BrandCompassMark(size: 30),
                   SizedBox(width: 10),
-                  Text(
-                    'CardCompass',
-                    style: TextStyle(
-                      fontFamily: 'Manrope',
-                      fontSize: 17,
-                      fontWeight: FontWeight.w800,
-                      color: BrandColors.paper,
-                      letterSpacing: -.4,
+                  Expanded(
+                    child: Text(
+                      'CardCompass',
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontFamily: 'Manrope',
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                        color: BrandColors.paper,
+                        letterSpacing: -.4,
+                      ),
                     ),
                   ),
                 ],
@@ -261,19 +268,22 @@ class _SideRail extends StatelessWidget {
                                 : BrandColors.mutedPaper,
                           ),
                           const SizedBox(width: 12),
-                          Text(
-                            item.label,
-                            style: TextStyle(
-                              fontFamily: 'Manrope',
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                              color: selected
-                                  ? BrandColors.ink
-                                  : BrandColors.mutedPaper,
+                          Expanded(
+                            child: Text(
+                              item.label,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontFamily: 'Manrope',
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                color: selected
+                                    ? BrandColors.ink
+                                    : BrandColors.mutedPaper,
+                              ),
                             ),
                           ),
                           if (selected) ...[
-                            const Spacer(),
+                            const SizedBox(width: 8),
                             Container(
                               width: 5,
                               height: 5,
@@ -297,10 +307,14 @@ class _SideRail extends StatelessWidget {
   }
 }
 
-class _BottomNav extends StatelessWidget {
+class AppBottomNav extends StatelessWidget {
   final int selectedIndex;
   final ValueChanged<int> onTap;
-  const _BottomNav({required this.selectedIndex, required this.onTap});
+  const AppBottomNav({
+    super.key,
+    required this.selectedIndex,
+    required this.onTap,
+  });
 
   static const _items = [
     (
@@ -340,7 +354,7 @@ class _BottomNav extends StatelessWidget {
       child: SafeArea(
         top: false,
         child: SizedBox(
-          height: 68,
+          height: 76,
           child: Row(
             children: List.generate(_items.length, (i) {
               final item = _items[i];
@@ -367,7 +381,10 @@ class _BottomNav extends StatelessWidget {
                           item.label,
                           style: TextStyle(
                             fontFamily: 'Manrope',
-                            fontSize: 10,
+                            fontSize: 14,
+                            letterSpacing: -0.6,
+                            height: 1,
+                            overflow: TextOverflow.ellipsis,
                             fontWeight: FontWeight.w700,
                             color: selected
                                 ? BrandColors.signal

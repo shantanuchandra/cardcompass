@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/router/app_tab_selection.dart';
 import '../../../core/theme/brand_tokens.dart';
 import '../../../core/theme/category_display.dart';
 import '../../../core/providers/supabase_provider.dart';
@@ -207,7 +208,7 @@ void _showSyncRangeDialog(BuildContext context, WidgetRef ref) {
     barrierDismissible: true,
     barrierColor: Colors.black.withValues(alpha: 0.6),
     transitionDuration: 220.ms,
-    pageBuilder: (dialogContext, _, __) => _SyncRangeDialog(
+    pageBuilder: (dialogContext, _, _) => _SyncRangeDialog(
       onStartSync: (days) {
         Navigator.of(dialogContext).pop();
         ref.read(gmailSyncProvider.notifier).syncGmail(lookbackDays: days);
@@ -541,10 +542,10 @@ class _DashboardContent extends StatelessWidget {
         : Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _SectionHeader(
+              DashboardSectionHeader(
                 title: 'Your Cards',
                 action: 'Manage',
-                onTap: () {},
+                onTap: () => AppTabSelection.of(context).select(AppTab.cards),
               ),
               _CardsCarousel(
                 cards: data.cards,
@@ -557,7 +558,11 @@ class _DashboardContent extends StatelessWidget {
         ? Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _SectionHeader(title: 'Bills Due', action: null, onTap: null),
+              DashboardSectionHeader(
+                title: 'Bills Due',
+                action: null,
+                onTap: null,
+              ),
               _BillsPanel(
                 cards: data.cards,
                 statements: data.latestStatements,
@@ -569,7 +574,11 @@ class _DashboardContent extends StatelessWidget {
     final transactionsSection = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _SectionHeader(title: 'Recent Spend', action: 'View All', onTap: () {}),
+        DashboardSectionHeader(
+          title: 'Recent Spend',
+          action: 'View All',
+          onTap: () => AppTabSelection.of(context).select(AppTab.transactions),
+        ),
         data.recentTransactions.isEmpty
             ? _EmptyTransactions().animate(delay: 200.ms).fadeIn()
             : _RecentTransactions(
@@ -724,12 +733,13 @@ class _KpiCard extends StatelessWidget {
 }
 
 // ─── Section Header ─────────────────────────────────────────────────────────
-class _SectionHeader extends StatelessWidget {
+class DashboardSectionHeader extends StatelessWidget {
   final String title;
   final String? action;
   final VoidCallback? onTap;
 
-  const _SectionHeader({
+  const DashboardSectionHeader({
+    super.key,
     required this.title,
     required this.action,
     required this.onTap,
@@ -1013,17 +1023,19 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
       final results = await ref
           .read(cardsRepositoryProvider)
           .searchCatalogForBank(widget.bankDetected, query: query);
-      if (mounted)
+      if (mounted) {
         setState(() {
           _options = results;
           _loading = false;
         });
+      }
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _error = e.toString();
           _loading = false;
         });
+      }
     }
   }
 
@@ -1677,7 +1689,7 @@ class _SkeletonBoxState extends State<_SkeletonBox>
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: _anim,
-      builder: (_, __) => Container(
+      builder: (_, _) => Container(
         height: widget.height,
         decoration: BoxDecoration(
           color: Color.lerp(

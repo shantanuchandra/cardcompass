@@ -21,3 +21,27 @@ flutter analyze lib/core/router/app_router.dart lib/core/router/app_tab_selectio
 
 - OAuth redirect values and redirects are unchanged; the OAuth redirect contract passed unchanged.
 - Host-root external links are resolved from `Uri.base`, which preserves the deployed site origin while keeping `/privacy/`, `/data-security/`, and `/terms/` as the canonical paths.
+
+## Review round 1
+
+- Wired the Dashboard **Manage** and **View All** actions to `AppTabSelection`, selecting the Cards and Transactions tabs respectively.
+- Raised the desktop rail and mobile bottom-navigation labels to 14 px. The bottom bar is 76 px high and the rail text is flexible, so the larger labels retain their target sizes without overflow.
+- Replaced the source-only mobile-label assertion with rendered widget tests. They verify all five 14 px labels, tap Transactions, and observe the rendered destination. A second rendered test taps Dashboard Manage and View All actions through `AppTabSelection` and observes Cards then Transactions.
+- Moved browser history mutation behind a web-only adapter. Browser behavior is unchanged (`history.replaceState` still receives the same `#/app…` fragments), and this permits the shell widgets to run in VM widget tests.
+
+### Command evidence
+
+```text
+$ flutter test test/core/oauth_redirect_test.dart test/core/router/app_shell_brand_test.dart test/features/auth/login_screen_test.dart test/features/settings/settings_brand_test.dart test/features/dashboard/dashboard_brand_test.dart
+00:01 +29: All tests passed!
+
+$ flutter analyze lib/core/router/app_router.dart lib/core/router/app_tab_selection.dart lib/core/router/browser_history.dart lib/core/router/browser_history_stub.dart lib/core/router/browser_history_web.dart lib/features/auth/screens/login_screen.dart lib/features/auth/screens/splash_screen.dart lib/features/settings/screens/settings_screen.dart lib/features/dashboard/screens/dashboard_screen.dart test/core/router/app_shell_brand_test.dart test/features/auth/login_screen_test.dart test/features/settings/settings_brand_test.dart test/features/dashboard/dashboard_brand_test.dart
+Analyzing 13 items...
+No issues found!
+
+$ git diff --check
+(no output; passed)
+
+$ flutter build web --no-wasm-dry-run
+✓ Built build/web
+```
