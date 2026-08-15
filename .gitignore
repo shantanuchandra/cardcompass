@@ -70,3 +70,5 @@ db_cluster*
 # Platform directories not used (web-only app)
 android/
 ios/
+.playwright-mcp/*
+.superpowers/brainstorm/
