@@ -28,13 +28,37 @@ int _tabIndexFor(String loc) {
 // The current tab index — a simple ValueNotifier so _AppShell rebuilds on change.
 final _tabIndexNotifier = ValueNotifier<int>(0);
 
+// Bridges Riverpod's authNotifierProvider to GoRouter's refreshListenable so
+// that auth-state ticks (including background token-refresh emissions from
+// Supabase's onAuthStateChange, which fire well after login/logout) only
+// re-evaluate `redirect` instead of rebuilding the whole GoRouter/Router
+// widget subtree — a full router rebuild on every token refresh was tearing
+// down and recreating the Navigator, which broke in-app tab-switch taps.
+class _AuthRefreshListenable extends ChangeNotifier {
+  _AuthRefreshListenable(this._ref) {
+    _sub = _ref.listen(authNotifierProvider, (_, _) => notifyListeners());
+  }
+
+  final Ref _ref;
+  late final ProviderSubscription<AsyncValue<AuthStatus>> _sub;
+
+  @override
+  void dispose() {
+    _sub.close();
+    super.dispose();
+  }
+}
+
 final routerProvider = Provider<GoRouter>((ref) {
-  final authState = ref.watch(authNotifierProvider);
+  final refreshListenable = _AuthRefreshListenable(ref);
+  ref.onDispose(refreshListenable.dispose);
 
   return GoRouter(
     navigatorKey: navigatorKey,
     initialLocation: '/',
+    refreshListenable: refreshListenable,
     redirect: (context, state) {
+      final authState = ref.read(authNotifierProvider);
       if (authState.isLoading) return null;
       final isAuthed = authState.valueOrNull == AuthStatus.authenticated;
       final loc = state.matchedLocation;
