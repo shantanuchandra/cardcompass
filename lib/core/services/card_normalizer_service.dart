@@ -4,6 +4,13 @@ class CardNormalizerService {
   static String normalizeBankName(String rawName) {
     final lower = rawName.toLowerCase();
 
+    // UAE shared-brand checks MUST come before their generic Indian
+    // counterparts below (hsbc, citi) — Dart's if/else-if chain matches
+    // top-to-bottom, so a UAE-specific check placed after the generic one
+    // would never be reached even when the raw name explicitly says "UAE".
+    if (lower.contains('hsbc uae') || lower.contains('hsbc middle east')) return 'HSBC UAE';
+    if (lower.contains('citibank uae') || lower.contains('citi uae')) return 'Citibank UAE';
+
     if (lower.contains('hdfc')) return 'HDFC Bank';
     if (lower.contains('sbi')) return 'SBI Card';
     if (lower.contains('axis')) return 'Axis Bank';
@@ -31,6 +38,17 @@ class CardNormalizerService {
     if (lower.contains('central bank')) return 'Central Bank of India';
     if (lower.contains('indian overseas')) return 'Indian Overseas Bank';
     if (lower.contains('allahabad') || lower.contains('indian')) return 'Indian Bank';
+
+    // UAE banks with no Indian namesake — no ordering hazard, can appear
+    // anywhere relative to the Indian checks above.
+    if (lower.contains('fab') || lower.contains('first abu dhabi')) return 'FAB';
+    if (lower.contains('emirates nbd')) return 'Emirates NBD';
+    if (lower.contains('adcb') || lower.contains('abu dhabi commercial')) return 'ADCB';
+    if (lower.contains('mashreq')) return 'Mashreq';
+    if (lower.contains('cbd') || lower.contains('commercial bank of dubai')) return 'CBD';
+    if (lower.contains('dib') || lower.contains('dubai islamic')) return 'Dubai Islamic Bank';
+    if (lower.contains('rakbank') || lower.contains('rak bank')) return 'RAKBANK';
+    if (lower.contains('emirates islamic')) return 'Emirates Islamic';
 
     return rawName.split(RegExp(r"\s+")).map((w) => w.isEmpty
       ? w
