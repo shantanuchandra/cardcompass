@@ -24,6 +24,11 @@ ALTER TABLE public.waitlist
   ADD COLUMN IF NOT EXISTS contacted_at timestamptz,
   ADD COLUMN IF NOT EXISTS invited_at timestamptz;
 
+-- Drop the historical check before rewriting its values; otherwise the
+-- pre-upgrade constraint rejects the values intended for the new taxonomy.
+ALTER TABLE public.waitlist
+  DROP CONSTRAINT IF EXISTS waitlist_card_count_check;
+
 -- The original launch used `3-5` and `6+`; preserve those historical rows
 -- while moving the public qualification taxonomy to the approved bands.
 UPDATE public.waitlist
@@ -34,8 +39,116 @@ SET card_count = CASE card_count
 END
 WHERE card_count IN ('3-5', '6+');
 
+-- Case variants were distinct under the original UNIQUE(email) constraint.
+-- Keep the earliest row (then the smallest UUID for a deterministic tie),
+-- merge its earliest non-null values from the duplicate set, delete the
+-- redundant rows, then normalize the surviving address before adding the
+-- durable case-insensitive uniqueness index.
+WITH ranked AS (
+  SELECT
+    w.*,
+    first_value(w.id) OVER (
+      PARTITION BY lower(btrim(w.email))
+      ORDER BY w.created_at ASC, w.id ASC
+    ) AS survivor_id
+  FROM public.waitlist AS w
+),
+merged AS (
+  SELECT
+    survivor_id,
+    min(created_at) AS created_at,
+    (array_agg(name ORDER BY created_at ASC, id ASC)
+      FILTER (WHERE name IS NOT NULL))[1] AS name,
+    (array_agg(card_count ORDER BY created_at ASC, id ASC)
+      FILTER (WHERE card_count IS NOT NULL))[1] AS card_count,
+    (array_agg(primary_goal ORDER BY created_at ASC, id ASC)
+      FILTER (WHERE primary_goal IS NOT NULL))[1] AS primary_goal,
+    (array_agg(monthly_spend_band ORDER BY created_at ASC, id ASC)
+      FILTER (WHERE monthly_spend_band IS NOT NULL))[1] AS monthly_spend_band,
+    (array_agg(problem_detail ORDER BY created_at ASC, id ASC)
+      FILTER (WHERE problem_detail IS NOT NULL))[1] AS problem_detail,
+    (array_agg(top_cards ORDER BY created_at ASC, id ASC)
+      FILTER (WHERE top_cards IS NOT NULL))[1] AS top_cards,
+    (array_agg(acquisition_source ORDER BY created_at ASC, id ASC)
+      FILTER (WHERE acquisition_source IS NOT NULL))[1] AS acquisition_source,
+    (array_agg(landing_variant ORDER BY created_at ASC, id ASC)
+      FILTER (WHERE landing_variant IS NOT NULL))[1] AS landing_variant,
+    (array_agg(utm_source ORDER BY created_at ASC, id ASC)
+      FILTER (WHERE utm_source IS NOT NULL))[1] AS utm_source,
+    (array_agg(utm_medium ORDER BY created_at ASC, id ASC)
+      FILTER (WHERE utm_medium IS NOT NULL))[1] AS utm_medium,
+    (array_agg(utm_campaign ORDER BY created_at ASC, id ASC)
+      FILTER (WHERE utm_campaign IS NOT NULL))[1] AS utm_campaign,
+    (array_agg(utm_term ORDER BY created_at ASC, id ASC)
+      FILTER (WHERE utm_term IS NOT NULL))[1] AS utm_term,
+    (array_agg(utm_content ORDER BY created_at ASC, id ASC)
+      FILTER (WHERE utm_content IS NOT NULL))[1] AS utm_content,
+    (array_agg(referrer_path ORDER BY created_at ASC, id ASC)
+      FILTER (WHERE referrer_path IS NOT NULL))[1] AS referrer_path,
+    min(privacy_consent_at) AS privacy_consent_at,
+    min(marketing_consent_at) AS marketing_consent_at,
+    min(enriched_at) AS enriched_at,
+    (array_agg(operator_status ORDER BY created_at ASC, id ASC))[1] AS operator_status,
+    max(qualification_score) AS qualification_score,
+    (array_agg(operator_notes ORDER BY created_at ASC, id ASC)
+      FILTER (WHERE operator_notes IS NOT NULL))[1] AS operator_notes,
+    min(contacted_at) AS contacted_at,
+    min(invited_at) AS invited_at,
+    (array_agg(enrichment_token_hash ORDER BY created_at ASC, id ASC)
+      FILTER (WHERE enrichment_token_hash IS NOT NULL))[1] AS enrichment_token_hash
+  FROM ranked
+  GROUP BY survivor_id
+)
+UPDATE public.waitlist AS target
+SET
+  created_at = merged.created_at,
+  name = merged.name,
+  card_count = merged.card_count,
+  primary_goal = merged.primary_goal,
+  monthly_spend_band = merged.monthly_spend_band,
+  problem_detail = merged.problem_detail,
+  top_cards = merged.top_cards,
+  acquisition_source = merged.acquisition_source,
+  landing_variant = merged.landing_variant,
+  utm_source = merged.utm_source,
+  utm_medium = merged.utm_medium,
+  utm_campaign = merged.utm_campaign,
+  utm_term = merged.utm_term,
+  utm_content = merged.utm_content,
+  referrer_path = merged.referrer_path,
+  privacy_consent_at = merged.privacy_consent_at,
+  marketing_consent_at = merged.marketing_consent_at,
+  enriched_at = merged.enriched_at,
+  operator_status = merged.operator_status,
+  qualification_score = merged.qualification_score,
+  operator_notes = merged.operator_notes,
+  contacted_at = merged.contacted_at,
+  invited_at = merged.invited_at,
+  enrichment_token_hash = merged.enrichment_token_hash
+FROM merged
+WHERE target.id = merged.survivor_id;
+
+WITH ranked AS (
+  SELECT
+    w.id,
+    first_value(w.id) OVER (
+      PARTITION BY lower(btrim(w.email))
+      ORDER BY w.created_at ASC, w.id ASC
+    ) AS survivor_id
+  FROM public.waitlist AS w
+)
+DELETE FROM public.waitlist AS target
+USING ranked
+WHERE target.id = ranked.id
+  AND ranked.id <> ranked.survivor_id;
+
+UPDATE public.waitlist
+SET email = lower(btrim(email));
+
+CREATE UNIQUE INDEX IF NOT EXISTS waitlist_email_lower_key
+  ON public.waitlist (lower(email));
+
 ALTER TABLE public.waitlist
-  DROP CONSTRAINT IF EXISTS waitlist_card_count_check,
   ADD CONSTRAINT waitlist_card_count_check
     CHECK (card_count IN ('1-2', '3-6', '7+') OR card_count IS NULL),
   ADD CONSTRAINT waitlist_primary_goal_check
@@ -104,7 +217,6 @@ DECLARE
   v_landing_variant text := nullif(btrim(p_landing_variant), '');
   v_token text;
   v_token_hash text;
-  v_waitlist_id uuid;
 BEGIN
   IF v_email IS NULL
      OR char_length(v_email) NOT BETWEEN 3 AND 254
@@ -157,15 +269,12 @@ BEGIN
     v_referrer_path,
     now()
   )
-  ON CONFLICT (email) DO NOTHING
-  RETURNING id INTO v_waitlist_id;
+  ON CONFLICT DO NOTHING;
 
-  IF v_waitlist_id IS NULL THEN
-    RETURN QUERY SELECT 'already_joined'::text, NULL::text;
-    RETURN;
-  END IF;
-
-  RETURN QUERY SELECT 'joined'::text, v_token;
+  -- The token is deliberately a decoy when the normalized email already
+  -- exists. The public response is identical in either case, preventing this
+  -- endpoint from becoming a waitlist-membership oracle.
+  RETURN QUERY SELECT 'accepted'::text, v_token;
 END;
 $$;
 
@@ -193,10 +302,9 @@ DECLARE
   v_problem_detail text := nullif(btrim(p_problem_detail), '');
   v_top_cards text[];
   v_token_hash text;
-  v_updated integer;
 BEGIN
-  -- Treat an invalid or expired token as an ordinary unsuccessful update so
-  -- callers cannot use this endpoint to learn whether a signup exists.
+  -- Reject malformed tokens without touching the table. Valid-shaped decoy
+  -- and consumed tokens are handled below with the same public result.
   IF v_token IS NULL OR v_token !~ '^[0-9a-f]{64}$' THEN
     RETURN false;
   END IF;
@@ -251,8 +359,10 @@ BEGIN
     enrichment_token_hash = NULL
   WHERE enrichment_token_hash = v_token_hash;
 
-  GET DIAGNOSTICS v_updated = ROW_COUNT;
-  RETURN v_updated = 1;
+  -- A valid-shaped decoy token from a duplicate join and a real, consumed
+  -- token deliberately receive the same success-shaped response. Only a
+  -- matching stored hash can mutate a row.
+  RETURN true;
 END;
 $$;
 

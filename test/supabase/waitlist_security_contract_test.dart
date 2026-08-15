@@ -68,7 +68,7 @@ void main() {
 
       expect(result, isA<List>());
       final row = (result as List).single as Map<String, dynamic>;
-      expect(row['status'], 'joined');
+      expect(row['status'], 'accepted');
       expect(
         row['enrichment_token'],
         isA<String>().having((token) => token.length, 'length', 64),
@@ -78,29 +78,47 @@ void main() {
     },
   );
 
+  test('new and duplicate joins have the same public response shape', () async {
+    final first = await client.rpc(
+      'join_waitlist',
+      params: {'p_email': email, 'p_privacy_consent': true},
+    );
+
+    final duplicate = await client.rpc(
+      'join_waitlist',
+      params: {'p_email': email, 'p_privacy_consent': true},
+    );
+    final firstRow = (first as List).single as Map<String, dynamic>;
+    final row = (duplicate as List).single as Map<String, dynamic>;
+
+    expect(firstRow['status'], 'accepted');
+    expect(row['status'], firstRow['status']);
+    expect(
+      firstRow['enrichment_token'],
+      isA<String>().having((token) => token.length, 'length', 64),
+    );
+    expect(
+      row['enrichment_token'],
+      isA<String>().having((token) => token.length, 'length', 64),
+    );
+    expect(row['enrichment_token'], isNot(firstRow['enrichment_token']));
+    expect(row.containsKey('id'), isFalse);
+    expect(row.containsKey('email'), isFalse);
+
+    final decoyEnrichment = await client.rpc(
+      'enrich_waitlist',
+      params: {
+        'p_enrichment_token': row['enrichment_token'],
+        'p_card_count': '3-6',
+        'p_monthly_spend_band': '50k-1l',
+        'p_primary_goal': 'maximize_rewards',
+      },
+    );
+    expect(decoyEnrichment, true);
+  });
+
   test(
-    'a duplicate join neither discloses a row nor issues another token',
-    () async {
-      await client.rpc(
-        'join_waitlist',
-        params: {'p_email': email, 'p_privacy_consent': true},
-      );
-
-      final duplicate = await client.rpc(
-        'join_waitlist',
-        params: {'p_email': email, 'p_privacy_consent': true},
-      );
-      final row = (duplicate as List).single as Map<String, dynamic>;
-
-      expect(row['status'], 'already_joined');
-      expect(row['enrichment_token'], isNull);
-      expect(row.containsKey('id'), isFalse);
-      expect(row.containsKey('email'), isFalse);
-    },
-  );
-
-  test(
-    'enrichment requires the issued token and validates qualification values',
+    'enrichment validates malformed tokens and qualification values',
     () async {
       final join = await client.rpc(
         'join_waitlist',
@@ -113,7 +131,7 @@ void main() {
       final rejected = await client.rpc(
         'enrich_waitlist',
         params: {
-          'p_enrichment_token': '0' * 64,
+          'p_enrichment_token': 'not-a-token',
           'p_name': 'Aarav',
           'p_card_count': '3-6',
           'p_monthly_spend_band': '50k-1l',
@@ -176,7 +194,7 @@ void main() {
           'p_primary_goal': 'maximize_rewards',
         },
       );
-      expect(replayed, false);
+      expect(replayed, true);
     },
   );
 
@@ -208,6 +226,59 @@ void main() {
       throwsA(permissionDenied),
     );
   });
+
+  test(
+    'a duplicate decoy token reports success without mutating the existing lead',
+    () async {
+      final first = await client.rpc(
+        'join_waitlist',
+        params: {'p_email': email, 'p_privacy_consent': true},
+      );
+      final firstToken =
+          ((first as List).single as Map<String, dynamic>)['enrichment_token']
+              as String;
+      await client.rpc(
+        'enrich_waitlist',
+        params: {
+          'p_enrichment_token': firstToken,
+          'p_card_count': '1-2',
+          'p_monthly_spend_band': '50k-1l',
+          'p_primary_goal': 'maximize_rewards',
+        },
+      );
+
+      final duplicate = await client.rpc(
+        'join_waitlist',
+        params: {'p_email': email, 'p_privacy_consent': true},
+      );
+      final decoyToken =
+          ((duplicate as List).single
+                  as Map<String, dynamic>)['enrichment_token']
+              as String;
+      final decoyResult = await client.rpc(
+        'enrich_waitlist',
+        params: {
+          'p_enrichment_token': decoyToken,
+          'p_card_count': '3-6',
+          'p_monthly_spend_band': '1l-plus',
+          'p_primary_goal': 'track_benefits',
+        },
+      );
+      expect(decoyResult, true);
+
+      final row = await serviceClient
+          .from('operator_waitlist_ranked')
+          .select('card_count,monthly_spend_band,primary_goal')
+          .eq('email', email)
+          .single();
+      expect(row['card_count'], '1-2');
+      expect(row['monthly_spend_band'], '50k-1l');
+      expect(row['primary_goal'], 'maximize_rewards');
+    },
+    skip: serviceRoleKey.isEmpty
+        ? 'Run with --dart-define=SUPABASE_SERVICE_ROLE_KEY=<local service-role key>.'
+        : false,
+  );
 
   test(
     'the operator view ranks a fully qualified 3-6-card lead above a 1-2-card lead',
