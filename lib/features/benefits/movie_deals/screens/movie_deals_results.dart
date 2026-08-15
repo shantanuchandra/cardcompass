@@ -6,8 +6,77 @@ import '../../../../core/providers/supabase_provider.dart';
 import '../../../../core/theme/brand_tokens.dart';
 import '../domain/movie_deal_candidate.dart';
 import '../domain/movie_deal_rule.dart';
+import '../domain/movie_platform_aliases.dart';
 import '../domain/movie_ticket_request.dart';
 import '../providers/movie_deals_provider.dart';
+
+bool _hasNoUsageCapToVerify(MovieDealCandidate candidate) {
+  final rule = candidate.rule;
+  return rule.offerType == MovieDealOfferType.percentDiscount ||
+      (rule.offerType == MovieDealOfferType.bogo &&
+          rule.cycleRedemptionLimit == null) ||
+      (rule.offerType == MovieDealOfferType.fixedDiscount &&
+          rule.cycleAmountCap == null);
+}
+
+bool _isPotentialCandidate(MovieDealCandidate candidate) =>
+    candidate.platformConfidence != MovieDealPlatformConfidence.explicit ||
+    (candidate.usageConfidence != MovieDealUsageConfidence.verified &&
+        !_hasNoUsageCapToVerify(candidate));
+
+bool _isVerifiedForSearch(
+  MovieDealCandidate candidate, {
+  required bool isPotential,
+}) => !isPotential && !_isPotentialCandidate(candidate);
+
+String _bookingPlatformMessage(
+  MovieDealCandidate candidate,
+  MovieTicketRequest request,
+) {
+  final selectedPlatform = request.preferredPlatform;
+  if (selectedPlatform != null) {
+    return candidate.platformConfidence == MovieDealPlatformConfidence.explicit
+        ? 'Book on $selectedPlatform.'
+        : 'Selected platform: $selectedPlatform — this offer needs confirmation there.';
+  }
+
+  final eligiblePlatforms = eligibleMoviePlatformsFor(candidate.rule).toList()
+    ..sort();
+  if (eligiblePlatforms.isNotEmpty) {
+    final platformLabel = eligiblePlatforms.join(', ');
+    return eligiblePlatforms.length == 1
+        ? 'Eligible booking platform: $platformLabel.'
+        : 'Eligible booking platforms: $platformLabel.';
+  }
+  return candidate.platformConfidence ==
+          MovieDealPlatformConfidence.communityConfirmed
+      ? 'A booking platform has community confirmation, but the exact platform is unknown.'
+      : 'Booking platform is not confirmed for this offer.';
+}
+
+String _formatAmount(double amount) => amount == amount.roundToDouble()
+    ? amount.toStringAsFixed(0)
+    : amount.toStringAsFixed(2);
+
+String _plainLanguageReason(MovieDealCandidate candidate) {
+  final rule = candidate.rule;
+  return switch (rule.offerType) {
+    MovieDealOfferType.percentDiscount =>
+      'This offer takes ${_formatAmount(rule.discountPercent ?? 0)}% off the ticket total.',
+    MovieDealOfferType.fixedDiscount =>
+      'This offer takes ₹${_formatAmount(candidate.savings)} off this booking.',
+    MovieDealOfferType.annualAllowance =>
+      'This booking can use ₹${_formatAmount(candidate.savings)} from the card’s annual movie allowance.',
+    MovieDealOfferType.milestone =>
+      'You met the required spend milestone for this movie voucher.',
+    MovieDealOfferType.bogo =>
+      'Buy ${rule.buyCount} ticket${rule.buyCount == 1 ? '' : 's'} and get ${rule.freeCount} free.',
+    MovieDealOfferType.rewardMultiplier =>
+      rule.rewardMultiplierRate == null
+          ? 'This card may earn extra rewards through its points program; this is not a ticket-price discount.'
+          : '${rule.rewardMultiplierRate} ${rule.rewardMultiplierUnit ?? 'reward points'} may be earned through the card’s points program; this is not a ticket-price discount.',
+  };
+}
 
 /// Design spec §8's three-section layout: guaranteed owned/overall (falling
 /// back to a labeled potential candidate when no guaranteed winner exists),
@@ -126,24 +195,36 @@ class MovieDealsResults extends ConsumerWidget {
   }
 
   Widget _buildAlternatives(List<MovieDealCandidate> candidates) {
+    final eligible = candidates
+        .where((candidate) => !_isPotentialCandidate(candidate))
+        .toList();
+    final potential = candidates.where(_isPotentialCandidate).toList();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Other eligible options',
-          style: TextStyle(
-            fontFamily: 'Manrope',
-            fontWeight: FontWeight.bold,
-            color: BrandColors.mutedInk,
-            fontSize: 11,
-            letterSpacing: 0.5,
+        if (eligible.isNotEmpty) ...[
+          const _ResultSectionTitle('Other eligible options'),
+          const SizedBox(height: 8),
+          ...eligible.map(
+            (candidate) =>
+                _AlternativeRow(candidate: candidate, request: request),
           ),
-        ),
-        const SizedBox(height: 8),
-        ...candidates.map(
-          (candidate) =>
-              _AlternativeRow(candidate: candidate, request: request),
-        ),
+        ],
+        if (eligible.isNotEmpty && potential.isNotEmpty)
+          const SizedBox(height: 12),
+        if (potential.isNotEmpty) ...[
+          const _ResultSectionTitle(
+            'Potential options — confirm before booking',
+          ),
+          const SizedBox(height: 8),
+          ...potential.map(
+            (candidate) => _AlternativeRow(
+              candidate: candidate,
+              request: request,
+              isPotential: true,
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -158,7 +239,7 @@ class MovieDealsResults extends ConsumerWidget {
             fontFamily: 'Manrope',
             fontWeight: FontWeight.bold,
             color: BrandColors.mutedInk,
-            fontSize: 10,
+            fontSize: 12,
             letterSpacing: 0.5,
           ),
         ),
@@ -177,7 +258,7 @@ class MovieDealsResults extends ConsumerWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '${c.rule.cardName ?? c.title} — earns via this card\'s points program',
+                    '${c.rule.cardName ?? c.title} — reward points rate',
                     style: TextStyle(
                       fontFamily: 'Manrope',
                       color: BrandColors.ink,
@@ -187,7 +268,7 @@ class MovieDealsResults extends ConsumerWidget {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    c.explanation,
+                    _plainLanguageReason(c),
                     style: TextStyle(
                       fontFamily: 'Manrope',
                       color: BrandColors.mutedInk,
@@ -278,6 +359,10 @@ class _RecommendationCardState extends State<_RecommendationCard> {
     final effectiveTicketPrice =
         candidate.finalAmount / widget.request.numberOfTickets;
     final owned = candidate.isOwned;
+    final verifiedEligibility = _isVerifiedForSearch(
+      candidate,
+      isPotential: widget.isPotential,
+    );
     final borderColor = widget.isPotential
         ? BrandColors.mutedInk.withValues(alpha: 0.3)
         : (owned
@@ -300,13 +385,15 @@ class _RecommendationCardState extends State<_RecommendationCard> {
                 fontFamily: 'Manrope',
                 fontWeight: FontWeight.bold,
                 color: BrandColors.mutedInk,
-                fontSize: 11,
+                fontSize: 12,
                 letterSpacing: 0.5,
               ),
             ),
             const SizedBox(height: 8),
+            const _ResultSectionTitle('Recommended route'),
+            const SizedBox(height: 4),
             Text(
-              candidate.rule.cardName ?? candidate.title,
+              'Use ${candidate.rule.cardName ?? candidate.title} for ${candidate.title}.',
               style: TextStyle(
                 fontFamily: 'Manrope',
                 color: BrandColors.ink,
@@ -316,11 +403,20 @@ class _RecommendationCardState extends State<_RecommendationCard> {
             ),
             const SizedBox(height: 8),
             Text(
-              widget.isPotential
-                  ? 'Potential option — check availability before booking.'
-                  : (owned
-                        ? 'A verified offer on a card you own.'
-                        : 'Available on a card you do not currently own.'),
+              _bookingPlatformMessage(candidate, widget.request),
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                color: BrandColors.mutedInk,
+                fontSize: 12,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              verifiedEligibility
+                  ? (owned
+                        ? 'Eligible for this search on a card you own.'
+                        : 'Eligible for this search on a card you do not own.')
+                  : 'Potential option — check availability and remaining usage before booking.',
               style: TextStyle(
                 fontFamily: 'Manrope',
                 color: BrandColors.mutedInk,
@@ -342,7 +438,7 @@ class _RecommendationCardState extends State<_RecommendationCard> {
               'Why this is recommended',
               style: TextStyle(
                 fontFamily: 'Manrope',
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: FontWeight.bold,
                 color: BrandColors.mutedInk,
                 letterSpacing: 0.4,
@@ -350,7 +446,7 @@ class _RecommendationCardState extends State<_RecommendationCard> {
             ),
             const SizedBox(height: 4),
             Text(
-              candidate.explanation,
+              _plainLanguageReason(candidate),
               style: TextStyle(
                 fontFamily: 'Manrope',
                 color: BrandColors.mutedInk,
@@ -374,7 +470,7 @@ class _RecommendationCardState extends State<_RecommendationCard> {
                     'Potential — remaining balance not verified',
                     style: TextStyle(
                       fontFamily: 'Manrope',
-                      fontSize: 10,
+                      fontSize: 12,
                       color: BrandColors.rewardInk,
                     ),
                   ),
@@ -397,13 +493,16 @@ class _RecommendationCardState extends State<_RecommendationCard> {
                     'Platform not confirmed for this offer',
                     style: TextStyle(
                       fontFamily: 'Manrope',
-                      fontSize: 10,
+                      fontSize: 12,
                       color: BrandColors.mutedInk,
                     ),
                   ),
                 ),
               ),
-            _CalculationDisclosure(candidate: candidate),
+            _CalculationDisclosure(
+              candidate: candidate,
+              isPotential: widget.isPotential,
+            ),
             if (widget.onConfirmPlatform != null && !_confirmed) ...[
               const SizedBox(height: 12),
               TextButton(
@@ -420,7 +519,7 @@ class _RecommendationCardState extends State<_RecommendationCard> {
                 'Thanks — this helps other users.',
                 style: TextStyle(
                   fontFamily: 'Manrope',
-                  fontSize: 11,
+                  fontSize: 12,
                   color: BrandColors.focusDark,
                 ),
               ),
@@ -446,7 +545,7 @@ class _ResultMetric extends StatelessWidget {
         label,
         style: TextStyle(
           fontFamily: 'Manrope',
-          fontSize: 11,
+          fontSize: 12,
           fontWeight: FontWeight.bold,
           color: BrandColors.mutedInk,
           letterSpacing: 0.4,
@@ -466,11 +565,34 @@ class _ResultMetric extends StatelessWidget {
   );
 }
 
+class _ResultSectionTitle extends StatelessWidget {
+  const _ResultSectionTitle(this.label);
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Text(
+    label,
+    style: TextStyle(
+      fontFamily: 'Manrope',
+      fontSize: 12,
+      fontWeight: FontWeight.bold,
+      color: BrandColors.mutedInk,
+      letterSpacing: 0.4,
+    ),
+  );
+}
+
 class _AlternativeRow extends StatelessWidget {
-  const _AlternativeRow({required this.candidate, required this.request});
+  const _AlternativeRow({
+    required this.candidate,
+    required this.request,
+    this.isPotential = false,
+  });
 
   final MovieDealCandidate candidate;
   final MovieTicketRequest request;
+  final bool isPotential;
 
   @override
   Widget build(BuildContext context) {
@@ -505,6 +627,17 @@ class _AlternativeRow extends StatelessWidget {
                 fontSize: 12,
               ),
             ),
+            if (isPotential) ...[
+              const SizedBox(height: 4),
+              Text(
+                'Potential — confirm before booking',
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  color: BrandColors.mutedInk,
+                  fontSize: 12,
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -513,9 +646,13 @@ class _AlternativeRow extends StatelessWidget {
 }
 
 class _CalculationDisclosure extends StatelessWidget {
-  const _CalculationDisclosure({required this.candidate});
+  const _CalculationDisclosure({
+    required this.candidate,
+    required this.isPotential,
+  });
 
   final MovieDealCandidate candidate;
+  final bool isPotential;
 
   @override
   Widget build(BuildContext context) {
@@ -556,10 +693,9 @@ class _CalculationDisclosure extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               Text(
-                candidate.platformConfidence ==
-                        MovieDealPlatformConfidence.explicit
-                    ? 'Eligibility: verified for this search.'
-                    : 'Eligibility: platform confirmation is still needed.',
+                _isVerifiedForSearch(candidate, isPotential: isPotential)
+                    ? 'Eligibility: confirmed for this search.'
+                    : 'Eligibility: potential — platform or remaining usage needs confirmation.',
                 style: TextStyle(
                   fontFamily: 'Manrope',
                   color: BrandColors.mutedInk,
@@ -570,6 +706,17 @@ class _CalculationDisclosure extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   'Offer cap: ${caps.join('; ')}.',
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    color: BrandColors.mutedInk,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+              if (rule.cycleRedemptionLimit != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Monthly usage limit: ${rule.cycleRedemptionLimit} redemption${rule.cycleRedemptionLimit == 1 ? '' : 's'} per month.',
                   style: TextStyle(
                     fontFamily: 'Manrope',
                     color: BrandColors.mutedInk,

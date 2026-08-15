@@ -144,7 +144,7 @@ void main() {
       expect(find.textContaining('Potential'), findsWidgets);
       expect(find.text('Best option'), findsOneWidget);
       expect(
-        find.textContaining('check availability before booking'),
+        find.textContaining('check availability and remaining usage'),
         findsOneWidget,
       );
     },

@@ -128,7 +128,7 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
                 'Offers checked against current rules',
                 style: TextStyle(
                   fontFamily: 'Manrope',
-                  fontSize: 9,
+                  fontSize: 12,
                   color: BrandColors.ink,
                   fontWeight: FontWeight.bold,
                   letterSpacing: 0.5,
@@ -237,7 +237,7 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
                     style: TextStyle(
                       fontFamily: 'Manrope',
                       color: BrandColors.mutedInk,
-                      fontSize: 10,
+                      fontSize: 12,
                     ),
                   ),
                 ),
@@ -293,7 +293,7 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               fontFamily: 'Manrope',
-              fontSize: 10,
+              fontSize: 14,
               color: BrandColors.mutedInk,
             ),
           ),
@@ -306,7 +306,7 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontFamily: 'Manrope',
-                fontSize: 10,
+                fontSize: 14,
                 color: BrandColors.ink,
               ),
             ),
@@ -337,7 +337,7 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               fontFamily: 'Manrope',
-              fontSize: 10,
+              fontSize: 14,
               color: BrandColors.mutedInk,
             ),
           ),
@@ -350,7 +350,7 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontFamily: 'Manrope',
-                fontSize: 10,
+                fontSize: 14,
                 color: BrandColors.ink,
               ),
             ),
@@ -372,7 +372,7 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
             '$n TICKETS',
             style: TextStyle(
               fontFamily: 'Manrope',
-              fontSize: 9,
+              fontSize: 14,
               fontWeight: FontWeight.bold,
               color: selected ? Colors.black : BrandColors.mutedInk,
             ),
@@ -395,7 +395,7 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
             '₹$p',
             style: TextStyle(
               fontFamily: 'Manrope',
-              fontSize: 9,
+              fontSize: 14,
               fontWeight: FontWeight.bold,
               color: selected ? Colors.black : BrandColors.mutedInk,
             ),
@@ -437,7 +437,7 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
               fontFamily: 'Manrope',
               fontWeight: FontWeight.bold,
               color: BrandColors.mutedInk,
-              fontSize: 10,
+              fontSize: 12,
               letterSpacing: 0.5,
             ),
           );
@@ -503,7 +503,7 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontFamily: 'Manrope',
-                fontSize: 12,
+                fontSize: 14,
                 fontWeight: FontWeight.bold,
                 letterSpacing: 0.5,
                 color: Colors.black,
