@@ -125,7 +125,8 @@ BEGIN
     WHERE schemaname = 'public'
       AND tablename = 'user_cards'
       AND qual ILIKE '%auth.uid()%user_id%'
-      AND with_check ILIKE '%auth.uid()%user_id%'
+      -- PostgreSQL uses USING as WITH CHECK when WITH CHECK is omitted.
+      AND COALESCE(with_check, qual) ILIKE '%auth.uid()%user_id%'
   ) THEN
     RAISE EXCEPTION 'user_cards ownership policy is missing';
   END IF;

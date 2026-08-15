@@ -42,3 +42,9 @@ test('canonical schema no longer declares PAN or card expiry storage', async () 
   assert.doesNotMatch(userCards, /\bcard_number\b/i);
   assert.doesNotMatch(userCards, /\bexpiry_date\b/i);
 });
+
+test('upgrade-path ownership assertion follows PostgreSQL WITH CHECK fallback semantics', async () => {
+  const sql = await readFile(new URL('test/supabase/card_data_hardening_upgrade_path_test.sql', repoRoot), 'utf8');
+
+  assert.match(sql, /COALESCE\s*\(\s*with_check\s*,\s*qual\s*\)/i);
+});

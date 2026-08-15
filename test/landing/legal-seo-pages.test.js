@@ -93,6 +93,9 @@ test('legal pages disclose the implemented processing boundaries without unsuppo
     /banking password/i,
     /statement PDF password/i,
     /locally/i,
+    /hardening migration/i,
+    /live backend may still retain/i,
+    /applied and verified/i,
     /attempts to store (?:the )?date of birth/i,
     /remain in memory/i,
     /requested again/i,
@@ -101,6 +104,7 @@ test('legal pages disclose the implemented processing boundaries without unsuppo
   }
 
   assert.doesNotMatch(combined, /SOC\s?2|ISO\s?27001|certified|full DPDPA|DPDPA[- ]compliant/i);
+  assert.doesNotMatch(combined, /historical RPCs[^.]*have been removed/i);
 });
 
 test('recommendation disclaimer keeps estimates informational and issuer terms authoritative', async () => {
@@ -130,7 +134,7 @@ test('robots and sitemap expose only canonical public routes', async () => {
   assert.equal(new Set(locations).size, locations.length);
 });
 
-test('machine-readable product page removes contradicted privacy and performance claims', async () => {
+test('machine-readable product page distinguishes repository hardening from deployed backend state', async () => {
   const llm = await landingFile('llm.txt');
   assert.match(llm, /Gmail read-only/i);
   assert.match(llm, /Supabase/i);
@@ -138,12 +142,24 @@ test('machine-readable product page removes contradicted privacy and performance
   assert.match(llm, /transaction and statement records/i);
   assert.match(llm, /full parsed message/i);
   assert.match(llm, /does not intentionally persist (?:the )?message body/i);
-  assert.doesNotMatch(llm, /legacy[^.]*card_number|legacy[^.]*expiry|hardening target/i);
+  assert.match(llm, /hardening migration/i);
+  assert.match(llm, /live backend may still retain/i);
+  assert.match(llm, /applied and verified/i);
+  assert.doesNotMatch(llm, /historical RPCs[^.]*have been removed/i);
   assert.match(llm, /attempts to store (?:the )?date of birth/i);
   assert.match(llm, /may remain in memory/i);
   assert.match(llm, /matching statement PDF/i);
   assert.doesNotMatch(llm, /selected statement PDF/i);
   assert.doesNotMatch(llm, /processed locally on-device|No transaction data is stored|Full DPDPA|99\.2%|₹50,000\+|real-time benefit rules/i);
+});
+
+test('GTM operations block broad acquisition until the card-data migration is verified', async () => {
+  const playbook = await readFile(new URL('../../docs/gtm/founder-led-playbook.md', import.meta.url), 'utf8');
+
+  assert.match(playbook, /launch gate/i);
+  assert.match(playbook, /20260815090910_remove_legacy_card_secrets/i);
+  assert.match(playbook, /applied and verified/i);
+  assert.match(playbook, /do not begin broad acquisition/i);
 });
 
 test('llms.txt is a byte-for-byte public alias of llm.txt and is declared for crawlers', async () => {

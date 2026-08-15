@@ -18,6 +18,18 @@ Every week uses the same loop:
 
 The founder should reserve one daily 30-minute block for responses. Fast, specific support is part of research during early access, but it should not become unscheduled all-day messaging.
 
+## Security launch gate
+
+Do not begin broad acquisition until the card-data hardening migration `20260815090910_remove_legacy_card_secrets.sql` has been applied and verified in the target Supabase project. Repository state alone does not prove deployed database state.
+
+Before clearing this gate:
+
+- Apply the migration through the controlled database deployment process; do not auto-apply it from a marketing or landing-page deployment.
+- Run the supplied reset/upgrade and permission checks in a non-production environment first.
+- Verify in the target project that `user_cards.card_number` and `user_cards.expiry_date` are absent and that the unsafe historical `associate_user_with_card`, `update_user_card`, and `get_user_cards` signatures are absent.
+- Record the environment, migration version, verification time, operator, commands and results in the launch record.
+- Keep broad acquisition paused if any check is incomplete or fails. A small internal remediation cohort must not submit PAN, expiry, CVV, PIN, OTP or banking credentials.
+
 ## 8-week cadence
 
 | Week | Learning objective | Founder actions | Exit evidence |

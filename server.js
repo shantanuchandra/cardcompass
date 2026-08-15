@@ -10,6 +10,19 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT      = Number(process.argv[2]) || 8080;
 const landingRoot = path.join(__dirname, 'landing');
+const loginRoot = path.join(__dirname, 'login');
+const appRoot = path.join(__dirname, 'build', 'web');
+
+const SENSITIVE_BASENAMES = new Set([
+  'dart_defines.json',
+  'package.json',
+  'package-lock.json',
+  'pubspec.lock',
+  'pubspec.yaml',
+  'schema.sql',
+  'server.js',
+]);
+const SENSITIVE_EXTENSIONS = new Set(['.dart', '.lock', '.md', '.sql', '.toml', '.yaml', '.yml']);
 
 // ── Load env vars ────────────────────────────────────────────────────────────
 // Production: set SUPABASE_URL and SUPABASE_ANON_KEY in the deployment platform.
@@ -63,13 +76,20 @@ const server = http.createServer((req, res) => {
   }
 
   const segments = url.split('/');
-  if (url.includes('\0') || segments.includes('..') || segments.includes('.')) {
+  const basename = segments.at(-1)?.toLowerCase() || '';
+  if (
+    url.includes('\0')
+    || url.includes('\\')
+    || segments.some((segment) => segment === '..' || segment === '.' || segment.startsWith('.'))
+    || segments.some((segment) => ['.git', 'supabase'].includes(segment.toLowerCase()))
+    || SENSITIVE_BASENAMES.has(basename)
+    || SENSITIVE_EXTENSIONS.has(path.extname(basename))
+  ) {
     res.writeHead(403); res.end('Forbidden'); return;
   }
 
-  // Block direct access to .env and server internals
-  if (url === '/.env' || url === '/server.js') {
-    res.writeHead(403); res.end('Forbidden'); return;
+  if (!['GET', 'HEAD'].includes(req.method || 'GET')) {
+    res.writeHead(405, { Allow: 'GET, HEAD' }); res.end('Method not allowed'); return;
   }
 
   // Inject env values as a JS module — never exposes raw .env
@@ -83,30 +103,48 @@ export const SUPABASE_ANON = ${JSON.stringify(env.SUPABASE_ANON_KEY || '')};
     return;
   }
 
-  // Serve repository routes first (for existing app assets), then mirror the
-  // production deploy root from landing/ for public pages and assets.
-  const relativePath = url.replace(/^\/+/, '');
-  const candidates = url === '/'
-    ? [path.join(landingRoot, 'index.html')]
-    : [path.join(__dirname, relativePath), path.join(landingRoot, relativePath)];
-  let filePath = candidates.find((candidate) => candidate.startsWith(`${__dirname}${path.sep}`) && fs.existsSync(candidate));
+  // Each URL namespace maps to one public root. Repository files outside
+  // these roots are never candidates for static serving.
+  let publicRoot = landingRoot;
+  let publicPath = url;
+  if (url === '/login' || url.startsWith('/login/')) {
+    publicRoot = loginRoot;
+    publicPath = url.slice('/login'.length) || '/';
+  } else if (url === '/app' || url.startsWith('/app/')) {
+    publicRoot = appRoot;
+    publicPath = url.slice('/app'.length) || '/';
+  }
+
+  const resolvedRoot = path.resolve(publicRoot);
+  let filePath = path.resolve(resolvedRoot, `.${publicPath}`);
+  const isWithinRoot = (candidate) => candidate === resolvedRoot || candidate.startsWith(`${resolvedRoot}${path.sep}`);
+  if (!isWithinRoot(filePath)) {
+    res.writeHead(403); res.end('Forbidden'); return;
+  }
 
   // Directory → index.html
-  if (filePath && fs.statSync(filePath).isDirectory()) {
+  if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory()) {
     filePath = path.join(filePath, 'index.html');
   }
 
-  if (!filePath || !filePath.startsWith(`${__dirname}${path.sep}`) || !fs.existsSync(filePath)) {
+  if (!isWithinRoot(filePath) || !fs.existsSync(filePath)) {
     res.writeHead(404); res.end('Not found'); return;
+  }
+
+  const realRoot = fs.realpathSync(resolvedRoot);
+  const realFilePath = fs.realpathSync(filePath);
+  if (realFilePath !== realRoot && !realFilePath.startsWith(`${realRoot}${path.sep}`)) {
+    res.writeHead(403); res.end('Forbidden'); return;
   }
 
   const ext  = path.extname(filePath);
   const mime = MIME[ext] || 'application/octet-stream';
   res.writeHead(200, { 'Content-Type': mime });
-  fs.createReadStream(filePath).pipe(res);
+  if (req.method === 'HEAD') res.end();
+  else fs.createReadStream(realFilePath).pipe(res);
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, '127.0.0.1', () => {
   console.log(`[CardCompass] http://localhost:${PORT}`);
   console.log(`  /login  → login page`);
   console.log(`  /       → landing page`);

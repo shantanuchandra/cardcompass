@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { spawn } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 
 const repoRoot = new URL('../../', import.meta.url);
@@ -47,7 +47,32 @@ test('public deploy-root documents and modules use root asset URLs', async () =>
   }
 });
 
-test('local server serves deploy-root landing routes and blocks traversal', async (t) => {
+test('local server serves landing, login, app, and generated environment roots', async (t) => {
+  const appFixture = new URL('../../build/web/server-allowlist-test.txt', import.meta.url);
+  await mkdir(new URL('../../build/web/', import.meta.url), { recursive: true });
+  await writeFile(appFixture, 'app fixture', 'utf8');
+  const port = await unusedPort();
+  const child = spawn(process.execPath, ['server.js', String(port)], {
+    cwd: new URL('../..', import.meta.url),
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  t.after(async () => {
+    child.kill();
+    await rm(appFixture, { force: true });
+  });
+  await Promise.race([
+    once(child.stdout, 'data'),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('server did not start')), 3000)),
+  ]);
+
+  for (const route of ['/', '/style.css', '/privacy/', '/tools/tools.js', '/llms.txt', '/img/social-preview.png', '/login/', '/login/style.css', '/app/server-allowlist-test.txt', '/env.js']) {
+    const response = await fetch(`http://127.0.0.1:${port}${route}`);
+    assert.equal(response.status, 200, route);
+  }
+
+});
+
+test('local server blocks dotfiles, repository internals, secrets, and traversal', async (t) => {
   const port = await unusedPort();
   const child = spawn(process.execPath, ['server.js', String(port)], {
     cwd: new URL('../..', import.meta.url),
@@ -59,13 +84,21 @@ test('local server serves deploy-root landing routes and blocks traversal', asyn
     new Promise((_, reject) => setTimeout(() => reject(new Error('server did not start')), 3000)),
   ]);
 
-  for (const route of ['/', '/style.css', '/privacy/', '/tools/tools.js', '/llms.txt', '/img/social-preview.png']) {
+  for (const route of [
+    '/.env',
+    '/.env.example',
+    '/.git/config',
+    '/dart_defines.json',
+    '/schema.sql',
+    '/supabase/migrations/20260815090910_remove_legacy_card_secrets.sql',
+    '/package.json',
+    '/pubspec.yaml',
+    '/..%2F.env',
+    '/%2e%2e%2fschema.sql',
+  ]) {
     const response = await fetch(`http://127.0.0.1:${port}${route}`);
-    assert.equal(response.status, 200, route);
+    assert.ok([403, 404].includes(response.status), `${route} returned ${response.status}`);
   }
-
-  const traversal = await fetch(`http://127.0.0.1:${port}/..%2F.env`);
-  assert.ok([400, 403, 404].includes(traversal.status));
 });
 
 test('Azure Static Web Apps config protects public pages without rewriting app assets', async () => {
@@ -98,4 +131,15 @@ test('deployment environment module serializes public Supabase values as inert J
 
   const workflow = await readFile(new URL('.github/workflows/azure-static-web-apps-thankful-moss-0b0214000.yml', repoRoot), 'utf8');
   assert.match(workflow, /write-landing-env\.mjs deploy\/env\.js/);
+});
+
+test('browser dart defines contain public configuration only', async () => {
+  const workflow = await readFile(new URL('.github/workflows/azure-static-web-apps-thankful-moss-0b0214000.yml', repoRoot), 'utf8');
+  const definesStep = workflow.match(/- name: Write dart_defines\.json from secrets([\s\S]*?)(?=\n\s+- name:)/)?.[1];
+
+  assert.ok(definesStep, 'dart defines workflow step is required');
+  assert.match(definesStep, /SUPABASE_URL/);
+  assert.match(definesStep, /SUPABASE_ANON_KEY/);
+  assert.match(definesStep, /GOOGLE_CLIENT_ID/);
+  assert.doesNotMatch(definesStep, /GEMINI_API_KEY|GROQ_API_KEY/);
 });
