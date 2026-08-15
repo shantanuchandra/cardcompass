@@ -24,4 +24,16 @@ void main() {
     expect(source, contains('height: 68'));
     expect(source, contains('Semantics('));
   });
+
+  test('mobile navigation uses concise consistent labels', () {
+    for (final label in const [
+      'Dashboard',
+      'Cards',
+      'Transactions',
+      'Movies',
+      'Settings',
+    ]) {
+      expect(source, contains("label: '$label'"));
+    }
+  });
 }

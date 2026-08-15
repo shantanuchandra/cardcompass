@@ -14,6 +14,7 @@ import '../../features/settings/screens/settings_screen.dart';
 import '../theme/brand_components.dart';
 import '../theme/brand_tokens.dart';
 import '../../app.dart' show navigatorKey;
+import 'app_tab_selection.dart';
 
 const _kTabPaths = [
   '/app',
@@ -129,25 +130,28 @@ class _AppShell extends ConsumerWidget {
         final isDesktop =
             MediaQuery.sizeOf(context).width >= _kDesktopBreakpoint;
 
-        if (isDesktop) {
-          return Scaffold(
-            body: Row(
-              children: [
-                _SideRail(selectedIndex: tabIndex, onTap: onTap),
-                Expanded(
-                  child: IndexedStack(index: tabIndex, children: _bodies),
+        final shell = isDesktop
+            ? Scaffold(
+                body: Row(
+                  children: [
+                    _SideRail(selectedIndex: tabIndex, onTap: onTap),
+                    Expanded(
+                      child: IndexedStack(index: tabIndex, children: _bodies),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          );
-        }
+              )
+            : Scaffold(
+                body: IndexedStack(index: tabIndex, children: _bodies),
+                bottomNavigationBar: _BottomNav(
+                  selectedIndex: tabIndex,
+                  onTap: onTap,
+                ),
+              );
 
-        return Scaffold(
-          body: IndexedStack(index: tabIndex, children: _bodies),
-          bottomNavigationBar: _BottomNav(
-            selectedIndex: tabIndex,
-            onTap: onTap,
-          ),
+        return AppTabSelection(
+          onSelect: (tab) => onTap(tab.index),
+          child: shell,
         );
       },
     );
@@ -173,12 +177,12 @@ class _SideRail extends StatelessWidget {
     (
       icon: Icons.receipt_long_outlined,
       activeIcon: Icons.receipt_long,
-      label: 'Ledger',
+      label: 'Transactions',
     ),
     (
       icon: Icons.local_movies_outlined,
       activeIcon: Icons.local_movies,
-      label: 'Movie Deals',
+      label: 'Movies',
     ),
     (
       icon: Icons.settings_outlined,
@@ -312,12 +316,12 @@ class _BottomNav extends StatelessWidget {
     (
       icon: Icons.receipt_long_outlined,
       activeIcon: Icons.receipt_long,
-      label: 'Ledger',
+      label: 'Transactions',
     ),
     (
       icon: Icons.local_movies_outlined,
       activeIcon: Icons.local_movies,
-      label: 'Movie Deals',
+      label: 'Movies',
     ),
     (
       icon: Icons.settings_outlined,

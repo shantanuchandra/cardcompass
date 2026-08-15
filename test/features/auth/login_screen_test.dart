@@ -1,4 +1,5 @@
 import 'package:cardcompass/features/auth/screens/login_screen.dart';
+import 'package:cardcompass/features/auth/screens/splash_screen.dart';
 import 'package:cardcompass/core/theme/brand_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -6,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 Widget _testApp({
   bool disableAnimations = false,
   bool isLoading = false,
+  Object? error,
   VoidCallback? onGoogleSignIn,
   ValueChanged<String>? onOpenLegal,
 }) {
@@ -17,7 +19,7 @@ Widget _testApp({
       ),
       child: LoginView(
         isLoading: isLoading,
-        error: null,
+        error: error,
         onGoogleSignIn: onGoogleSignIn ?? () {},
         onOpenLegal: onOpenLegal ?? (_) {},
       ),
@@ -190,6 +192,51 @@ void main() {
     );
     expect(loadingButton.onPressed, isNull);
     expect(signInCount, 1);
+  });
+
+  testWidgets('login card exposes signing-in and failure feedback', (
+    tester,
+  ) async {
+    await _setSurface(tester, const Size(1440, 1000));
+    await tester.pumpWidget(_testApp(isLoading: true));
+    await tester.pump();
+
+    expect(find.text('Signing in…'), findsOneWidget);
+
+    await tester.pumpWidget(_testApp(error: StateError('network')));
+    await tester.pump();
+    expect(
+      find.text('Sign-in failed. Check your connection and try again.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('splash communicates progress before exposing recovery actions', (
+    tester,
+  ) async {
+    var retried = false;
+    var returnedToSignIn = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SplashScreen(
+          onRetry: () => retried = true,
+          onBackToSignIn: () => returnedToSignIn = true,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Securing your session'), findsOneWidget);
+    expect(find.text('Loading your wallet'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 8));
+    expect(find.text('Retry'), findsOneWidget);
+    expect(find.text('Back to sign in'), findsOneWidget);
+
+    await tester.tap(find.text('Retry'));
+    await tester.tap(find.text('Back to sign in'));
+    expect(retried, isTrue);
+    expect(returnedToSignIn, isTrue);
   });
 
   testWidgets('product proof preserves the landing receipt specification', (
