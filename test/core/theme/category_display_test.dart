@@ -43,4 +43,29 @@ void main() {
       expect(categoryColor('not_a_real_category'), AppColors.textSecondary);
     });
   });
+
+  // These three legacy strings are NOT in transaction_categorizer.dart's
+  // validCategories and are no longer produced going forward, but pre-existing
+  // rows written before the category CHECK constraint may still hold them (see
+  // category_display.dart's doc comment for the full reasoning: the
+  // NOT VALID constraint and its companion VALIDATE CONSTRAINT migration
+  // don't guarantee the backfill has actually run against production in this
+  // environment). Locking these in here so a future refactor of the switch
+  // bodies can't silently drop the aliases without a test failing.
+  group('legacy category aliases (kept per unverified-backfill safety reasoning)', () {
+    test('dining resolves the same as food', () {
+      expect(categoryIcon('dining'), categoryIcon('food'));
+      expect(categoryColor('dining'), categoryColor('food'));
+    });
+
+    test('groceries resolves the same as grocery', () {
+      expect(categoryIcon('groceries'), categoryIcon('grocery'));
+      expect(categoryColor('groceries'), categoryColor('grocery'));
+    });
+
+    test('health resolves the same as medical', () {
+      expect(categoryIcon('health'), categoryIcon('medical'));
+      expect(categoryColor('health'), categoryColor('medical'));
+    });
+  });
 }
