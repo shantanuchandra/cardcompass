@@ -48,6 +48,17 @@ test('public deploy-root documents and modules use root asset URLs', async () =>
   }
 });
 
+test('landing shell stays edge-to-edge instead of capping wide viewports', async () => {
+  const css = await landingFile('style.css');
+  const shellDeclarations = [...css.matchAll(/--shell:\s*([^;]+);/g)].map((match) => match[1]);
+
+  assert.deepEqual(shellDeclarations, [
+    'calc(100vw - 40px)',
+    'calc(100% - 28px)',
+  ]);
+  assert.doesNotMatch(css, /--shell:\s*min\(/);
+});
+
 test('local server serves landing, app, and generated environment roots without legacy login', async (t) => {
   const appFixture = new URL('../../build/web/server-allowlist-test.txt', import.meta.url);
   await mkdir(new URL('../../build/web/', import.meta.url), { recursive: true });
