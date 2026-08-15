@@ -6,6 +6,44 @@ import 'parsing_logger.dart';
 import 'gemini_request_service.dart';
 import '../config/ai_config.dart';
 
+/// Builds the Gemini prompt for `parseTransactions()`. Extracted into its
+/// own function (rather than inlined) so its exact text is directly
+/// unit-testable — catches a future edit accidentally reintroducing the
+/// old category vocabulary or the hardcoded INR example, which neither a
+/// "prompts aren't testable" stance nor a live-Gemini-call test could
+/// catch cheaply.
+String buildTransactionsPrompt({required String bankName}) {
+  return '''You are an expert at extracting transactions from Indian credit card statements. Analyze this ${bankName.toUpperCase()} statement and extract ALL transactions.
+
+BANK: $bankName
+
+EXTRACTION STRATEGY:
+1. Find transaction table sections (look for headers like "Date", "Transaction", "Amount")
+2. Extract each row that contains: Date + Description + Amount
+3. Skip summary rows, balance rows, and headers
+4. Parse amounts carefully - "CR" = credit (+), "D"/"Dr" = debit (-)
+5. Clean merchant names (remove codes, URLs, extra numbers)
+6. Convert all dates to YYYY-MM-DD format
+7. For each transaction, identify the actual currency symbol or code visible on that line (e.g. "Rs.", "₹", "INR", "AED", "د.إ", "USD", "\$"). If no currency marker is visible on that specific line, assume INR only as a last resort — do not assume INR when a different marker is actually present.
+
+JSON OUTPUT (return ONLY this array, no markdown blocks):
+[
+  {
+    "date": "YYYY-MM-DD",
+    "description": "Clean merchant name without codes",
+    "amount": number (positive for credits, negative for debits),
+    "currency": "the actual currency code observed on this line (e.g. INR, AED, USD) — only assume INR if no marker is visible",
+    "merchantName": "Primary merchant name",
+    "category": "food|fuel|grocery|entertainment|travel|shopping|utilities|insurance|medical|education|investment|transport|rental|subscription|gift|other",
+    "type": "debit|credit",
+    "reward_points": number or null (reward/loyalty points earned for this transaction, 0 if none),
+    "reference": "transaction reference if clearly visible"
+  }
+]
+
+ANALYZE THIS STATEMENT:''';
+}
+
 /// Parses credit card statement PDF text into structured statement info and
 /// transactions via Gemini (through gemini_request_service's proxy call).
 /// Trimmed from main's gemini_transaction_parser.dart: drops the
@@ -185,35 +223,7 @@ ANALYZE THE STATEMENT:''';
     required String bankName,
   }) async {
     try {
-      final prompt =
-          '''You are an expert at extracting transactions from Indian credit card statements. Analyze this ${bankName.toUpperCase()} statement and extract ALL transactions.
-
-BANK: $bankName
-
-EXTRACTION STRATEGY:
-1. Find transaction table sections (look for headers like "Date", "Transaction", "Amount")
-2. Extract each row that contains: Date + Description + Amount
-3. Skip summary rows, balance rows, and headers
-4. Parse amounts carefully - "CR" = credit (+), "D"/"Dr" = debit (-)
-5. Clean merchant names (remove codes, URLs, extra numbers)
-6. Convert all dates to YYYY-MM-DD format
-
-JSON OUTPUT (return ONLY this array, no markdown blocks):
-[
-  {
-    "date": "YYYY-MM-DD",
-    "description": "Clean merchant name without codes",
-    "amount": number (positive for credits, negative for debits),
-    "currency": "INR",
-    "merchantName": "Primary merchant name",
-    "category": "shopping|dining|travel|fuel|entertainment|bills|transfer|fee|payment|cash|other",
-    "type": "debit|credit",
-    "reward_points": number or null (reward/loyalty points earned for this transaction, 0 if none),
-    "reference": "transaction reference if clearly visible"
-  }
-]
-
-ANALYZE THIS STATEMENT:''';
+      final prompt = buildTransactionsPrompt(bankName: bankName);
 
       final cleanedText = _pruneAndCleanText(pdfText);
       final requestBody = {
