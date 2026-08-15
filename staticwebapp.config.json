@@ -6,11 +6,6 @@
       "statusCode": 302
     },
     {
-      "route": "/login/",
-      "redirect": "/app/#/login",
-      "statusCode": 302
-    },
-    {
       "route": "/app/*",
       "headers": {
         "Cache-Control": "no-cache"

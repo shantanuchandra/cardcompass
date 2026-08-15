@@ -116,13 +116,18 @@ test('Azure Static Web Apps config protects public pages without rewriting app a
   assert.ok(config.routes.some((route) => route.route === '/app/*' && !route.rewrite && !route.redirect));
   assert.ok(!config.navigationFallback || config.navigationFallback.exclude.includes('/app/*'));
   assert.equal(config.responseOverrides['404'].rewrite, '/404.html');
-  for (const loginPath of ['/login', '/login/']) {
-    assert.ok(config.routes.some((route) => (
-      route.route === loginPath
-      && route.redirect === '/app/#/login'
-      && route.statusCode === 302
-    )));
-  }
+  assert.ok(config.routes.some((route) => (
+    route.route === '/login'
+    && route.redirect === '/app/#/login'
+    && route.statusCode === 302
+  )));
+});
+
+test('Azure routes remain unique after trailing-slash normalization', async () => {
+  const config = JSON.parse(await readFile(new URL('staticwebapp.config.json', repoRoot), 'utf8'));
+  const normalizedRoutes = config.routes.map((route) => route.route.replace(/\/+$/, '') || '/');
+
+  assert.equal(new Set(normalizedRoutes).size, normalizedRoutes.length);
 });
 
 test('illustrative concept images retain their intrinsic aspect ratio and orientation', async () => {
