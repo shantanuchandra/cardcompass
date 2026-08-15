@@ -10,6 +10,7 @@ import {
   captureFirstTouch,
   clearEnrichmentSession,
   clearFirstTouch,
+  createScenarioRotation,
   extractEnrichmentToken,
   isValidEmail,
   persistEnrichmentSession,
@@ -409,7 +410,7 @@ const receiptFields = {
 };
 const receipt = document.getElementById('decisionReceipt');
 
-function updateReceipt(scenarioName) {
+function updateReceipt(scenarioName, { trackInteraction = true } = {}) {
   const scenario = scenarios[scenarioName];
   if (!scenario) return;
   document.querySelectorAll('.scenario-tab').forEach((tab) => {
@@ -423,12 +424,34 @@ function updateReceipt(scenarioName) {
     receipt.classList.remove('is-updating');
   };
   prefersReducedMotion ? apply() : window.setTimeout(apply, 120);
-  track('Recommendation Preview Changed', { variant: landingVariant, outcome: scenarioName });
+  if (trackInteraction) {
+    track('Recommendation Preview Changed', { variant: landingVariant, outcome: scenarioName });
+  }
 }
 
-document.querySelectorAll('.scenario-tab').forEach((tab) => {
-  tab.addEventListener('click', () => updateReceipt(tab.dataset.scenario));
+const scenarioTabs = [...document.querySelectorAll('.scenario-tab')];
+const scenarioRotation = createScenarioRotation({
+  scenarios: scenarioTabs.map((tab) => tab.dataset.scenario),
+  initialScenario: 'groceries',
+  reducedMotion: prefersReducedMotion,
+  onChange: (scenarioName) => updateReceipt(scenarioName, { trackInteraction: false }),
 });
+
+scenarioTabs.forEach((tab) => {
+  tab.addEventListener('click', () => {
+    updateReceipt(tab.dataset.scenario);
+    scenarioRotation.select(tab.dataset.scenario);
+  });
+});
+
+const receiptStage = document.querySelector('.receipt-stage');
+receiptStage.addEventListener('pointerenter', scenarioRotation.pause);
+receiptStage.addEventListener('pointerleave', scenarioRotation.resume);
+receiptStage.addEventListener('focusin', scenarioRotation.pause);
+receiptStage.addEventListener('focusout', (event) => {
+  if (!receiptStage.contains(event.relatedTarget)) scenarioRotation.resume();
+});
+scenarioRotation.start();
 
 function updateHeader() {
   siteHeader.classList.toggle('is-scrolled', window.scrollY > 24);

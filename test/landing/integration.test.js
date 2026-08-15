@@ -71,7 +71,11 @@ test('local server serves landing, app, and generated environment roots without 
     assert.equal(response.status, 200, route);
   }
 
-  assert.equal((await fetch(`http://127.0.0.1:${port}/login/`)).status, 404);
+  for (const loginPath of ['/login', '/login/']) {
+    const response = await fetch(`http://127.0.0.1:${port}${loginPath}`, { redirect: 'manual' });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/app/#/login');
+  }
 
 });
 
@@ -112,6 +116,22 @@ test('Azure Static Web Apps config protects public pages without rewriting app a
   assert.ok(config.routes.some((route) => route.route === '/app/*' && !route.rewrite && !route.redirect));
   assert.ok(!config.navigationFallback || config.navigationFallback.exclude.includes('/app/*'));
   assert.equal(config.responseOverrides['404'].rewrite, '/404.html');
+  for (const loginPath of ['/login', '/login/']) {
+    assert.ok(config.routes.some((route) => (
+      route.route === loginPath
+      && route.redirect === '/app/#/login'
+      && route.statusCode === 302
+    )));
+  }
+});
+
+test('illustrative concept images retain their intrinsic aspect ratio and orientation', async () => {
+  const css = await landingFile('style.css');
+  const imageRule = css.match(/\.capture-frame img\s*\{([^}]*)\}/)?.[1] || '';
+
+  assert.match(imageRule, /height:\s*auto/);
+  assert.match(imageRule, /image-orientation:\s*from-image/);
+  assert.doesNotMatch(imageRule, /aspect-ratio|object-fit/);
 });
 
 test('Azure CSP permits the deployed Flutter WebAssembly engine and CanvasKit module', async () => {

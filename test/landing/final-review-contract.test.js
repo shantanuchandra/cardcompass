@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 const root = new URL('../../', import.meta.url);
 const read = (path) => readFile(new URL(path, root), 'utf8');
 
-test('production surfaces preserve the /app/ OAuth callback and do not deploy legacy login', async () => {
+test('production surfaces preserve the /app/ OAuth callback and redirect legacy login', async () => {
   const auth = await read('lib/features/auth/providers/auth_provider.dart');
   const supabaseConfig = await read('supabase/config.toml');
   const server = await read('server.js');
@@ -13,7 +13,8 @@ test('production surfaces preserve the /app/ OAuth callback and do not deploy le
   assert.match(auth, /oauthRedirectUri/);
   assert.match(auth, /\/app\//);
   assert.match(supabaseConfig, /https:\/\/cardcompass\.in\/app\//);
-  assert.doesNotMatch(server, /loginRoot|\/login/);
+  assert.match(server, /\/login/);
+  assert.match(server, /\/app\/#\/login/);
   assert.doesNotMatch(workflow, /cp\s+-r\s+login/);
 });
 

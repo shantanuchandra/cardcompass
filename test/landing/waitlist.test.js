@@ -11,7 +11,55 @@ import {
   restoreEnrichmentSession,
   clearEnrichmentSession,
   buildApplicationReceipt,
+  createScenarioRotation,
 } from '../../landing/waitlist.js';
+
+test('scenario rotation cycles every four seconds, pauses, resumes, and restarts after selection', () => {
+  let nextTimer = 0;
+  const timers = new Map();
+  const changes = [];
+  const rotation = createScenarioRotation({
+    scenarios: ['groceries', 'dining', 'movies'],
+    initialScenario: 'groceries',
+    onChange: (scenario) => changes.push(scenario),
+    setIntervalFn: (callback, delay) => {
+      assert.equal(delay, 4000);
+      const id = ++nextTimer;
+      timers.set(id, callback);
+      return id;
+    },
+    clearIntervalFn: (id) => timers.delete(id),
+  });
+
+  const tick = () => [...timers.values()][0]?.();
+  rotation.start();
+  tick();
+  tick();
+  assert.deepEqual(changes, ['dining', 'movies']);
+
+  rotation.pause();
+  tick();
+  assert.deepEqual(changes, ['dining', 'movies']);
+
+  rotation.resume();
+  rotation.select('dining');
+  tick();
+  assert.deepEqual(changes, ['dining', 'movies', 'movies']);
+});
+
+test('scenario rotation stays disabled when reduced motion is requested', () => {
+  let scheduled = false;
+  const rotation = createScenarioRotation({
+    scenarios: ['groceries', 'dining', 'movies'],
+    initialScenario: 'groceries',
+    reducedMotion: true,
+    onChange: () => assert.fail('reduced-motion rotation must remain static'),
+    setIntervalFn: () => { scheduled = true; },
+  });
+
+  rotation.start();
+  assert.equal(scheduled, false);
+});
 
 test('email validation rejects malformed and overlong addresses', () => {
   assert.equal(isValidEmail(' person@example.com '), true);

@@ -53,6 +53,53 @@ export function isValidEmail(value) {
   return Boolean(email && email.length <= 254 && EMAIL_RE.test(email));
 }
 
+export function createScenarioRotation({
+  scenarios,
+  initialScenario,
+  onChange,
+  reducedMotion = false,
+  intervalMs = 4000,
+  setIntervalFn = globalThis.setInterval,
+  clearIntervalFn = globalThis.clearInterval,
+} = {}) {
+  const orderedScenarios = Array.isArray(scenarios) ? [...scenarios] : [];
+  let currentIndex = Math.max(0, orderedScenarios.indexOf(initialScenario));
+  let timer = null;
+  let paused = false;
+
+  const stopTimer = () => {
+    if (timer === null) return;
+    clearIntervalFn(timer);
+    timer = null;
+  };
+  const schedule = () => {
+    if (reducedMotion || paused || timer !== null || orderedScenarios.length < 2) return;
+    timer = setIntervalFn(() => {
+      currentIndex = (currentIndex + 1) % orderedScenarios.length;
+      onChange?.(orderedScenarios[currentIndex]);
+    }, intervalMs);
+  };
+
+  return {
+    start: schedule,
+    pause() {
+      paused = true;
+      stopTimer();
+    },
+    resume() {
+      paused = false;
+      schedule();
+    },
+    select(scenario) {
+      const nextIndex = orderedScenarios.indexOf(scenario);
+      if (nextIndex === -1) return;
+      currentIndex = nextIndex;
+      stopTimer();
+      schedule();
+    },
+  };
+}
+
 export function buildJoinPayload({ email, privacyConsent, source, website = '', attribution = {} }) {
   return {
     p_email: String(email ?? '').trim().toLowerCase(),

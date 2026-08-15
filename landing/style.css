@@ -316,7 +316,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--focus); outline:
 .capture { margin: 0; }
 .capture-offset { margin-top: 112px; }
 .capture-frame { padding: 12px; background: #151c22; border: 1px solid var(--rule-light); box-shadow: 0 28px 72px rgba(0, 0, 0, 0.34); }
-.capture-frame img { width: 100%; aspect-ratio: 1; object-fit: cover; }
+.capture-frame img { display: block; width: 100%; height: auto; image-orientation: from-image; }
 .capture figcaption { display: flex; align-items: baseline; justify-content: space-between; gap: 20px; margin-top: 12px; }
 .capture figcaption span { color: var(--signal); font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; }
 .capture figcaption strong { font-size: 13px; font-weight: 600; text-align: right; }

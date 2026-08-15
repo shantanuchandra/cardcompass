@@ -91,6 +91,12 @@ const server = http.createServer((req, res) => {
     res.writeHead(405, { Allow: 'GET, HEAD' }); res.end('Method not allowed'); return;
   }
 
+  if (url === '/login' || url === '/login/') {
+    res.writeHead(302, { Location: '/app/#/login', 'Cache-Control': 'no-store' });
+    res.end();
+    return;
+  }
+
   // Inject env values as a JS module — never exposes raw .env
   if (url === '/env.js') {
     const env = loadEnv();
