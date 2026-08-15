@@ -17,7 +17,7 @@
   --font-display: "Fraunces", Georgia, serif;
   --font-body: "Manrope", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", monospace;
-  --shell: calc(100vw - 40px);
+  --shell: min(1180px, calc(100vw - 40px));
   --shadow: 0 26px 70px rgba(3, 7, 10, 0.2);
 }
 
@@ -365,7 +365,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--focus); outline:
 }
 
 @media (max-width: 760px) {
-  :root { --shell: calc(100% - 28px); }
+  :root { --shell: min(100% - 28px, 620px); }
   .nav-link { display: none; }
   .nav-row nav { gap: 0; }
   .hero { padding: 108px 0 72px; }
