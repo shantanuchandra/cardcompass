@@ -49,6 +49,14 @@ class Transaction {
 
   bool get isDebit => transactionType == TransactionType.debit;
 
+  /// Whether this transaction's currency differs from [bankMarketCurrency]
+  /// — the currency the issuing bank's statements are normally denominated
+  /// in (see `currencyForBank` in bank_market.dart). A foreign-currency
+  /// charge (e.g. a USD hotel booking on an otherwise-INR statement) is
+  /// international; a same-currency charge isn't. Independent of
+  /// `category` — a transaction can be both "food" and international.
+  bool isInternational(String bankMarketCurrency) => currency != bankMarketCurrency;
+
   factory Transaction.fromJson(Map<String, dynamic> json) {
     return Transaction(
       id: json['id'] as String,

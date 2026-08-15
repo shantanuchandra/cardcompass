@@ -1,6 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/providers/repository_providers.dart';
 import '../../../core/providers/supabase_provider.dart';
+import '../../../core/services/bank_market.dart';
+import '../../../core/services/card_normalizer_service.dart';
 import '../../../core/services/eligible_spend.dart';
 import '../../../shared/models/transaction.dart';
 import '../../../shared/models/user_card.dart';
@@ -142,6 +144,24 @@ class TxnsState {
     }
     if (map.isEmpty) return null;
     return map.entries.reduce((a, b) => a.value > b.value ? a : b).key;
+  }
+
+  /// Whether [txn] is a foreign-currency charge relative to its card's
+  /// issuing bank's market currency. Resolves the card's bank name once
+  /// per lookup (cards list is small — far fewer cards than transactions)
+  /// rather than joining bank name into every transaction row at the
+  /// database level. Returns false if the card can't be found or its
+  /// bank's market currency can't be resolved (currencyForBank returns
+  /// null for an unrecognized bank) — a transaction is only flagged
+  /// international when there's a concrete, resolved market to compare
+  /// against.
+  bool isTransactionInternational(Transaction txn) {
+    final card = cards.where((c) => c.id == txn.userCardId).firstOrNull;
+    if (card?.bank == null) return false;
+    final normalizedBank = CardNormalizerService.normalizeBankName(card!.bank!);
+    final marketCurrency = currencyForBank(normalizedBank);
+    if (marketCurrency == null) return false;
+    return txn.isInternational(marketCurrency);
   }
 
   Map<String, List<Transaction>> get grouped {

@@ -170,7 +170,12 @@ class _LedgerBodyState extends ConsumerState<_LedgerBody> {
                         cursor++;
                       }
                       for (final txn in entry.value) {
-                        if (index == cursor) return _TxnRow(txn: txn);
+                        if (index == cursor) {
+                          return _TxnRow(
+                            txn: txn,
+                            isInternational: s.isTransactionInternational(txn),
+                          );
+                        }
                         cursor++;
                       }
                     }
@@ -314,7 +319,8 @@ class _GroupHeader extends StatelessWidget {
 
 class _TxnRow extends StatelessWidget {
   final Transaction txn;
-  const _TxnRow({required this.txn});
+  final bool isInternational;
+  const _TxnRow({required this.txn, this.isInternational = false});
 
   @override
   Widget build(BuildContext context) {
@@ -344,10 +350,22 @@ class _TxnRow extends StatelessWidget {
           const SizedBox(width: AppSpacing.sm),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(
-                txn.merchantName ?? txn.description,
-                style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w500, color: AppColors.textPrimary),
-                overflow: TextOverflow.ellipsis,
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: Text(
+                      txn.merchantName ?? txn.description,
+                      style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w500, color: AppColors.textPrimary),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (isInternational)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 4),
+                      child: Icon(Icons.public, size: 12, color: AppColors.textMuted),
+                    ),
+                ],
               ),
               Text(
                 DateFormat('d MMM · h:mm a').format(txn.transactionDate.toLocal()),
