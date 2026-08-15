@@ -1,5 +1,5 @@
 /// Repository interface for the subset of email-record operations
-/// [DataPipelineDebugService] depends on. Lets tests substitute a fake
+/// the Gmail sync flow depends on. Lets tests substitute a fake
 /// without touching a real Supabase client.
 abstract class EmailRepositoryInterface {
   /// Check if email already exists
@@ -23,5 +23,9 @@ abstract class EmailRepositoryInterface {
     required String emailId,
     required bool processed,
     String? statementId,
+    String? bankDetected,
   });
+
+  /// Get emails with attachments that haven't been processed yet
+  Future<List<Map<String, dynamic>>> getUnprocessedEmails(String userId);
 }

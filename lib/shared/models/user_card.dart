@@ -1,130 +1,83 @@
-import 'package:flutter/material.dart';
-import 'package:hive/hive.dart';
-import 'package:json_annotation/json_annotation.dart';
-import 'package:cardcompass/shared/models/card_catalog.dart';
-import 'package:cardcompass/shared/models/credit_card.dart';
-
-part 'user_card.g.dart';
-
-/// Represents a user's specific credit card
-@HiveType(typeId: 6)
-@JsonSerializable()
 class UserCard {
-  @HiveField(0)
   final String id;
-  
-  @HiveField(1)
   final String userId;
-  
-  @HiveField(2)
   final String catalogCardId;
-  
-  @HiveField(3)
   final String? lastFourDigits;
-  
-  @HiveField(4)
-  final String? cardNumber;  // Should be encrypted in production
-  
-  @HiveField(5)
-  final String? expiryDate;  // Format: MM/YY
-  
-  @HiveField(6)
   final String? cardHolderName;
-  
-  @HiveField(7)
   final double? creditLimit;
-  
-  @HiveField(8)
-  final int? statementDate;  // Day of month when statement is generated
-  
-  @HiveField(9)
-  final int? dueDate;  // Days after statement date
-  
-  @HiveField(10)
+  final int? statementDate;
+  final int? dueDate;
   final bool isActive;
-  
-  @HiveField(11)
   final DateTime createdAt;
-  
-  @HiveField(12)
-  final DateTime updatedAt;
-  
-  @HiveField(13)
-  final CardCatalog? cardCatalog;  // Associated card catalog entry
+
+  // Joined from card_catalog
+  final String? cardName;
+  final String? bank;
+  final String? network;
+  final String? cardType;
+  final double? annualFee;
+  final String? cardUrl;
 
   const UserCard({
     required this.id,
     required this.userId,
     required this.catalogCardId,
     this.lastFourDigits,
-    this.cardNumber,
-    this.expiryDate,
     this.cardHolderName,
     this.creditLimit,
     this.statementDate,
     this.dueDate,
     this.isActive = true,
     required this.createdAt,
-    required this.updatedAt,
-    this.cardCatalog,
+    this.cardName,
+    this.bank,
+    this.network,
+    this.cardType,
+    this.annualFee,
+    this.cardUrl,
   });
 
   factory UserCard.fromJson(Map<String, dynamic> json) {
+    final catalog = json['card_catalog'] as Map<String, dynamic>?;
     return UserCard(
-      id: json['id'],
-      userId: json['user_id'],
-      catalogCardId: json['catalog_card_id'],
-      lastFourDigits: json['last_four_digits'],
-      cardNumber: json['card_number'],
-      expiryDate: json['expiry_date'],
-      cardHolderName: json['card_holder_name'],
-      creditLimit: json['credit_limit']?.toDouble(),
-      statementDate: json['statement_date'],
-      dueDate: json['due_date'],
-      isActive: json['is_active'] ?? true,
-      createdAt: json['created_at'] != null 
-          ? DateTime.parse(json['created_at']) 
-          : DateTime.now(),
-      updatedAt: json['updated_at'] != null 
-          ? DateTime.parse(json['updated_at']) 
-          : DateTime.now(),
-      cardCatalog: json['card_catalog'] != null 
-          ? CardCatalog.fromJson(json['card_catalog']) 
-          : null,
+      id: json['id'] as String,
+      userId: json['user_id'] as String,
+      catalogCardId: json['catalog_card_id'] as String,
+      lastFourDigits: json['last_four_digits'] as String?,
+      cardHolderName: json['card_holder_name'] as String?,
+      creditLimit: (json['credit_limit'] as num?)?.toDouble(),
+      statementDate: json['statement_date'] as int?,
+      dueDate: json['due_date'] as int?,
+      isActive: json['is_active'] as bool? ?? true,
+      createdAt: DateTime.parse(json['created_at'] as String),
+      cardName: catalog?['card_name'] as String?,
+      bank: catalog?['bank'] as String?,
+      network: catalog?['network'] as String?,
+      cardType: catalog?['card_type'] as String?,
+      annualFee: (catalog?['annual_fee'] as num?)?.toDouble(),
+      cardUrl: catalog?['card_url'] as String?,
     );
   }
 
-  Map<String, dynamic> toJson() {
-    final map = {
-      'id': id,
-      'user_id': userId,
-      'catalog_card_id': catalogCardId,
-      'last_four_digits': lastFourDigits,
-      'card_number': cardNumber,
-      'expiry_date': expiryDate,
-      'card_holder_name': cardHolderName,
-      'credit_limit': creditLimit,
-      'statement_date': statementDate,
-      'due_date': dueDate,
-      'is_active': isActive,
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
-    };
-    
-    // Don't include card_catalog in JSON for database operations
-    return map;
+  String get displayName => cardName ?? 'Card ••••${lastFourDigits ?? ''}';
+  String get maskedNumber => lastFourDigits != null ? '••••  ••••  ••••  $lastFourDigits' : '';
+
+  // Maps any bank name variant to a short gradient key.
+  // "HDFC Bank", "hdfc" → "hdfc"; "SBI Cards" → "sbi"; "Bpcl" → "bpcl"; etc.
+  String get bankCode {
+    final b = (bank ?? '').toLowerCase();
+    if (b.contains('hdfc')) return 'hdfc';
+    if (b.contains('sbi')) return 'sbi';
+    if (b.contains('icici')) return 'icici';
+    if (b.contains('axis')) return 'axis';
+    if (b.contains('kotak')) return 'kotak';
+    if (b.contains('amex') || b.contains('american express')) return 'amex';
+    if (b.contains('bpcl')) return 'bpcl';
+    if (b.contains('indusind')) return 'indusind';
+    if (b.contains('yes bank') || b == 'yes') return 'yes';
+    if (b.contains('rbl')) return 'rbl';
+    if (b.contains('idfc')) return 'idfc';
+    if (b.contains('bob') || b.contains('bank of baroda')) return 'bob';
+    return b.replaceAll(' ', '');
   }
-  
-  String get maskedCardNumber {
-    if (lastFourDigits == null || lastFourDigits!.isEmpty) return '****';
-    return '**** **** **** ${lastFourDigits}';
-  }
-  
-  // Convenience getters to access catalog properties directly
-  String get bankName => cardCatalog?.bank ?? 'Unknown Bank';
-  String get cardName => cardCatalog?.cardName ?? 'Unknown Card';
-  CardType get cardType => cardCatalog?.typeEnum ?? CardType.credit;
-  CardNetwork get network => cardCatalog?.networkEnum ?? CardNetwork.visa;
-  double? get annualFee => cardCatalog?.annualFee;
-  Color get networkColor => cardCatalog?.networkColor ?? Colors.blueGrey;
 }

@@ -1,0 +1,161 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import {
+  buildEnrichmentPayload,
+  buildJoinPayload,
+  extractEnrichmentToken,
+  isValidEmail,
+  validateQualification,
+  persistEnrichmentSession,
+  restoreEnrichmentSession,
+  clearEnrichmentSession,
+  buildApplicationReceipt,
+} from '../../landing/waitlist.js';
+
+test('email validation rejects malformed and overlong addresses', () => {
+  assert.equal(isValidEmail(' person@example.com '), true);
+  assert.equal(isValidEmail('person@example'), false);
+  assert.equal(isValidEmail(`a@${'b'.repeat(250)}.com`), false);
+});
+
+test('join payload matches the public RPC contract exactly', () => {
+  assert.deepEqual(
+    buildJoinPayload({
+      email: ' Person@Example.com ',
+      privacyConsent: true,
+      source: 'landing_hero',
+      attribution: {
+        utm_source: 'newsletter',
+        utm_medium: 'email',
+        utm_campaign: 'founding-100',
+        utm_term: null,
+        utm_content: 'receipt-a',
+        referrer_path: '/best-credit-card/',
+        landing_variant: 'receipt_v1',
+      },
+    }),
+    {
+      p_email: 'person@example.com',
+      p_source: 'landing_hero',
+      p_utm_source: 'newsletter',
+      p_utm_medium: 'email',
+      p_utm_campaign: 'founding-100',
+      p_utm_term: null,
+      p_utm_content: 'receipt-a',
+      p_referrer_path: '/best-credit-card/',
+      p_landing_variant: 'receipt_v1',
+      p_privacy_consent: true,
+      p_website: null,
+    },
+  );
+});
+
+test('first-touch utility source overrides the on-page waitlist placement in join_waitlist', () => {
+  assert.equal(
+    buildJoinPayload({
+      email: 'person@example.com',
+      privacyConsent: true,
+      source: 'landing_hero',
+      attribution: { source: 'best-card', landing_variant: 'best-card' },
+    }).p_source,
+    'best-card',
+  );
+});
+
+test('qualification requires every scoring field', () => {
+  assert.deepEqual(
+    validateQualification({
+      cardCount: '3-6',
+      monthlySpendBand: '',
+      primaryGoal: 'maximize_rewards',
+      problemDetail: '',
+      topCards: [],
+    }),
+    { monthlySpendBand: 'Choose your monthly card spend.' },
+  );
+});
+
+test('qualification enforces RPC field limits and enum values', () => {
+  assert.deepEqual(
+    validateQualification({
+      name: 'N'.repeat(101),
+      cardCount: '3-5',
+      monthlySpendBand: '50k-1l',
+      primaryGoal: 'maximize_rewards',
+      problemDetail: 'P'.repeat(501),
+      topCards: ['A'.repeat(101), 'Card B', 'Card C'],
+    }),
+    {
+      name: 'Keep your name to 100 characters or fewer.',
+      cardCount: 'Choose how many cards you hold.',
+      problemDetail: 'Keep this to 500 characters or fewer.',
+      topCards: 'Choose up to two cards, each under 100 characters.',
+    },
+  );
+});
+
+test('enrichment payload trims optional values and matches the RPC contract', () => {
+  assert.deepEqual(
+    buildEnrichmentPayload({
+      token: 'A'.repeat(64),
+      name: '  Asha  ',
+      cardCount: '3-6',
+      monthlySpendBand: '50k-1l',
+      primaryGoal: 'maximize_rewards',
+      problemDetail: '  Caps are hard to remember.  ',
+      topCards: ['  HDFC Bank Infinia  ', '', ' Axis Bank Atlas '],
+      marketingConsent: true,
+    }),
+    {
+      p_enrichment_token: 'a'.repeat(64),
+      p_name: 'Asha',
+      p_card_count: '3-6',
+      p_monthly_spend_band: '50k-1l',
+      p_primary_goal: 'maximize_rewards',
+      p_problem_detail: 'Caps are hard to remember.',
+      p_top_cards: ['HDFC Bank Infinia', 'Axis Bank Atlas'],
+      p_marketing_consent: true,
+    },
+  );
+});
+
+test('join response accepts only a success row with a valid opaque token', () => {
+  const token = '0123456789abcdef'.repeat(4);
+  assert.equal(extractEnrichmentToken([{ status: 'accepted', enrichment_token: token }]), token);
+  assert.throws(() => extractEnrichmentToken([{ status: 'accepted', enrichment_token: 'short' }]));
+  assert.throws(() => extractEnrichmentToken([{ status: 'rejected', enrichment_token: token }]));
+});
+
+test('enrichment token survives same-session refresh, expires, and clears', () => {
+  let value = null;
+  const storage = { getItem: () => value, setItem: (_key, next) => { value = next; }, removeItem: () => { value = null; } };
+  const now = Date.parse('2026-08-15T12:00:00Z');
+  const token = 'a'.repeat(64);
+  persistEnrichmentSession(storage, token, now);
+  assert.equal(restoreEnrichmentSession(storage, now + 1000), token);
+  assert.equal(restoreEnrichmentSession(storage, now + (31 * 60 * 1000)), null);
+  persistEnrichmentSession(storage, token, now);
+  clearEnrichmentSession(storage);
+  assert.equal(restoreEnrichmentSession(storage, now), null);
+});
+
+test('join receipt resumes after refresh and supplies enrich before one-time clear', () => {
+  let value = null;
+  const storage = { getItem: () => value, setItem: (_key, next) => { value = next; }, removeItem: () => { value = null; } };
+  const token = extractEnrichmentToken([{ status: 'accepted', enrichment_token: 'b'.repeat(64) }]);
+  persistEnrichmentSession(storage, token, 1000);
+  const resumed = restoreEnrichmentSession(storage, 2000);
+  assert.equal(buildEnrichmentPayload({
+    token: resumed, cardCount: '3-6', monthlySpendBand: '50k-1l',
+    primaryGoal: 'maximize_rewards',
+  }).p_enrichment_token, token);
+  clearEnrichmentSession(storage);
+  assert.equal(restoreEnrichmentSession(storage, 2000), null);
+});
+
+test('enrichment receipt stays neutral when a duplicate decoy token stores no details', () => {
+  const receipt = buildApplicationReceipt(true);
+  assert.match(receipt.body, /If these details matched an active application, they were processed\./i);
+  assert.doesNotMatch(receipt.body, /We(?:'|’)ve received this step/i);
+});

@@ -8,7 +8,6 @@ class SimpleBirthdayInputService {
     required String userId,
     required String reason,
   }) async {
-    // If no context provided, return null (can't show dialog)
     if (context == null) {
       print('⚠️  No context provided for birthday input dialog');
       return null;
@@ -53,11 +52,10 @@ class SimpleBirthdayInputService {
     return result;
   }
 
-  /// Show date picker dialog
   static Future<DateTime?> _showDatePicker(BuildContext context) async {
     final now = DateTime.now();
     final eighteenYearsAgo = DateTime(now.year - 18, now.month, now.day);
-    
+
     return await showDatePicker(
       context: context,
       initialDate: eighteenYearsAgo,
@@ -65,22 +63,6 @@ class SimpleBirthdayInputService {
       lastDate: now,
       helpText: 'Select your date of birth',
     );
-  }
-
-  /// Validate birthday
-  static bool isValidBirthday(DateTime? birthday) {
-    if (birthday == null) return false;
-    
-    final now = DateTime.now();
-    final age = now.year - birthday.year;
-    
-    // Check if birthday is not in the future
-    if (birthday.isAfter(now)) return false;
-    
-    // Check reasonable age range (13-120 years)
-    if (age < 13 || age > 120) return false;
-    
-    return true;
   }
 
   /// Format birthday for password generation
@@ -91,12 +73,12 @@ class SimpleBirthdayInputService {
     final shortYear = year.substring(2);
 
     return {
-      'ddmm': '$day$month',           // 2512
-      'ddmmyy': '$day$month$shortYear', // 251290
-      'ddmmyyyy': '$day$month$year',   // 25121990
-      'yyyymmdd': '$year$month$day',   // 19901225
-      'mmddyyyy': '$month$day$year',   // 12251990
-      'raw': '$year-$month-$day',      // 1990-12-25
+      'ddmm': '$day$month',
+      'ddmmyy': '$day$month$shortYear',
+      'ddmmyyyy': '$day$month$year',
+      'yyyymmdd': '$year$month$day',
+      'mmddyyyy': '$month$day$year',
+      'raw': '$year-$month-$day',
     };
   }
 }

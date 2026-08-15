@@ -1,0 +1,301 @@
+/* ============================================================
+   CardCompass — Login Page Styles
+   Design tokens match landing/style.css
+   ============================================================ */
+
+/* --- Design tokens --- */
+:root {
+  --bg:            #0F172A;
+  --card-bg:       rgba(255, 255, 255, 0.04);
+  --card-border:   rgba(255, 255, 255, 0.08);
+  --card-radius:   20px;
+  --green:         #15803D;
+  --green-light:   #16a34a;
+  --amber:         #D97706;
+  --text:          rgba(255, 255, 255, 0.85);
+  --text-muted:    rgba(255, 255, 255, 0.45);
+  --text-dim:      rgba(255, 255, 255, 0.35);
+  --font:          'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+/* --- Reset / base --- */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* --- Radial glow --- */
+.glow {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse 600px 400px at 50% 40%,
+    rgba(21, 128, 61, 0.12),
+    transparent
+  );
+  z-index: 0;
+}
+
+/* --- Page wrapper --- */
+.page-wrap {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  width: 100%;
+  max-width: 420px;
+  padding: 24px 20px;
+}
+
+/* --- Brand header --- */
+.brand {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.wordmark {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.375rem;    /* 22px */
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.compass-icon {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+.tagline {
+  font-size: 0.8125rem;   /* 13px */
+  font-weight: 400;
+  color: var(--text-muted);
+  letter-spacing: 0.01em;
+}
+
+/* --- Card --- */
+.card {
+  width: 100%;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--card-radius);
+  padding: 36px 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.card-heading {
+  font-size: 1.25rem;     /* 20px */
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  text-align: center;
+  line-height: 1.3;
+}
+
+.card-subtitle {
+  font-size: 0.875rem;    /* 14px */
+  font-weight: 400;
+  color: var(--text-muted);
+  text-align: center;
+  margin-bottom: 16px;
+}
+
+/* --- Google OAuth button --- */
+.google-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;       /* touch target */
+  padding: 14px 24px;
+  background: #ffffff;
+  color: #0F172A;
+  border: none;
+  border-radius: 10px;
+  font-family: var(--font);
+  font-size: 0.9375rem;   /* 15px */
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  outline: none;
+  position: relative;
+  transition: box-shadow 0.18s ease, transform 0.15s ease;
+  margin-top: 8px;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.google-btn:hover {
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+  transform: scale(1.01);
+}
+
+.google-btn:active {
+  transform: scale(0.99);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.google-btn:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+
+/* Loading state */
+.google-btn[disabled] {
+  cursor: not-allowed;
+  opacity: 0.85;
+}
+
+.google-btn[disabled]:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+/* Google icon / spinner */
+.google-icon,
+.spinner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.spinner {
+  display: none;
+  animation: spin 0.8s linear infinite;
+}
+
+.google-btn.loading .google-icon {
+  display: none;
+}
+
+.google-btn.loading .spinner {
+  display: flex;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* --- Error message --- */
+.error-msg {
+  display: none;
+  width: 100%;
+  margin-top: 4px;
+  padding: 10px 14px;
+  background: rgba(220, 38, 38, 0.12);
+  border: 1px solid rgba(220, 38, 38, 0.25);
+  border-radius: 8px;
+  font-size: 0.8125rem;   /* 13px */
+  font-weight: 500;
+  color: #fca5a5;
+  text-align: center;
+  line-height: 1.5;
+}
+
+.error-msg.visible {
+  display: block;
+}
+
+/* --- Security line --- */
+.security-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 0.75rem;     /* 12px */
+  font-weight: 400;
+  color: var(--text-dim);
+  text-align: center;
+  line-height: 1.4;
+}
+
+.security-line svg {
+  flex-shrink: 0;
+}
+
+/* --- Back link --- */
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8125rem;   /* 13px */
+  font-weight: 500;
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.back-link:hover {
+  color: var(--text);
+}
+
+.back-link:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* --- Reduced motion --- */
+@media (prefers-reduced-motion: reduce) {
+  .google-btn,
+  .google-btn:hover,
+  .google-btn:active {
+    transition: none;
+    transform: none !important;
+  }
+
+  .spinner {
+    animation: none;
+  }
+}
+
+/* --- Mobile --- */
+@media (max-width: 480px) {
+  .card {
+    padding: 28px 20px;
+    border-radius: 16px;
+  }
+
+  .wordmark {
+    font-size: 1.25rem;
+  }
+
+  .card-heading {
+    font-size: 1.125rem;
+  }
+}

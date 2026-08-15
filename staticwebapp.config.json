@@ -1,32 +1,34 @@
 {
-  "navigationFallback": {
-    "rewrite": "/app/index.html",
-    "exclude": [
-      "/img/*",
-      "/app/assets/*",
-      "/app/icons/*",
-      "/app/canvaskit/*",
-      "*.css",
-      "*.js",
-      "*.json",
-      "*.png",
-      "*.jpg",
-      "*.svg",
-      "*.ico",
-      "*.woff2",
-      "*.wasm",
-      "/llm.txt"
-    ]
-  },
   "routes": [
     {
-      "route": "/",
-      "rewrite": "/index.html"
+      "route": "/app/*",
+      "headers": {
+        "Cache-Control": "no-cache"
+      }
+    },
+    {
+      "route": "/env.js",
+      "headers": {
+        "Cache-Control": "no-store"
+      }
     }
   ],
   "responseOverrides": {
     "404": {
-      "rewrite": "/app/index.html"
+      "rewrite": "/404.html",
+      "statusCode": 404
     }
+  },
+  "globalHeaders": {
+    "Permissions-Policy": "camera=(), geolocation=(), microphone=()",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Content-Security-Policy": "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; connect-src 'self' https://*.supabase.co https://plausible.io; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+  },
+  "mimeTypes": {
+    ".json": "application/json; charset=utf-8",
+    ".txt": "text/plain; charset=utf-8",
+    ".webmanifest": "application/manifest+json"
   }
 }

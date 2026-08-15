@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Credit Card Milestone Tracker Calculator | CardCompass</title>
+    <meta
+      name="description"
+      content="Calculate the remaining spend, daily pace and projected gap for a credit-card milestone. Includes eligibility cautions and transparent assumptions."
+    />
+    <link
+      rel="canonical"
+      href="https://cardcompass.in/tools/milestone-tracker/"
+    />
+    <meta property="og:title" content="Credit Card Milestone Tracker" />
+    <meta
+      property="og:description"
+      content="See the remaining spend and daily pace—without turning a target into a reason to overspend."
+    />
+    <meta property="og:type" content="website" />
+    <meta
+      property="og:url"
+      content="https://cardcompass.in/tools/milestone-tracker/"
+    />
+    <meta
+      property="og:image"
+      content="https://cardcompass.in/img/social-preview.png"
+    />
+    <meta
+      property="og:image:alt"
+      content="CardCompass decision receipt showing an inspectable credit-card choice."
+    />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:image"
+      content="https://cardcompass.in/img/social-preview.png"
+    />
+    <meta
+      name="twitter:image:alt"
+      content="CardCompass decision receipt showing an inspectable credit-card choice."
+    />
+    <meta name="theme-color" content="#0B1015" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/resources.css" />
+    <link rel="icon" href="/img/favicon.png" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebApplication",
+            "name": "Credit Card Milestone Tracker Calculator",
+            "url": "https://cardcompass.in/tools/milestone-tracker/",
+            "applicationCategory": "FinanceApplication",
+            "operatingSystem": "Any",
+            "isAccessibleForFree": true,
+            "description": "Estimate remaining milestone spend, planned-spend gap and daily pace."
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to calculator</a>
+    <header class="site-header">
+      <div class="shell nav-row">
+        <a class="wordmark" href="/"
+          ><span class="wordmark-mark">CC</span><span>CardCompass</span></a
+        >
+        <nav class="nav-links" aria-label="Primary">
+          <a href="/tools/best-card/">Best card</a
+          ><a href="/tools/movie-offers/">Movie offers</a
+          ><a
+            class="button button-primary"
+            href="/?source=milestone-tracker&amp;landing_variant=milestone-tracker#apply"
+            >Join waitlist</a
+          >
+        </nav>
+      </div>
+    </header>
+    <main id="main">
+      <section class="resource-hero">
+        <div class="shell">
+          <nav class="breadcrumb" aria-label="Breadcrumb">
+            <a href="/">Home</a> / <span>Tools</span> / Milestone tracker
+          </nav>
+          <p class="eyebrow">Free calculator / spend target</p>
+          <h1>How far are you from your credit-card milestone?</h1>
+          <p class="lede">
+            Turn an issuer threshold into four numbers: remaining now, projected
+            spend, projected gap and projected-gap daily pace. The calculator
+            never assumes that spending more is a good decision.
+          </p>
+          <p class="updated">
+            Illustrative calculator · no sign-in · inputs stay in this page
+          </p>
+          <p class="trust-line">
+            Author: CardCompass product team · Reviewed by: CardCompass
+            engineering · Last updated: 15 August 2026
+          </p>
+        </div>
+      </section>
+      <section class="tool-intro">
+        <div class="shell tool-grid">
+          <form
+            class="tool-panel"
+            method="post"
+            action="/tool-unavailable/"
+            data-tool-form="milestone"
+            data-output="milestoneOutput"
+          >
+            <noscript><p>This calculator requires JavaScript. No values were submitted.</p></noscript>
+            <p class="mono-label">Target / period / plan</p>
+            <h2>Enter milestone progress</h2>
+            <p>
+              Use eligible posted spend from the same milestone period. Keep
+              refunds and excluded categories out of the current-spend number
+              where possible.
+            </p>
+            <div class="field-grid">
+              <div class="field">
+                <label for="target">Milestone target (₹)</label
+                ><input
+                  id="target"
+                  name="target"
+                  type="number"
+                  min="1"
+                  step="0.01"
+                  value="100000"
+                  required
+                />
+              </div>
+              <div class="field">
+                <label for="currentSpend">Eligible spend so far (₹)</label
+                ><input
+                  id="currentSpend"
+                  name="current_spend"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value="72000"
+                  required
+                />
+              </div>
+              <div class="field">
+                <label for="plannedSpend">Already-planned spend (₹)</label
+                ><input
+                  id="plannedSpend"
+                  name="planned_spend"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value="8000"
+                  required
+                /><small
+                  >Purchases you intended anyway, not spend invented for the
+                  target.</small
+                >
+              </div>
+              <div class="field">
+                <label for="daysRemaining">Days remaining</label
+                ><input
+                  id="daysRemaining"
+                  name="days_remaining"
+                  type="number"
+                  min="0"
+                  step="1"
+                  value="14"
+                  required
+                />
+              </div>
+            </div>
+            <div class="form-actions">
+              <button class="button button-primary" type="submit">
+                Calculate progress
+              </button>
+            </div>
+          </form>
+          <section
+            class="tool-output"
+            id="milestoneOutput"
+            aria-live="polite"
+            hidden
+          ></section>
+        </div>
+      </section>
+      <section class="resource-main">
+        <div class="shell content">
+          <h2>How this estimate works</h2>
+          <p>
+            The tracker subtracts eligible spend so far from the target. It then
+            adds spend you already plan and shows any projected gap.
+            Projected-gap daily pace is that gap divided by days left; it is a
+            neutral planning number, not a recommendation to spend that amount
+            every day.
+          </p>
+          <p class="formula">
+            remaining now = max(target − eligible spend, 0)<br />projected gap =
+            max(target − eligible spend − planned spend, 0)<br />projected-gap
+            daily pace = projected gap ÷ days remaining
+          </p>
+          <div class="explain-grid">
+            <article class="explain-card">
+              <h3>“On track” is narrow</h3>
+              <p>
+                The label means only that your entered current plus planned
+                spend reaches the threshold. It does not confirm that the issuer
+                will count each transaction or award the milestone.
+              </p>
+            </article>
+            <article class="explain-card">
+              <h3>A target is not free money</h3>
+              <p>
+                If you need ₹20,000 of unnecessary spend to earn a ₹2,000
+                voucher, the arithmetic is not attractive. Interest or late fees
+                can overwhelm the value even faster.
+              </p>
+            </article>
+          </div>
+          <h2>What this does not include</h2>
+          <p>
+            The calculator does not connect to an issuer. It cannot know pending
+            versus posted transactions, refunds, reversals, supplementary-card
+            rules, category exclusions, EMI treatment, wallet loads, rent,
+            government payments, insurance, fuel, fees, taxes or the issuer's
+            exact cycle boundary. It does not value the milestone reward or
+            compare that value with another card's lost rewards.
+          </p>
+          <p>
+            It also cannot decide whether the planned purchase is affordable or
+            useful. Treat the result as a reconciliation aid and verify progress
+            in the issuer app or statement.
+          </p>
+          <h2>Find the correct target period first</h2>
+          <p>
+            Milestones can run by calendar month, calendar quarter, membership
+            year, card anniversary or statement cycle. A “quarter” in marketing
+            copy may not match the three months you expect. Record the start and
+            end dates from the issuer terms. When the final day is close,
+            remember that authorisation date and posting date can differ.
+          </p>
+          <h2>Which spend might not count?</h2>
+          <p>
+            Every programme is different, but common exclusions include cash
+            advances, balance transfers, fees and interest, refunds, rent,
+            wallet loading, fuel, government payments, education, utilities,
+            insurance, tax payments and EMI conversion. Some milestones count
+            net retail purchases only. Some exclude transactions that later
+            become EMI. Use the issuer's current wording rather than this
+            general list.
+          </p>
+          <h2>Worked example</h2>
+          <p>
+            A card has a ₹1,00,000 quarterly milestone. The issuer shows ₹72,000
+            of eligible posted spend and the period ends in 14 days. You already
+            plan ₹8,000 of normal purchases. The remaining amount now is
+            ₹28,000; current plus planned spend is ₹80,000; the projected gap is
+            ₹20,000; and the projected-gap daily pace is ₹1,428.57.
+          </p>
+          <p>
+            If the milestone benefit is worth ₹1,500, manufacturing ₹20,000 of
+            purchases is not justified. If ₹20,000 of unavoidable eligible bills
+            are already scheduled, the milestone may be relevant—but those bills
+            still need to post in time and qualify.
+          </p>
+          <h2>A safer milestone routine</h2>
+          <ol>
+            <li>
+              Copy the target, benefit, eligible-spend definition and exact
+              period from the issuer.
+            </li>
+            <li>
+              Use posted eligible spend, not the card's total outstanding
+              balance.
+            </li>
+            <li>Subtract refunds and known exclusions.</li>
+            <li>
+              List only purchases you already intended and can pay in full.
+            </li>
+            <li>
+              Compare the benefit value with rewards you give up by moving
+              purchases from another card.
+            </li>
+            <li>
+              Leave a posting-time buffer and verify after the cycle ends.
+            </li>
+          </ol>
+          <h2>Sources and methodology</h2>
+          <p>
+            The tracker calculates only from the figures you enter; it does not
+            verify eligible spend. Read the
+            <a href="/recommendation-disclaimer/"
+              >CardCompass recommendation methodology and disclaimer</a
+            >, consult the issuer's current milestone terms, and compare them
+            with the
+            <a
+              href="https://www.rbi.org.in/commonman/Upload/English/FAQs/PDFs/FAQMDCreditCardandDebitCard.pdf"
+              >Reserve Bank of India credit- and debit-card FAQ</a
+            >. Issuer rules remain authoritative for exclusions, posting windows
+            and fulfilment.
+          </p>
+          <h2>Frequently asked questions</h2>
+          <div class="faq-list">
+            <details>
+              <summary>Does all card spend count?</summary>
+              <p>
+                No. Use the issuer's eligible-spend definition. Outstanding
+                balance is not the same as milestone progress.
+              </p>
+            </details>
+            <details>
+              <summary>What if there are zero days left?</summary>
+              <p>
+                The calculator shows that no daily pace can be computed. Check
+                posted progress with the issuer and do not assume a same-day
+                purchase will count.
+              </p>
+            </details>
+            <details>
+              <summary>Does “reached” guarantee the benefit?</summary>
+              <p>
+                No. It means the number you entered meets the numeric target.
+                Eligibility, posting and reward fulfilment remain with the
+                issuer.
+              </p>
+            </details>
+          </div>
+        </div>
+      </section>
+      <section class="cta-band">
+        <div class="shell cta-inner">
+          <div>
+            <p class="mono-label">Several cards / several cycles</p>
+            <h2>
+              CardCompass is being built to keep milestone context beside
+              everyday card choices.
+            </h2>
+          </div>
+          <a
+            class="button button-dark"
+            href="/?source=milestone-tracker&amp;landing_variant=milestone-tracker#apply"
+            >Apply for early access</a
+          >
+        </div>
+      </section>
+    </main>
+    <footer class="site-footer">
+      <div class="shell footer-grid">
+        <div>
+          <a class="wordmark" href="/"
+            ><span class="wordmark-mark">CC</span><span>CardCompass</span></a
+          >
+          <p>Calculations you can inspect.</p>
+        </div>
+        <nav class="footer-links" aria-label="Resources">
+          <a href="/tools/best-card/">Best-card calculator</a
+          ><a href="/tools/movie-offers/">Movie offer calculator</a
+          ><a href="/recommendation-disclaimer/">Recommendation disclaimer</a
+          ><a href="/privacy/">Privacy</a>
+        </nav>
+        <p class="footer-copy">© 2026 CardCompass</p>
+      </div>
+    </footer>
+    <script type="module" src="/tools/tools.js"></script>
+  </body>
+</html>

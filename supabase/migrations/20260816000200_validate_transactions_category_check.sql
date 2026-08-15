@@ -1,0 +1,30 @@
+-- supabase/migrations/20260816000200_validate_transactions_category_check.sql
+--
+-- Upgrades transactions_category_valid (added NOT VALID in
+-- 20260816000100) to a fully-enforced constraint by validating every
+-- existing row. DO NOT apply this migration until the backfill job
+-- (category_backfill_service.dart) has run against production and
+-- corrected every pre-existing invalid category value — if any row
+-- still holds an invalid value when this runs, VALIDATE CONSTRAINT
+-- fails with an error identifying it, and this migration does not
+-- apply. That failure is the correct, safe outcome: it means the
+-- backfill hasn't finished, not that this SQL is wrong.
+--
+-- This migration has NOT been applied as part of this implementation
+-- pass. Its precondition (the backfill having actually run against
+-- real production data) cannot be verified in this environment
+-- (Docker/local Supabase unavailable). Before applying this migration,
+-- confirm the precondition query below returns 0:
+--
+--   select count(*) from transactions
+--   where category is not null
+--     and category not in (
+--       'food', 'fuel', 'grocery', 'entertainment', 'travel', 'shopping',
+--       'utilities', 'insurance', 'medical', 'education', 'investment',
+--       'transport', 'rental', 'subscription', 'gift', 'other'
+--     );
+--
+-- If it returns anything greater than 0, do not apply this migration —
+-- run the backfill against those rows first.
+alter table public.transactions
+  validate constraint transactions_category_valid;
