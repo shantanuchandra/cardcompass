@@ -79,6 +79,14 @@ test('local server serves landing, app, and generated environment roots without 
 
 });
 
+test('local development builds Flutter for the /app/ mount before serving it', async () => {
+  const packageJson = JSON.parse(await readFile(new URL('package.json', repoRoot), 'utf8'));
+
+  assert.match(packageJson.scripts['build:app'], /flutter build web/);
+  assert.match(packageJson.scripts['build:app'], /--base-href \/app\//);
+  assert.equal(packageJson.scripts.predev, 'npm run build:app');
+});
+
 test('local server blocks dotfiles, repository internals, secrets, and traversal', async (t) => {
   const port = await unusedPort();
   const child = spawn(process.execPath, ['server.js', String(port)], {
