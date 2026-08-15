@@ -10,6 +10,9 @@ import 'pdf_password_resolver.dart';
 import 'gemini_statement_parser.dart';
 import 'card_normalizer_service.dart';
 import 'parsing_logger.dart';
+import 'transaction_categorizer.dart';
+import 'bank_market.dart';
+import 'transaction_currency_resolver.dart';
 
 enum EmailOutcome { succeeded, needsPassword, needsCardAssignment, failed }
 
@@ -42,6 +45,7 @@ class StatementProcessingService {
   final String _userEmail;
   final String _userName;
   final Map<String, String> _forcedCardIdByBank;
+  final Map<String, String?> _merchantCategoryCache = {};
 
   /// [forcedCardIdByBank] lets a caller pin a specific bank name (as stored
   /// in emails.bank_detected) to a card for this run — used right after the
@@ -63,6 +67,12 @@ class StatementProcessingService {
         _userEmail = userEmail,
         _userName = userName,
         _forcedCardIdByBank = forcedCardIdByBank;
+
+  Future<void> _warmMerchantCategoryCache(String normalizedMerchantName) async {
+    if (_merchantCategoryCache.containsKey(normalizedMerchantName)) return;
+    _merchantCategoryCache[normalizedMerchantName] =
+        await _transactionsRepo.lookupMerchantCategory(normalizedMerchantName);
+  }
 
   Future<StatementProcessingResult> processUnprocessedEmails() async {
     final emails = await _emailRepo.getUnprocessedEmails(_userId);
@@ -427,21 +437,46 @@ class StatementProcessingService {
         transactionCount: transactions.length,
       );
 
+      final bankMarketCurrency = currencyForBank(bankName);
+
       for (final txn in transactions) {
         final amount = (txn['amount'] as num?)?.toDouble() ?? 0;
         final type = txn['type'] as String? ?? 'debit';
+        final description =
+            txn['description'] as String? ?? 'Unknown transaction';
+        final rawMerchantName = txn['merchantName'] as String?;
+        final merchantForCategorization = rawMerchantName ?? description;
+        final normalizedMerchant =
+            normalizeMerchantName(merchantForCategorization);
+
+        await _warmMerchantCategoryCache(normalizedMerchant);
+        final categorization = categorize(
+          merchantName: merchantForCategorization,
+          description: description,
+          geminiCategory: txn['category'] as String?,
+          merchantLookup: (normalized) => _merchantCategoryCache[normalized],
+        );
+        final currency = resolveTransactionCurrency(
+          geminiCurrency: txn['currency'] as String?,
+          bankMarketCurrency: bankMarketCurrency,
+        );
+
         await _transactionsRepo.addTransaction(
           userId: _userId,
           userCardId: userCardId,
           amount: amount.abs(),
-          description: txn['description'] as String? ?? 'Unknown transaction',
+          description: description,
           transactionDate:
               txn['date'] != null ? DateTime.parse(txn['date'] as String) : statementDate,
-          merchantName: txn['merchantName'] as String?,
-          category: txn['category'] as String?,
+          currency: currency,
+          merchantName: rawMerchantName,
+          category: categorization.category,
           transactionType: type,
           rewardEarned: (txn['reward_points'] as num?)?.toDouble(),
           statementId: statement.id,
+          metadata: {
+            'category_source': categorization.source.name,
+          },
         );
       }
 

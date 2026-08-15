@@ -1,6 +1,10 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../shared/models/transaction.dart';
 
+String? parseMerchantCategoryRow(Map<String, dynamic>? row) {
+  return row?['category'] as String?;
+}
+
 class TransactionsRepository {
   final SupabaseClient _db;
   TransactionsRepository(this._db);
@@ -41,6 +45,15 @@ class TransactionsRepository {
     return (data as List).map((e) => Transaction.fromJson(e as Map<String, dynamic>)).toList();
   }
 
+  Future<String?> lookupMerchantCategory(String normalizedMerchantName) async {
+    final row = await _db
+        .from('merchant_category_map')
+        .select('category')
+        .eq('merchant_name_normalized', normalizedMerchantName)
+        .maybeSingle();
+    return parseMerchantCategoryRow(row);
+  }
+
   // Total spend for current month, grouped by category
   Future<Map<String, double>> getMonthlySpendByCategory(String userId) async {
     final now = DateTime.now();
@@ -70,7 +83,7 @@ class TransactionsRepository {
     required double amount,
     required String description,
     required DateTime transactionDate,
-    String currency = 'INR',
+    required String currency,
     String? merchantName,
     String? category,
     String transactionType = 'debit',
