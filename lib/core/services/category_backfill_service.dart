@@ -65,7 +65,7 @@ class CategoryBackfillService {
 
     for (final txn in transactions) {
       final merchantName = txn.merchantName ?? txn.description;
-      final normalized = merchantName.trim().toUpperCase().replaceAll(RegExp(r'\s+'), ' ');
+      final normalized = normalizeMerchantName(merchantName);
       final mapped = await _repo.lookupMerchantCategory(normalized);
 
       final result = recategorize(
