@@ -1,15 +1,7 @@
+@import url("./brand-tokens.css");
+
 :root {
-  --ink: #0b1015;
-  --ink-soft: #172027;
-  --paper: #f4f0e6;
-  --paper-deep: #e8e2d5;
-  --ledger: #dde7e1;
-  --cyan: #3fe0d0;
-  --saffron: #ffb547;
-  --coral: #ff7163;
-  --muted: #687278;
   --line: rgba(11, 16, 21, 0.18);
-  --radius: 18px;
   --shell: 1120px;
 }
 

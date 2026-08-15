@@ -1,24 +1,7 @@
+@import url("./brand-tokens.css");
+
 :root {
-  --ink: #0b1015;
-  --paper: #f4f0e6;
-  --paper-deep: #e9e3d5;
-  --ledger: #dde7e1;
-  --signal: #3fe0d0;
-  --reward: #ffb547;
-  --error: #ff7163;
-  --white: #fffdf7;
-  --muted-ink: #465159;
-  --muted-paper: #9ca9a8;
-  --teal-text: #316c65;
-  --subtle-text: #586568;
-  --focus: #006d64;
-  --rule-light: rgba(244, 240, 230, 0.16);
-  --rule-dark: rgba(11, 16, 21, 0.16);
-  --font-display: "Fraunces", Georgia, serif;
-  --font-body: "Manrope", system-ui, sans-serif;
-  --font-mono: "IBM Plex Mono", monospace;
   --shell: min(1440px, calc(100vw - clamp(40px, 4vw, 64px)));
-  --shadow: 0 26px 70px rgba(3, 7, 10, 0.2);
 }
 
 *, *::before, *::after { box-sizing: border-box; }

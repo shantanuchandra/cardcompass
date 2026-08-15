@@ -1,0 +1,49 @@
+:root {
+  --brand-ink: #0b1015;
+  --brand-ink-soft: #172027;
+  --brand-paper: #f4f0e6;
+  --brand-paper-deep: #e9e3d5;
+  --brand-ledger: #dde7e1;
+  --brand-signal: #3fe0d0;
+  --brand-reward: #ffb547;
+  --brand-error: #ff7163;
+  --brand-white: #fffdf7;
+  --brand-muted-ink: #465159;
+  --brand-muted-paper: #9ca9a8;
+  --brand-focus-dark: #006d64;
+
+  --ink: var(--brand-ink);
+  --ink-soft: var(--brand-ink-soft);
+  --paper: var(--brand-paper);
+  --paper-deep: var(--brand-paper-deep);
+  --ledger: var(--brand-ledger);
+  --signal: var(--brand-signal);
+  --cyan: var(--brand-signal);
+  --reward: var(--brand-reward);
+  --saffron: var(--brand-reward);
+  --error: var(--brand-error);
+  --coral: var(--brand-error);
+  --white: var(--brand-white);
+  --muted-ink: var(--brand-muted-ink);
+  --muted-paper: var(--brand-muted-paper);
+  --muted: var(--brand-muted-ink);
+  --focus: var(--brand-focus-dark);
+  --teal-text: #316c65;
+  --subtle-text: #586568;
+  --rule-light: rgba(244, 240, 230, 0.16);
+  --rule-dark: rgba(11, 16, 21, 0.16);
+
+  --font-display: "Fraunces", Georgia, serif;
+  --font-body: "Manrope", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", monospace;
+
+  --radius-label: 2px;
+  --radius-control: 4px;
+  --radius-card: 8px;
+  --radius-overlay: 12px;
+  --radius: var(--radius-card);
+  --motion-immediate: 120ms;
+  --motion-standard: 180ms;
+  --motion-navigation: 240ms;
+  --shadow: 0 26px 70px rgba(3, 7, 10, 0.2);
+}
