@@ -121,6 +121,7 @@ test('Azure CSP permits the deployed Flutter WebAssembly engine and CanvasKit mo
   assert.match(policy, /script-src[^;]*'wasm-unsafe-eval'/);
   assert.match(policy, /script-src[^;]*https:\/\/www\.gstatic\.com/);
   assert.match(policy, /connect-src[^;]*https:\/\/www\.gstatic\.com/);
+  assert.match(policy, /connect-src[^;]*https:\/\/fonts\.gstatic\.com/);
 });
 
 test('deployment environment module serializes public Supabase values as inert JavaScript strings', async () => {
