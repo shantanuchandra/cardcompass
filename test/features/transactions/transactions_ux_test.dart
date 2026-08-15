@@ -32,6 +32,20 @@ final _transaction = Transaction(
   createdAt: DateTime(2026, 8, 15),
 );
 
+final _travelTransaction = Transaction(
+  id: 'transaction-2',
+  userId: 'user-1',
+  userCardId: 'card-1',
+  amount: 920,
+  description: 'Second merchant backup description',
+  merchantName: 'Second merchant',
+  category: 'Travel',
+  transactionType: TransactionType.debit,
+  transactionDate: DateTime(2026, 8, 16, 9),
+  rewardEarned: 17,
+  createdAt: DateTime(2026, 8, 16),
+);
+
 class _LedgerNotifier extends TxnsNotifier {
   _LedgerNotifier(this.load);
 
@@ -96,6 +110,29 @@ void main() {
     expect(find.byType(BottomSheet), findsOneWidget);
   });
 
+  for (final textScale in [1.5, 2.0]) {
+    testWidgets(
+      'filters keep their active count visible at ${textScale}x text',
+      (tester) async {
+        await pumpLedger(
+          tester,
+          width: 390,
+          textScale: textScale,
+          load: () async => TxnsState(
+            all: [_transaction],
+            cards: [_card],
+            filter: TxnFilter(from: DateTime(2026, 8, 1)),
+          ),
+        );
+
+        final count = find.text('1 active');
+        expect(count, findsOneWidget);
+        expect(tester.getRect(count).right, lessThanOrEqualTo(390));
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   testWidgets('ledger makes spend the primary metric', (tester) async {
     await pumpLedger(tester, width: 768);
 
@@ -111,6 +148,59 @@ void main() {
         .firstWhere((text) => text.style?.fontFamily == 'IBM Plex Mono');
     final rewards = tester.widget<Text>(find.text('Rewards earned'));
     expect(primary.style!.fontSize, greaterThan(rewards.style!.fontSize!));
+  });
+
+  testWidgets(
+    'reordered rows do not inherit another transaction details state',
+    (tester) async {
+      await pumpLedger(
+        tester,
+        width: 768,
+        load: () async =>
+            TxnsState(all: [_transaction, _travelTransaction], cards: [_card]),
+      );
+
+      await tester.scrollUntilVisible(
+        find.text('Details').first,
+        400,
+        scrollable: find.byType(Scrollable).last,
+      );
+      await tester.tap(find.text('Details').first);
+      await tester.pumpAndSettle();
+      expect(find.text('+36 pts'), findsOneWidget);
+
+      await tester.scrollUntilVisible(
+        find.text('Filters'),
+        -400,
+        scrollable: find.byType(Scrollable).last,
+      );
+      await tester.tap(find.text('Filters'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Travel').last);
+      await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(
+        find.text(_travelTransaction.merchantName!),
+        400,
+        scrollable: find.byType(Scrollable).last,
+      );
+      expect(find.text('+17 pts'), findsNothing);
+    },
+  );
+
+  testWidgets('rewards use points rather than currency labels', (tester) async {
+    await pumpLedger(tester, width: 768);
+
+    expect(find.text('36 pts'), findsOneWidget);
+    expect(find.textContaining('₹36'), findsNothing);
+    await tester.scrollUntilVisible(
+      find.text('Details'),
+      400,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.tap(find.text('Details'));
+    await tester.pumpAndSettle();
+    expect(find.text('+36 pts'), findsOneWidget);
   });
 
   for (final width in [390.0, 768.0, 1280.0]) {

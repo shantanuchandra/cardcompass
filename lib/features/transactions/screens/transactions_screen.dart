@@ -18,6 +18,7 @@ final _fmtCompact = NumberFormat.compactCurrency(
   symbol: '₹',
   decimalDigits: 0,
 );
+final _fmtPoints = NumberFormat.decimalPattern('en_IN');
 
 class TransactionsScreen extends ConsumerWidget {
   const TransactionsScreen({super.key});
@@ -152,7 +153,7 @@ class _LedgerBodyState extends ConsumerState<_LedgerBody> {
                         supportingText: '${filtered.length} transactions',
                       );
                       final support = _SupportingMetrics(
-                        rewards: _fmtCompact.format(s.totalRewards),
+                        rewards: '${_fmtPoints.format(s.totalRewards)} pts',
                         topCategory: s.topCategory ?? '—',
                       );
                       return stack
@@ -290,6 +291,7 @@ class _LedgerBodyState extends ConsumerState<_LedgerBody> {
                         for (final txn in entry.value) {
                           if (index == cursor) {
                             return _TxnRow(
+                              key: ValueKey(txn.id),
                               txn: txn,
                               isInternational: s.isTransactionInternational(
                                 txn,
@@ -540,6 +542,7 @@ class _GroupHeader extends StatelessWidget {
 
 class _TxnRow extends StatefulWidget {
   const _TxnRow({
+    super.key,
     required this.txn,
     this.isInternational = false,
     this.cardName,
@@ -676,7 +679,7 @@ class _TxnRowState extends State<_TxnRow> {
               ),
             if (txn.rewardEarned != null && txn.rewardEarned! > 0)
               Text(
-                '+${_fmt.format(txn.rewardEarned)} reward points',
+                '+${_fmtPoints.format(txn.rewardEarned)} pts',
                 style: const TextStyle(
                   fontFamily: 'Manrope',
                   fontSize: 12,
@@ -793,43 +796,80 @@ class _FilterPill extends StatelessWidget {
                   : BrandColors.mutedInk.withValues(alpha: 0.2),
             ),
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                icon,
-                size: 13,
-                color: active ? BrandColors.focusDark : BrandColors.mutedInk,
-              ),
-              const SizedBox(width: 4),
-              Text(
-                label,
-                style: TextStyle(
-                  fontFamily: 'Manrope',
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
-                  color: active ? BrandColors.focusDark : BrandColors.mutedInk,
+          child: compact
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _FilterPillLabel(label: label, icon: icon, active: active),
+                    const SizedBox(height: 2),
+                    Text(
+                      summary,
+                      style: TextStyle(
+                        fontFamily: 'Manrope',
+                        fontSize: 11,
+                        color: active
+                            ? BrandColors.focusDark
+                            : BrandColors.mutedInk,
+                      ),
+                    ),
+                  ],
+                )
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _FilterPillLabel(label: label, icon: icon, active: active),
+                    const SizedBox(width: 4),
+                    Text(
+                      summary,
+                      style: TextStyle(
+                        fontFamily: 'Manrope',
+                        fontSize: 11,
+                        color: active
+                            ? BrandColors.focusDark
+                            : BrandColors.mutedInk,
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-              if (!compact) ...[
-                const SizedBox(width: 4),
-                Text(
-                  summary,
-                  style: TextStyle(
-                    fontFamily: 'Manrope',
-                    fontSize: 11,
-                    color: active
-                        ? BrandColors.focusDark
-                        : BrandColors.mutedInk,
-                  ),
-                ),
-              ],
-            ],
-          ),
         ),
       ),
     );
   }
+}
+
+class _FilterPillLabel extends StatelessWidget {
+  const _FilterPillLabel({
+    required this.label,
+    required this.icon,
+    required this.active,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Icon(
+        icon,
+        size: 13,
+        color: active ? BrandColors.focusDark : BrandColors.mutedInk,
+      ),
+      const SizedBox(width: 4),
+      Text(
+        label,
+        style: TextStyle(
+          fontFamily: 'Manrope',
+          fontSize: 11,
+          fontWeight: FontWeight.w500,
+          color: active ? BrandColors.focusDark : BrandColors.mutedInk,
+        ),
+      ),
+    ],
+  );
 }
 
 class _GroupingPill extends StatelessWidget {
