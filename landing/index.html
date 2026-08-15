@@ -4,19 +4,17 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>CardCompass — Know the best card before you pay</title>
-  <meta name="description" content="CardCompass helps Indian multi-card users compare rewards, caps, and milestones before choosing a card. Join the qualified early-access waitlist.">
+  <meta name="description" content="CardCompass helps Indian multi-card users compare rewards, caps, and milestones before choosing a card. Join the early-access waitlist.">
   <meta name="theme-color" content="#0B1015">
   <meta property="og:title" content="CardCompass — Know the best card before you pay">
   <meta property="og:description" content="A clearer card choice, with the value and caveats shown together.">
   <meta property="og:type" content="website">
-  <meta property="og:image" content="/landing/img/app-recommendations.png">
   <link rel="alternate" type="text/markdown" href="/landing/llm.txt" title="Machine-readable product information">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/landing/style.css">
   <link rel="icon" type="image/png" href="/landing/img/favicon.png">
-  <script defer data-domain="cardcompass.in" src="https://plausible.io/js/script.js"></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to main content</a>
@@ -51,19 +49,19 @@
 
             <div id="waitlistStepOne">
               <div class="panel-heading">
-                <p class="mono-label">Qualified early access</p>
+                <p class="mono-label">Early access application</p>
                 <h2 id="waitlist-title">Apply to the Founding 100</h2>
                 <p>Start with your email. The next step takes about a minute.</p>
               </div>
               <form id="joinForm" novalidate data-placement="hero">
                 <label for="email">Email address</label>
                 <div class="field-action-row">
-                  <input id="email" name="email" type="email" inputmode="email" autocomplete="email" maxlength="254" placeholder="you@example.com" aria-describedby="emailError">
+                  <input id="email" name="email" type="email" inputmode="email" autocomplete="email" maxlength="254" placeholder="you@example.com" aria-describedby="emailError" required aria-required="true">
                   <button class="button button-primary" type="submit" id="joinButton">Continue</button>
                 </div>
                 <p class="field-error" id="emailError" aria-live="polite"></p>
                 <label class="check-row" for="privacyConsent">
-                  <input id="privacyConsent" name="privacy_consent" type="checkbox" aria-describedby="privacyError">
+                  <input id="privacyConsent" name="privacy_consent" type="checkbox" aria-describedby="privacyError" required aria-required="true">
                   <span>I agree to the <a href="/privacy/">privacy notice</a> and to CardCompass using my details to manage this waitlist.</span>
                 </label>
                 <p class="field-error" id="privacyError" aria-live="polite"></p>
@@ -86,7 +84,7 @@
                   </div>
                   <div class="field-group">
                     <label for="cardCount">Cards you hold <b>Required</b></label>
-                    <select id="cardCount" name="card_count" aria-describedby="cardCountError">
+                    <select id="cardCount" name="card_count" aria-describedby="cardCountError" required aria-required="true">
                       <option value="">Choose a range</option>
                       <option value="1-2">1–2 cards</option>
                       <option value="3-6">3–6 cards</option>
@@ -96,7 +94,7 @@
                   </div>
                   <div class="field-group">
                     <label for="monthlySpendBand">Monthly card spend <b>Required</b></label>
-                    <select id="monthlySpendBand" name="monthly_spend_band" aria-describedby="monthlySpendBandError">
+                    <select id="monthlySpendBand" name="monthly_spend_band" aria-describedby="monthlySpendBandError" required aria-required="true">
                       <option value="">Choose a range</option>
                       <option value="under-25k">Under ₹25,000</option>
                       <option value="25k-50k">₹25,000–₹50,000</option>
@@ -107,7 +105,7 @@
                   </div>
                   <div class="field-group">
                     <label for="primaryGoal">What matters most? <b>Required</b></label>
-                    <select id="primaryGoal" name="primary_goal" aria-describedby="primaryGoalError">
+                    <select id="primaryGoal" name="primary_goal" aria-describedby="primaryGoalError" required aria-required="true">
                       <option value="">Choose one goal</option>
                       <option value="maximize_rewards">Maximise rewards</option>
                       <option value="track_benefits">Track benefits and milestones</option>
@@ -122,7 +120,7 @@
                   <div class="selected-cards" id="selectedCards" aria-live="polite"></div>
                   <input id="cardSearch" type="text" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="cardSuggestions" aria-describedby="topCardsError" placeholder="Search bank or card name">
                   <ul class="suggestions" id="cardSuggestions" role="listbox" hidden></ul>
-                  <p class="field-hint">Suggestions come from the current CardCompass card catalog.</p>
+                  <p class="field-hint">Suggestions come from the CardCompass card catalog.</p>
                   <p class="field-error" id="topCardsError"></p>
                 </div>
 
@@ -144,11 +142,11 @@
               </form>
             </div>
 
-            <div class="success-state" id="waitlistSuccess" role="status" hidden>
+            <div class="success-state" id="waitlistSuccess" role="status" tabindex="-1" hidden>
               <span class="success-check" aria-hidden="true">✓</span>
-              <p class="mono-label">Application received</p>
-              <h2>You’re on the qualified waitlist.</h2>
-              <p>We’ll review your answers for Founding 100 early access. If selected, you’ll hear from us by email.</p>
+              <p class="mono-label" id="successEyebrow">Details received</p>
+              <h2 id="successTitle">You’re on the waitlist.</h2>
+              <p id="successBody">We’ve received this step. Keep an eye on your inbox for early-access updates.</p>
             </div>
           </div>
         </div>
@@ -233,18 +231,18 @@
     <section class="product-proof section-pad" id="proof" aria-labelledby="proof-title">
       <div class="shell">
         <div class="section-heading reveal">
-          <p class="mono-label">Current product captures</p>
-          <h2 id="proof-title">The decision sits inside a wider view of your cards.</h2>
-          <p>These are captures of the current CardCompass app, not concept renders.</p>
+          <p class="mono-label">Illustrative early concepts</p>
+          <h2 id="proof-title">Exploring how card decisions could fit into a wider view.</h2>
+          <p>These images are illustrative early concepts only and do not evidence product capability.</p>
         </div>
         <div class="capture-grid">
           <figure class="capture capture-wide reveal">
-            <div class="capture-frame"><img src="/landing/img/app-dashboard.png" alt="Current CardCompass dashboard showing card and spending information" loading="lazy" width="1024" height="1024"></div>
-            <figcaption><span>Current capture 01</span><strong>Your card activity, in context</strong></figcaption>
+            <div class="capture-frame"><img src="/landing/img/app-dashboard.png" alt="Illustrative early concept for a possible card overview interface" loading="lazy" width="1024" height="1024"></div>
+            <figcaption><span>Illustrative early concept 01</span><strong>Possible card overview direction</strong></figcaption>
           </figure>
           <figure class="capture capture-offset reveal">
-            <div class="capture-frame"><img src="/landing/img/app-recommendations.png" alt="Current CardCompass recommendations screen showing a card comparison" loading="lazy" width="1024" height="1024"></div>
-            <figcaption><span>Current capture 02</span><strong>Recommendations with the reasoning visible</strong></figcaption>
+            <div class="capture-frame"><img src="/landing/img/app-recommendations.png" alt="Illustrative early concept for a possible card comparison interface" loading="lazy" width="1024" height="1024"></div>
+            <figcaption><span>Illustrative early concept 02</span><strong>Possible comparison direction</strong></figcaption>
           </figure>
         </div>
       </div>
@@ -278,7 +276,7 @@
           </details>
           <details>
             <summary>Why do you ask about my cards and spend range?</summary>
-            <p>Those answers help us understand whether the current early-access experience fits your needs. You can name up to two cards, but that field is optional.</p>
+            <p>Those answers help us understand whether the early-access experience fits your needs. You can name up to two cards, but that field is optional.</p>
           </details>
           <details>
             <summary>Will I receive marketing email?</summary>

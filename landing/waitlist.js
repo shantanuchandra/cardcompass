@@ -8,7 +8,7 @@ const GOALS = new Set(['maximize_rewards', 'track_benefits', 'simplify_card_choi
 const EVENT_NAMES = new Set([
   'Waitlist Started',
   'Waitlist Joined',
-  'Waitlist Qualified',
+  'Enrichment Submitted',
   'Waitlist Error',
   'Recommendation Preview Changed',
 ]);
@@ -113,6 +113,16 @@ export function extractEnrichmentToken(data) {
   return token;
 }
 
+export function buildApplicationReceipt(rpcAccepted) {
+  if (rpcAccepted !== true) throw new Error('Enrichment was not accepted.');
+  return {
+    eyebrow: 'Details received',
+    title: 'You’re on the waitlist.',
+    body: 'We’ve received this step. Keep an eye on your inbox for early-access updates.',
+    eventName: 'Enrichment Submitted',
+  };
+}
+
 function referrerPath(referrer) {
   if (!clean(referrer)) return null;
   try {
@@ -169,13 +179,54 @@ export function captureFirstTouch({ locationHref, referrer = '', variant, storag
   return attribution;
 }
 
-export function buildPlausibleEvent(name, context = {}) {
-  if (!EVENT_NAMES.has(name)) return null;
-  const props = {};
-  for (const [key, value] of Object.entries(context)) {
-    if (EVENT_PROP_KEYS.has(key) && cleanSlug(value)) props[key] = value.trim();
+export function stripAnalyticsUrl(value) {
+  try {
+    const url = new URL(value);
+    url.search = '';
+    url.hash = '';
+    return url.href;
+  } catch {
+    return null;
   }
-  return { name, options: { props } };
+}
+
+function safeAnalyticsProps(props) {
+  if (!props || typeof props !== 'object' || Array.isArray(props)) return {};
+  const safe = {};
+  for (const [key, value] of Object.entries(props)) {
+    if (EVENT_PROP_KEYS.has(key) && cleanSlug(value)) safe[key] = value.trim();
+  }
+  return safe;
+}
+
+export function sanitizeAnalyticsPayload(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return payload;
+  const safe = {};
+  for (const [key, value] of Object.entries(payload)) {
+    if (key === 'r' || key === 'ref' || key.startsWith('utm_')) continue;
+    if (key === 'u') {
+      const strippedUrl = stripAnalyticsUrl(value);
+      if (strippedUrl) safe.u = strippedUrl;
+      continue;
+    }
+    if (key === 'p') {
+      const parsed = typeof value === 'string' ? (() => {
+        try { return JSON.parse(value); } catch { return {}; }
+      })() : value;
+      safe.p = safeAnalyticsProps(parsed);
+      continue;
+    }
+    safe[key] = value;
+  }
+  return safe;
+}
+
+export function buildPlausibleEvent(name, context = {}, currentUrl) {
+  if (!EVENT_NAMES.has(name)) return null;
+  const options = { props: safeAnalyticsProps(context) };
+  const strippedUrl = stripAnalyticsUrl(currentUrl);
+  if (strippedUrl) options.url = strippedUrl;
+  return { name, options };
 }
 
 export function searchCards(cards, query, selectedCards = []) {
