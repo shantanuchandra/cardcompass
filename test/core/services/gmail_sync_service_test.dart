@@ -15,6 +15,23 @@ gmail.MessagePart _pdfPart(String filename, {String? attachmentId}) {
 void main() {
   final service = GmailSyncService('fake-token');
 
+  test(
+    'message reads translate an expired Google token into Gmail auth',
+    () async {
+      final expiredService = GmailSyncService(
+        'expired-token',
+        getMessage: (_) async =>
+            throw gmail.DetailedApiRequestError(401, 'Invalid Credentials'),
+      );
+      addTearDown(expiredService.dispose);
+
+      expect(
+        () => expiredService.loadMessageBodyText('message-1'),
+        throwsA(isA<GmailAuthException>()),
+      );
+    },
+  );
+
   test('searchStatementEmails follows every Gmail result page', () async {
     final requestedTokens = <String?>[];
     final pagedService = GmailSyncService(

@@ -108,8 +108,17 @@ class GmailSyncService {
   /// The caller must not persist this value. Plain text is preferred over
   /// HTML and attachment payloads are deliberately ignored.
   Future<String> loadMessageBodyText(String messageId) async {
-    final message = await _loadMessage(messageId);
-    return extractReadableBodyText(message.payload);
+    try {
+      final message = await _loadMessage(messageId);
+      return extractReadableBodyText(message.payload);
+    } on gmail.DetailedApiRequestError catch (error) {
+      if (error.status == 401 || error.status == 403) {
+        throw GmailAuthException(
+          'Gmail access expired or was denied (HTTP ${error.status}).',
+        );
+      }
+      rethrow;
+    }
   }
 
   String extractReadableBodyText(gmail.MessagePart? payload) {
@@ -340,11 +349,21 @@ class GmailSyncService {
     String messageId,
     String attachmentId,
   ) async {
-    final attachment = await _api.users.messages.attachments.get(
-      'me',
-      messageId,
-      attachmentId,
-    );
+    gmail.MessagePartBody attachment;
+    try {
+      attachment = await _api.users.messages.attachments.get(
+        'me',
+        messageId,
+        attachmentId,
+      );
+    } on gmail.DetailedApiRequestError catch (error) {
+      if (error.status == 401 || error.status == 403) {
+        throw GmailAuthException(
+          'Gmail access expired or was denied (HTTP ${error.status}).',
+        );
+      }
+      rethrow;
+    }
 
     if (attachment.data == null) {
       throw Exception('No attachment data found');

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:cardcompass/core/providers/supabase_provider.dart';
 import 'package:cardcompass/core/router/app_tab_selection.dart';
 import 'package:cardcompass/core/services/card_discovery_service.dart';
+import 'package:cardcompass/core/services/gmail_sync_service.dart';
 import 'package:cardcompass/core/theme/app_theme.dart';
 import 'package:cardcompass/features/dashboard/providers/dashboard_provider.dart';
 import 'package:cardcompass/features/dashboard/providers/gmail_sync_provider.dart';
@@ -81,12 +82,21 @@ class _FailingGmailSyncNotifier extends GmailSyncNotifier {
   }
 }
 
+class _ExpiredGmailSyncNotifier extends GmailSyncNotifier {
+  @override
+  Future<GmailSyncResult?> build() async {
+    throw const GmailAuthException('expired private Google credential');
+  }
+}
+
 Future<void> _pumpDashboard(
   WidgetTester tester, {
   required ValueNotifier<AppTab> selectedAppTab,
   DashboardData? data,
   bool failDashboard = false,
   bool failGmailSync = false,
+  bool expireGmailSync = false,
+  GmailReconnect? gmailReconnect,
   VoidCallback? onDashboardLoad,
   List<Map<String, dynamic>> pendingAssignments = const [],
   BankCatalogSearch? catalogSearch,
@@ -117,6 +127,10 @@ Future<void> _pumpDashboard(
         }),
         if (failGmailSync)
           gmailSyncProvider.overrideWith(_FailingGmailSyncNotifier.new),
+        if (expireGmailSync)
+          gmailSyncProvider.overrideWith(_ExpiredGmailSyncNotifier.new),
+        if (gmailReconnect != null)
+          gmailReconnectProvider.overrideWithValue(gmailReconnect),
       ],
       child: MaterialApp(
         theme: AppTheme.work,
@@ -653,6 +667,79 @@ void main() {
       expect(dashboardLoads, 2);
     },
   );
+
+  testWidgets('missing Gmail authorization explains how to resume assignment', (
+    tester,
+  ) async {
+    var reconnectRequests = 0;
+    final selectedAppTab = ValueNotifier(AppTab.dashboard);
+    addTearDown(selectedAppTab.dispose);
+    await _pumpDashboard(
+      tester,
+      selectedAppTab: selectedAppTab,
+      pendingAssignments: const [
+        {'email_id': 'email-1', 'bank_detected': 'Horizon Bank'},
+      ],
+      catalogSearch: (_, _) async => const [
+        {
+          'id': 'catalog-1',
+          'card_name': 'Astra Preferred',
+          'bank': 'Horizon Bank',
+        },
+      ],
+      cardResolution: (_, _) async {
+        throw const NoGmailTokenException('private token detail');
+      },
+      gmailReconnect: () async => reconnectRequests++,
+    );
+
+    await tester.scrollUntilVisible(
+      find.text('Your Cards'),
+      300,
+      scrollable: find
+          .descendant(
+            of: find.byType(CustomScrollView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    await tester.drag(find.byType(PageView), const Offset(-500, 0));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('resolve-bank-email-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Astra Preferred'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Reconnect Gmail to download and process this statement.'),
+      findsOneWidget,
+    );
+    expect(find.text('Reconnect Gmail'), findsOneWidget);
+    expect(find.textContaining('private token detail'), findsNothing);
+    expect(reconnectRequests, 1);
+  });
+
+  testWidgets('expired Gmail authorization immediately requests reconnection', (
+    tester,
+  ) async {
+    var reconnectRequests = 0;
+    final selectedAppTab = ValueNotifier(AppTab.dashboard);
+    addTearDown(selectedAppTab.dispose);
+
+    await _pumpDashboard(
+      tester,
+      selectedAppTab: selectedAppTab,
+      expireGmailSync: true,
+      gmailReconnect: () async => reconnectRequests++,
+    );
+
+    expect(reconnectRequests, 1);
+    expect(find.text('Reconnect Gmail to continue syncing.'), findsOneWidget);
+    expect(
+      find.textContaining('expired private Google credential'),
+      findsNothing,
+    );
+  });
 
   testWidgets(
     'assignment survives barrier dismissal and invalidates dashboard once',

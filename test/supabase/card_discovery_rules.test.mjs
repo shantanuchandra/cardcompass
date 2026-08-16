@@ -7,11 +7,53 @@ import {
   canonicalCardIdentity,
   evaluateAutomaticCatalogGate,
   isAdminEmail,
+  officialCardIdentityFromHtml,
   publicDiscoveryResult,
   publicReasonCode,
   rankOfficialUrls,
+  reviewRequiredJobPatch,
   sanitizeEvidence,
+  selectSubmittedUrlIdentity,
 } from '../../supabase/functions/_shared/card_discovery.ts';
+
+test('extracts a product identity from legacy issuer page headings', () => {
+  const html = `
+    <title>Punjab National Bank - Credit Card Portal</title>
+    <nav><a href="types5.html">PNB RuPay Platinum Card</a></nav>
+    <div class="leftbluelink title"><strong>PNB Rupay Select Card</strong></div>
+  `;
+
+  assert.deepEqual(
+    officialCardIdentityFromHtml(html, 'Punjab National Bank'),
+    {
+      issuer: 'Punjab National Bank',
+      cardName: 'Select',
+      network: 'RuPay',
+      aliases: ['PNB Rupay Select Card'],
+    },
+  );
+});
+
+test('uses official page identity when statement signals are issuer-only', () => {
+  const result = selectSubmittedUrlIdentity({
+    html: '<div class="title"><strong>PNB Rupay Select Card</strong></div>',
+    issuer: 'Punjab National Bank',
+    statementProducts: ['PNB'],
+  });
+
+  assert.equal(result.identity.cardName, 'Select');
+  assert.deepEqual(result.statementProducts, []);
+});
+
+test('clears stale URL failures when a discovery job enters review', () => {
+  assert.deepEqual(reviewRequiredJobPatch('review-1', '2026-08-17T00:00:00.000Z'), {
+    status: 'review_required',
+    review_item_id: 'review-1',
+    failure_category: null,
+    next_retry_at: null,
+    updated_at: '2026-08-17T00:00:00.000Z',
+  });
+});
 
 test('returns only safe discovery status fields to the client', () => {
   assert.deepEqual(

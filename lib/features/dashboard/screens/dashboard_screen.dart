@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
@@ -17,11 +18,19 @@ import '../../../core/services/statement_processing_service.dart'
     show buildStatementIssueLines;
 import '../../../core/services/card_discovery_service.dart';
 import '../../../core/services/card_identity_service.dart';
+import '../../../core/services/gmail_sync_service.dart';
 import '../../../shared/models/user_card.dart';
 import '../../../shared/models/transaction.dart';
 import '../../../shared/models/statement.dart';
+import '../../auth/providers/auth_provider.dart';
 import '../providers/dashboard_provider.dart';
 import '../providers/gmail_sync_provider.dart';
+
+typedef GmailReconnect = Future<void> Function();
+
+final gmailReconnectProvider = Provider<GmailReconnect>((ref) {
+  return () => ref.read(authNotifierProvider.notifier).signInWithGoogle();
+});
 
 final _currencyFmt = NumberFormat.currency(
   locale: 'en_IN',
@@ -177,15 +186,24 @@ class _DashboardAppBar extends ConsumerWidget {
           ref.invalidate(dashboardProvider);
           ref.invalidate(pendingCardAssignmentsProvider);
         },
-        error: (_, _) {
+        error: (error, _) {
+          final needsReconnect =
+              error is GmailAuthException || error is NoGmailTokenException;
+          if (needsReconnect) {
+            unawaited(ref.read(gmailReconnectProvider)());
+          }
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: const Text(
-                'Couldn\'t sync Gmail. Check your connection and try again.',
+              content: Text(
+                needsReconnect
+                    ? 'Reconnect Gmail to continue syncing.'
+                    : 'Couldn\'t sync Gmail. Check your connection and try again.',
               ),
               action: SnackBarAction(
-                label: 'Try again',
-                onPressed: () => _showSyncRangeDialog(context, ref),
+                label: needsReconnect ? 'Reconnect' : 'Try again',
+                onPressed: needsReconnect
+                    ? ref.read(gmailReconnectProvider)
+                    : () => _showSyncRangeDialog(context, ref),
               ),
             ),
           );
@@ -1628,6 +1646,7 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
   List<Map<String, dynamic>> _options = [];
   bool _loading = true;
   bool _resolving = false;
+  bool _needsGmailReconnect = false;
   String? _error;
   String _lastQuery = '';
   Map<String, dynamic>? _retryResolution;
@@ -1724,6 +1743,7 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
     final resolveCard = ref.read(cardResolutionProvider);
     setState(() {
       _resolving = true;
+      _needsGmailReconnect = false;
       _error = null;
       _retryResolution = catalogEntry;
     });
@@ -1736,6 +1756,22 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
         _retryResolution = null;
       });
       Navigator.of(context).pop();
+    } on NoGmailTokenException {
+      if (mounted) {
+        setState(() {
+          _needsGmailReconnect = true;
+          _error = 'Reconnect Gmail to download and process this statement.';
+        });
+        unawaited(ref.read(gmailReconnectProvider)());
+      }
+    } on GmailAuthException {
+      if (mounted) {
+        setState(() {
+          _needsGmailReconnect = true;
+          _error = 'Reconnect Gmail to download and process this statement.';
+        });
+        unawaited(ref.read(gmailReconnectProvider)());
+      }
     } catch (_) {
       if (mounted) {
         setState(() => _error = 'Could not assign this card. Try again.');
@@ -1824,11 +1860,15 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
                             TextButton(
                               onPressed: _resolving
                                   ? null
+                                  : _needsGmailReconnect
+                                  ? ref.read(gmailReconnectProvider)
                                   : _retryResolution == null
                                   ? () => _search(_lastQuery)
                                   : () => _resolve(_retryResolution!),
                               child: Text(
-                                _retryResolution == null
+                                _needsGmailReconnect
+                                    ? 'Reconnect Gmail'
+                                    : _retryResolution == null
                                     ? 'Retry search'
                                     : 'Retry assignment',
                               ),
