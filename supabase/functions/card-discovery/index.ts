@@ -371,7 +371,59 @@ async function putInReview(
   warnings: string[],
   confidence: number,
   existingCandidates: unknown[] = [],
+  preserveTerminal = false,
 ) {
+  if (preserveTerminal) {
+    const { data: currentReview, error: currentReviewError } = await db
+      .from("card_catalog_review_queue")
+      .select("id, status")
+      .eq("discovery_job_id", job.id)
+      .maybeSingle();
+    if (currentReviewError) throw currentReviewError;
+    if (currentReview && ["approved", "merged", "rejected"].includes(currentReview.status)) {
+      return;
+    }
+
+    let review = currentReview;
+    if (!review) {
+      const { data, error } = await db.from("card_catalog_review_queue")
+        .insert({
+          discovery_job_id: job.id,
+          proposed_fields: proposedFields,
+          source_evidence: sourceEvidence,
+          existing_candidates: existingCandidates,
+          validation_warnings: warnings,
+          confidence,
+          status: "pending",
+          updated_at: new Date().toISOString(),
+        })
+        .select("id, status")
+        .single();
+      if (!error) {
+        review = data;
+      } else {
+        const { data: racedReview, error: racedReviewError } = await db
+          .from("card_catalog_review_queue")
+          .select("id, status")
+          .eq("discovery_job_id", job.id)
+          .maybeSingle();
+        if (racedReviewError || !racedReview) throw error;
+        if (["approved", "merged", "rejected"].includes(racedReview.status)) return;
+        review = racedReview;
+      }
+    }
+    const { error: updateError } = await db.from("card_discovery_jobs").update(
+      reviewRequiredJobPatch(review.id, new Date().toISOString()),
+    ).eq("id", job.id).in("status", [
+      "queued",
+      "discovering",
+      "failed",
+      "review_required",
+    ]);
+    if (updateError) throw updateError;
+    return;
+  }
+
   const { data: review, error } = await db.from("card_catalog_review_queue")
     .upsert({
       discovery_job_id: job.id,
@@ -401,6 +453,7 @@ async function processDiscoveryJob(
   const job = rawJob as Record<string, any>;
   const evidence = job.evidence as SafeEvidence;
   if (job.discovery_source === "issuer_crawl") {
+    if (["resolved", "rejected"].includes(job.status)) return;
     const crawlerEvidence = evidence as CrawlerReviewEvidence;
     const proposal = crawlerEvidence.crawler_proposal ?? {
       issuer: job.issuer,
@@ -429,6 +482,7 @@ async function processDiscoveryJob(
       warnings,
       evidence.confidence ?? 0,
       existingCandidates,
+      true,
     );
     return;
   }

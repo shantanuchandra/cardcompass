@@ -55,7 +55,12 @@ function createDb(
       }
       if (action === "update") {
         const row = state.jobs.find((job) => job.id === filters.id);
-        if (row) Object.assign(row, payload);
+        const acceptedStatuses = Array.isArray(filters.status)
+          ? filters.status
+          : filters.status ? [filters.status] : null;
+        if (row && (!acceptedStatuses || acceptedStatuses.includes(row.status))) {
+          Object.assign(row, payload);
+        }
         return { data: row ?? null, error: null };
       }
       const row = state.jobs.find((job) =>
@@ -66,6 +71,23 @@ function createDb(
       return { data: row, error: null };
     }
     if (table === "card_catalog_review_queue") {
+      if (action === "select") {
+        return {
+          data: state.reviews.find((review) =>
+            review.discovery_job_id === filters.discovery_job_id
+          ) ?? null,
+          error: null,
+        };
+      }
+      if (action === "insert") {
+        const existing = state.reviews.find((review) =>
+          review.discovery_job_id === payload.discovery_job_id
+        );
+        if (existing) return { data: null, error: { code: "23505" } };
+        const row = { id: `review-${state.reviews.length + 1}`, ...payload };
+        state.reviews.push(row);
+        return { data: row, error: null };
+      }
       if (action === "upsert") {
         const existing = state.reviews.find((review) =>
           review.discovery_job_id === payload.discovery_job_id
@@ -97,11 +119,11 @@ function createDb(
           filters[key] = value;
           return query;
         },
-        in(key, value) {
+        is(key, value) {
           filters[key] = value;
           return query;
         },
-        is(key, value) {
+        in(key, value) {
           filters[key] = value;
           return query;
         },
@@ -162,7 +184,7 @@ test("returns the catalog card on a canonical URL-hash match without queueing cr
   assert.equal(db.state.reviews.length, 0);
 });
 
-test("queues a review for one canonical issuer/name match with crawler-only provenance", async () => {
+test("returns one canonical issuer/name catalog candidate without queueing crawler work", async () => {
   const db = createDb({
     catalogRows: [{
       id: "card-neo",
@@ -174,20 +196,9 @@ test("queues a review for one canonical issuer/name match with crawler-only prov
 
   const result = await persistCrawlerCandidate(db, "Axis Bank", candidate());
 
-  assert.deepEqual(result, { outcome: "review", reviewId: "review-1" });
-  assert.equal(db.state.jobs.length, 1);
-  assert.deepEqual(db.state.jobs[0].user_id, null);
-  assert.equal(db.state.jobs[0].discovery_source, "issuer_crawl");
-  assert.equal(db.state.jobs[0].proposed_product, "Neo");
-  assert.ok(db.state.jobs[0].dedupe_key.match(/^[a-f0-9]{64}$/));
-  assert.deepEqual(db.state.reviews[0].existing_candidates, [
-    { id: "card-neo", bank: "Axis Bank", card_name: "Neo", network: "Visa" },
-  ]);
-  assert.ok(
-    db.state.reviews[0].validation_warnings.includes(
-      "crawler_discovered_without_statement_signal",
-    ),
-  );
+  assert.deepEqual(result, { outcome: "existing", catalogCardId: "card-neo" });
+  assert.equal(db.state.jobs.length, 0);
+  assert.equal(db.state.reviews.length, 0);
   assert.equal(
     db.state.calls.some(({ table }) => table === "card_catalog"),
     false,
@@ -202,7 +213,7 @@ test("queues a review for one canonical issuer/name match with crawler-only prov
   );
 });
 
-test("finds an existing issuer card through a normalized alias and still requires review", async () => {
+test("returns one normalized alias catalog candidate without queueing crawler work", async () => {
   const db = createDb({
     catalogRows: [{
       id: "card-alt",
@@ -219,10 +230,9 @@ test("finds an existing issuer card through a normalized alias and still require
 
   const result = await persistCrawlerCandidate(db, "Axis Bank", candidate());
 
-  assert.deepEqual(result, { outcome: "review", reviewId: "review-1" });
-  assert.deepEqual(db.state.reviews[0].existing_candidates, [
-    { id: "card-alt", bank: "Axis Bank", card_name: "Alt", network: null },
-  ]);
+  assert.deepEqual(result, { outcome: "existing", catalogCardId: "card-alt" });
+  assert.equal(db.state.jobs.length, 0);
+  assert.equal(db.state.reviews.length, 0);
 });
 
 test("queues ambiguous catalog candidates for review instead of selecting one", async () => {
@@ -280,4 +290,43 @@ test("repairs a review-less crawler service job without creating a second job", 
   assert.equal(db.state.jobs.length, 1);
   assert.equal(db.state.reviews.length, 1);
   assert.equal(db.state.jobs[0].status, "review_required");
+});
+
+for (const [reviewStatus, jobStatus] of [
+  ["approved", "resolved"],
+  ["merged", "resolved"],
+  ["rejected", "rejected"],
+]) {
+  test(`does not reopen a ${reviewStatus} crawler review on a repeated candidate`, async () => {
+    const db = createDb();
+    await persistCrawlerCandidate(db, "Axis Bank", candidate());
+    db.state.reviews[0].status = reviewStatus;
+    db.state.reviews[0].proposed_fields = { locked: reviewStatus };
+    db.state.jobs[0].status = jobStatus;
+    const callCount = db.state.calls.length;
+
+    const result = await persistCrawlerCandidate(db, "Axis Bank", candidate());
+
+    assert.deepEqual(result, { outcome: "duplicate", reviewId: "review-1" });
+    assert.equal(db.state.reviews[0].status, reviewStatus);
+    assert.deepEqual(db.state.reviews[0].proposed_fields, { locked: reviewStatus });
+    assert.equal(db.state.jobs[0].status, jobStatus);
+    assert.equal(db.state.calls.length, callCount);
+  });
+}
+
+test("does not reopen a terminal crawler review when its job status is stale", async () => {
+  const db = createDb();
+  await persistCrawlerCandidate(db, "Axis Bank", candidate());
+  db.state.reviews[0].status = "approved";
+  db.state.reviews[0].proposed_fields = { locked: "approved" };
+  const callCount = db.state.calls.length;
+
+  const result = await persistCrawlerCandidate(db, "Axis Bank", candidate());
+
+  assert.deepEqual(result, { outcome: "duplicate", reviewId: "review-1" });
+  assert.equal(db.state.reviews[0].status, "approved");
+  assert.deepEqual(db.state.reviews[0].proposed_fields, { locked: "approved" });
+  assert.equal(db.state.jobs[0].status, "review_required");
+  assert.equal(db.state.calls.length, callCount);
 });

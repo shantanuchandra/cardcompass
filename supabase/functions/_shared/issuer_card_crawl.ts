@@ -339,6 +339,9 @@ export async function persistCrawlerCandidate(
     .map((value) => normalizedProduct(value, issuer)))]
     .filter((value) => value.length >= 2);
   const candidates = await findCrawlerCatalogCandidates(supabase, issuer, normalizedNames);
+  if (candidates.length === 1) {
+    return { outcome: "existing", catalogCardId: String(candidates[0].id) };
+  }
   const warnings = uniqueStrings([
     ...candidate.warnings,
     "crawler_discovered_without_statement_signal",
@@ -349,12 +352,18 @@ export async function persistCrawlerCandidate(
 
   const { data: existingJob, error: existingJobError } = await supabase
     .from("card_discovery_jobs")
-    .select("id, review_item_id")
+    .select("id, review_item_id, status")
     .eq("discovery_source", "issuer_crawl")
     .eq("dedupe_key", dedupeKey)
     .is("user_id", null)
     .maybeSingle();
   if (existingJobError) throw existingJobError;
+  if (existingJob && ["resolved", "rejected"].includes(existingJob.status)) {
+    return {
+      outcome: "duplicate",
+      ...(existingJob.review_item_id ? { reviewId: existingJob.review_item_id } : {}),
+    };
+  }
 
   const proposal = {
     issuer,
@@ -411,20 +420,48 @@ export async function persistCrawlerCandidate(
     }
   }
 
-  const { data: review, error: reviewError } = await supabase.from("card_catalog_review_queue")
-    .upsert({
-      discovery_job_id: job.id,
-      proposed_fields: proposal,
-      source_evidence: evidence.crawler_source_evidence,
-      existing_candidates: candidates,
-      validation_warnings: warnings,
-      confidence: evidence.confidence,
-      status: "pending",
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "discovery_job_id" })
-    .select("id")
-    .single();
-  if (reviewError) throw reviewError;
+  const { data: existingReview, error: existingReviewError } = await supabase
+    .from("card_catalog_review_queue")
+    .select("id, status")
+    .eq("discovery_job_id", job.id)
+    .maybeSingle();
+  if (existingReviewError) throw existingReviewError;
+  if (existingReview && ["approved", "merged", "rejected"].includes(existingReview.status)) {
+    return { outcome: "duplicate", reviewId: existingReview.id };
+  }
+
+  let review = existingReview;
+  if (!review) {
+    const { data, error } = await supabase.from("card_catalog_review_queue")
+      .insert({
+        discovery_job_id: job.id,
+        proposed_fields: proposal,
+        source_evidence: evidence.crawler_source_evidence,
+        existing_candidates: candidates,
+        validation_warnings: warnings,
+        confidence: evidence.confidence,
+        status: "pending",
+        updated_at: new Date().toISOString(),
+      })
+      .select("id, status")
+      .single();
+    if (!error) {
+      review = data;
+    } else {
+      const { data: racedReview, error: racedReviewError } = await supabase
+        .from("card_catalog_review_queue")
+        .select("id, status")
+        .eq("discovery_job_id", job.id)
+        .maybeSingle();
+      if (racedReviewError || !racedReview) throw error;
+      if (["approved", "merged", "rejected"].includes(racedReview.status)) {
+        return { outcome: "duplicate", reviewId: racedReview.id };
+      }
+      review = racedReview;
+      duplicate = true;
+    }
+  }
+
   const { error: updateError } = await supabase.from("card_discovery_jobs")
     .update({
       status: "review_required",
@@ -433,7 +470,8 @@ export async function persistCrawlerCandidate(
       next_retry_at: null,
       updated_at: new Date().toISOString(),
     })
-    .eq("id", job.id);
+    .eq("id", job.id)
+    .in("status", ["queued", "discovering", "failed", "review_required"]);
   if (updateError) throw updateError;
   return { outcome: duplicate ? "duplicate" : "review", reviewId: review.id };
 }
