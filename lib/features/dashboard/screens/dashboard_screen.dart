@@ -20,8 +20,15 @@ import '../../../core/services/card_identity_service.dart';
 import '../../../shared/models/user_card.dart';
 import '../../../shared/models/transaction.dart';
 import '../../../shared/models/statement.dart';
+import '../../auth/providers/auth_provider.dart';
 import '../providers/dashboard_provider.dart';
 import '../providers/gmail_sync_provider.dart';
+
+typedef GmailReconnect = Future<void> Function();
+
+final gmailReconnectProvider = Provider<GmailReconnect>((ref) {
+  return () => ref.read(authNotifierProvider.notifier).signInWithGoogle();
+});
 
 final _currencyFmt = NumberFormat.currency(
   locale: 'en_IN',
@@ -1628,6 +1635,7 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
   List<Map<String, dynamic>> _options = [];
   bool _loading = true;
   bool _resolving = false;
+  bool _needsGmailReconnect = false;
   String? _error;
   String _lastQuery = '';
   Map<String, dynamic>? _retryResolution;
@@ -1724,6 +1732,7 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
     final resolveCard = ref.read(cardResolutionProvider);
     setState(() {
       _resolving = true;
+      _needsGmailReconnect = false;
       _error = null;
       _retryResolution = catalogEntry;
     });
@@ -1736,6 +1745,13 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
         _retryResolution = null;
       });
       Navigator.of(context).pop();
+    } on NoGmailTokenException {
+      if (mounted) {
+        setState(() {
+          _needsGmailReconnect = true;
+          _error = 'Reconnect Gmail to download and process this statement.';
+        });
+      }
     } catch (_) {
       if (mounted) {
         setState(() => _error = 'Could not assign this card. Try again.');
@@ -1824,11 +1840,15 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
                             TextButton(
                               onPressed: _resolving
                                   ? null
+                                  : _needsGmailReconnect
+                                  ? ref.read(gmailReconnectProvider)
                                   : _retryResolution == null
                                   ? () => _search(_lastQuery)
                                   : () => _resolve(_retryResolution!),
                               child: Text(
-                                _retryResolution == null
+                                _needsGmailReconnect
+                                    ? 'Reconnect Gmail'
+                                    : _retryResolution == null
                                     ? 'Retry search'
                                     : 'Retry assignment',
                               ),
