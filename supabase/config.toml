@@ -378,6 +378,12 @@ deno_version = 2
 verify_jwt = false
 entrypoint = "./functions/waitlist-public/index.ts"
 
+# Authentication is enforced inside the function so a dedicated scheduler
+# secret can be used as an alternative to the service-role JWT.
+[functions.benefit-enrichment-batch]
+verify_jwt = false
+entrypoint = "./functions/benefit-enrichment-batch/index.ts"
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
