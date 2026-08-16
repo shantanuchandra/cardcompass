@@ -29,7 +29,7 @@
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
-    "Content-Security-Policy": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://www.gstatic.com; connect-src 'self' https://*.supabase.co https://plausible.io https://www.gstatic.com https://fonts.gstatic.com https://gmail.googleapis.com https://people.googleapis.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    "Content-Security-Policy": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://www.gstatic.com; connect-src 'self' https://*.supabase.co https://plausible.io https://www.gstatic.com https://fonts.gstatic.com https://gmail.googleapis.com https://people.googleapis.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://*.googleusercontent.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
   },
   "mimeTypes": {
     ".json": "application/json; charset=utf-8",
