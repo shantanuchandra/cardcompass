@@ -53,6 +53,15 @@ test('resources are a compact link row rather than a padded narrative band', asy
   assert.doesNotMatch(resources, /<h2\b/);
 });
 
+test('returning users can reach sign in from the landing header and footer', async () => {
+  const html = await read('landing/index.html');
+  const header = html.match(/<header\b[\s\S]*?<\/header>/)?.[0] || '';
+  const footer = html.match(/<footer\b[\s\S]*?<\/footer>/)?.[0] || '';
+
+  assert.match(header, /<a\b[^>]*href="\/login"[^>]*>\s*Sign in\s*<\/a>/i);
+  assert.match(footer, /<a\b[^>]*href="\/login"[^>]*>\s*Sign in\s*<\/a>/i);
+});
+
 test('public landing actions explicitly meet readable copy and target-size floors', async () => {
   const css = await read('landing/style.css');
   const actions = [

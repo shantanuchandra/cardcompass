@@ -7,8 +7,10 @@ import 'package:flutter_test/flutter_test.dart';
 Widget _testApp({
   bool disableAnimations = false,
   bool isLoading = false,
+  bool callbackFailed = false,
   Object? error,
   VoidCallback? onGoogleSignIn,
+  VoidCallback? onBackToLanding,
   ValueChanged<String>? onOpenLegal,
 }) {
   return MaterialApp(
@@ -19,8 +21,10 @@ Widget _testApp({
       ),
       child: LoginView(
         isLoading: isLoading,
+        callbackFailed: callbackFailed,
         error: error,
         onGoogleSignIn: onGoogleSignIn ?? () {},
+        onBackToLanding: onBackToLanding ?? () {},
         onOpenLegal: onOpenLegal ?? (_) {},
       ),
     ),
@@ -279,6 +283,33 @@ void main() {
       find.text('Sign-in failed. Check your connection and try again.'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('failed OAuth callback offers a fresh sign-in and landing exit', (
+    tester,
+  ) async {
+    var signInCount = 0;
+    var landingCount = 0;
+    await _setSurface(tester, const Size(1440, 1000));
+    await tester.pumpWidget(
+      _testApp(
+        callbackFailed: true,
+        onGoogleSignIn: () => signInCount++,
+        onBackToLanding: () => landingCount++,
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      find.text(
+        'We couldn\'t finish this sign-in. The link may have expired. Start again.',
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Start sign-in again'));
+    await tester.tap(find.text('Back to landing'));
+    expect(signInCount, 1);
+    expect(landingCount, 1);
   });
 
   testWidgets('splash communicates progress before exposing recovery actions', (

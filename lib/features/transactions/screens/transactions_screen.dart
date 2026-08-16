@@ -32,7 +32,7 @@ class TransactionsScreen extends ConsumerWidget {
       appBar: AppBar(
         backgroundColor: BrandColors.paper,
         title: Text(
-          'Ledger',
+          'Transactions',
           style: TextStyle(
             fontFamily: 'Manrope',
             fontSize: 20,
@@ -61,7 +61,7 @@ class TransactionsScreen extends ConsumerWidget {
           minHeight: 280,
         ),
         error: (_, _) => BrandStateView(
-          title: 'Could not load your ledger.',
+          title: 'Could not load your transactions.',
           message: 'Check your connection and try again.',
           icon: Icons.cloud_off_rounded,
           actionLabel: 'Try again',
@@ -259,7 +259,7 @@ class _LedgerBodyState extends ConsumerState<_LedgerBody> {
                       : 'No matches for these filters',
                   message: s.all.isEmpty
                       ? 'Refresh after your next statement sync to check again.'
-                      : 'Clear the active filters to return to the full ledger.',
+                      : 'Clear the active filters to return to all transactions.',
                   icon: Icons.receipt_long_outlined,
                   actionLabel: s.all.isEmpty ? 'Check again' : 'Clear filters',
                   onAction: s.all.isEmpty

@@ -7,7 +7,6 @@ import '../../../core/theme/brand_tokens.dart';
 import '../../../core/theme/brand_components.dart';
 import '../../../shared/models/user_card.dart';
 import '../providers/cards_provider.dart';
-import 'card_detail_screen.dart';
 
 class CardsScreen extends ConsumerWidget {
   const CardsScreen({super.key});
@@ -97,9 +96,7 @@ class _CardListTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return InkWell(
-      onTap: () => Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => CardDetailScreen(cardId: card.id)),
-      ),
+      onTap: () => context.push('/app/cards/${Uri.encodeComponent(card.id)}'),
       borderRadius: BorderRadius.circular(BrandRadius.overlay),
       child: Container(
         padding: const EdgeInsets.all(BrandSpacing.md),

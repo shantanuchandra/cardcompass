@@ -91,6 +91,15 @@ Future<void> pumpLedger(
 }
 
 void main() {
+  testWidgets('transaction destination uses one consistent user-facing name', (
+    tester,
+  ) async {
+    await pumpLedger(tester, width: 390, load: () async => const TxnsState());
+
+    expect(find.text('Transactions'), findsOneWidget);
+    expect(find.textContaining('ledger', findRichText: true), findsNothing);
+  });
+
   testWidgets('ledger loading reserves a stable skeleton slot', (tester) async {
     final pending = Completer<TxnsState>();
     addTearDown(() {

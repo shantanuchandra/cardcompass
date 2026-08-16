@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/router/app_tab_selection.dart';
@@ -14,7 +15,6 @@ import '../../../core/providers/repository_providers.dart';
 import '../../../shared/models/user_card.dart';
 import '../../../shared/models/transaction.dart';
 import '../../../shared/models/statement.dart';
-import '../../cards/screens/card_detail_screen.dart';
 import '../providers/dashboard_provider.dart';
 import '../providers/gmail_sync_provider.dart';
 
@@ -953,22 +953,15 @@ class _CardsCarouselState extends ConsumerState<_CardsCarousel> {
                           label:
                               'Open ${widget.cards[i].displayName} card details',
                           button: true,
-                          onTap: () => Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) =>
-                                  CardDetailScreen(cardId: widget.cards[i].id),
-                            ),
+                          onTap: () => context.push(
+                            '/app/cards/${Uri.encodeComponent(widget.cards[i].id)}',
                           ),
                           child: ExcludeSemantics(
                             child: Material(
                               color: Colors.transparent,
                               child: InkWell(
-                                onTap: () => Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) => CardDetailScreen(
-                                      cardId: widget.cards[i].id,
-                                    ),
-                                  ),
+                                onTap: () => context.push(
+                                  '/app/cards/${Uri.encodeComponent(widget.cards[i].id)}',
                                 ),
                                 borderRadius: BorderRadius.circular(
                                   BrandRadius.overlay,

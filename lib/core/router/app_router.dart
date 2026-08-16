@@ -7,6 +7,7 @@ import '../../features/auth/screens/splash_screen.dart';
 import '../../features/dashboard/screens/dashboard_screen.dart';
 import '../../features/cards/screens/cards_screen.dart';
 import '../../features/cards/screens/add_card_screen.dart';
+import '../../features/cards/screens/card_detail_screen.dart';
 import '../../features/transactions/screens/transactions_screen.dart';
 import '../../features/benefits/movie_deals/screens/movie_deals_screen.dart';
 import '../../features/settings/screens/settings_screen.dart';
@@ -71,6 +72,9 @@ final routerProvider = Provider<GoRouter>((ref) {
       final loc = state.matchedLocation;
       if (Uri.base.fragment.contains('access_token')) return null;
       if (!isAuthed && loc.startsWith('/app')) return '/login';
+      if (isAuthed && loc.startsWith('/app')) {
+        _tabIndexNotifier.value = _tabIndexFor(loc);
+      }
       if (isAuthed && (loc == '/login' || loc == '/')) {
         // Restore tab from URL on initial load
         final fragment = Uri.base.fragment;
@@ -99,6 +103,12 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: 'cards/add',
             pageBuilder: (_, s) =>
                 const NoTransitionPage(child: AddCardScreen()),
+          ),
+          GoRoute(
+            path: 'cards/:cardId',
+            pageBuilder: (_, state) => NoTransitionPage(
+              child: CardDetailScreen(cardId: state.pathParameters['cardId']!),
+            ),
           ),
         ],
       ),

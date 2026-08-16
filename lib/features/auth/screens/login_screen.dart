@@ -15,6 +15,9 @@ class LoginScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final auth = ref.watch(authNotifierProvider);
+    final callbackFailed =
+        Uri.base.queryParameters.containsKey('code') &&
+        auth.valueOrNull == AuthStatus.unauthenticated;
     ref.listen(authNotifierProvider, (_, next) {
       if (next.hasError) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -26,9 +29,12 @@ class LoginScreen extends ConsumerWidget {
       data: AppTheme.marketing,
       child: LoginView(
         isLoading: auth.isLoading,
+        callbackFailed: callbackFailed,
         error: auth.error,
         onGoogleSignIn: () =>
             ref.read(authNotifierProvider.notifier).signInWithGoogle(),
+        onBackToLanding: () =>
+            launchUrl(Uri.base.resolve('/'), webOnlyWindowName: '_self'),
         onOpenLegal: (path) =>
             launchUrl(Uri.parse(path), webOnlyWindowName: '_blank'),
       ),
@@ -39,15 +45,19 @@ class LoginScreen extends ConsumerWidget {
 class LoginView extends StatefulWidget {
   const LoginView({
     required this.isLoading,
+    required this.callbackFailed,
     required this.error,
     required this.onGoogleSignIn,
+    required this.onBackToLanding,
     required this.onOpenLegal,
     super.key,
   });
 
   final bool isLoading;
+  final bool callbackFailed;
   final Object? error;
   final VoidCallback onGoogleSignIn;
+  final VoidCallback onBackToLanding;
   final ValueChanged<String> onOpenLegal;
 
   @override
@@ -136,8 +146,10 @@ class _LoginViewState extends State<LoginView> {
                                     flex: 102,
                                     child: _LoginColumn(
                                       isLoading: widget.isLoading,
+                                      callbackFailed: widget.callbackFailed,
                                       error: widget.error,
                                       onGoogleSignIn: widget.onGoogleSignIn,
+                                      onBackToLanding: widget.onBackToLanding,
                                       onOpenLegal: widget.onOpenLegal,
                                     ),
                                   ),
@@ -160,8 +172,10 @@ class _LoginViewState extends State<LoginView> {
                                 children: [
                                   _LoginColumn(
                                     isLoading: widget.isLoading,
+                                    callbackFailed: widget.callbackFailed,
                                     error: widget.error,
                                     onGoogleSignIn: widget.onGoogleSignIn,
+                                    onBackToLanding: widget.onBackToLanding,
                                     onOpenLegal: widget.onOpenLegal,
                                   ),
                                   const SizedBox(height: 46),
@@ -383,14 +397,18 @@ class _CompassMarkPainter extends CustomPainter {
 class _LoginColumn extends StatelessWidget {
   const _LoginColumn({
     required this.isLoading,
+    required this.callbackFailed,
     required this.error,
     required this.onGoogleSignIn,
+    required this.onBackToLanding,
     required this.onOpenLegal,
   });
 
   final bool isLoading;
+  final bool callbackFailed;
   final Object? error;
   final VoidCallback onGoogleSignIn;
+  final VoidCallback onBackToLanding;
   final ValueChanged<String> onOpenLegal;
 
   @override
@@ -501,14 +519,16 @@ class _LoginColumn extends StatelessWidget {
                         child: Padding(
                           padding: const EdgeInsets.only(top: 12),
                           child: Text(
-                            error != null
+                            callbackFailed
+                                ? 'We couldn\'t finish this sign-in. The link may have expired. Start again.'
+                                : error != null
                                 ? 'Sign-in failed. Check your connection and try again.'
                                 : isLoading
                                 ? 'Signing in securely…'
                                 : '',
                             style: TextStyle(
                               fontFamily: 'Manrope',
-                              color: error != null
+                              color: callbackFailed || error != null
                                   ? const Color(0xFFB3261E)
                                   : const Color(0xFF526064),
                               fontSize: 14,
@@ -520,8 +540,21 @@ class _LoginColumn extends StatelessWidget {
                       const SizedBox(height: 20),
                       _GoogleSignInButton(
                         isLoading: isLoading,
+                        label: callbackFailed
+                            ? 'Start sign-in again'
+                            : 'Continue with Google',
                         onPressed: onGoogleSignIn,
                       ),
+                      if (callbackFailed) ...[
+                        const SizedBox(height: 4),
+                        SizedBox(
+                          width: double.infinity,
+                          child: TextButton(
+                            onPressed: onBackToLanding,
+                            child: const Text('Back to landing'),
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 17),
                       const Divider(color: Color(0xFFB9B4AB), height: 1),
                       const SizedBox(height: 5),
@@ -1146,8 +1179,13 @@ class _PermissionRow extends StatelessWidget {
 }
 
 class _GoogleSignInButton extends StatelessWidget {
-  const _GoogleSignInButton({required this.isLoading, required this.onPressed});
+  const _GoogleSignInButton({
+    required this.isLoading,
+    required this.label,
+    required this.onPressed,
+  });
   final bool isLoading;
+  final String label;
   final VoidCallback onPressed;
   @override
   Widget build(BuildContext context) => SizedBox(
@@ -1194,7 +1232,7 @@ class _GoogleSignInButton extends StatelessWidget {
                 const SizedBox(width: 10),
                 Flexible(
                   child: Text(
-                    'Continue with Google',
+                    label,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(

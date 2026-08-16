@@ -5,6 +5,7 @@ import 'package:cardcompass/core/providers/supabase_provider.dart';
 import 'package:cardcompass/core/repositories/cards_repository.dart';
 import 'package:cardcompass/core/theme/app_theme.dart';
 import 'package:cardcompass/features/cards/screens/add_card_screen.dart';
+import 'package:cardcompass/features/cards/screens/card_detail_screen.dart';
 import 'package:cardcompass/features/cards/screens/cards_screen.dart';
 import 'package:cardcompass/shared/models/user_card.dart';
 import 'package:flutter/material.dart';
@@ -101,6 +102,11 @@ Future<GoRouter> _pumpJourney(
     routes: [
       GoRoute(path: '/app/cards', builder: (_, _) => const CardsScreen()),
       GoRoute(path: '/app/cards/add', builder: (_, _) => const AddCardScreen()),
+      GoRoute(
+        path: '/app/cards/:cardId',
+        builder: (_, state) =>
+            CardDetailScreen(cardId: state.pathParameters['cardId']!),
+      ),
     ],
   );
   addTearDown(router.dispose);
@@ -141,6 +147,24 @@ Future<void> _reachConfirmStep(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('card detail has a stable URL and system Back restores Cards', (
+    tester,
+  ) async {
+    final router = await _pumpJourney(
+      tester,
+      initial: [_card('card-existing', 'Existing card')],
+    );
+
+    await tester.tap(find.text('Existing card'));
+    await tester.pumpAndSettle();
+    expect(router.state.uri.path, '/app/cards/card-existing');
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(router.state.uri.path, '/app/cards');
+    expect(find.text('Existing card'), findsOneWidget);
+  });
+
   for (final initial in <List<UserCard>>[
     const [],
     [_card('card-existing', 'Existing card')],
