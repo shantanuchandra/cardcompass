@@ -310,7 +310,10 @@ void main() {
         recommendation: recommendation,
       );
 
-      expect(find.textContaining('Potential option'), findsOneWidget);
+      expect(
+        find.text('Potential — remaining usage needs confirmation.'),
+        findsWidgets,
+      );
       expect(find.textContaining('Eligible for this search'), findsNothing);
       expect(find.textContaining('verified for this search'), findsNothing);
 
@@ -345,7 +348,10 @@ void main() {
         find.text('Potential options — confirm before booking'),
         findsOneWidget,
       );
-      expect(find.text('Potential — confirm before booking'), findsOneWidget);
+      expect(
+        find.text('Potential — remaining usage needs confirmation.'),
+        findsOneWidget,
+      );
     },
   );
 }
