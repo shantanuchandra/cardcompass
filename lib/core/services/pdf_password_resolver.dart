@@ -69,11 +69,12 @@ class PdfPasswordResolver {
       userName: userName,
       userProfile: userProfile,
       fileName: fileName,
-      onManualPasswordRequired: (attempt, maxAttempts) =>
+      onManualPasswordRequired: (attempt, maxAttempts, hint) =>
           PasswordInputService.requestPassword(
             bankName,
             attempt: attempt,
             maxAttempts: maxAttempts,
+            hint: hint,
           ),
     );
   }

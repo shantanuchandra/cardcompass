@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:cardcompass/core/services/gmail_sync_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:googleapis/gmail/v1.dart' as gmail;
@@ -125,6 +127,84 @@ void main() {
 
       expect(result.found, true);
       expect(result.filename, 'statement.pdf');
+    });
+  });
+
+  group('GmailSyncService.loadMessageBodyText', () {
+    test(
+      'prefers the plain-text body and does not include attachments',
+      () async {
+        final bodyService = GmailSyncService(
+          'fake-token',
+          getMessage: (_) async => gmail.Message(
+            payload: gmail.MessagePart(
+              mimeType: 'multipart/mixed',
+              parts: [
+                gmail.MessagePart(
+                  mimeType: 'text/html',
+                  body: gmail.MessagePartBody(
+                    data: base64Url.encode(utf8.encode('<p>HTML fallback</p>')),
+                  ),
+                ),
+                gmail.MessagePart(
+                  mimeType: 'text/plain',
+                  body: gmail.MessagePartBody(
+                    data: base64Url.encode(
+                      utf8.encode(
+                        'Use the first four letters of your name followed by DDMM.',
+                      ),
+                    ),
+                  ),
+                ),
+                gmail.MessagePart(
+                  mimeType: 'application/pdf',
+                  filename: 'statement.pdf',
+                  body: gmail.MessagePartBody(
+                    data: base64Url.encode(utf8.encode('private PDF bytes')),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+
+        final body = await bodyService.loadMessageBodyText('message-1');
+
+        expect(
+          body,
+          'Use the first four letters of your name followed by DDMM.',
+        );
+        expect(body, isNot(contains('private PDF bytes')));
+        bodyService.dispose();
+      },
+    );
+
+    test('converts an HTML-only body into readable text', () async {
+      final bodyService = GmailSyncService(
+        'fake-token',
+        getMessage: (_) async => gmail.Message(
+          payload: gmail.MessagePart(
+            mimeType: 'text/html',
+            body: gmail.MessagePartBody(
+              data: base64Url.encode(
+                utf8.encode(
+                  '<p>Your password is the first 4 letters of your name</p>'
+                  '<p>followed by your DOB in DDMM format.</p>',
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      final body = await bodyService.loadMessageBodyText('message-2');
+
+      expect(
+        body,
+        'Your password is the first 4 letters of your name '
+        'followed by your DOB in DDMM format.',
+      );
+      bodyService.dispose();
     });
   });
 }

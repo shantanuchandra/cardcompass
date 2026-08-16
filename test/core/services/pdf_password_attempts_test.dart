@@ -104,4 +104,31 @@ void main() {
     await tester.pumpAndSettle();
     expect(await second, isNull);
   });
+
+  testWidgets('password prompt shows the issuer instruction as a hint', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(navigatorKey: navigatorKey, home: const SizedBox()),
+    );
+
+    final password = PasswordInputService.requestPassword(
+      'HSBC',
+      attempt: 1,
+      maxAttempts: 2,
+      hint: 'Use the first four letters of your name followed by DDMM.',
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        'Hint: Use the first four letters of your name followed by DDMM.',
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(await password, isNull);
+  });
 }

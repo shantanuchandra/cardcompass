@@ -42,6 +42,109 @@ Future<ManualPasswordAttemptResult> runManualPasswordAttempts({
 class PdfPasswordDetectionService {
   ManualPasswordOutcome? lastManualPasswordOutcome;
 
+  String _concisePasswordInstruction(String instruction) {
+    var end = instruction.length;
+    for (final marker in [
+      RegExp(r'\s*[•]\s*'),
+      RegExp(r'\s+for example\s*:', caseSensitive: false),
+      RegExp(r'\s+example\s*:', caseSensitive: false),
+    ]) {
+      final match = marker.firstMatch(instruction);
+      if (match != null && match.start < end) end = match.start;
+    }
+
+    final concise = instruction.substring(0, end).trim();
+    const maxLength = 280;
+    if (concise.length <= maxLength) return concise;
+    return '${concise.substring(0, maxLength - 1).trimRight()}…';
+  }
+
+  /// Returns one concise issuer-authored password-format instruction for
+  /// display. Explicit password values and generic protection boilerplate are
+  /// intentionally excluded.
+  String? extractPasswordInstruction(String emailBody) {
+    final normalized = emailBody.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (normalized.isEmpty) return null;
+
+    final sentences = normalized.split(RegExp(r'(?<=[.!?])\s+'));
+    const instructionTerms = [
+      'first',
+      'last',
+      'date of birth',
+      'dob',
+      'ddmm',
+      'yyyy',
+      'name',
+      'card number',
+      'mobile',
+      'pan',
+      'combination',
+      'followed by',
+    ];
+
+    for (var index = 0; index < sentences.length; index++) {
+      final anchor = sentences[index].trim();
+      final anchorLower = anchor.toLowerCase();
+      final describesPassword = anchorLower.contains('password');
+      final describesOpeningDocument =
+          anchorLower.contains('open') &&
+          (anchorLower.contains('pdf') ||
+              anchorLower.contains('statement') ||
+              anchorLower.contains('attachment'));
+      if (!describesPassword && !describesOpeningDocument) continue;
+
+      final window = <String>[anchor];
+      for (var end = index; end < sentences.length && end <= index + 2; end++) {
+        if (end > index) {
+          final next = sentences[end].trim();
+          final nextLower = next.toLowerCase();
+          final nextDescribesOpening =
+              nextLower.contains('open') &&
+              (nextLower.contains('pdf') ||
+                  nextLower.contains('statement') ||
+                  nextLower.contains('attachment'));
+          if (nextDescribesOpening &&
+              instructionTerms.any(nextLower.contains)) {
+            return _concisePasswordInstruction(next);
+          }
+          window.add(next);
+        }
+        final candidate = window.join(' ').trim();
+        final lower = candidate.toLowerCase();
+        if (!instructionTerms.any(lower.contains)) continue;
+
+        final explicitValue = RegExp(
+          r'\bpassword\s*(?:is|:)\s*([a-z0-9@#$_-]{4,})',
+          caseSensitive: false,
+        ).firstMatch(candidate)?.group(1)?.toLowerCase();
+        if (explicitValue != null &&
+            !instructionTerms.any((term) => explicitValue.startsWith(term))) {
+          break;
+        }
+
+        return _concisePasswordInstruction(candidate);
+      }
+    }
+
+    const strongFormatTerms = [
+      'ddmm',
+      'dd mm',
+      'yyyymmdd',
+      'yyyy mm dd',
+      'ddmmyyyy',
+      'dd mm yyyy',
+    ];
+    for (final sentence in sentences) {
+      final candidate = sentence.trim();
+      final lower = candidate.toLowerCase();
+      if (!strongFormatTerms.any(lower.contains)) continue;
+      if (!instructionTerms.any(lower.contains)) continue;
+
+      return _concisePasswordInstruction(candidate);
+    }
+    return null;
+  }
+
   /// Common password patterns used by different banks
   static final Map<String, List<String>> bankPasswordPatterns = {
     'sbi': [
@@ -372,7 +475,7 @@ class PdfPasswordDetectionService {
     String? userName,
     Map<String, dynamic>? userProfile,
     String? fileName,
-    Future<String?> Function(int attempt, int maxAttempts)?
+    Future<String?> Function(int attempt, int maxAttempts, String? hint)?
     onManualPasswordRequired,
   }) async {
     try {
@@ -396,6 +499,7 @@ class PdfPasswordDetectionService {
         userName: userName,
         fileName: fileName,
       );
+      final displayHint = extractPasswordInstruction(emailBody);
 
       final learnedPasswords =
           await PasswordLearningService.getLearnedPasswordCandidates(
@@ -447,7 +551,11 @@ class PdfPasswordDetectionService {
               ParsingLogger.summary(
                 'Password: Manual input attempt $attempt/$maxAttempts for $bankName',
               );
-              return onManualPasswordRequired(attempt, maxAttempts);
+              return onManualPasswordRequired(
+                attempt,
+                maxAttempts,
+                displayHint,
+              );
             },
             verifyPassword: (manualPassword) async {
               ParsingLogger.summary(

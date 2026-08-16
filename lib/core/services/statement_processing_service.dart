@@ -452,6 +452,7 @@ class StatementProcessingService {
     final resolver = PdfPasswordResolver();
     final googleAccessToken =
         Supabase.instance.client.auth.currentSession?.providerToken ?? '';
+    final emailBody = await _loadEmailBodyForPasswordHint(emailId);
 
     final text = await resolver.extractText(
       pdfBytes: pdfBytes,
@@ -462,6 +463,7 @@ class StatementProcessingService {
       googleAccessToken: googleAccessToken,
       fileName: fileName,
       emailSubject: subject,
+      emailBody: emailBody,
     );
 
     if (text == null) {
@@ -587,6 +589,7 @@ class StatementProcessingService {
     final resolver = PdfPasswordResolver();
     final googleAccessToken =
         Supabase.instance.client.auth.currentSession?.providerToken ?? '';
+    final emailBody = await _loadEmailBodyForPasswordHint(emailId);
 
     final text = await resolver.extractText(
       pdfBytes: pdfBytes,
@@ -597,6 +600,7 @@ class StatementProcessingService {
       googleAccessToken: googleAccessToken,
       fileName: fileName,
       emailSubject: subject,
+      emailBody: emailBody,
     );
 
     if (text == null) {
@@ -628,6 +632,17 @@ class StatementProcessingService {
       statementInfo: statementInfo,
       pdfText: text,
     );
+  }
+
+  Future<String> _loadEmailBodyForPasswordHint(String emailId) async {
+    try {
+      return await _gmailService.loadMessageBodyText(emailId);
+    } catch (error) {
+      ParsingLogger.warning(
+        'Statement Processing: Password hint unavailable for email $emailId',
+      );
+      return '';
+    }
   }
 
   /// Parses transactions from [pdfText] and writes the statement + its

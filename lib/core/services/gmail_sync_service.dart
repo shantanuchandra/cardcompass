@@ -104,6 +104,75 @@ class GmailSyncService {
         : _api.users.messages.get('me', messageId);
   }
 
+  /// Loads the readable message body for transient password-hint detection.
+  /// The caller must not persist this value. Plain text is preferred over
+  /// HTML and attachment payloads are deliberately ignored.
+  Future<String> loadMessageBodyText(String messageId) async {
+    final message = await _loadMessage(messageId);
+    return extractReadableBodyText(message.payload);
+  }
+
+  String extractReadableBodyText(gmail.MessagePart? payload) {
+    if (payload == null) return '';
+
+    final plainParts = <String>[];
+    final htmlParts = <String>[];
+
+    void collect(gmail.MessagePart part) {
+      final mimeType = part.mimeType?.toLowerCase();
+      final isInlineText = part.filename == null || part.filename!.isEmpty;
+      final encoded = part.body?.data;
+      if (isInlineText && encoded != null && encoded.isNotEmpty) {
+        final decoded = _decodeBodyData(encoded);
+        if (decoded.isNotEmpty) {
+          if (mimeType == 'text/plain') {
+            plainParts.add(decoded);
+          } else if (mimeType == 'text/html') {
+            htmlParts.add(_htmlToText(decoded));
+          }
+        }
+      }
+      for (final child in part.parts ?? const <gmail.MessagePart>[]) {
+        collect(child);
+      }
+    }
+
+    collect(payload);
+    final selected = plainParts.isNotEmpty ? plainParts : htmlParts;
+    return selected.join(' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+  }
+
+  String _decodeBodyData(String encoded) {
+    try {
+      final bytes = base64Url.decode(base64Url.normalize(encoded));
+      return utf8.decode(bytes, allowMalformed: true);
+    } on FormatException {
+      return '';
+    }
+  }
+
+  String _htmlToText(String html) {
+    var text = html
+        .replaceAll(
+          RegExp(r'<(?:br\s*/?|/p|/div|/li)>', caseSensitive: false),
+          ' ',
+        )
+        .replaceAll(RegExp(r'<[^>]+>'), ' ');
+    const entities = {
+      '&nbsp;': ' ',
+      '&amp;': '&',
+      '&lt;': '<',
+      '&gt;': '>',
+      '&quot;': '"',
+      '&#39;': "'",
+      '&apos;': "'",
+    };
+    for (final entry in entities.entries) {
+      text = text.replaceAll(entry.key, entry.value);
+    }
+    return text;
+  }
+
   /// Searches for likely credit-card-statement emails. Ported from
   /// enhanced_gmail_service.dart's searchStatements query construction
   /// (main branch), narrowed to PDF attachments and statement-like subjects.
