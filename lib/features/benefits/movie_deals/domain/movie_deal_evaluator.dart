@@ -46,6 +46,9 @@ MovieDealsRecommendation evaluateMovieDeals({
       usageConfidence: context.usageConfidence,
       platformConfidence: platformConfidence,
       explanation: _explanation(rule, saving, context.usageConfidence),
+      usedTransactions: context.usedTransactions,
+      milestoneSpend: context.milestoneSpend,
+      confirmationCount: context.confirmationCount,
     ));
   }
 

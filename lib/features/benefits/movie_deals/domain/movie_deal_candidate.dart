@@ -45,6 +45,7 @@ class MovieDealContext {
     this.usedTransactions = 0,
     this.milestoneSpend,
     this.confirmedPlatforms = const {},
+    this.confirmationCount,
   });
 
   final bool isOwned;
@@ -56,6 +57,13 @@ class MovieDealContext {
   /// Platforms with >=1 confirmation for THIS SPECIFIC benefitId
   /// (design spec §6/§5) — never a card-wide union across benefits.
   final Set<String> confirmedPlatforms;
+
+  /// Distinct-user confirmation count for THIS SPECIFIC benefitId, from
+  /// benefit_platform_confirmation_counts.confirmation_count. Null (never a
+  /// fabricated 0) when no confirmation row exists for this benefit at all —
+  /// distinct from confirmedPlatforms being empty for a different platform
+  /// than the one searched.
+  final int? confirmationCount;
 }
 
 class MovieDealCandidate {
@@ -72,6 +80,9 @@ class MovieDealCandidate {
     required this.platformConfidence,
     required this.explanation,
     this.remainingVerifiedUsage,
+    this.usedTransactions = 0,
+    this.milestoneSpend,
+    this.confirmationCount,
   });
 
   final String cardId;
@@ -86,6 +97,22 @@ class MovieDealCandidate {
   final MovieDealPlatformConfidence platformConfidence;
   final int? remainingVerifiedUsage;
   final String explanation;
+
+  /// Pass-through of MovieDealContext.usedTransactions — how many
+  /// redemptions have already counted against rule.cycleRedemptionLimit
+  /// (bogo) this cycle. Meaningless (always 0) when the rule has no
+  /// cycleRedemptionLimit to count against.
+  final int usedTransactions;
+
+  /// Pass-through of MovieDealContext.milestoneSpend — the prior completed
+  /// cycle's category spend, to render against rule.milestoneThreshold. Null
+  /// when unavailable, never a fabricated 0.
+  final double? milestoneSpend;
+
+  /// Pass-through of MovieDealContext.confirmationCount — distinct-user
+  /// count backing a communityConfirmed platformConfidence. Null when no
+  /// confirmation row exists for this benefit, never a fabricated 0.
+  final int? confirmationCount;
 }
 
 class RejectedMovieDealCandidate {

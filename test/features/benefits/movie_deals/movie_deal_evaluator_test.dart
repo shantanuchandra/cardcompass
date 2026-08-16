@@ -276,4 +276,64 @@ void main() {
       expect(candidate.savings, greaterThanOrEqualTo(0));
     });
   });
+
+  group('context proof fields pass through to the candidate unchanged', () {
+    // These fields (usedTransactions, milestoneSpend, confirmationCount) were
+    // already computed by the repository/evaluator for gating purposes, but
+    // never surfaced on MovieDealCandidate — the UI could not show "1 of 2
+    // redemptions used" or "confirmed by N users" without them, even though
+    // the numbers existed one layer down. This proves the pass-through, not
+    // new computation.
+    test('a bogo candidate carries usedTransactions from its context', () {
+      final result = evaluateMovieDeals(
+        request: const MovieTicketRequest(numberOfTickets: 2, pricePerTicket: 300, preferredPlatform: 'Zomato'),
+        rules: [_bogoRule(partners: {'Zomato'})],
+        contexts: {
+          ('c1', 'b-bogo'): const MovieDealContext(
+            isOwned: true,
+            usageConfidence: MovieDealUsageConfidence.verified,
+            usedTransactions: 1,
+          ),
+        },
+        now: today,
+      );
+      final candidate = result.candidates.firstWhere((c) => c.cardId == 'c1');
+      expect(candidate.usedTransactions, 1);
+    });
+
+    test('a candidate with no usage context defaults usedTransactions to 0, matching MovieDealContext default', () {
+      final result = evaluateMovieDeals(
+        request: const MovieTicketRequest(numberOfTickets: 4, pricePerTicket: 300),
+        rules: [_percentRule()],
+        contexts: {('c2', 'b-percent'): const MovieDealContext(isOwned: true)},
+        now: today,
+      );
+      final candidate = result.candidates.firstWhere((c) => c.cardId == 'c2');
+      expect(candidate.usedTransactions, 0);
+    });
+
+    test('a milestone candidate carries milestoneSpend from its context', () {
+      final result = evaluateMovieDeals(
+        request: const MovieTicketRequest(numberOfTickets: 1, pricePerTicket: 300, preferredPlatform: 'BookMyShow'),
+        rules: [_milestoneRule(partners: {'BookMyShow'})],
+        contexts: {
+          ('c3', 'b-milestone'): const MovieDealContext(isOwned: true, milestoneSpend: 85000),
+        },
+        now: today,
+      );
+      final candidate = result.candidates.firstWhere((c) => c.cardId == 'c3');
+      expect(candidate.milestoneSpend, 85000);
+    });
+
+    test('a candidate with no milestoneSpend in its context carries a null milestoneSpend, never a fabricated 0', () {
+      final result = evaluateMovieDeals(
+        request: const MovieTicketRequest(numberOfTickets: 4, pricePerTicket: 300),
+        rules: [_percentRule()],
+        contexts: {('c2', 'b-percent'): const MovieDealContext(isOwned: true)},
+        now: today,
+      );
+      final candidate = result.candidates.firstWhere((c) => c.cardId == 'c2');
+      expect(candidate.milestoneSpend, isNull);
+    });
+  });
 }

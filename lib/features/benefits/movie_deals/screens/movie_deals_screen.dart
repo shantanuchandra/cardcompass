@@ -1,6 +1,6 @@
 // lib/features/benefits/movie_deals/screens/movie_deals_screen.dart
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../../core/theme/app_theme.dart';
@@ -16,8 +16,8 @@ class MovieDealsScreen extends ConsumerStatefulWidget {
 }
 
 class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
-  final _ticketCountController = TextEditingController();
-  final _priceController = TextEditingController();
+  int _tickets = 2;
+  double _price = 250;
   String? _selectedPlatform;
   String? _selectedCinema;
   MovieTicketRequest? _submittedRequest;
@@ -28,37 +28,73 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
   // both "zomato" and "district" alias to) into one entry.
   static final _platforms = moviePlatformAliases.values.toSet().toList()..sort();
   static const _cinemas = ['PVR Cinemas', 'INOX', 'Cinepolis', 'Moviemax', 'SRS Cinemas', 'Wave Cinemas'];
-  static const _ticketOptions = [2, 3, 4, 6];
-  static const _priceOptions = [200, 250, 300, 400];
 
-  @override
-  void dispose() {
-    _ticketCountController.dispose();
-    _priceController.dispose();
-    super.dispose();
-  }
+  static const _minTickets = 1;
+  static const _maxTickets = 20;
+  static const _priceStep = 25.0;
+  static const _minPrice = 25.0;
 
-  bool get _formValid {
-    final tickets = int.tryParse(_ticketCountController.text);
-    final price = double.tryParse(_priceController.text);
-    return tickets != null && tickets > 0 && price != null && price > 0;
+  double get _total => _tickets * _price;
+
+  void _submit() {
+    setState(() {
+      _submittedRequest = MovieTicketRequest(
+        numberOfTickets: _tickets,
+        pricePerTicket: _price,
+        preferredPlatform: _selectedPlatform,
+        preferredCinema: _selectedCinema,
+      );
+    });
   }
 
   @override
   Widget build(BuildContext context) {
+    final isDesktop = MediaQuery.sizeOf(context).width >= 1024;
+    final deck = _InputDeck(
+      tickets: _tickets,
+      price: _price,
+      total: _total,
+      platforms: _platforms,
+      cinemas: _cinemas,
+      selectedPlatform: _selectedPlatform,
+      selectedCinema: _selectedCinema,
+      onTicketsChanged: (v) => setState(() => _tickets = v.clamp(_minTickets, _maxTickets)),
+      onPriceChanged: (v) => setState(() => _price = v < _minPrice ? _minPrice : v),
+      priceStep: _priceStep,
+      onPlatformChanged: (v) => setState(() => _selectedPlatform = v),
+      onCinemaChanged: (v) => setState(() => _selectedCinema = v),
+      onSubmit: _submit,
+    );
+    final results = _submittedRequest == null
+        ? const SizedBox.shrink()
+        : MovieDealsResults(request: _submittedRequest!);
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildHeader(),
-          const SizedBox(height: 24),
-          _buildInputForm(),
-          const SizedBox(height: 24),
-          _buildOptimizeButton(),
-          const SizedBox(height: 24),
-          if (_submittedRequest != null)
-            MovieDealsResults(request: _submittedRequest!),
+          const SizedBox(height: 20),
+          if (isDesktop)
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(flex: 2, child: deck.animate(delay: 80.ms).fadeIn().slideX(begin: -0.03)),
+                  const SizedBox(width: AppSpacing.lg),
+                  Expanded(
+                    flex: 3,
+                    child: results.animate(delay: 140.ms).fadeIn().slideX(begin: 0.03),
+                  ),
+                ],
+              ),
+            )
+          else ...[
+            deck.animate(delay: 80.ms).fadeIn().slideY(begin: 0.03),
+            const SizedBox(height: 20),
+            results,
+          ],
         ],
       ),
     );
@@ -73,7 +109,7 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
             const Icon(Icons.local_movies_outlined, size: 24, color: AppColors.neonCyan),
             const SizedBox(width: 12),
             Text(
-              'MOVIE TICKET OPTIMIZER',
+              'MOVIE DEALS',
               style: GoogleFonts.spaceGrotesk(
                 fontWeight: FontWeight.bold,
                 letterSpacing: 1.0,
@@ -81,263 +117,350 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
                 color: AppColors.textPrimary,
               ),
             ),
+            const Spacer(),
+            const _LivePulse(),
           ],
         ),
         const SizedBox(height: 8),
         Text(
-          'Query ticket combinations across major platforms and calculate optimal savings route.',
+          'Every offer type gets the proof it actually has — redemptions used, milestone progress, '
+          'or an honest reward rate — never one generic confidence label for all six.',
           style: GoogleFonts.inter(color: AppColors.textSecondary, fontSize: 12, height: 1.4),
         ),
-        const SizedBox(height: 12),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-          decoration: BoxDecoration(
-            color: AppColors.surface1,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.neonCyan.withValues(alpha: 0.25), width: 1.2),
+      ],
+    ).animate().fadeIn(duration: 300.ms);
+  }
+}
+
+class _LivePulse extends StatefulWidget {
+  const _LivePulse();
+
+  @override
+  State<_LivePulse> createState() => _LivePulseState();
+}
+
+class _LivePulseState extends State<_LivePulse> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 900))
+      ..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        FadeTransition(
+          opacity: Tween(begin: 1.0, end: 0.35).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut)),
+          child: Container(
+            width: 6,
+            height: 6,
+            decoration: const BoxDecoration(
+              color: AppColors.neonCyan,
+              shape: BoxShape.circle,
+              boxShadow: [BoxShadow(color: AppColors.neonCyan, blurRadius: 6)],
+            ),
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.bolt, size: 14, color: AppColors.neonCyan),
-              const SizedBox(width: 4),
-              Text(
-                'AI RULE OPTIMIZATION ENGINE',
-                style: GoogleFonts.spaceGrotesk(
-                  fontSize: 9,
-                  color: AppColors.neonCyan,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 0.5,
-                ),
-              ),
-            ],
-          ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          'READY',
+          style: GoogleFonts.spaceGrotesk(fontSize: 9, fontWeight: FontWeight.bold, letterSpacing: 0.6, color: AppColors.neonCyan),
         ),
       ],
     );
   }
+}
 
-  Widget _buildInputForm() {
+class _InputDeck extends StatelessWidget {
+  const _InputDeck({
+    required this.tickets,
+    required this.price,
+    required this.total,
+    required this.platforms,
+    required this.cinemas,
+    required this.selectedPlatform,
+    required this.selectedCinema,
+    required this.onTicketsChanged,
+    required this.onPriceChanged,
+    required this.onPlatformChanged,
+    required this.onCinemaChanged,
+    required this.onSubmit,
+    required this.priceStep,
+  });
+
+  final int tickets;
+  final double price;
+  final double total;
+  final List<String> platforms;
+  final List<String> cinemas;
+  final String? selectedPlatform;
+  final String? selectedCinema;
+  final ValueChanged<int> onTicketsChanged;
+  final ValueChanged<double> onPriceChanged;
+  final double priceStep;
+  final ValueChanged<String?> onPlatformChanged;
+  final ValueChanged<String?> onCinemaChanged;
+  final VoidCallback onSubmit;
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
         color: AppColors.surface1,
         borderRadius: BorderRadius.circular(AppRadius.xl),
         border: Border.all(color: AppColors.surface3),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'TICKET SPECIFICATIONS',
-              style: GoogleFonts.spaceGrotesk(fontWeight: FontWeight.bold, color: AppColors.textPrimary, fontSize: 11, letterSpacing: 1.0),
-            ),
-            const SizedBox(height: 18),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _ticketCountController,
-                    keyboardType: TextInputType.number,
-                    style: GoogleFonts.inter(color: AppColors.textPrimary),
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(2)],
-                    decoration: const InputDecoration(
-                      labelText: 'Tickets',
-                      prefixIcon: Icon(Icons.confirmation_number_outlined, color: AppColors.neonCyan),
-                    ),
-                    onChanged: (_) => setState(() {}),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: TextField(
-                    controller: _priceController,
-                    keyboardType: TextInputType.number,
-                    style: GoogleFonts.inter(color: AppColors.textPrimary),
-                    inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9]')), LengthLimitingTextInputFormatter(5)],
-                    decoration: const InputDecoration(
-                      labelText: 'Price (₹)',
-                      prefixIcon: Icon(Icons.currency_rupee, color: AppColors.neonCyan),
-                    ),
-                    onChanged: (_) => setState(() {}),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            _buildQuickChips(),
-            const SizedBox(height: 20),
-            Row(
-              children: [
-                Expanded(child: _buildPlatformDropdown()),
-                const SizedBox(width: 16),
-                Expanded(child: _buildCinemaDropdown()),
-              ],
-            ),
-            const SizedBox(height: 20),
-            _buildTotalAmount(),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                const Icon(Icons.info_outline, size: 14, color: AppColors.textMuted),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Cinema filtering is not yet supported — no current benefit data is tied to a specific cinema chain.',
-                    style: GoogleFonts.inter(color: AppColors.textMuted, fontSize: 10),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPlatformDropdown() {
-    return DropdownButtonFormField<String>(
-      initialValue: _selectedPlatform,
-      isExpanded: true,
-      dropdownColor: AppColors.surface1,
-      decoration: const InputDecoration(
-        labelText: 'Platform',
-        prefixIcon: Icon(Icons.smartphone_outlined, color: AppColors.neonCyan),
-      ),
-      items: [
-        DropdownMenuItem<String>(
-          value: null,
-          child: Text('ANY PLATFORM', overflow: TextOverflow.ellipsis, style: GoogleFonts.spaceGrotesk(fontSize: 10, color: AppColors.textSecondary)),
-        ),
-        ..._platforms.map((p) => DropdownMenuItem<String>(
-              value: p,
-              child: Text(p.toUpperCase(), overflow: TextOverflow.ellipsis, style: GoogleFonts.spaceGrotesk(fontSize: 10, color: AppColors.textPrimary)),
-            )),
-      ],
-      onChanged: (value) => setState(() => _selectedPlatform = value),
-    );
-  }
-
-  Widget _buildCinemaDropdown() {
-    return DropdownButtonFormField<String>(
-      initialValue: _selectedCinema,
-      isExpanded: true,
-      dropdownColor: AppColors.surface1,
-      decoration: const InputDecoration(
-        labelText: 'Cinema',
-        prefixIcon: Icon(Icons.theater_comedy_outlined, color: AppColors.neonCyan),
-      ),
-      items: [
-        DropdownMenuItem<String>(
-          value: null,
-          child: Text('ANY CINEMA', overflow: TextOverflow.ellipsis, style: GoogleFonts.spaceGrotesk(fontSize: 10, color: AppColors.textSecondary)),
-        ),
-        ..._cinemas.map((c) => DropdownMenuItem<String>(
-              value: c,
-              child: Text(c.toUpperCase(), overflow: TextOverflow.ellipsis, style: GoogleFonts.spaceGrotesk(fontSize: 10, color: AppColors.textPrimary)),
-            )),
-      ],
-      onChanged: (value) => setState(() => _selectedCinema = value),
-    );
-  }
-
-  Widget _buildQuickChips() {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          child: Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: _ticketOptions.map((n) {
-              final selected = int.tryParse(_ticketCountController.text) == n;
-              return ChoiceChip(
-                label: Text('$n TICKETS', style: GoogleFonts.spaceGrotesk(fontSize: 9, fontWeight: FontWeight.bold, color: selected ? Colors.black : AppColors.textSecondary)),
-                selectedColor: AppColors.neonCyan,
-                backgroundColor: AppColors.surfaceVoid,
-                selected: selected,
-                showCheckmark: false,
-                onSelected: (_) => setState(() => _ticketCountController.text = '$n'),
-              );
-            }).toList(),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: _priceOptions.map((p) {
-              final selected = double.tryParse(_priceController.text) == p.toDouble();
-              return ChoiceChip(
-                label: Text('₹$p', style: GoogleFonts.spaceGrotesk(fontSize: 9, fontWeight: FontWeight.bold, color: selected ? Colors.black : AppColors.textSecondary)),
-                selectedColor: AppColors.neonCyan,
-                backgroundColor: AppColors.surfaceVoid,
-                selected: selected,
-                showCheckmark: false,
-                onSelected: (_) => setState(() => _priceController.text = '$p'),
-              );
-            }).toList(),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildTotalAmount() {
-    final tickets = int.tryParse(_ticketCountController.text) ?? 0;
-    final price = double.tryParse(_priceController.text) ?? 0.0;
-    final total = tickets * price;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceVoid,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        border: Border.all(color: AppColors.surface3),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Stack(
         children: [
-          Text('TOTAL BASE AMOUNT:', style: GoogleFonts.spaceGrotesk(fontWeight: FontWeight.bold, color: AppColors.textSecondary, fontSize: 10, letterSpacing: 0.5)),
-          Text(
-            total > 0 ? '₹${total.toStringAsFixed(0)}' : '₹0',
-            style: GoogleFonts.spaceGrotesk(fontWeight: FontWeight.bold, color: AppColors.neonCyan, fontSize: 16),
+          Positioned(
+            top: -60,
+            right: -30,
+            child: Container(
+              width: 220,
+              height: 220,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: RadialGradient(
+                  colors: [AppColors.violet.withValues(alpha: 0.10), Colors.transparent],
+                ),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(20.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'TICKET SPECIFICATIONS',
+                  style: GoogleFonts.spaceGrotesk(fontWeight: FontWeight.bold, color: AppColors.textMuted, fontSize: 10, letterSpacing: 1.0),
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: _Stepper(
+                        label: 'Tickets',
+                        value: '$tickets',
+                        onDecrement: () => onTicketsChanged(tickets - 1),
+                        onIncrement: () => onTicketsChanged(tickets + 1),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _Stepper(
+                        label: 'Price / ticket',
+                        value: '₹${price.toStringAsFixed(0)}',
+                        onDecrement: () => onPriceChanged(price - priceStep),
+                        onIncrement: () => onPriceChanged(price + priceStep),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _DeckDropdown(
+                        label: 'Platform',
+                        value: selectedPlatform,
+                        options: platforms,
+                        onChanged: onPlatformChanged,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _DeckDropdown(
+                        label: 'Cinema',
+                        value: selectedCinema,
+                        options: cinemas,
+                        onChanged: onCinemaChanged,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Padding(
+                  padding: const EdgeInsets.only(top: 8, bottom: 4),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.info_outline, size: 12, color: AppColors.textMuted),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          'Cinema filtering is not yet supported — no benefit data is tied to a specific chain.',
+                          style: GoogleFonts.inter(color: AppColors.textMuted, fontSize: 9.5),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: AppColors.surfaceVoid,
+                    borderRadius: BorderRadius.circular(AppRadius.md),
+                    border: Border.all(color: AppColors.surface3),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('BASE AMOUNT', style: GoogleFonts.spaceGrotesk(fontWeight: FontWeight.bold, color: AppColors.textSecondary, fontSize: 10, letterSpacing: 0.5)),
+                      Text(
+                        '₹${total.toStringAsFixed(0)}',
+                        style: GoogleFonts.spaceGrotesk(fontWeight: FontWeight.bold, color: AppColors.neonCyan, fontSize: 18),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: total > 0 ? onSubmit : null,
+                    icon: const Icon(Icons.bolt, color: Colors.black, size: 16),
+                    label: Text(
+                      'OPTIMIZE DEALS',
+                      style: GoogleFonts.spaceGrotesk(fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.0, color: Colors.black),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.neonCyan,
+                      disabledBackgroundColor: AppColors.surface3,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadius.md)),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
     );
   }
+}
 
-  Widget _buildOptimizeButton() {
-    final tickets = int.tryParse(_ticketCountController.text) ?? 0;
-    final price = double.tryParse(_priceController.text) ?? 0.0;
-    final total = tickets * price;
-    return SizedBox(
-      width: double.infinity,
-      child: ElevatedButton.icon(
-        onPressed: _formValid
-            ? () => setState(() {
-                  _submittedRequest = MovieTicketRequest(
-                    numberOfTickets: tickets,
-                    pricePerTicket: price,
-                    preferredPlatform: _selectedPlatform,
-                    preferredCinema: _selectedCinema,
-                  );
-                })
-            : null,
-        icon: const Icon(Icons.bolt, color: Colors.black, size: 16),
-        label: Text(
-          total > 0 ? 'OPTIMIZE DEALS • ₹${total.toStringAsFixed(0)}' : 'OPTIMIZE DEALS',
-          style: GoogleFonts.spaceGrotesk(fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.0, color: Colors.black),
-        ),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.neonCyan,
-          disabledBackgroundColor: AppColors.surface3,
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadius.md)),
+class _Stepper extends StatelessWidget {
+  const _Stepper({
+    required this.label,
+    required this.value,
+    required this.onDecrement,
+    required this.onIncrement,
+  });
+
+  final String label;
+  final String value;
+  final VoidCallback onDecrement;
+  final VoidCallback onIncrement;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceVoid,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: AppColors.surface3),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label.toUpperCase(), style: GoogleFonts.spaceGrotesk(fontSize: 9, color: AppColors.textMuted, letterSpacing: 0.4)),
+          const SizedBox(height: 6),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(value, style: GoogleFonts.spaceGrotesk(fontWeight: FontWeight.bold, fontSize: 17, color: AppColors.neonCyan)),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _StepButton(icon: Icons.remove, onTap: onDecrement),
+                  const SizedBox(width: 4),
+                  _StepButton(icon: Icons.add, onTap: onIncrement),
+                ],
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StepButton extends StatelessWidget {
+  const _StepButton({required this.icon, required this.onTap});
+
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.surface1,
+      borderRadius: BorderRadius.circular(6),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(6),
+        onTap: onTap,
+        child: Container(
+          width: 22,
+          height: 22,
+          decoration: BoxDecoration(borderRadius: BorderRadius.circular(6), border: Border.all(color: AppColors.surface3)),
+          child: Icon(icon, size: 13, color: AppColors.textSecondary),
         ),
       ),
+    );
+  }
+}
+
+class _DeckDropdown extends StatelessWidget {
+  const _DeckDropdown({
+    required this.label,
+    required this.value,
+    required this.options,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String? value;
+  final List<String> options;
+  final ValueChanged<String?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return DropdownButtonFormField<String>(
+      initialValue: value,
+      isExpanded: true,
+      dropdownColor: AppColors.surface1,
+      decoration: InputDecoration(
+        labelText: label,
+        isDense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      ),
+      style: GoogleFonts.spaceGrotesk(fontSize: 10, color: AppColors.textPrimary),
+      items: [
+        DropdownMenuItem<String>(
+          value: null,
+          child: Text('ANY', overflow: TextOverflow.ellipsis, style: GoogleFonts.spaceGrotesk(fontSize: 10, color: AppColors.textSecondary)),
+        ),
+        ...options.map((o) => DropdownMenuItem<String>(
+              value: o,
+              child: Text(o.toUpperCase(), overflow: TextOverflow.ellipsis, style: GoogleFonts.spaceGrotesk(fontSize: 10, color: AppColors.textPrimary)),
+            )),
+      ],
+      onChanged: onChanged,
     );
   }
 }
