@@ -63,6 +63,11 @@ flowchart TD
     J -->|"Yes, confidence at least 0.90"| K["Transactionally create or merge identity"]
     J -->|"No"| L["Protected admin review queue"]
     K --> M["Store aliases and provenance"]
+    M --> P["Queue asynchronous catalog enrichment"]
+    P --> Q["Normalize and backfill missing catalog fields and benefits"]
+    Q --> R{"Existing value conflict?"}
+    R -->|"No"| S["Persist grounded fields with provenance"]
+    R -->|"Yes"| L
     M --> D
     D --> N["Reuse or create user card"]
     N --> O["Retry all linked deferred statements"]
@@ -103,6 +108,16 @@ It will:
 
 The operation reuses the existing discovery job keyed by user, issuer, and normalized statement evidence. Repeated URL submissions update that job without creating parallel work.
 
+Identity resolution and statement assignment do not wait for complete catalog enrichment. Once the card ID is known, the Edge Function creates or reuses an asynchronous catalog-enrichment job for that card and official URL.
+
+### Catalog enrichment
+
+The enrichment worker reuses the validated official response and existing scraping infrastructure. It extracts and normalizes only fields explicitly supported by the issuer page, including canonical name, issuer, payment network, card type, joining fee, annual fee, APR, eligibility, rewards and other benefits represented by the existing catalog and benefit schemas.
+
+Missing catalog values may be backfilled automatically when field-level confidence meets the validation threshold. An existing non-null value is never overwritten automatically when the official extraction disagrees; the conflicting field and both values enter admin review. Repeated enrichment requests deduplicate by card ID, canonical final URL, and content hash.
+
+Benefits are processed as a second asynchronous phase after identity resolution. Grounded benefit records retain their official URL, retrieved timestamp, content hash, sanitized supporting evidence, and field-level confidence. Ambiguous benefit language or conflicts with active benefits enter the existing staging/review path instead of being published automatically.
+
 ### Database operations
 
 Add a canonical URL identity to catalog provenance, including:
@@ -113,6 +128,8 @@ Add a canonical URL identity to catalog provenance, including:
 - Stable hash for canonical lookup.
 - Retrieval timestamp and content hash.
 - Validation result and official-domain identity.
+
+Add persistent catalog-enrichment jobs containing the resolved card ID, canonical URL hashes, content hash, status, attempt count, retry timing, extracted normalized fields, and safe validation warnings. The jobs are service-role-only and unique for one card, final URL hash, and content hash.
 
 Unique indexes will prevent duplicate canonical and final URL identities. A service-role-only transactional database function will resolve or create a catalog identity while locking the relevant normalized issuer/product and URL identities. Its result is always one catalog card ID.
 
@@ -177,6 +194,8 @@ URL-originated review items use the existing protected admin queue and include:
 
 Existing approve, edit-and-approve, merge, retry, and reject actions apply. Approval or merge resolves every linked discovery job and lets the client retry deferred statements.
 
+Catalog and benefit conflicts created during asynchronous enrichment appear in the same protected workflow with the resolved card ID and field-level before/after values. Admin approval can apply selected missing or corrected fields without duplicating the card.
+
 ## Error Handling
 
 Errors use stable reason codes with safe user-facing messages:
@@ -226,6 +245,11 @@ Network and scrape failures remain retryable with bounded backoff. Validation an
 - Official page alone enters review.
 - Issuer or network conflict enters review or fails validation.
 - Existing user cards and all linked deferred statements are reused and retried.
+- Verified identity resolution queues one asynchronous enrichment job.
+- Missing fees, network and other grounded catalog fields are backfilled.
+- Existing conflicting non-null catalog fields are not overwritten automatically.
+- Repeated enrichment for the same card, final URL and content hash is idempotent.
+- Officially grounded benefits are normalized with provenance; ambiguous benefits enter review.
 
 ## Acceptance Criteria
 
@@ -235,4 +259,7 @@ Network and scrape failures remain retryable with bounded backoff. Validation an
 - Cross-bank and unsafe URLs cannot resolve a statement.
 - Verified resolution assigns and retries all related statements without restarting Gmail sync.
 - Ambiguous submissions appear in the existing protected admin queue.
+- Identity resolution does not wait for catalog or benefit enrichment.
+- A new official URL queues normalized catalog and benefit backfill using the existing scraping infrastructure.
+- Missing catalog values are populated from official evidence while conflicting existing values require review.
 - No new sensitive statement or customer data is retained.
