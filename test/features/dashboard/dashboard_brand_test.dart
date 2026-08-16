@@ -654,6 +654,54 @@ void main() {
     },
   );
 
+  testWidgets('missing Gmail authorization explains how to resume assignment', (
+    tester,
+  ) async {
+    final selectedAppTab = ValueNotifier(AppTab.dashboard);
+    addTearDown(selectedAppTab.dispose);
+    await _pumpDashboard(
+      tester,
+      selectedAppTab: selectedAppTab,
+      pendingAssignments: const [
+        {'email_id': 'email-1', 'bank_detected': 'Horizon Bank'},
+      ],
+      catalogSearch: (_, _) async => const [
+        {
+          'id': 'catalog-1',
+          'card_name': 'Astra Preferred',
+          'bank': 'Horizon Bank',
+        },
+      ],
+      cardResolution: (_, _) async {
+        throw const NoGmailTokenException('private token detail');
+      },
+    );
+
+    await tester.scrollUntilVisible(
+      find.text('Your Cards'),
+      300,
+      scrollable: find
+          .descendant(
+            of: find.byType(CustomScrollView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    await tester.drag(find.byType(PageView), const Offset(-500, 0));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('resolve-bank-email-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Astra Preferred'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Reconnect Gmail to download and process this statement.'),
+      findsOneWidget,
+    );
+    expect(find.text('Reconnect Gmail'), findsOneWidget);
+    expect(find.textContaining('private token detail'), findsNothing);
+  });
+
   testWidgets(
     'assignment survives barrier dismissal and invalidates dashboard once',
     (tester) async {

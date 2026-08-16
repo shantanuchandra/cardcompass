@@ -73,6 +73,16 @@ export function publicDiscoveryResult(job: DiscoveryJobPublicSource) {
   };
 }
 
+export function reviewRequiredJobPatch(reviewItemId: string, updatedAt: string) {
+  return {
+    status: "review_required",
+    review_item_id: reviewItemId,
+    failure_category: null,
+    next_retry_at: null,
+    updated_at: updatedAt,
+  };
+}
+
 const issuerDomains: Record<string, string[]> = {
   "Axis Bank": ["axis.bank.in", "axisbank.com"],
   "HDFC Bank": ["hdfcbank.com", "hdfc.bank.in"],
@@ -170,6 +180,67 @@ export function canonicalCardIdentity(
     network: hasAmex ? "American Express" : null,
     aliases: rawProduct.trim() === cardName ? [] : [rawProduct.trim()],
   };
+}
+
+function decodeHtmlText(value: string): string {
+  return value
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;|&#34;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&nbsp;|&#160;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function officialCardIdentityFromHtml(
+  html: string,
+  issuer: string,
+): CanonicalCardIdentity | null {
+  const candidates: string[] = [];
+  const patterns = [
+    /<[^>]+class=["'][^"']*\btitle\b[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/gi,
+    /<h[1-3][^>]*>([\s\S]*?)<\/h[1-3]>/gi,
+    /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["'][^>]*>/gi,
+  ];
+  for (const pattern of patterns) {
+    for (const match of html.matchAll(pattern)) {
+      const candidate = decodeHtmlText(match[1] ?? "");
+      if (/\bcard\b/i.test(candidate) && normalizedProduct(candidate, issuer).length >= 4) {
+        candidates.push(candidate);
+      }
+    }
+    if (candidates.length > 0) break;
+  }
+  const rawProduct = candidates[0];
+  if (!rawProduct) return null;
+  const identity = canonicalCardIdentity(issuer, rawProduct);
+  const network = /\brupay\b/i.test(rawProduct)
+    ? "RuPay"
+    : /\bvisa\b/i.test(rawProduct)
+    ? "Visa"
+    : /\bmaster\s*card\b/i.test(rawProduct)
+    ? "Mastercard"
+    : identity.network;
+  return { ...identity, network };
+}
+
+export function selectSubmittedUrlIdentity(input: {
+  html: string;
+  issuer: string;
+  statementProducts: string[];
+}): {
+  identity: CanonicalCardIdentity | null;
+  statementProducts: string[];
+} {
+  const statementProducts = input.statementProducts.filter(
+    (value) => normalizedProduct(value, input.issuer).length >= 4,
+  );
+  const identity = officialCardIdentityFromHtml(input.html, input.issuer) ??
+    (statementProducts[0]
+      ? canonicalCardIdentity(input.issuer, statementProducts[0])
+      : null);
+  return { identity, statementProducts };
 }
 
 export function officialDomainsForIssuer(issuer: string): string[] {

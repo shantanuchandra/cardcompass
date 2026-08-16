@@ -114,14 +114,21 @@ async function evaluate(cdp, expression) {
   return result.value;
 }
 
+let navigationSequence = 0;
+
 async function navigate(cdp, url) {
-  await cdp.send('Page.navigate', { url });
+  const target = new URL(url);
+  target.searchParams.set('__browser_test', String(++navigationSequence));
+  await cdp.send('Page.navigate', { url: target.href });
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    const ready = await evaluate(cdp, 'document.readyState');
-    if (ready === 'complete') return;
+    const page = await evaluate(cdp, `({
+      readyState: document.readyState,
+      href: location.href,
+    })`);
+    if (page.readyState === 'complete' && page.href === target.href) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(`Page did not finish loading: ${url}`);
+  throw new Error(`Page did not finish loading: ${target.href}`);
 }
 
 async function pressTab(cdp) {
@@ -133,7 +140,14 @@ async function pressTab(cdp) {
   };
   await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...key });
   await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...key });
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const visible = await evaluate(cdp, `(() => {
+      const rect = document.activeElement.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < innerHeight;
+    })()`);
+    if (visible) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
 }
 
 async function clickSelector(cdp, selector) {
@@ -198,8 +212,21 @@ test('public pages render without viewport overflow and expose live keyboard and
     'about:blank',
   ], { stdio: ['ignore', 'ignore', 'pipe'] });
   t.after(async () => {
-    chromeProcess.kill();
-    await rm(profile, { recursive: true, force: true });
+    if (chromeProcess.exitCode === null && chromeProcess.signalCode === null) {
+      chromeProcess.kill();
+      await Promise.race([
+        once(chromeProcess, 'exit'),
+        new Promise((resolve) => setTimeout(resolve, 5_000)),
+      ]);
+    }
+    // Chrome can briefly recreate profile files while shutting down. Node's
+    // recursive rm supports retries for this exact ENOTEMPTY/EBUSY race.
+    await rm(profile, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
   });
 
   const browserSocket = await devtoolsWebSocket(chromeProcess);

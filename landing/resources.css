@@ -24,7 +24,8 @@ img { max-width: 100%; }
   transform: translateY(-160%); padding: 10px 14px;
   background: var(--cyan); color: var(--ink); font-weight: 700;
 }
-.skip-link:focus { transform: none; }
+.skip-link:focus,
+.skip-link:focus-visible { transform: none; }
 .site-header {
   border-bottom: 1px solid rgba(244, 240, 230, 0.14);
   background: rgba(11, 16, 21, 0.96); color: var(--paper);

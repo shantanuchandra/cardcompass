@@ -10,7 +10,9 @@ import {
   publicDiscoveryResult,
   publicReasonCode,
   rankOfficialUrls,
+  reviewRequiredJobPatch,
   sanitizeEvidence,
+  selectSubmittedUrlIdentity,
 } from "../_shared/card_discovery.ts";
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
@@ -248,10 +250,12 @@ async function processSubmittedUrl(
   );
   if (knownFinal) return markResolved(db, job.id, knownFinal);
 
-  const product = evidence.product_signals?.[0] ?? job.proposed_product;
-  if (!product) throw new Error("not_product_page");
-  const canonical = canonicalCardIdentity(job.issuer, product);
   if (page.contentType === "application/pdf") {
+    const product = evidence.product_signals?.find((value) =>
+      normalizedProduct(value, job.issuer).length >= 4
+    ) ?? job.proposed_product;
+    if (!product) throw new Error("not_product_page");
+    const canonical = canonicalCardIdentity(job.issuer, product);
     await putInReview(db, job, { ...canonical, official_url: finalUrl }, {
       evidence,
       official_url: finalUrl,
@@ -263,6 +267,13 @@ async function processSubmittedUrl(
   }
 
   const pageText = htmlText(page.body);
+  const selected = selectSubmittedUrlIdentity({
+    html: page.body,
+    issuer: job.issuer,
+    statementProducts: evidence.product_signals ?? [],
+  });
+  const canonical = selected.identity;
+  if (!canonical) throw new Error("not_product_page");
   const expectedIdentity = normalizedProduct(canonical.cardName, job.issuer);
   if (expectedIdentity.length < 4 ||
       !normalizedProduct(pageText, job.issuer).includes(expectedIdentity)) {
@@ -272,7 +283,7 @@ async function processSubmittedUrl(
     issuer: job.issuer,
     officialUrl: finalUrl,
     officialProduct: canonical.cardName,
-    statementProducts: evidence.product_signals ?? [],
+    statementProducts: selected.statementProducts,
     confidence: evidence.confidence ?? 0,
     catalogCandidateCount: 0,
     conflicts: evidence.warnings ?? [],
@@ -416,11 +427,9 @@ async function putInReview(
     .select("id")
     .single();
   if (error) throw error;
-  await db.from("card_discovery_jobs").update({
-    status: "review_required",
-    review_item_id: review.id,
-    updated_at: new Date().toISOString(),
-  }).eq("id", job.id);
+  await db.from("card_discovery_jobs").update(
+    reviewRequiredJobPatch(review.id, new Date().toISOString()),
+  ).eq("id", job.id);
 }
 
 async function processDiscoveryJob(
