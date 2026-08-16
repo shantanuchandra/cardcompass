@@ -29,6 +29,13 @@ function sitemap(urls, index = false) {
     .join('')}</${index ? 'sitemapindex' : 'urlset'}>`;
 }
 
+function everyReturnedString(value) {
+  if (typeof value === 'string') return [value];
+  if (Array.isArray(value)) return value.flatMap(everyReturnedString);
+  if (value && typeof value === 'object') return Object.values(value).flatMap(everyReturnedString);
+  return [];
+}
+
 test('stops nested sitemap indexes at depth two and uses a same-domain page index as a candidate fallback', async () => {
   const depthOne = 'https://www.axis.bank.in/sitemaps/one.xml';
   const depthTwo = 'https://www.axis.bank.in/sitemaps/two.xml';
@@ -189,4 +196,109 @@ test('quarantines known invalid Axis, HDFC, Kotak, and generic PNB pages without
     assert.ok(page.sanitizedEvidence.every((value) => !/\d{4,}/.test(value)), url);
     assert.ok(page.sanitizedEvidence.every((value) => value.length <= 300), url);
   }
+});
+
+test('redacts long digit sequences from every returned result string', async () => {
+  const product = 'https://www.axis.bank.in/cards/credit-card/privilege-credit-card?account=1234567890123456';
+  const result = await discoverIssuerCardCandidates({
+    issuer,
+    sitemapUrl: rootSitemap,
+    fetchOfficialIssuerResource: async (input) => {
+      if (input.url === rootSitemap) return resource(input.url, sitemap([product]), 'application/xml');
+      return resource(
+        input.url,
+        '<h1>Axis Privilege 9876543210987654 Credit Card</h1><title>Member 1234567890123456</title>',
+      );
+    },
+    delay: async () => {},
+  });
+
+  for (const value of everyReturnedString(result)) {
+    assert.doesNotMatch(value, /\d{4,}/, value);
+  }
+});
+
+test('ranks positives before the 40 fetch cap and quarantines hard-negative links without fetching them', async () => {
+  const negatives = Array.from({length: 40}, (_, index) =>
+    `https://www.axis.bank.in/login?tracking=${index + 1000000000000000}`,
+  );
+  const product = 'https://www.axis.bank.in/cards/credit-card/privilege-credit-card';
+  const requested = [];
+  const result = await discoverIssuerCardCandidates({
+    issuer,
+    sitemapUrl: rootSitemap,
+    fetchOfficialIssuerResource: async (input) => {
+      requested.push(input.url);
+      if (input.url === rootSitemap) return resource(input.url, sitemap([...negatives, product]), 'application/xml');
+      assert.equal(input.url, product);
+      return resource(input.url, '<h1>Axis Privilege Credit Card</h1>');
+    },
+    delay: async () => {},
+  });
+
+  assert.equal(result.consideredCount, 41);
+  assert.equal(result.fetchedCount, 1);
+  assert.equal(result.candidates[0]?.canonicalUrl, product);
+  assert.equal(result.quarantined.length, 40);
+  assert.deepEqual(requested, [rootSitemap, product]);
+});
+
+test('anchors sitemap, candidate, and returned canonical URLs to the initial approved hostname', async () => {
+  const crossHostSitemap = 'https://www.axisbank.com/sitemap.xml';
+  const crossHostCandidate = 'https://www.axisbank.com/cards/credit-card/privilege-credit-card';
+  const localProduct = 'https://www.axis.bank.in/cards/credit-card/select-credit-card';
+  const requested = [];
+  const result = await discoverIssuerCardCandidates({
+    issuer,
+    sitemapUrl: rootSitemap,
+    fetchOfficialIssuerResource: async (input) => {
+      requested.push(input.url);
+      if (input.url === rootSitemap) {
+        return resource(input.url, sitemap([crossHostSitemap, crossHostCandidate, localProduct], true), 'application/xml');
+      }
+      assert.equal(input.url, localProduct);
+      return {
+        ...resource(input.url, '<h1>Axis Select Credit Card</h1>'),
+        finalUrl: crossHostCandidate,
+        canonicalUrl: crossHostCandidate,
+      };
+    },
+    delay: async () => {},
+  });
+
+  assert.deepEqual(requested, [rootSitemap, localProduct]);
+  assert.equal(result.candidates.length, 0);
+  assert.equal(result.quarantined.length, 1);
+  assert.doesNotMatch(result.quarantined[0].canonicalUrl, /axisbank\.com/);
+});
+
+test('requires product-specific identity context before classifying generic listings or sitewide documents positively', () => {
+  const genericListing = classifyIssuerPage({
+    issuer,
+    url: 'https://www.axis.bank.in/cards/credit-cards',
+    html: '<h1>Credit Cards</h1>',
+  });
+  const sitewideTerms = classifyIssuerPage({
+    issuer,
+    url: 'https://www.axis.bank.in/terms-and-conditions',
+    html: '<h1>Terms and Conditions</h1>',
+  });
+
+  assert.equal(genericListing.kind, 'ambiguous');
+  assert.equal(sitewideTerms.kind, 'ambiguous');
+});
+
+test('passes a nonzero production default delay to an injected delay function', async () => {
+  const delays = [];
+  await discoverIssuerCardCandidates({
+    issuer,
+    sitemapUrl: rootSitemap,
+    fetchOfficialIssuerResource: async (input) => input.url === rootSitemap
+      ? resource(input.url, sitemap(['https://www.axis.bank.in/cards/credit-card/privilege-credit-card']), 'application/xml')
+      : resource(input.url, '<h1>Axis Privilege Credit Card</h1>'),
+    delay: async (milliseconds) => delays.push(milliseconds),
+  });
+
+  assert.equal(delays.length, 1);
+  assert.ok(delays[0] > 0);
 });

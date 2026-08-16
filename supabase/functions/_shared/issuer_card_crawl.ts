@@ -11,6 +11,7 @@ import {
 export const MAX_SITEMAP_URLS = 200;
 export const MAX_CANDIDATE_FETCHES = 40;
 export const MAX_SITEMAP_DEPTH = 2;
+export const DEFAULT_CRAWL_DELAY_MS = 250;
 
 export type PageClassification = {
   kind: "card_product" | "supporting_document" | "not_a_card" | "ambiguous";
@@ -59,6 +60,11 @@ const supportingPattern = /(?:benefits?|fees?|charges?|rewards?|terms?|condition
 const productPattern = /(?:credit[-_ ]?cards?|cards?[-_ ]?credit|card[-_ ]?products?|product[-_ ]?cards?)(?:$|[/?=&_.-])/i;
 const evidencePattern = /<(?:title|h1|h2)[^>]*>([\s\S]*?)<\/(?:title|h1|h2)>/gi;
 const linkPattern = /<loc\b[^>]*>([\s\S]*?)<\/loc>/gi;
+const nonProductPathTokens = new Set([
+  "card", "cards", "credit", "products", "product", "personal", "bank",
+  "benefit", "benefits", "fee", "fees", "charge", "charges", "reward", "rewards",
+  "term", "terms", "condition", "conditions", "mitc", "html", "pdf",
+]);
 
 function decodeXml(value: string): string {
   return value
@@ -77,10 +83,12 @@ function textOnly(value: string): string {
     .trim();
 }
 
+function redactLongDigits(value: string): string {
+  return value.replace(/\d{4,}/g, "[redacted]");
+}
+
 function sanitizeEvidence(value: string): string {
-  return textOnly(value)
-    .replace(/\d{4,}/g, "[redacted]")
-    .slice(0, 300);
+  return redactLongDigits(textOnly(value)).slice(0, 300);
 }
 
 function evidenceFromHtml(html: string): string[] {
@@ -105,6 +113,38 @@ function pageEvidence(url: string, html: string): string {
   return `${url}\n${evidenceFromHtml(html).join(" ")}`;
 }
 
+function hostnameOf(url: string): string | null {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function isAnchoredToHost(url: string, hostname: string): boolean {
+  return hostnameOf(url) === hostname;
+}
+
+function hasProductSpecificUrlContext(url: string): boolean {
+  try {
+    const tokens = decodeURIComponent(new URL(url).pathname)
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean);
+    return tokens.some((token) => !nonProductPathTokens.has(token));
+  } catch {
+    return false;
+  }
+}
+
+function candidateUrlScore(url: string): number {
+  if (unsafePagePattern.test(url)) return -1;
+  if (!hasProductSpecificUrlContext(url)) return 0;
+  if (productPattern.test(url)) return 2;
+  if (supportingPattern.test(url)) return 1;
+  return 0;
+}
+
 function isSitemapUrl(url: string): boolean {
   try {
     const pathname = new URL(url).pathname.toLowerCase();
@@ -125,13 +165,25 @@ function parseSitemap(xml: string): SitemapDocument {
 }
 
 function emptyClassification(url: string, warning: string): PageClassification {
-  return {
+  return sanitizeClassification({
     kind: "ambiguous",
     canonicalUrl: url,
     aliases: [],
     confidence: 0,
     warnings: [warning],
     sanitizedEvidence: [],
+  });
+}
+
+function sanitizeClassification(page: PageClassification): PageClassification {
+  return {
+    ...page,
+    canonicalUrl: redactLongDigits(page.canonicalUrl),
+    proposedName: page.proposedName ? redactLongDigits(page.proposedName) : undefined,
+    aliases: page.aliases.map(redactLongDigits),
+    network: page.network ? redactLongDigits(page.network) : undefined,
+    warnings: page.warnings.map(redactLongDigits),
+    sanitizedEvidence: page.sanitizedEvidence.map(sanitizeEvidence),
   };
 }
 
@@ -145,24 +197,25 @@ export function classifyIssuerPage(input: ClassifyIssuerPageInput): PageClassifi
   const evidence = pageEvidence(canonicalUrl, html);
   const sanitizedEvidence = evidenceFromHtml(html);
   const identity = officialCardIdentityFromHtml(html, input.issuer);
+  const hasIdentityContext = Boolean(identity) && hasProductSpecificUrlContext(canonicalUrl);
   const warnings: string[] = [];
 
   if (unsafePagePattern.test(evidence)) {
-    return {
+    return sanitizeClassification({
       kind: "not_a_card",
       canonicalUrl,
       aliases: [],
       confidence: 0.99,
       warnings: ["quarantined_page_pattern"],
       sanitizedEvidence,
-    };
+    });
   }
 
   // A product heading commonly appears on its benefit/fee/terms pages. The
   // canonical path is the durable signal that makes those supporting pages
   // distinct from the product itself.
-  if (supportingPattern.test(canonicalUrl)) {
-    return {
+  if (hasIdentityContext && supportingPattern.test(canonicalUrl)) {
+    return sanitizeClassification({
       kind: "supporting_document",
       canonicalUrl,
       proposedName: identity?.cardName,
@@ -171,11 +224,11 @@ export function classifyIssuerPage(input: ClassifyIssuerPageInput): PageClassifi
       confidence: identity ? 0.86 : 0.72,
       warnings,
       sanitizedEvidence,
-    };
+    });
   }
 
-  if (productPattern.test(evidence)) {
-    return {
+  if (hasIdentityContext && productPattern.test(evidence)) {
+    return sanitizeClassification({
       kind: "card_product",
       canonicalUrl,
       proposedName: identity?.cardName,
@@ -184,11 +237,11 @@ export function classifyIssuerPage(input: ClassifyIssuerPageInput): PageClassifi
       confidence: identity ? 0.95 : 0.82,
       warnings,
       sanitizedEvidence,
-    };
+    });
   }
 
-  if (supportingPattern.test(evidence)) {
-    return {
+  if (hasIdentityContext && supportingPattern.test(evidence)) {
+    return sanitizeClassification({
       kind: "supporting_document",
       canonicalUrl,
       proposedName: identity?.cardName,
@@ -197,18 +250,18 @@ export function classifyIssuerPage(input: ClassifyIssuerPageInput): PageClassifi
       confidence: identity ? 0.86 : 0.72,
       warnings,
       sanitizedEvidence,
-    };
+    });
   }
 
   warnings.push("insufficient_card_signals");
-  return {
+  return sanitizeClassification({
     kind: "ambiguous",
     canonicalUrl,
     aliases: [],
     confidence: 0.2,
     warnings,
     sanitizedEvidence,
-  };
+  });
 }
 
 /**
@@ -225,10 +278,14 @@ export async function discoverIssuerCardCandidates(
   const seenSitemaps = new Set<string>();
   const candidateUrls: string[] = [];
   const seenCandidates = new Set<string>();
+  const delay = input.delay ?? ((milliseconds: number) => new Promise<void>((resolve) => {
+    setTimeout(resolve, milliseconds);
+  }));
   let hasRequested = false;
+  let anchorHost: string | null = null;
 
   const request = async (url: string, contentPurpose: OfficialFetchInput["contentPurpose"]) => {
-    if (hasRequested && input.delay) await input.delay(input.delayMs ?? 0);
+    if (hasRequested) await delay(input.delayMs ?? DEFAULT_CRAWL_DELAY_MS);
     hasRequested = true;
     return await fetchResource({ issuer: input.issuer, url, contentPurpose });
   };
@@ -236,7 +293,11 @@ export async function discoverIssuerCardCandidates(
   for (const rawUrl of sitemapStarts) {
     if (seenSitemaps.size >= MAX_SITEMAP_URLS) break;
     const url = canonicalForIssuer(input.issuer, rawUrl);
-    if (url && !seenSitemaps.has(url)) {
+    const hostname = url ? hostnameOf(url) : null;
+    if (!url || !hostname) continue;
+    if (!anchorHost) anchorHost = hostname;
+    if (hostname !== anchorHost) continue;
+    if (!seenSitemaps.has(url)) {
       seenSitemaps.add(url);
       sitemapQueue.push({ url, depth: 0 });
     }
@@ -250,10 +311,14 @@ export async function discoverIssuerCardCandidates(
     } catch {
       continue;
     }
+    if (!anchorHost || !isAnchoredToHost(response.finalUrl, anchorHost) ||
+      !isAnchoredToHost(response.canonicalUrl, anchorHost)) {
+      continue;
+    }
     const document = parseSitemap(response.text);
     for (const rawLocation of document.locations) {
       const location = canonicalForIssuer(input.issuer, rawLocation);
-      if (!location) continue;
+      if (!location || !anchorHost || !isAnchoredToHost(location, anchorHost)) continue;
 
       if (document.isIndex && isSitemapUrl(location)) {
         if (
@@ -275,11 +340,28 @@ export async function discoverIssuerCardCandidates(
 
   const candidates: PageClassification[] = [];
   const quarantined: PageClassification[] = [];
+  const rankedCandidates = candidateUrls
+    .map((url, index) => {
+      const classification = classifyIssuerPage({ issuer: input.issuer, url });
+      return { url, index, classification, positive: candidateUrlScore(url) };
+    });
+  const fetchableCandidates = rankedCandidates
+    .filter((candidate) => {
+      if (candidate.classification.kind !== "not_a_card") return true;
+      quarantined.push(candidate.classification);
+      return false;
+    })
+    .sort((left, right) => right.positive - left.positive || left.index - right.index);
   let fetchedCount = 0;
-  for (const url of candidateUrls.slice(0, MAX_CANDIDATE_FETCHES)) {
+  for (const { url } of fetchableCandidates.slice(0, MAX_CANDIDATE_FETCHES)) {
     fetchedCount += 1;
     try {
       const response = await request(url, /\.pdf(?:$|\?)/i.test(url) ? "document" : "html");
+      if (!anchorHost || !isAnchoredToHost(response.finalUrl, anchorHost) ||
+        !isAnchoredToHost(response.canonicalUrl, anchorHost)) {
+        quarantined.push(emptyClassification(url, "cross_host_response"));
+        continue;
+      }
       const page = classifyIssuerPage({
         issuer: input.issuer,
         url,
