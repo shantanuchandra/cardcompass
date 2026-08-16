@@ -99,8 +99,10 @@ class CardDetailScreen extends ConsumerWidget {
         ),
       ),
       body: cardAsync.when(
-        loading: () => const Center(
-          child: CircularProgressIndicator(color: BrandColors.focusDark),
+        loading: () => const BrandLoadingSkeleton(
+          key: Key('card-detail-loading'),
+          semanticLabel: 'Loading card details',
+          minHeight: 280,
         ),
         error: (_, _) => Center(
           child: Column(
@@ -123,14 +125,13 @@ class CardDetailScreen extends ConsumerWidget {
         ),
         data: (card) {
           if (card == null) {
-            return Center(
-              child: Text(
-                'Card not found',
-                style: TextStyle(
-                  fontFamily: 'Manrope',
-                  color: BrandColors.mutedInk,
-                ),
-              ),
+            return BrandStateView(
+              title: 'Card not found',
+              message:
+                  'This card may have been removed or is no longer available.',
+              icon: Icons.credit_card_off_rounded,
+              actionLabel: 'Back to cards',
+              onAction: () => Navigator.of(context).maybePop(),
             );
           }
           return _CardDetailBody(card: card, cardId: cardId);

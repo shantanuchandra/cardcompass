@@ -50,8 +50,10 @@ class CardsScreen extends ConsumerWidget {
         ],
       ),
       body: cardsAsync.when(
-        loading: () => const Center(
-          child: CircularProgressIndicator(color: BrandColors.focusDark),
+        loading: () => const BrandLoadingSkeleton(
+          key: Key('cards-loading'),
+          semanticLabel: 'Loading your cards',
+          minHeight: 280,
         ),
         error: (_, _) => Center(
           child: Column(

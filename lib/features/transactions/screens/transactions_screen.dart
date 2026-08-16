@@ -55,8 +55,10 @@ class TransactionsScreen extends ConsumerWidget {
         ],
       ),
       body: async.when(
-        loading: () => const Center(
-          child: CircularProgressIndicator(color: BrandColors.focusDark),
+        loading: () => const BrandLoadingSkeleton(
+          key: Key('transactions-loading'),
+          semanticLabel: 'Loading transactions',
+          minHeight: 280,
         ),
         error: (_, _) => BrandStateView(
           title: 'Could not load your ledger.',
@@ -251,36 +253,20 @@ class _LedgerBodyState extends ConsumerState<_LedgerBody> {
             // ── Transaction list ──────────────────────────────────────────
             if (filtered.isEmpty)
               SliverFillRemaining(
-                child: Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(
-                        Icons.receipt_long_outlined,
-                        size: 48,
-                        color: BrandColors.mutedInk,
-                      ),
-                      const SizedBox(height: BrandSpacing.md),
-                      Text(
-                        'No transactions',
-                        style: TextStyle(
-                          fontFamily: 'Manrope',
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                          color: BrandColors.ink,
-                        ),
-                      ),
-                      const SizedBox(height: BrandSpacing.xs),
-                      Text(
-                        'Try adjusting your filters',
-                        style: TextStyle(
-                          fontFamily: 'Manrope',
-                          fontSize: 13,
-                          color: BrandColors.mutedInk,
-                        ),
-                      ),
-                    ],
-                  ),
+                child: BrandStateView(
+                  title: s.all.isEmpty
+                      ? 'No transactions yet'
+                      : 'No matches for these filters',
+                  message: s.all.isEmpty
+                      ? 'Refresh after your next statement sync to check again.'
+                      : 'Clear the active filters to return to the full ledger.',
+                  icon: Icons.receipt_long_outlined,
+                  actionLabel: s.all.isEmpty ? 'Check again' : 'Clear filters',
+                  onAction: s.all.isEmpty
+                      ? () => ref.read(txnsNotifierProvider.notifier).refresh()
+                      : () => ref
+                            .read(txnsNotifierProvider.notifier)
+                            .setFilter(const TxnFilter()),
                 ),
               )
             else

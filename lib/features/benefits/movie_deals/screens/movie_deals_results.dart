@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/providers/repository_providers.dart';
 import '../../../../core/providers/supabase_provider.dart';
 import '../../../../core/theme/brand_tokens.dart';
+import '../../../../core/theme/brand_components.dart';
 import '../domain/movie_deal_candidate.dart';
 import '../domain/movie_deal_rule.dart';
 import '../domain/movie_platform_aliases.dart';
@@ -23,6 +24,24 @@ bool _isPotentialCandidate(MovieDealCandidate candidate) =>
     candidate.platformConfidence != MovieDealPlatformConfidence.explicit ||
     (candidate.usageConfidence != MovieDealUsageConfidence.verified &&
         !_hasNoUsageCapToVerify(candidate));
+
+String _potentialEvidenceMessage(MovieDealCandidate candidate) {
+  final platformNeedsConfirmation =
+      candidate.platformConfidence != MovieDealPlatformConfidence.explicit;
+  final usageNeedsConfirmation =
+      candidate.usageConfidence != MovieDealUsageConfidence.verified &&
+      !_hasNoUsageCapToVerify(candidate);
+  if (platformNeedsConfirmation && usageNeedsConfirmation) {
+    return 'Potential — booking platform and remaining usage need confirmation.';
+  }
+  if (platformNeedsConfirmation) {
+    return 'Potential — booking platform needs confirmation.';
+  }
+  if (usageNeedsConfirmation) {
+    return 'Potential — remaining usage needs confirmation.';
+  }
+  return 'Potential — eligibility needs confirmation.';
+}
 
 bool _isVerifiedForSearch(
   MovieDealCandidate candidate, {
@@ -94,11 +113,10 @@ class MovieDealsResults extends ConsumerWidget {
     return async.when(
       data: (recommendation) =>
           _buildRecommendation(context, ref, recommendation),
-      loading: () => const Center(
-        child: Padding(
-          padding: EdgeInsets.all(32.0),
-          child: CircularProgressIndicator(),
-        ),
+      loading: () => const BrandLoadingSkeleton(
+        key: Key('movie-results-loading'),
+        semanticLabel: 'Finding movie offers',
+        minHeight: 280,
       ),
       error: (error, stack) => _buildRetryCard(context, ref),
     );
@@ -416,7 +434,7 @@ class _RecommendationCardState extends State<_RecommendationCard> {
                   ? (owned
                         ? 'Eligible for this search on a card you own.'
                         : 'Eligible for this search on a card you do not own.')
-                  : 'Potential option — check availability and remaining usage before booking.',
+                  : _potentialEvidenceMessage(candidate),
               style: TextStyle(
                 fontFamily: 'Manrope',
                 color: BrandColors.mutedInk,
@@ -467,7 +485,7 @@ class _RecommendationCardState extends State<_RecommendationCard> {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
-                    'Potential — remaining balance not verified',
+                    _potentialEvidenceMessage(candidate),
                     style: TextStyle(
                       fontFamily: 'Manrope',
                       fontSize: 12,
@@ -630,7 +648,7 @@ class _AlternativeRow extends StatelessWidget {
             if (isPotential) ...[
               const SizedBox(height: 4),
               Text(
-                'Potential — confirm before booking',
+                _potentialEvidenceMessage(candidate),
                 style: TextStyle(
                   fontFamily: 'Manrope',
                   color: BrandColors.mutedInk,
@@ -695,7 +713,7 @@ class _CalculationDisclosure extends StatelessWidget {
               Text(
                 _isVerifiedForSearch(candidate, isPotential: isPotential)
                     ? 'Eligibility: confirmed for this search.'
-                    : 'Eligibility: potential — platform or remaining usage needs confirmation.',
+                    : 'Eligibility: ${_potentialEvidenceMessage(candidate).replaceFirst('Potential', 'potential')}',
                 style: TextStyle(
                   fontFamily: 'Manrope',
                   color: BrandColors.mutedInk,

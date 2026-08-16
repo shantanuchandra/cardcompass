@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cardcompass/core/theme/app_theme.dart';
 import 'package:cardcompass/core/providers/supabase_provider.dart';
 import 'package:cardcompass/features/cards/screens/card_detail_screen.dart';
@@ -177,5 +179,50 @@ void main() {
     expect(find.text('Could not load this card.'), findsOneWidget);
     expect(find.text('Try again'), findsOneWidget);
     expect(find.textContaining('private statement join failure'), findsNothing);
+  });
+
+  testWidgets('detail loading reserves space and a missing card offers exit', (
+    tester,
+  ) async {
+    final pending = Completer<UserCard?>();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          currentUserProvider.overrideWithValue(null),
+          cardDetailProvider('missing').overrideWith((ref) => pending.future),
+        ],
+        child: MaterialApp(
+          theme: AppTheme.work,
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: ElevatedButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const CardDetailScreen(cardId: 'missing'),
+                    ),
+                  ),
+                  child: const Text('Open missing card'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Open missing card'));
+    await tester.pumpAndSettle();
+
+    final loading = find.byKey(const Key('card-detail-loading'));
+    expect(loading, findsOneWidget);
+    expect(tester.getSize(loading).height, greaterThanOrEqualTo(240));
+
+    pending.complete(null);
+    await tester.pumpAndSettle();
+    expect(find.text('Card not found'), findsOneWidget);
+    expect(find.text('Back to cards'), findsOneWidget);
+    await tester.tap(find.text('Back to cards'));
+    await tester.pumpAndSettle();
+    expect(find.text('Open missing card'), findsOneWidget);
   });
 }

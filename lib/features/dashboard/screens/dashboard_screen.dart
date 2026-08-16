@@ -29,6 +29,24 @@ final _shortCurrency = NumberFormat.compactCurrency(
   decimalDigits: 1,
 );
 
+typedef BankCatalogSearch =
+    Future<List<Map<String, dynamic>>> Function(String bank, String query);
+
+final bankCatalogSearchProvider = Provider<BankCatalogSearch>((ref) {
+  return (bank, query) => ref
+      .read(cardsRepositoryProvider)
+      .searchCatalogForBank(bank, query: query);
+});
+
+typedef CardResolution =
+    Future<void> Function(Map<String, dynamic> email, String catalogCardId);
+
+final cardResolutionProvider = Provider<CardResolution>((ref) {
+  return (email, catalogCardId) => ref
+      .read(cardAssignmentProvider.notifier)
+      .resolveWithCatalogEntry(email: email, catalogCardId: catalogCardId);
+});
+
 class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});
 
@@ -1044,10 +1062,11 @@ class _PendingBankTile extends StatelessWidget {
                 tooltip: 'Resolve $bankDetected card',
                 constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
                 onPressed: () => _showBankResolveDialog(context, email),
-                icon: const Icon(
+                icon: Icon(
                   Icons.priority_high_rounded,
                   size: 20,
                   color: BrandColors.rewardInk,
+                  semanticLabel: 'Resolve $bankDetected card',
                 ),
               ),
             ],
@@ -1096,6 +1115,9 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
   bool _loading = true;
   bool _resolving = false;
   String? _error;
+  String _lastQuery = '';
+  Map<String, dynamic>? _retryResolution;
+  int _searchGeneration = 0;
 
   @override
   void initState() {
@@ -1103,25 +1125,38 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
     _search('');
   }
 
+  @override
+  void dispose() {
+    _searchGeneration++;
+    super.dispose();
+  }
+
   Future<void> _search(String query) async {
-    setState(() => _loading = true);
+    final generation = ++_searchGeneration;
+    _lastQuery = query;
+    setState(() {
+      _loading = true;
+      _error = null;
+      _retryResolution = null;
+    });
     try {
-      final results = await ref
-          .read(cardsRepositoryProvider)
-          .searchCatalogForBank(widget.bankDetected, query: query);
-      if (mounted) {
-        setState(() {
-          _options = results;
-          _loading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = e.toString();
-          _loading = false;
-        });
-      }
+      final results = await ref.read(bankCatalogSearchProvider)(
+        widget.bankDetected,
+        query,
+      );
+      if (!mounted || generation != _searchGeneration) return;
+      setState(() {
+        _options = results;
+        _error = null;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted || generation != _searchGeneration) return;
+      setState(() {
+        _error =
+            'Could not load matching cards. Check your connection and try again.';
+        _loading = false;
+      });
     }
   }
 
@@ -1129,18 +1164,24 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
     setState(() {
       _resolving = true;
       _error = null;
+      _retryResolution = catalogEntry;
     });
     try {
-      await ref
-          .read(cardAssignmentProvider.notifier)
-          .resolveWithCatalogEntry(
-            email: widget.email,
-            catalogCardId: catalogEntry['id'] as String,
-          );
+      await ref.read(cardResolutionProvider)(
+        widget.email,
+        catalogEntry['id'] as String,
+      );
+      if (!mounted) return;
+      setState(() {
+        _error = null;
+        _retryResolution = null;
+      });
       ref.invalidate(dashboardProvider);
-      if (mounted) Navigator.of(context).pop();
-    } catch (e) {
-      if (mounted) setState(() => _error = 'Failed to assign card: $e');
+      Navigator.of(context).pop();
+    } catch (_) {
+      if (mounted) {
+        setState(() => _error = 'Could not assign this card. Try again.');
+      }
     } finally {
       if (mounted) setState(() => _resolving = false);
     }
@@ -1204,13 +1245,31 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
                         padding: const EdgeInsets.symmetric(
                           vertical: BrandSpacing.lg,
                         ),
-                        child: Text(
-                          _error!,
-                          style: TextStyle(
-                            fontFamily: 'Manrope',
-                            fontSize: 12,
-                            color: BrandColors.error,
-                          ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              _error!,
+                              style: TextStyle(
+                                fontFamily: 'Manrope',
+                                fontSize: 14,
+                                color: BrandColors.error,
+                              ),
+                            ),
+                            const SizedBox(height: BrandSpacing.sm),
+                            TextButton(
+                              onPressed: _resolving
+                                  ? null
+                                  : _retryResolution == null
+                                  ? () => _search(_lastQuery)
+                                  : () => _resolve(_retryResolution!),
+                              child: Text(
+                                _retryResolution == null
+                                    ? 'Retry search'
+                                    : 'Retry assignment',
+                              ),
+                            ),
+                          ],
                         ),
                       )
                     : _options.isEmpty

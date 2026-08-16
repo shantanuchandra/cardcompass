@@ -480,6 +480,75 @@ class BrandStateView extends StatelessWidget {
   }
 }
 
+/// A deterministic loading placeholder that preserves the page's content
+/// footprint while data is in flight. It intentionally avoids animation so
+/// reduced-motion users and tests receive the same stable structure.
+class BrandLoadingSkeleton extends StatelessWidget {
+  const BrandLoadingSkeleton({
+    super.key,
+    required this.semanticLabel,
+    this.minHeight = 280,
+    this.itemCount = 3,
+  });
+
+  final String semanticLabel;
+  final double minHeight;
+  final int itemCount;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: semanticLabel,
+    liveRegion: true,
+    child: ExcludeSemantics(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(minHeight: minHeight),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 720),
+            child: Padding(
+              padding: const EdgeInsets.all(BrandSpacing.lg),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _SkeletonBar(widthFactor: .42, height: 20),
+                  const SizedBox(height: BrandSpacing.lg),
+                  for (var index = 0; index < itemCount; index++) ...[
+                    const _SkeletonBar(height: 64),
+                    if (index + 1 < itemCount)
+                      const SizedBox(height: BrandSpacing.sm),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _SkeletonBar extends StatelessWidget {
+  const _SkeletonBar({required this.height, this.widthFactor = 1});
+
+  final double height;
+  final double widthFactor;
+
+  @override
+  Widget build(BuildContext context) => FractionallySizedBox(
+    alignment: Alignment.centerLeft,
+    widthFactor: widthFactor,
+    child: DecoratedBox(
+      decoration: BoxDecoration(
+        color: BrandColors.ledger,
+        borderRadius: BorderRadius.circular(BrandRadius.control),
+        border: Border.all(color: BrandColors.ruleOnPaper),
+      ),
+      child: SizedBox(height: height),
+    ),
+  );
+}
+
 class BrandEvidence {
   const BrandEvidence({required this.label, required this.value});
   final String label;

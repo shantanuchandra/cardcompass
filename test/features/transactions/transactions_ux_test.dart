@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cardcompass/core/theme/app_theme.dart';
 import 'package:cardcompass/core/theme/brand_components.dart';
 import 'package:cardcompass/features/transactions/providers/transactions_provider.dart';
@@ -89,6 +91,55 @@ Future<void> pumpLedger(
 }
 
 void main() {
+  testWidgets('ledger loading reserves a stable skeleton slot', (tester) async {
+    final pending = Completer<TxnsState>();
+    addTearDown(() {
+      if (!pending.isCompleted) pending.complete(const TxnsState());
+    });
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          txnsNotifierProvider.overrideWith(
+            () => _LedgerNotifier(() => pending.future),
+          ),
+        ],
+        child: MaterialApp(
+          theme: AppTheme.work,
+          home: const TransactionsScreen(),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final loading = find.byKey(const Key('transactions-loading'));
+    expect(loading, findsOneWidget);
+    expect(tester.getSize(loading).height, greaterThanOrEqualTo(240));
+  });
+
+  testWidgets('ledger distinguishes dataset-empty from filtered-empty', (
+    tester,
+  ) async {
+    await pumpLedger(tester, width: 390, load: () async => const TxnsState());
+    expect(find.text('No transactions yet'), findsOneWidget);
+    expect(find.text('Check again'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await pumpLedger(
+      tester,
+      width: 390,
+      load: () async => TxnsState(
+        all: [_transaction],
+        cards: [_card],
+        filter: const TxnFilter(category: 'Travel'),
+      ),
+    );
+    expect(find.text('No matches for these filters'), findsOneWidget);
+    expect(find.text('Clear filters'), findsOneWidget);
+    await tester.tap(find.text('Clear filters'));
+    await tester.pumpAndSettle();
+    expect(find.text(_transaction.merchantName!), findsOneWidget);
+  });
+
   testWidgets('ledger redacts repository failures and offers recovery', (
     tester,
   ) async {
@@ -231,6 +282,24 @@ void main() {
       400,
       scrollable: find.byType(Scrollable).last,
     );
+    expect(find.text('+36 pts'), findsOneWidget);
+    expect(find.text('+17 pts'), findsNothing);
+
+    await tester.scrollUntilVisible(
+      find.text('Filters'),
+      -400,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.tap(find.text('Filters'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('All').last);
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text(_travelTransaction.merchantName!),
+      400,
+      scrollable: find.byType(Scrollable).last,
+    );
+    expect(find.text(_travelTransaction.merchantName!), findsOneWidget);
     expect(find.text('+36 pts'), findsOneWidget);
     expect(find.text('+17 pts'), findsNothing);
   });

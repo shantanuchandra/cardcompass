@@ -65,12 +65,21 @@ Future<void> _pumpDashboard(
   bool failDashboard = false,
   bool failGmailSync = false,
   VoidCallback? onDashboardLoad,
+  List<Map<String, dynamic>> pendingAssignments = const [],
+  BankCatalogSearch? catalogSearch,
+  CardResolution? cardResolution,
 }) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
         currentUserProvider.overrideWithValue(null),
-        pendingCardAssignmentsProvider.overrideWith((ref) async => []),
+        pendingCardAssignmentsProvider.overrideWith(
+          (ref) async => pendingAssignments,
+        ),
+        if (catalogSearch != null)
+          bankCatalogSearchProvider.overrideWithValue(catalogSearch),
+        if (cardResolution != null)
+          cardResolutionProvider.overrideWithValue(cardResolution),
         dashboardProvider.overrideWith((ref) async {
           onDashboardLoad?.call();
           if (failDashboard) {
@@ -104,6 +113,7 @@ void main() {
     expect(source, contains('BrandColors.ledger'));
     expect(source, contains("fontFamily: 'Fraunces'"));
     expect(source, isNot(contains('GoogleFonts.spaceGrotesk')));
+    expect(source, isNot(contains('GestureDetector')));
   });
 
   testWidgets('dashboard view-all actions select their destinations', (
@@ -244,4 +254,93 @@ void main() {
     );
     await tester.pump(const Duration(seconds: 1));
   });
+
+  testWidgets(
+    'bank resolution redacts failures, clears stale errors, and retries',
+    (tester) async {
+      var searchFails = true;
+      var resolutionFails = true;
+      final selectedAppTab = ValueNotifier(AppTab.dashboard);
+      addTearDown(selectedAppTab.dispose);
+      await _pumpDashboard(
+        tester,
+        selectedAppTab: selectedAppTab,
+        pendingAssignments: const [
+          {'email_id': 'email-1', 'bank_detected': 'Horizon Bank'},
+        ],
+        catalogSearch: (bank, query) async {
+          if (searchFails) throw StateError('secret catalog stack');
+          return const [
+            {
+              'id': 'catalog-1',
+              'card_name': 'Astra Preferred',
+              'bank': 'Horizon Bank',
+            },
+          ];
+        },
+        cardResolution: (email, catalogCardId) async {
+          if (resolutionFails) throw StateError('secret assignment stack');
+        },
+      );
+
+      await tester.scrollUntilVisible(
+        find.text('Your Cards'),
+        300,
+        scrollable: find
+            .descendant(
+              of: find.byType(CustomScrollView),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      await tester.drag(find.byType(PageView), const Offset(-500, 0));
+      await tester.pumpAndSettle();
+      final resolveControl = find.byKey(const Key('resolve-bank-email-1'));
+      expect(tester.getSize(resolveControl).height, greaterThanOrEqualTo(44));
+      expect(
+        tester.getSemantics(resolveControl),
+        matchesSemantics(
+          label: 'Resolve Horizon Bank card',
+          tooltip: 'Resolve Horizon Bank card',
+          isButton: true,
+          hasTapAction: true,
+          hasFocusAction: true,
+          hasEnabledState: true,
+          isEnabled: true,
+          isFocusable: true,
+        ),
+      );
+      await tester.tap(resolveControl);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text(
+          'Could not load matching cards. Check your connection and try again.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('secret catalog stack'), findsNothing);
+      expect(find.text('Retry search'), findsOneWidget);
+
+      searchFails = false;
+      await tester.tap(find.text('Retry search'));
+      await tester.pumpAndSettle();
+      expect(find.text('Astra Preferred'), findsOneWidget);
+      expect(find.text('Retry search'), findsNothing);
+
+      await tester.tap(find.text('Astra Preferred'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Could not assign this card. Try again.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('secret assignment stack'), findsNothing);
+      expect(find.text('Retry assignment'), findsOneWidget);
+
+      resolutionFails = false;
+      await tester.tap(find.text('Retry assignment'));
+      await tester.pumpAndSettle();
+      expect(find.byType(Dialog), findsNothing);
+    },
+  );
 }

@@ -160,7 +160,7 @@ async function clickSelector(cdp, selector) {
   await new Promise((resolve) => setTimeout(resolve, 25));
 }
 
-test('public pages render without viewport overflow and expose live keyboard and reduced-motion behavior', { timeout: 30_000 }, async (t) => {
+test('public pages render without viewport overflow and expose live keyboard and reduced-motion behavior', { timeout: 45_000 }, async (t) => {
   if (typeof WebSocket === 'undefined') {
     t.skip('This rendered assertion requires a Node runtime with WebSocket support');
     return;
@@ -244,36 +244,46 @@ test('public pages render without viewport overflow and expose live keyboard and
         `${route} at ${viewport.width}px`,
       );
 
-      await pressTab(cdp);
-      const firstFocus = await evaluate(cdp, `(() => {
-        const element = document.activeElement;
-        const style = getComputedStyle(element);
-        const rect = element.getBoundingClientRect();
-        return {
-          tag: element.tagName,
-          className: element.className,
-          href: element.getAttribute('href'),
-          rect: { top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height },
-          visible: rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < innerHeight,
-          indicator: style.outlineStyle !== 'none' || style.boxShadow !== 'none',
-        };
-      })()`);
-      const focusContext = `${route} at ${viewport.width}px: ${JSON.stringify(firstFocus)}`;
-      assert.equal(firstFocus.tag, 'A', `${focusContext}: Tab did not reach a link`);
-      assert.equal(firstFocus.visible, true, `${focusContext}: focused link is not visible`);
-      assert.equal(firstFocus.indicator, true, `${focusContext}: focused link has no visible indicator`);
+      const visitedFocusStops = new Set();
+      let firstFocus;
+      let completedTraversal = false;
+      for (let focusIndex = 0; focusIndex < 100; focusIndex += 1) {
+        await pressTab(cdp);
+        const focus = await evaluate(cdp, `(() => {
+          const element = document.activeElement;
+          const style = getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          return {
+            domIndex: [...document.querySelectorAll('*')].indexOf(element),
+            tag: element.tagName,
+            className: element.className,
+            href: element.getAttribute('href'),
+            visible: rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < innerHeight,
+            indicator: style.outlineStyle !== 'none' || style.boxShadow !== 'none',
+          };
+        })()`);
+        if (focus.tag === 'BODY' && firstFocus) continue;
+        if (visitedFocusStops.has(focus.domIndex)) {
+          assert.equal(
+            focus.domIndex,
+            firstFocus.domIndex,
+            `${route} at ${viewport.width}px: focus repeated before completing the traversal`,
+          );
+          completedTraversal = true;
+          break;
+        }
+        visitedFocusStops.add(focus.domIndex);
+        const focusContext = `${route} at ${viewport.width}px stop ${focusIndex + 1}: ${JSON.stringify(focus)}`;
+        assert.equal(focus.visible, true, `${focusContext}: focused control is not visible`);
+        assert.equal(focus.indicator, true, `${focusContext}: focused control has no visible indicator`);
+        if (focusIndex === 0) firstFocus = focus;
+      }
+      assert.equal(completedTraversal, true, `${route}: keyboard traversal did not complete within 100 stops`);
+      assert.ok(visitedFocusStops.size > 1, `${route}: traversal did not advance beyond one control`);
       if (route !== '/404.html') {
         assert.match(firstFocus.className, /skip-link/, `${route}: skip link is not first`);
         assert.equal(firstFocus.href, '#main', `${route}: skip target changed`);
       }
-
-      await pressTab(cdp);
-      const secondFocus = await evaluate(cdp, `(() => ({
-        tag: document.activeElement.tagName,
-        href: document.activeElement.getAttribute('href'),
-      }))()`);
-      assert.equal(secondFocus.tag, 'A', `${route}: second Tab did not continue traversal`);
-      assert.notEqual(secondFocus.href, firstFocus.href, `${route}: focus did not advance`);
     }
   }
 

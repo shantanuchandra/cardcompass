@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cardcompass/core/providers/supabase_provider.dart';
 import 'package:cardcompass/core/theme/app_theme.dart';
 import 'package:cardcompass/features/cards/screens/cards_screen.dart';
@@ -76,4 +78,26 @@ void main() {
       );
     },
   );
+
+  testWidgets('card loading reserves a stable skeleton slot', (tester) async {
+    final pending = Completer<List<UserCard>>();
+    addTearDown(() {
+      if (!pending.isCompleted) pending.complete([]);
+    });
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          currentUserProvider.overrideWithValue(null),
+          userCardsProvider.overrideWith((ref) => pending.future),
+        ],
+        child: MaterialApp(theme: AppTheme.work, home: const CardsScreen()),
+      ),
+    );
+    await tester.pump();
+
+    final loading = find.byKey(const Key('cards-loading'));
+    expect(loading, findsOneWidget);
+    expect(tester.getSize(loading).height, greaterThanOrEqualTo(240));
+    expect(find.bySemanticsLabel('Loading your cards'), findsOneWidget);
+  });
 }

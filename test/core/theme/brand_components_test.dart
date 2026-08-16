@@ -260,4 +260,28 @@ void main() {
       );
     },
   );
+
+  testWidgets('loading skeleton reserves a stable labeled content slot', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.work,
+        home: const Scaffold(
+          body: BrandLoadingSkeleton(
+            key: Key('fixture-loading'),
+            semanticLabel: 'Loading fixture',
+            minHeight: 240,
+          ),
+        ),
+      ),
+    );
+
+    final skeleton = find.byKey(const Key('fixture-loading'));
+    expect(tester.getSize(skeleton).height, greaterThanOrEqualTo(240));
+    expect(
+      tester.getSemantics(skeleton),
+      matchesSemantics(label: 'Loading fixture', isLiveRegion: true),
+    );
+  });
 }
