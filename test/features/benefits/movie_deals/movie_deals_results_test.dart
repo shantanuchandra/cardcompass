@@ -41,49 +41,56 @@ MovieDealCandidate _candidate({
 void main() {
   const request = MovieTicketRequest(numberOfTickets: 2, pricePerTicket: 300);
 
-  testWidgets('renders distinct guaranteed owned and overall panels when winners differ', (tester) async {
-    final owned = _candidate(cardId: 'owned', isOwned: true, savings: 100);
-    final overall = _candidate(cardId: 'unowned', isOwned: false, savings: 300);
+  testWidgets('lists every candidate in each ranked group, not just one winner', (tester) async {
+    final ownedHigh = _candidate(cardId: 'owned-high', isOwned: true, savings: 150);
+    final ownedLow = _candidate(cardId: 'owned-low', isOwned: true, savings: 50);
+    final unowned = _candidate(cardId: 'unowned', isOwned: false, savings: 300);
     final recommendation = MovieDealsRecommendation(
-      candidates: [overall, owned],
+      candidates: [ownedHigh, ownedLow, unowned],
       rejectedCandidates: const [],
-      bestGuaranteedOwned: owned,
-      bestGuaranteedOverall: overall,
+      guaranteedOwned: [ownedHigh, ownedLow],
+      guaranteedOverall: [unowned, ownedHigh, ownedLow],
     );
 
     await tester.pumpWidget(ProviderScope(
       overrides: [movieDealsSearchProvider(request).overrideWith((ref) async => recommendation)],
-      child: const MaterialApp(home: Scaffold(body: MovieDealsResults(request: request))),
+      child: const MaterialApp(
+        home: Scaffold(body: SingleChildScrollView(child: MovieDealsResults(request: request))),
+      ),
     ));
     await tester.pumpAndSettle();
 
-    expect(find.text('BEST CARD YOU OWN'), findsOneWidget);
-    expect(find.text('BEST CARD OVERALL'), findsOneWidget);
-    expect(find.textContaining('Card owned'), findsOneWidget);
+    expect(find.text('GUARANTEED · YOU OWN'), findsOneWidget);
+    expect(find.text('GUARANTEED · OVERALL'), findsOneWidget);
+    // owned-high/owned-low each appear TWICE: once in "you own" and once
+    // again in "overall" (overall is never ownership-filtered) — proving
+    // the same candidate can legitimately render in both groups.
+    expect(find.textContaining('Card owned-high'), findsNWidgets(2));
+    expect(find.textContaining('Card owned-low'), findsNWidgets(2));
     expect(find.textContaining('Card unowned'), findsOneWidget);
   });
 
-  testWidgets('shows "Also best overall" when the same card wins both guaranteed pools', (tester) async {
-    final winner = _candidate(cardId: 'shared', isOwned: true, savings: 300);
+  testWidgets('shows an ownership badge on a candidate that is owned', (tester) async {
+    final owned = _candidate(cardId: 'owned', isOwned: true, savings: 100);
     final recommendation = MovieDealsRecommendation(
-      candidates: [winner],
+      candidates: [owned],
       rejectedCandidates: const [],
-      bestGuaranteedOwned: winner,
-      bestGuaranteedOverall: winner,
+      guaranteedOwned: [owned],
+      guaranteedOverall: [owned],
     );
 
     await tester.pumpWidget(ProviderScope(
       overrides: [movieDealsSearchProvider(request).overrideWith((ref) async => recommendation)],
-      child: const MaterialApp(home: Scaffold(body: MovieDealsResults(request: request))),
+      child: const MaterialApp(
+        home: Scaffold(body: SingleChildScrollView(child: MovieDealsResults(request: request))),
+      ),
     ));
     await tester.pumpAndSettle();
 
-    expect(find.text('BEST CARD YOU OWN'), findsOneWidget);
-    expect(find.textContaining('Also best overall'), findsOneWidget);
-    expect(find.textContaining('Card shared'), findsOneWidget);
+    expect(find.text('YOU OWN THIS'), findsNWidgets(2));
   });
 
-  testWidgets('falls back to a labeled potential candidate when no guaranteed winner exists', (tester) async {
+  testWidgets('falls back to potential groups when no guaranteed candidate exists', (tester) async {
     final potential = _candidate(
       cardId: 'potential-only',
       isOwned: true,
@@ -93,28 +100,57 @@ void main() {
     final recommendation = MovieDealsRecommendation(
       candidates: [potential],
       rejectedCandidates: const [],
-      bestPotentialOwned: potential,
-      bestPotentialOverall: potential,
+      potentialOwned: [potential],
+      potentialOverall: [potential],
     );
 
     await tester.pumpWidget(ProviderScope(
       overrides: [movieDealsSearchProvider(request).overrideWith((ref) async => recommendation)],
-      child: const MaterialApp(home: Scaffold(body: MovieDealsResults(request: request))),
+      child: const MaterialApp(
+        home: Scaffold(body: SingleChildScrollView(child: MovieDealsResults(request: request))),
+      ),
     ));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('Card potential-only'), findsWidgets);
-    expect(find.textContaining('Potential'), findsWidgets);
-    // Must NOT be presented under the confirmed "BEST CARD YOU OWN" heading.
-    expect(find.text('BEST CARD YOU OWN'), findsNothing);
+    expect(find.textContaining('Potential — remaining balance not verified'), findsWidgets);
+    // The guaranteed groups must show their empty-state note, not the
+    // potential candidate presented as if it were guaranteed.
+    expect(find.textContaining('No guaranteed deals'), findsWidgets);
   });
 
-  testWidgets('shows a no-deal message when neither tier has a winner', (tester) async {
+  testWidgets('shows an empty-state note for a group with zero eligible candidates, never hides the header', (tester) async {
+    final overallOnly = _candidate(cardId: 'overall-only', isOwned: false, savings: 100);
+    final recommendation = MovieDealsRecommendation(
+      candidates: [overallOnly],
+      rejectedCandidates: const [],
+      guaranteedOverall: [overallOnly],
+    );
+
+    await tester.pumpWidget(ProviderScope(
+      overrides: [movieDealsSearchProvider(request).overrideWith((ref) async => recommendation)],
+      child: const MaterialApp(
+        home: Scaffold(body: SingleChildScrollView(child: MovieDealsResults(request: request))),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('GUARANTEED · YOU OWN'), findsOneWidget);
+    expect(find.textContaining('No guaranteed deals on cards you own'), findsOneWidget);
+    expect(find.text('POTENTIAL · YOU OWN'), findsOneWidget);
+    expect(find.textContaining('No potential deals on cards you own'), findsOneWidget);
+    expect(find.text('POTENTIAL · OVERALL'), findsOneWidget);
+    expect(find.textContaining('No potential deals available'), findsOneWidget);
+  });
+
+  testWidgets('shows a no-deal message when every group and every dedicated section is empty', (tester) async {
     const recommendation = MovieDealsRecommendation(candidates: [], rejectedCandidates: []);
 
     await tester.pumpWidget(ProviderScope(
       overrides: [movieDealsSearchProvider(request).overrideWith((ref) async => recommendation)],
-      child: const MaterialApp(home: Scaffold(body: MovieDealsResults(request: request))),
+      child: const MaterialApp(
+        home: Scaffold(body: SingleChildScrollView(child: MovieDealsResults(request: request))),
+      ),
     ));
     await tester.pumpAndSettle();
 
@@ -130,7 +166,9 @@ void main() {
 
     await tester.pumpWidget(ProviderScope(
       overrides: [movieDealsSearchProvider(request).overrideWith((ref) async => recommendation)],
-      child: const MaterialApp(home: Scaffold(body: MovieDealsResults(request: request))),
+      child: const MaterialApp(
+        home: Scaffold(body: SingleChildScrollView(child: MovieDealsResults(request: request))),
+      ),
     ));
     await tester.pumpAndSettle();
 
@@ -152,7 +190,9 @@ void main() {
 
     await tester.pumpWidget(ProviderScope(
       overrides: [movieDealsSearchProvider(request).overrideWith((ref) async => recommendation)],
-      child: const MaterialApp(home: Scaffold(body: MovieDealsResults(request: request))),
+      child: const MaterialApp(
+        home: Scaffold(body: SingleChildScrollView(child: MovieDealsResults(request: request))),
+      ),
     ));
     await tester.pumpAndSettle();
 
@@ -160,7 +200,7 @@ void main() {
     expect(find.textContaining('Save ₹0'), findsNothing);
   });
 
-  testWidgets('an annualAllowance candidate renders in its own section, never as a BEST CARD winner', (tester) async {
+  testWidgets('an annualAllowance candidate renders in its own section, never in a ranked group', (tester) async {
     final annualRule = MovieDealRule(
       benefitId: 'b-annual-card',
       catalogCardId: 'annual-card',
@@ -189,13 +229,13 @@ void main() {
 
     await tester.pumpWidget(ProviderScope(
       overrides: [movieDealsSearchProvider(request).overrideWith((ref) async => recommendation)],
-      child: const MaterialApp(home: Scaffold(body: MovieDealsResults(request: request))),
+      child: const MaterialApp(
+        home: Scaffold(body: SingleChildScrollView(child: MovieDealsResults(request: request))),
+      ),
     ));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('balance not tracked'), findsOneWidget);
-    expect(find.text('BEST CARD YOU OWN'), findsNothing);
-    expect(find.text('BEST CARD OVERALL'), findsNothing);
     expect(find.textContaining('Save ₹0'), findsNothing);
   });
 }

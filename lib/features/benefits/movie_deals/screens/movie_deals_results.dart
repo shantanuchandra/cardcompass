@@ -12,11 +12,13 @@ import '../domain/movie_ticket_request.dart';
 import '../providers/movie_deals_provider.dart';
 import '../widgets/sprocket_rail_painter.dart';
 
-/// Design spec §8's three-section layout: guaranteed owned/overall (falling
-/// back to a labeled potential candidate when no guaranteed winner exists),
-/// a distinct "Potential" section for anything the guaranteed tier didn't
-/// surface, and rewardMultiplier candidates shown separately with their raw
-/// rate — never mixed into either savings-based tier.
+/// Design spec §8's layout, extended per user feedback: rather than a
+/// single winner per guaranteed/potential × owned/overall slot, EVERY
+/// eligible candidate in each of the 4 groups is listed, ranked by savings —
+/// a user comparing offers (e.g. a ₹700 potential fixedDiscount against a
+/// ₹70 guaranteed percentDiscount) can see all of them, not just whichever
+/// one the evaluator picked as "best." rewardMultiplier/annualAllowance
+/// candidates stay in their own dedicated, non-competitive sections.
 ///
 /// Each result renders as a "frame" (a film-strip metaphor: a sprocket rail
 /// down the left edge, matching the app's existing CustomPainter texture
@@ -51,34 +53,21 @@ class MovieDealsResults extends ConsumerWidget {
         recommendation.candidates.where((c) => c.rule.offerType == MovieDealOfferType.rewardMultiplier).toList();
     // Same reasoning as rewardMultiplier — an annualAllowance's true
     // per-visit savings is unknowable (no remaining-balance tracking
-    // exists), so it's never a guaranteed/potential winner (the evaluator
-    // itself already excludes both types — see evaluateMovieDeals'
-    // winnerEligible filter). Shown in its own dedicated, non-competitive
-    // section instead.
+    // exists), so it's never in any of the 4 ranked groups below (the
+    // evaluator itself already excludes both types — see
+    // evaluateMovieDeals' winnerEligible filter). Shown in its own
+    // dedicated, non-competitive section instead.
     final annualAllowanceCandidates =
         recommendation.candidates.where((c) => c.rule.offerType == MovieDealOfferType.annualAllowance).toList();
 
-    final hasAnyGuaranteed =
-        recommendation.bestGuaranteedOwned != null || recommendation.bestGuaranteedOverall != null;
-    final hasAnyPotential =
-        recommendation.bestPotentialOwned != null || recommendation.bestPotentialOverall != null;
+    final hasAnyRanked = recommendation.guaranteedOwned.isNotEmpty ||
+        recommendation.guaranteedOverall.isNotEmpty ||
+        recommendation.potentialOwned.isNotEmpty ||
+        recommendation.potentialOverall.isNotEmpty;
 
-    if (!hasAnyGuaranteed &&
-        !hasAnyPotential &&
-        rewardMultiplierCandidates.isEmpty &&
-        annualAllowanceCandidates.isEmpty) {
+    if (!hasAnyRanked && rewardMultiplierCandidates.isEmpty && annualAllowanceCandidates.isEmpty) {
       return _buildNoDealCard(context);
     }
-
-    final ownedWinner = recommendation.bestGuaranteedOwned ?? recommendation.bestPotentialOwned;
-    final overallWinner = recommendation.bestGuaranteedOverall ?? recommendation.bestPotentialOverall;
-    final ownedIsGuaranteed = recommendation.bestGuaranteedOwned != null;
-    final overallIsGuaranteed = recommendation.bestGuaranteedOverall != null;
-    final sharedWinner = ownedWinner != null &&
-        overallWinner != null &&
-        ownedWinner.cardId == overallWinner.cardId &&
-        ownedWinner.benefitId == overallWinner.benefitId &&
-        ownedIsGuaranteed == overallIsGuaranteed;
 
     Future<void> Function()? confirmCallbackFor(MovieDealCandidate candidate) {
       if (request.preferredPlatform == null) return null;
@@ -99,33 +88,45 @@ class MovieDealsResults extends ConsumerWidget {
 
     var frameIndex = 0;
 
+    Widget buildGroup(String label, _DividerTone tone, List<MovieDealCandidate> group, {required bool isOverallFlavor}) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _SectionDivider(label: label, tone: tone),
+          const SizedBox(height: 12),
+          if (group.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text(
+                'No ${tone == _DividerTone.guaranteed ? 'guaranteed' : 'potential'} deals ${isOverallFlavor ? 'available' : 'on cards you own'} for this search.',
+                style: GoogleFonts.inter(color: AppColors.textMuted, fontSize: 12),
+              ),
+            )
+          else
+            for (final candidate in group)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: _FilmFrame(
+                  candidate: candidate,
+                  isPotential: tone == _DividerTone.potential,
+                  isOverallFlavor: isOverallFlavor,
+                  onConfirmPlatform: confirmCallbackFor(candidate),
+                ).animate(delay: (frameIndex++ * 50).ms).fadeIn(duration: 250.ms).slideY(begin: 0.04),
+              ),
+        ],
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (ownedWinner != null) ...[
-          _SectionDivider(label: ownedIsGuaranteed ? 'GUARANTEED · YOU OWN' : 'POTENTIAL · YOU OWN', tone: ownedIsGuaranteed ? _DividerTone.guaranteed : _DividerTone.potential),
-          const SizedBox(height: 12),
-          _FilmFrame(
-            heading: ownedIsGuaranteed ? 'BEST CARD YOU OWN' : 'POTENTIAL — YOU OWN THIS CARD',
-            candidate: ownedWinner,
-            isPotential: !ownedIsGuaranteed,
-            isOverallFlavor: false,
-            trailingLabel: sharedWinner ? 'Also best overall' : null,
-            onConfirmPlatform: confirmCallbackFor(ownedWinner),
-          ).animate(delay: (frameIndex++ * 60).ms).fadeIn(duration: 250.ms).slideY(begin: 0.04),
-        ],
-        if (ownedWinner != null && !sharedWinner) const SizedBox(height: 18),
-        if (overallWinner != null && !sharedWinner) ...[
-          _SectionDivider(label: overallIsGuaranteed ? 'GUARANTEED · BEST OVERALL' : 'POTENTIAL · BEST OVERALL', tone: overallIsGuaranteed ? _DividerTone.guaranteed : _DividerTone.potential),
-          const SizedBox(height: 12),
-          _FilmFrame(
-            heading: overallIsGuaranteed ? 'BEST CARD OVERALL' : 'POTENTIAL — BEST OVERALL',
-            candidate: overallWinner,
-            isPotential: !overallIsGuaranteed,
-            isOverallFlavor: true,
-            onConfirmPlatform: confirmCallbackFor(overallWinner),
-          ).animate(delay: (frameIndex++ * 60).ms).fadeIn(duration: 250.ms).slideY(begin: 0.04),
-        ],
+        buildGroup('GUARANTEED · YOU OWN', _DividerTone.guaranteed, recommendation.guaranteedOwned, isOverallFlavor: false),
+        const SizedBox(height: 18),
+        buildGroup('GUARANTEED · OVERALL', _DividerTone.guaranteed, recommendation.guaranteedOverall, isOverallFlavor: true),
+        const SizedBox(height: 18),
+        buildGroup('POTENTIAL · YOU OWN', _DividerTone.potential, recommendation.potentialOwned, isOverallFlavor: false),
+        const SizedBox(height: 18),
+        buildGroup('POTENTIAL · OVERALL', _DividerTone.potential, recommendation.potentialOverall, isOverallFlavor: true),
         if (rewardMultiplierCandidates.isNotEmpty) ...[
           const SizedBox(height: 22),
           _SectionDivider(label: 'REWARD RATE — NOT A DIRECT DISCOUNT', tone: _DividerTone.reward),
@@ -249,19 +250,15 @@ class _SectionDivider extends StatelessWidget {
 
 class _FilmFrame extends StatefulWidget {
   const _FilmFrame({
-    required this.heading,
     required this.candidate,
     required this.isOverallFlavor,
     this.isPotential = false,
-    this.trailingLabel,
     this.onConfirmPlatform,
   });
 
-  final String heading;
   final MovieDealCandidate candidate;
   final bool isOverallFlavor;
   final bool isPotential;
-  final String? trailingLabel;
   final Future<void> Function()? onConfirmPlatform;
 
   @override
@@ -301,22 +298,20 @@ class _FilmFrameState extends State<_FilmFrame> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Wrap(
-                            spacing: 6,
-                            runSpacing: 6,
-                            children: [
-                              _Tag(text: widget.heading, color: accent, filled: true),
-                              if (widget.trailingLabel != null) _Tag(text: widget.trailingLabel!, color: AppColors.textSecondary, filled: false),
-                            ],
+                    if (candidate.isOwned)
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Wrap(
+                              spacing: 6,
+                              runSpacing: 6,
+                              children: [_Tag(text: 'YOU OWN THIS', color: accent, filled: true)],
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
+                        ],
+                      ),
+                    if (candidate.isOwned) const SizedBox(height: 10),
                     Text(
                       candidate.rule.cardName ?? candidate.title,
                       style: GoogleFonts.spaceGrotesk(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 16),

@@ -77,6 +77,16 @@ MovieDealsRecommendation evaluateMovieDeals({
     bestGuaranteedOverall: guaranteed.isEmpty ? null : guaranteed.first,
     bestPotentialOwned: potentialOwned.isEmpty ? null : potentialOwned.first,
     bestPotentialOverall: potential.isEmpty ? null : potential.first,
+    // Full ranked lists — the UI shows every eligible candidate per group,
+    // not just the top pick. guaranteedOverall/potentialOverall are the
+    // WHOLE guaranteed/potential lists (never filtered by isOwned — "overall"
+    // means market-wide, matching bestGuaranteedOverall's existing,
+    // already-tested semantics above), while *Owned are the ownership-
+    // filtered subsets. All four are already sorted by _compareCandidates.
+    guaranteedOwned: guaranteedOwned,
+    guaranteedOverall: guaranteed,
+    potentialOwned: potentialOwned,
+    potentialOverall: potential,
   );
 }
 

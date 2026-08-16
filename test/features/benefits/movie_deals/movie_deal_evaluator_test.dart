@@ -463,4 +463,132 @@ void main() {
       expect(result.bestPotentialOverall, isNull);
     });
   });
+
+  group('full ranked lists per tier×ownership group, not just the top pick', () {
+    test('guaranteedOverall lists every eligible guaranteed candidate, ranked by savings desc', () {
+      final result = evaluateMovieDeals(
+        request: const MovieTicketRequest(numberOfTickets: 2, pricePerTicket: 300, preferredPlatform: 'BookMyShow'),
+        rules: [
+          _percentRule(cardId: 'low', percent: 5, partners: {'BookMyShow'}),
+          _percentRule(cardId: 'high', percent: 20, partners: {'BookMyShow'}),
+          _percentRule(cardId: 'mid', percent: 10, partners: {'BookMyShow'}),
+        ],
+        contexts: {
+          ('low', 'b-percent'): const MovieDealContext(isOwned: false),
+          ('high', 'b-percent'): const MovieDealContext(isOwned: false),
+          ('mid', 'b-percent'): const MovieDealContext(isOwned: false),
+        },
+        now: today,
+      );
+      expect(result.guaranteedOverall.map((c) => c.cardId), ['high', 'mid', 'low']);
+    });
+
+    test('guaranteedOverall is never filtered by ownership — it lists owned AND unowned candidates', () {
+      final result = evaluateMovieDeals(
+        request: const MovieTicketRequest(numberOfTickets: 2, pricePerTicket: 300, preferredPlatform: 'BookMyShow'),
+        rules: [
+          _percentRule(cardId: 'owned-card', percent: 5, partners: {'BookMyShow'}),
+          _percentRule(cardId: 'unowned-card', percent: 20, partners: {'BookMyShow'}),
+        ],
+        contexts: {
+          ('owned-card', 'b-percent'): const MovieDealContext(isOwned: true),
+          ('unowned-card', 'b-percent'): const MovieDealContext(isOwned: false),
+        },
+        now: today,
+      );
+      expect(result.guaranteedOverall, hasLength(2));
+      expect(result.guaranteedOverall.first.cardId, 'unowned-card');
+    });
+
+    test('guaranteedOwned lists only owned candidates, still ranked by savings', () {
+      final result = evaluateMovieDeals(
+        request: const MovieTicketRequest(numberOfTickets: 2, pricePerTicket: 300, preferredPlatform: 'BookMyShow'),
+        rules: [
+          _percentRule(cardId: 'owned-low', percent: 5, partners: {'BookMyShow'}),
+          _percentRule(cardId: 'owned-high', percent: 20, partners: {'BookMyShow'}),
+          _percentRule(cardId: 'unowned', percent: 30, partners: {'BookMyShow'}),
+        ],
+        contexts: {
+          ('owned-low', 'b-percent'): const MovieDealContext(isOwned: true),
+          ('owned-high', 'b-percent'): const MovieDealContext(isOwned: true),
+          ('unowned', 'b-percent'): const MovieDealContext(isOwned: false),
+        },
+        now: today,
+      );
+      expect(result.guaranteedOwned.map((c) => c.cardId), ['owned-high', 'owned-low']);
+    });
+
+    test('potentialOverall lists every eligible potential candidate, ranked by savings desc', () {
+      final result = evaluateMovieDeals(
+        request: const MovieTicketRequest(numberOfTickets: 2, pricePerTicket: 300),
+        rules: [
+          _bogoRule(cardId: 'c1'), // notRequested platform confidence -> potential
+          _percentRule(cardId: 'c2', percent: 15), // no partners -> notRequested -> potential
+        ],
+        contexts: {
+          ('c1', 'b-bogo'): const MovieDealContext(isOwned: false),
+          ('c2', 'b-percent'): const MovieDealContext(isOwned: false),
+        },
+        now: today,
+      );
+      expect(result.potentialOverall, isNotEmpty);
+      // bogo's clamp-to-price (300 < cap 500) beats percent's 45 — the
+      // point is that BOTH appear, ranked, not just one winner.
+      expect(result.potentialOverall.map((c) => c.cardId), ['c1', 'c2']);
+    });
+
+    test('best* fields match the corresponding list\'s first entry', () {
+      final result = evaluateMovieDeals(
+        request: const MovieTicketRequest(numberOfTickets: 2, pricePerTicket: 300, preferredPlatform: 'BookMyShow'),
+        rules: [
+          _percentRule(cardId: 'owned-card', percent: 5, partners: {'BookMyShow'}),
+          _percentRule(cardId: 'unowned-card', percent: 20, partners: {'BookMyShow'}),
+        ],
+        contexts: {
+          ('owned-card', 'b-percent'): const MovieDealContext(isOwned: true),
+          ('unowned-card', 'b-percent'): const MovieDealContext(isOwned: false),
+        },
+        now: today,
+      );
+      expect(result.bestGuaranteedOwned, result.guaranteedOwned.first);
+      expect(result.bestGuaranteedOverall, result.guaranteedOverall.first);
+    });
+
+    test('rewardMultiplier and annualAllowance never appear in any of the 4 list fields', () {
+      final multiplierRule = MovieDealRule(
+        benefitId: 'b-mult',
+        catalogCardId: 'c-mult',
+        title: '10X points',
+        offerType: MovieDealOfferType.rewardMultiplier,
+        rewardMultiplierRate: 10,
+        rewardMultiplierUnit: 'points per Rs.150',
+      );
+      final annualRule = MovieDealRule(
+        benefitId: 'b-annual',
+        catalogCardId: 'c-annual',
+        title: 'Free Movie Tickets',
+        offerType: MovieDealOfferType.annualAllowance,
+        annualCap: 6000,
+      );
+      final percentRule = _percentRule(cardId: 'c-percent', percent: 15);
+      final result = evaluateMovieDeals(
+        request: const MovieTicketRequest(numberOfTickets: 2, pricePerTicket: 300),
+        rules: [multiplierRule, annualRule, percentRule],
+        contexts: {
+          ('c-mult', 'b-mult'): const MovieDealContext(isOwned: true),
+          ('c-annual', 'b-annual'): const MovieDealContext(isOwned: true),
+          ('c-percent', 'b-percent'): const MovieDealContext(isOwned: true),
+        },
+        now: today,
+      );
+      final allListedIds = [
+        ...result.guaranteedOwned,
+        ...result.guaranteedOverall,
+        ...result.potentialOwned,
+        ...result.potentialOverall,
+      ].map((c) => c.cardId);
+      expect(allListedIds, isNot(contains('c-mult')));
+      expect(allListedIds, isNot(contains('c-annual')));
+    });
+  });
 }

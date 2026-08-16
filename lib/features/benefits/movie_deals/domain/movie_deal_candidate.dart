@@ -133,6 +133,14 @@ class RejectedMovieDealCandidate {
 /// potential-tier result can never be assigned to a bestGuaranteed* field,
 /// because the type itself keeps the tiers separate. No comment-enforced
 /// convention for the UI to remember; the split is structural.
+///
+/// guaranteedOwned/guaranteedOverall/potentialOwned/potentialOverall are the
+/// FULL ranked lists per tier×ownership group (each already sorted by
+/// evaluateMovieDeals' own comparator) — the UI shows every eligible
+/// candidate per group, not just the top pick. The best* singular fields
+/// are kept as a derived convenience (each is simply the corresponding
+/// list's first entry, or null when empty) for any caller that only wants
+/// the single winner.
 class MovieDealsRecommendation {
   const MovieDealsRecommendation({
     required this.candidates,
@@ -142,6 +150,10 @@ class MovieDealsRecommendation {
     this.bestGuaranteedOverall,
     this.bestPotentialOwned,
     this.bestPotentialOverall,
+    this.guaranteedOwned = const [],
+    this.guaranteedOverall = const [],
+    this.potentialOwned = const [],
+    this.potentialOverall = const [],
   });
 
   final List<MovieDealCandidate> candidates;
@@ -151,4 +163,8 @@ class MovieDealsRecommendation {
   final MovieDealCandidate? bestGuaranteedOverall;
   final MovieDealCandidate? bestPotentialOwned;
   final MovieDealCandidate? bestPotentialOverall;
+  final List<MovieDealCandidate> guaranteedOwned;
+  final List<MovieDealCandidate> guaranteedOverall;
+  final List<MovieDealCandidate> potentialOwned;
+  final List<MovieDealCandidate> potentialOverall;
 }
