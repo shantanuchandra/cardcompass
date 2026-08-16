@@ -36,7 +36,7 @@ export type BenefitDiff = {
   possibleRemovals: Array<{ benefit: BenefitProposal; informational: true }>;
   unchanged: Array<{ current: BenefitProposal; proposed: BenefitProposal }>;
   conflicts: Array<{
-    code: "ambiguous_benefit_match" | "conflicting_proposed_terms";
+    code: "ambiguous_benefit_match" | "conflicting_proposed_terms" | "dedupe_key_condition_mismatch";
     current?: BenefitProposal[];
     proposed: BenefitProposal[];
   }>;
@@ -124,8 +124,10 @@ function period(text: string): string | undefined {
   return normalize(matched).replace("annum", "year");
 }
 
-function listAfter(text: string, marker: RegExp): string[] {
-  const matched = text.match(marker)?.[1];
+function exclusions(text: string): string[] {
+  const matched = text.match(
+    /\bexcluding\s+(.+?)(?=\s*,?\s*(?:valid\s+(?:until|through)|offer\s+ends?|expires?(?:\s+on)?|effective\s+until|capp?ed\s+(?:at|to)|maximum\s+(?:of\s+)?|up\s+to|per\s+(?:statement\s+month|calendar\s+month|month|quarter|year|annum|week|day))\b|[.;]|$)/i,
+  )?.[1];
   if (!matched) return [];
   return matched
     .split(/,|\band\b/gi)
@@ -192,7 +194,7 @@ function parseCashback(text: string): ParsedFields | null {
     ...(cap === undefined ? {} : { cap }),
     ...(period(text) === undefined ? {} : { period: period(text) }),
     restrictions: restriction ? [normalize(restriction)] : [],
-    exclusions: listAfter(text, /\bexcluding\s+(.+?)(?=[.;]|$)/i),
+    exclusions: exclusions(text),
     ...(dateToIso(text) === undefined ? {} : { effectiveTo: dateToIso(text) }),
   };
 }
@@ -208,7 +210,7 @@ function parseRewards(text: string): ParsedFields | null {
     value: decimal(matched[1]),
     ...(money(thresholdMatch ?? "") === undefined ? {} : { threshold: money(thresholdMatch ?? "") }),
     restrictions: restriction ? [normalize(restriction)] : [],
-    exclusions: listAfter(text, /\bexcluding\s+(.+?)(?=[.;]|$)/i),
+    exclusions: exclusions(text),
     ...(dateToIso(text) === undefined ? {} : { effectiveTo: dateToIso(text) }),
   };
 }
@@ -227,7 +229,7 @@ function parseLounge(text: string): ParsedFields | null {
     frequency: `${visitCount} visits`,
     ...(period(text) === undefined ? {} : { period: period(text) }),
     restrictions: [],
-    exclusions: listAfter(text, /\bexcluding\s+(.+?)(?=[.;]|$)/i),
+    exclusions: exclusions(text),
     ...(dateToIso(text) === undefined ? {} : { effectiveTo: dateToIso(text) }),
   };
 }
@@ -264,21 +266,21 @@ function conditionKey(benefit: ParsedFields): string {
     rate: benefit.rate,
     cap: benefit.cap,
     threshold: benefit.threshold,
-    frequency: benefit.frequency,
-    period: benefit.period,
-    restrictions: [...benefit.restrictions].sort(),
-    exclusions: [...benefit.exclusions].sort(),
+    frequency: benefit.frequency === undefined ? undefined : normalize(benefit.frequency),
+    period: benefit.period === undefined ? undefined : normalize(benefit.period),
+    restrictions: benefit.restrictions.map(normalize).sort(),
+    exclusions: benefit.exclusions.map(normalize).sort(),
     effectiveFrom: benefit.effectiveFrom,
     effectiveTo: benefit.effectiveTo,
   });
 }
 
-function semanticKey(benefit: Pick<BenefitProposal, "category" | "valueType" | "value" | "rate">): string {
+function semanticKey(benefit: Pick<BenefitProposal, "category" | "valueType" | "restrictions" | "exclusions">): string {
   return JSON.stringify({
-    category: benefit.category,
-    valueType: benefit.valueType,
-    value: benefit.value,
-    rate: benefit.rate,
+    category: normalize(benefit.category),
+    valueType: benefit.valueType === undefined ? undefined : normalize(benefit.valueType),
+    restrictions: benefit.restrictions.map(normalize).sort(),
+    exclusions: benefit.exclusions.map(normalize).sort(),
   });
 }
 
@@ -332,31 +334,92 @@ export function extractGroundedBenefits(
  * field, so absence from a crawl cannot be approved as a destructive mutation.
  */
 export function diffBenefits(current: BenefitProposal[], proposed: BenefitProposal[]): BenefitDiff {
-  const currentByKey = new Map(current.map((benefit) => [benefit.dedupeKey, benefit]));
-  const proposedByKey = new Map(proposed.map((benefit) => [benefit.dedupeKey, benefit]));
+  const currentByKey = new Map<string, BenefitProposal[]>();
+  const proposedByKey = new Map<string, BenefitProposal[]>();
+  for (const benefit of current) {
+    currentByKey.set(benefit.dedupeKey, [...(currentByKey.get(benefit.dedupeKey) ?? []), benefit]);
+  }
+  for (const benefit of proposed) {
+    proposedByKey.set(benefit.dedupeKey, [...(proposedByKey.get(benefit.dedupeKey) ?? []), benefit]);
+  }
   const unchanged: BenefitDiff["unchanged"] = [];
-  for (const key of [...currentByKey.keys()].filter((key) => proposedByKey.has(key)).sort()) {
-    unchanged.push({ current: currentByKey.get(key)!, proposed: proposedByKey.get(key)! });
+  const conflicts: BenefitDiff["conflicts"] = [];
+  const allDedupeKeys = new Set([...currentByKey.keys(), ...proposedByKey.keys()]);
+  for (const key of allDedupeKeys) {
+    const currentMatches = sorted(currentByKey.get(key) ?? []);
+    const proposedMatches = sorted(proposedByKey.get(key) ?? []);
+    if (
+      new Set(currentMatches.map(conditionKey)).size < 2 &&
+      new Set(proposedMatches.map(conditionKey)).size < 2
+    ) continue;
+    conflicts.push({
+      code: "dedupe_key_condition_mismatch",
+      ...(currentMatches.length > 0 ? { current: currentMatches } : {}),
+      proposed: proposedMatches,
+    });
+    currentByKey.delete(key);
+    proposedByKey.delete(key);
+  }
+  const proposedBySemantic = new Map<string, BenefitProposal[]>();
+  for (const benefit of proposed) {
+    const key = semanticKey(benefit);
+    proposedBySemantic.set(key, [...(proposedBySemantic.get(key) ?? []), benefit]);
+  }
+  for (const [key, candidates] of proposedBySemantic) {
+    if (new Set(candidates.map(conditionKey)).size < 2) continue;
+    const currentMatches = current.filter((benefit) => semanticKey(benefit) === key);
+    conflicts.push({
+      code: "conflicting_proposed_terms",
+      ...(currentMatches.length > 0 ? { current: sorted(currentMatches) } : {}),
+      proposed: sorted(candidates),
+    });
+    for (const benefit of candidates) proposedByKey.delete(benefit.dedupeKey);
+    for (const benefit of currentMatches) currentByKey.delete(benefit.dedupeKey);
+  }
+  const sharedDedupeKeys = [...currentByKey.keys()].filter((key) => proposedByKey.has(key)).sort();
+  for (const key of sharedDedupeKeys) {
+    const currentMatches = sorted(currentByKey.get(key)!);
+    const proposedMatches = sorted(proposedByKey.get(key)!);
+    const currentConditions = new Set(currentMatches.map(conditionKey));
+    const proposedConditions = new Set(proposedMatches.map(conditionKey));
+    if (
+      currentConditions.size !== 1 ||
+      proposedConditions.size !== 1 ||
+      [...currentConditions][0] !== [...proposedConditions][0]
+    ) {
+      conflicts.push({
+        code: "dedupe_key_condition_mismatch",
+        current: currentMatches,
+        proposed: proposedMatches,
+      });
+      currentByKey.delete(key);
+      proposedByKey.delete(key);
+      continue;
+    }
+    unchanged.push({ current: currentMatches[0], proposed: proposedMatches[0] });
     currentByKey.delete(key);
     proposedByKey.delete(key);
   }
 
   const currentBySemantic = new Map<string, BenefitProposal[]>();
-  const proposedBySemantic = new Map<string, BenefitProposal[]>();
-  for (const benefit of currentByKey.values()) {
-    const key = semanticKey(benefit);
-    currentBySemantic.set(key, [...(currentBySemantic.get(key) ?? []), benefit]);
+  const unmatchedProposedBySemantic = new Map<string, BenefitProposal[]>();
+  for (const benefits of currentByKey.values()) {
+    for (const benefit of benefits) {
+      const key = semanticKey(benefit);
+      currentBySemantic.set(key, [...(currentBySemantic.get(key) ?? []), benefit]);
+    }
   }
-  for (const benefit of proposedByKey.values()) {
-    const key = semanticKey(benefit);
-    proposedBySemantic.set(key, [...(proposedBySemantic.get(key) ?? []), benefit]);
+  for (const benefits of proposedByKey.values()) {
+    for (const benefit of benefits) {
+      const key = semanticKey(benefit);
+      unmatchedProposedBySemantic.set(key, [...(unmatchedProposedBySemantic.get(key) ?? []), benefit]);
+    }
   }
 
   const modifications: BenefitDiff["modifications"] = [];
-  const conflicts: BenefitDiff["conflicts"] = [];
-  for (const key of [...currentBySemantic.keys()].filter((key) => proposedBySemantic.has(key)).sort()) {
+  for (const key of [...currentBySemantic.keys()].filter((key) => unmatchedProposedBySemantic.has(key)).sort()) {
     const currentMatches = sorted(currentBySemantic.get(key)!);
-    const proposedMatches = sorted(proposedBySemantic.get(key)!);
+    const proposedMatches = sorted(unmatchedProposedBySemantic.get(key)!);
     if (currentMatches.length === 1 && proposedMatches.length === 1) {
       modifications.push({ current: currentMatches[0], proposed: proposedMatches[0] });
       currentByKey.delete(currentMatches[0].dedupeKey);
@@ -368,7 +431,7 @@ export function diffBenefits(current: BenefitProposal[], proposed: BenefitPropos
     }
   }
 
-  for (const benefits of proposedBySemantic.values()) {
+  for (const benefits of unmatchedProposedBySemantic.values()) {
     const unmatched = sorted(benefits.filter((benefit) => proposedByKey.has(benefit.dedupeKey)));
     if (unmatched.length > 1) {
       conflicts.push({ code: "conflicting_proposed_terms", proposed: unmatched });
@@ -376,7 +439,7 @@ export function diffBenefits(current: BenefitProposal[], proposed: BenefitPropos
     }
   }
 
-  const additions = sorted([...proposedByKey.values()]);
-  const possibleRemovals = sorted([...currentByKey.values()]).map((benefit) => ({ benefit, informational: true as const }));
+  const additions = sorted([...proposedByKey.values()].flat());
+  const possibleRemovals = sorted([...currentByKey.values()].flat()).map((benefit) => ({ benefit, informational: true as const }));
   return { additions, modifications, possibleRemovals, unchanged, conflicts };
 }

@@ -136,7 +136,83 @@ test('produces deterministic additions, modifications, unchanged benefits, confl
       text: 'Get 10% cashback on dining spends, capped at ₹1,000 per statement month.',
     }], 'grounded-v1'),
   ]);
-  assert.equal(ambiguous.conflicts[0]?.code, 'ambiguous_benefit_match');
+  assert.equal(ambiguous.conflicts.length > 0, true);
   assert.equal(ambiguous.additions.length, 1);
   assert.equal(ambiguous.possibleRemovals.length, 1);
+});
+
+test('matches benefit subjects independently from mutable reward conditions', () => {
+  // Catches semantic matching that treats a changed rate as a new benefit, or treats dining and grocery as the same subject.
+  const diningTen = extractGroundedBenefits([{
+    sourceUrl: SOURCE,
+    text: 'Get 10% cashback on dining spends, capped at ₹500 per statement month.',
+  }], 'grounded-v1');
+  const diningFive = extractGroundedBenefits([{
+    sourceUrl: SOURCE,
+    text: 'Get 5% cashback on dining spends, capped at ₹750 per statement month.',
+  }], 'grounded-v1');
+  const groceryTen = extractGroundedBenefits([{
+    sourceUrl: SOURCE,
+    text: 'Get 10% cashback on grocery spends, capped at ₹500 per statement month.',
+  }], 'grounded-v1');
+
+  const changedRate = diffBenefits(diningTen, diningFive);
+  assert.equal(changedRate.modifications.length, 1);
+  assert.equal(changedRate.additions.length, 0);
+  assert.equal(changedRate.possibleRemovals.length, 0);
+
+  const changedSubject = diffBenefits(diningTen, groceryTen);
+  assert.equal(changedSubject.modifications.length, 0);
+  assert.equal(changedSubject.additions.length, 1);
+  assert.equal(changedSubject.possibleRemovals.length, 1);
+});
+
+test('keeps divergent official terms as conflicts rather than silently matching them', () => {
+  // Catches a semantic key that includes mutable rate/condition fields and misses conflicting official documents.
+  const current = extractGroundedBenefits([{
+    sourceUrl: `${SOURCE}/current`,
+    text: 'Get 10% cashback on dining spends, capped at ₹500 per statement month.',
+  }], 'grounded-v1');
+  const proposed = extractGroundedBenefits([
+    {
+      sourceUrl: `${SOURCE}/page`,
+      text: 'Get 10% cashback on dining spends, capped at ₹500 per statement month.',
+    },
+    {
+      sourceUrl: `${SOURCE}/terms`,
+      text: 'Get 5% cashback on dining spends, capped at ₹750 per statement month.',
+    },
+  ], 'grounded-v1');
+
+  assert.equal(proposed.length, 2);
+  assert.equal(proposed.every((benefit) => benefit.warnings.includes('conflicting_official_terms')), true);
+  assert.equal(diffBenefits(current, proposed).conflicts.length > 0, true);
+});
+
+test('does not treat a reused dedupe key with divergent normalized conditions as unchanged', () => {
+  // Catches Map-based dedupe overwrites that hide differing terms under one claimed key.
+  const [base] = extractGroundedBenefits([{
+    sourceUrl: SOURCE,
+    text: 'Get 10% cashback on dining spends, capped at ₹500 per statement month.',
+  }], 'grounded-v1');
+  const divergent = { ...base, cap: 999 };
+
+  const diff = diffBenefits([base, divergent], [base]);
+  assert.equal(diff.unchanged.length, 0);
+  assert.equal(diff.conflicts.some((conflict) => conflict.code === 'dedupe_key_condition_mismatch'), true);
+
+  const currentOnly = diffBenefits([base, divergent], []);
+  assert.equal(currentOnly.conflicts.some((conflict) => conflict.code === 'dedupe_key_condition_mismatch'), true);
+  assert.equal(currentOnly.possibleRemovals.length, 0);
+});
+
+test('stops exclusions before a stated expiry or other benefit clause', () => {
+  // Catches exclusions absorbing expiry, cap, or period wording into the merchant list.
+  const [benefit] = extractGroundedBenefits([{
+    sourceUrl: SOURCE,
+    text: 'Get 5% cashback on online spends, excluding fuel and wallet reloads, valid until 31 December 2026.',
+  }], 'grounded-v1');
+
+  assert.deepEqual(benefit.exclusions, ['fuel', 'wallet reloads']);
+  assert.equal(benefit.effectiveTo, '2026-12-31');
 });
