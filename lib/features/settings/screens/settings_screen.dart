@@ -1,11 +1,17 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/providers/supabase_provider.dart';
+import '../../../core/repositories/user_data_repository.dart';
 import '../../../core/theme/brand_components.dart';
 import '../../../core/theme/brand_tokens.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../../cards/providers/cards_provider.dart';
+import '../../dashboard/providers/dashboard_provider.dart';
+import '../../dashboard/providers/gmail_sync_provider.dart';
+import '../../transactions/providers/transactions_provider.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -26,7 +32,18 @@ class SettingsScreen extends ConsumerWidget {
         children: [
           _ProfileCard(name: name, email: email, avatar: avatar),
           const SizedBox(height: BrandSpacing.lg),
-          const SettingsActionList(),
+          SettingsActionList(
+            onDeleteAllData: () async {
+              await UserDataRepository(
+                ref.read(supabaseClientProvider),
+              ).resetAll();
+              ref.invalidate(userCardsProvider);
+              ref.invalidate(dashboardProvider);
+              ref.invalidate(txnsNotifierProvider);
+              ref.invalidate(pendingCardAssignmentsProvider);
+              ref.invalidate(gmailSyncProvider);
+            },
+          ),
           const SizedBox(height: BrandSpacing.lg),
           SizedBox(
             width: double.infinity,
@@ -120,9 +137,10 @@ class _ProfileCard extends StatelessWidget {
 
 /// Product settings with an explicit outcome for every visible row.
 class SettingsActionList extends StatelessWidget {
-  const SettingsActionList({super.key, this.onOpenUri});
+  const SettingsActionList({super.key, this.onOpenUri, this.onDeleteAllData});
 
   final Future<bool> Function(Uri uri)? onOpenUri;
+  final Future<void> Function()? onDeleteAllData;
 
   Uri _siteUri(String path) => Uri.base.resolve(path);
 
@@ -142,6 +160,69 @@ class SettingsActionList extends StatelessWidget {
       applicationLegalese:
           'Understand the calculation behind every recommendation.',
     );
+  }
+
+  Future<void> _confirmDataReset(BuildContext context) async {
+    var confirmation = '';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('Delete all CardCompass data?'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'This permanently deletes your cards, statements, '
+                'transactions, synced email metadata, and preferences. '
+                'Your login account and Gmail access stay connected.',
+              ),
+              const SizedBox(height: BrandSpacing.md),
+              const Text('Type DELETE to confirm'),
+              const SizedBox(height: BrandSpacing.sm),
+              TextField(
+                autofocus: true,
+                onChanged: (value) => setState(() => confirmation = value),
+                decoration: const InputDecoration(hintText: 'DELETE'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: confirmation == 'DELETE'
+                  ? () => Navigator.pop(dialogContext, true)
+                  : null,
+              style: FilledButton.styleFrom(backgroundColor: BrandColors.error),
+              child: const Text('Delete data'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (confirmed != true || onDeleteAllData == null || !context.mounted) {
+      return;
+    }
+
+    try {
+      await onDeleteAllData!();
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('CardCompass data deleted.')),
+      );
+    } catch (error) {
+      debugPrint('CardCompass data reset failed: $error');
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not delete your data. Please try again.'),
+        ),
+      );
+    }
   }
 
   @override
@@ -184,6 +265,32 @@ class SettingsActionList extends StatelessWidget {
         description: 'CardCompass version information',
         leading: const Icon(Icons.info_outline_rounded),
         onTap: () => _showAbout(context),
+      ),
+      const SizedBox(height: BrandSpacing.lg),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: Text(
+          'Danger zone',
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+            color: BrandColors.error,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+      const SizedBox(height: BrandSpacing.sm),
+      Semantics(
+        button: true,
+        label: 'Delete all CardCompass data',
+        child: OutlinedButton.icon(
+          onPressed: () => _confirmDataReset(context),
+          icon: const Icon(Icons.delete_forever_outlined),
+          label: const Text('Delete all CardCompass data'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: BrandColors.error,
+            side: const BorderSide(color: BrandColors.error),
+            minimumSize: const Size(double.infinity, 48),
+          ),
+        ),
       ),
     ],
   );

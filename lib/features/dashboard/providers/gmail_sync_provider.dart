@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/providers/supabase_provider.dart';
 import '../../../core/providers/repository_providers.dart';
@@ -5,7 +6,11 @@ import '../../../core/repositories/email_repository.dart';
 import '../../../core/services/email_discovery_persister.dart';
 import '../../../core/services/gmail_sync_service.dart';
 import '../../../core/services/statement_processing_service.dart'
-    show StatementProcessingService, StatementProcessingIssue, EmailOutcome;
+    show
+        StatementProcessingService,
+        StatementProcessingIssue,
+        EmailOutcome,
+        metadataAfterCardAssignment;
 
 /// Outcome of one Gmail sync run, shown to the user as a summary.
 class GmailSyncResult {
@@ -124,6 +129,7 @@ class GmailSyncNotifier extends AsyncNotifier<GmailSyncResult?> {
         gmailService.dispose();
       }
     } catch (e, st) {
+      debugPrint('Gmail sync failed: $e');
       state = AsyncValue.error(e, st);
     }
   }
@@ -213,6 +219,11 @@ class CardAssignmentNotifier extends AsyncNotifier<void> {
 
       // Clear the needsCardAssignment flag and let the next processing pass
       // pick this email back up now that its bank has a resolution on file.
+      await emailRepo.updateEmailMetadata(
+        userId: userId,
+        emailId: email['email_id'] as String,
+        metadata: metadataAfterCardAssignment(email['metadata'] as Map?),
+      );
       await emailRepo.updateEmailStatus(
         userId: userId,
         emailId: email['email_id'] as String,

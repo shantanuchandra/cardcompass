@@ -165,12 +165,16 @@ class EmailRepository implements EmailRepositoryInterface {
     required String userId,
     required String emailId,
     required String bankDetected,
+    Map<String, dynamic>? identityHints,
   }) async {
     final existing = await getEmailById(userId: userId, emailId: emailId);
     final metadata = Map<String, dynamic>.from(
       existing?['metadata'] as Map<String, dynamic>? ?? {},
     );
     metadata['needsCardAssignment'] = true;
+    if (identityHints != null && identityHints.isNotEmpty) {
+      metadata['identityHints'] = identityHints;
+    }
 
     await _supabase
         .from('emails')

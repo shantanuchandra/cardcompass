@@ -37,6 +37,24 @@ void main() {
     expect(notifications.onTap, isNull);
   });
 
+  testWidgets('settings offers a guarded CardCompass data reset', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(theme: AppTheme.work, home: const SettingsActionList()),
+    );
+
+    expect(find.text('Delete all CardCompass data'), findsOneWidget);
+    await tester.tap(find.text('Delete all CardCompass data'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Type DELETE to confirm'), findsOneWidget);
+    final deleteButton = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Delete data'),
+    );
+    expect(deleteButton.onPressed, isNull);
+  });
+
   testWidgets('settings actions use the public routes and version dialog', (
     tester,
   ) async {

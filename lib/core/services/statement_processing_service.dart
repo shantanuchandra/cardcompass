@@ -17,18 +17,126 @@ import 'transaction_type_normalizer.dart';
 
 enum EmailOutcome { succeeded, needsPassword, needsCardAssignment, failed }
 
+/// Extracts the last four digits from an explicitly-labelled masked primary
+/// card number, as used on HSBC statements.
+String? extractPrimaryCardLastFour(String pdfText) {
+  final labelledNumber = RegExp(
+    r'primary\s+card\s+number\s*[:\-]?\s*((?:\d{2}[xX*]{2}|[xX*]{4})[\s-]+[xX*]{4}[\s-]+[xX*]{4}[\s-]+\d{4})',
+    caseSensitive: false,
+  ).firstMatch(pdfText);
+  if (labelledNumber == null) return null;
+  return RegExp(r'\d{4}').allMatches(labelledNumber.group(1)!).last.group(0);
+}
+
+/// Keeps a valid parser result, otherwise supplements it with deterministic
+/// evidence from the PDF text.
+Map<String, dynamic> statementInfoWithCardLastFour(
+  Map<String, dynamic> statementInfo,
+  String pdfText,
+) {
+  final existing = (statementInfo['card_last4'] as String?)?.trim();
+  if (existing != null && RegExp(r'^\d{4}$').hasMatch(existing)) {
+    return statementInfo;
+  }
+  final extracted = extractPrimaryCardLastFour(pdfText);
+  if (extracted == null) return statementInfo;
+  return {...statementInfo, 'card_last4': extracted};
+}
+
+/// Builds the small, sanitized evidence set shown while a user resolves an
+/// ambiguous statement. Raw statement text and transaction rows never enter
+/// email metadata.
+Map<String, dynamic> buildCardIdentityHints({
+  required String bankName,
+  required Map<String, dynamic> statementInfo,
+  String? attachmentFilename,
+}) {
+  final hints = <String, dynamic>{};
+
+  void addText(String key, Object? value) {
+    if (value is! String) return;
+    final trimmed = value.trim();
+    if (trimmed.isNotEmpty) hints[key] = trimmed;
+  }
+
+  addText('bank', bankName);
+  final last4 = statementInfo['card_last4'];
+  if (last4 is String && RegExp(r'^\s*\d{4}\s*$').hasMatch(last4)) {
+    hints['last4'] = last4.trim();
+  }
+  addText('productName', statementInfo['card_name']);
+  addText('statementDate', statementInfo['statement_date']);
+  addText('dueDate', statementInfo['due_date']);
+  final totalAmount = statementInfo['total_amount'];
+  if (totalAmount is num) hints['totalAmount'] = totalAmount;
+  addText('attachmentFilename', attachmentFilename);
+  return hints;
+}
+
+Map<String, dynamic> metadataAfterCardAssignment(Map<dynamic, dynamic>? value) {
+  final metadata = Map<String, dynamic>.from(value ?? const {});
+  metadata.remove('needsCardAssignment');
+  return metadata;
+}
+
 /// Returns only statement emails that still need automated processing.
 ///
 /// Emails awaiting an explicit card choice stay unprocessed so they remain in
 /// the assignment queue, but rerunning PDF/Gemini parsing cannot resolve that
 /// user decision and only repeats expensive work.
 List<Map<String, dynamic>> statementEmailsReadyForProcessing(
-  Iterable<Map<String, dynamic>> emails,
-) {
+  Iterable<Map<String, dynamic>> emails, {
+  List<UserCard> userCards = const [],
+}) {
   return emails.where((email) {
     final metadata = email['metadata'];
-    return metadata is! Map || metadata['needsCardAssignment'] != true;
+    if (metadata is! Map || metadata['needsCardAssignment'] != true) {
+      return true;
+    }
+    return cardMatchedFromEmailFilename(email, userCards) != null;
   }).toList();
+}
+
+/// Returns a card only when filename/subject evidence identifies exactly one
+/// same-bank card. Verified last-four digits take precedence; product names in
+/// subjects are the fallback for banks whose filenames omit useful digits.
+UserCard? cardMatchedFromEmailFilename(
+  Map<String, dynamic> email,
+  List<UserCard> userCards,
+) {
+  final metadata = email['metadata'];
+  final filename = metadata is Map
+      ? metadata['attachmentFilename'] as String?
+      : null;
+
+  final detectedBank = CardNormalizerService.normalizeBankName(
+    email['bank_detected'] as String? ?? '',
+  );
+  final sameBankCards = userCards.where((card) {
+    final cardBank = CardNormalizerService.normalizeBankName(card.bank ?? '');
+    return cardBank == detectedBank;
+  }).toList();
+
+  final lastFourMatches = sameBankCards.where((card) {
+    final last4 = card.lastFourDigits?.trim();
+    if (last4 == null || !RegExp(r'^\d{4}$').hasMatch(last4)) return false;
+    return filename != null &&
+        RegExp('(?<!\\d)${RegExp.escape(last4)}(?!\\d)').hasMatch(filename);
+  }).toList();
+  if (lastFourMatches.length == 1) return lastFourMatches.single;
+
+  String searchable(String value) => value
+      .toLowerCase()
+      .replaceAll(RegExp(r'\bclub\b'), '')
+      .replaceAll(RegExp(r'[^a-z0-9]'), '');
+
+  final subject = searchable(email['subject'] as String? ?? '');
+  if (subject.isEmpty) return null;
+  final productMatches = sameBankCards.where((card) {
+    final product = searchable(card.cardName ?? '');
+    return product.length >= 5 && subject.contains(product);
+  }).toList();
+  return productMatches.length == 1 ? productMatches.single : null;
 }
 
 enum StatementIssueReason {
@@ -213,10 +321,11 @@ class StatementProcessingService {
 
   Future<StatementProcessingResult> processUnprocessedEmails() async {
     _issues.clear();
+    final userCards = await _cardsRepo.getUserCards(_userId);
     final emails = statementEmailsReadyForProcessing(
       await _emailRepo.getUnprocessedEmails(_userId),
+      userCards: userCards,
     );
-    final userCards = await _cardsRepo.getUserCards(_userId);
 
     var succeeded = 0;
     var needsPassword = 0;
@@ -330,6 +439,16 @@ class StatementProcessingService {
     );
 
     final candidates = _cardsForBank(bankName, userCards);
+    final filenameMatchedCard = cardMatchedFromEmailFilename(email, userCards);
+
+    if (filenameMatchedCard != null) {
+      await _emailRepo.updateEmailMetadata(
+        userId: _userId,
+        emailId: emailId,
+        metadata: metadataAfterCardAssignment(metadata),
+      );
+      return _processOneWithCard(email, filenameMatchedCard);
+    }
 
     if (attachmentId == null) {
       _recordIssue(
@@ -483,9 +602,12 @@ class StatementProcessingService {
       return EmailOutcome.needsPassword;
     }
 
-    final statementInfo = await GeminiStatementParser.parseStatementInfo(
-      pdfText: text,
-      bankName: bankName,
+    final statementInfo = statementInfoWithCardLastFour(
+      await GeminiStatementParser.parseStatementInfo(
+        pdfText: text,
+        bankName: bankName,
+      ),
+      text,
     );
 
     final last4 = (statementInfo['card_last4'] as String?)?.trim();
@@ -521,6 +643,11 @@ class StatementProcessingService {
         userId: _userId,
         emailId: emailId,
         bankDetected: bankName,
+        identityHints: buildCardIdentityHints(
+          bankName: bankName,
+          statementInfo: statementInfo,
+          attachmentFilename: fileName,
+        ),
       );
       _recordIssue(
         bankName: bankName,
@@ -620,9 +747,12 @@ class StatementProcessingService {
       return EmailOutcome.needsPassword;
     }
 
-    final statementInfo = await GeminiStatementParser.parseStatementInfo(
-      pdfText: text,
-      bankName: bankName,
+    final statementInfo = statementInfoWithCardLastFour(
+      await GeminiStatementParser.parseStatementInfo(
+        pdfText: text,
+        bankName: bankName,
+      ),
+      text,
     );
 
     return _persistParsedStatement(

@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -1304,50 +1305,60 @@ class _CardsCarouselState extends ConsumerState<_CardsCarousel> {
           children: [
             SizedBox(
               height: cardHeight,
-              child: PageView.builder(
-                itemCount: itemCount,
-                padEnds: false,
-                controller: _controller,
-                onPageChanged: (i) => setState(() => _current = i),
-                itemBuilder: (context, i) {
-                  final isPending = i >= widget.cards.length;
-                  final tile = isPending
-                      ? _PendingBankTile(
-                          email: pending[i - widget.cards.length],
-                        )
-                      : Semantics(
-                          key: Key('dashboard-card-${widget.cards[i].id}'),
-                          label:
-                              'Open ${widget.cards[i].displayName} card details',
-                          button: true,
-                          onTap: () => context.push(
-                            '/app/cards/${Uri.encodeComponent(widget.cards[i].id)}',
-                          ),
-                          child: ExcludeSemantics(
-                            child: Material(
-                              color: Colors.transparent,
-                              child: InkWell(
-                                onTap: () => context.push(
-                                  '/app/cards/${Uri.encodeComponent(widget.cards[i].id)}',
+              child: ScrollConfiguration(
+                behavior: const MaterialScrollBehavior().copyWith(
+                  dragDevices: const {
+                    PointerDeviceKind.touch,
+                    PointerDeviceKind.mouse,
+                    PointerDeviceKind.stylus,
+                    PointerDeviceKind.trackpad,
+                  },
+                ),
+                child: PageView.builder(
+                  itemCount: itemCount,
+                  padEnds: false,
+                  controller: _controller,
+                  onPageChanged: (i) => setState(() => _current = i),
+                  itemBuilder: (context, i) {
+                    final isPending = i >= widget.cards.length;
+                    final tile = isPending
+                        ? _PendingBankTile(
+                            email: pending[i - widget.cards.length],
+                          )
+                        : Semantics(
+                            key: Key('dashboard-card-${widget.cards[i].id}'),
+                            label:
+                                'Open ${widget.cards[i].displayName} card details',
+                            button: true,
+                            onTap: () => context.push(
+                              '/app/cards/${Uri.encodeComponent(widget.cards[i].id)}',
+                            ),
+                            child: ExcludeSemantics(
+                              child: Material(
+                                color: Colors.transparent,
+                                child: InkWell(
+                                  onTap: () => context.push(
+                                    '/app/cards/${Uri.encodeComponent(widget.cards[i].id)}',
+                                  ),
+                                  borderRadius: BorderRadius.circular(
+                                    BrandRadius.overlay,
+                                  ),
+                                  child: _CreditCardTile(card: widget.cards[i]),
                                 ),
-                                borderRadius: BorderRadius.circular(
-                                  BrandRadius.overlay,
-                                ),
-                                child: _CreditCardTile(card: widget.cards[i]),
                               ),
                             ),
-                          ),
-                        );
-                  return Padding(
-                    padding: EdgeInsets.only(
-                      left: i == 0 ? BrandSpacing.md : BrandSpacing.sm,
-                      right: i == itemCount - 1
-                          ? BrandSpacing.md
-                          : BrandSpacing.sm,
-                    ),
-                    child: SizedBox(width: cardWidth, child: tile),
-                  );
-                },
+                          );
+                    return Padding(
+                      padding: EdgeInsets.only(
+                        left: i == 0 ? BrandSpacing.md : BrandSpacing.sm,
+                        right: i == itemCount - 1
+                            ? BrandSpacing.md
+                            : BrandSpacing.sm,
+                      ),
+                      child: SizedBox(width: cardWidth, child: tile),
+                    );
+                  },
+                ),
               ),
             ),
             if (itemCount > 1) ...[
@@ -1402,12 +1413,14 @@ class _PendingBankTile extends StatelessWidget {
       email['received_date'] as String? ?? '',
     );
     final totalAmount = hints['totalAmount'];
+    final subject = (email['subject'] as String?)?.trim();
     final attachmentFilename =
         hints['attachmentFilename'] as String? ??
         (metadata is Map ? metadata['attachmentFilename'] as String? : null);
     final sourceDate = statementDate ?? receivedDate;
     final hasEvidence =
         hints.isNotEmpty ||
+        (subject?.isNotEmpty ?? false) ||
         sourceDate != null ||
         (attachmentFilename?.isNotEmpty ?? false);
     final amountDue = totalAmount is num && dueDate != null
@@ -1423,7 +1436,10 @@ class _PendingBankTile extends StatelessWidget {
           style: BorderStyle.solid,
         ),
       ),
-      padding: const EdgeInsets.all(BrandSpacing.lg),
+      padding: const EdgeInsets.symmetric(
+        horizontal: BrandSpacing.lg,
+        vertical: BrandSpacing.md,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1469,6 +1485,19 @@ class _PendingBankTile extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
+            if (subject != null && subject.isNotEmpty) ...[
+              if (productName != null) const SizedBox(height: BrandSpacing.xs),
+              Text(
+                subject,
+                style: const TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 12,
+                  color: BrandColors.ink,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
             if (amountDue != null) ...[
               const SizedBox(height: BrandSpacing.xs),
               Text(
@@ -1496,7 +1525,7 @@ class _PendingBankTile extends StatelessWidget {
                 attachmentFilename,
                 style: const TextStyle(
                   fontFamily: 'IBM Plex Mono',
-                  fontSize: 10.5,
+                  fontSize: 12,
                   color: BrandColors.mutedInk,
                 ),
                 maxLines: 1,

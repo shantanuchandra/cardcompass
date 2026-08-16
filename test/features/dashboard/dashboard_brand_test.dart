@@ -10,6 +10,7 @@ import 'package:cardcompass/features/dashboard/screens/dashboard_screen.dart';
 import 'package:cardcompass/shared/models/transaction.dart';
 import 'package:cardcompass/shared/models/user_card.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -315,6 +316,58 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
   });
 
+  testWidgets('cards carousel responds to a pressed mouse drag', (
+    tester,
+  ) async {
+    final selectedAppTab = ValueNotifier(AppTab.dashboard);
+    addTearDown(selectedAppTab.dispose);
+    await _pumpDashboard(
+      tester,
+      selectedAppTab: selectedAppTab,
+      pendingAssignments: const [
+        {'email_id': 'email-mouse', 'bank_detected': 'Horizon Bank'},
+        {'email_id': 'email-mouse-2', 'bank_detected': 'Horizon Bank'},
+        {'email_id': 'email-mouse-3', 'bank_detected': 'Horizon Bank'},
+      ],
+      catalogSearch: (_, _) async => const [],
+    );
+
+    await tester.scrollUntilVisible(
+      find.text('Your Cards'),
+      300,
+      scrollable: find
+          .descendant(
+            of: find.byType(CustomScrollView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    final pageView = find.byType(PageView);
+    final pageScrollable = find.descendant(
+      of: pageView,
+      matching: find.byType(Scrollable),
+    );
+    final position = tester.state<ScrollableState>(pageScrollable).position;
+    expect(position.maxScrollExtent, greaterThan(0));
+    expect(
+      ScrollConfiguration.of(tester.element(pageView)).dragDevices,
+      contains(PointerDeviceKind.mouse),
+    );
+    final before = position.pixels;
+    await tester.drag(
+      pageView,
+      const Offset(-420, 0),
+      kind: PointerDeviceKind.mouse,
+      buttons: kPrimaryMouseButton,
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.state<ScrollableState>(pageScrollable).position.pixels,
+      greaterThan(before),
+    );
+  });
+
   testWidgets('pending card shows statement identity evidence', (tester) async {
     final selectedAppTab = ValueNotifier(AppTab.dashboard);
     addTearDown(selectedAppTab.dispose);
@@ -372,6 +425,7 @@ void main() {
         {
           'email_id': 'email-legacy',
           'bank_detected': 'ICICI Bank',
+          'subject': 'Your ICICI Bank credit card statement is ready',
           'received_date': '2026-08-13T10:30:00Z',
           'metadata': {'attachmentFilename': 'ICICI-Aug-Statement.pdf'},
         },
@@ -392,6 +446,10 @@ void main() {
     await tester.drag(find.byType(PageView), const Offset(-500, 0));
     await tester.pumpAndSettle();
 
+    expect(
+      find.text('Your ICICI Bank credit card statement is ready'),
+      findsOneWidget,
+    );
     expect(find.text('Statement email · 13 Aug'), findsOneWidget);
     expect(find.text('ICICI-Aug-Statement.pdf'), findsOneWidget);
     expect(find.text('Confirm card'), findsOneWidget);
