@@ -17,12 +17,91 @@ import 'transaction_type_normalizer.dart';
 
 enum EmailOutcome { succeeded, needsPassword, needsCardAssignment, failed }
 
+enum StatementIssueReason {
+  attachmentUnavailable,
+  downloadFailed,
+  passwordRequired,
+  cardAssignmentRequired,
+  processingFailed,
+}
+
+class StatementProcessingIssue {
+  const StatementProcessingIssue({
+    required this.bankName,
+    required this.cardContext,
+    required this.reason,
+  });
+
+  final String bankName;
+  final String cardContext;
+  final StatementIssueReason reason;
+}
+
+/// Keeps failure reporting to one final explanation per processing attempt.
+class StatementIssueAccumulator {
+  final List<StatementProcessingIssue> _items = [];
+
+  int beginAttempt() => _items.length;
+
+  void record(StatementProcessingIssue issue) => _items.add(issue);
+
+  void replaceAttemptWith(int startIndex, StatementProcessingIssue issue) {
+    if (startIndex < _items.length) {
+      _items.removeRange(startIndex, _items.length);
+    }
+    _items.add(issue);
+  }
+
+  void clear() => _items.clear();
+
+  List<StatementProcessingIssue> get snapshot => List.unmodifiable(_items);
+}
+
+List<String> buildStatementIssueLines(List<StatementProcessingIssue> issues) {
+  final grouped =
+      <
+        ({String bankName, String cardContext, StatementIssueReason reason}),
+        int
+      >{};
+  for (final issue in issues) {
+    final key = (
+      bankName: issue.bankName,
+      cardContext: issue.cardContext,
+      reason: issue.reason,
+    );
+    grouped[key] = (grouped[key] ?? 0) + 1;
+  }
+
+  final entries = grouped.entries.toList()
+    ..sort((a, b) {
+      final bank = a.key.bankName.compareTo(b.key.bankName);
+      if (bank != 0) return bank;
+      return a.key.reason.index.compareTo(b.key.reason.index);
+    });
+
+  String reasonLabel(StatementIssueReason reason) => switch (reason) {
+    StatementIssueReason.attachmentUnavailable =>
+      'Attachment unavailable before card matching',
+    StatementIssueReason.downloadFailed => 'Could not download the statement',
+    StatementIssueReason.passwordRequired => 'Statement password required',
+    StatementIssueReason.cardAssignmentRequired => 'Choose the correct card',
+    StatementIssueReason.processingFailed =>
+      'Could not parse or save statement',
+  };
+
+  return entries.map((entry) {
+    final count = entry.value;
+    return '${entry.key.bankName} · ${entry.key.cardContext} · $count ${count == 1 ? 'email' : 'emails'} · ${reasonLabel(entry.key.reason)}';
+  }).toList();
+}
+
 class StatementProcessingResult {
   final int totalAttempted;
   final int succeeded;
   final int needsPassword;
   final int needsCardAssignment;
   final int failed;
+  final List<StatementProcessingIssue> issues;
 
   const StatementProcessingResult({
     required this.totalAttempted,
@@ -30,6 +109,7 @@ class StatementProcessingResult {
     required this.needsPassword,
     required this.needsCardAssignment,
     required this.failed,
+    this.issues = const [],
   });
 }
 
@@ -47,6 +127,45 @@ class StatementProcessingService {
   final String _userName;
   final Map<String, String> _forcedCardIdByBank;
   final Map<String, String?> _merchantCategoryCache = {};
+  final StatementIssueAccumulator _issues = StatementIssueAccumulator();
+
+  void _recordIssue({
+    required String bankName,
+    required String cardContext,
+    required StatementIssueReason reason,
+  }) {
+    _issues.record(
+      StatementProcessingIssue(
+        bankName: bankName,
+        cardContext: cardContext,
+        reason: reason,
+      ),
+    );
+  }
+
+  String _cardContext(List<UserCard> cards) {
+    if (cards.isEmpty) return 'No matching card';
+    final names = cards.map(_cardName).toSet().toList()..sort();
+    if (names.length <= 3) return names.join(' / ');
+    return '${names.take(3).join(' / ')} / +${names.length - 3} more';
+  }
+
+  String _cardName(UserCard card) {
+    final name = card.cardName?.trim();
+    if (name != null && name.isNotEmpty) return name;
+    final lastFour = card.lastFourDigits?.trim();
+    return lastFour == null || lastFour.isEmpty
+        ? 'Unnamed card'
+        : 'Card ••••$lastFour';
+  }
+
+  List<UserCard> _cardsForBank(String bankName, List<UserCard> cards) {
+    return cards.where((card) {
+      final code = card.bankCode;
+      return bankName.toLowerCase().contains(code) ||
+          code.contains(bankName.toLowerCase().split(' ').first);
+    }).toList();
+  }
 
   /// [forcedCardIdByBank] lets a caller pin a specific bank name (as stored
   /// in emails.bank_detected) to a card for this run — used right after the
@@ -76,6 +195,7 @@ class StatementProcessingService {
   }
 
   Future<StatementProcessingResult> processUnprocessedEmails() async {
+    _issues.clear();
     final emails = await _emailRepo.getUnprocessedEmails(_userId);
     final userCards = await _cardsRepo.getUserCards(_userId);
 
@@ -85,10 +205,24 @@ class StatementProcessingService {
     var failed = 0;
 
     for (final email in emails) {
+      final attemptStart = _issues.beginAttempt();
       EmailOutcome outcome;
       try {
         outcome = await _processOne(email, userCards);
       } catch (e) {
+        final sender = email['sender'] as String? ?? '';
+        final subject = email['subject'] as String? ?? '';
+        final bankName = CardNormalizerService.normalizeBankName(
+          sender.isNotEmpty ? sender : subject,
+        );
+        _issues.replaceAttemptWith(
+          attemptStart,
+          StatementProcessingIssue(
+            bankName: bankName,
+            cardContext: _cardContext(_cardsForBank(bankName, userCards)),
+            reason: StatementIssueReason.processingFailed,
+          ),
+        );
         ParsingLogger.error(
           'Statement Processing: Unhandled error processing email ${email['email_id']}',
           e,
@@ -117,6 +251,7 @@ class StatementProcessingService {
       needsPassword: needsPassword,
       needsCardAssignment: needsCardAssignment,
       failed: failed,
+      issues: _issues.snapshot,
     );
   }
 
@@ -171,29 +306,35 @@ class StatementProcessingService {
     final metadata = email['metadata'] as Map<String, dynamic>? ?? {};
     final attachmentId = metadata['attachmentId'] as String?;
 
+    final bankName = CardNormalizerService.normalizeBankName(
+      sender.isNotEmpty ? sender : subject,
+    );
+
+    final candidates = _cardsForBank(bankName, userCards);
+
     if (attachmentId == null) {
+      _recordIssue(
+        bankName: bankName,
+        cardContext: _cardContext(candidates),
+        reason: StatementIssueReason.attachmentUnavailable,
+      );
       ParsingLogger.warning(
         'Statement Processing: No attachment id for email $emailId, skipping',
       );
       return EmailOutcome.failed;
     }
 
-    final bankName = CardNormalizerService.normalizeBankName(
-      sender.isNotEmpty ? sender : subject,
-    );
-
     if (userCards.isEmpty) {
+      _recordIssue(
+        bankName: bankName,
+        cardContext: 'No cards in wallet',
+        reason: StatementIssueReason.processingFailed,
+      );
       ParsingLogger.warning(
         'Statement Processing: No cards on file for user, skipping email $emailId',
       );
       return EmailOutcome.failed;
     }
-
-    final candidates = userCards.where((card) {
-      final code = card.bankCode;
-      return bankName.toLowerCase().contains(code) ||
-          code.contains(bankName.toLowerCase().split(' ').first);
-    }).toList();
 
     if (candidates.length == 1) {
       return _processOneWithCard(email, candidates.first);
@@ -223,6 +364,11 @@ class StatementProcessingService {
         userId: _userId,
         emailId: emailId,
         bankDetected: bankName,
+      );
+      _recordIssue(
+        bankName: bankName,
+        cardContext: 'No matching card',
+        reason: StatementIssueReason.cardAssignmentRequired,
       );
       return EmailOutcome.needsCardAssignment;
     }
@@ -257,6 +403,11 @@ class StatementProcessingService {
         .toList();
 
     if (attachmentId == null) {
+      _recordIssue(
+        bankName: bankName,
+        cardContext: _cardContext(candidates),
+        reason: StatementIssueReason.attachmentUnavailable,
+      );
       ParsingLogger.warning(
         'Statement Processing: No attachment id for email $emailId, skipping',
       );
@@ -267,6 +418,11 @@ class StatementProcessingService {
     try {
       pdfBytes = await _gmailService.downloadAttachment(emailId, attachmentId);
     } catch (e) {
+      _recordIssue(
+        bankName: bankName,
+        cardContext: _cardContext(candidates),
+        reason: StatementIssueReason.downloadFailed,
+      );
       ParsingLogger.error(
         'Statement Processing: Failed to download attachment for $emailId',
         e,
@@ -290,6 +446,11 @@ class StatementProcessingService {
     );
 
     if (text == null) {
+      _recordIssue(
+        bankName: bankName,
+        cardContext: _cardContext(candidates),
+        reason: StatementIssueReason.passwordRequired,
+      );
       await _emailRepo.updateEmailStatus(
         userId: _userId,
         emailId: emailId,
@@ -338,6 +499,11 @@ class StatementProcessingService {
         emailId: emailId,
         bankDetected: bankName,
       );
+      _recordIssue(
+        bankName: bankName,
+        cardContext: _cardContext(candidates),
+        reason: StatementIssueReason.cardAssignmentRequired,
+      );
       return EmailOutcome.needsCardAssignment;
     }
 
@@ -364,6 +530,13 @@ class StatementProcessingService {
     final fileName = metadata['attachmentFilename'] as String?;
 
     if (attachmentId == null) {
+      _recordIssue(
+        bankName: CardNormalizerService.normalizeBankName(
+          sender.isNotEmpty ? sender : subject,
+        ),
+        cardContext: _cardName(userCard),
+        reason: StatementIssueReason.attachmentUnavailable,
+      );
       ParsingLogger.warning(
         'Statement Processing: No attachment id for email $emailId, skipping',
       );
@@ -378,6 +551,11 @@ class StatementProcessingService {
     try {
       pdfBytes = await _gmailService.downloadAttachment(emailId, attachmentId);
     } catch (e) {
+      _recordIssue(
+        bankName: bankName,
+        cardContext: _cardName(userCard),
+        reason: StatementIssueReason.downloadFailed,
+      );
       ParsingLogger.error(
         'Statement Processing: Failed to download attachment for $emailId',
         e,
@@ -401,6 +579,11 @@ class StatementProcessingService {
     );
 
     if (text == null) {
+      _recordIssue(
+        bankName: bankName,
+        cardContext: _cardName(userCard),
+        reason: StatementIssueReason.passwordRequired,
+      );
       await _emailRepo.updateEmailStatus(
         userId: _userId,
         emailId: emailId,
@@ -551,6 +734,11 @@ class StatementProcessingService {
 
       return EmailOutcome.succeeded;
     } catch (e) {
+      _recordIssue(
+        bankName: bankName,
+        cardContext: _cardName(userCard),
+        reason: StatementIssueReason.processingFailed,
+      );
       ParsingLogger.error(
         'Statement Processing: Failed to parse/store statement for $emailId',
         e,

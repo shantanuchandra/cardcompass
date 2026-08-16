@@ -5,6 +5,17 @@ abstract class EmailRepositoryInterface {
   /// Check if email already exists
   Future<bool> emailExists(String userId, String emailId);
 
+  Future<Map<String, dynamic>?> getEmailById({
+    required String userId,
+    required String emailId,
+  });
+
+  Future<void> updateEmailMetadata({
+    required String userId,
+    required String emailId,
+    required Map<String, dynamic> metadata,
+  });
+
   /// Store email record in the database
   Future<String> storeEmail({
     required String userId,

@@ -12,6 +12,8 @@ import '../../../core/theme/brand_tokens.dart';
 import '../../../core/theme/category_display.dart';
 import '../../../core/providers/supabase_provider.dart';
 import '../../../core/providers/repository_providers.dart';
+import '../../../core/services/statement_processing_service.dart'
+    show buildStatementIssueLines;
 import '../../../shared/models/user_card.dart';
 import '../../../shared/models/transaction.dart';
 import '../../../shared/models/statement.dart';
@@ -109,16 +111,22 @@ class _DashboardAppBar extends ConsumerWidget {
       next.whenOrNull(
         data: (result) {
           if (result == null) return;
+          final issueLines = buildStatementIssueLines(result.issues);
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(
-                'Found ${result.foundCount} statement emails, ${result.newlyStoredCount} new. '
-                'Processed ${result.processedAttempted}: ${result.processedSucceeded} succeeded'
-                '${result.processedNeedsPassword > 0 ? ', ${result.processedNeedsPassword} need a password' : ''}'
-                '${result.processedNeedsCardAssignment > 0 ? ', ${result.processedNeedsCardAssignment} need a card assigned' : ''}'
-                '${result.processedFailed > 0 ? ', ${result.processedFailed} failed' : ''}.',
-              ),
+              content: Text(result.summaryMessage),
               duration: const Duration(seconds: 8),
+              action: issueLines.isEmpty
+                  ? null
+                  : SnackBarAction(
+                      label: 'Details',
+                      onPressed: () => showDialog<void>(
+                        context: context,
+                        builder: (_) => Dialog(
+                          child: StatementSyncDetails(issueLines: issueLines),
+                        ),
+                      ),
+                    ),
             ),
           );
           ref.invalidate(dashboardProvider);
@@ -226,6 +234,81 @@ class _DashboardAppBar extends ConsumerWidget {
                     controls,
                   ],
                 ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Concise, bank-level explanation of statement failures from the latest sync.
+class StatementSyncDetails extends StatelessWidget {
+  const StatementSyncDetails({required this.issueLines, super.key});
+
+  final List<String> issueLines;
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 620, maxHeight: 560),
+      child: Padding(
+        padding: const EdgeInsets.all(BrandSpacing.xl),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Statement issues',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                      color: BrandColors.ink,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Close statement issues',
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close_rounded),
+                ),
+              ],
+            ),
+            const SizedBox(height: BrandSpacing.xs),
+            const Text(
+              'Grouped by bank, possible card, and the stage that needs attention. '
+              '“Attachment unavailable” means the older saved email has no Gmail '
+              'attachment reference; syncing that date range again can repair it.',
+              style: TextStyle(color: BrandColors.mutedInk, height: 1.4),
+            ),
+            const SizedBox(height: BrandSpacing.lg),
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: issueLines.length,
+                separatorBuilder: (_, _) =>
+                    const SizedBox(height: BrandSpacing.sm),
+                itemBuilder: (context, index) => Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(BrandSpacing.md),
+                  decoration: BoxDecoration(
+                    color: BrandColors.paper,
+                    border: Border.all(color: BrandColors.paperDeep),
+                    borderRadius: BorderRadius.circular(BrandRadius.card),
+                  ),
+                  child: Text(
+                    issueLines[index],
+                    style: const TextStyle(
+                      color: BrandColors.ink,
+                      height: 1.45,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

@@ -53,9 +53,7 @@ class EmailRepository implements EmailRepositoryInterface {
     String? bankDetected,
   }) async {
     try {
-      final updateData = <String, dynamic>{
-        'processed': processed,
-      };
+      final updateData = <String, dynamic>{'processed': processed};
 
       if (statementId != null) {
         updateData['statement_id'] = statementId;
@@ -72,6 +70,19 @@ class EmailRepository implements EmailRepositoryInterface {
     } catch (e) {
       throw Exception('Failed to update email status: $e');
     }
+  }
+
+  @override
+  Future<void> updateEmailMetadata({
+    required String userId,
+    required String emailId,
+    required Map<String, dynamic> metadata,
+  }) async {
+    await _supabase
+        .from('emails')
+        .update({'metadata': metadata})
+        .eq('user_id', userId)
+        .eq('email_id', emailId);
   }
 
   /// Check if email already exists
@@ -173,6 +184,7 @@ class EmailRepository implements EmailRepositoryInterface {
   }
 
   /// Fetches a single email row by its Gmail message id, or null if not found.
+  @override
   Future<Map<String, dynamic>?> getEmailById({
     required String userId,
     required String emailId,
@@ -190,7 +202,9 @@ class EmailRepository implements EmailRepositoryInterface {
   /// Emails whose statement bank couldn't be matched to any card and has
   /// never been resolved before — surfaced to the user for one-time
   /// clarification (see [markNeedsCardAssignment]).
-  Future<List<Map<String, dynamic>>> getEmailsNeedingCardAssignment(String userId) async {
+  Future<List<Map<String, dynamic>>> getEmailsNeedingCardAssignment(
+    String userId,
+  ) async {
     final response = await _supabase
         .from('emails')
         .select('*')
