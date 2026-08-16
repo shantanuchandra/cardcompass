@@ -114,14 +114,21 @@ async function evaluate(cdp, expression) {
   return result.value;
 }
 
+let navigationSequence = 0;
+
 async function navigate(cdp, url) {
-  await cdp.send('Page.navigate', { url });
+  const target = new URL(url);
+  target.searchParams.set('__browser_test', String(++navigationSequence));
+  await cdp.send('Page.navigate', { url: target.href });
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    const ready = await evaluate(cdp, 'document.readyState');
-    if (ready === 'complete') return;
+    const page = await evaluate(cdp, `({
+      readyState: document.readyState,
+      href: location.href,
+    })`);
+    if (page.readyState === 'complete' && page.href === target.href) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(`Page did not finish loading: ${url}`);
+  throw new Error(`Page did not finish loading: ${target.href}`);
 }
 
 async function pressTab(cdp) {
