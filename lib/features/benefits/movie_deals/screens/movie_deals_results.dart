@@ -49,13 +49,24 @@ class MovieDealsResults extends ConsumerWidget {
 
     final rewardMultiplierCandidates =
         recommendation.candidates.where((c) => c.rule.offerType == MovieDealOfferType.rewardMultiplier).toList();
+    // Same reasoning as rewardMultiplier — an annualAllowance's true
+    // per-visit savings is unknowable (no remaining-balance tracking
+    // exists), so it's never a guaranteed/potential winner (the evaluator
+    // itself already excludes both types — see evaluateMovieDeals'
+    // winnerEligible filter). Shown in its own dedicated, non-competitive
+    // section instead.
+    final annualAllowanceCandidates =
+        recommendation.candidates.where((c) => c.rule.offerType == MovieDealOfferType.annualAllowance).toList();
 
     final hasAnyGuaranteed =
         recommendation.bestGuaranteedOwned != null || recommendation.bestGuaranteedOverall != null;
     final hasAnyPotential =
         recommendation.bestPotentialOwned != null || recommendation.bestPotentialOverall != null;
 
-    if (!hasAnyGuaranteed && !hasAnyPotential && rewardMultiplierCandidates.isEmpty) {
+    if (!hasAnyGuaranteed &&
+        !hasAnyPotential &&
+        rewardMultiplierCandidates.isEmpty &&
+        annualAllowanceCandidates.isEmpty) {
       return _buildNoDealCard(context);
     }
 
@@ -121,6 +132,12 @@ class MovieDealsResults extends ConsumerWidget {
           const SizedBox(height: 12),
           _buildRewardMultiplierSection(rewardMultiplierCandidates, frameIndex),
         ],
+        if (annualAllowanceCandidates.isNotEmpty) ...[
+          const SizedBox(height: 22),
+          _SectionDivider(label: 'ANNUAL ALLOWANCE — BALANCE NOT TRACKED', tone: _DividerTone.allowance),
+          const SizedBox(height: 12),
+          _buildAnnualAllowanceSection(annualAllowanceCandidates, frameIndex + rewardMultiplierCandidates.length),
+        ],
       ],
     );
   }
@@ -133,6 +150,22 @@ class MovieDealsResults extends ConsumerWidget {
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
             child: _RewardRateStrip(candidate: candidates[i])
+                .animate(delay: ((startIndex + i) * 60).ms)
+                .fadeIn(duration: 250.ms)
+                .slideY(begin: 0.04),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildAnnualAllowanceSection(List<MovieDealCandidate> candidates, int startIndex) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var i = 0; i < candidates.length; i++)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: _AnnualAllowanceStrip(candidate: candidates[i])
                 .animate(delay: ((startIndex + i) * 60).ms)
                 .fadeIn(duration: 250.ms)
                 .slideY(begin: 0.04),
@@ -182,7 +215,7 @@ class MovieDealsResults extends ConsumerWidget {
   }
 }
 
-enum _DividerTone { guaranteed, potential, reward }
+enum _DividerTone { guaranteed, potential, reward, allowance }
 
 class _SectionDivider extends StatelessWidget {
   const _SectionDivider({required this.label, required this.tone});
@@ -196,6 +229,7 @@ class _SectionDivider extends StatelessWidget {
       _DividerTone.guaranteed => AppColors.neonCyan,
       _DividerTone.potential => AppColors.warning,
       _DividerTone.reward => AppColors.violet,
+      _DividerTone.allowance => AppColors.success,
     };
     return Row(
       children: [
@@ -651,6 +685,68 @@ class _RewardRateStrip extends StatelessWidget {
                 // RichText/TextSpan — the latter's rendered content is
                 // invisible to find.textContaining, which only inspects a
                 // Text widget's own .data string.
+                Text(
+                  candidate.explanation,
+                  style: GoogleFonts.inter(color: AppColors.textSecondary, fontSize: 11.5),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// annualAllowance's own dedicated, non-competitive display — same reasoning
+/// as _RewardRateStrip: the true per-visit savings is unknowable (no
+/// remaining-balance tracking exists anywhere in the schema), so this must
+/// never look like a savings-tier film-frame with "Save ₹0" (which would
+/// read as a failed/worthless result rather than "you have annual
+/// headroom, details below").
+class _AnnualAllowanceStrip extends StatelessWidget {
+  const _AnnualAllowanceStrip({required this.candidate});
+
+  final MovieDealCandidate candidate;
+
+  @override
+  Widget build(BuildContext context) {
+    final rule = candidate.rule;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.surface1,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: AppColors.surface3),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: AppColors.success.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              rule.annualCap != null ? '₹${rule.annualCap!.toStringAsFixed(0)}/yr' : '—',
+              style: GoogleFonts.spaceGrotesk(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.success),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '${rule.cardName ?? candidate.title} — annual movie-ticket allowance',
+                  style: GoogleFonts.spaceGrotesk(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+                const SizedBox(height: 4),
+                // Never clamped/ellipsized, same reasoning as
+                // _RewardRateStrip's explanation Text — this is the
+                // disclaimer that remaining balance isn't tracked, never a
+                // per-visit rupee claim.
                 Text(
                   candidate.explanation,
                   style: GoogleFonts.inter(color: AppColors.textSecondary, fontSize: 11.5),

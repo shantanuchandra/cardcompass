@@ -1,6 +1,5 @@
 // test/features/benefits/movie_deals/movie_deal_evaluator_test.dart
 import 'package:flutter_test/flutter_test.dart';
-import 'package:cardcompass/features/benefits/movie_deals/domain/movie_deal_candidate.dart';
 import 'package:cardcompass/features/benefits/movie_deals/domain/movie_deal_evaluator.dart';
 import 'package:cardcompass/features/benefits/movie_deals/domain/movie_deal_rule.dart';
 import 'package:cardcompass/features/benefits/movie_deals/domain/movie_ticket_request.dart';
@@ -334,6 +333,134 @@ void main() {
       );
       final candidate = result.candidates.firstWhere((c) => c.cardId == 'c2');
       expect(candidate.milestoneSpend, isNull);
+    });
+  });
+
+  group('annualAllowance never fabricates a per-visit savings figure', () {
+    // A whole-year cap (e.g. "₹6,000 of free movie tickets annually") is not
+    // this specific purchase's discount — there is no remaining-balance
+    // tracking anywhere in the schema (confirmed: MovieDealCandidate.
+    // remainingVerifiedUsage is declared but never populated), so unlike
+    // fixedDiscount/percentDiscount (whose caps genuinely bound THIS
+    // transaction), annualAllowance's true per-visit savings is unknowable —
+    // the same epistemic gap that already makes rewardMultiplier report 0
+    // instead of inventing a rupee figure.
+    test('an annualAllowance candidate reports zero computed savings, like rewardMultiplier', () {
+      final rule = MovieDealRule(
+        benefitId: 'b-annual',
+        catalogCardId: 'c6',
+        title: 'SBI Card ELITE Free Movie Tickets',
+        offerType: MovieDealOfferType.annualAllowance,
+        annualCap: 6000,
+      );
+      final result = evaluateMovieDeals(
+        request: const MovieTicketRequest(numberOfTickets: 2, pricePerTicket: 250),
+        rules: [rule],
+        contexts: {('c6', 'b-annual'): const MovieDealContext(isOwned: true)},
+        now: today,
+      );
+      final candidate = result.candidates.firstWhere((c) => c.cardId == 'c6');
+      expect(candidate.savings, 0);
+      expect(candidate.finalAmount, candidate.grossAmount);
+    });
+
+    test('an annualAllowance candidate never out-ranks a real, computable percentDiscount candidate', () {
+      final annualRule = MovieDealRule(
+        benefitId: 'b-annual',
+        catalogCardId: 'c6',
+        title: 'SBI Card ELITE Free Movie Tickets',
+        offerType: MovieDealOfferType.annualAllowance,
+        annualCap: 6000,
+      );
+      final percentRule = _percentRule(cardId: 'c7', percent: 10);
+      final result = evaluateMovieDeals(
+        request: const MovieTicketRequest(numberOfTickets: 2, pricePerTicket: 250),
+        rules: [annualRule, percentRule],
+        contexts: {
+          ('c6', 'b-annual'): const MovieDealContext(isOwned: false),
+          ('c7', 'b-percent'): const MovieDealContext(isOwned: false),
+        },
+        now: today,
+      );
+      // Before the fix, annualCap=6000 clamped to the ₹500 gross would tie
+      // (or beat) the percent candidate's real ₹50 savings — exactly the
+      // mis-ranking this test guards against.
+      expect(result.bestPotentialOverall!.cardId, 'c7');
+    });
+
+    test('annualAllowance explanation never claims a rupee savings figure', () {
+      final rule = MovieDealRule(
+        benefitId: 'b-annual',
+        catalogCardId: 'c6',
+        title: 'SBI Card ELITE Free Movie Tickets',
+        offerType: MovieDealOfferType.annualAllowance,
+        annualCap: 6000,
+      );
+      final result = evaluateMovieDeals(
+        request: const MovieTicketRequest(numberOfTickets: 2, pricePerTicket: 250),
+        rules: [rule],
+        contexts: {('c6', 'b-annual'): const MovieDealContext(isOwned: true)},
+        now: today,
+      );
+      final candidate = result.candidates.firstWhere((c) => c.cardId == 'c6');
+      expect(candidate.explanation, isNot(contains('saves ₹')));
+      expect(candidate.explanation, contains('₹6000'));
+    });
+
+    // savings=0 alone made this the SOLE guard against annualAllowance
+    // winning by default when it's the only candidate — the exact scenario
+    // this reproduces. Still present in `candidates` (so the UI's own
+    // dedicated strip can find and render it), just never a `best*` winner.
+    test('an annualAllowance candidate never becomes a best* winner even as the sole candidate', () {
+      final rule = MovieDealRule(
+        benefitId: 'b-annual',
+        catalogCardId: 'c6',
+        title: 'SBI Card ELITE Free Movie Tickets',
+        offerType: MovieDealOfferType.annualAllowance,
+        annualCap: 6000,
+      );
+      final result = evaluateMovieDeals(
+        request: const MovieTicketRequest(numberOfTickets: 2, pricePerTicket: 250),
+        rules: [rule],
+        contexts: {('c6', 'b-annual'): const MovieDealContext(isOwned: true)},
+        now: today,
+      );
+      expect(result.candidates, hasLength(1));
+      expect(result.bestGuaranteedOwned, isNull);
+      expect(result.bestGuaranteedOverall, isNull);
+      expect(result.bestPotentialOwned, isNull);
+      expect(result.bestPotentialOverall, isNull);
+    });
+  });
+
+  group('rewardMultiplier is never a best* winner even as the sole candidate', () {
+    // The same latent gap annualAllowance had — savings=0 only ever LOSES
+    // ranking comparisons, it was never an actual exclusion from winner
+    // selection. Genuinely pre-existing (no prior test exercised
+    // evaluateMovieDeals' real winner-selection with only a rewardMultiplier
+    // candidate present), fixed alongside annualAllowance since both rely on
+    // the identical mechanism.
+    test('a lone rewardMultiplier candidate never becomes a best* winner', () {
+      final rule = MovieDealRule(
+        benefitId: 'b-mult',
+        catalogCardId: 'c5',
+        title: '10X points',
+        offerType: MovieDealOfferType.rewardMultiplier,
+        rewardMultiplierRate: 10,
+        rewardMultiplierUnit: 'points per Rs.150',
+        qualifyingCategories: const {'movies'},
+      );
+      final result = evaluateMovieDeals(
+        request: const MovieTicketRequest(numberOfTickets: 2, pricePerTicket: 300),
+        rules: [rule],
+        contexts: {('c5', 'b-mult'): const MovieDealContext(isOwned: true)},
+        now: today,
+      );
+      expect(result.candidates, hasLength(1));
+      expect(result.bestGuaranteedOwned, isNull);
+      expect(result.bestGuaranteedOverall, isNull);
+      expect(result.bestPotentialOwned, isNull);
+      expect(result.bestPotentialOverall, isNull);
     });
   });
 }

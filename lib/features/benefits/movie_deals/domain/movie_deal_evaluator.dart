@@ -52,8 +52,20 @@ MovieDealsRecommendation evaluateMovieDeals({
     ));
   }
 
-  final guaranteed = candidates.where(_isGuaranteed).toList()..sort(_compareCandidates);
-  final potential = candidates.where((c) => !_isGuaranteed(c)).toList()..sort(_compareCandidates);
+  // rewardMultiplier and annualAllowance both always report savings=0 (no
+  // ₹ figure is invented for either — see _calculateSavings) and are shown
+  // in their own dedicated, non-competitive UI section rather than a
+  // guaranteed/potential winner slot. Relying on savings=0 alone to lose
+  // every ranking comparison was NOT sufficient: as the sole candidate in
+  // `candidates`, either type could still become a best* winner by default
+  // (no competing candidate to lose to) — excluded here explicitly so a
+  // best* field can never surface either type as if it won a comparison,
+  // while both remain fully present in `candidates` for their own section.
+  final winnerEligible = candidates.where((c) =>
+      c.rule.offerType != MovieDealOfferType.rewardMultiplier &&
+      c.rule.offerType != MovieDealOfferType.annualAllowance);
+  final guaranteed = winnerEligible.where(_isGuaranteed).toList()..sort(_compareCandidates);
+  final potential = winnerEligible.where((c) => !_isGuaranteed(c)).toList()..sort(_compareCandidates);
 
   final guaranteedOwned = guaranteed.where((c) => c.isOwned).toList();
   final potentialOwned = potential.where((c) => c.isOwned).toList();
@@ -178,7 +190,15 @@ double _calculateSavings(
     case MovieDealOfferType.fixedDiscount:
       savings = rule.fixedAmount ?? 0;
     case MovieDealOfferType.annualAllowance:
-      savings = rule.annualCap ?? 0;
+      // annualCap is a whole-year budget, not this transaction's discount —
+      // there is no remaining-balance tracking anywhere in the schema
+      // (MovieDealCandidate.remainingVerifiedUsage is declared but never
+      // populated), so how much of it is left for THIS purchase is
+      // unknowable. Reporting the raw cap here previously let a ₹6,000
+      // annual allowance out-rank a real, computable ₹50 percentDiscount for
+      // a ₹500 search — the same category error rewardMultiplier already
+      // avoids by reporting 0 instead of inventing a rupee figure.
+      savings = 0;
     case MovieDealOfferType.milestone:
       savings = rule.milestoneReward ?? 0;
     case MovieDealOfferType.rewardMultiplier:
@@ -196,8 +216,8 @@ double _calculateSavings(
 // Enumerates all 6 offer types explicitly (no `_` catch-all) so a future
 // 7th offer type fails to compile here, the same way it already fails to
 // compile in _calculateSavings above — a generic explanation string is a
-// deliberate choice for percentDiscount/fixedDiscount/annualAllowance/
-// milestone, not a fallback for types nobody has decided the wording for.
+// deliberate choice for percentDiscount/fixedDiscount/milestone, not a
+// fallback for types nobody has decided the wording for.
 String _explanation(MovieDealRule rule, double savings,
         MovieDealUsageConfidence confidence) =>
     switch (rule.offerType) {
@@ -206,9 +226,14 @@ String _explanation(MovieDealRule rule, double savings,
       MovieDealOfferType.bogo =>
         'BOGO — up to ₹${rule.perTransactionCap?.toStringAsFixed(0)} off, '
             '${rule.cycleRedemptionLimit} redemptions/month.',
+      // States the real, unconditional term (the annual cap) rather than a
+      // computed ₹ figure for this specific purchase — how much of the
+      // ₹X/year budget remains is unknowable (see _calculateSavings), so
+      // this must never read like a guaranteed discount on THIS transaction.
+      MovieDealOfferType.annualAllowance =>
+        'Up to ₹${rule.annualCap?.toStringAsFixed(0)}/year in movie tickets — remaining balance not tracked.',
       MovieDealOfferType.percentDiscount ||
       MovieDealOfferType.fixedDiscount ||
-      MovieDealOfferType.annualAllowance ||
       MovieDealOfferType.milestone =>
         '${rule.offerType.name} saves ₹${savings.toStringAsFixed(2)} (${confidence.name} usage).',
     };

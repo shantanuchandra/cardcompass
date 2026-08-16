@@ -159,4 +159,43 @@ void main() {
     expect(find.textContaining('points program'), findsOneWidget);
     expect(find.textContaining('Save ₹0'), findsNothing);
   });
+
+  testWidgets('an annualAllowance candidate renders in its own section, never as a BEST CARD winner', (tester) async {
+    final annualRule = MovieDealRule(
+      benefitId: 'b-annual-card',
+      catalogCardId: 'annual-card',
+      title: 'SBI Card ELITE Free Movie Tickets',
+      cardName: 'SBI Card ELITE',
+      offerType: MovieDealOfferType.annualAllowance,
+      annualCap: 6000,
+    );
+    final annualCandidate = MovieDealCandidate(
+      cardId: 'annual-card',
+      benefitId: 'b-annual-card',
+      title: annualRule.title,
+      rule: annualRule,
+      isOwned: true,
+      grossAmount: 600,
+      savings: 0,
+      finalAmount: 600,
+      usageConfidence: MovieDealUsageConfidence.unverified,
+      platformConfidence: MovieDealPlatformConfidence.notRequested,
+      explanation: 'Up to ₹6000/year in movie tickets — remaining balance not tracked.',
+    );
+    final recommendation = MovieDealsRecommendation(
+      candidates: [annualCandidate],
+      rejectedCandidates: const [],
+    );
+
+    await tester.pumpWidget(ProviderScope(
+      overrides: [movieDealsSearchProvider(request).overrideWith((ref) async => recommendation)],
+      child: const MaterialApp(home: Scaffold(body: MovieDealsResults(request: request))),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('balance not tracked'), findsOneWidget);
+    expect(find.text('BEST CARD YOU OWN'), findsNothing);
+    expect(find.text('BEST CARD OVERALL'), findsNothing);
+    expect(find.textContaining('Save ₹0'), findsNothing);
+  });
 }
