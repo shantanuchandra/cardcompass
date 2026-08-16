@@ -103,6 +103,7 @@ class BenefitEnrichmentReview {
     required this.proposedCount,
     required this.summary,
     required this.staging,
+    required this.crawlerDiscoveredWithoutStatementSignal,
   });
 
   factory BenefitEnrichmentReview.fromJson(JsonMap json) {
@@ -126,6 +127,8 @@ class BenefitEnrichmentReview {
           0,
       summary: BenefitRunSummary.fromJson(_map(json['result_summary'])),
       staging: BenefitStaging.fromJson(_map(json['staging'])),
+      crawlerDiscoveredWithoutStatementSignal:
+          json['crawler_discovered_without_statement_signal'] == true,
     );
   }
 
@@ -144,6 +147,7 @@ class BenefitEnrichmentReview {
   final int proposedCount;
   final BenefitRunSummary summary;
   final BenefitStaging staging;
+  final bool crawlerDiscoveredWithoutStatementSignal;
 
   bool get canReview =>
       status == 'staged' && staging.id != null && staging.status == 'pending';

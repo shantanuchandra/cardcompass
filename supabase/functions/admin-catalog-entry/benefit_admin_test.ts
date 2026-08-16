@@ -147,6 +147,16 @@ Deno.test("benefit list returns evidence and confidence without page bodies or s
   };
   const db = withAuthenticatedUser({
     from(table: string) {
+      if (table === "card_discovery_jobs") {
+        return {
+          select() { return this; },
+          eq() { return this; },
+          in() { return this; },
+          then(resolve: (value: unknown) => unknown) {
+            return Promise.resolve({ data: [{ resolved_card_id: "card-1" }], error: null }).then(resolve);
+          },
+        };
+      }
       assert(
         table === "card_catalog_enrichment_jobs",
         "list read an unexpected table",
@@ -188,6 +198,7 @@ Deno.test("benefit list returns evidence and confidence without page bodies or s
       "safe evidence was omitted",
     );
     assert(serialized.includes("0.94"), "confidence was omitted");
+    assert(body.items[0].crawler_discovered_without_statement_signal === true, "linked issuer crawl was omitted");
     assert(
       !serialized.includes("private issuer html"),
       "raw page body was exposed",

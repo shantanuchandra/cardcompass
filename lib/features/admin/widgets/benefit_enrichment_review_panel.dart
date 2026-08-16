@@ -107,9 +107,20 @@ class _BenefitEnrichmentReviewPanelState
   }
 
   Future<void> _edit(BenefitEnrichmentReview item) async {
+    final decision = item.staging.decisions.firstWhereOrNull(
+      (decision) =>
+          decision.editedBenefit != null ||
+          decision.benefit != null ||
+          decision.proposed != null,
+    );
+    final diff = item.staging.extractedData.diff;
     final candidate =
-        item.staging.decisions.firstOrNull?.benefit ??
-        item.staging.extractedData.diff.additions.firstOrNull;
+        decision?.editedBenefit ??
+        decision?.proposed ??
+        decision?.benefit ??
+        diff.additions.firstOrNull ??
+        diff.modifications.firstOrNull?.proposed ??
+        diff.conflicts.firstOrNull?.proposed.firstOrNull;
     if (candidate == null) {
       setState(
         () => _actionError = 'This enrichment has no proposed benefit to edit.',
@@ -149,6 +160,10 @@ class _BenefitEnrichmentReviewPanelState
               context,
               BenefitReviewDecision(
                 action: 'edit',
+                changeType: decision?.changeType,
+                dedupeKey: decision?.dedupeKey ?? candidate.dedupeKey,
+                displayPriority: decision?.displayPriority,
+                isPrimary: decision?.isPrimary,
                 editedBenefit: candidate.copyWith(
                   title: title.text.trim(),
                   description: description.text.trim(),
@@ -376,7 +391,8 @@ class _BenefitReviewCard extends StatelessWidget {
             Text(
               'Source/parser: ${item.runMode} · ${item.parserVersion ?? 'unknown'} · ${item.status} · attempt ${item.attemptCount}',
             ),
-            if (item.staging.lacksStatementEvidence) ...[
+            if (item.crawlerDiscoveredWithoutStatementSignal ||
+                item.staging.lacksStatementEvidence) ...[
               const SizedBox(height: 8),
               const Text(
                 'Crawler-discovered card — statement evidence is unavailable.',
@@ -573,4 +589,10 @@ class _MessageState extends StatelessWidget {
 
 extension<T> on List<T> {
   T? get firstOrNull => isEmpty ? null : first;
+  T? firstWhereOrNull(bool Function(T value) test) {
+    for (final value in this) {
+      if (test(value)) return value;
+    }
+    return null;
+  }
 }

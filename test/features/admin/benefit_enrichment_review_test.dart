@@ -16,6 +16,7 @@ const _jobJson = <String, dynamic>{
   'run_mode': 'scheduled',
   'attempt_count': 2,
   'staging_id': 'staging-1',
+  'crawler_discovered_without_statement_signal': true,
   'normalized_fields': {'proposed_count': 1},
   'result_summary': {
     'run_id': 'run-1',
@@ -28,9 +29,7 @@ const _jobJson = <String, dynamic>{
     'status': 'pending',
     'source_url': 'https://issuer.example/cards/astra',
     'calculated_confidence': 0.92,
-    'validation_warnings': [
-      {'code': 'crawler_discovered'},
-    ],
+    'validation_warnings': [],
     'source_evidence': [
       {
         'dedupe_key': 'dining-credit',

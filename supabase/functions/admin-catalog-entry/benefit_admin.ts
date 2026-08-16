@@ -285,7 +285,7 @@ function stagingForOutput(value: unknown) {
   };
 }
 
-export function presentBenefitJob(value: unknown) {
+export function presentBenefitJob(value: unknown, crawlerDiscovered = false) {
   const row = asRecord(value) ?? {};
   const card = asRecord(row.card_catalog) ?? {};
   return {
@@ -311,6 +311,7 @@ export function presentBenefitJob(value: unknown) {
       bank: text(card.bank, 200),
       card_name: text(card.card_name, 300),
     },
+    crawler_discovered_without_statement_signal: crawlerDiscovered,
     staging: stagingForOutput(row.card_benefits_staging),
   };
 }
@@ -373,9 +374,7 @@ async function benefitCounts(db: UntypedSupabaseClient) {
 async function readBenefitJobs(
   db: UntypedSupabaseClient,
   body: JsonRecord,
-): Promise<
-  { rows: JsonRecord[]; page: number; limit: number; hasMore: boolean }
-> {
+): Promise<{ rows: JsonRecord[]; page: number; limit: number; hasMore: boolean; crawlerCardIds: Set<string> }> {
   const { page, limit, offset } = pageRequest(body);
   let query = benefitLane(
     db.from("card_catalog_enrichment_jobs").select(safeJobColumns),
@@ -389,11 +388,28 @@ async function readBenefitJobs(
   const { data, error } = await query.range(offset, offset + limit);
   if (error) throw error;
   const rows = (data ?? []).map((row: unknown) => asRecord(row) ?? {});
+  const cardIds = rows.map((row: JsonRecord) => text(row.card_id, 100))
+    .filter((id: string | null): id is string => id !== null);
+  const crawlerCardIds = new Set<string>();
+  if (cardIds.length > 0) {
+    const { data: crawlerRows, error: crawlerError } = await db
+      .from("card_discovery_jobs")
+      .select("resolved_card_id")
+      .eq("discovery_source", "issuer_crawl")
+      .eq("status", "resolved")
+      .in("resolved_card_id", cardIds);
+    if (crawlerError) throw crawlerError;
+    for (const row of crawlerRows ?? []) {
+      const cardId = text(asRecord(row)?.resolved_card_id, 100);
+      if (cardId) crawlerCardIds.add(cardId);
+    }
+  }
   return {
     rows: rows.slice(0, limit),
     page,
     limit,
     hasMore: rows.length > limit,
+    crawlerCardIds,
   };
 }
 
@@ -537,7 +553,7 @@ export async function handleBenefitAdminAction(
         benefitCounts(db),
       ]);
       return {
-        items: page.rows.map(presentBenefitJob),
+        items: page.rows.map((row) => presentBenefitJob(row, page.crawlerCardIds.has(String(row.card_id ?? "")))),
         counts,
         page: page.page,
         limit: page.limit,
@@ -550,7 +566,7 @@ export async function handleBenefitAdminAction(
         benefitCounts(db),
       ]);
       return {
-        items: page.rows.map(presentBenefitJob),
+        items: page.rows.map((row) => presentBenefitJob(row, page.crawlerCardIds.has(String(row.card_id ?? "")))),
         run_counts: counts,
         history: page.rows.map((row) => ({
           job_id: text(row.id, 100),
