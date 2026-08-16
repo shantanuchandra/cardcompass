@@ -299,6 +299,7 @@ async function processSubmittedUrl(
     if (normalizedAlias.length < 2) continue;
     const { error } = await db.from("card_catalog_aliases").upsert({
       card_id: cardId,
+      discovery_job_id: job.id,
       alias,
       normalized_alias: normalizedAlias,
       evidence_type: "issuer_page",

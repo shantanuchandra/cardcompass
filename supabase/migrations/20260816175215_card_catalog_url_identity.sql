@@ -22,6 +22,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_card_catalog_provenance_final_url_hash
 CREATE TABLE IF NOT EXISTS public.card_catalog_enrichment_jobs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   card_id uuid NOT NULL REFERENCES public.card_catalog(id) ON DELETE CASCADE,
+  discovery_job_id uuid REFERENCES public.card_discovery_jobs(id) ON DELETE SET NULL,
   issuer text NOT NULL CHECK (length(trim(issuer)) BETWEEN 2 AND 120),
   canonical_url text NOT NULL CHECK (canonical_url ~ '^https://'),
   final_url_hash text NOT NULL CHECK (length(final_url_hash) = 64),
