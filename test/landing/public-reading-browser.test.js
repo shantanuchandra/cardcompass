@@ -132,7 +132,31 @@ async function pressTab(cdp) {
   await new Promise((resolve) => setTimeout(resolve, 25));
 }
 
-test('public pages render without viewport overflow and expose live keyboard focus', { timeout: 30_000 }, async (t) => {
+async function clickSelector(cdp, selector) {
+  const point = await evaluate(cdp, `(() => {
+    const element = document.querySelector(${JSON.stringify(selector)});
+    if (!element) return null;
+    element.scrollIntoView({ block: 'center', inline: 'center' });
+    const rect = element.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  })()`);
+  if (!point) throw new Error(`Missing click target: ${selector}`);
+  await cdp.send('Input.dispatchMouseEvent', {
+    type: 'mousePressed',
+    button: 'left',
+    clickCount: 1,
+    ...point,
+  });
+  await cdp.send('Input.dispatchMouseEvent', {
+    type: 'mouseReleased',
+    button: 'left',
+    clickCount: 1,
+    ...point,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 25));
+}
+
+test('public pages render without viewport overflow and expose live keyboard and reduced-motion behavior', { timeout: 30_000 }, async (t) => {
   if (typeof WebSocket === 'undefined') {
     t.skip('This rendered assertion requires a Node runtime with WebSocket support');
     return;
@@ -255,6 +279,57 @@ test('public pages render without viewport overflow and expose live keyboard foc
     deviceScaleFactor: 1,
     mobile: false,
   });
+  await navigate(cdp, `http://127.0.0.1:${serverPort}/`);
+  const reducedMotionStart = await evaluate(cdp, `(() => {
+    const milliseconds = (value) => value.endsWith('ms')
+      ? Number.parseFloat(value)
+      : Number.parseFloat(value) * 1000;
+    const longest = (value) => Math.max(...value.split(',').map((part) => milliseconds(part.trim())));
+    const receiptStyle = getComputedStyle(document.querySelector('.decision-receipt'));
+    const buttonStyle = getComputedStyle(document.querySelector('.button'));
+    const revealStyle = getComputedStyle(document.querySelector('.reveal'));
+    const active = document.querySelector('.scenario-tab[aria-pressed="true"]');
+    return {
+      scenario: active?.dataset.scenario,
+      receiptNumber: document.querySelector('#receiptNumber')?.textContent,
+      receiptTransitionMs: longest(receiptStyle.transitionDuration),
+      buttonTransitionMs: longest(buttonStyle.transitionDuration),
+      revealAnimationMs: longest(revealStyle.animationDuration),
+    };
+  })()`);
+  assert.deepEqual(reducedMotionStart, {
+    scenario: 'groceries',
+    receiptNumber: 'CC-0815-01',
+    receiptTransitionMs: 0.01,
+    buttonTransitionMs: 0.01,
+    revealAnimationMs: 0.01,
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 4_250));
+  const scenarioAfterRotationInterval = await evaluate(
+    cdp,
+    `document.querySelector('.scenario-tab[aria-pressed="true"]')?.dataset.scenario`,
+  );
+  assert.equal(
+    scenarioAfterRotationInterval,
+    'groceries',
+    'reduced motion must stop automatic scenario rotation beyond its four-second interval',
+  );
+
+  await clickSelector(cdp, '.scenario-tab[data-scenario="dining"]');
+  const manualScenario = await evaluate(cdp, `(() => ({
+    scenario: document.querySelector('.scenario-tab[aria-pressed="true"]')?.dataset.scenario,
+    receiptNumber: document.querySelector('#receiptNumber')?.textContent,
+    card: document.querySelector('#receiptCard')?.textContent,
+    updating: document.querySelector('.decision-receipt')?.classList.contains('is-updating'),
+  }))()`);
+  assert.deepEqual(manualScenario, {
+    scenario: 'dining',
+    receiptNumber: 'CC-0815-02',
+    card: 'Example Dining Card',
+    updating: false,
+  });
+
   await navigate(cdp, `http://127.0.0.1:${serverPort}/data-security/`);
   const table = await evaluate(cdp, `(() => {
     const element = document.querySelector('.data-table');
