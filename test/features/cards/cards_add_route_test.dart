@@ -209,6 +209,38 @@ void main() {
     },
   );
 
+  testWidgets(
+    'system Back dismisses a pending save and eventual success refreshes once',
+    (tester) async {
+      final save = Completer<void>();
+      final repository = _MemoryCardsRepository(const [])..saveBarrier = save;
+      final router = await _pumpJourney(
+        tester,
+        initial: const [],
+        repository: repository,
+      );
+      await _openAddCard(tester, empty: true);
+      await _reachConfirmStep(tester);
+
+      await tester.tap(find.text('Add card'));
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+
+      expect(router.state.uri.path, '/app/cards');
+      expect(find.text('No cards yet'), findsOneWidget);
+      expect(repository.saveCount, 1);
+      expect(repository.loadCount, 1);
+
+      save.complete();
+      await tester.pumpAndSettle();
+
+      expect(repository.saveCount, 1);
+      expect(repository.loadCount, 2);
+      expect(repository.cards, hasLength(1));
+      expect(find.text('Astra Travel Preferred'), findsOneWidget);
+    },
+  );
+
   testWidgets('reopening during a pending save cannot insert the card twice', (
     tester,
   ) async {

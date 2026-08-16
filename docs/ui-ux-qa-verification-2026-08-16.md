@@ -12,7 +12,7 @@
 
 These commits keep OAuth, calculator/evaluator behavior, provider calculations, waitlist, Gmail/backend, and schema contracts intact. No deployment, push, or merge was performed.
 
-Branch-owned gates are green: all changed Dart files format cleanly and analyze without a new finding; the 321-test non-Supabase Flutter suite, 144-test focused final-review fixture suite, static Supabase Node contracts, 96-test landing/GTM/brand Node suite, full-cycle rendered public-page keyboard regression, release build, and changed-file audit pass.
+Branch-owned gates are green: all changed Dart files format cleanly and analyze without a new finding; the 322-test non-Supabase Flutter suite, 145-test focused final-review fixture suite, static Supabase Node contracts, 96-test landing/GTM/brand Node suite, full-cycle rendered public-page keyboard regression, release build, and changed-file audit pass.
 
 Release-blocking gates remain unmet outside Task 10's authorized scope:
 
@@ -29,14 +29,14 @@ Accordingly, plan Step 1 did **not** fully pass. The successful branch-owned che
 |---|---|
 | Changed Dart files through `dart format` | 0 changes after formatting. Repository-wide formatting remains the recorded pre-existing limitation because it would rewrite unrelated Gmail/backend/Supabase files. |
 | `flutter analyze` | Baseline limitation unchanged: 36 existing findings (3 warnings, 33 infos), all outside the final-fix implementation/test set. Repeated analysis of the owned product/test files reported `No issues found`. |
-| `flutter test` | **Not green:** 322 passed, 4 skipped, 11 failed. All 11 remaining failures are the recorded environment-bound Supabase cases: the local static endpoint is not PostgREST and VM storage/PKCE plugins or live credentials are unavailable. No UI test remains failed. |
-| `flutter test test/core test/features test/shared test/widget_test.dart` | 321 passed, 0 failed. |
-| Focused final-review Flutter selection (theme, auth, dashboard, cards, transactions, movie deals, settings) | 144 passed, 0 failed. |
+| `flutter test` | **Not green:** 323 passed, 4 skipped, 11 failed. All 11 remaining failures are the recorded environment-bound Supabase cases: the local static endpoint is not PostgREST and VM storage/PKCE plugins or live credentials are unavailable. No UI test remains failed. |
+| `flutter test test/core test/features test/shared test/widget_test.dart` | 322 passed, 0 failed. |
+| Focused final-review Flutter selection (theme, auth, dashboard, cards, transactions, movie deals, settings) | 145 passed, 0 failed. |
 | `node --test test/landing/*.test.js test/gtm/*.test.js test/brand/*.test.js` | 96 passed, 0 failed, including every-stop rendered Chrome focus/reduced-motion/viewport-overflow regression. |
 | `node --test test/supabase/*_test.js` | 8 static Supabase migration-contract tests passed, 0 failed across `card_data_hardening_migration_test.js` and `waitlist_launch_hardening_test.js`. |
 | Brief's exact Node command ending in `test/supabase/*.test.js` | Does not start in zsh: that glob has no match. The two existing Supabase Node files end in `_test.js`, not `.test.js`. The two successful commands above are the exact replacements. |
 | `node --test test/landing/public-reading-browser.test.js` | 1 rendered Chrome test passed: 9 public HTML routes × 390/1440, a complete real-Tab cycle through every browser focus stop with each stop visible and visibly focused, and `document.documentElement.scrollWidth === window.innerWidth`; reduced-motion behavior also remains green at both viewports. |
-| Chrome-target OAuth tests | 4 passed. `app_shell_brand_test.dart` still cannot load on Chrome because the test itself reads source with `dart:io File` (`Unsupported operation: _Namespace`); its VM run passes in the 321-test suite. |
+| Chrome-target OAuth tests | 4 passed. `app_shell_brand_test.dart` still cannot load on Chrome because the test itself reads source with `dart:io File` (`Unsupported operation: _Namespace`); its VM run passes in the 322-test suite. |
 | `npm run build:app` | Not runnable locally because ignored `dart_defines.json` is intentionally absent. No secret or production define file was created. |
 | `flutter build web --release --base-href /app/` | Exit 0. `build/web/index.html` contains `<base href="/app/">` and no unexpected root-relative app asset reference. |
 | `git diff --check` | Clean before and after the repair. |
@@ -78,7 +78,7 @@ All required local route requests returned 200 except `/login`, which returned t
 
 Live authenticated browsing was not attempted because no local Supabase instance or seeded account was available, and production credentials/user data were explicitly out of scope. The accepted screens were inspected through deterministic widget/provider fixtures.
 
-The final focused selection was expanded with the theme contracts and add-card route integration test and exited 0 with 144 passed. Its core feature list remains:
+The final focused selection was expanded with the theme contracts and add-card route integration test and exited 0 with 145 passed. Its core feature list remains:
 
 ```bash
 flutter test --reporter compact \
@@ -108,7 +108,7 @@ This table maps the requested screen/state evidence to the named tests; a missin
 | Login / splash | desktop/default and mobile layout; status: `status space is reserved and the proof heading never scales down text`; controls: `scenario and legal actions keep 44px targets and selected semantics`; signing-in/error and splash recovery; reduced motion | fixture pass, including reserved idle/loading/error space and 200% layout | N/A — widget fixture; no rendered screenshot of each state |
 | Dashboard | populated hierarchy/scale, cardless, redacted dashboard/Gmail errors, actions; card control: `dashboard card is a labeled keyboard-sized button`; bank resolution covers redacted retry, Cancel/modal-barrier/Back dismissal, dismissed failure/retry, and two activations before rebuild | populated, empty, errors, actions, bank/card controls, retry, dismissal-race invalidation, zero invalidation on failure, synchronous exactly-once resolution, and 200% fixture pass; loading **NOT VERIFIED** | N/A — widget fixture; no live-auth browser screenshot |
 | Cards | populated/long-name/200%, redacted error, loading: `card loading reserves a stable skeleton slot`; empty/back/save/refresh: `cards_add_route_test.dart` covers empty and populated lists | populated, empty, loading, error, route return, and immediate refresh fixture pass | N/A — widget fixture; no live-auth browser screenshot |
-| Add Card | progress/validation/error/200%; keyboard result target; out-of-order search, short-query clear, dispose, save-dispose, and pop-failure race tests; route integration covers immediate Back during stalled saves, eventual reconciliation, reopen deduplication, and dismissed failure/retry | listed initial, loading, error, async-race, keyboard, usable Back during save, route-independent persistence/refresh, app-wide exactly-once insert, retry, and 200% states pass | N/A — widget fixture; no live-auth browser screenshot |
+| Add Card | progress/validation/error/200%; keyboard result target; out-of-order search, short-query clear, dispose, save-dispose, and pop-failure race tests; route integration covers immediate app-bar and system Back during stalled saves, eventual reconciliation, reopen deduplication, and dismissed failure/retry | listed initial, loading, error, async-race, keyboard, usable Back during save, route-independent persistence/refresh, app-wide exactly-once insert, retry, and 200% states pass | N/A — widget fixture; no live-auth browser screenshot |
 | Card Detail | populated/action order, long-name/200%, bill/history, redacted error; `detail loading reserves space and a missing card offers exit` | populated, not-found action, loading, error, and 200% fixture pass | N/A — widget fixture; no live-auth browser screenshot |
 | Transactions | populated metric, nine long-name/scale cases, filters/keyboard/geometry/semantics, expanded/reordered with transaction B reintroduced, redacted error; `ledger loading reserves a stable skeleton slot`; `ledger distinguishes dataset-empty from filtered-empty` | populated, data-empty, filtered-empty/action, loading, error, expanded-state, keyboard, and 200% fixture pass | N/A — widget fixture; no live-auth browser screenshot |
 | Movie form / results | form/result scale matrix, eligible/potential/unknown/no-deal/error; precise platform-only vs capped-usage uncertainty; `movie search loading reserves a stable result slot` | populated, empty/no-deal, loading, error, precise potential evidence, and 200% fixture pass | N/A — widget fixture; no live-auth browser screenshot |
