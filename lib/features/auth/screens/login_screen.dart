@@ -103,79 +103,72 @@ class _LoginViewState extends State<LoginView> {
       body: Stack(
         children: [
           const Positioned.fill(child: CustomPaint(painter: _GridPainter())),
-          SelectionArea(
-            child: SafeArea(
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final desktop = constraints.maxWidth >= 900;
-                  final horizontal = desktop
-                      ? (constraints.maxWidth * .04).clamp(32.0, 64.0)
-                      : 20.0;
-                  return SingleChildScrollView(
-                    padding: EdgeInsets.fromLTRB(
-                      horizontal,
-                      20,
-                      horizontal,
-                      40,
-                    ),
-                    child: Center(
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 1440),
-                        child: Column(
-                          children: [
-                            const _Header(),
-                            SizedBox(height: desktop ? 82 : 38),
-                            if (desktop)
-                              Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Expanded(
-                                    flex: 102,
-                                    child: _LoginColumn(
-                                      isLoading: widget.isLoading,
-                                      error: widget.error,
-                                      onGoogleSignIn: widget.onGoogleSignIn,
-                                      onOpenLegal: widget.onOpenLegal,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 70),
-                                  Expanded(
-                                    flex: 98,
-                                    child: Padding(
-                                      padding: const EdgeInsets.only(top: 75),
-                                      child: _ProofColumn(
-                                        index: _scenarioIndex,
-                                        onSelect: _selectScenario,
-                                        onPauseChanged: _setPaused,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              )
-                            else
-                              Column(
-                                children: [
-                                  _LoginColumn(
+          SafeArea(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final desktop = constraints.maxWidth >= 900;
+                final horizontal = desktop
+                    ? (constraints.maxWidth * .04).clamp(32.0, 64.0)
+                    : 20.0;
+                return SingleChildScrollView(
+                  padding: EdgeInsets.fromLTRB(horizontal, 20, horizontal, 40),
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 1440),
+                      child: Column(
+                        children: [
+                          const _Header(),
+                          SizedBox(height: desktop ? 82 : 38),
+                          if (desktop)
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  flex: 102,
+                                  child: _LoginColumn(
                                     isLoading: widget.isLoading,
                                     error: widget.error,
                                     onGoogleSignIn: widget.onGoogleSignIn,
                                     onOpenLegal: widget.onOpenLegal,
                                   ),
-                                  const SizedBox(height: 46),
-                                  _ProofColumn(
-                                    index: _scenarioIndex,
-                                    onSelect: _selectScenario,
-                                    onPauseChanged: _setPaused,
+                                ),
+                                const SizedBox(width: 70),
+                                Expanded(
+                                  flex: 98,
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(top: 75),
+                                    child: _ProofColumn(
+                                      index: _scenarioIndex,
+                                      onSelect: _selectScenario,
+                                      onPauseChanged: _setPaused,
+                                    ),
                                   ),
-                                ],
-                              ),
-                          ],
-                        ),
+                                ),
+                              ],
+                            )
+                          else
+                            Column(
+                              children: [
+                                _LoginColumn(
+                                  isLoading: widget.isLoading,
+                                  error: widget.error,
+                                  onGoogleSignIn: widget.onGoogleSignIn,
+                                  onOpenLegal: widget.onOpenLegal,
+                                ),
+                                const SizedBox(height: 46),
+                                _ProofColumn(
+                                  index: _scenarioIndex,
+                                  onSelect: _selectScenario,
+                                  onPauseChanged: _setPaused,
+                                ),
+                              ],
+                            ),
+                        ],
                       ),
                     ),
-                  );
-                },
-              ),
+                  ),
+                );
+              },
             ),
           ),
         ],

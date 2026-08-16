@@ -15,11 +15,13 @@ Widget _testApp({
         size: const Size(1440, 1000),
         disableAnimations: disableAnimations,
       ),
-      child: LoginView(
-        isLoading: isLoading,
-        error: null,
-        onGoogleSignIn: onGoogleSignIn ?? () {},
-        onOpenLegal: onOpenLegal ?? (_) {},
+      child: SelectionArea(
+        child: LoginView(
+          isLoading: isLoading,
+          error: null,
+          onGoogleSignIn: onGoogleSignIn ?? () {},
+          onOpenLegal: onOpenLegal ?? (_) {},
+        ),
       ),
     ),
   );
