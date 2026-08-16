@@ -121,6 +121,8 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
       _saveSucceeded = true;
       _requestError = null;
     });
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted || generation != _saveGeneration) return;
     try {
       await Navigator.of(context).maybePop(true);
     } catch (_) {
@@ -142,9 +144,12 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
             fontWeight: FontWeight.w700,
           ),
         ),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_rounded),
-          onPressed: () => Navigator.of(context).maybePop(),
+        leading: PopScope(
+          canPop: !_saving,
+          child: IconButton(
+            icon: const Icon(Icons.arrow_back_rounded),
+            onPressed: _saving ? null : () => Navigator.of(context).maybePop(),
+          ),
         ),
       ),
       body: BrandContentFrame(

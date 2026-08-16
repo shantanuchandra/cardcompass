@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cardcompass/core/providers/repository_providers.dart';
 import 'package:cardcompass/core/providers/supabase_provider.dart';
 import 'package:cardcompass/core/repositories/cards_repository.dart';
@@ -46,6 +48,9 @@ class _MemoryCardsRepository extends CardsRepository {
       );
 
   final List<UserCard> cards;
+  final Completer<void> saveBarrier = Completer<void>();
+  bool pauseSaves = false;
+  var saveCount = 0;
 
   @override
   Future<List<UserCard>> getUserCards(String userId) async => [...cards];
@@ -60,6 +65,8 @@ class _MemoryCardsRepository extends CardsRepository {
     int? statementDate,
     int? dueDate,
   }) async {
+    saveCount++;
+    if (pauseSaves) await saveBarrier.future;
     final card = UserCard(
       id: 'card-new',
       userId: userId,
@@ -78,8 +85,9 @@ class _MemoryCardsRepository extends CardsRepository {
 Future<GoRouter> _pumpJourney(
   WidgetTester tester, {
   required List<UserCard> initial,
+  _MemoryCardsRepository? repository,
 }) async {
-  final repository = _MemoryCardsRepository(initial);
+  repository ??= _MemoryCardsRepository(initial);
   final router = GoRouter(
     initialLocation: '/app/cards',
     routes: [
@@ -158,4 +166,40 @@ void main() {
       },
     );
   }
+
+  testWidgets(
+    'save blocks app and system Back until the inserted card refreshes the list',
+    (tester) async {
+      final repository = _MemoryCardsRepository(const [])..pauseSaves = true;
+      final router = await _pumpJourney(
+        tester,
+        initial: const [],
+        repository: repository,
+      );
+      await _openAddCard(tester, empty: true);
+
+      await tester.enterText(find.byKey(const Key('card-search')), 'astra');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Astra Travel Preferred'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Add card'));
+      await tester.pump();
+
+      final back = tester.widget<IconButton>(
+        find.widgetWithIcon(IconButton, Icons.arrow_back_rounded),
+      );
+      expect(back.onPressed, isNull);
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+      expect(router.state.uri.path, '/app/cards/add');
+      expect(repository.saveCount, 1);
+
+      repository.saveBarrier.complete();
+      await tester.pumpAndSettle();
+
+      expect(router.state.uri.path, '/app/cards');
+      expect(find.text('Astra Travel Preferred'), findsOneWidget);
+      expect(repository.saveCount, 1);
+    },
+  );
 }

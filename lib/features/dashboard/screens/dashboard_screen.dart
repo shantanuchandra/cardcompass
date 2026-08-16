@@ -1161,22 +1161,21 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
   }
 
   Future<void> _resolve(Map<String, dynamic> catalogEntry) async {
+    final container = ProviderScope.containerOf(context, listen: false);
+    final resolveCard = ref.read(cardResolutionProvider);
     setState(() {
       _resolving = true;
       _error = null;
       _retryResolution = catalogEntry;
     });
     try {
-      await ref.read(cardResolutionProvider)(
-        widget.email,
-        catalogEntry['id'] as String,
-      );
+      await resolveCard(widget.email, catalogEntry['id'] as String);
+      container.invalidate(dashboardProvider);
       if (!mounted) return;
       setState(() {
         _error = null;
         _retryResolution = null;
       });
-      ref.invalidate(dashboardProvider);
       Navigator.of(context).pop();
     } catch (_) {
       if (mounted) {

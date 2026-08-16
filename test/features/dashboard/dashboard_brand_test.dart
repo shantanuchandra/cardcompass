@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:cardcompass/core/providers/supabase_provider.dart';
@@ -102,6 +103,53 @@ Future<void> _pumpDashboard(
     ),
   );
   await tester.pumpAndSettle();
+}
+
+Future<void> _startPendingAssignment(
+  WidgetTester tester, {
+  required Completer<void> resolution,
+  required ValueChanged<int> onResolution,
+  VoidCallback? onDashboardLoad,
+}) async {
+  var resolutionCount = 0;
+  final selectedAppTab = ValueNotifier(AppTab.dashboard);
+  addTearDown(selectedAppTab.dispose);
+  await _pumpDashboard(
+    tester,
+    selectedAppTab: selectedAppTab,
+    onDashboardLoad: onDashboardLoad,
+    pendingAssignments: const [
+      {'email_id': 'email-1', 'bank_detected': 'Horizon Bank'},
+    ],
+    catalogSearch: (_, _) async => const [
+      {
+        'id': 'catalog-1',
+        'card_name': 'Astra Preferred',
+        'bank': 'Horizon Bank',
+      },
+    ],
+    cardResolution: (_, _) {
+      resolutionCount++;
+      onResolution(resolutionCount);
+      return resolution.future;
+    },
+  );
+  await tester.scrollUntilVisible(
+    find.text('Your Cards'),
+    300,
+    scrollable: find
+        .descendant(
+          of: find.byType(CustomScrollView),
+          matching: find.byType(Scrollable),
+        )
+        .first,
+  );
+  await tester.drag(find.byType(PageView), const Offset(-500, 0));
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(const Key('resolve-bank-email-1')));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Astra Preferred'));
+  await tester.pump();
 }
 
 void main() {
@@ -343,4 +391,112 @@ void main() {
       expect(find.byType(Dialog), findsNothing);
     },
   );
+
+  testWidgets(
+    'cancelled assignment invalidates once after success without duplicate work',
+    (tester) async {
+      final resolution = Completer<void>();
+      var resolutionCount = 0;
+      var dashboardLoads = 0;
+      await _startPendingAssignment(
+        tester,
+        resolution: resolution,
+        onResolution: (count) => resolutionCount = count,
+        onDashboardLoad: () => dashboardLoads++,
+      );
+
+      await tester.tap(find.text('Astra Preferred'));
+      await tester.pump();
+      expect(resolutionCount, 1);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(find.byType(Dialog), findsNothing);
+
+      resolution.complete();
+      await tester.pumpAndSettle();
+      expect(resolutionCount, 1);
+      expect(dashboardLoads, 2);
+    },
+  );
+
+  testWidgets(
+    'assignment survives barrier dismissal and invalidates dashboard once',
+    (tester) async {
+      final resolution = Completer<void>();
+      var dashboardLoads = 0;
+      var resolutionCount = 0;
+      final selectedAppTab = ValueNotifier(AppTab.dashboard);
+      addTearDown(selectedAppTab.dispose);
+      await _pumpDashboard(
+        tester,
+        selectedAppTab: selectedAppTab,
+        onDashboardLoad: () => dashboardLoads++,
+        pendingAssignments: const [
+          {'email_id': 'email-1', 'bank_detected': 'Horizon Bank'},
+        ],
+        catalogSearch: (_, _) async => const [
+          {
+            'id': 'catalog-1',
+            'card_name': 'Astra Preferred',
+            'bank': 'Horizon Bank',
+          },
+        ],
+        cardResolution: (_, _) {
+          resolutionCount++;
+          return resolution.future;
+        },
+      );
+      await tester.scrollUntilVisible(
+        find.text('Your Cards'),
+        300,
+        scrollable: find
+            .descendant(
+              of: find.byType(CustomScrollView),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      await tester.drag(find.byType(PageView), const Offset(-500, 0));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('resolve-bank-email-1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Astra Preferred'));
+      await tester.pump();
+
+      final dialogRect = tester.getRect(find.byType(Dialog));
+      await tester.tapAt(Offset(dialogRect.left / 2, dialogRect.center.dy));
+      await tester.pumpAndSettle();
+      expect(find.byType(Dialog), findsNothing);
+
+      resolution.complete();
+      await tester.pumpAndSettle();
+      expect(resolutionCount, 1);
+      expect(dashboardLoads, 2);
+      expect(find.byType(Dialog), findsNothing);
+    },
+  );
+
+  testWidgets('Back-dismissed assignment still invalidates after success', (
+    tester,
+  ) async {
+    final resolution = Completer<void>();
+    var resolutionCount = 0;
+    var dashboardLoads = 0;
+    await _startPendingAssignment(
+      tester,
+      resolution: resolution,
+      onResolution: (count) => resolutionCount = count,
+      onDashboardLoad: () => dashboardLoads++,
+    );
+
+    final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+    await navigator.maybePop();
+    await tester.pumpAndSettle();
+    expect(find.byType(Dialog), findsNothing);
+
+    resolution.complete();
+    await tester.pumpAndSettle();
+    expect(resolutionCount, 1);
+    expect(dashboardLoads, 2);
+  });
 }
