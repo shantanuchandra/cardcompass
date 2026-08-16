@@ -13,6 +13,79 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'local_supabase_test_support.dart';
 
 const _serviceRoleKey = String.fromEnvironment('SUPABASE_SERVICE_ROLE_KEY');
+const _officialBenefitIssuer = String.fromEnvironment(
+  'SUPABASE_OFFICIAL_BENEFIT_FIXTURE_ISSUER',
+);
+const _officialBenefitUrl = String.fromEnvironment(
+  'SUPABASE_OFFICIAL_BENEFIT_FIXTURE_URL',
+);
+const _officialBenefitCardName = String.fromEnvironment(
+  'SUPABASE_OFFICIAL_BENEFIT_FIXTURE_CARD_NAME',
+);
+const _officialDiscoveryIssuer = String.fromEnvironment(
+  'SUPABASE_OFFICIAL_DISCOVERY_FIXTURE_ISSUER',
+);
+const _officialDiscoveryUrl = String.fromEnvironment(
+  'SUPABASE_OFFICIAL_DISCOVERY_FIXTURE_URL',
+);
+const _officialDiscoveryCardName = String.fromEnvironment(
+  'SUPABASE_OFFICIAL_DISCOVERY_FIXTURE_CARD_NAME',
+);
+const _officialDiscoveryExpectedNewProduct = String.fromEnvironment(
+  'SUPABASE_OFFICIAL_DISCOVERY_EXPECTED_NEW_PRODUCT',
+);
+
+List<String> _officialFixtureValidationErrors({
+  required String benefitIssuer,
+  required String benefitUrl,
+  required String benefitCardName,
+  required String discoveryIssuer,
+  required String discoveryUrl,
+  required String discoveryCardName,
+  required String expectedNewProduct,
+}) {
+  final errors = <String>[];
+  void requireText(String name, String value) {
+    if (value.trim().length < 2) errors.add(name);
+  }
+
+  requireText('SUPABASE_OFFICIAL_BENEFIT_FIXTURE_ISSUER', benefitIssuer);
+  requireText('SUPABASE_OFFICIAL_BENEFIT_FIXTURE_CARD_NAME', benefitCardName);
+  requireText('SUPABASE_OFFICIAL_DISCOVERY_FIXTURE_ISSUER', discoveryIssuer);
+  requireText(
+    'SUPABASE_OFFICIAL_DISCOVERY_FIXTURE_CARD_NAME',
+    discoveryCardName,
+  );
+  requireText(
+    'SUPABASE_OFFICIAL_DISCOVERY_EXPECTED_NEW_PRODUCT',
+    expectedNewProduct,
+  );
+  if (benefitIssuer.trim().isNotEmpty &&
+      benefitIssuer.trim().toLowerCase() ==
+          discoveryIssuer.trim().toLowerCase()) {
+    errors.add('SUPABASE_OFFICIAL_DISCOVERY_FIXTURE_ISSUER');
+  }
+  if (!_isPublicHttpsFixtureUrl(benefitUrl)) {
+    errors.add('SUPABASE_OFFICIAL_BENEFIT_FIXTURE_URL');
+  }
+  if (!_isPublicHttpsFixtureUrl(discoveryUrl)) {
+    errors.add('SUPABASE_OFFICIAL_DISCOVERY_FIXTURE_URL');
+  }
+  return errors;
+}
+
+Set<String> _addedIds(Set<String> before, Set<String> after) =>
+    after.difference(before);
+
+final _officialFixtureErrors = _officialFixtureValidationErrors(
+  benefitIssuer: _officialBenefitIssuer,
+  benefitUrl: _officialBenefitUrl,
+  benefitCardName: _officialBenefitCardName,
+  discoveryIssuer: _officialDiscoveryIssuer,
+  discoveryUrl: _officialDiscoveryUrl,
+  discoveryCardName: _officialDiscoveryCardName,
+  expectedNewProduct: _officialDiscoveryExpectedNewProduct,
+);
 
 final _integrationSkipReason =
     localSupabaseSkipReason ??
@@ -20,26 +93,10 @@ final _integrationSkipReason =
         ? 'Requires SUPABASE_SERVICE_ROLE_KEY.'
         : !_isLoopbackUrl(localSupabaseUrl)
         ? 'Refuses non-loopback SUPABASE_URL.'
+        : _officialFixtureErrors.isNotEmpty
+        ? 'Requires complete public HTTPS official fixture configuration: '
+              '${_officialFixtureErrors.join(', ')}.'
         : null);
-
-const _knownCardFixture = '''<!doctype html>
-<html>
-  <head><title>Task 10 Compass Credit Card</title></head>
-  <body>
-    <h1>Task 10 Compass Credit Card</h1>
-    <p>Earn 5 reward points per ₹100 spent on dining.</p>
-    <p>Get 10% cashback on dining, capped at ₹500 per statement month.</p>
-  </body>
-</html>''';
-
-const _crawlerOnlyFixture = '''<!doctype html>
-<html>
-  <head><title>Task 10 Crawler Only Credit Card</title></head>
-  <body>
-    <h1>Task 10 Crawler Only Credit Card</h1>
-    <p>Get two complimentary domestic lounge visits every quarter.</p>
-  </body>
-</html>''';
 
 bool _isLoopbackUrl(String value) {
   final uri = Uri.tryParse(value);
@@ -51,31 +108,37 @@ bool _isLoopbackUrl(String value) {
       uri.host == '::1';
 }
 
+bool _isPublicHttpsFixtureUrl(String value) {
+  final uri = Uri.tryParse(value);
+  if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) return false;
+  if (uri.userInfo.isNotEmpty || _isLoopbackUrl(value)) return false;
+  final host = uri.host.toLowerCase();
+  final ipv4 = host.split('.').map(int.tryParse).toList(growable: false);
+  if (ipv4.length == 4 && ipv4.every((part) => part != null)) {
+    final first = ipv4[0]!;
+    final second = ipv4[1]!;
+    if (first == 0 ||
+        first == 10 ||
+        first == 127 ||
+        (first == 169 && second == 254) ||
+        (first == 172 && second >= 16 && second <= 31) ||
+        (first == 192 && second == 168)) {
+      return false;
+    }
+  }
+  return host != '0:0:0:0:0:0:0:1' &&
+      host != '::' &&
+      !host.startsWith('fc') &&
+      !host.startsWith('fd') &&
+      !RegExp(r'^fe[89ab]').hasMatch(host);
+}
+
 Map<String, dynamic> _row(dynamic value) =>
     Map<String, dynamic>.from(value as Map);
 
 List<Map<String, dynamic>> _rows(dynamic value) => (value as List)
     .map((item) => Map<String, dynamic>.from(item as Map))
     .toList(growable: false);
-
-Future<HttpServer> _serveFixtures() async {
-  final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-  server.listen((request) async {
-    final fixture = switch (request.uri.path) {
-      '/known-card' => _knownCardFixture,
-      '/crawler-only' => _crawlerOnlyFixture,
-      _ => null,
-    };
-    if (fixture == null) {
-      request.response.statusCode = HttpStatus.notFound;
-    } else {
-      request.response.headers.contentType = ContentType.html;
-      request.response.write(fixture);
-    }
-    await request.response.close();
-  });
-  return server;
-}
 
 String _sha256(String value) {
   final bytes = Uint8List.fromList(utf8.encode(value));
@@ -266,91 +329,209 @@ Future<Map<String, dynamic>> _claimManualJob(
   return claimed.single;
 }
 
-Future<Map<String, dynamic>> _stage(
-  SupabaseClient service, {
-  required Map<String, dynamic> job,
-  required String sourceUrl,
-  required String parserVersion,
-  required String contentHash,
-  required Map<String, dynamic> proposal,
-}) async {
-  final staged = _rows(
-    await service.rpc(
-      'stage_card_benefit_enrichment',
-      params: {
-        '_job_id': job['id'],
-        '_lease_token': job['lease_token'],
-        '_source_url': sourceUrl,
-        '_source_url_hash': _sha256(sourceUrl),
-        '_parser_version': parserVersion,
-        '_content_hash': contentHash,
-        '_extracted_data': {
-          'request_type': 'official_benefit_enrichment',
-          'parser_version': parserVersion,
-          'content_hash': contentHash,
-          'proposals': [proposal],
-          'diff': {
-            'additions': [proposal],
-            'modifications': <dynamic>[],
-            'possibleRemovals': <dynamic>[],
-            'unchanged': <dynamic>[],
-            'conflicts': <dynamic>[],
-          },
-        },
-        '_calculated_confidence': 0.99,
-        '_validation_reasons': [
-          {'code': 'official_issuer_source'},
-        ],
-        '_validation_warnings': <dynamic>[],
-        '_source_evidence': [
-          {
-            'dedupe_key': proposal['dedupeKey'],
-            'source_url': sourceUrl,
-            'source_excerpt': proposal['sourceExcerpt'],
-            'evidence': proposal['evidence'],
-          },
-        ],
-        '_validated_at': DateTime.now().toUtc().toIso8601String(),
-      },
-    ),
+Future<Map<String, dynamic>> _callManualBatch() async {
+  final endpoint = Uri.parse(
+    '${localSupabaseUrl.replaceFirst(RegExp(r'/+$'), '')}'
+    '/functions/v1/benefit-enrichment-batch',
   );
-  expect(staged, hasLength(1));
-  return staged.single;
+  final response = await http.post(
+    endpoint,
+    headers: {
+      HttpHeaders.authorizationHeader: 'Bearer $_serviceRoleKey',
+      'apikey': _serviceRoleKey,
+      HttpHeaders.contentTypeHeader: ContentType.json.mimeType,
+    },
+    body: jsonEncode({'run_mode': 'manual'}),
+  );
+  expect(response.statusCode, HttpStatus.ok, reason: response.body);
+  final payload = _row(jsonDecode(response.body));
+  expect(payload['error'], isNull, reason: response.body);
+  return payload;
 }
 
-Future<void> _finalize(
+Future<Map<String, dynamic>> _readJob(
+  SupabaseClient service,
+  String jobId,
+) async => _row(
+  await service
+      .from('card_catalog_enrichment_jobs')
+      .select()
+      .eq('id', jobId)
+      .single(),
+);
+
+Future<Map<String, dynamic>> _waitForStagedJob(
+  SupabaseClient service,
+  String jobId,
+) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 20));
+  while (DateTime.now().isBefore(deadline)) {
+    final job = await _readJob(service, jobId);
+    if (job['status'] == 'staged' && job['staging_id'] != null) return job;
+    if (job['status'] == 'failed' ||
+        job['status'] == 'quarantined' ||
+        job['status'] == 'review_required') {
+      fail(
+        'Batch job $jobId ended as ${job['status']}: '
+        '${job['failure_category']}',
+      );
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+  }
+  fail('Timed out waiting for batch-produced staging for job $jobId.');
+}
+
+Future<Map<String, dynamic>> _readStaging(
+  SupabaseClient service,
+  String stagingId,
+) async => _row(
+  await service
+      .from('card_benefits_staging')
+      .select()
+      .eq('id', stagingId)
+      .single(),
+);
+
+Future<void> _requeueJob(SupabaseClient service, String jobId) async {
+  await service
+      .from('card_catalog_enrichment_jobs')
+      .update({
+        'status': 'queued',
+        'staging_id': null,
+        'content_hash': null,
+        'lease_expires_at': null,
+        'lease_token': null,
+        'failure_category': null,
+        'next_retry_at': null,
+      })
+      .eq('id', jobId);
+}
+
+Future<Set<String>> _tableIds(
+  SupabaseClient service,
+  String table,
+  String idColumn,
+) async {
+  const pageSize = 1000;
+  final ids = <String>{};
+  for (var offset = 0; ; offset += pageSize) {
+    final page = await service
+        .from(table)
+        .select(idColumn)
+        .range(offset, offset + pageSize - 1);
+    ids.addAll(
+      (page as List).map((item) => (item as Map)[idColumn].toString()),
+    );
+    if (page.length < pageSize) return ids;
+  }
+}
+
+String _normalizedProduct(String value) => value
+    .toLowerCase()
+    .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+    .trim()
+    .replaceAll(RegExp(r'\s+'), ' ');
+
+bool _matchesExpectedProduct(String actual, String expected) {
+  final normalizedActual = _normalizedProduct(actual);
+  final normalizedExpected = _normalizedProduct(expected);
+  return normalizedActual == normalizedExpected ||
+      normalizedActual.contains(normalizedExpected) ||
+      normalizedExpected.contains(normalizedActual);
+}
+
+Future<Map<String, dynamic>> _waitForCrawlerReview(
   SupabaseClient service, {
-  required Map<String, dynamic> job,
-  required String stagingId,
-  required String contentHash,
-  required bool reused,
+  required Set<String> baselineJobIds,
 }) async {
-  final finalized = await service.rpc(
-    'finalize_card_catalog_enrichment_job',
-    params: {
-      '_job_id': job['id'],
-      '_lease_token': job['lease_token'],
-      '_status': 'staged',
-      '_staging_id': stagingId,
-      '_content_hash': contentHash,
-      '_normalized_fields': {'proposed_count': 1},
-      '_result_summary': {
-        'proposals': 1,
-        'additions': 1,
-        'reused_staging': reused,
-        'unsafe_mutation_count': 0,
-        'raw_body_stored': false,
-        'evidence_passed': true,
-        'idempotency_passed': true,
-      },
-      '_failure_category': null,
-      '_next_retry_at': null,
-    },
+  final deadline = DateTime.now().add(const Duration(seconds: 60));
+  while (DateTime.now().isBefore(deadline)) {
+    final rows = _rows(
+      await service
+          .from('card_discovery_jobs')
+          .select('id,user_id,issuer,proposed_product,status,review_item_id')
+          .eq('discovery_source', 'issuer_crawl')
+          .eq('issuer', _officialDiscoveryIssuer),
+    );
+    for (final row in rows) {
+      if (baselineJobIds.contains(row['id'])) continue;
+      if (_matchesExpectedProduct(
+        (row['proposed_product'] ?? '').toString(),
+        _officialDiscoveryExpectedNewProduct,
+      )) {
+        if (row['status'] == 'review_required' &&
+            row['review_item_id'] != null) {
+          return row;
+        }
+      }
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+  }
+  fail(
+    'Timed out waiting for function-produced review for '
+    '$_officialDiscoveryExpectedNewProduct.',
   );
-  expect(finalized, job['id']);
+}
+
+Map<String, dynamic> _firstAddition(Map<String, dynamic> staging) {
+  final extracted = _row(staging['extracted_data']);
+  final diff = _row(extracted['diff']);
+  final additions = _rows(diff['additions']);
+  expect(additions, isNotEmpty, reason: 'official fixture needs an addition');
+  return additions.first;
 }
 
 void main() {
+  test('official fixture contract requires complete public HTTPS products', () {
+    expect(
+      _officialFixtureValidationErrors(
+        benefitIssuer: '',
+        benefitUrl: 'http://127.0.0.1/fixture',
+        benefitCardName: '',
+        discoveryIssuer: 'Kotak Bank',
+        discoveryUrl: 'https://localhost/card',
+        discoveryCardName: 'Known discovery card',
+        expectedNewProduct: '',
+      ),
+      containsAll(<String>[
+        'SUPABASE_OFFICIAL_BENEFIT_FIXTURE_ISSUER',
+        'SUPABASE_OFFICIAL_BENEFIT_FIXTURE_URL',
+        'SUPABASE_OFFICIAL_BENEFIT_FIXTURE_CARD_NAME',
+        'SUPABASE_OFFICIAL_DISCOVERY_FIXTURE_URL',
+        'SUPABASE_OFFICIAL_DISCOVERY_EXPECTED_NEW_PRODUCT',
+      ]),
+    );
+    expect(
+      _officialFixtureValidationErrors(
+        benefitIssuer: 'Axis Bank',
+        benefitUrl: 'https://www.axis.bank.in/cards/fixture',
+        benefitCardName: 'Known fixture card',
+        discoveryIssuer: 'Kotak Bank',
+        discoveryUrl: 'https://www.kotak.com/cards/fixture',
+        discoveryCardName: 'Known discovery card',
+        expectedNewProduct: 'New crawler card',
+      ),
+      isEmpty,
+    );
+    expect(
+      _officialFixtureValidationErrors(
+        benefitIssuer: 'Axis Bank',
+        benefitUrl: 'https://www.axis.bank.in/cards/fixture-one',
+        benefitCardName: 'Known fixture card',
+        discoveryIssuer: ' axis bank ',
+        discoveryUrl: 'https://www.axis.bank.in/cards/fixture-two',
+        discoveryCardName: 'Known discovery card',
+        expectedNewProduct: 'New crawler card',
+      ),
+      contains('SUPABASE_OFFICIAL_DISCOVERY_FIXTURE_ISSUER'),
+    );
+  });
+
+  test('identity delta reports only newly created rows', () {
+    expect(_addedIds({'a', 'b'}, {'a', 'b'}), isEmpty);
+    expect(_addedIds({'a', 'b'}, {'a', 'b', 'c'}), {'c'});
+  });
+
   test('local integration safety gate refuses hosted Supabase URLs', () {
     expect(_isLoopbackUrl('https://project.supabase.co'), isFalse);
     expect(_isLoopbackUrl('http://127.0.0.1:54321'), isTrue);
@@ -370,36 +551,21 @@ void main() {
       final suffix = DateTime.now().microsecondsSinceEpoch.toString();
       final service = SupabaseClient(localSupabaseUrl, _serviceRoleKey);
       final anonymous = SupabaseClient(localSupabaseUrl, localSupabaseAnonKey);
-      final fixtureServer = await _serveFixtures();
-      final fixtureBase = Uri(
-        scheme: 'http',
-        host: InternetAddress.loopbackIPv4.address,
-        port: fixtureServer.port,
-      );
-      final knownFixtureUrl = fixtureBase.resolve('/known-card');
-      final crawlerFixtureUrl = fixtureBase.resolve('/crawler-only');
       String? knownCardId;
-      String? crawlerJobId;
+      String? discoveryCardId;
       String? reviewerId;
+      String? approvedDedupeKey;
+      String? createdApprovedBenefitId;
+      final createdCrawlerJobIds = <String>{};
+      Set<String>? baselineCrawlerJobIds;
       final existingDedupeKey = 'task10-existing-$suffix';
-      final rejectedDedupeKey = 'task10-rejected-$suffix';
-      final approvedDedupeKey = 'task10-approved-$suffix';
-      final parserVersion = 'benefits-task10-$suffix';
-      final officialKnownUrl =
-          'https://www.axis.bank.in/cards/credit-card/task10-$suffix';
-      final officialApprovalUrl =
-          'https://www.axis.bank.in/cards/credit-card/task10-$suffix/terms';
+      final rejectedParserVersion = 'benefits-task10-reject-$suffix';
+      final approvedParserVersion = 'benefits-task10-approve-$suffix';
+      final discoveryParserVersion = 'benefits-task10-discovery-$suffix';
 
       try {
-        final knownFixture = await http.get(knownFixtureUrl);
-        final crawlerFixture = await http.get(crawlerFixtureUrl);
-        expect(knownFixture.statusCode, HttpStatus.ok);
-        expect(knownFixture.body, _knownCardFixture);
-        expect(crawlerFixture.statusCode, HttpStatus.ok);
-        expect(crawlerFixture.body, _crawlerOnlyFixture);
+        expect(_officialFixtureErrors, isEmpty);
 
-        // These endpoint checks prove the local function bundle is being
-        // served without allowing the test to fetch a hosted issuer page.
         final functionBase = Uri.parse(
           localSupabaseUrl,
         ).replace(path: '/functions/v1/');
@@ -412,6 +578,7 @@ void main() {
           functionBase.resolve('benefit-enrichment-batch'),
           headers: {
             HttpHeaders.authorizationHeader: 'Bearer $_serviceRoleKey',
+            'apikey': _serviceRoleKey,
             HttpHeaders.contentTypeHeader: ContentType.json.mimeType,
           },
           body: jsonEncode({'run_mode': 'unsafe'}),
@@ -446,10 +613,10 @@ void main() {
           await service
               .from('card_catalog')
               .insert({
-                'bank': 'Axis Bank',
-                'card_name': 'Task 10 Compass $suffix',
+                'bank': _officialBenefitIssuer,
+                'card_name': _officialBenefitCardName,
                 'card_type': 'credit',
-                'card_url': officialKnownUrl,
+                'card_url': _officialBenefitUrl,
                 'is_discontinued': false,
               })
               .select()
@@ -475,115 +642,48 @@ void main() {
               .select()
               .single(),
         );
-        await service.from('card_benefit_mapping').insert({
-          'card_id': knownCardId,
-          'benefit_id': existingBenefit['benefit_id'],
-          'display_priority': 1,
-          'is_primary': true,
-          'category_codes': ['DINING'],
-        });
-
-        // A crawler-only candidate is service-owned, idempotent, and must
-        // remain review-only rather than silently creating a catalog card.
-        final crawlerDedupeKey = _sha256(
-          'Kotak Bank:task-10-crawler-only-$suffix',
-        );
-        final crawlerJob = _row(
+        final existingMapping = _row(
           await service
-              .from('card_discovery_jobs')
+              .from('card_benefit_mapping')
               .insert({
-                'user_id': null,
-                'issuer': 'Kotak Bank',
-                'proposed_product': 'Task 10 Crawler Only $suffix',
-                'evidence': {
-                  'fixture_url': crawlerFixtureUrl.toString(),
-                  'html_sha256': _sha256(crawlerFixture.body),
-                },
-                'dedupe_key': crawlerDedupeKey,
-                'status': 'review_required',
-                'discovery_source': 'issuer_crawl',
+                'card_id': knownCardId,
+                'benefit_id': existingBenefit['benefit_id'],
+                'display_priority': 1,
+                'is_primary': true,
+                'category_codes': ['DINING'],
               })
               .select()
               .single(),
         );
-        crawlerJobId = crawlerJob['id'] as String;
-        final crawlerReview = _row(
-          await service
-              .from('card_catalog_review_queue')
-              .insert({
-                'discovery_job_id': crawlerJobId,
-                'proposed_fields': {
-                  'bank': 'Kotak Bank',
-                  'card_name': 'Task 10 Crawler Only $suffix',
-                },
-                'source_evidence': {
-                  'fixture_url': crawlerFixtureUrl.toString(),
-                  'html_sha256': _sha256(crawlerFixture.body),
-                },
-                'validation_warnings': ['crawler_only_requires_review'],
-                'confidence': 0.99,
-                'status': 'pending',
-              })
-              .select()
-              .single(),
-        );
-        await service
-            .from('card_discovery_jobs')
-            .update({'review_item_id': crawlerReview['id']})
-            .eq('id', crawlerJobId);
-        await expectLater(
-          service.from('card_discovery_jobs').insert({
-            'user_id': null,
-            'issuer': 'Kotak Bank',
-            'proposed_product': 'Task 10 Crawler Only $suffix',
-            'evidence': <String, dynamic>{},
-            'dedupe_key': crawlerDedupeKey,
-            'status': 'review_required',
-            'discovery_source': 'issuer_crawl',
-          }),
-          throwsA(isA<PostgrestException>()),
-        );
-        final crawlerRows = await service
-            .from('card_discovery_jobs')
-            .select('id,status,review_item_id')
-            .eq('discovery_source', 'issuer_crawl')
-            .eq('dedupe_key', crawlerDedupeKey);
-        expect(crawlerRows, hasLength(1));
-        expect(crawlerRows.single['status'], 'review_required');
-        expect(crawlerRows.single['review_item_id'], crawlerReview['id']);
-        final accidentalCrawlerCard = await service
-            .from('card_catalog')
-            .select('id')
-            .eq('bank', 'Kotak Bank')
-            .eq('card_name', 'Task 10 Crawler Only $suffix');
-        expect(accidentalCrawlerCard, isEmpty);
 
-        final rejectedProposal = <String, dynamic>{
-          'dedupeKey': rejectedDedupeKey,
-          'title': 'Task 10 rejected cashback',
-          'description': '10% cashback capped at ₹500 per statement month.',
-          'category': 'DINING',
-          'valueType': 'cashback',
-          'rate': 10,
-          'cap': 500,
-          'period': 'statement month',
-          'sourceUrl': officialKnownUrl,
-          'sourceExcerpt':
-              'Get 10% cashback on dining, capped at ₹500 per statement month.',
-          'evidence': {
-            'title': '10% cashback on dining',
-            'rate': '10% cashback',
-            'cap': 'capped at ₹500',
-            'period': 'per statement month',
-          },
-        };
-        final rejectedContentHash = _sha256(knownFixture.body);
+        final existingDiscoveryCards = _rows(
+          await service
+              .from('card_catalog')
+              .select('id,card_name')
+              .eq('bank', _officialDiscoveryIssuer),
+        );
+        expect(
+          existingDiscoveryCards.any(
+            (row) => _matchesExpectedProduct(
+              (row['card_name'] ?? '').toString(),
+              _officialDiscoveryExpectedNewProduct,
+            ),
+          ),
+          isFalse,
+          reason: 'discovery fixture must represent a new catalog product',
+        );
+        baselineCrawlerJobIds = await _tableIds(
+          service,
+          'card_discovery_jobs',
+          'id',
+        );
+
         final rejectedJob = await _insertManualJob(
           service,
           cardId: knownCardId,
-          issuer: 'Axis Bank',
-          sourceUrl: officialKnownUrl,
-          parserVersion: parserVersion,
+          issuer: _officialBenefitIssuer,
+          sourceUrl: _officialBenefitUrl,
+          parserVersion: rejectedParserVersion,
         );
         var claimedRejected = await _claimManualJob(
           service,
@@ -606,80 +706,71 @@ void main() {
         expect(claimedRejected['attempt_count'], 2);
         expect(claimedRejected['lease_token'], isNot(firstLeaseToken));
 
-        final firstStage = await _stage(
-          service,
-          job: claimedRejected,
-          sourceUrl: officialKnownUrl,
-          parserVersion: parserVersion,
-          contentHash: rejectedContentHash,
-          proposal: rejectedProposal,
-        );
-        expect(firstStage['reused'], isFalse);
-        await _finalize(
-          service,
-          job: claimedRejected,
-          stagingId: firstStage['staging_id'] as String,
-          contentHash: rejectedContentHash,
-          reused: false,
-        );
-
         await service
             .from('card_catalog_enrichment_jobs')
             .update({
-              'status': 'queued',
-              'staging_id': null,
-              'content_hash': null,
+              'lease_expires_at': DateTime.now()
+                  .toUtc()
+                  .subtract(const Duration(seconds: 1))
+                  .toIso8601String(),
             })
             .eq('id', rejectedJob['id']);
-        final repeatedClaim = await _claimManualJob(
+        final firstBatch = await _callManualBatch();
+        expect(firstBatch['claimed'], 1);
+        expect(firstBatch['staged'], 1);
+        final firstProcessedJob = await _waitForStagedJob(
           service,
           rejectedJob['id'] as String,
         );
-        final repeatedStage = await _stage(
-          service,
-          job: repeatedClaim,
-          sourceUrl: officialKnownUrl,
-          parserVersion: parserVersion,
-          contentHash: rejectedContentHash,
-          proposal: rejectedProposal,
+        expect(firstProcessedJob['status'], 'staged');
+        final firstStagingId = firstProcessedJob['staging_id'] as String;
+        final firstStage = await _readStaging(service, firstStagingId);
+        expect(firstStage['status'], 'pending');
+        expect(
+          _isPublicHttpsFixtureUrl(firstStage['source_url'].toString()),
+          isTrue,
         );
-        expect(repeatedStage['reused'], isTrue);
-        expect(repeatedStage['staging_id'], firstStage['staging_id']);
-        await _finalize(
+        final rejectedProposal = _firstAddition(firstStage);
+
+        await _requeueJob(service, rejectedJob['id'] as String);
+        final repeatedBatch = await _callManualBatch();
+        expect(repeatedBatch['claimed'], 1);
+        expect(repeatedBatch['staged'], 1);
+        final repeatedJob = await _waitForStagedJob(
           service,
-          job: repeatedClaim,
-          stagingId: repeatedStage['staging_id'] as String,
-          contentHash: rejectedContentHash,
-          reused: true,
+          rejectedJob['id'] as String,
         );
+        expect(repeatedJob['staging_id'], firstStagingId);
+        expect(_row(repeatedJob['result_summary'])['reused_staging'], isTrue);
         final oneStagingRow = await service
             .from('card_benefits_staging')
             .select('id')
             .eq('card_id', knownCardId)
-            .eq('source_url_hash', _sha256(officialKnownUrl))
-            .eq('parser_version', parserVersion)
-            .eq('content_hash', rejectedContentHash);
+            .eq('parser_version', rejectedParserVersion)
+            .eq('content_hash', firstStage['content_hash']);
         expect(oneStagingRow, hasLength(1));
 
-        final liveBenefitsBeforeReject = await service
-            .from('benefits')
-            .select('benefit_id')
-            .inFilter('dedupe_key', [existingDedupeKey, rejectedDedupeKey]);
-        final liveMappingsBeforeReject = await service
-            .from('card_benefit_mapping')
-            .select('mapping_id')
-            .eq('card_id', knownCardId);
+        final liveBenefitsBeforeReject = await _tableIds(
+          service,
+          'benefits',
+          'benefit_id',
+        );
+        final liveMappingsBeforeReject = await _tableIds(
+          service,
+          'card_benefit_mapping',
+          'mapping_id',
+        );
         final rejection = _rows(
           await service.rpc(
             'approve_card_benefit_enrichment',
             params: {
-              '_staging_id': firstStage['staging_id'],
+              '_staging_id': firstStagingId,
               '_reviewed_by': reviewerId,
               '_decisions': [
                 {
                   'action': 'reject',
                   'change_type': 'addition',
-                  'dedupe_key': rejectedDedupeKey,
+                  'dedupe_key': rejectedProposal['dedupeKey'],
                   'benefit': rejectedProposal,
                   'reason': 'Deterministic Task 10 rejection',
                 },
@@ -688,57 +779,67 @@ void main() {
           ),
         );
         expect(rejection.single['resulting_status'], 'rejected');
-        final liveBenefitsAfterReject = await service
-            .from('benefits')
-            .select('benefit_id')
-            .inFilter('dedupe_key', [existingDedupeKey, rejectedDedupeKey]);
-        final liveMappingsAfterReject = await service
-            .from('card_benefit_mapping')
-            .select('mapping_id')
-            .eq('card_id', knownCardId);
-        expect(liveBenefitsAfterReject.length, liveBenefitsBeforeReject.length);
-        expect(liveMappingsAfterReject.length, liveMappingsBeforeReject.length);
+        final liveBenefitsAfterReject = await _tableIds(
+          service,
+          'benefits',
+          'benefit_id',
+        );
+        final liveMappingsAfterReject = await _tableIds(
+          service,
+          'card_benefit_mapping',
+          'mapping_id',
+        );
+        expect(liveBenefitsAfterReject, liveBenefitsBeforeReject);
+        expect(liveMappingsAfterReject, liveMappingsBeforeReject);
+        expect(
+          liveBenefitsAfterReject,
+          contains(existingBenefit['benefit_id']),
+        );
+        expect(
+          liveMappingsAfterReject,
+          contains(existingMapping['mapping_id']),
+        );
 
-        final approvedProposal = <String, dynamic>{
-          'dedupeKey': approvedDedupeKey,
-          'title': 'Task 10 approved reward points',
-          'description': 'Earn 5 reward points per ₹100 spent on dining.',
-          'category': 'DINING',
-          'valueType': 'reward_points',
-          'rate': 5,
-          'sourceUrl': officialApprovalUrl,
-          'sourceExcerpt': 'Earn 5 reward points per ₹100 spent on dining.',
-          'evidence': {
-            'title': '5 reward points',
-            'rate': '5 reward points per ₹100',
-          },
-        };
         final approvedJob = await _insertManualJob(
           service,
           cardId: knownCardId,
-          issuer: 'Axis Bank',
-          sourceUrl: officialApprovalUrl,
-          parserVersion: parserVersion,
+          issuer: _officialBenefitIssuer,
+          sourceUrl: _officialBenefitUrl,
+          parserVersion: approvedParserVersion,
         );
-        final claimedApproved = await _claimManualJob(
+        final approvedBatch = await _callManualBatch();
+        expect(approvedBatch['claimed'], 1);
+        expect(approvedBatch['staged'], 1);
+        final processedApprovedJob = await _waitForStagedJob(
           service,
           approvedJob['id'] as String,
         );
-        final approvedContentHash = _sha256('${knownFixture.body}\napproval');
-        final approvedStage = await _stage(
+        expect(processedApprovedJob['status'], 'staged');
+        final approvedStage = await _readStaging(
           service,
-          job: claimedApproved,
-          sourceUrl: officialApprovalUrl,
-          parserVersion: parserVersion,
-          contentHash: approvedContentHash,
-          proposal: approvedProposal,
+          processedApprovedJob['staging_id'] as String,
         );
-        await _finalize(
+        final approvedProposal = _firstAddition(approvedStage);
+        approvedDedupeKey = approvedProposal['dedupeKey'].toString();
+        final preexistingApprovedBenefit = await service
+            .from('benefits')
+            .select('benefit_id')
+            .eq('dedupe_key', approvedDedupeKey);
+        expect(
+          preexistingApprovedBenefit,
+          isEmpty,
+          reason:
+              'benefit fixture addition must be new to reset reference data',
+        );
+        final liveBenefitsBeforeApproval = await _tableIds(
           service,
-          job: claimedApproved,
-          stagingId: approvedStage['staging_id'] as String,
-          contentHash: approvedContentHash,
-          reused: false,
+          'benefits',
+          'benefit_id',
+        );
+        final liveMappingsBeforeApproval = await _tableIds(
+          service,
+          'card_benefit_mapping',
+          'mapping_id',
         );
         final approval = _rows(
           await service.rpc(
@@ -758,44 +859,182 @@ void main() {
           ),
         );
         expect(approval.single['resulting_status'], 'approved');
-        final approvedBenefits = await service
-            .from('benefits')
-            .select('benefit_id,dedupe_key')
-            .eq('dedupe_key', approvedDedupeKey);
+        final liveBenefitsAfterApproval = await _tableIds(
+          service,
+          'benefits',
+          'benefit_id',
+        );
+        final liveMappingsAfterApproval = await _tableIds(
+          service,
+          'card_benefit_mapping',
+          'mapping_id',
+        );
+        final newBenefitIds = _addedIds(
+          liveBenefitsBeforeApproval,
+          liveBenefitsAfterApproval,
+        );
+        final newMappingIds = _addedIds(
+          liveMappingsBeforeApproval,
+          liveMappingsAfterApproval,
+        );
+        expect(
+          liveBenefitsAfterApproval.length,
+          liveBenefitsBeforeApproval.length + 1,
+        );
+        expect(
+          liveMappingsAfterApproval.length,
+          liveMappingsBeforeApproval.length + 1,
+        );
+        expect(newBenefitIds, hasLength(1));
+        expect(newMappingIds, hasLength(1));
+        createdApprovedBenefitId = newBenefitIds.single;
+        expect(
+          liveBenefitsAfterApproval.intersection(liveBenefitsBeforeApproval),
+          liveBenefitsBeforeApproval,
+        );
+        expect(
+          liveMappingsAfterApproval.intersection(liveMappingsBeforeApproval),
+          liveMappingsBeforeApproval,
+        );
+        final approvedBenefits = _rows(
+          await service
+              .from('benefits')
+              .select('benefit_id,dedupe_key')
+              .eq('dedupe_key', approvedDedupeKey),
+        );
         expect(approvedBenefits, hasLength(1));
-        final approvedMappings = await service
-            .from('card_benefit_mapping')
-            .select('mapping_id')
-            .eq('card_id', knownCardId)
-            .eq('benefit_id', approvedBenefits.single['benefit_id']);
+        expect(approvedBenefits.single['benefit_id'], newBenefitIds.single);
+        final approvedMappings = _rows(
+          await service
+              .from('card_benefit_mapping')
+              .select('mapping_id,card_id,benefit_id')
+              .eq('card_id', knownCardId)
+              .eq('benefit_id', approvedBenefits.single['benefit_id']),
+        );
         expect(approvedMappings, hasLength(1));
-        final finalMappings = await service
-            .from('card_benefit_mapping')
-            .select('mapping_id')
-            .eq('card_id', knownCardId);
-        expect(finalMappings.length, liveMappingsBeforeReject.length + 1);
+        expect(approvedMappings.single['mapping_id'], newMappingIds.single);
+
+        final discoveryCard = _row(
+          await service
+              .from('card_catalog')
+              .insert({
+                'bank': _officialDiscoveryIssuer,
+                'card_name': _officialDiscoveryCardName,
+                'card_type': 'credit',
+                'card_url': _officialDiscoveryUrl,
+                'is_discontinued': false,
+              })
+              .select()
+              .single(),
+        );
+        discoveryCardId = discoveryCard['id'] as String;
+        final discoveryJob = await _insertManualJob(
+          service,
+          cardId: discoveryCardId,
+          issuer: _officialDiscoveryIssuer,
+          sourceUrl: _officialDiscoveryUrl,
+          parserVersion: discoveryParserVersion,
+        );
+        final discoveryBatch = await _callManualBatch();
+        expect(discoveryBatch['claimed'], 1);
+        expect(discoveryBatch['staged'], 1);
+        await _waitForStagedJob(service, discoveryJob['id'] as String);
+        final crawlerJob = await _waitForCrawlerReview(
+          service,
+          baselineJobIds: baselineCrawlerJobIds,
+        );
+        createdCrawlerJobIds.add(crawlerJob['id'] as String);
+        expect(crawlerJob['user_id'], isNull);
+        final crawlerReview = _row(
+          await service
+              .from('card_catalog_review_queue')
+              .select('id,status,discovery_job_id')
+              .eq('id', crawlerJob['review_item_id'])
+              .single(),
+        );
+        expect(crawlerReview['status'], 'pending');
+        expect(crawlerReview['discovery_job_id'], crawlerJob['id']);
+
+        await service
+            .from('card_catalog_review_queue')
+            .delete()
+            .eq('id', crawlerReview['id']);
+        await _requeueJob(service, discoveryJob['id'] as String);
+        final repeatedDiscoveryBatch = await _callManualBatch();
+        expect(repeatedDiscoveryBatch['claimed'], 1);
+        expect(repeatedDiscoveryBatch['staged'], 1);
+        final repeatedDiscoveryJob = await _waitForStagedJob(
+          service,
+          discoveryJob['id'] as String,
+        );
+        expect(
+          _row(repeatedDiscoveryJob['result_summary'])['reused_staging'],
+          isTrue,
+        );
+        final repeatedCrawlerJob = await _waitForCrawlerReview(
+          service,
+          baselineJobIds: baselineCrawlerJobIds,
+        );
+        expect(repeatedCrawlerJob['id'], crawlerJob['id']);
+        expect(
+          repeatedCrawlerJob['review_item_id'],
+          isNot(crawlerReview['id']),
+        );
+        final matchingCrawlerRows =
+            _rows(
+              await service
+                  .from('card_discovery_jobs')
+                  .select('id,proposed_product')
+                  .eq('discovery_source', 'issuer_crawl')
+                  .eq('issuer', _officialDiscoveryIssuer),
+            ).where(
+              (row) => _matchesExpectedProduct(
+                (row['proposed_product'] ?? '').toString(),
+                _officialDiscoveryExpectedNewProduct,
+              ),
+            );
+        expect(matchingCrawlerRows.map((row) => row['id']).toSet(), {
+          crawlerJob['id'],
+        });
       } finally {
-        await fixtureServer.close(force: true);
-        if (crawlerJobId != null) {
+        if (baselineCrawlerJobIds != null) {
+          final currentCrawlerJobIds = await _tableIds(
+            service,
+            'card_discovery_jobs',
+            'id',
+          );
+          createdCrawlerJobIds.addAll(
+            currentCrawlerJobIds.difference(baselineCrawlerJobIds),
+          );
+        }
+        if (createdCrawlerJobIds.isNotEmpty) {
           await service
               .from('card_discovery_jobs')
               .delete()
-              .eq('id', crawlerJobId);
+              .inFilter('id', createdCrawlerJobIds.toList());
+        }
+        if (discoveryCardId != null) {
+          await service.from('card_catalog').delete().eq('id', discoveryCardId);
         }
         if (knownCardId != null) {
           await service.from('card_catalog').delete().eq('id', knownCardId);
         }
-        await service.from('benefits').delete().inFilter('dedupe_key', [
-          existingDedupeKey,
-          rejectedDedupeKey,
-          approvedDedupeKey,
-        ]);
+        if (createdApprovedBenefitId != null) {
+          await service
+              .from('benefits')
+              .delete()
+              .eq('benefit_id', createdApprovedBenefitId);
+        }
+        await service
+            .from('benefits')
+            .delete()
+            .eq('dedupe_key', existingDedupeKey);
         if (reviewerId != null) {
           await service.auth.admin.deleteUser(reviewerId);
         }
         service.dispose();
         anonymous.dispose();
       }
-    }, timeout: const Timeout(Duration(minutes: 2)));
+    }, timeout: const Timeout(Duration(minutes: 4)));
   }, skip: _integrationSkipReason);
 }
