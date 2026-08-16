@@ -1,0 +1,1 @@
+void replaceBrowserHistory(String location) {}

@@ -19,15 +19,18 @@ class CardCompassApp extends ConsumerWidget {
     return MaterialApp.router(
       title: 'CardCompass',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.editorial,
+      theme: AppTheme.work,
       routerConfig: router,
-      builder: (context, child) => SelectionArea(
-        child: MediaQuery(
-          data: MediaQuery.of(
-            context,
-          ).copyWith(textScaler: const TextScaler.linear(1.0)),
-          child: child!,
-        ),
+      builder: (context, child) => ValueListenableBuilder<RouteInformation>(
+        valueListenable: router.routeInformationProvider,
+        builder: (context, routeInformation, _) {
+          final path = routeInformation.uri.path;
+          final content = child ?? const SizedBox.shrink();
+
+          if (path != '/' && path != '/login') return content;
+
+          return Theme(data: AppTheme.marketing, child: content);
+        },
       ),
     );
   }
