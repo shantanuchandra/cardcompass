@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:cardcompass/core/providers/supabase_provider.dart';
 import 'package:cardcompass/core/router/app_tab_selection.dart';
+import 'package:cardcompass/core/services/card_discovery_service.dart';
 import 'package:cardcompass/core/theme/app_theme.dart';
 import 'package:cardcompass/features/dashboard/providers/dashboard_provider.dart';
 import 'package:cardcompass/features/dashboard/providers/gmail_sync_provider.dart';
@@ -90,6 +91,7 @@ Future<void> _pumpDashboard(
   List<Map<String, dynamic>> pendingAssignments = const [],
   BankCatalogSearch? catalogSearch,
   CardResolution? cardResolution,
+  CardUrlResolver? cardUrlResolver,
 }) async {
   await tester.pumpWidget(
     ProviderScope(
@@ -102,6 +104,8 @@ Future<void> _pumpDashboard(
           bankCatalogSearchProvider.overrideWithValue(catalogSearch),
         if (cardResolution != null)
           cardResolutionProvider.overrideWithValue(cardResolution),
+        if (cardUrlResolver != null)
+          cardUrlResolverProvider.overrideWithValue(cardUrlResolver),
         dashboardProvider.overrideWith((ref) async {
           onDashboardLoad?.call();
           if (failDashboard) {
@@ -454,6 +458,85 @@ void main() {
     expect(find.text('ICICI-Aug-Statement.pdf'), findsOneWidget);
     expect(find.text('Confirm card'), findsOneWidget);
   });
+
+  testWidgets(
+    'missing bank variant can be resolved from an official product URL',
+    (tester) async {
+      String? assignedCardId;
+      String? submittedUrl;
+      final selectedAppTab = ValueNotifier(AppTab.dashboard);
+      addTearDown(selectedAppTab.dispose);
+      await _pumpDashboard(
+        tester,
+        selectedAppTab: selectedAppTab,
+        pendingAssignments: const [
+          {
+            'email_id': 'email-url',
+            'bank_detected': 'Kotak Bank',
+            'subject': 'Statement for White Reserve Credit Card',
+            'metadata': {
+              'identityHints': {
+                'productName': 'White Reserve',
+                'last4': '0771',
+              },
+            },
+          },
+        ],
+        catalogSearch: (_, _) async => const [],
+        cardUrlResolver: (email, url) async {
+          submittedUrl = url;
+          return const CardUrlResolution(
+            jobId: 'job-url',
+            status: 'resolved',
+            resolvedCardId: 'catalog-white-reserve',
+          );
+        },
+        cardResolution: (_, catalogCardId) async {
+          assignedCardId = catalogCardId;
+        },
+      );
+
+      await tester.scrollUntilVisible(
+        find.text('Your Cards'),
+        300,
+        scrollable: find
+            .descendant(
+              of: find.byType(CustomScrollView),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      await tester.drag(find.byType(PageView), const Offset(-500, 0));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('resolve-bank-email-url')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text("Can't find it? Paste official card page"),
+        findsOneWidget,
+      );
+      await tester.tap(find.text("Can't find it? Paste official card page"));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('official-card-url-field')),
+        'http://www.kotak.com/rd/white-reserve',
+      );
+      await tester.tap(find.text('Verify card page'));
+      await tester.pump();
+      expect(find.text('Enter a valid HTTPS card page URL.'), findsOneWidget);
+
+      await tester.enterText(
+        find.byKey(const Key('official-card-url-field')),
+        'https://www.kotak.com/rd/white-reserve',
+      );
+      await tester.tap(find.text('Verify card page'));
+      await tester.pumpAndSettle();
+
+      expect(submittedUrl, 'https://www.kotak.com/rd/white-reserve');
+      expect(assignedCardId, 'catalog-white-reserve');
+      expect(find.byType(Dialog), findsNothing);
+    },
+  );
 
   testWidgets(
     'bank resolution redacts failures, clears stale errors, and retries',

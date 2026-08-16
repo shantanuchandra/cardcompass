@@ -1,6 +1,26 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../shared/models/user_card.dart';
 
+bool catalogEntryMatchesQuery(Map<String, dynamic> entry, String query) {
+  final normalizedQuery = query
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+      .trim();
+  if (normalizedQuery.isEmpty) return true;
+  final labels = <String>[
+    if (entry['card_name'] is String) entry['card_name'] as String,
+    for (final alias in entry['card_catalog_aliases'] as List? ?? const [])
+      if (alias is Map && alias['alias'] is String) alias['alias'] as String,
+  ];
+  return labels.any(
+    (label) => label
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+        .trim()
+        .contains(normalizedQuery),
+  );
+}
+
 class CardsRepository {
   final SupabaseClient _db;
   CardsRepository(this._db);
@@ -12,7 +32,9 @@ class CardsRepository {
         .eq('user_id', userId)
         .eq('is_active', true)
         .order('created_at');
-    return (data as List).map((e) => UserCard.fromJson(e as Map<String, dynamic>)).toList();
+    return (data as List)
+        .map((e) => UserCard.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   Future<UserCard> addUserCard({
@@ -24,20 +46,28 @@ class CardsRepository {
     int? statementDate,
     int? dueDate,
   }) async {
-    final data = await _db.from('user_cards').insert({
+    final values = <String, dynamic>{
       'user_id': userId,
       'catalog_card_id': catalogCardId,
-      if (lastFourDigits != null) 'last_four_digits': lastFourDigits,
-      if (cardHolderName != null) 'card_holder_name': cardHolderName,
-      if (creditLimit != null) 'credit_limit': creditLimit,
-      if (statementDate != null) 'statement_date': statementDate,
-      if (dueDate != null) 'due_date': dueDate,
-    }).select('*, card_catalog(*)').single();
-    return UserCard.fromJson(data as Map<String, dynamic>);
+    };
+    if (lastFourDigits != null) values['last_four_digits'] = lastFourDigits;
+    if (cardHolderName != null) values['card_holder_name'] = cardHolderName;
+    if (creditLimit != null) values['credit_limit'] = creditLimit;
+    if (statementDate != null) values['statement_date'] = statementDate;
+    if (dueDate != null) values['due_date'] = dueDate;
+    final data = await _db
+        .from('user_cards')
+        .insert(values)
+        .select('*, card_catalog(*)')
+        .single();
+    return UserCard.fromJson(data);
   }
 
   Future<void> removeUserCard(String userCardId) async {
-    await _db.from('user_cards').update({'is_active': false}).eq('id', userCardId);
+    await _db
+        .from('user_cards')
+        .update({'is_active': false})
+        .eq('id', userCardId);
   }
 
   /// Placeholder last-4 seen on cards added before real statement data was
@@ -92,16 +122,23 @@ class CardsRepository {
   /// Catalog entries for one bank, optionally filtered by card-name typeahead
   /// text — used when resolving a statement email whose bank didn't match
   /// any card the user already has on file.
-  Future<List<Map<String, dynamic>>> searchCatalogForBank(String bank, {String query = ''}) async {
+  Future<List<Map<String, dynamic>>> searchCatalogForBank(
+    String bank, {
+    String query = '',
+  }) async {
     var builder = _db
         .from('card_catalog')
-        .select('id, card_name, bank, network, annual_fee, card_url')
+        .select(
+          'id, card_name, bank, network, annual_fee, card_url, '
+          'card_catalog_aliases(alias, normalized_alias, evidence_type)',
+        )
         .eq('is_discontinued', false)
         .ilike('bank', '%$bank%');
-    if (query.isNotEmpty) {
-      builder = builder.ilike('card_name', '%$query%');
-    }
-    final data = await builder.order('card_name').limit(30);
-    return (data as List).cast<Map<String, dynamic>>();
+    final data = await builder.order('card_name').limit(100);
+    return (data as List)
+        .cast<Map<String, dynamic>>()
+        .where((entry) => catalogEntryMatchesQuery(entry, query))
+        .take(30)
+        .toList(growable: false);
   }
 }

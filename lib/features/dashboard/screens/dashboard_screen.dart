@@ -15,6 +15,8 @@ import '../../../core/providers/supabase_provider.dart';
 import '../../../core/providers/repository_providers.dart';
 import '../../../core/services/statement_processing_service.dart'
     show buildStatementIssueLines;
+import '../../../core/services/card_discovery_service.dart';
+import '../../../core/services/card_identity_service.dart';
 import '../../../shared/models/user_card.dart';
 import '../../../shared/models/transaction.dart';
 import '../../../shared/models/statement.dart';
@@ -48,6 +50,48 @@ final cardResolutionProvider = Provider<CardResolution>((ref) {
   return (email, catalogCardId) => ref
       .read(cardAssignmentProvider.notifier)
       .resolveWithCatalogEntry(email: email, catalogCardId: catalogCardId);
+});
+
+typedef CardUrlResolver =
+    Future<CardUrlResolution> Function(
+      Map<String, dynamic> email,
+      String sourceUrl,
+    );
+
+final cardUrlResolverProvider = Provider<CardUrlResolver>((ref) {
+  return (email, sourceUrl) {
+    final metadata = email['metadata'];
+    final safeMetadata = metadata is Map
+        ? Map<String, dynamic>.from(metadata)
+        : const <String, dynamic>{};
+    final rawHints = safeMetadata['identityHints'];
+    final hints = rawHints is Map
+        ? Map<String, dynamic>.from(rawHints)
+        : const <String, dynamic>{};
+    final extracted = CardIdentityEvidence.extract(
+      issuer: email['bank_detected'] as String? ?? '',
+      subject: email['subject'] as String?,
+      attachmentFilename:
+          safeMetadata['attachmentFilename'] as String? ??
+          email['attachment_filename'] as String?,
+      pdfHeader: hints['pdfHeaderExcerpt'] as String?,
+    );
+    final evidence = CardIdentityEvidence(
+      issuer: extracted.issuer,
+      subjectProduct:
+          extracted.subjectProduct ?? hints['productName'] as String?,
+      filenameProduct: extracted.filenameProduct,
+      pdfHeaderProduct: extracted.pdfHeaderProduct,
+      network: extracted.network ?? hints['network'] as String?,
+      lastFour: extracted.lastFour ?? hints['last4'] as String?,
+      attachmentFilename: extracted.attachmentFilename,
+      pdfHeaderExcerpt: extracted.pdfHeaderExcerpt,
+      warnings: extracted.warnings,
+    );
+    return CardDiscoveryService(
+      ref.read(supabaseClientProvider),
+    ).resolveUrl(evidence, sourceUrl);
+  };
 });
 
 class DashboardScreen extends ConsumerWidget {
@@ -954,7 +998,7 @@ class _MetricChip extends StatelessWidget {
                           label.toUpperCase(),
                           style: const TextStyle(
                             fontFamily: 'Manrope',
-                            fontSize: 10.5,
+                            fontSize: 12,
                             fontWeight: FontWeight.w700,
                             letterSpacing: 0.5,
                             color: BrandColors.mutedInk,
@@ -994,7 +1038,7 @@ class _MetricChip extends StatelessWidget {
                   supportingText!,
                   style: const TextStyle(
                     fontFamily: 'Manrope',
-                    fontSize: 11.5,
+                    fontSize: 12,
                     color: BrandColors.mutedInk,
                   ),
                   maxLines: 1,
@@ -1152,7 +1196,7 @@ class _MonthBarTooltip extends StatelessWidget {
               month!,
               style: const TextStyle(
                 fontFamily: 'Manrope',
-                fontSize: 10.5,
+                fontSize: 12,
                 fontWeight: FontWeight.w600,
                 color: BrandColors.mutedPaper,
               ),
@@ -1163,7 +1207,7 @@ class _MonthBarTooltip extends StatelessWidget {
             value,
             style: TextStyle(
               fontFamily: 'IBM Plex Mono',
-              fontSize: 11.5,
+              fontSize: 12,
               fontWeight: FontWeight.w700,
               color: color,
             ),
@@ -1274,10 +1318,11 @@ class _CardsCarouselState extends ConsumerState<_CardsCarousel> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final cardWidth = constraints.maxWidth * 0.6 > _maxCardWidth
-            ? _maxCardWidth
-            : constraints.maxWidth * 0.6;
         final usesLargeText = MediaQuery.textScalerOf(context).scale(14) >= 21;
+        final preferredWidth = usesLargeText
+            ? constraints.maxWidth
+            : constraints.maxWidth * 0.6;
+        final cardWidth = math.min(preferredWidth, _maxCardWidth);
         final cardHeight = math
             .max(cardWidth / _cardAspectRatio, usesLargeText ? 340.0 : 180.0)
             .toDouble();
@@ -1587,6 +1632,10 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
   String _lastQuery = '';
   Map<String, dynamic>? _retryResolution;
   int _searchGeneration = 0;
+  final TextEditingController _urlController = TextEditingController();
+  bool _showUrlFallback = false;
+  bool _urlResolving = false;
+  String? _urlMessage;
 
   @override
   void initState() {
@@ -1597,7 +1646,47 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
   @override
   void dispose() {
     _searchGeneration++;
+    _urlController.dispose();
     super.dispose();
+  }
+
+  Future<void> _resolveUrl() async {
+    if (_urlResolving || _resolving) return;
+    final rawUrl = _urlController.text.trim();
+    final uri = Uri.tryParse(rawUrl);
+    if (uri == null ||
+        uri.scheme.toLowerCase() != 'https' ||
+        uri.host.isEmpty ||
+        uri.userInfo.isNotEmpty) {
+      setState(() => _urlMessage = 'Enter a valid HTTPS card page URL.');
+      return;
+    }
+    setState(() {
+      _urlResolving = true;
+      _urlMessage = null;
+    });
+    try {
+      final result = await ref.read(cardUrlResolverProvider)(
+        widget.email,
+        rawUrl,
+      );
+      if (!mounted) return;
+      if (result.isResolved) {
+        await _resolve({'id': result.resolvedCardId});
+      } else {
+        setState(() => _urlMessage = result.userMessage);
+      }
+    } on CardUrlResolutionException catch (error) {
+      if (mounted) setState(() => _urlMessage = error.userMessage);
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => _urlMessage = 'Could not verify this card page. Try again.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _urlResolving = false);
+    }
   }
 
   Future<void> _search(String query) async {
@@ -1804,6 +1893,63 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
                       ),
               ),
               const SizedBox(height: BrandSpacing.sm),
+              TextButton.icon(
+                onPressed: _urlResolving
+                    ? null
+                    : () => setState(() {
+                        _showUrlFallback = !_showUrlFallback;
+                        _urlMessage = null;
+                      }),
+                icon: Icon(
+                  _showUrlFallback
+                      ? Icons.expand_less_rounded
+                      : Icons.link_rounded,
+                  size: 18,
+                ),
+                label: const Text("Can't find it? Paste official card page"),
+              ),
+              if (_showUrlFallback) ...[
+                TextField(
+                  key: const Key('official-card-url-field'),
+                  controller: _urlController,
+                  enabled: !_urlResolving,
+                  keyboardType: TextInputType.url,
+                  autocorrect: false,
+                  decoration: const InputDecoration(
+                    hintText: 'https://bank.example/cards/card-name',
+                    prefixIcon: Icon(Icons.language_rounded, size: 20),
+                  ),
+                  onSubmitted: (_) => _resolveUrl(),
+                ),
+                const SizedBox(height: BrandSpacing.xs),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: FilledButton(
+                    onPressed: _urlResolving ? null : _resolveUrl,
+                    child: _urlResolving
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Verify card page'),
+                  ),
+                ),
+                if (_urlMessage != null) ...[
+                  const SizedBox(height: BrandSpacing.xs),
+                  Text(
+                    _urlMessage!,
+                    style: TextStyle(
+                      fontFamily: 'Manrope',
+                      fontSize: 12.5,
+                      color: _urlMessage!.contains('reviewing')
+                          ? BrandColors.mutedInk
+                          : BrandColors.error,
+                    ),
+                  ),
+                ],
+              ],
+              const SizedBox(height: BrandSpacing.sm),
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton(
@@ -1882,7 +2028,7 @@ class _CreditCardTile extends StatelessWidget {
                 (card.network ?? '').toUpperCase(),
                 style: TextStyle(
                   fontFamily: 'Manrope',
-                  fontSize: 11,
+                  fontSize: 12,
                   color: issuerColor,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0.8,
