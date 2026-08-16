@@ -26,6 +26,53 @@ export type CardDiscoveryReasonCode =
   | "identity_conflict"
   | "review_required";
 
+type DiscoveryJobPublicSource = {
+  id: string;
+  status: string;
+  resolved_card_id?: string | null;
+  failure_category?: string | null;
+  next_retry_at?: string | null;
+};
+
+export function publicReasonCode(error: unknown): CardDiscoveryReasonCode {
+  const message = error instanceof Error ? error.message : String(error);
+  const known: CardDiscoveryReasonCode[] = [
+    "invalid_url",
+    "unapproved_domain",
+    "issuer_mismatch",
+    "not_product_page",
+    "unsafe_redirect",
+    "fetch_timeout",
+    "unsupported_content",
+    "identity_conflict",
+    "review_required",
+  ];
+  if (known.includes(message as CardDiscoveryReasonCode)) {
+    return message as CardDiscoveryReasonCode;
+  }
+  if (
+    (error instanceof DOMException && error.name === "TimeoutError") ||
+    /timeout|official_fetch_(?:408|429|5\d\d)/i.test(message)
+  ) {
+    return "fetch_timeout";
+  }
+  if (/redirect/i.test(message)) return "unsafe_redirect";
+  if (/content/i.test(message)) return "unsupported_content";
+  return "review_required";
+}
+
+export function publicDiscoveryResult(job: DiscoveryJobPublicSource) {
+  return {
+    job_id: job.id,
+    status: job.status,
+    resolved_card_id: job.resolved_card_id ?? null,
+    reason_code: job.status === "resolved"
+      ? null
+      : publicReasonCode(job.failure_category ?? "review_required"),
+    retry_after: job.next_retry_at ?? null,
+  };
+}
+
 const issuerDomains: Record<string, string[]> = {
   "Axis Bank": ["axis.bank.in", "axisbank.com"],
   "HDFC Bank": ["hdfcbank.com", "hdfc.bank.in"],

@@ -7,9 +7,38 @@ import {
   canonicalCardIdentity,
   evaluateAutomaticCatalogGate,
   isAdminEmail,
+  publicDiscoveryResult,
+  publicReasonCode,
   rankOfficialUrls,
   sanitizeEvidence,
 } from '../../supabase/functions/_shared/card_discovery.ts';
+
+test('returns only safe discovery status fields to the client', () => {
+  assert.deepEqual(
+    publicDiscoveryResult({
+      id: 'job-1',
+      status: 'resolved',
+      resolved_card_id: 'card-1',
+      failure_category: 'raw upstream detail',
+      next_retry_at: null,
+      evidence: {pdf_header_excerpt: 'private'},
+    }),
+    {
+      job_id: 'job-1',
+      status: 'resolved',
+      resolved_card_id: 'card-1',
+      reason_code: null,
+      retry_after: null,
+    },
+  );
+});
+
+test('maps internal URL failures to stable public reason codes', () => {
+  assert.equal(publicReasonCode(new Error('unapproved_domain')), 'unapproved_domain');
+  assert.equal(publicReasonCode(new DOMException('timed out', 'TimeoutError')), 'fetch_timeout');
+  assert.equal(publicReasonCode(new Error('official_fetch_503')), 'fetch_timeout');
+  assert.equal(publicReasonCode(new Error('database connection detail')), 'review_required');
+});
 
 test('canonicalizes equivalent official product URLs for deduplication', () => {
   assert.equal(
