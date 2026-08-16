@@ -823,6 +823,7 @@ class _DashboardMetrics extends StatelessWidget {
         label: "This month's spend",
         value: _shortCurrency.format(data.monthlySpend),
         trend: data.monthlySpendTrend,
+        trendMonths: data.trendMonths,
       ),
       _MetricChip(
         key: const Key('supporting-rewards-metric'),
@@ -831,6 +832,7 @@ class _DashboardMetrics extends StatelessWidget {
         label: 'Rewards earned',
         value: _shortCurrency.format(data.rewardsEarned),
         trend: data.monthlyRewardsTrend,
+        trendMonths: data.trendMonths,
       ),
       _MetricChip(
         key: const Key('supporting-limit-metric'),
@@ -842,8 +844,7 @@ class _DashboardMetrics extends StatelessWidget {
         // (it's a live snapshot, not a transaction-derived figure) — show
         // the chip without a trend rather than fabricate one.
         trend: null,
-        supportingText:
-            'Across $cardCount card${cardCount == 1 ? '' : 's'}',
+        supportingText: 'Across $cardCount card${cardCount == 1 ? '' : 's'}',
       ),
     ];
 
@@ -883,6 +884,7 @@ class _MetricChip extends StatelessWidget {
   final String label;
   final String value;
   final List<double>? trend;
+  final List<DateTime>? trendMonths;
   final String? supportingText;
 
   const _MetricChip({
@@ -892,6 +894,7 @@ class _MetricChip extends StatelessWidget {
     required this.label,
     required this.value,
     required this.trend,
+    this.trendMonths,
     this.supportingText,
   });
 
@@ -918,71 +921,86 @@ class _MetricChip extends StatelessWidget {
     return Semantics(
       label: '$label: $value',
       child: ExcludeSemantics(
-        child: AspectRatio(
-          aspectRatio: 1,
-          child: Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(BrandSpacing.md),
-            decoration: BoxDecoration(
-              color: BrandColors.paperDeep,
-              borderRadius: BorderRadius.circular(BrandRadius.overlay),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 34,
-                  height: 34,
-                  decoration: BoxDecoration(
-                    color: dotColor,
-                    shape: BoxShape.circle,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(BrandSpacing.md),
+          decoration: BoxDecoration(
+            color: BrandColors.paperDeep,
+            borderRadius: BorderRadius.circular(BrandRadius.overlay),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: dotColor,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(icon, size: 16, color: dotOnColor),
                   ),
-                  child: Icon(icon, size: 16, color: dotOnColor),
-                ),
+                  const SizedBox(width: BrandSpacing.compact),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          label.toUpperCase(),
+                          style: const TextStyle(
+                            fontFamily: 'Manrope',
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.5,
+                            color: BrandColors.mutedInk,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        Text(
+                          value,
+                          style: const TextStyle(
+                            fontFamily: 'IBM Plex Mono',
+                            fontSize: 17,
+                            fontWeight: FontWeight.w700,
+                            color: BrandColors.ink,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              if (trend != null && trend!.any((v) => v > 0)) ...[
                 const SizedBox(height: BrandSpacing.compact),
+                SizedBox(
+                  height: 32,
+                  child: _MonthBars(
+                    values: trend!,
+                    months: trendMonths,
+                    color: barColor,
+                  ),
+                ),
+              ] else if (supportingText != null) ...[
+                const SizedBox(height: BrandSpacing.xs),
                 Text(
-                  label.toUpperCase(),
+                  supportingText!,
                   style: const TextStyle(
                     fontFamily: 'Manrope',
-                    fontSize: 10.5,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.5,
+                    fontSize: 11.5,
                     color: BrandColors.mutedInk,
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  value,
-                  style: const TextStyle(
-                    fontFamily: 'IBM Plex Mono',
-                    fontSize: 19,
-                    fontWeight: FontWeight.w700,
-                    color: BrandColors.ink,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const Spacer(),
-                if (trend != null && trend!.any((v) => v > 0))
-                  SizedBox(
-                    height: 36,
-                    child: _MonthBars(values: trend!, color: barColor),
-                  )
-                else if (supportingText != null)
-                  Text(
-                    supportingText!,
-                    style: const TextStyle(
-                      fontFamily: 'Manrope',
-                      fontSize: 11.5,
-                      color: BrandColors.mutedInk,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
               ],
-            ),
+            ],
           ),
         ),
       ),
@@ -990,41 +1008,167 @@ class _MetricChip extends StatelessWidget {
   }
 }
 
+final _monthLabelFmt = DateFormat('MMM yyyy');
+
 /// Discrete monthly bars (oldest → newest), current month at full opacity
-/// so it reads unambiguously as "you are here."
-class _MonthBars extends StatelessWidget {
+/// so it reads unambiguously as "you are here." Hovering (or tapping, for
+/// touch) a bar reveals its real month and value — no data is invented,
+/// this only surfaces what's already in [values]/[months].
+class _MonthBars extends StatefulWidget {
   final List<double> values;
+  final List<DateTime>? months;
   final Color color;
-  const _MonthBars({required this.values, required this.color});
+  const _MonthBars({required this.values, this.months, required this.color});
+
+  @override
+  State<_MonthBars> createState() => _MonthBarsState();
+}
+
+class _MonthBarsState extends State<_MonthBars> {
+  int? _hovered;
+
+  void _setHovered(int? index) {
+    if (_hovered == index) return;
+    setState(() => _hovered = index);
+  }
 
   @override
   Widget build(BuildContext context) {
+    final values = widget.values;
+    final months = widget.months;
+    final color = widget.color;
     final maxValue = values.fold<double>(0, (m, v) => v > m ? v : m);
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
+    final hovered = _hovered;
+
+    return Stack(
+      clipBehavior: Clip.none,
       children: [
-        for (var i = 0; i < values.length; i++) ...[
-          if (i > 0) const SizedBox(width: 3),
-          Expanded(
-            child: FractionallySizedBox(
-              heightFactor: maxValue <= 0
-                  ? 0.05
-                  : (0.12 + 0.88 * (values[i] / maxValue)).clamp(0.05, 1.0),
-              alignment: Alignment.bottomCenter,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: color.withValues(
-                    alpha: i == values.length - 1 ? 1.0 : 0.28,
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            for (var i = 0; i < values.length; i++) ...[
+              if (i > 0) const SizedBox(width: 3),
+              Expanded(
+                child: MouseRegion(
+                  onEnter: (_) => _setHovered(i),
+                  onExit: (_) => _setHovered(null),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(2),
+                      ),
+                      onTap: () => _setHovered(hovered == i ? null : i),
+                      child: AnimatedScale(
+                        scale: hovered == i ? 1.06 : 1.0,
+                        duration: BrandMotion.standard,
+                        curve: Curves.easeOut,
+                        alignment: Alignment.bottomCenter,
+                        child: FractionallySizedBox(
+                          heightFactor: maxValue <= 0
+                              ? 0.05
+                              : (0.12 + 0.88 * (values[i] / maxValue)).clamp(
+                                  0.05,
+                                  1.0,
+                                ),
+                          alignment: Alignment.bottomCenter,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: color.withValues(
+                                alpha: i == values.length - 1
+                                    ? 1.0
+                                    : (hovered == i ? 0.55 : 0.28),
+                              ),
+                              borderRadius: const BorderRadius.vertical(
+                                top: Radius.circular(2),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
-                  borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(2),
-                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+        if (hovered != null)
+          Positioned(
+            bottom: 38,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: IgnorePointer(
+                child: _MonthBarTooltip(
+                  month: months != null && hovered < months.length
+                      ? _monthLabelFmt.format(months[hovered])
+                      : null,
+                  value: _shortCurrency.format(values[hovered]),
+                  color: color,
                 ),
               ),
             ),
           ),
-        ],
       ],
+    );
+  }
+}
+
+class _MonthBarTooltip extends StatelessWidget {
+  final String? month;
+  final String value;
+  final Color color;
+  const _MonthBarTooltip({
+    required this.month,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: BrandSpacing.sm,
+        vertical: BrandSpacing.xs,
+      ),
+      decoration: BoxDecoration(
+        color: BrandColors.ink,
+        borderRadius: BorderRadius.circular(BrandRadius.control),
+        boxShadow: [
+          BoxShadow(
+            color: BrandColors.ink.withValues(alpha: 0.25),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (month != null) ...[
+            Text(
+              month!,
+              style: const TextStyle(
+                fontFamily: 'Manrope',
+                fontSize: 10.5,
+                fontWeight: FontWeight.w600,
+                color: BrandColors.mutedPaper,
+              ),
+            ),
+            const SizedBox(width: 6),
+          ],
+          Text(
+            value,
+            style: TextStyle(
+              fontFamily: 'IBM Plex Mono',
+              fontSize: 11.5,
+              fontWeight: FontWeight.w700,
+              color: color,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1244,6 +1388,31 @@ class _PendingBankTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bankDetected = email['bank_detected'] as String? ?? 'Unknown bank';
+    final metadata = email['metadata'];
+    final hints = metadata is Map && metadata['identityHints'] is Map
+        ? Map<String, dynamic>.from(metadata['identityHints'] as Map)
+        : const <String, dynamic>{};
+    final last4 = hints['last4'] as String?;
+    final productName = hints['productName'] as String?;
+    final dueDate = DateTime.tryParse(hints['dueDate'] as String? ?? '');
+    final statementDate = DateTime.tryParse(
+      hints['statementDate'] as String? ?? '',
+    );
+    final receivedDate = DateTime.tryParse(
+      email['received_date'] as String? ?? '',
+    );
+    final totalAmount = hints['totalAmount'];
+    final attachmentFilename =
+        hints['attachmentFilename'] as String? ??
+        (metadata is Map ? metadata['attachmentFilename'] as String? : null);
+    final sourceDate = statementDate ?? receivedDate;
+    final hasEvidence =
+        hints.isNotEmpty ||
+        sourceDate != null ||
+        (attachmentFilename?.isNotEmpty ?? false);
+    final amountDue = totalAmount is num && dueDate != null
+        ? '${NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 2).format(totalAmount)} due ${DateFormat('d MMM').format(dueDate)}'
+        : null;
     return Container(
       decoration: BoxDecoration(
         color: BrandColors.paperDeep,
@@ -1262,7 +1431,7 @@ class _PendingBankTile extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  bankDetected,
+                  last4 == null ? bankDetected : '$bankDetected •••• $last4',
                   style: TextStyle(
                     fontFamily: 'Manrope',
                     fontSize: 12,
@@ -1287,21 +1456,76 @@ class _PendingBankTile extends StatelessWidget {
               ),
             ],
           ),
-          const Spacer(),
-          Icon(
-            Icons.help_outline_rounded,
-            size: 28,
-            color: BrandColors.mutedInk.withValues(alpha: 0.5),
-          ),
-          const SizedBox(height: BrandSpacing.sm),
-          Text(
-            'Which card is this?',
-            style: TextStyle(
-              fontFamily: 'Manrope',
-              fontSize: 13,
-              color: BrandColors.mutedInk,
+          if (hasEvidence) ...[
+            if (productName != null)
+              Text(
+                'Possible card: $productName',
+                style: const TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: BrandColors.ink,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            if (amountDue != null) ...[
+              const SizedBox(height: BrandSpacing.xs),
+              Text(
+                amountDue,
+                style: const TextStyle(
+                  fontFamily: 'IBM Plex Mono',
+                  fontSize: 12,
+                  color: BrandColors.mutedInk,
+                ),
+              ),
+            ],
+            if (amountDue == null && sourceDate != null)
+              Text(
+                'Statement email · ${DateFormat('d MMM').format(sourceDate)}',
+                style: const TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 12,
+                  color: BrandColors.mutedInk,
+                ),
+              ),
+            if (attachmentFilename != null &&
+                attachmentFilename.isNotEmpty) ...[
+              const SizedBox(height: BrandSpacing.xs),
+              Text(
+                attachmentFilename,
+                style: const TextStyle(
+                  fontFamily: 'IBM Plex Mono',
+                  fontSize: 10.5,
+                  color: BrandColors.mutedInk,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+            const Spacer(),
+            TextButton.icon(
+              onPressed: () => _showBankResolveDialog(context, email),
+              icon: const Icon(Icons.check_circle_outline_rounded, size: 18),
+              label: const Text('Confirm card'),
             ),
-          ),
+          ] else ...[
+            const Spacer(),
+            Icon(
+              Icons.help_outline_rounded,
+              size: 28,
+              color: BrandColors.mutedInk.withValues(alpha: 0.5),
+            ),
+            const SizedBox(height: BrandSpacing.sm),
+            Text(
+              'Which card is this?',
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                fontSize: 13,
+                color: BrandColors.mutedInk,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -1405,6 +1629,12 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final metadata = widget.email['metadata'];
+    final hints = metadata is Map && metadata['identityHints'] is Map
+        ? Map<String, dynamic>.from(metadata['identityHints'] as Map)
+        : const <String, dynamic>{};
+    final productName = hints['productName'] as String?;
+    final last4 = hints['last4'] as String?;
     return Dialog(
       backgroundColor: BrandColors.paper,
       shape: RoundedRectangleBorder(
@@ -1429,7 +1659,7 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
               ),
               const SizedBox(height: 2),
               Text(
-                widget.bankDetected,
+                '${widget.bankDetected}${last4 == null ? '' : ' · •••• $last4'}${productName == null ? '' : ' · $productName'}',
                 style: TextStyle(
                   fontFamily: 'Manrope',
                   fontSize: 12.5,

@@ -22,6 +22,11 @@ class DashboardData {
   /// Oldest-to-newest total rewards earned for the same window.
   final List<double> monthlyRewardsTrend;
 
+  /// The first day of each month in [monthlySpendTrend] /
+  /// [monthlyRewardsTrend], oldest → newest, same length as both — lets the
+  /// UI label a bar with its real calendar month instead of assuming one.
+  final List<DateTime> trendMonths;
+
   const DashboardData({
     required this.cards,
     required this.recentTransactions,
@@ -31,6 +36,7 @@ class DashboardData {
     required this.rewardsEarned,
     required this.monthlySpendTrend,
     required this.monthlyRewardsTrend,
+    required this.trendMonths,
   });
 }
 
@@ -75,6 +81,11 @@ final dashboardProvider = FutureProvider<DashboardData>((ref) async {
     rewardsByMonth[monthIndex] += t.rewardEarned ?? 0;
   }
 
+  final trendMonths = List<DateTime>.generate(
+    trendMonthCount,
+    (i) => DateTime(trendStart.year, trendStart.month + i, 1),
+  );
+
   return DashboardData(
     cards: cards,
     recentTransactions: recent,
@@ -84,5 +95,6 @@ final dashboardProvider = FutureProvider<DashboardData>((ref) async {
     rewardsEarned: rewardsByMonth.last,
     monthlySpendTrend: spendByMonth,
     monthlyRewardsTrend: rewardsByMonth,
+    trendMonths: trendMonths,
   );
 });

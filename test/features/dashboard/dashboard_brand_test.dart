@@ -43,6 +43,14 @@ final _fixture = DashboardData(
   rewardsEarned: 75,
   monthlySpendTrend: const [800, 950, 1100, 1000, 1300, 1250],
   monthlyRewardsTrend: const [40, 55, 60, 50, 70, 75],
+  trendMonths: [
+    DateTime(2026, 3),
+    DateTime(2026, 4),
+    DateTime(2026, 5),
+    DateTime(2026, 6),
+    DateTime(2026, 7),
+    DateTime(2026, 8),
+  ],
 );
 
 final _cardlessFixture = DashboardData(
@@ -54,6 +62,14 @@ final _cardlessFixture = DashboardData(
   rewardsEarned: 0,
   monthlySpendTrend: const [0, 0, 0, 0, 0, 0],
   monthlyRewardsTrend: const [0, 0, 0, 0, 0, 0],
+  trendMonths: [
+    DateTime(2026, 3),
+    DateTime(2026, 4),
+    DateTime(2026, 5),
+    DateTime(2026, 6),
+    DateTime(2026, 7),
+    DateTime(2026, 8),
+  ],
 );
 
 class _FailingGmailSyncNotifier extends GmailSyncNotifier {
@@ -297,6 +313,88 @@ void main() {
       ),
     );
     await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('pending card shows statement identity evidence', (tester) async {
+    final selectedAppTab = ValueNotifier(AppTab.dashboard);
+    addTearDown(selectedAppTab.dispose);
+    await _pumpDashboard(
+      tester,
+      selectedAppTab: selectedAppTab,
+      pendingAssignments: const [
+        {
+          'email_id': 'email-evidence',
+          'bank_detected': 'HDFC Bank',
+          'received_date': '2026-08-13T10:30:00Z',
+          'metadata': {
+            'needsCardAssignment': true,
+            'identityHints': {
+              'last4': '4821',
+              'productName': 'Regalia Gold',
+              'statementDate': '2026-08-12',
+              'dueDate': '2026-09-02',
+              'totalAmount': 18420.50,
+            },
+          },
+        },
+      ],
+      catalogSearch: (_, _) async => const [],
+    );
+
+    await tester.scrollUntilVisible(
+      find.text('Your Cards'),
+      300,
+      scrollable: find
+          .descendant(
+            of: find.byType(CustomScrollView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    await tester.drag(find.byType(PageView), const Offset(-500, 0));
+    await tester.pumpAndSettle();
+
+    expect(find.text('HDFC Bank •••• 4821'), findsOneWidget);
+    expect(find.text('Possible card: Regalia Gold'), findsOneWidget);
+    expect(find.textContaining('₹18,420.50 due 2 Sep'), findsOneWidget);
+    expect(find.text('Confirm card'), findsOneWidget);
+  });
+
+  testWidgets('older pending card shows available email evidence', (
+    tester,
+  ) async {
+    final selectedAppTab = ValueNotifier(AppTab.dashboard);
+    addTearDown(selectedAppTab.dispose);
+    await _pumpDashboard(
+      tester,
+      selectedAppTab: selectedAppTab,
+      pendingAssignments: const [
+        {
+          'email_id': 'email-legacy',
+          'bank_detected': 'ICICI Bank',
+          'received_date': '2026-08-13T10:30:00Z',
+          'metadata': {'attachmentFilename': 'ICICI-Aug-Statement.pdf'},
+        },
+      ],
+      catalogSearch: (_, _) async => const [],
+    );
+
+    await tester.scrollUntilVisible(
+      find.text('Your Cards'),
+      300,
+      scrollable: find
+          .descendant(
+            of: find.byType(CustomScrollView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    await tester.drag(find.byType(PageView), const Offset(-500, 0));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Statement email · 13 Aug'), findsOneWidget);
+    expect(find.text('ICICI-Aug-Statement.pdf'), findsOneWidget);
+    expect(find.text('Confirm card'), findsOneWidget);
   });
 
   testWidgets(
