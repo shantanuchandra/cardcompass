@@ -45,6 +45,7 @@ test('migration adds leaseable enrichment queue metadata without losing compatib
   assert.match(sql, /status IN \('queued', 'processing', 'completed', 'review_required', 'failed', 'staged', 'quarantined'\)/i);
   assert.match(sql, /ALTER COLUMN content_hash DROP NOT NULL/i);
   assert.match(sql, /UPDATE public\.card_catalog_enrichment_jobs[\s\S]*SET job_key[\s\S]*legacy:/i);
+  assert.doesNotMatch(sql, /ALTER COLUMN job_key SET NOT NULL/i);
   assert.match(sql, /ADD CONSTRAINT card_catalog_enrichment_jobs_job_key_key\s+UNIQUE \(job_key\)/i);
 });
 
@@ -55,7 +56,10 @@ test('claim RPC leases no more than five jobs from one issuer with service-only 
   assert.match(claim, /claim_card_catalog_enrichment_jobs\s*\(\s*_max_jobs integer\s*,\s*_lease_seconds integer\s*,\s*_run_mode text/i);
   assert.match(claim, /SECURITY INVOKER/i);
   assert.match(claim, /auth\.role\(\).*service_role/i);
-  assert.match(claim, /lease_expires_at\s*<=\s*now\(\)/i);
+  assert.match(claim, /lease_expires_at IS NULL\s+OR lease_expires_at\s*<=\s*now\(\)/i);
+  assert.match(claim, /_run_mode IS NULL\s+OR _run_mode NOT IN \('pilot', 'scheduled', 'manual'\)/i);
+  assert.match(claim, /pg_advisory_xact_lock\s*\(\s*hashtextextended\s*\(\s*'card_catalog_enrichment_claim'/i);
+  assert.match(claim, /pg_advisory_xact_lock[\s\S]*SELECT job\.issuer[\s\S]*INTO selected_issuer/i);
   assert.match(claim, /SELECT[\s\S]*issuer[\s\S]*INTO selected_issuer/i);
   assert.match(claim, /FOR UPDATE SKIP LOCKED/i);
   assert.match(claim, /LEAST\s*\(\s*GREATEST\s*\([^)]*\)\s*,\s*5\s*\)/i);
@@ -71,7 +75,10 @@ test('approval RPC applies only reviewed additions or edits and retains existing
   assert.match(approval, /SECURITY INVOKER/i);
   assert.match(approval, /auth\.role\(\).*service_role/i);
   assert.match(approval, /'approve', 'edit', 'reject', 'keep_existing'/i);
+  assert.match(approval, /jsonb_typeof\(decision\)\s*<>\s*'object'\s+OR decision_action IS NULL\s+OR decision_action NOT IN/i);
   assert.match(approval, /INSERT INTO public\.benefits[\s\S]*ON CONFLICT \(dedupe_key\) DO UPDATE/i);
+  assert.match(approval, /SELECT category\.category_code[\s\S]*FROM public\.benefit_categories AS category[\s\S]*lower\(category\.category_code\)/i);
+  assert.match(approval, /category_codes\s*\)[\s\S]*ARRAY\[canonical_category\]/i);
   assert.match(approval, /INSERT INTO public\.card_benefit_mapping[\s\S]*ON CONFLICT \(card_id, benefit_id\) DO UPDATE/i);
   assert.match(approval, /possible_removal|removal/i);
   assert.match(approval, /benefit_decisions\s*=\s*_decisions/i);

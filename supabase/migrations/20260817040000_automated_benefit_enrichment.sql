@@ -83,7 +83,6 @@ FROM ranked
 WHERE ranked.id = job.id;
 
 ALTER TABLE public.card_catalog_enrichment_jobs
-  ALTER COLUMN job_key SET NOT NULL,
   ADD CONSTRAINT card_catalog_enrichment_jobs_job_key_key UNIQUE (job_key);
 
 CREATE OR REPLACE FUNCTION public.claim_card_catalog_enrichment_jobs(
@@ -103,7 +102,7 @@ BEGIN
   IF coalesce(auth.role(), '') <> 'service_role' THEN
     RAISE EXCEPTION 'service_role_required';
   END IF;
-  IF _max_jobs IS NULL OR _lease_seconds IS NULL
+  IF _max_jobs IS NULL OR _lease_seconds IS NULL OR _run_mode IS NULL
      OR _run_mode NOT IN ('pilot', 'scheduled', 'manual') THEN
     RAISE EXCEPTION 'invalid_enrichment_claim';
   END IF;
@@ -111,12 +110,18 @@ BEGIN
   maximum_jobs := LEAST(GREATEST(_max_jobs, 1), 5);
   lease_seconds := LEAST(GREATEST(_lease_seconds, 60), 3600);
 
+  -- A transaction-scoped global lock serializes issuer selection and keeps the
+  -- post-lock eligibility query authoritative for concurrent callers.
+  PERFORM pg_advisory_xact_lock(
+    hashtextextended('card_catalog_enrichment_claim', 0)
+  );
+
   UPDATE public.card_catalog_enrichment_jobs
   SET status = 'queued',
       lease_expires_at = NULL,
       updated_at = now()
   WHERE status = 'processing'
-    AND lease_expires_at <= now();
+    AND (lease_expires_at IS NULL OR lease_expires_at <= now());
 
   SELECT job.issuer
   INTO selected_issuer
@@ -183,6 +188,8 @@ DECLARE
   proposal jsonb;
   decision_action text;
   proposed_dedupe_key text;
+  proposed_category text;
+  canonical_category text;
   resolved_benefit_id uuid;
   approved_count integer := 0;
   retained_count integer := 0;
@@ -211,7 +218,9 @@ BEGIN
   FOR decision IN SELECT value FROM jsonb_array_elements(_decisions) AS item(value)
   LOOP
     decision_action := lower(trim(decision->>'action'));
-    IF decision_action NOT IN ('approve', 'edit', 'reject', 'keep_existing') THEN
+    IF jsonb_typeof(decision) <> 'object'
+       OR decision_action IS NULL
+       OR decision_action NOT IN ('approve', 'edit', 'reject', 'keep_existing') THEN
       RAISE EXCEPTION 'invalid_benefit_decision';
     END IF;
 
@@ -238,11 +247,28 @@ BEGIN
       proposal->>'dedupe_key', proposal->>'dedupeKey',
       decision->>'dedupe_key', decision->>'dedupeKey'
     );
+    proposed_category := trim(coalesce(
+      proposal->>'benefit_category', proposal->>'category', ''
+    ));
 
     IF proposed_dedupe_key IS NULL OR length(trim(proposed_dedupe_key)) < 3
        OR length(trim(coalesce(proposal->>'title', ''))) < 2
-       OR length(trim(coalesce(proposal->>'benefit_category', proposal->>'category', ''))) < 2 THEN
+       OR length(proposed_category) < 2 THEN
       RAISE EXCEPTION 'approved benefit is missing identity fields';
+    END IF;
+
+    SELECT category.category_code
+    INTO canonical_category
+    FROM public.benefit_categories AS category
+    WHERE lower(category.category_code) = lower(proposed_category)
+       OR lower(category.name) = lower(proposed_category)
+    ORDER BY
+      CASE WHEN lower(category.category_code) = lower(proposed_category) THEN 0 ELSE 1 END,
+      category.category_code
+    LIMIT 1;
+
+    IF canonical_category IS NULL THEN
+      RAISE EXCEPTION 'approved benefit has an unknown category';
     END IF;
 
     INSERT INTO public.benefits (
@@ -252,7 +278,7 @@ BEGIN
     ) VALUES (
       trim(proposal->>'title'),
       nullif(trim(proposal->>'description'), ''),
-      trim(coalesce(proposal->>'benefit_category', proposal->>'category')),
+      canonical_category,
       nullif(trim(coalesce(proposal->>'benefit_type', proposal->>'valueType')), ''),
       coalesce(proposal->'value_config', proposal->'valueConfig', '{}'::jsonb),
       coalesce(proposal->'partners', '[]'::jsonb),
@@ -286,7 +312,7 @@ BEGIN
       resolved_benefit_id,
       coalesce((decision->>'display_priority')::integer, 1),
       coalesce((decision->>'is_primary')::boolean, true),
-      ARRAY[trim(coalesce(proposal->>'benefit_category', proposal->>'category'))]
+      ARRAY[canonical_category]
     ) ON CONFLICT (card_id, benefit_id) DO UPDATE
     SET display_priority = EXCLUDED.display_priority,
         is_primary = EXCLUDED.is_primary,
