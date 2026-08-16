@@ -19,6 +19,13 @@ final userCardsProvider = FutureProvider<List<UserCard>>((ref) async {
 class CardsScreen extends ConsumerWidget {
   const CardsScreen({super.key});
 
+  Future<void> _openAddCard(BuildContext context, WidgetRef ref) async {
+    final added = await context.push<bool>('/app/cards/add');
+    if (added == true && context.mounted) {
+      ref.invalidate(userCardsProvider);
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final cardsAsync = ref.watch(userCardsProvider);
@@ -37,7 +44,7 @@ class CardsScreen extends ConsumerWidget {
         actions: [
           IconButton(
             icon: const Icon(Icons.add_rounded),
-            onPressed: () => context.go('/app/cards/add'),
+            onPressed: () => _openAddCard(context, ref),
             tooltip: 'Add card',
           ),
         ],
@@ -66,7 +73,7 @@ class CardsScreen extends ConsumerWidget {
           ),
         ),
         data: (cards) => cards.isEmpty
-            ? _EmptyCards()
+            ? _EmptyCards(onAddCard: () => _openAddCard(context, ref))
             : BrandContentFrame(
                 mode: BrandContentMode.fullWidthData,
                 child: RefreshIndicator(
@@ -222,9 +229,13 @@ class CardIdentityMark extends StatelessWidget {
   }
 }
 
-class _EmptyCards extends ConsumerWidget {
+class _EmptyCards extends StatelessWidget {
+  const _EmptyCards({required this.onAddCard});
+
+  final VoidCallback onAddCard;
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(BrandSpacing.xl),
@@ -259,7 +270,7 @@ class _EmptyCards extends ConsumerWidget {
             ),
             const SizedBox(height: BrandSpacing.xl),
             ElevatedButton.icon(
-              onPressed: () => context.go('/app/cards/add'),
+              onPressed: onAddCard,
               icon: const Icon(Icons.add, size: 18),
               label: const Text('Add Card'),
             ),

@@ -91,11 +91,16 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/app',
         pageBuilder: (_, s) => const NoTransitionPage(child: _AppShell()),
-      ),
-      // add-card is a separate full-page push on top of the shell
-      GoRoute(
-        path: '/app/cards/add',
-        pageBuilder: (_, s) => const NoTransitionPage(child: AddCardScreen()),
+        routes: [
+          // A nested page preserves the app shell beneath Add Card. Cards uses
+          // push semantics so both Back and a successful save can pop to the
+          // existing list without reconstructing navigation state.
+          GoRoute(
+            path: 'cards/add',
+            pageBuilder: (_, s) =>
+                const NoTransitionPage(child: AddCardScreen()),
+          ),
+        ],
       ),
     ],
   );

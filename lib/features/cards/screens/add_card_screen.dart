@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import '../../../core/theme/brand_tokens.dart';
 import '../../../core/theme/brand_components.dart';
 import '../../../core/providers/repository_providers.dart';
@@ -26,14 +25,19 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
   Map<String, dynamic>? _selected;
   bool _loading = false;
   bool _saving = false;
+  bool _saveSucceeded = false;
   String? _requestError;
   String? _lastFourError;
+  int _searchGeneration = 0;
+  int _saveGeneration = 0;
 
   final _lastFour = TextEditingController();
   final _holderName = TextEditingController();
 
   @override
   void dispose() {
+    _searchGeneration++;
+    _saveGeneration++;
     _search.dispose();
     _lastFour.dispose();
     _holderName.dispose();
@@ -41,21 +45,31 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
   }
 
   Future<void> _searchCards(String q) async {
-    if (q.trim().length < 2) {
+    final generation = ++_searchGeneration;
+    final query = q.trim();
+    if (query.length < 2) {
+      if (!mounted) return;
       setState(() {
         _results = [];
+        _loading = false;
+        _requestError = null;
       });
       return;
     }
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _requestError = null;
+    });
     try {
-      final r = await ref.read(cardCatalogSearchProvider)(q.trim());
+      final r = await ref.read(cardCatalogSearchProvider)(query);
+      if (!mounted || generation != _searchGeneration) return;
       setState(() {
         _results = r;
         _loading = false;
         _requestError = null;
       });
     } catch (_) {
+      if (!mounted || generation != _searchGeneration) return;
       setState(() {
         _loading = false;
         _requestError = 'Could not search the card catalogue. Try again.';
@@ -64,7 +78,7 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
   }
 
   Future<void> _save() async {
-    if (_selected == null) return;
+    if (_selected == null || _saving || _saveSucceeded) return;
     final lastFour = _lastFour.text.trim();
     if (lastFour.isNotEmpty && !RegExp(r'^\d{4}$').hasMatch(lastFour)) {
       setState(
@@ -74,8 +88,12 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
     }
     final user = ref.read(currentUserProvider);
     if (user == null) return;
+    final generation = ++_saveGeneration;
+    final catalogCardId = _selected!['id'] as String;
+    final holderName = _holderName.text.trim();
     setState(() {
       _saving = true;
+      _saveSucceeded = false;
       _lastFourError = null;
       _requestError = null;
     });
@@ -84,20 +102,30 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
           .read(cardsRepositoryProvider)
           .addUserCard(
             userId: user.id,
-            catalogCardId: _selected!['id'] as String,
-            lastFourDigits: _lastFour.text.trim().isEmpty
-                ? null
-                : _lastFour.text.trim(),
-            cardHolderName: _holderName.text.trim().isEmpty
-                ? null
-                : _holderName.text.trim(),
+            catalogCardId: catalogCardId,
+            lastFourDigits: lastFour.isEmpty ? null : lastFour,
+            cardHolderName: holderName.isEmpty ? null : holderName,
           );
-      if (mounted) context.pop();
     } catch (_) {
+      if (!mounted || generation != _saveGeneration) return;
       setState(() {
         _saving = false;
         _requestError = 'Could not add this card. Try again.';
       });
+      return;
+    }
+
+    if (!mounted || generation != _saveGeneration) return;
+    setState(() {
+      _saving = false;
+      _saveSucceeded = true;
+      _requestError = null;
+    });
+    try {
+      await Navigator.of(context).maybePop(true);
+    } catch (_) {
+      // The insert already succeeded. Navigation recovery must never rewrite a
+      // successful mutation as a repository error.
     }
   }
 
@@ -116,7 +144,7 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
         ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_rounded),
-          onPressed: () => context.pop(),
+          onPressed: () => Navigator.of(context).maybePop(),
         ),
       ),
       body: BrandContentFrame(
@@ -171,6 +199,8 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
                     card: card,
                     onTap: () => setState(() {
                       _selected = card;
+                      _requestError = null;
+                      _saveSucceeded = false;
                     }),
                   ),
                 ),
@@ -204,7 +234,11 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
                 ),
                 child: _SelectedCatalogCard(
                   card: _selected!,
-                  onChange: () => setState(() => _selected = null),
+                  onChange: () => setState(() {
+                    _selected = null;
+                    _requestError = null;
+                    _saveSucceeded = false;
+                  }),
                 ),
               ),
               const SizedBox(height: BrandSpacing.lg),
@@ -281,10 +315,25 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
                     ),
                   ),
                 ),
+              if (_saveSucceeded)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: BrandSpacing.sm),
+                  child: Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      'Card added. Return to your cards to see it.',
+                      style: TextStyle(
+                        fontFamily: 'Manrope',
+                        fontSize: 14,
+                        color: BrandColors.successInk,
+                      ),
+                    ),
+                  ),
+                ),
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: _saving ? null : _save,
+                  onPressed: _saving || _saveSucceeded ? null : _save,
                   child: _saving
                       ? const SizedBox(
                           width: 20,
