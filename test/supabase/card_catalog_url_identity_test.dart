@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   test('migration protects canonical URL identity and enrichment jobs', () {
     final migration = File(
-      'supabase/migrations/20260816175215_card_catalog_url_identity.sql',
+      'supabase/migrations/20260817030000_card_catalog_url_identity.sql',
     );
     expect(migration.existsSync(), isTrue);
 
@@ -14,6 +14,8 @@ void main() {
     expect(sql, contains('canonical_final_url text'));
     expect(sql, contains('submitted_url_hash text'));
     expect(sql, contains('final_url_hash text'));
+    expect(sql, contains('card_catalog_url_keys'));
+    expect(sql, contains('url_hash text primary key'));
     expect(sql, contains('create unique index'));
     expect(sql, contains('resolve_card_catalog_identity'));
     expect(sql, contains('pg_advisory_xact_lock'));
@@ -26,7 +28,7 @@ void main() {
 
   test('catalog resolver cannot be executed by application roles', () {
     final sql = File(
-      'supabase/migrations/20260816175215_card_catalog_url_identity.sql',
+      'supabase/migrations/20260817030000_card_catalog_url_identity.sql',
     ).readAsStringSync().toLowerCase();
 
     expect(

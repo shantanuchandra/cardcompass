@@ -19,6 +19,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_card_catalog_provenance_final_url_hash
   ON public.card_catalog_provenance(final_url_hash)
   WHERE final_url_hash IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS public.card_catalog_url_keys (
+  url_hash text PRIMARY KEY CHECK (url_hash ~ '^[0-9a-f]{64}$'),
+  card_id uuid NOT NULL REFERENCES public.card_catalog(id) ON DELETE CASCADE,
+  canonical_url text NOT NULL CHECK (canonical_url ~ '^https://'),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_card_catalog_url_keys_card
+  ON public.card_catalog_url_keys(card_id);
+
+ALTER TABLE public.card_catalog_url_keys ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.card_catalog_url_keys FROM PUBLIC, anon, authenticated;
+GRANT ALL ON public.card_catalog_url_keys TO service_role;
+
 CREATE TABLE IF NOT EXISTS public.card_catalog_enrichment_jobs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   card_id uuid NOT NULL REFERENCES public.card_catalog(id) ON DELETE CASCADE,
@@ -67,6 +81,7 @@ DECLARE
   normalized_name text;
   resolved_id uuid;
   candidate_count integer;
+  candidate_ids uuid[];
 BEGIN
   normalized_issuer := lower(trim(_issuer));
   normalized_name := lower(regexp_replace(_card_name, '[^a-zA-Z0-9]+', '', 'g'));
@@ -83,15 +98,20 @@ BEGIN
   END IF;
 
   PERFORM pg_advisory_xact_lock(
+    hashtextextended('url:' || least(_submitted_url_hash, _final_url_hash), 0)
+  );
+  PERFORM pg_advisory_xact_lock(
+    hashtextextended('url:' || greatest(_submitted_url_hash, _final_url_hash), 0)
+  );
+  PERFORM pg_advisory_xact_lock(
     hashtextextended(normalized_issuer || ':' || normalized_name, 0)
   );
 
-  SELECT provenance.card_id
+  SELECT key.card_id
   INTO resolved_id
-  FROM public.card_catalog_provenance AS provenance
-  WHERE provenance.submitted_url_hash IN (_submitted_url_hash, _final_url_hash)
-     OR provenance.final_url_hash IN (_submitted_url_hash, _final_url_hash)
-  ORDER BY provenance.created_at
+  FROM public.card_catalog_url_keys AS key
+  WHERE key.url_hash IN (_submitted_url_hash, _final_url_hash)
+  ORDER BY key.created_at
   LIMIT 1;
 
   IF resolved_id IS NOT NULL THEN
@@ -112,12 +132,16 @@ BEGIN
       AND catalog.is_discontinued = false
       AND lower(regexp_replace(alias.alias, '[^a-zA-Z0-9]+', '', 'g')) = normalized_name
   )
-  SELECT count(*), min(id)
-  INTO candidate_count, resolved_id
+  SELECT count(*), array_agg(id ORDER BY id)
+  INTO candidate_count, candidate_ids
   FROM candidates;
 
   IF candidate_count > 1 THEN
     RAISE EXCEPTION 'ambiguous_catalog_identity';
+  END IF;
+
+  IF candidate_count = 1 THEN
+    resolved_id := candidate_ids[1];
   END IF;
 
   IF resolved_id IS NULL THEN
@@ -134,6 +158,18 @@ BEGIN
         updated_at = now()
     WHERE id = resolved_id;
   END IF;
+
+  INSERT INTO public.card_catalog_url_keys(url_hash, card_id, canonical_url)
+  SELECT DISTINCT value.url_hash, resolved_id, _source_url
+  FROM (VALUES (_submitted_url_hash), (_final_url_hash)) AS value(url_hash)
+  ON CONFLICT (url_hash) DO NOTHING;
+
+  SELECT key.card_id
+  INTO resolved_id
+  FROM public.card_catalog_url_keys AS key
+  WHERE key.url_hash IN (_submitted_url_hash, _final_url_hash)
+  ORDER BY key.created_at
+  LIMIT 1;
 
   RETURN resolved_id;
 END;

@@ -169,6 +169,13 @@ async function findCatalogCardByUrlHashes(
 ): Promise<string | null> {
   const unique = [...new Set(hashes.filter(Boolean))];
   if (unique.length === 0) return null;
+  const { data: key, error: keyError } = await db.from("card_catalog_url_keys")
+    .select("card_id")
+    .in("url_hash", unique)
+    .limit(1)
+    .maybeSingle();
+  if (keyError) throw keyError;
+  if (key?.card_id) return key.card_id;
   const filter = unique.flatMap((hash) => [
     `submitted_url_hash.eq.${hash}`,
     `final_url_hash.eq.${hash}`,
