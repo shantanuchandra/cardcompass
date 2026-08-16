@@ -53,73 +53,78 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Same page-level desktop threshold dashboard_screen.dart already
-    // uses (distinct from _responsivePair's 600px form-field breakpoint,
-    // which governs stacking within a single column, not this page split).
-    final isDesktop = MediaQuery.sizeOf(context).width >= 1024;
-    final formColumn = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildHeader(),
-        const SizedBox(height: 24),
-        _buildInputForm(context),
-        const SizedBox(height: 24),
-        _buildOptimizeButton(),
-      ],
-    );
-    // Split so the left column can stack the form above "You own" results
-    // and the right column shows "Overall" on its own. Both watch the
-    // same provider, so this never doubles the actual search work.
-    final ownedResults = _submittedRequest == null
-        ? const SizedBox.shrink()
-        : MovieDealsResults(request: _submittedRequest!, slot: ResultsSlot.owned);
-    final overallResults = _submittedRequest == null
-        ? const SizedBox.shrink()
-        : MovieDealsResults(request: _submittedRequest!, slot: ResultsSlot.overall);
-
-    if (isDesktop) {
-      // No IntrinsicHeight here — the form column already contains its
-      // own LayoutBuilder (_buildTotalAmount's responsive stack/row
-      // switch), and IntrinsicHeight forces every descendant to answer
-      // computeMaxIntrinsicHeight, which LayoutBuilder explicitly cannot
-      // do (throws "does not support returning intrinsic dimensions").
-      // CrossAxisAlignment.start is enough — the columns don't need to
-      // match height exactly.
-      return SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              flex: 2,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  formColumn,
-                  const SizedBox(height: 24),
-                  ownedResults,
-                ],
-              ),
-            ),
-            const SizedBox(width: 24),
-            Expanded(flex: 3, child: overallResults),
-          ],
-        ),
-      );
-    }
-
+    // Full-width bento layout: the header stays a plain top banner, then
+    // the form and every results group become tiles in ONE grid that
+    // uses the whole available width — no more segregating the form
+    // into its own column. Padding is the page's only width limiter now;
+    // there's no BrandContentFrame cap here (this screen has never used
+    // one), matching the explicit "full-width on desktop" direction.
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          formColumn,
-          const SizedBox(height: 24),
-          ownedResults,
-          const SizedBox(height: 24),
-          overallResults,
+          _buildHeader(),
+          const SizedBox(height: 20),
+          _buildFormAndResultsGrid(context),
         ],
       ),
+    );
+  }
+
+  Widget _buildFormAndResultsGrid(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final columns = width >= 1024 ? 3 : (width >= 600 ? 2 : 1);
+        const gap = 16.0;
+        final unitWidth = (width - gap * (columns - 1)) / columns;
+        // The form claims 2 units on a 3-column grid (roomy enough for
+        // its two-field rows without forcing them to stack), 1 unit
+        // otherwise — same intrinsic-width tile mechanism the results
+        // grid itself uses, so the form visually belongs among the tiles
+        // rather than reading as a separate sidebar.
+        final formSpan = columns >= 3 ? 2 : 1;
+        final formWidth = unitWidth * formSpan + gap * (formSpan - 1);
+
+        final formTile = SizedBox(
+          width: formWidth,
+          child: Container(
+            decoration: BoxDecoration(
+              color: BrandColors.paper,
+              borderRadius: BorderRadius.circular(BrandRadius.overlay),
+              border: Border.all(color: BrandColors.paperDeep),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(20.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildInputForm(context),
+                  const SizedBox(height: 20),
+                  _buildOptimizeButton(),
+                ],
+              ),
+            ),
+          ),
+        );
+
+        if (_submittedRequest == null) {
+          return Wrap(children: [formTile]);
+        }
+
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [
+            formTile,
+            SizedBox(
+              width: width,
+              child: MovieDealsResults(request: _submittedRequest!),
+            ),
+          ],
+        );
+      },
     );
   }
 

@@ -83,10 +83,8 @@ Future<void> pumpMovieDeals(
   await tester.pumpAndSettle();
 }
 
-/// Pumps both slots stacked — matching how movie_deals_screen.dart
-/// actually composes them (form + owned on the left, overall on the
-/// right at desktop widths, stacked at mobile widths) — so assertions
-/// check what a real search actually renders, not one slot in isolation.
+/// Pumps the results widget alone — it's a single bento grid now (no
+/// more owned/overall slot split), so one instance shows every group.
 Future<void> pumpMovieResult(
   WidgetTester tester, {
   double width = 390,
@@ -123,12 +121,7 @@ Future<void> pumpMovieResult(
           ),
           child: Scaffold(
             body: SingleChildScrollView(
-              child: Column(
-                children: [
-                  MovieDealsResults(request: request, slot: ResultsSlot.owned),
-                  MovieDealsResults(request: request, slot: ResultsSlot.overall),
-                ],
-              ),
+              child: MovieDealsResults(request: request),
             ),
           ),
         ),
@@ -216,8 +209,8 @@ void main() {
         (tester) async {
           await pumpMovieResult(tester, width: width, textScale: textScale);
 
-          expect(find.text('Guaranteed · You own'), findsOneWidget);
-          expect(find.text('Guaranteed · Overall'), findsOneWidget);
+          expect(find.textContaining('GUARANTEED · YOU OWN'), findsOneWidget);
+          expect(find.textContaining('GUARANTEED · OVERALL'), findsOneWidget);
           expect(find.textContaining('Save ₹'), findsWidgets);
           expect(tester.takeException(), isNull);
         },
@@ -308,8 +301,8 @@ void main() {
         recommendation: recommendation,
       );
 
-      expect(find.text('Potential · You own'), findsOneWidget);
-      expect(find.text('Potential · Overall'), findsOneWidget);
+      expect(find.textContaining('POTENTIAL · YOU OWN'), findsOneWidget);
+      expect(find.textContaining('POTENTIAL · OVERALL'), findsOneWidget);
       expect(find.textContaining('Buy 1 ticket and get 1 free'), findsWidgets);
       expect(tester.takeException(), isNull);
     },
@@ -334,8 +327,8 @@ void main() {
 
       await pumpMovieResult(tester, recommendation: recommendation);
 
-      expect(find.text('Guaranteed · You own'), findsOneWidget);
-      expect(find.text('Potential · You own'), findsOneWidget);
+      expect(find.textContaining('GUARANTEED · YOU OWN'), findsOneWidget);
+      expect(find.textContaining('POTENTIAL · YOU OWN'), findsOneWidget);
       expect(find.textContaining('Horizon Movie Card'), findsWidgets);
       expect(find.textContaining('Horizon BOGO Card'), findsWidgets);
     },

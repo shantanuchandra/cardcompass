@@ -44,17 +44,18 @@ MovieDealCandidate _candidate({
   );
 }
 
-/// Renders both slots stacked, matching how movie_deals_screen.dart
-/// actually composes them (form + owned on the left, overall on the
-/// right) — a real search always shows both, so most assertions below
-/// check the combined output. Both instances watch the same provider
-/// override, so this exercises the layout without duplicating the search.
-Widget _bothSlots(MovieTicketRequest request) {
-  return Column(
-    children: [
-      MovieDealsResults(request: request, slot: ResultsSlot.owned),
-      MovieDealsResults(request: request, slot: ResultsSlot.overall),
-    ],
+/// Wraps in a Scaffold + wide SizedBox so the bento grid's LayoutBuilder
+/// always resolves to its 3-column desktop arrangement — most assertions
+/// below don't care about column count, only that a group's own tile
+/// shows the right content, so a stable, roomy width keeps them simple.
+Widget _wideHarness(Widget child) {
+  return MaterialApp(
+    home: Scaffold(
+      body: SizedBox(
+        width: 1200,
+        child: SingleChildScrollView(child: child),
+      ),
+    ),
   );
 }
 
@@ -82,11 +83,7 @@ void main() {
             request,
           ).overrideWith((ref) => pending.future),
         ],
-        child: MaterialApp(
-          home: Scaffold(
-            body: MovieDealsResults(request: request, slot: ResultsSlot.overall),
-          ),
-        ),
+        child: _wideHarness(const MovieDealsResults(request: request)),
       ),
     );
     await tester.pump();
@@ -110,50 +107,44 @@ void main() {
 
     await tester.pumpWidget(ProviderScope(
       overrides: [movieDealsSearchProvider(request).overrideWith((ref) async => recommendation)],
-      child: MaterialApp(
-        home: Scaffold(body: SingleChildScrollView(child: _bothSlots(request))),
-      ),
+      child: _wideHarness(const MovieDealsResults(request: request)),
     ));
     await tester.pumpAndSettle();
 
-    expect(find.text('Guaranteed · You own'), findsOneWidget);
-    expect(find.text('Guaranteed · Overall'), findsOneWidget);
-    // owned-high/owned-low each appear TWICE: once in "you own" and once
-    // again in "overall" (overall is never ownership-filtered) — proving
-    // the same candidate can legitimately render in both groups.
+    expect(find.textContaining('GUARANTEED · YOU OWN'), findsOneWidget);
+    expect(find.textContaining('GUARANTEED · OVERALL'), findsOneWidget);
+    // owned-high/owned-low each appear TWICE: once in the "you own" tile
+    // and once again in the "overall" tile (overall is never ownership-
+    // filtered) — proving the same candidate can legitimately render in
+    // both tiles.
     expect(find.textContaining('Card owned-high'), findsNWidgets(2));
     expect(find.textContaining('Card owned-low'), findsNWidgets(2));
     expect(find.textContaining('Card unowned'), findsOneWidget);
   });
 
-  testWidgets('the owned slot never renders an Overall group, and vice versa', (tester) async {
+  testWidgets('each tile only ever shows its own group — Guaranteed·Own never leaks into Guaranteed·Overall content', (tester) async {
     final owned = _candidate(cardId: 'owned-only', isOwned: true, savings: 100);
     final unowned = _candidate(cardId: 'unowned-only', isOwned: false, savings: 200);
     final recommendation = MovieDealsRecommendation(
       candidates: [owned, unowned],
       rejectedCandidates: const [],
       guaranteedOwned: [owned],
-      guaranteedOverall: [unowned, owned],
+      guaranteedOverall: [unowned],
     );
 
     await tester.pumpWidget(ProviderScope(
       overrides: [movieDealsSearchProvider(request).overrideWith((ref) async => recommendation)],
-      child: MaterialApp(
-        home: Scaffold(
-          body: SingleChildScrollView(
-            child: MovieDealsResults(request: request, slot: ResultsSlot.owned),
-          ),
-        ),
-      ),
+      child: _wideHarness(const MovieDealsResults(request: request)),
     ));
     await tester.pumpAndSettle();
 
-    expect(find.text('Guaranteed · You own'), findsOneWidget);
-    expect(find.text('Guaranteed · Overall'), findsNothing);
-    expect(find.text('Potential · You own'), findsOneWidget);
-    expect(find.text('Potential · Overall'), findsNothing);
-    // unowned-only is never eligible for the owned slot at all.
-    expect(find.textContaining('Card unowned-only'), findsNothing);
+    expect(find.textContaining('GUARANTEED · YOU OWN'), findsOneWidget);
+    expect(find.textContaining('GUARANTEED · OVERALL'), findsOneWidget);
+    // The owned-only candidate never appears where only the unowned one
+    // was placed, and vice versa — each tile renders exactly its own
+    // recommendation field, not a merged/deduped view.
+    expect(find.textContaining('Card owned-only'), findsOneWidget);
+    expect(find.textContaining('Card unowned-only'), findsOneWidget);
   });
 
   testWidgets('shows an ownership badge on a candidate that is owned', (tester) async {
@@ -167,9 +158,7 @@ void main() {
 
     await tester.pumpWidget(ProviderScope(
       overrides: [movieDealsSearchProvider(request).overrideWith((ref) async => recommendation)],
-      child: MaterialApp(
-        home: Scaffold(body: SingleChildScrollView(child: _bothSlots(request))),
-      ),
+      child: _wideHarness(const MovieDealsResults(request: request)),
     ));
     await tester.pumpAndSettle();
 
@@ -192,20 +181,17 @@ void main() {
 
     await tester.pumpWidget(ProviderScope(
       overrides: [movieDealsSearchProvider(request).overrideWith((ref) async => recommendation)],
-      child: MaterialApp(
-        home: Scaffold(body: SingleChildScrollView(child: _bothSlots(request))),
-      ),
+      child: _wideHarness(const MovieDealsResults(request: request)),
     ));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('Card potential-only'), findsWidgets);
-    expect(find.textContaining('Potential'), findsWidgets);
-    // The guaranteed groups must show their empty-state note, not the
+    // The guaranteed tiles must show their empty-state note, not the
     // potential candidate presented as if it were guaranteed.
     expect(find.textContaining('No guaranteed'), findsWidgets);
   });
 
-  testWidgets('shows an empty-state note for a group with zero eligible candidates, never hides the header', (tester) async {
+  testWidgets('shows an empty-state note for a group with zero eligible candidates, never hides the tile', (tester) async {
     final overallOnly = _candidate(cardId: 'overall-only', isOwned: false, savings: 100);
     final recommendation = MovieDealsRecommendation(
       candidates: [overallOnly],
@@ -215,33 +201,27 @@ void main() {
 
     await tester.pumpWidget(ProviderScope(
       overrides: [movieDealsSearchProvider(request).overrideWith((ref) async => recommendation)],
-      child: MaterialApp(
-        home: Scaffold(body: SingleChildScrollView(child: _bothSlots(request))),
-      ),
+      child: _wideHarness(const MovieDealsResults(request: request)),
     ));
     await tester.pumpAndSettle();
 
-    expect(find.text('Guaranteed · You own'), findsOneWidget);
+    expect(find.textContaining('GUARANTEED · YOU OWN'), findsOneWidget);
     expect(find.textContaining('No guaranteed deals on cards you own'), findsOneWidget);
-    expect(find.text('Potential · You own'), findsOneWidget);
+    expect(find.textContaining('POTENTIAL · YOU OWN'), findsOneWidget);
     expect(find.textContaining('No potential deals on cards you own'), findsOneWidget);
-    expect(find.text('Potential · Overall'), findsOneWidget);
+    expect(find.textContaining('POTENTIAL · OVERALL'), findsOneWidget);
     expect(find.textContaining('No potential deals available'), findsOneWidget);
   });
 
-  testWidgets('shows a no-deal message on the overall slot, and nothing on the owned slot, when every group is empty', (tester) async {
+  testWidgets('shows a single no-deal message when every group and every dedicated section is empty', (tester) async {
     const recommendation = MovieDealsRecommendation(candidates: [], rejectedCandidates: []);
 
     await tester.pumpWidget(ProviderScope(
       overrides: [movieDealsSearchProvider(request).overrideWith((ref) async => recommendation)],
-      child: MaterialApp(
-        home: Scaffold(body: SingleChildScrollView(child: _bothSlots(request))),
-      ),
+      child: _wideHarness(const MovieDealsResults(request: request)),
     ));
     await tester.pumpAndSettle();
 
-    // Shown once, on the overall slot only — the owned slot renders
-    // nothing rather than a second, redundant "no deal" card right above it.
     expect(find.text('No eligible ticket-saving option'), findsOneWidget);
   });
 
@@ -254,13 +234,7 @@ void main() {
 
     await tester.pumpWidget(ProviderScope(
       overrides: [movieDealsSearchProvider(request).overrideWith((ref) async => recommendation)],
-      child: MaterialApp(
-        home: Scaffold(
-          body: SingleChildScrollView(
-            child: MovieDealsResults(request: request, slot: ResultsSlot.overall),
-          ),
-        ),
-      ),
+      child: _wideHarness(const MovieDealsResults(request: request)),
     ));
     await tester.pumpAndSettle();
 
@@ -268,7 +242,7 @@ void main() {
     expect(find.widgetWithText(ElevatedButton, 'Retry'), findsOneWidget);
   });
 
-  testWidgets('a rewardMultiplier candidate renders its raw rate on the overall slot, never a computed rupee figure', (tester) async {
+  testWidgets('a rewardMultiplier candidate renders its raw rate, never a computed rupee figure', (tester) async {
     final multiplier = _candidate(
       cardId: 'multiplier-card',
       isOwned: true,
@@ -282,9 +256,7 @@ void main() {
 
     await tester.pumpWidget(ProviderScope(
       overrides: [movieDealsSearchProvider(request).overrideWith((ref) async => recommendation)],
-      child: MaterialApp(
-        home: Scaffold(body: SingleChildScrollView(child: _bothSlots(request))),
-      ),
+      child: _wideHarness(const MovieDealsResults(request: request)),
     ));
     await tester.pumpAndSettle();
 
@@ -292,7 +264,7 @@ void main() {
     expect(find.textContaining('Save ₹0'), findsNothing);
   });
 
-  testWidgets('an annualAllowance candidate renders in its own section on the overall slot, never in a ranked group', (tester) async {
+  testWidgets('an annualAllowance candidate renders in its own strip, never in a ranked group', (tester) async {
     final annualRule = MovieDealRule(
       benefitId: 'b-annual-card',
       catalogCardId: 'annual-card',
@@ -321,14 +293,12 @@ void main() {
 
     await tester.pumpWidget(ProviderScope(
       overrides: [movieDealsSearchProvider(request).overrideWith((ref) async => recommendation)],
-      child: MaterialApp(
-        home: Scaffold(body: SingleChildScrollView(child: _bothSlots(request))),
-      ),
+      child: _wideHarness(const MovieDealsResults(request: request)),
     ));
     await tester.pumpAndSettle();
 
     // "balance not tracked" legitimately appears twice — once in the
-    // section label, once in the candidate's own explanation text — so
+    // tile title, once in the candidate's own explanation text — so
     // assert on the more specific candidate-level string instead.
     expect(find.textContaining('remaining balance not tracked'), findsOneWidget);
     expect(find.textContaining('Save ₹0'), findsNothing);
@@ -355,9 +325,7 @@ void main() {
 
     await tester.pumpWidget(ProviderScope(
       overrides: [movieDealsSearchProvider(searchedRequest).overrideWith((ref) async => recommendation)],
-      child: MaterialApp(
-        home: Scaffold(body: SingleChildScrollView(child: _bothSlots(searchedRequest))),
-      ),
+      child: _wideHarness(const MovieDealsResults(request: searchedRequest)),
     ));
     await tester.pumpAndSettle();
 
@@ -393,9 +361,7 @@ void main() {
         // initialized in this widget test.
         currentUserProvider.overrideWithValue(null),
       ],
-      child: MaterialApp(
-        home: Scaffold(body: SingleChildScrollView(child: _bothSlots(searchedRequest))),
-      ),
+      child: _wideHarness(const MovieDealsResults(request: searchedRequest)),
     ));
     await tester.pumpAndSettle();
 
@@ -418,9 +384,7 @@ void main() {
 
     await tester.pumpWidget(ProviderScope(
       overrides: [movieDealsSearchProvider(searchedRequest).overrideWith((ref) async => recommendation)],
-      child: MaterialApp(
-        home: Scaffold(body: SingleChildScrollView(child: _bothSlots(searchedRequest))),
-      ),
+      child: _wideHarness(const MovieDealsResults(request: searchedRequest)),
     ));
     await tester.pumpAndSettle();
 
@@ -438,9 +402,7 @@ void main() {
 
     await tester.pumpWidget(ProviderScope(
       overrides: [movieDealsSearchProvider(request).overrideWith((ref) async => recommendation)],
-      child: MaterialApp(
-        home: Scaffold(body: SingleChildScrollView(child: _bothSlots(request))),
-      ),
+      child: _wideHarness(const MovieDealsResults(request: request)),
     ));
     await tester.pumpAndSettle();
 
