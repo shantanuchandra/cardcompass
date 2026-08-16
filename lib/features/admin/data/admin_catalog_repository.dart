@@ -189,6 +189,15 @@ class AdminCatalogRepository implements BenefitEnrichmentRepository {
           benefit: benefit,
         ),
       ),
+      ...diff.unchanged.map(
+        (change) => BenefitReviewDecision(
+          action: 'keep_existing',
+          changeType: 'unchanged',
+          dedupeKey: change.current.dedupeKey ?? change.proposed.dedupeKey,
+          benefit: change.current,
+          proposed: change.proposed,
+        ),
+      ),
       ...diff.conflicts.expand(
         (conflict) => [
           ...conflict.current.map(

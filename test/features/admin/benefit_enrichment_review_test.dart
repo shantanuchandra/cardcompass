@@ -303,7 +303,10 @@ void main() {
         find.text('Job run coverage: 2 scheduled · 1 pilot'),
         findsOneWidget,
       );
-      expect(find.text('Last run: 1 completed · 1 failed'), findsOneWidget);
+      expect(
+        find.text('All jobs by status: 1 completed · 1 failed'),
+        findsOneWidget,
+      );
       expect(find.text('Current'), findsOneWidget);
       expect(find.text('Proposed'), findsAtLeastNWidgets(1));
       expect(

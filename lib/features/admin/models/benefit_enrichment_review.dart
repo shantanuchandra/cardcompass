@@ -245,6 +245,7 @@ class BenefitDiff {
     this.additions = const [],
     this.modifications = const [],
     this.possibleRemovals = const [],
+    this.unchanged = const [],
     this.conflicts = const [],
   });
 
@@ -258,6 +259,9 @@ class BenefitDiff {
     possibleRemovals: _maps(json['possibleRemovals'])
         .map((row) => BenefitProposal.fromJson(_map(row['benefit'] ?? row)))
         .toList(growable: false),
+    unchanged: _maps(
+      json['unchanged'],
+    ).map(BenefitModification.fromJson).toList(growable: false),
     conflicts: _maps(
       json['conflicts'],
     ).map(BenefitConflict.fromJson).toList(growable: false),
@@ -266,6 +270,7 @@ class BenefitDiff {
   final List<BenefitProposal> additions;
   final List<BenefitModification> modifications;
   final List<BenefitProposal> possibleRemovals;
+  final List<BenefitModification> unchanged;
   final List<BenefitConflict> conflicts;
 }
 
@@ -360,6 +365,33 @@ class BenefitProposal {
 
   String get label => title ?? dedupeKey ?? 'Untitled benefit';
 
+  BenefitProposal copyWith({String? title, String? description}) =>
+      BenefitProposal(
+        dedupeKey: dedupeKey,
+        title: title ?? this.title,
+        description: description ?? this.description,
+        category: category,
+        valueType: valueType,
+        value: value,
+        rate: rate,
+        cap: cap,
+        threshold: threshold,
+        frequency: frequency,
+        period: period,
+        restrictions: restrictions,
+        exclusions: exclusions,
+        effectiveFrom: effectiveFrom,
+        effectiveTo: effectiveTo,
+        sourceUrl: sourceUrl,
+        sourceUrls: sourceUrls,
+        sourceExcerpt: sourceExcerpt,
+        contentHash: contentHash,
+        parserVersion: parserVersion,
+        confidence: confidence,
+        evidence: evidence,
+        warnings: warnings,
+      );
+
   JsonMap toJson() => {
     if (dedupeKey != null) 'dedupeKey': dedupeKey,
     if (title != null) 'title': title,
@@ -381,6 +413,9 @@ class BenefitProposal {
     if (sourceExcerpt != null) 'sourceExcerpt': sourceExcerpt,
     if (contentHash != null) 'contentHash': contentHash,
     if (parserVersion != null) 'parserVersion': parserVersion,
+    if (confidence.isNotEmpty) 'confidence': confidence,
+    if (evidence.isNotEmpty) 'evidence': evidence,
+    if (warnings.isNotEmpty) 'warnings': warnings,
   };
 }
 

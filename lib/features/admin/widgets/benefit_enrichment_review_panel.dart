@@ -149,12 +149,9 @@ class _BenefitEnrichmentReviewPanelState
               context,
               BenefitReviewDecision(
                 action: 'edit',
-                editedBenefit: BenefitProposal(
-                  dedupeKey: candidate.dedupeKey,
+                editedBenefit: candidate.copyWith(
                   title: title.text.trim(),
                   description: description.text.trim(),
-                  category: candidate.category,
-                  value: candidate.value,
                 ),
               ),
             ),
@@ -326,7 +323,7 @@ class _ProgressSummary extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text('Job run coverage: $scheduled scheduled · $pilot pilot'),
-            Text('Last run: $completed completed · $failed failed'),
+            Text('All jobs by status: $completed completed · $failed failed'),
             if (history.isNotEmpty) ...[
               const SizedBox(height: 8),
               Text(
@@ -413,13 +410,24 @@ class _BenefitReviewCard extends StatelessWidget {
               const Text('Possible removals (informational)'),
               ...diff.possibleRemovals.map(_ProposalEvidence.new),
             ],
+            if (diff.unchanged.isNotEmpty) ...[
+              const Divider(),
+              const Text('Unchanged'),
+              ...diff.unchanged.map(
+                (change) => _DiffRow(
+                  current: change.current,
+                  proposed: change.proposed,
+                ),
+              ),
+            ],
             if (diff.conflicts.isNotEmpty) ...[
               const Divider(),
               const Text('Conflicts'),
               ...diff.conflicts.expand(
                 (conflict) => [
-                  Text(conflict.code ?? 'Unspecified conflict'),
+                  Text('Current: ${conflict.code ?? 'Unspecified conflict'}'),
                   ...conflict.current.map(_ProposalEvidence.new),
+                  Text('Proposed: ${conflict.code ?? 'Unspecified conflict'}'),
                   ...conflict.proposed.map(_ProposalEvidence.new),
                 ],
               ),
