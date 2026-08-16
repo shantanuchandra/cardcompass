@@ -19,6 +19,46 @@ flutter test test/supabase/ \
   --dart-define=SUPABASE_ANON_KEY=<the anon key printed by supabase start>
 ```
 
+### Automated benefit-enrichment safety workflow
+
+`benefit_enrichment_integration_test.dart` is destructive local verification:
+it seeds uniquely named cards, benefits, crawler review work, enrichment jobs,
+and an auth user, then removes those fixtures. In addition to the anon key it
+requires the local service-role key and refuses any `SUPABASE_URL` whose host is
+not `localhost`, `127.0.0.1`, or `::1`. Never point it at a hosted project.
+
+Reset the local database and serve the four functions before running it:
+
+```bash
+supabase db reset
+supabase functions serve \
+  card-discovery catalog-enrichment benefit-enrichment-batch admin-catalog-entry \
+  --env-file supabase/.env.local
+
+flutter test test/supabase/benefit_enrichment_integration_test.dart \
+  --dart-define=RUN_SUPABASE_INTEGRATION=true \
+  --dart-define=SUPABASE_ANON_KEY=<local anon key> \
+  --dart-define=SUPABASE_SERVICE_ROLE_KEY=<local service-role key>
+```
+
+The test checks that the local function routes enforce authentication, anon
+clients cannot read service queues, crawler-only work remains in review,
+service work deduplicates, expired leases recover, identical enrichment output
+reuses one staging row, rejection leaves live benefit/mapping counts unchanged,
+and approval creates exactly one benefit and one mapping.
+
+The deterministic HTML server binds only to loopback. The integration test uses
+its exact fixture bytes and hashes to drive the real staging/approval RPCs. The
+production official-issuer fetcher intentionally rejects loopback/private
+addresses as an SSRF defense, so the served batch function must not be given the
+loopback fixture URL or a test-only production bypass. A separate trusted HTTPS
+fixture host would be required to exercise the fetch hop itself; ordinary unit
+tests cover fetch and extraction behavior with injected transports.
+
+If Docker is unavailable, the command without `RUN_SUPABASE_INTEGRATION=true`
+still compiles the file and reports the live group as skipped. That is only a
+compile check, not an integration pass.
+
 To run only the pure-Dart unit suite (the common case, e.g. before a
 commit), scope the invocation to exclude this directory:
 
