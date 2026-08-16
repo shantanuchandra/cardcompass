@@ -119,6 +119,13 @@ test('allows only HTTPS URLs on the detected issuer domain', () => {
     ),
     false,
   );
+  assert.equal(
+    allowedOfficialUrl(
+      'Punjab National Bank',
+      'https://www.pnbcard.in/types15.html',
+    ),
+    true,
+  );
 });
 
 test('normalizes reported statement variants into canonical products', () => {

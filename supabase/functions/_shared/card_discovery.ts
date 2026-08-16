@@ -86,6 +86,7 @@ const issuerDomains: Record<string, string[]> = {
   "AU Small Finance Bank": ["aubank.in", "au.bank.in"],
   "RBL Bank": ["rbl.bank", "rblbank.com"],
   "Bank of Baroda": ["bobfinancial.com"],
+  "Punjab National Bank": ["pnbcard.in", "pnbindia.in"],
   "Standard Chartered": ["sc.com"],
   "American Express": ["americanexpress.com"],
 };
@@ -97,6 +98,7 @@ const issuerAliases: Record<string, string[]> = {
   "Kotak Bank": ["kotak"],
   "IndusInd Bank": ["indusind"],
   HSBC: ["hsbc"],
+  "Punjab National Bank": ["pnb", "punjab", "national"],
 };
 
 const genericTokens = new Set([
