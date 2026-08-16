@@ -212,8 +212,21 @@ test('public pages render without viewport overflow and expose live keyboard and
     'about:blank',
   ], { stdio: ['ignore', 'ignore', 'pipe'] });
   t.after(async () => {
-    chromeProcess.kill();
-    await rm(profile, { recursive: true, force: true });
+    if (chromeProcess.exitCode === null && chromeProcess.signalCode === null) {
+      chromeProcess.kill();
+      await Promise.race([
+        once(chromeProcess, 'exit'),
+        new Promise((resolve) => setTimeout(resolve, 5_000)),
+      ]);
+    }
+    // Chrome can briefly recreate profile files while shutting down. Node's
+    // recursive rm supports retries for this exact ENOTEMPTY/EBUSY race.
+    await rm(profile, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
   });
 
   const browserSocket = await devtoolsWebSocket(chromeProcess);
