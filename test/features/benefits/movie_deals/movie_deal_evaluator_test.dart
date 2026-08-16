@@ -16,7 +16,12 @@ MovieDealRule _bogoRule({String cardId = 'c1', Set<String> partners = const {}})
       cycleRedemptionLimit: 2,
     );
 
-MovieDealRule _percentRule({String cardId = 'c2', double percent = 10, Set<String> partners = const {}}) =>
+MovieDealRule _percentRule({
+  String cardId = 'c2',
+  double percent = 10,
+  Set<String> partners = const {},
+  double? perTransactionCap,
+}) =>
     MovieDealRule(
       benefitId: 'b-percent',
       catalogCardId: cardId,
@@ -24,6 +29,7 @@ MovieDealRule _percentRule({String cardId = 'c2', double percent = 10, Set<Strin
       offerType: MovieDealOfferType.percentDiscount,
       discountPercent: percent,
       partners: partners,
+      perTransactionCap: perTransactionCap,
     );
 
 MovieDealRule _milestoneRule({String cardId = 'c3', Set<String> partners = const {}}) => MovieDealRule(
@@ -87,6 +93,33 @@ void main() {
       expect(candidate.savings, 120);
       expect(candidate.finalAmount, 1080);
     });
+
+    test('a perTransactionCap clamps a percentDiscount below the uncapped rate', () {
+      // Real row: "25% off on movie tickets" (IDFC First Millennia) —
+      // sourced terms (bankbazaar/paisabazaar/cardinsider, converging):
+      // 25% off, capped at ₹100. 2 tickets @ ₹350 = ₹700 gross; uncapped
+      // 25% would be ₹175, but the real cap limits it to ₹100.
+      final result = evaluateMovieDeals(
+        request: const MovieTicketRequest(numberOfTickets: 2, pricePerTicket: 350),
+        rules: [_percentRule(percent: 25, perTransactionCap: 100)],
+        contexts: {('c2', 'b-percent'): const MovieDealContext(isOwned: true)},
+        now: today,
+      );
+      final candidate = result.candidates.firstWhere((c) => c.cardId == 'c2');
+      expect(candidate.savings, 100);
+      expect(candidate.finalAmount, 600);
+    });
+
+    test('a percentDiscount with no perTransactionCap is uncapped, matching pre-existing behavior', () {
+      final result = evaluateMovieDeals(
+        request: const MovieTicketRequest(numberOfTickets: 2, pricePerTicket: 350),
+        rules: [_percentRule(percent: 25)],
+        contexts: {('c2', 'b-percent'): const MovieDealContext(isOwned: true)},
+        now: today,
+      );
+      final candidate = result.candidates.firstWhere((c) => c.cardId == 'c2');
+      expect(candidate.savings, 175);
+    });
   });
 
   group('guaranteed-tier gate — data-availability limit (design spec §5/§7)', () {
@@ -118,6 +151,24 @@ void main() {
       );
       expect(result.bestGuaranteedOwned, isNotNull);
       expect(result.bestGuaranteedOwned!.cardId, 'c2');
+    });
+
+    test('a percentDiscount candidate with a perTransactionCap never reaches the guaranteed tier, same as capped bogo/fixedDiscount', () {
+      // Real row: IDFC First Millennia's "25% off up to ₹100" — a capped
+      // percentDiscount has the identical unverifiable-usage problem
+      // bogo/fixedDiscount already correctly avoid (no signal tracks
+      // whether this cycle's cap redemption has already been used).
+      final result = evaluateMovieDeals(
+        request: const MovieTicketRequest(numberOfTickets: 4, pricePerTicket: 300, preferredPlatform: 'BookMyShow'),
+        rules: [_percentRule(percent: 10, partners: {'BookMyShow'}, perTransactionCap: 50)],
+        contexts: {
+          ('c2', 'b-percent'): const MovieDealContext(isOwned: true, usageConfidence: MovieDealUsageConfidence.unverified),
+        },
+        now: today,
+      );
+      expect(result.bestGuaranteedOwned, isNull);
+      expect(result.bestPotentialOwned, isNotNull);
+      expect(result.bestPotentialOwned!.cardId, 'c2');
     });
 
     test('a milestone candidate never reaches the guaranteed tier, regardless of milestoneSpend', () {

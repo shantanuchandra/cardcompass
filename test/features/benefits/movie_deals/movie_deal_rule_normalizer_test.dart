@@ -50,6 +50,27 @@ void main() {
       expect(result, isA<RejectedMovieDealRule>());
       expect((result as RejectedMovieDealRule).reason, isNotEmpty);
     });
+
+    test('max_discount_per_transaction normalizes to perTransactionCap when present', () {
+      // Real rows carry this key on percent-type benefits too (e.g.
+      // "10% Off on Tira Orders": max_discount_per_transaction: 1000.0,
+      // "Fuel Surcharge Waiver": max_discount_per_transaction: 250.0) — the
+      // normalizer previously only ever read this key for bogo, silently
+      // dropping the cap for every capped percentDiscount row.
+      final result = normalizeMovieDealRule(_source(
+        {'discount_type': 'percent', 'discount_percent': 25.0, 'max_discount_per_transaction': 100.0},
+      ));
+      final rule = (result as AcceptedMovieDealRule).rule;
+      expect(rule.perTransactionCap, 100.0);
+    });
+
+    test('perTransactionCap is null when max_discount_per_transaction is absent, never a fabricated 0', () {
+      final result = normalizeMovieDealRule(
+        _source({'discount_type': 'percent', 'discount_percent': 25.0}),
+      );
+      final rule = (result as AcceptedMovieDealRule).rule;
+      expect(rule.perTransactionCap, isNull);
+    });
   });
 
   group('normalizeMovieDealRule — fixedDiscount', () {

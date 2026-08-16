@@ -65,9 +65,16 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
       onCinemaChanged: (v) => setState(() => _selectedCinema = v),
       onSubmit: _submit,
     );
-    final results = _submittedRequest == null
+    // Split so the left column can stack the form above "You own" results
+    // and the right column shows "Overall" on its own — confirmed layout:
+    // "input form + below that You Own | Overall on the right." Both watch
+    // the same provider, so this never doubles the actual search work.
+    final ownedResults = _submittedRequest == null
         ? const SizedBox.shrink()
-        : MovieDealsResults(request: _submittedRequest!);
+        : MovieDealsResults(request: _submittedRequest!, slot: ResultsSlot.owned);
+    final overallResults = _submittedRequest == null
+        ? const SizedBox.shrink()
+        : MovieDealsResults(request: _submittedRequest!, slot: ResultsSlot.overall);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16.0),
@@ -81,11 +88,21 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(flex: 2, child: deck.animate(delay: 80.ms).fadeIn().slideX(begin: -0.03)),
+                  Expanded(
+                    flex: 2,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        deck.animate(delay: 80.ms).fadeIn().slideX(begin: -0.03),
+                        const SizedBox(height: 20),
+                        ownedResults.animate(delay: 140.ms).fadeIn().slideX(begin: -0.03),
+                      ],
+                    ),
+                  ),
                   const SizedBox(width: AppSpacing.lg),
                   Expanded(
                     flex: 3,
-                    child: results.animate(delay: 140.ms).fadeIn().slideX(begin: 0.03),
+                    child: overallResults.animate(delay: 140.ms).fadeIn().slideX(begin: 0.03),
                   ),
                 ],
               ),
@@ -93,7 +110,9 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
           else ...[
             deck.animate(delay: 80.ms).fadeIn().slideY(begin: 0.03),
             const SizedBox(height: 20),
-            results,
+            ownedResults,
+            const SizedBox(height: 20),
+            overallResults,
           ],
         ],
       ),

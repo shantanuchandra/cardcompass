@@ -99,8 +99,10 @@ class MovieDealRule {
   final double? discountPercent;
   final double? fixedAmount;
 
-  /// Caps a SINGLE booking's discount (e.g. bogo's per-pair cap, from
-  /// `max_discount_per_transaction`). Distinct from [cycleAmountCap].
+  /// Caps a SINGLE booking's discount (e.g. bogo's per-pair cap, or
+  /// percentDiscount's per-transaction ceiling — both from
+  /// `max_discount_per_transaction`). Distinct from [cycleAmountCap], which
+  /// caps a TOTAL across the whole cycle rather than one transaction.
   final double? perTransactionCap;
 
   /// Caps TOTAL discount across the whole cycle (e.g. fixedDiscount's

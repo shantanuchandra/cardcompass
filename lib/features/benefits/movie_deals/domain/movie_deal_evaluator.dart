@@ -106,8 +106,16 @@ MovieDealsRecommendation evaluateMovieDeals({
 /// from the source row), so a future capless fixedDiscount row must reach
 /// this branch too — there being nothing to verify usage against is the
 /// actual condition, not "is this the one row we've seen so far."
+///
+/// percentDiscount now follows the SAME rule, not an unconditional pass —
+/// once _normalizePercent started reading max_discount_per_transaction into
+/// perTransactionCap (e.g. IDFC First Millennia's real "25% off up to ₹100"
+/// row), a capped percentDiscount candidate has exactly the same unverifiable-
+/// usage problem bogo/fixedDiscount already have, and must be gated
+/// identically rather than treated as if the cap didn't exist.
 bool _isGuaranteed(MovieDealCandidate candidate) {
-  final hasNoCapToVerify = (candidate.rule.offerType == MovieDealOfferType.percentDiscount) ||
+  final hasNoCapToVerify = (candidate.rule.offerType == MovieDealOfferType.percentDiscount &&
+          candidate.rule.perTransactionCap == null) ||
       (candidate.rule.offerType == MovieDealOfferType.bogo &&
           candidate.rule.cycleRedemptionLimit == null) ||
       (candidate.rule.offerType == MovieDealOfferType.fixedDiscount &&
@@ -219,6 +227,16 @@ double _calculateSavings(
       rule.cycleAmountCap != null &&
       savings > rule.cycleAmountCap!) {
     savings = rule.cycleAmountCap!;
+  }
+  // perTransactionCap caps a SINGLE booking (design spec §4.4) — distinct
+  // from fixedDiscount's cycleAmountCap above, which caps a TOTAL across
+  // the whole cycle. A capped percentDiscount row (e.g. "25% off up to
+  // ₹100") previously computed the full uncapped percentage regardless of
+  // whatever cap was actually present in the source data.
+  if (rule.offerType == MovieDealOfferType.percentDiscount &&
+      rule.perTransactionCap != null &&
+      savings > rule.perTransactionCap!) {
+    savings = rule.perTransactionCap!;
   }
   return savings.clamp(0, gross).toDouble();
 }

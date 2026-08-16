@@ -74,6 +74,13 @@ RuleNormalizationResult _normalizePercent(
       'A percentage offer requires a rate between 0 and 100.',
     );
   }
+  // max_discount_per_transaction already exists on real, live percent-type
+  // rows (e.g. "10% Off on Tira Orders", "Fuel Surcharge Waiver") — this key
+  // was previously only ever read for bogo, silently dropping the cap for
+  // every capped percentDiscount row. Optional: absent means genuinely
+  // uncapped, never defaulted to 0 (design spec §4.2's "never invented"
+  // convention).
+  final perTransactionCap = _number(source.valueConfig['max_discount_per_transaction']);
   return AcceptedMovieDealRule(MovieDealRule(
     benefitId: source.benefitId,
     catalogCardId: source.catalogCardId,
@@ -86,6 +93,7 @@ RuleNormalizationResult _normalizePercent(
     offerType: MovieDealOfferType.percentDiscount,
     partners: source.partners,
     discountPercent: discountPercent,
+    perTransactionCap: perTransactionCap,
   ));
 }
 

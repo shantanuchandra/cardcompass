@@ -8,9 +8,18 @@ import '../../../../core/providers/supabase_provider.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../domain/movie_deal_candidate.dart';
 import '../domain/movie_deal_rule.dart';
+import '../domain/movie_platform_aliases.dart';
 import '../domain/movie_ticket_request.dart';
 import '../providers/movie_deals_provider.dart';
-import '../widgets/sprocket_rail_painter.dart';
+
+/// Which half of the confirmed 2-column layout a [MovieDealsResults]
+/// instance renders — the input form sits above [owned] on the left,
+/// [overall] fills the right on its own (design decision: "input form +
+/// below that You Own | Overall on the right"). Both slots independently
+/// watch the same [movieDealsSearchProvider], so Riverpod serves both from
+/// one cached call — no duplicate network work, just two views over the
+/// same recommendation.
+enum ResultsSlot { owned, overall }
 
 /// Design spec §8's layout, extended per user feedback: rather than a
 /// single winner per guaranteed/potential × owned/overall slot, EVERY
@@ -18,18 +27,25 @@ import '../widgets/sprocket_rail_painter.dart';
 /// a user comparing offers (e.g. a ₹700 potential fixedDiscount against a
 /// ₹70 guaranteed percentDiscount) can see all of them, not just whichever
 /// one the evaluator picked as "best." rewardMultiplier/annualAllowance
-/// candidates stay in their own dedicated, non-competitive sections.
+/// candidates stay in their own dedicated, non-competitive sections, always
+/// under [ResultsSlot.overall] — they're never ownership-split so a
+/// standalone "You own" copy would just duplicate the overall one.
 ///
-/// Each result renders as a "frame" (a film-strip metaphor: a sprocket rail
-/// down the left edge, matching the app's existing CustomPainter texture
-/// technique). The six MovieDealOfferTypes carry genuinely different proof
-/// of eligibility — a BOGO's redemption count, a milestone's real progress
-/// bar, a reward-rate's honest non-currency badge — so each gets its own
-/// "proof strip" widget instead of one generic confidence chip for all six.
+/// Each result card follows the app's own restrained card convention (see
+/// _KpiCard/cards_screen.dart's list tile) — surface1 fill, AppRadius.lg, a
+/// plain ~0.2-alpha border — rather than a screen-specific visual motif. The
+/// six MovieDealOfferTypes still carry genuinely different proof of
+/// eligibility — a BOGO's redemption count, a milestone's real progress bar,
+/// a reward-rate's honest non-currency badge — so each gets its own "proof
+/// strip" widget instead of one generic confidence chip for all six; an
+/// earlier film-strip-metaphor treatment (sprocket rail, heavier colored
+/// borders) was reverted after it made this screen read as visually
+/// inconsistent with the rest of the app.
 class MovieDealsResults extends ConsumerWidget {
-  const MovieDealsResults({super.key, required this.request});
+  const MovieDealsResults({super.key, required this.request, required this.slot});
 
   final MovieTicketRequest request;
+  final ResultsSlot slot;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -39,6 +55,9 @@ class MovieDealsResults extends ConsumerWidget {
       loading: () => const Center(
         child: Padding(padding: EdgeInsets.all(32.0), child: CircularProgressIndicator()),
       ),
+      // Both slots watch the same provider, so a failure surfaces a retry
+      // card in each column independently — retrying from either one
+      // invalidates the single shared provider entry for both.
       error: (error, stack) => _buildRetryCard(context, ref),
     );
   }
@@ -66,7 +85,9 @@ class MovieDealsResults extends ConsumerWidget {
         recommendation.potentialOverall.isNotEmpty;
 
     if (!hasAnyRanked && rewardMultiplierCandidates.isEmpty && annualAllowanceCandidates.isEmpty) {
-      return _buildNoDealCard(context);
+      // Shown only on the overall slot — the owned slot would otherwise
+      // duplicate the same "no deal" message right next to it.
+      return slot == ResultsSlot.overall ? _buildNoDealCard(context) : const SizedBox.shrink();
     }
 
     Future<void> Function()? confirmCallbackFor(MovieDealCandidate candidate) {
@@ -110,6 +131,7 @@ class MovieDealsResults extends ConsumerWidget {
                   candidate: candidate,
                   isPotential: tone == _DividerTone.potential,
                   isOverallFlavor: isOverallFlavor,
+                  request: request,
                   onConfirmPlatform: confirmCallbackFor(candidate),
                 ).animate(delay: (frameIndex++ * 50).ms).fadeIn(duration: 250.ms).slideY(begin: 0.04),
               ),
@@ -117,25 +139,37 @@ class MovieDealsResults extends ConsumerWidget {
       );
     }
 
+    // Owned slot: Guaranteed·Own stacked above Potential·Own (left column,
+    // under the input form). Overall slot: Guaranteed·Overall stacked above
+    // Potential·Overall, followed by the reward-rate/annual-allowance
+    // sections — confirmed layout: "In the right column, below Overall
+    // results."
+    if (slot == ResultsSlot.owned) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          buildGroup('Guaranteed · You own', _DividerTone.guaranteed, recommendation.guaranteedOwned, isOverallFlavor: false),
+          const SizedBox(height: 18),
+          buildGroup('Potential · You own', _DividerTone.potential, recommendation.potentialOwned, isOverallFlavor: false),
+        ],
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        buildGroup('GUARANTEED · YOU OWN', _DividerTone.guaranteed, recommendation.guaranteedOwned, isOverallFlavor: false),
+        buildGroup('Guaranteed · Overall', _DividerTone.guaranteed, recommendation.guaranteedOverall, isOverallFlavor: true),
         const SizedBox(height: 18),
-        buildGroup('GUARANTEED · OVERALL', _DividerTone.guaranteed, recommendation.guaranteedOverall, isOverallFlavor: true),
-        const SizedBox(height: 18),
-        buildGroup('POTENTIAL · YOU OWN', _DividerTone.potential, recommendation.potentialOwned, isOverallFlavor: false),
-        const SizedBox(height: 18),
-        buildGroup('POTENTIAL · OVERALL', _DividerTone.potential, recommendation.potentialOverall, isOverallFlavor: true),
+        buildGroup('Potential · Overall', _DividerTone.potential, recommendation.potentialOverall, isOverallFlavor: true),
         if (rewardMultiplierCandidates.isNotEmpty) ...[
           const SizedBox(height: 22),
-          _SectionDivider(label: 'REWARD RATE — NOT A DIRECT DISCOUNT', tone: _DividerTone.reward),
+          _SectionDivider(label: 'Reward rate — not a direct discount', tone: _DividerTone.reward),
           const SizedBox(height: 12),
           _buildRewardMultiplierSection(rewardMultiplierCandidates, frameIndex),
         ],
         if (annualAllowanceCandidates.isNotEmpty) ...[
           const SizedBox(height: 22),
-          _SectionDivider(label: 'ANNUAL ALLOWANCE — BALANCE NOT TRACKED', tone: _DividerTone.allowance),
+          _SectionDivider(label: 'Annual allowance — balance not tracked', tone: _DividerTone.allowance),
           const SizedBox(height: 12),
           _buildAnnualAllowanceSection(annualAllowanceCandidates, frameIndex + rewardMultiplierCandidates.length),
         ],
@@ -232,18 +266,23 @@ class _SectionDivider extends StatelessWidget {
       _DividerTone.reward => AppColors.violet,
       _DividerTone.allowance => AppColors.success,
     };
-    return Row(
-      children: [
-        Expanded(child: Container(height: 1, color: AppColors.surface3)),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          child: Text(
+    // Matches _SectionHeader's real convention (dashboard_screen.dart) —
+    // sentence-case, 16px, w700, plain textPrimary — rather than the
+    // all-caps/letter-spaced/hairline-flanked treatment this screen
+    // previously invented on its own. A small colored dot (not the whole
+    // label recolored) keeps the tier legible without shouting it.
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          Container(width: 6, height: 6, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+          const SizedBox(width: 8),
+          Text(
             label,
-            style: GoogleFonts.spaceGrotesk(fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.0, color: color),
+            style: GoogleFonts.spaceGrotesk(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
           ),
-        ),
-        Expanded(child: Container(height: 1, color: AppColors.surface3)),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -252,6 +291,7 @@ class _FilmFrame extends StatefulWidget {
   const _FilmFrame({
     required this.candidate,
     required this.isOverallFlavor,
+    required this.request,
     this.isPotential = false,
     this.onConfirmPlatform,
   });
@@ -260,6 +300,12 @@ class _FilmFrame extends StatefulWidget {
   final bool isOverallFlavor;
   final bool isPotential;
   final Future<void> Function()? onConfirmPlatform;
+
+  /// The original search — needed so the card can say whether IT'S the
+  /// specific platform/cinema the user actually asked about, not just a
+  /// generic "platform not confirmed" chip that never names what was
+  /// searched.
+  final MovieTicketRequest request;
 
   @override
   State<_FilmFrame> createState() => _FilmFrameState();
@@ -274,128 +320,140 @@ class _FilmFrameState extends State<_FilmFrame> {
     final accent = widget.isPotential
         ? AppColors.warning
         : (widget.isOverallFlavor ? AppColors.violet : AppColors.neonCyan);
-    final borderColor = accent.withValues(alpha: 0.35);
 
+    // Matches the app's own restrained card convention (see _KpiCard in
+    // dashboard_screen.dart, the card-list tile in cards_screen.dart):
+    // surface1 fill, AppRadius.lg, a plain 1px border at ~0.2 alpha — no
+    // decorative rail, no extra-heavy/colored border. The film-strip
+    // metaphor (sprocket rail, 0.35-alpha/1.4px border) was a deliberate
+    // choice earlier in this feature's design but made this screen read as
+    // visually inconsistent with the rest of the app; this reverts to the
+    // shared card language while keeping the actual proof content
+    // (redemption tracker, milestone bar, etc.) unchanged.
     return Container(
+      padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
         color: AppColors.surface1,
         borderRadius: BorderRadius.circular(AppRadius.lg),
-        border: Border.all(color: borderColor, width: 1.4, style: widget.isPotential ? BorderStyle.solid : BorderStyle.solid),
+        border: Border.all(color: accent.withValues(alpha: 0.2)),
       ),
-      clipBehavior: Clip.antiAlias,
-      child: IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Container(
-              width: 22,
-              color: AppColors.surfaceVoid,
-              child: CustomPaint(painter: SprocketRailPainter(holeColor: accent.withValues(alpha: 0.4))),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (candidate.isOwned) ...[
+            _Tag(text: 'You own this', color: accent, filled: true),
+            const SizedBox(height: 8),
+          ],
+          Text(
+            candidate.rule.cardName ?? candidate.title,
+            style: GoogleFonts.spaceGrotesk(color: AppColors.textPrimary, fontWeight: FontWeight.w600, fontSize: 16),
+          ),
+          if (widget.isPotential)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                'Potential — remaining balance not verified',
+                style: GoogleFonts.inter(fontSize: 11, color: AppColors.warning),
+              ),
             ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (candidate.isOwned)
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: Wrap(
-                              spacing: 6,
-                              runSpacing: 6,
-                              children: [_Tag(text: 'YOU OWN THIS', color: accent, filled: true)],
-                            ),
-                          ),
-                        ],
-                      ),
-                    if (candidate.isOwned) const SizedBox(height: 10),
-                    Text(
-                      candidate.rule.cardName ?? candidate.title,
-                      style: GoogleFonts.spaceGrotesk(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 16),
-                    ),
-                    if (widget.isPotential)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: AppColors.warning.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            'Potential — remaining balance not verified',
-                            style: GoogleFonts.inter(fontSize: 10, color: AppColors.warning),
-                          ),
-                        ),
-                      ),
-                    const SizedBox(height: 12),
-                    _ProofStrip(candidate: candidate),
-                    const SizedBox(height: 12),
-                    if (candidate.platformConfidence != MovieDealPlatformConfidence.explicit &&
-                        candidate.platformConfidence != MovieDealPlatformConfidence.communityConfirmed)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: _Tag(text: 'Platform not confirmed', color: AppColors.textMuted, filled: false),
-                      ),
-                    Text(candidate.explanation, style: GoogleFonts.inter(color: AppColors.textSecondary, fontSize: 12, height: 1.4)),
-                    const SizedBox(height: 12),
-                    Container(
-                      padding: const EdgeInsets.only(top: 12),
-                      decoration: BoxDecoration(border: Border(top: BorderSide(color: AppColors.surface3))),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        crossAxisAlignment: CrossAxisAlignment.baseline,
-                        textBaseline: TextBaseline.alphabetic,
-                        children: [
-                          Wrap(
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: [
-                              Text(
-                                '₹${candidate.grossAmount.toStringAsFixed(0)}',
-                                style: GoogleFonts.spaceGrotesk(color: AppColors.textMuted, fontSize: 13, decoration: TextDecoration.lineThrough),
-                              ),
-                              Text('  →  ', style: GoogleFonts.spaceGrotesk(color: AppColors.textMuted, fontSize: 13)),
-                              Text(
-                                '₹${candidate.finalAmount.toStringAsFixed(0)}',
-                                style: GoogleFonts.spaceGrotesk(color: AppColors.textPrimary, fontWeight: FontWeight.w700, fontSize: 16),
-                              ),
-                            ],
-                          ),
-                          Text(
-                            'Save ₹${candidate.savings.toStringAsFixed(0)}',
-                            style: GoogleFonts.spaceGrotesk(fontWeight: FontWeight.bold, color: accent, fontSize: 15),
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (widget.onConfirmPlatform != null && !_confirmed) ...[
-                      const SizedBox(height: 10),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton(
-                          onPressed: () async {
-                            await widget.onConfirmPlatform!();
-                            if (mounted) setState(() => _confirmed = true);
-                          },
-                          child: const Text('Did this work here? Let us know'),
-                        ),
-                      ),
-                    ],
-                    if (_confirmed) ...[
-                      const SizedBox(height: 10),
-                      Text('Thanks — this helps other users.', style: GoogleFonts.inter(fontSize: 11, color: AppColors.neonCyan)),
-                    ],
-                  ],
-                ),
+          const SizedBox(height: 10),
+          _ProofStrip(candidate: candidate),
+          const SizedBox(height: 10),
+          ..._platformCinemaNotes(candidate),
+          Text(candidate.explanation, style: GoogleFonts.inter(color: AppColors.textSecondary, fontSize: 12, height: 1.4)),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    '₹${candidate.grossAmount.toStringAsFixed(0)}',
+                    style: GoogleFonts.spaceGrotesk(color: AppColors.textMuted, fontSize: 13, decoration: TextDecoration.lineThrough),
+                  ),
+                  Text('  →  ', style: GoogleFonts.spaceGrotesk(color: AppColors.textMuted, fontSize: 13)),
+                  Text(
+                    '₹${candidate.finalAmount.toStringAsFixed(0)}',
+                    style: GoogleFonts.spaceGrotesk(color: AppColors.textPrimary, fontWeight: FontWeight.w700, fontSize: 15),
+                  ),
+                ],
+              ),
+              Text(
+                'Save ₹${candidate.savings.toStringAsFixed(0)}',
+                style: GoogleFonts.spaceGrotesk(fontWeight: FontWeight.w700, color: accent, fontSize: 14),
+              ),
+            ],
+          ),
+          if (widget.onConfirmPlatform != null && !_confirmed) ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: () async {
+                  await widget.onConfirmPlatform!();
+                  if (mounted) setState(() => _confirmed = true);
+                },
+                child: const Text('Did this work here? Let us know'),
               ),
             ),
           ],
-        ),
+          if (_confirmed) ...[
+            const SizedBox(height: 8),
+            Text('Thanks — this helps other users.', style: GoogleFonts.inter(fontSize: 11, color: AppColors.neonCyan)),
+          ],
+        ],
       ),
     );
+  }
+
+  /// Names the actual platform/cinema the user searched for, rather than a
+  /// generic "not confirmed" chip that never says what was searched. Three
+  /// distinct platform states (falls back to the pre-existing generic copy
+  /// when nothing was searched or the rule carries no platform data to
+  /// check at all — same condition the old inline check used) plus an
+  /// honest, always-separate cinema note — cinema never affects
+  /// eligibility anywhere in this schema (see MovieTicketRequest's own doc
+  /// comment), so this is purely informational, never a confidence signal.
+  List<Widget> _platformCinemaNotes(MovieDealCandidate candidate) {
+    final notes = <Widget>[];
+    final preferredPlatform = widget.request.preferredPlatform;
+    final eligible = eligibleMoviePlatformsFor(candidate.rule);
+
+    if (preferredPlatform != null && eligible.isNotEmpty) {
+      final tied = eligible.any((p) => p.toLowerCase() == preferredPlatform.toLowerCase());
+      notes.add(Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Text(
+          tied ? 'Tied to $preferredPlatform' : 'This offer is not tied to $preferredPlatform',
+          style: GoogleFonts.inter(
+            fontSize: 11,
+            fontWeight: tied ? FontWeight.w600 : FontWeight.normal,
+            color: tied ? AppColors.success : AppColors.textMuted,
+          ),
+        ),
+      ));
+    } else if (candidate.platformConfidence != MovieDealPlatformConfidence.explicit &&
+        candidate.platformConfidence != MovieDealPlatformConfidence.communityConfirmed) {
+      notes.add(Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Text('Platform not confirmed', style: GoogleFonts.inter(fontSize: 11, color: AppColors.textMuted)),
+      ));
+    }
+
+    if (widget.request.preferredCinema != null) {
+      notes.add(Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Text(
+          'Cinema filtering is not yet supported — no benefit data is tied to a specific chain.',
+          style: GoogleFonts.inter(fontSize: 11, color: AppColors.textMuted),
+        ),
+      ));
+    }
+
+    return notes;
   }
 }
 
