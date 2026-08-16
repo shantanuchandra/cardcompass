@@ -69,4 +69,8 @@ test('extracts grounded benefits without inventing missing values', () => {
   assert.equal(result.benefits.length, 2);
   assert.match(result.benefits[0].evidence, /10% cashback/i);
   assert.equal(result.benefits[0].confidence >= 0.9, true);
+  assert.equal(typeof result.benefits[0].dedupeKey, 'string');
+  assert.equal(result.benefits[0].cap, 500);
+  assert.equal(result.benefits[0].period, 'statement month');
+  assert.match(result.benefits[0].fieldEvidence.cap, /capped at ₹500/i);
 });
