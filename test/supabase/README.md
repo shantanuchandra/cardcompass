@@ -3,11 +3,10 @@
 Tests in this directory require a **live local Supabase instance** — they
 are never run as part of the regular unit-test suite in `test/features/...`.
 
-A bare `flutter test` (no path argument) will discover and attempt to run
-every `*_test.dart` file under `test/`, including these — and each will fail
-immediately in `setUpAll` if no local Supabase instance is running, since
-there is no `SUPABASE_ANON_KEY` and nothing listening at
-`http://127.0.0.1:54321`.
+A bare `flutter test` (no path argument) discovers these files, but the live
+integration groups skip unless `SUPABASE_ANON_KEY` is explicitly provided.
+This prevents another service on `http://127.0.0.1:54321` from being mistaken
+for Supabase during the regular unit-test suite.
 
 To run these tests:
 
