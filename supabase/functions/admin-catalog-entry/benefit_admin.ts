@@ -34,8 +34,6 @@ const safeJobColumns = `
   )
 `;
 
-const prohibitedOutputKey =
-  /(?:^|_)(?:raw(?:_?body)?|page(?:_?body)?|html|authorization|secret|token|cookie|password|api_?key|private_?key|headers?)(?:$|_)/i;
 const pilotProfiles = new Set([
   "straightforward",
   "redirect_or_js",
@@ -46,6 +44,49 @@ const pilotProfiles = new Set([
 
 type Actor = { id: string };
 type JsonRecord = Record<string, unknown>;
+const benefitRunModes = ["pilot", "scheduled", "manual"];
+const jobStatuses = [
+  "queued",
+  "processing",
+  "completed",
+  "review_required",
+  "failed",
+  "staged",
+  "quarantined",
+];
+const benefitFields = [
+  "dedupeKey",
+  "title",
+  "description",
+  "category",
+  "valueType",
+  "value",
+  "rate",
+  "cap",
+  "threshold",
+  "frequency",
+  "period",
+  "restrictions",
+  "exclusions",
+  "effectiveFrom",
+  "effectiveTo",
+] as const;
+const evidenceFields = [
+  "title",
+  "description",
+  "category",
+  "valueType",
+  "value",
+  "rate",
+  "cap",
+  "threshold",
+  "frequency",
+  "period",
+  "restrictions",
+  "exclusions",
+  "effectiveFrom",
+  "effectiveTo",
+] as const;
 
 function asRecord(value: unknown): JsonRecord | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -67,92 +108,293 @@ function requiredReason(value: unknown): string {
   return value.trim().slice(0, 500);
 }
 
-/** Removes crawler payloads and credentials before they cross the admin API. */
-export function safeAdminValue(value: unknown): unknown {
-  if (typeof value === "string") return value.slice(0, 8_000);
-  if (value === null || typeof value !== "object") return value;
-  if (Array.isArray(value)) return value.map(safeAdminValue);
-  return Object.fromEntries(
-    Object.entries(value).flatMap(([key, item]) =>
-      prohibitedOutputKey.test(key) ? [] : [[key, safeAdminValue(item)]]
-    ),
-  );
+function text(value: unknown, maximum = 8_000): string | null {
+  return typeof value === "string" ? value.slice(0, maximum) : null;
+}
+
+function number(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function textList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.flatMap((item) =>
+      typeof item === "string" ? [item.slice(0, 500)] : []
+    )
+    : [];
+}
+
+function objectList(value: unknown): JsonRecord[] {
+  return Array.isArray(value)
+    ? value.flatMap((item) => {
+      const record = asRecord(item);
+      return record ? [record] : [];
+    })
+    : [];
+}
+
+function fieldEvidence(value: unknown) {
+  const row = asRecord(value) ?? {};
+  return Object.fromEntries(evidenceFields.flatMap((field) => {
+    const excerpt = text(row[field], 500);
+    return excerpt === null ? [] : [[field, excerpt]];
+  }));
+}
+
+function fieldConfidence(value: unknown) {
+  const row = asRecord(value) ?? {};
+  return Object.fromEntries(evidenceFields.flatMap((field) => {
+    const confidence = number(row[field]);
+    return confidence === null ? [] : [[field, confidence]];
+  }));
+}
+
+function benefitForOutput(value: unknown) {
+  const row = asRecord(value) ?? {};
+  const scalar: JsonRecord = {};
+  for (const field of benefitFields) {
+    const value = row[field];
+    if (typeof value === "string") scalar[field] = value.slice(0, 2_000);
+    if (typeof value === "number" && Number.isFinite(value)) {
+      scalar[field] = value;
+    }
+    if (
+      (field === "restrictions" || field === "exclusions") &&
+      Array.isArray(value)
+    ) {
+      scalar[field] = textList(value);
+    }
+  }
+  return {
+    ...scalar,
+    sourceUrl: text(row.sourceUrl),
+    sourceUrls: textList(row.sourceUrls),
+    sourceExcerpt: text(row.sourceExcerpt, 500),
+    contentHash: text(row.contentHash, 200),
+    parserVersion: text(row.parserVersion, 100),
+    confidence: fieldConfidence(row.confidence),
+    evidence: fieldEvidence(row.evidence),
+    warnings: textList(row.warnings),
+  };
+}
+
+function benefitDiff(value: unknown) {
+  const row = asRecord(value) ?? {};
+  return {
+    additions: objectList(row.additions).map(benefitForOutput),
+    modifications: objectList(row.modifications).map((item) => ({
+      current: benefitForOutput(item.current),
+      proposed: benefitForOutput(item.proposed),
+    })),
+    possibleRemovals: objectList(row.possibleRemovals).map((item) => ({
+      benefit: benefitForOutput(item.benefit),
+      informational: item.informational === true,
+    })),
+    unchanged: objectList(row.unchanged).map((item) => ({
+      current: benefitForOutput(item.current),
+      proposed: benefitForOutput(item.proposed),
+    })),
+    conflicts: objectList(row.conflicts).map((item) => ({
+      code: text(item.code, 100),
+      current: objectList(item.current).map(benefitForOutput),
+      proposed: objectList(item.proposed).map(benefitForOutput),
+    })),
+  };
+}
+
+function benefitDecision(value: unknown) {
+  const row = asRecord(value) ?? {};
+  return {
+    action: text(row.action, 40),
+    reason: text(row.reason, 500),
+    change_type: text(row.change_type ?? row.changeType, 60),
+    dedupe_key: text(row.dedupe_key ?? row.dedupeKey, 200),
+    display_priority: number(row.display_priority),
+    is_primary: typeof row.is_primary === "boolean" ? row.is_primary : null,
+    benefit: benefitForOutput(row.benefit),
+    proposed: benefitForOutput(row.proposed),
+    edited_benefit: benefitForOutput(row.edited_benefit ?? row.editedBenefit),
+  };
+}
+
+function validationItems(value: unknown) {
+  return objectList(value).map((item) => ({ code: text(item.code, 100) }));
+}
+
+function sourceEvidence(value: unknown) {
+  return objectList(value).map((item) => ({
+    dedupe_key: text(item.dedupe_key, 200),
+    source_url: text(item.source_url),
+    source_excerpt: text(item.source_excerpt, 500),
+    evidence: fieldEvidence(item.evidence),
+  }));
+}
+
+function extractionForOutput(value: unknown) {
+  const row = asRecord(value) ?? {};
+  return {
+    request_type: text(row.request_type, 100),
+    parser_version: text(row.parser_version, 100),
+    content_hash: text(row.content_hash, 200),
+    retrieved_at: text(row.retrieved_at, 100),
+    proposals: objectList(row.proposals).map(benefitForOutput),
+    diff: benefitDiff(row.diff),
+  };
+}
+
+function resultSummary(value: unknown) {
+  const row = asRecord(value) ?? {};
+  return {
+    run_id: text(row.run_id, 100),
+    proposals: number(row.proposals),
+    additions: number(row.additions),
+    modifications: number(row.modifications),
+    possible_removals: number(row.possible_removals),
+    conflicts: number(row.conflicts),
+    reused_staging: row.reused_staging === true,
+    unsafe_mutation_count: number(row.unsafe_mutation_count),
+    raw_body_stored: row.raw_body_stored === true,
+    evidence_passed: row.evidence_passed === true,
+    idempotency_passed: row.idempotency_passed === true,
+    retry_scheduled: row.retry_scheduled === true,
+    quarantine_reason: text(row.quarantine_reason, 100),
+  };
 }
 
 function stagingForOutput(value: unknown) {
   const staging = Array.isArray(value) ? value[0] : value;
   const row = asRecord(staging);
   if (!row) return null;
-  return safeAdminValue({
-    id: row.id,
-    card_id: row.card_id,
-    request_type: row.request_type,
-    parser_version: row.parser_version,
-    source_url: row.source_url,
-    source_url_hash: row.source_url_hash,
-    content_hash: row.content_hash,
-    status: row.status,
-    calculated_confidence: row.calculated_confidence,
-    validation_reasons: row.validation_reasons,
-    validation_warnings: row.validation_warnings,
-    source_evidence: row.source_evidence,
-    extracted_data: row.extracted_data,
-    benefit_decisions: row.benefit_decisions,
-    created_at: row.created_at,
-    reviewed_at: row.reviewed_at,
-  });
+  return {
+    id: text(row.id, 100),
+    card_id: text(row.card_id, 100),
+    request_type: text(row.request_type, 100),
+    parser_version: text(row.parser_version, 100),
+    source_url: text(row.source_url),
+    source_url_hash: text(row.source_url_hash, 200),
+    content_hash: text(row.content_hash, 200),
+    status: text(row.status, 50),
+    calculated_confidence: number(row.calculated_confidence),
+    validation_reasons: validationItems(row.validation_reasons),
+    validation_warnings: validationItems(row.validation_warnings),
+    source_evidence: sourceEvidence(row.source_evidence),
+    extracted_data: extractionForOutput(row.extracted_data),
+    benefit_decisions: objectList(row.benefit_decisions).map(benefitDecision),
+    created_at: text(row.created_at, 100),
+    reviewed_at: text(row.reviewed_at, 100),
+  };
 }
 
 export function presentBenefitJob(value: unknown) {
   const row = asRecord(value) ?? {};
-  return safeAdminValue({
-    id: row.id,
-    card_id: row.card_id,
-    issuer: row.issuer,
-    canonical_url: row.canonical_url,
-    parser_version: row.parser_version,
-    status: row.status,
-    run_mode: row.run_mode,
-    attempt_count: row.attempt_count,
-    staging_id: row.staging_id,
-    failure_category: row.failure_category,
-    next_retry_at: row.next_retry_at,
-    normalized_fields: row.normalized_fields,
-    result_summary: row.result_summary,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    card: row.card_catalog,
+  const card = asRecord(row.card_catalog) ?? {};
+  return {
+    id: text(row.id, 100),
+    card_id: text(row.card_id, 100),
+    issuer: text(row.issuer, 200),
+    canonical_url: text(row.canonical_url),
+    parser_version: text(row.parser_version, 100),
+    status: text(row.status, 50),
+    run_mode: text(row.run_mode, 50),
+    attempt_count: number(row.attempt_count),
+    staging_id: text(row.staging_id, 100),
+    failure_category: text(row.failure_category, 100),
+    next_retry_at: text(row.next_retry_at, 100),
+    normalized_fields: {
+      proposed_count: number(asRecord(row.normalized_fields)?.proposed_count),
+    },
+    result_summary: resultSummary(row.result_summary),
+    created_at: text(row.created_at, 100),
+    updated_at: text(row.updated_at, 100),
+    card: {
+      id: text(card.id, 100),
+      bank: text(card.bank, 200),
+      card_name: text(card.card_name, 300),
+    },
     staging: stagingForOutput(row.card_benefits_staging),
-  });
+  };
 }
 
-function counts(rows: JsonRecord[]) {
-  const byStatus: Record<string, number> = {};
-  const byRunMode: Record<string, number> = {};
-  for (const row of rows) {
-    const status = typeof row.status === "string" ? row.status : "unknown";
-    const runMode = typeof row.run_mode === "string" ? row.run_mode : "unknown";
-    byStatus[status] = (byStatus[status] ?? 0) + 1;
-    byRunMode[runMode] = (byRunMode[runMode] ?? 0) + 1;
+function benefitLane<T>(query: T): T {
+  return (query as any)
+    .neq("parser_version", "catalog-v1")
+    .in("run_mode", benefitRunModes);
+}
+
+function pageRequest(body: JsonRecord) {
+  const page = body.page === undefined ? 1 : Number(body.page);
+  const limit = body.limit === undefined ? 50 : Number(body.limit);
+  if (
+    !Number.isInteger(page) || page < 1 || !Number.isInteger(limit) ||
+    limit < 1 || limit > 100
+  ) {
+    throw new BenefitAdminError("invalid_benefit_page");
   }
-  return { total: rows.length, by_status: byStatus, by_run_mode: byRunMode };
+  return { page, limit, offset: (page - 1) * limit };
+}
+
+async function exactCount(
+  db: UntypedSupabaseClient,
+  column: "status" | "run_mode" | null = null,
+  value: string | null = null,
+) {
+  let query = benefitLane(
+    db.from("card_catalog_enrichment_jobs").select("id", {
+      count: "exact",
+      head: true,
+    }),
+  );
+  if (column && value) query = query.eq(column, value);
+  const { count, error } = await query;
+  if (error) throw error;
+  return Number(count ?? 0);
+}
+
+async function benefitCounts(db: UntypedSupabaseClient) {
+  const [total, ...buckets] = await Promise.all([
+    exactCount(db),
+    ...jobStatuses.map((status) => exactCount(db, "status", status)),
+    ...benefitRunModes.map((runMode) => exactCount(db, "run_mode", runMode)),
+  ]);
+  return {
+    total,
+    by_status: Object.fromEntries(
+      jobStatuses.map((status, index) => [status, buckets[index]]),
+    ),
+    by_run_mode: Object.fromEntries(
+      benefitRunModes.map((runMode, index) => [
+        runMode,
+        buckets[jobStatuses.length + index],
+      ]),
+    ),
+  };
 }
 
 async function readBenefitJobs(
   db: UntypedSupabaseClient,
   body: JsonRecord,
-): Promise<JsonRecord[]> {
-  let query = db.from("card_catalog_enrichment_jobs").select(safeJobColumns)
-    .order("created_at", { ascending: false });
+): Promise<
+  { rows: JsonRecord[]; page: number; limit: number; hasMore: boolean }
+> {
+  const { page, limit, offset } = pageRequest(body);
+  let query = benefitLane(
+    db.from("card_catalog_enrichment_jobs").select(safeJobColumns),
+  ).order("created_at", { ascending: false });
   if (typeof body.status === "string" && body.status.trim()) {
     query = query.eq("status", body.status.trim());
   }
   if (typeof body.job_id === "string" && body.job_id.trim()) {
     query = query.eq("id", body.job_id.trim());
   }
-  const { data, error } = await query.limit(100);
+  const { data, error } = await query.range(offset, offset + limit);
   if (error) throw error;
-  return (data ?? []).map((row: unknown) => asRecord(row) ?? {});
+  const rows = (data ?? []).map((row: unknown) => asRecord(row) ?? {});
+  return {
+    rows: rows.slice(0, limit),
+    page,
+    limit,
+    hasMore: rows.length > limit,
+  };
 }
 
 function allowedDecisions(
@@ -182,9 +424,10 @@ async function approvalTarget(
 ) {
   const jobId = requiredId(body.job_id, "job_id");
   const stagingId = requiredId(body.staging_id, "staging_id");
-  const { data: job, error: jobError } = await db
-    .from("card_catalog_enrichment_jobs")
-    .select("id, card_id, staging_id, status")
+  const { data: job, error: jobError } = await benefitLane(
+    db.from("card_catalog_enrichment_jobs")
+      .select("id, card_id, staging_id, status"),
+  )
     .eq("id", jobId)
     .eq("staging_id", stagingId)
     .single();
@@ -230,11 +473,11 @@ async function approve(
   const result = Array.isArray(data) ? data[0] : data;
   return {
     success: true,
-    result: safeAdminValue({
+    result: {
       staging_id: result?.staging_id ?? target.stagingId,
       resulting_status: result?.resulting_status ??
         (mode === "reject" ? "rejected" : "approved"),
-    }),
+    },
   };
 }
 
@@ -244,8 +487,9 @@ async function resetJob(
   allowedStatuses: string[],
   patch: JsonRecord,
 ) {
-  const { data, error } = await db.from("card_catalog_enrichment_jobs")
-    .update(patch)
+  const { data, error } = await benefitLane(
+    db.from("card_catalog_enrichment_jobs").update(patch),
+  )
     .eq("id", jobId)
     .in("status", allowedStatuses)
     .select(
@@ -288,23 +532,36 @@ export async function handleBenefitAdminAction(
 ): Promise<unknown> {
   switch (body.action) {
     case "benefit-list": {
-      const rows = await readBenefitJobs(db, body);
-      return { items: rows.map(presentBenefitJob), counts: counts(rows) };
+      const [page, counts] = await Promise.all([
+        readBenefitJobs(db, body),
+        benefitCounts(db),
+      ]);
+      return {
+        items: page.rows.map(presentBenefitJob),
+        counts,
+        page: page.page,
+        limit: page.limit,
+        has_more: page.hasMore,
+      };
     }
     case "benefit-status": {
-      const rows = await readBenefitJobs(db, body);
+      const [page, counts] = await Promise.all([
+        readBenefitJobs(db, body),
+        benefitCounts(db),
+      ]);
       return {
-        items: rows.map(presentBenefitJob),
-        run_counts: counts(rows),
-        history: rows.map((row) =>
-          safeAdminValue({
-            job_id: row.id,
-            status: row.status,
-            run_mode: row.run_mode,
-            updated_at: row.updated_at,
-            run_id: asRecord(row.result_summary)?.run_id ?? null,
-          })
-        ),
+        items: page.rows.map(presentBenefitJob),
+        run_counts: counts,
+        history: page.rows.map((row) => ({
+          job_id: text(row.id, 100),
+          status: text(row.status, 50),
+          run_mode: text(row.run_mode, 50),
+          updated_at: text(row.updated_at, 100),
+          run_id: text(asRecord(row.result_summary)?.run_id, 100),
+        })),
+        page: page.page,
+        limit: page.limit,
+        has_more: page.hasMore,
       };
     }
     case "benefit-approve":

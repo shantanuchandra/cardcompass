@@ -155,11 +155,20 @@ Deno.test("benefit list returns evidence and confidence without page bodies or s
         select() {
           return this;
         },
+        neq() {
+          return this;
+        },
+        in() {
+          return this;
+        },
         eq() {
           return this;
         },
         order() {
           return this;
+        },
+        async range() {
+          return { data: [row], error: null };
         },
         async limit() {
           return { data: [row], error: null };
@@ -198,6 +207,12 @@ Deno.test("benefit approval accepts only matching pending enrichment staging and
     from(table: string) {
       return {
         select() {
+          return this;
+        },
+        neq() {
+          return this;
+        },
+        in() {
           return this;
         },
         eq() {
@@ -322,12 +337,17 @@ Deno.test("benefit quarantine state changes are explicit and a pilot uses the se
         eq() {
           return this;
         },
-        in(_column: string, states: string[]) {
+        neq() {
+          return this;
+        },
+        in(column: string, states: string[]) {
           const current = String(jobs.status);
-          assert(
-            states.includes(current),
-            "state action accepted an invalid transition",
-          );
+          if (column === "status") {
+            assert(
+              states.includes(current),
+              "state action accepted an invalid transition",
+            );
+          }
           return this;
         },
         select() {
@@ -433,11 +453,17 @@ Deno.test("benefit rejection requires a reason and retry resets only retryable j
         eq() {
           return this;
         },
-        in(_column: string, statuses: string[]) {
-          assert(
-            statuses.includes("failed") && statuses.includes("review_required"),
-            "retry allowed a terminal state",
-          );
+        neq() {
+          return this;
+        },
+        in(column: string, statuses: string[]) {
+          if (column === "status") {
+            assert(
+              statuses.includes("failed") &&
+                statuses.includes("review_required"),
+              "retry allowed a terminal state",
+            );
+          }
           return this;
         },
         select() {
@@ -480,6 +506,404 @@ Deno.test("benefit rejection requires a reason and retry resets only retryable j
     assert(
       job.result_summary.run_id === "run-1",
       "retry overwrote run history",
+    );
+  } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  }
+});
+
+Deno.test("benefit reads exclude legacy catalog jobs in the query and response", async () => {
+  const handle = await handler();
+  const rows = [
+    {
+      id: "catalog-job",
+      parser_version: "catalog-v1",
+      run_mode: "manual",
+      status: "failed",
+    },
+    {
+      id: "benefit-job",
+      parser_version: "benefits-v1",
+      run_mode: "scheduled",
+      status: "failed",
+    },
+  ];
+  const db = withAuthenticatedUser({
+    from(table: string) {
+      assert(
+        table === "card_catalog_enrichment_jobs",
+        "read used an unexpected table",
+      );
+      let excludeCatalog = false;
+      let allowedModes: string[] = [];
+      return {
+        select() {
+          return this;
+        },
+        neq(column: string, value: string) {
+          if (column === "parser_version" && value === "catalog-v1") {
+            excludeCatalog = true;
+          }
+          return this;
+        },
+        in(column: string, values: string[]) {
+          if (column === "run_mode") allowedModes = values;
+          return this;
+        },
+        eq() {
+          return this;
+        },
+        order() {
+          return this;
+        },
+        async range() {
+          const data = rows.filter((row) =>
+            (!excludeCatalog || row.parser_version !== "catalog-v1") &&
+            (allowedModes.length === 0 || allowedModes.includes(row.run_mode))
+          );
+          return { data, error: null };
+        },
+        async limit() {
+          const data = rows.filter((row) =>
+            (!excludeCatalog || row.parser_version !== "catalog-v1") &&
+            (allowedModes.length === 0 || allowedModes.includes(row.run_mode))
+          );
+          return { data, error: null };
+        },
+      };
+    },
+  });
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
+  try {
+    const response = await handle(request({ action: "benefit-list" }), db);
+    const body = await response.json();
+    assert(response.status === 200, "benefit list was rejected");
+    assert(
+      body.items.length === 1,
+      "legacy catalog job appeared in benefit list",
+    );
+    assert(
+      body.items[0].id === "benefit-job",
+      "benefit list returned the wrong lane",
+    );
+  } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  }
+});
+
+Deno.test("benefit mutations cannot update catalog-v1 jobs", async () => {
+  const handle = await handler();
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
+  try {
+    for (
+      const [action, status] of [
+        ["benefit-retry", "failed"],
+        ["benefit-quarantine", "failed"],
+        ["benefit-unquarantine", "quarantined"],
+      ]
+    ) {
+      const job = {
+        id: "catalog-job",
+        parser_version: "catalog-v1",
+        run_mode: "manual",
+        status,
+      };
+      const db = withAuthenticatedUser({
+        from(table: string) {
+          assert(
+            table === "card_catalog_enrichment_jobs",
+            "mutation used an unexpected table",
+          );
+          let patch: Record<string, unknown> | null = null;
+          let benefitLaneOnly = false;
+          let approvedRunModes: string[] = [];
+          return {
+            update(next: Record<string, unknown>) {
+              patch = next;
+              return this;
+            },
+            eq() {
+              return this;
+            },
+            neq(column: string, value: string) {
+              if (column === "parser_version" && value === "catalog-v1") {
+                benefitLaneOnly = true;
+              }
+              return this;
+            },
+            in(column: string, values: string[]) {
+              if (column === "run_mode") approvedRunModes = values;
+              return this;
+            },
+            select() {
+              return this;
+            },
+            async single() {
+              const eligible =
+                (!benefitLaneOnly || job.parser_version !== "catalog-v1") &&
+                (approvedRunModes.length === 0 ||
+                  approvedRunModes.includes(job.run_mode));
+              if (eligible && patch) Object.assign(job, patch);
+              return { data: eligible ? job : null, error: null };
+            },
+          };
+        },
+      });
+      const response = await handle(
+        request({ action, job_id: "catalog-job", reason: "legacy lane" }),
+        db,
+      );
+      assert(response.status === 409, `${action} mutated a catalog-v1 job`);
+      assert(job.status === status, `${action} changed a catalog-v1 job state`);
+    }
+  } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  }
+});
+
+Deno.test("benefit DTOs allow only documented nested output fields", async () => {
+  const handle = await handler();
+  const db = withAuthenticatedUser({
+    from() {
+      return {
+        select() {
+          return this;
+        },
+        neq() {
+          return this;
+        },
+        in() {
+          return this;
+        },
+        eq() {
+          return this;
+        },
+        order() {
+          return this;
+        },
+        async range() {
+          return {
+            data: [{
+              id: "job-1",
+              parser_version: "benefits-v1",
+              run_mode: "scheduled",
+              status: "staged",
+              clientSecret: "must not escape",
+              result_summary: {
+                run_id: "run-1",
+                accessToken: "must not escape",
+                debug_trace: "unknown field",
+              },
+              card_catalog: {
+                id: "card-1",
+                bank: "Axis",
+                card_name: "Ace",
+                internal: "unknown",
+              },
+              card_benefits_staging: {
+                id: "staging-1",
+                request_type: "official_benefit_enrichment",
+                source_evidence: [{
+                  source_excerpt: "₹500 dining credit",
+                  authorizationHeader: "must not escape",
+                  proof: "unknown field",
+                }],
+                extracted_data: {
+                  diff: {
+                    additions: [{
+                      title: "Dining credit",
+                      warnings: ["low_confidence"],
+                      responseBody: "must not escape",
+                    }],
+                  },
+                  unknown_nested: "must not escape",
+                },
+                benefit_decisions: [{
+                  action: "approve",
+                  decision_note: "unknown field",
+                }],
+              },
+            }],
+            error: null,
+          };
+        },
+        async limit() {
+          return {
+            data: [{
+              id: "job-1",
+              parser_version: "benefits-v1",
+              run_mode: "scheduled",
+              status: "staged",
+              clientSecret: "must not escape",
+              result_summary: {
+                run_id: "run-1",
+                accessToken: "must not escape",
+                debug_trace: "unknown field",
+              },
+              card_catalog: {
+                id: "card-1",
+                bank: "Axis",
+                card_name: "Ace",
+                internal: "unknown",
+              },
+              card_benefits_staging: {
+                id: "staging-1",
+                request_type: "official_benefit_enrichment",
+                source_evidence: [{
+                  source_excerpt: "₹500 dining credit",
+                  authorizationHeader: "must not escape",
+                  proof: "unknown field",
+                }],
+                extracted_data: {
+                  diff: {
+                    additions: [{
+                      title: "Dining credit",
+                      responseBody: "must not escape",
+                    }],
+                  },
+                  unknown_nested: "must not escape",
+                },
+                benefit_decisions: [{
+                  action: "approve",
+                  decision_note: "unknown field",
+                }],
+              },
+            }],
+            error: null,
+          };
+        },
+      };
+    },
+  });
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
+  try {
+    const response = await handle(request({ action: "benefit-list" }), db);
+    const serialized = JSON.stringify(await response.json());
+    assert(response.status === 200, "benefit DTO response was rejected");
+    for (
+      const prohibited of [
+        "must not escape",
+        "unknown field",
+        "unknown_nested",
+        "debug_trace",
+        "clientSecret",
+        "accessToken",
+        "responseBody",
+        "authorizationHeader",
+      ]
+    ) {
+      assert(!serialized.includes(prohibited), `DTO exposed ${prohibited}`);
+    }
+    assert(
+      serialized.includes("₹500 dining credit"),
+      "allowlisted evidence was omitted",
+    );
+    assert(
+      serialized.includes("low_confidence"),
+      "allowlisted warning was omitted",
+    );
+  } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  }
+});
+
+Deno.test("benefit counts remain complete while list and history use explicit pages", async () => {
+  const handle = await handler();
+  const rows = Array.from({ length: 130 }, (_, index) => ({
+    id: `benefit-${index + 1}`,
+    parser_version: "benefits-v1",
+    run_mode: "scheduled",
+    status: index < 100 ? "queued" : "staged",
+    result_summary: { run_id: `run-${index + 1}` },
+  }));
+  let countQueries = 0;
+  const db = withAuthenticatedUser({
+    from(table: string) {
+      assert(
+        table === "card_catalog_enrichment_jobs",
+        "coverage used an unexpected table",
+      );
+      let countOnly = false;
+      let offset = 0;
+      let end = rows.length - 1;
+      return {
+        select(_columns: string, options?: { count?: string; head?: boolean }) {
+          countOnly = options?.count === "exact" && options.head === true;
+          return this;
+        },
+        neq() {
+          return this;
+        },
+        in() {
+          return this;
+        },
+        eq() {
+          return this;
+        },
+        order() {
+          return this;
+        },
+        range(start: number, stop: number) {
+          offset = start;
+          end = stop;
+          return this;
+        },
+        async limit(limit: number) {
+          return { data: rows.slice(0, limit), error: null };
+        },
+        then(onfulfilled: (value: unknown) => unknown) {
+          if (countOnly) {
+            countQueries += 1;
+            return Promise.resolve({
+              data: null,
+              count: rows.length,
+              error: null,
+            }).then(onfulfilled);
+          }
+          return Promise.resolve({
+            data: rows.slice(offset, end + 1),
+            error: null,
+          }).then(onfulfilled);
+        },
+      };
+    },
+  });
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
+  try {
+    const response = await handle(
+      request({ action: "benefit-status", page: 2, limit: 25 }),
+      db,
+    );
+    const body = await response.json();
+    assert(response.status === 200, "paginated benefit status was rejected");
+    assert(body.items.length === 25, "status page did not honor its limit");
+    assert(
+      body.items[0].id === "benefit-26",
+      "status page did not honor its offset",
+    );
+    assert(
+      body.page === 2 && body.limit === 25 && body.has_more === true,
+      "page metadata was missing",
+    );
+    assert(
+      body.run_counts.total === 130,
+      "run counts were derived from the page",
+    );
+    assert(
+      countQueries > 0,
+      "run counts did not use an independent aggregate query",
     );
   } finally {
     if (originalAllowlist === undefined) {
