@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:cardcompass/core/providers/supabase_provider.dart';
 import 'package:cardcompass/core/router/app_tab_selection.dart';
+import 'package:cardcompass/core/services/card_discovery_service.dart';
 import 'package:cardcompass/core/theme/app_theme.dart';
 import 'package:cardcompass/features/dashboard/providers/dashboard_provider.dart';
 import 'package:cardcompass/features/dashboard/providers/gmail_sync_provider.dart';
@@ -10,6 +11,7 @@ import 'package:cardcompass/features/dashboard/screens/dashboard_screen.dart';
 import 'package:cardcompass/shared/models/transaction.dart';
 import 'package:cardcompass/shared/models/user_card.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -41,6 +43,16 @@ final _fixture = DashboardData(
   totalCreditLimit: 100000,
   monthlySpend: 1250,
   rewardsEarned: 75,
+  monthlySpendTrend: const [800, 950, 1100, 1000, 1300, 1250],
+  monthlyRewardsTrend: const [40, 55, 60, 50, 70, 75],
+  trendMonths: [
+    DateTime(2026, 3),
+    DateTime(2026, 4),
+    DateTime(2026, 5),
+    DateTime(2026, 6),
+    DateTime(2026, 7),
+    DateTime(2026, 8),
+  ],
 );
 
 final _cardlessFixture = DashboardData(
@@ -50,6 +62,16 @@ final _cardlessFixture = DashboardData(
   totalCreditLimit: 0,
   monthlySpend: 0,
   rewardsEarned: 0,
+  monthlySpendTrend: const [0, 0, 0, 0, 0, 0],
+  monthlyRewardsTrend: const [0, 0, 0, 0, 0, 0],
+  trendMonths: [
+    DateTime(2026, 3),
+    DateTime(2026, 4),
+    DateTime(2026, 5),
+    DateTime(2026, 6),
+    DateTime(2026, 7),
+    DateTime(2026, 8),
+  ],
 );
 
 class _FailingGmailSyncNotifier extends GmailSyncNotifier {
@@ -69,6 +91,7 @@ Future<void> _pumpDashboard(
   List<Map<String, dynamic>> pendingAssignments = const [],
   BankCatalogSearch? catalogSearch,
   CardResolution? cardResolution,
+  CardUrlResolver? cardUrlResolver,
 }) async {
   await tester.pumpWidget(
     ProviderScope(
@@ -81,6 +104,8 @@ Future<void> _pumpDashboard(
           bankCatalogSearchProvider.overrideWithValue(catalogSearch),
         if (cardResolution != null)
           cardResolutionProvider.overrideWithValue(cardResolution),
+        if (cardUrlResolver != null)
+          cardUrlResolverProvider.overrideWithValue(cardUrlResolver),
         dashboardProvider.overrideWith((ref) async {
           onDashboardLoad?.call();
           if (failDashboard) {
@@ -243,17 +268,6 @@ void main() {
     expect(dashboardLoads, 2);
   });
 
-  testWidgets('primary recent-spending action selects Transactions', (
-    tester,
-  ) async {
-    final selectedAppTab = ValueNotifier(AppTab.dashboard);
-    addTearDown(selectedAppTab.dispose);
-    await _pumpDashboard(tester, selectedAppTab: selectedAppTab);
-
-    await tester.tap(find.text('Review recent spending'));
-    expect(selectedAppTab.value, AppTab.transactions);
-  });
-
   testWidgets('Gmail sync failures never render internal exception text', (
     tester,
   ) async {
@@ -305,6 +319,224 @@ void main() {
     );
     await tester.pump(const Duration(seconds: 1));
   });
+
+  testWidgets('cards carousel responds to a pressed mouse drag', (
+    tester,
+  ) async {
+    final selectedAppTab = ValueNotifier(AppTab.dashboard);
+    addTearDown(selectedAppTab.dispose);
+    await _pumpDashboard(
+      tester,
+      selectedAppTab: selectedAppTab,
+      pendingAssignments: const [
+        {'email_id': 'email-mouse', 'bank_detected': 'Horizon Bank'},
+        {'email_id': 'email-mouse-2', 'bank_detected': 'Horizon Bank'},
+        {'email_id': 'email-mouse-3', 'bank_detected': 'Horizon Bank'},
+      ],
+      catalogSearch: (_, _) async => const [],
+    );
+
+    await tester.scrollUntilVisible(
+      find.text('Your Cards'),
+      300,
+      scrollable: find
+          .descendant(
+            of: find.byType(CustomScrollView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    final pageView = find.byType(PageView);
+    final pageScrollable = find.descendant(
+      of: pageView,
+      matching: find.byType(Scrollable),
+    );
+    final position = tester.state<ScrollableState>(pageScrollable).position;
+    expect(position.maxScrollExtent, greaterThan(0));
+    expect(
+      ScrollConfiguration.of(tester.element(pageView)).dragDevices,
+      contains(PointerDeviceKind.mouse),
+    );
+    final before = position.pixels;
+    await tester.drag(
+      pageView,
+      const Offset(-420, 0),
+      kind: PointerDeviceKind.mouse,
+      buttons: kPrimaryMouseButton,
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.state<ScrollableState>(pageScrollable).position.pixels,
+      greaterThan(before),
+    );
+  });
+
+  testWidgets('pending card shows statement identity evidence', (tester) async {
+    final selectedAppTab = ValueNotifier(AppTab.dashboard);
+    addTearDown(selectedAppTab.dispose);
+    await _pumpDashboard(
+      tester,
+      selectedAppTab: selectedAppTab,
+      pendingAssignments: const [
+        {
+          'email_id': 'email-evidence',
+          'bank_detected': 'HDFC Bank',
+          'received_date': '2026-08-13T10:30:00Z',
+          'metadata': {
+            'needsCardAssignment': true,
+            'identityHints': {
+              'last4': '4821',
+              'productName': 'Regalia Gold',
+              'statementDate': '2026-08-12',
+              'dueDate': '2026-09-02',
+              'totalAmount': 18420.50,
+            },
+          },
+        },
+      ],
+      catalogSearch: (_, _) async => const [],
+    );
+
+    await tester.scrollUntilVisible(
+      find.text('Your Cards'),
+      300,
+      scrollable: find
+          .descendant(
+            of: find.byType(CustomScrollView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    await tester.drag(find.byType(PageView), const Offset(-500, 0));
+    await tester.pumpAndSettle();
+
+    expect(find.text('HDFC Bank •••• 4821'), findsOneWidget);
+    expect(find.text('Possible card: Regalia Gold'), findsOneWidget);
+    expect(find.textContaining('₹18,420.50 due 2 Sep'), findsOneWidget);
+    expect(find.text('Confirm card'), findsOneWidget);
+  });
+
+  testWidgets('older pending card shows available email evidence', (
+    tester,
+  ) async {
+    final selectedAppTab = ValueNotifier(AppTab.dashboard);
+    addTearDown(selectedAppTab.dispose);
+    await _pumpDashboard(
+      tester,
+      selectedAppTab: selectedAppTab,
+      pendingAssignments: const [
+        {
+          'email_id': 'email-legacy',
+          'bank_detected': 'ICICI Bank',
+          'subject': 'Your ICICI Bank credit card statement is ready',
+          'received_date': '2026-08-13T10:30:00Z',
+          'metadata': {'attachmentFilename': 'ICICI-Aug-Statement.pdf'},
+        },
+      ],
+      catalogSearch: (_, _) async => const [],
+    );
+
+    await tester.scrollUntilVisible(
+      find.text('Your Cards'),
+      300,
+      scrollable: find
+          .descendant(
+            of: find.byType(CustomScrollView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    await tester.drag(find.byType(PageView), const Offset(-500, 0));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Your ICICI Bank credit card statement is ready'),
+      findsOneWidget,
+    );
+    expect(find.text('Statement email · 13 Aug'), findsOneWidget);
+    expect(find.text('ICICI-Aug-Statement.pdf'), findsOneWidget);
+    expect(find.text('Confirm card'), findsOneWidget);
+  });
+
+  testWidgets(
+    'missing bank variant can be resolved from an official product URL',
+    (tester) async {
+      String? assignedCardId;
+      String? submittedUrl;
+      final selectedAppTab = ValueNotifier(AppTab.dashboard);
+      addTearDown(selectedAppTab.dispose);
+      await _pumpDashboard(
+        tester,
+        selectedAppTab: selectedAppTab,
+        pendingAssignments: const [
+          {
+            'email_id': 'email-url',
+            'bank_detected': 'Kotak Bank',
+            'subject': 'Statement for White Reserve Credit Card',
+            'metadata': {
+              'identityHints': {
+                'productName': 'White Reserve',
+                'last4': '0771',
+              },
+            },
+          },
+        ],
+        catalogSearch: (_, _) async => const [],
+        cardUrlResolver: (email, url) async {
+          submittedUrl = url;
+          return const CardUrlResolution(
+            jobId: 'job-url',
+            status: 'resolved',
+            resolvedCardId: 'catalog-white-reserve',
+          );
+        },
+        cardResolution: (_, catalogCardId) async {
+          assignedCardId = catalogCardId;
+        },
+      );
+
+      await tester.scrollUntilVisible(
+        find.text('Your Cards'),
+        300,
+        scrollable: find
+            .descendant(
+              of: find.byType(CustomScrollView),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      await tester.drag(find.byType(PageView), const Offset(-500, 0));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('resolve-bank-email-url')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text("Can't find it? Paste official card page"),
+        findsOneWidget,
+      );
+      await tester.tap(find.text("Can't find it? Paste official card page"));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('official-card-url-field')),
+        'http://www.kotak.com/rd/white-reserve',
+      );
+      await tester.tap(find.text('Verify card page'));
+      await tester.pump();
+      expect(find.text('Enter a valid HTTPS card page URL.'), findsOneWidget);
+
+      await tester.enterText(
+        find.byKey(const Key('official-card-url-field')),
+        'https://www.kotak.com/rd/white-reserve',
+      );
+      await tester.tap(find.text('Verify card page'));
+      await tester.pumpAndSettle();
+
+      expect(submittedUrl, 'https://www.kotak.com/rd/white-reserve');
+      expect(assignedCardId, 'catalog-white-reserve');
+      expect(find.byType(Dialog), findsNothing);
+    },
+  );
 
   testWidgets(
     'bank resolution redacts failures, clears stale errors, and retries',

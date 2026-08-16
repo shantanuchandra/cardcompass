@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -12,6 +13,10 @@ import '../../../core/theme/brand_tokens.dart';
 import '../../../core/theme/category_display.dart';
 import '../../../core/providers/supabase_provider.dart';
 import '../../../core/providers/repository_providers.dart';
+import '../../../core/services/statement_processing_service.dart'
+    show buildStatementIssueLines;
+import '../../../core/services/card_discovery_service.dart';
+import '../../../core/services/card_identity_service.dart';
 import '../../../shared/models/user_card.dart';
 import '../../../shared/models/transaction.dart';
 import '../../../shared/models/statement.dart';
@@ -45,6 +50,48 @@ final cardResolutionProvider = Provider<CardResolution>((ref) {
   return (email, catalogCardId) => ref
       .read(cardAssignmentProvider.notifier)
       .resolveWithCatalogEntry(email: email, catalogCardId: catalogCardId);
+});
+
+typedef CardUrlResolver =
+    Future<CardUrlResolution> Function(
+      Map<String, dynamic> email,
+      String sourceUrl,
+    );
+
+final cardUrlResolverProvider = Provider<CardUrlResolver>((ref) {
+  return (email, sourceUrl) {
+    final metadata = email['metadata'];
+    final safeMetadata = metadata is Map
+        ? Map<String, dynamic>.from(metadata)
+        : const <String, dynamic>{};
+    final rawHints = safeMetadata['identityHints'];
+    final hints = rawHints is Map
+        ? Map<String, dynamic>.from(rawHints)
+        : const <String, dynamic>{};
+    final extracted = CardIdentityEvidence.extract(
+      issuer: email['bank_detected'] as String? ?? '',
+      subject: email['subject'] as String?,
+      attachmentFilename:
+          safeMetadata['attachmentFilename'] as String? ??
+          email['attachment_filename'] as String?,
+      pdfHeader: hints['pdfHeaderExcerpt'] as String?,
+    );
+    final evidence = CardIdentityEvidence(
+      issuer: extracted.issuer,
+      subjectProduct:
+          extracted.subjectProduct ?? hints['productName'] as String?,
+      filenameProduct: extracted.filenameProduct,
+      pdfHeaderProduct: extracted.pdfHeaderProduct,
+      network: extracted.network ?? hints['network'] as String?,
+      lastFour: extracted.lastFour ?? hints['last4'] as String?,
+      attachmentFilename: extracted.attachmentFilename,
+      pdfHeaderExcerpt: extracted.pdfHeaderExcerpt,
+      warnings: extracted.warnings,
+    );
+    return CardDiscoveryService(
+      ref.read(supabaseClientProvider),
+    ).resolveUrl(evidence, sourceUrl);
+  };
 });
 
 class DashboardScreen extends ConsumerWidget {
@@ -109,16 +156,22 @@ class _DashboardAppBar extends ConsumerWidget {
       next.whenOrNull(
         data: (result) {
           if (result == null) return;
+          final issueLines = buildStatementIssueLines(result.issues);
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(
-                'Found ${result.foundCount} statement emails, ${result.newlyStoredCount} new. '
-                'Processed ${result.processedAttempted}: ${result.processedSucceeded} succeeded'
-                '${result.processedNeedsPassword > 0 ? ', ${result.processedNeedsPassword} need a password' : ''}'
-                '${result.processedNeedsCardAssignment > 0 ? ', ${result.processedNeedsCardAssignment} need a card assigned' : ''}'
-                '${result.processedFailed > 0 ? ', ${result.processedFailed} failed' : ''}.',
-              ),
+              content: Text(result.summaryMessage),
               duration: const Duration(seconds: 8),
+              action: issueLines.isEmpty
+                  ? null
+                  : SnackBarAction(
+                      label: 'Details',
+                      onPressed: () => showDialog<void>(
+                        context: context,
+                        builder: (_) => Dialog(
+                          child: StatementSyncDetails(issueLines: issueLines),
+                        ),
+                      ),
+                    ),
             ),
           );
           ref.invalidate(dashboardProvider);
@@ -226,6 +279,81 @@ class _DashboardAppBar extends ConsumerWidget {
                     controls,
                   ],
                 ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Concise, bank-level explanation of statement failures from the latest sync.
+class StatementSyncDetails extends StatelessWidget {
+  const StatementSyncDetails({required this.issueLines, super.key});
+
+  final List<String> issueLines;
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 620, maxHeight: 560),
+      child: Padding(
+        padding: const EdgeInsets.all(BrandSpacing.xl),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Statement issues',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                      color: BrandColors.ink,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Close statement issues',
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close_rounded),
+                ),
+              ],
+            ),
+            const SizedBox(height: BrandSpacing.xs),
+            const Text(
+              'Grouped by bank, possible card, and the stage that needs attention. '
+              '“Attachment unavailable” means the older saved email has no Gmail '
+              'attachment reference; syncing that date range again can repair it.',
+              style: TextStyle(color: BrandColors.mutedInk, height: 1.4),
+            ),
+            const SizedBox(height: BrandSpacing.lg),
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: issueLines.length,
+                separatorBuilder: (_, _) =>
+                    const SizedBox(height: BrandSpacing.sm),
+                itemBuilder: (context, index) => Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(BrandSpacing.md),
+                  decoration: BoxDecoration(
+                    color: BrandColors.paper,
+                    border: Border.all(color: BrandColors.paperDeep),
+                    borderRadius: BorderRadius.circular(BrandRadius.card),
+                  ),
+                  child: Text(
+                    issueLines[index],
+                    style: const TextStyle(
+                      color: BrandColors.ink,
+                      height: 1.45,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -637,29 +765,27 @@ class _DashboardContent extends StatelessWidget {
             data: data,
           ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.1),
           const SizedBox(height: BrandSpacing.lg),
-          IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  flex: 3,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      cardsSection,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                flex: 3,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    cardsSection,
+                    const SizedBox(height: BrandSpacing.lg),
+                    billsSection,
+                    if (data.latestStatements.isEmpty) ...[
                       const SizedBox(height: BrandSpacing.lg),
-                      billsSection,
-                      if (data.latestStatements.isEmpty) ...[
-                        const SizedBox(height: BrandSpacing.lg),
-                        statementsUnavailable,
-                      ],
+                      statementsUnavailable,
                     ],
-                  ),
+                  ],
                 ),
-                const SizedBox(width: BrandSpacing.lg),
-                Expanded(flex: 2, child: transactionsSection),
-              ],
-            ),
+              ),
+              const SizedBox(width: BrandSpacing.lg),
+              Expanded(flex: 2, child: transactionsSection),
+            ],
           ),
           const SizedBox(height: BrandSpacing.xxl),
         ]),
@@ -716,31 +842,11 @@ class _DashboardOverview extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         BrandContentFrame(
+          mode: BrandContentMode.fullWidthData,
           child: Padding(
             padding: const EdgeInsets.only(top: BrandSpacing.md),
-            child: const BrandPageHeader(
-              eyebrow: 'Wallet briefing',
-              title: 'Your next money move',
-              description:
-                  'Review what you have spent before your next statement closes.',
-            ),
+            child: _DashboardMetrics(data: data),
           ),
-        ),
-        const SizedBox(height: BrandSpacing.sm),
-        BrandContentFrame(
-          child: BrandActionRow(
-            title: 'Review recent spending',
-            description:
-                'See the latest purchases and rewards across your cards.',
-            leading: const Icon(Icons.receipt_long_rounded),
-            onTap: () =>
-                AppTabSelection.of(context).select(AppTab.transactions),
-          ),
-        ),
-        const SizedBox(height: BrandSpacing.lg),
-        BrandContentFrame(
-          mode: BrandContentMode.fullWidthData,
-          child: _DashboardMetrics(data: data),
         ),
       ],
     );
@@ -753,55 +859,361 @@ class _DashboardMetrics extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(BrandSpacing.lg),
-          decoration: BoxDecoration(
-            color: BrandColors.ledger,
-            borderRadius: BorderRadius.circular(BrandRadius.overlay),
-            border: Border.all(
-              color: BrandColors.focusDark.withValues(alpha: 0.25),
-            ),
-          ),
-          child: BrandMetric(
-            key: const Key('primary-spend-metric'),
-            label: 'This month\'s spend',
-            value: _shortCurrency.format(data.monthlySpend),
-            supportingText: 'Across your active cards',
-          ),
-        ),
-        const SizedBox(height: BrandSpacing.md),
-        Container(
+    final cardCount = data.cards.length;
+    final chips = [
+      _MetricChip(
+        key: const Key('primary-spend-metric'),
+        icon: Icons.credit_card_rounded,
+        tone: _MetricTone.primary,
+        label: "This month's spend",
+        value: _shortCurrency.format(data.monthlySpend),
+        trend: data.monthlySpendTrend,
+        trendMonths: data.trendMonths,
+      ),
+      _MetricChip(
+        key: const Key('supporting-rewards-metric'),
+        icon: Icons.star_rounded,
+        tone: _MetricTone.reward,
+        label: 'Rewards earned',
+        value: _shortCurrency.format(data.rewardsEarned),
+        trend: data.monthlyRewardsTrend,
+        trendMonths: data.trendMonths,
+      ),
+      _MetricChip(
+        key: const Key('supporting-limit-metric'),
+        icon: Icons.crop_square_rounded,
+        tone: _MetricTone.limit,
+        label: 'Total credit limit',
+        value: _shortCurrency.format(data.totalCreditLimit),
+        // No month-over-month history exists for a card's credit limit
+        // (it's a live snapshot, not a transaction-derived figure) — show
+        // the chip without a trend rather than fabricate one.
+        trend: null,
+        supportingText: 'Across $cardCount card${cardCount == 1 ? '' : 's'}',
+      ),
+    ];
+
+    final usesLargeText = MediaQuery.textScalerOf(context).scale(14) >= 21;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final stack = constraints.maxWidth < 560 || usesLargeText;
+        if (stack) {
+          return Column(
+            children: [
+              for (var i = 0; i < chips.length; i++) ...[
+                if (i > 0) const SizedBox(height: BrandSpacing.sm),
+                chips[i],
+              ],
+            ],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (var i = 0; i < chips.length; i++) ...[
+              if (i > 0) const SizedBox(width: BrandSpacing.sm),
+              Expanded(child: chips[i]),
+            ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+enum _MetricTone { primary, reward, limit }
+
+class _MetricChip extends StatelessWidget {
+  final IconData icon;
+  final _MetricTone tone;
+  final String label;
+  final String value;
+  final List<double>? trend;
+  final List<DateTime>? trendMonths;
+  final String? supportingText;
+
+  const _MetricChip({
+    super.key,
+    required this.icon,
+    required this.tone,
+    required this.label,
+    required this.value,
+    required this.trend,
+    this.trendMonths,
+    this.supportingText,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final (dotColor, dotOnColor, barColor) = switch (tone) {
+      _MetricTone.primary => (
+        BrandColors.focusDark,
+        BrandColors.signal,
+        BrandColors.focusDark,
+      ),
+      _MetricTone.reward => (
+        BrandColors.reward,
+        BrandColors.rewardInk,
+        BrandColors.rewardInk,
+      ),
+      _MetricTone.limit => (
+        BrandColors.ledger,
+        BrandColors.focusDark,
+        BrandColors.mutedInk,
+      ),
+    };
+
+    return Semantics(
+      label: '$label: $value',
+      child: ExcludeSemantics(
+        child: Container(
           width: double.infinity,
           padding: const EdgeInsets.all(BrandSpacing.md),
           decoration: BoxDecoration(
-            color: BrandColors.paper,
+            color: BrandColors.paperDeep,
             borderRadius: BorderRadius.circular(BrandRadius.overlay),
-            border: Border.all(color: BrandColors.ruleOnPaper),
           ),
-          child: ResponsiveValueRow(
-            spacing: BrandSpacing.xl,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: [
-              BrandMetric(
-                key: const Key('supporting-rewards-metric'),
-                label: 'Rewards earned',
-                value: _shortCurrency.format(data.rewardsEarned),
-                supportingText: 'This month',
+              Row(
+                children: [
+                  Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: dotColor,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(icon, size: 16, color: dotOnColor),
+                  ),
+                  const SizedBox(width: BrandSpacing.compact),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          label.toUpperCase(),
+                          style: const TextStyle(
+                            fontFamily: 'Manrope',
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.5,
+                            color: BrandColors.mutedInk,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        Text(
+                          value,
+                          style: const TextStyle(
+                            fontFamily: 'IBM Plex Mono',
+                            fontSize: 17,
+                            fontWeight: FontWeight.w700,
+                            color: BrandColors.ink,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-              BrandMetric(
-                key: const Key('supporting-limit-metric'),
-                label: 'Total credit limit',
-                value: _shortCurrency.format(data.totalCreditLimit),
-                supportingText:
-                    'Across ${data.cards.length} card${data.cards.length == 1 ? '' : 's'}',
-              ),
+              if (trend != null && trend!.any((v) => v > 0)) ...[
+                const SizedBox(height: BrandSpacing.compact),
+                SizedBox(
+                  height: 32,
+                  child: _MonthBars(
+                    values: trend!,
+                    months: trendMonths,
+                    color: barColor,
+                  ),
+                ),
+              ] else if (supportingText != null) ...[
+                const SizedBox(height: BrandSpacing.xs),
+                Text(
+                  supportingText!,
+                  style: const TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 12,
+                    color: BrandColors.mutedInk,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+final _monthLabelFmt = DateFormat('MMM yyyy');
+
+/// Discrete monthly bars (oldest → newest), current month at full opacity
+/// so it reads unambiguously as "you are here." Hovering (or tapping, for
+/// touch) a bar reveals its real month and value — no data is invented,
+/// this only surfaces what's already in [values]/[months].
+class _MonthBars extends StatefulWidget {
+  final List<double> values;
+  final List<DateTime>? months;
+  final Color color;
+  const _MonthBars({required this.values, this.months, required this.color});
+
+  @override
+  State<_MonthBars> createState() => _MonthBarsState();
+}
+
+class _MonthBarsState extends State<_MonthBars> {
+  int? _hovered;
+
+  void _setHovered(int? index) {
+    if (_hovered == index) return;
+    setState(() => _hovered = index);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final values = widget.values;
+    final months = widget.months;
+    final color = widget.color;
+    final maxValue = values.fold<double>(0, (m, v) => v > m ? v : m);
+    final hovered = _hovered;
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            for (var i = 0; i < values.length; i++) ...[
+              if (i > 0) const SizedBox(width: 3),
+              Expanded(
+                child: MouseRegion(
+                  onEnter: (_) => _setHovered(i),
+                  onExit: (_) => _setHovered(null),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(2),
+                      ),
+                      onTap: () => _setHovered(hovered == i ? null : i),
+                      child: AnimatedScale(
+                        scale: hovered == i ? 1.06 : 1.0,
+                        duration: BrandMotion.standard,
+                        curve: Curves.easeOut,
+                        alignment: Alignment.bottomCenter,
+                        child: FractionallySizedBox(
+                          heightFactor: maxValue <= 0
+                              ? 0.05
+                              : (0.12 + 0.88 * (values[i] / maxValue)).clamp(
+                                  0.05,
+                                  1.0,
+                                ),
+                          alignment: Alignment.bottomCenter,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: color.withValues(
+                                alpha: i == values.length - 1
+                                    ? 1.0
+                                    : (hovered == i ? 0.55 : 0.28),
+                              ),
+                              borderRadius: const BorderRadius.vertical(
+                                top: Radius.circular(2),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+        if (hovered != null)
+          Positioned(
+            bottom: 38,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: IgnorePointer(
+                child: _MonthBarTooltip(
+                  month: months != null && hovered < months.length
+                      ? _monthLabelFmt.format(months[hovered])
+                      : null,
+                  value: _shortCurrency.format(values[hovered]),
+                  color: color,
+                ),
+              ),
+            ),
+          ),
       ],
+    );
+  }
+}
+
+class _MonthBarTooltip extends StatelessWidget {
+  final String? month;
+  final String value;
+  final Color color;
+  const _MonthBarTooltip({
+    required this.month,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: BrandSpacing.sm,
+        vertical: BrandSpacing.xs,
+      ),
+      decoration: BoxDecoration(
+        color: BrandColors.ink,
+        borderRadius: BorderRadius.circular(BrandRadius.control),
+        boxShadow: [
+          BoxShadow(
+            color: BrandColors.ink.withValues(alpha: 0.25),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (month != null) ...[
+            Text(
+              month!,
+              style: const TextStyle(
+                fontFamily: 'Manrope',
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: BrandColors.mutedPaper,
+              ),
+            ),
+            const SizedBox(width: 6),
+          ],
+          Text(
+            value,
+            style: TextStyle(
+              fontFamily: 'IBM Plex Mono',
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: color,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -906,10 +1318,11 @@ class _CardsCarouselState extends ConsumerState<_CardsCarousel> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final cardWidth = constraints.maxWidth * 0.6 > _maxCardWidth
-            ? _maxCardWidth
-            : constraints.maxWidth * 0.6;
         final usesLargeText = MediaQuery.textScalerOf(context).scale(14) >= 21;
+        final preferredWidth = usesLargeText
+            ? constraints.maxWidth
+            : constraints.maxWidth * 0.6;
+        final cardWidth = math.min(preferredWidth, _maxCardWidth);
         final cardHeight = math
             .max(cardWidth / _cardAspectRatio, usesLargeText ? 340.0 : 180.0)
             .toDouble();
@@ -937,50 +1350,60 @@ class _CardsCarouselState extends ConsumerState<_CardsCarousel> {
           children: [
             SizedBox(
               height: cardHeight,
-              child: PageView.builder(
-                itemCount: itemCount,
-                padEnds: false,
-                controller: _controller,
-                onPageChanged: (i) => setState(() => _current = i),
-                itemBuilder: (context, i) {
-                  final isPending = i >= widget.cards.length;
-                  final tile = isPending
-                      ? _PendingBankTile(
-                          email: pending[i - widget.cards.length],
-                        )
-                      : Semantics(
-                          key: Key('dashboard-card-${widget.cards[i].id}'),
-                          label:
-                              'Open ${widget.cards[i].displayName} card details',
-                          button: true,
-                          onTap: () => context.push(
-                            '/app/cards/${Uri.encodeComponent(widget.cards[i].id)}',
-                          ),
-                          child: ExcludeSemantics(
-                            child: Material(
-                              color: Colors.transparent,
-                              child: InkWell(
-                                onTap: () => context.push(
-                                  '/app/cards/${Uri.encodeComponent(widget.cards[i].id)}',
+              child: ScrollConfiguration(
+                behavior: const MaterialScrollBehavior().copyWith(
+                  dragDevices: const {
+                    PointerDeviceKind.touch,
+                    PointerDeviceKind.mouse,
+                    PointerDeviceKind.stylus,
+                    PointerDeviceKind.trackpad,
+                  },
+                ),
+                child: PageView.builder(
+                  itemCount: itemCount,
+                  padEnds: false,
+                  controller: _controller,
+                  onPageChanged: (i) => setState(() => _current = i),
+                  itemBuilder: (context, i) {
+                    final isPending = i >= widget.cards.length;
+                    final tile = isPending
+                        ? _PendingBankTile(
+                            email: pending[i - widget.cards.length],
+                          )
+                        : Semantics(
+                            key: Key('dashboard-card-${widget.cards[i].id}'),
+                            label:
+                                'Open ${widget.cards[i].displayName} card details',
+                            button: true,
+                            onTap: () => context.push(
+                              '/app/cards/${Uri.encodeComponent(widget.cards[i].id)}',
+                            ),
+                            child: ExcludeSemantics(
+                              child: Material(
+                                color: Colors.transparent,
+                                child: InkWell(
+                                  onTap: () => context.push(
+                                    '/app/cards/${Uri.encodeComponent(widget.cards[i].id)}',
+                                  ),
+                                  borderRadius: BorderRadius.circular(
+                                    BrandRadius.overlay,
+                                  ),
+                                  child: _CreditCardTile(card: widget.cards[i]),
                                 ),
-                                borderRadius: BorderRadius.circular(
-                                  BrandRadius.overlay,
-                                ),
-                                child: _CreditCardTile(card: widget.cards[i]),
                               ),
                             ),
-                          ),
-                        );
-                  return Padding(
-                    padding: EdgeInsets.only(
-                      left: i == 0 ? BrandSpacing.md : BrandSpacing.sm,
-                      right: i == itemCount - 1
-                          ? BrandSpacing.md
-                          : BrandSpacing.sm,
-                    ),
-                    child: SizedBox(width: cardWidth, child: tile),
-                  );
-                },
+                          );
+                    return Padding(
+                      padding: EdgeInsets.only(
+                        left: i == 0 ? BrandSpacing.md : BrandSpacing.sm,
+                        right: i == itemCount - 1
+                            ? BrandSpacing.md
+                            : BrandSpacing.sm,
+                      ),
+                      child: SizedBox(width: cardWidth, child: tile),
+                    );
+                  },
+                ),
               ),
             ),
             if (itemCount > 1) ...[
@@ -1021,6 +1444,33 @@ class _PendingBankTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bankDetected = email['bank_detected'] as String? ?? 'Unknown bank';
+    final metadata = email['metadata'];
+    final hints = metadata is Map && metadata['identityHints'] is Map
+        ? Map<String, dynamic>.from(metadata['identityHints'] as Map)
+        : const <String, dynamic>{};
+    final last4 = hints['last4'] as String?;
+    final productName = hints['productName'] as String?;
+    final dueDate = DateTime.tryParse(hints['dueDate'] as String? ?? '');
+    final statementDate = DateTime.tryParse(
+      hints['statementDate'] as String? ?? '',
+    );
+    final receivedDate = DateTime.tryParse(
+      email['received_date'] as String? ?? '',
+    );
+    final totalAmount = hints['totalAmount'];
+    final subject = (email['subject'] as String?)?.trim();
+    final attachmentFilename =
+        hints['attachmentFilename'] as String? ??
+        (metadata is Map ? metadata['attachmentFilename'] as String? : null);
+    final sourceDate = statementDate ?? receivedDate;
+    final hasEvidence =
+        hints.isNotEmpty ||
+        (subject?.isNotEmpty ?? false) ||
+        sourceDate != null ||
+        (attachmentFilename?.isNotEmpty ?? false);
+    final amountDue = totalAmount is num && dueDate != null
+        ? '${NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 2).format(totalAmount)} due ${DateFormat('d MMM').format(dueDate)}'
+        : null;
     return Container(
       decoration: BoxDecoration(
         color: BrandColors.paperDeep,
@@ -1031,7 +1481,10 @@ class _PendingBankTile extends StatelessWidget {
           style: BorderStyle.solid,
         ),
       ),
-      padding: const EdgeInsets.all(BrandSpacing.lg),
+      padding: const EdgeInsets.symmetric(
+        horizontal: BrandSpacing.lg,
+        vertical: BrandSpacing.md,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1039,7 +1492,7 @@ class _PendingBankTile extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  bankDetected,
+                  last4 == null ? bankDetected : '$bankDetected •••• $last4',
                   style: TextStyle(
                     fontFamily: 'Manrope',
                     fontSize: 12,
@@ -1064,21 +1517,89 @@ class _PendingBankTile extends StatelessWidget {
               ),
             ],
           ),
-          const Spacer(),
-          Icon(
-            Icons.help_outline_rounded,
-            size: 28,
-            color: BrandColors.mutedInk.withValues(alpha: 0.5),
-          ),
-          const SizedBox(height: BrandSpacing.sm),
-          Text(
-            'Which card is this?',
-            style: TextStyle(
-              fontFamily: 'Manrope',
-              fontSize: 13,
-              color: BrandColors.mutedInk,
+          if (hasEvidence) ...[
+            if (productName != null)
+              Text(
+                'Possible card: $productName',
+                style: const TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: BrandColors.ink,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            if (subject != null && subject.isNotEmpty) ...[
+              if (productName != null) const SizedBox(height: BrandSpacing.xs),
+              Text(
+                subject,
+                style: const TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 12,
+                  color: BrandColors.ink,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+            if (amountDue != null) ...[
+              const SizedBox(height: BrandSpacing.xs),
+              Text(
+                amountDue,
+                style: const TextStyle(
+                  fontFamily: 'IBM Plex Mono',
+                  fontSize: 12,
+                  color: BrandColors.mutedInk,
+                ),
+              ),
+            ],
+            if (amountDue == null && sourceDate != null)
+              Text(
+                'Statement email · ${DateFormat('d MMM').format(sourceDate)}',
+                style: const TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 12,
+                  color: BrandColors.mutedInk,
+                ),
+              ),
+            if (attachmentFilename != null &&
+                attachmentFilename.isNotEmpty) ...[
+              const SizedBox(height: BrandSpacing.xs),
+              Text(
+                attachmentFilename,
+                style: const TextStyle(
+                  fontFamily: 'IBM Plex Mono',
+                  fontSize: 12,
+                  color: BrandColors.mutedInk,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+            const Spacer(),
+            TextButton.icon(
+              onPressed: () => _showBankResolveDialog(context, email),
+              icon: const Icon(Icons.check_circle_outline_rounded, size: 18),
+              label: const Text('Confirm card'),
             ),
-          ),
+          ] else ...[
+            const Spacer(),
+            Icon(
+              Icons.help_outline_rounded,
+              size: 28,
+              color: BrandColors.mutedInk.withValues(alpha: 0.5),
+            ),
+            const SizedBox(height: BrandSpacing.sm),
+            Text(
+              'Which card is this?',
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                fontSize: 13,
+                color: BrandColors.mutedInk,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -1111,6 +1632,10 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
   String _lastQuery = '';
   Map<String, dynamic>? _retryResolution;
   int _searchGeneration = 0;
+  final TextEditingController _urlController = TextEditingController();
+  bool _showUrlFallback = false;
+  bool _urlResolving = false;
+  String? _urlMessage;
 
   @override
   void initState() {
@@ -1121,7 +1646,47 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
   @override
   void dispose() {
     _searchGeneration++;
+    _urlController.dispose();
     super.dispose();
+  }
+
+  Future<void> _resolveUrl() async {
+    if (_urlResolving || _resolving) return;
+    final rawUrl = _urlController.text.trim();
+    final uri = Uri.tryParse(rawUrl);
+    if (uri == null ||
+        uri.scheme.toLowerCase() != 'https' ||
+        uri.host.isEmpty ||
+        uri.userInfo.isNotEmpty) {
+      setState(() => _urlMessage = 'Enter a valid HTTPS card page URL.');
+      return;
+    }
+    setState(() {
+      _urlResolving = true;
+      _urlMessage = null;
+    });
+    try {
+      final result = await ref.read(cardUrlResolverProvider)(
+        widget.email,
+        rawUrl,
+      );
+      if (!mounted) return;
+      if (result.isResolved) {
+        await _resolve({'id': result.resolvedCardId});
+      } else {
+        setState(() => _urlMessage = result.userMessage);
+      }
+    } on CardUrlResolutionException catch (error) {
+      if (mounted) setState(() => _urlMessage = error.userMessage);
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => _urlMessage = 'Could not verify this card page. Try again.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _urlResolving = false);
+    }
   }
 
   Future<void> _search(String query) async {
@@ -1182,6 +1747,12 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final metadata = widget.email['metadata'];
+    final hints = metadata is Map && metadata['identityHints'] is Map
+        ? Map<String, dynamic>.from(metadata['identityHints'] as Map)
+        : const <String, dynamic>{};
+    final productName = hints['productName'] as String?;
+    final last4 = hints['last4'] as String?;
     return Dialog(
       backgroundColor: BrandColors.paper,
       shape: RoundedRectangleBorder(
@@ -1206,7 +1777,7 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
               ),
               const SizedBox(height: 2),
               Text(
-                widget.bankDetected,
+                '${widget.bankDetected}${last4 == null ? '' : ' · •••• $last4'}${productName == null ? '' : ' · $productName'}',
                 style: TextStyle(
                   fontFamily: 'Manrope',
                   fontSize: 12.5,
@@ -1322,6 +1893,63 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
                       ),
               ),
               const SizedBox(height: BrandSpacing.sm),
+              TextButton.icon(
+                onPressed: _urlResolving
+                    ? null
+                    : () => setState(() {
+                        _showUrlFallback = !_showUrlFallback;
+                        _urlMessage = null;
+                      }),
+                icon: Icon(
+                  _showUrlFallback
+                      ? Icons.expand_less_rounded
+                      : Icons.link_rounded,
+                  size: 18,
+                ),
+                label: const Text("Can't find it? Paste official card page"),
+              ),
+              if (_showUrlFallback) ...[
+                TextField(
+                  key: const Key('official-card-url-field'),
+                  controller: _urlController,
+                  enabled: !_urlResolving,
+                  keyboardType: TextInputType.url,
+                  autocorrect: false,
+                  decoration: const InputDecoration(
+                    hintText: 'https://bank.example/cards/card-name',
+                    prefixIcon: Icon(Icons.language_rounded, size: 20),
+                  ),
+                  onSubmitted: (_) => _resolveUrl(),
+                ),
+                const SizedBox(height: BrandSpacing.xs),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: FilledButton(
+                    onPressed: _urlResolving ? null : _resolveUrl,
+                    child: _urlResolving
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Verify card page'),
+                  ),
+                ),
+                if (_urlMessage != null) ...[
+                  const SizedBox(height: BrandSpacing.xs),
+                  Text(
+                    _urlMessage!,
+                    style: TextStyle(
+                      fontFamily: 'Manrope',
+                      fontSize: 12.5,
+                      color: _urlMessage!.contains('reviewing')
+                          ? BrandColors.mutedInk
+                          : BrandColors.error,
+                    ),
+                  ),
+                ],
+              ],
+              const SizedBox(height: BrandSpacing.sm),
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton(
@@ -1343,16 +1971,30 @@ class _CreditCardTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final issuerColor = AppTheme.issuerColor(card.bankCode);
     return Container(
       decoration: BoxDecoration(
-        color: BrandColors.paperDeep,
         borderRadius: BorderRadius.circular(BrandRadius.overlay),
-        border: Border(
-          left: BorderSide(
-            color: AppTheme.issuerColor(card.bankCode),
-            width: 7,
-          ),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color.alphaBlend(
+              issuerColor.withValues(alpha: 0.16),
+              BrandColors.paperDeep,
+            ),
+            BrandColors.paperDeep,
+          ],
+          stops: const [0.0, 0.7],
         ),
+        border: Border.all(color: issuerColor.withValues(alpha: 0.35)),
+        boxShadow: [
+          BoxShadow(
+            color: BrandColors.ink.withValues(alpha: 0.06),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
       ),
       padding: const EdgeInsets.all(BrandSpacing.lg),
       child: Column(
@@ -1360,6 +2002,15 @@ class _CreditCardTile extends StatelessWidget {
         children: [
           Row(
             children: [
+              Container(
+                width: 8,
+                height: 8,
+                margin: const EdgeInsets.only(right: BrandSpacing.xs),
+                decoration: BoxDecoration(
+                  color: issuerColor,
+                  shape: BoxShape.circle,
+                ),
+              ),
               Expanded(
                 child: Text(
                   card.bank ?? '',
@@ -1367,18 +2018,20 @@ class _CreditCardTile extends StatelessWidget {
                     fontFamily: 'Manrope',
                     fontSize: 12,
                     color: BrandColors.mutedInk,
-                    fontWeight: FontWeight.w500,
+                    fontWeight: FontWeight.w600,
                     letterSpacing: 0.5,
                   ),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
               Text(
-                card.network ?? '',
+                (card.network ?? '').toUpperCase(),
                 style: TextStyle(
                   fontFamily: 'Manrope',
                   fontSize: 12,
-                  color: BrandColors.mutedInk,
-                  fontWeight: FontWeight.w600,
+                  color: issuerColor,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.8,
                 ),
               ),
             ],
@@ -1387,21 +2040,22 @@ class _CreditCardTile extends StatelessWidget {
           if (card.lastFourDigits != null)
             Text(
               '••••  ••••  ••••  ${card.lastFourDigits}',
-              style: TextStyle(
-                fontFamily: 'Manrope',
-                fontSize: 16,
+              style: const TextStyle(
+                fontFamily: 'IBM Plex Mono',
+                fontSize: 18,
                 color: BrandColors.ink,
                 fontWeight: FontWeight.w600,
-                letterSpacing: 2,
+                letterSpacing: 1.5,
               ),
             ),
-          const SizedBox(height: BrandSpacing.sm),
+          const SizedBox(height: BrandSpacing.md),
           Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Expanded(
                 child: Text(
                   card.displayName,
-                  style: TextStyle(
+                  style: const TextStyle(
                     fontFamily: 'Manrope',
                     fontSize: 14,
                     color: BrandColors.ink,
@@ -1414,10 +2068,10 @@ class _CreditCardTile extends StatelessWidget {
                 Text(
                   _currencyFmt.format(card.creditLimit),
                   style: TextStyle(
-                    fontFamily: 'Manrope',
+                    fontFamily: 'IBM Plex Mono',
                     fontSize: 13,
-                    color: BrandColors.ink,
-                    fontWeight: FontWeight.w500,
+                    color: BrandColors.mutedInk,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
             ],
@@ -1438,7 +2092,12 @@ class _BillsPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final pending = cards
-        .where((c) => statements.containsKey(c.id) && !statements[c.id]!.isPaid)
+        .where(
+          (c) =>
+              statements.containsKey(c.id) &&
+              !statements[c.id]!.isPaid &&
+              statements[c.id]!.outstanding > 0,
+        )
         .toList();
 
     if (pending.isEmpty) {
@@ -1504,6 +2163,20 @@ class _BillsPanel extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      if (card.bank != null && card.bank!.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 2),
+                          child: Text(
+                            card.bank!,
+                            style: TextStyle(
+                              fontFamily: 'Manrope',
+                              fontSize: 12,
+                              color: BrandColors.mutedInk,
+                              fontWeight: FontWeight.w500,
+                              letterSpacing: 0.3,
+                            ),
+                          ),
+                        ),
                       Text(
                         card.displayName,
                         style: TextStyle(

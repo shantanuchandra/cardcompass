@@ -11,7 +11,14 @@ import 'user_profile_service.dart';
 /// dialog (2 attempts). Returns the extracted text, or null if every step
 /// fails.
 class PdfPasswordResolver {
-  final PdfPasswordDetectionService _detectionService = PdfPasswordDetectionService();
+  final PdfPasswordDetectionService _detectionService =
+      PdfPasswordDetectionService();
+
+  ManualPasswordOutcome? get lastManualPasswordOutcome =>
+      _detectionService.lastManualPasswordOutcome;
+
+  bool get manualAttemptsExhausted =>
+      lastManualPasswordOutcome == ManualPasswordOutcome.attemptsExhausted;
 
   Future<String?> extractText({
     required Uint8List pdfBytes,
@@ -48,7 +55,9 @@ class PdfPasswordResolver {
     }
 
     if (dob != null) {
-      userProfile = {'birthday': SimpleBirthdayInputService.formatBirthdayForPasswords(dob)};
+      userProfile = {
+        'birthday': SimpleBirthdayInputService.formatBirthdayForPasswords(dob),
+      };
     }
 
     return _detectionService.findPasswordAndExtractText(
@@ -60,7 +69,13 @@ class PdfPasswordResolver {
       userName: userName,
       userProfile: userProfile,
       fileName: fileName,
-      onManualPasswordRequired: () => PasswordInputService.requestPassword(bankName),
+      onManualPasswordRequired: (attempt, maxAttempts, hint) =>
+          PasswordInputService.requestPassword(
+            bankName,
+            attempt: attempt,
+            maxAttempts: maxAttempts,
+            hint: hint,
+          ),
     );
   }
 }

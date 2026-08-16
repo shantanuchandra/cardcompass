@@ -1,17 +1,174 @@
 import 'dart:typed_data';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
-import 'password_input_service.dart';
 import 'password_learning_service.dart';
 import 'parsing_logger.dart';
 
+enum ManualPasswordOutcome { succeeded, cancelled, attemptsExhausted }
+
+class ManualPasswordAttemptResult {
+  const ManualPasswordAttemptResult({required this.outcome, this.text});
+
+  final ManualPasswordOutcome outcome;
+  final String? text;
+}
+
+Future<ManualPasswordAttemptResult> runManualPasswordAttempts({
+  required Future<String?> Function(int attempt, int maxAttempts)
+  requestPassword,
+  required Future<String?> Function(String password) verifyPassword,
+  int maxAttempts = 2,
+}) async {
+  for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+    final password = await requestPassword(attempt, maxAttempts);
+    if (password == null || password.isEmpty) {
+      return const ManualPasswordAttemptResult(
+        outcome: ManualPasswordOutcome.cancelled,
+      );
+    }
+    final text = await verifyPassword(password);
+    if (text != null) {
+      return ManualPasswordAttemptResult(
+        outcome: ManualPasswordOutcome.succeeded,
+        text: text,
+      );
+    }
+  }
+  return const ManualPasswordAttemptResult(
+    outcome: ManualPasswordOutcome.attemptsExhausted,
+  );
+}
+
 /// Service for detecting and trying common PDF passwords used by banks
 class PdfPasswordDetectionService {
+  ManualPasswordOutcome? lastManualPasswordOutcome;
+
+  String _concisePasswordInstruction(String instruction) {
+    var end = instruction.length;
+    for (final marker in [
+      RegExp(r'\s*[•]\s*'),
+      RegExp(r'\s+for example\s*:', caseSensitive: false),
+      RegExp(r'\s+example\s*:', caseSensitive: false),
+    ]) {
+      final match = marker.firstMatch(instruction);
+      if (match != null && match.start < end) end = match.start;
+    }
+
+    final concise = instruction.substring(0, end).trim();
+    const maxLength = 280;
+    if (concise.length <= maxLength) return concise;
+    return '${concise.substring(0, maxLength - 1).trimRight()}…';
+  }
+
+  /// Returns one concise issuer-authored password-format instruction for
+  /// display. Explicit password values and generic protection boilerplate are
+  /// intentionally excluded.
+  String? extractPasswordInstruction(String emailBody) {
+    final normalized = emailBody.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (normalized.isEmpty) return null;
+
+    final sentences = normalized.split(RegExp(r'(?<=[.!?])\s+'));
+    const instructionTerms = [
+      'first',
+      'last',
+      'date of birth',
+      'dob',
+      'ddmm',
+      'yyyy',
+      'name',
+      'card number',
+      'mobile',
+      'pan',
+      'combination',
+      'followed by',
+    ];
+
+    for (var index = 0; index < sentences.length; index++) {
+      final anchor = sentences[index].trim();
+      final anchorLower = anchor.toLowerCase();
+      final describesPassword = anchorLower.contains('password');
+      final describesOpeningDocument =
+          anchorLower.contains('open') &&
+          (anchorLower.contains('pdf') ||
+              anchorLower.contains('statement') ||
+              anchorLower.contains('attachment'));
+      if (!describesPassword && !describesOpeningDocument) continue;
+
+      final window = <String>[anchor];
+      for (var end = index; end < sentences.length && end <= index + 2; end++) {
+        if (end > index) {
+          final next = sentences[end].trim();
+          final nextLower = next.toLowerCase();
+          final nextDescribesOpening =
+              nextLower.contains('open') &&
+              (nextLower.contains('pdf') ||
+                  nextLower.contains('statement') ||
+                  nextLower.contains('attachment'));
+          if (nextDescribesOpening &&
+              instructionTerms.any(nextLower.contains)) {
+            return _concisePasswordInstruction(next);
+          }
+          window.add(next);
+        }
+        final candidate = window.join(' ').trim();
+        final lower = candidate.toLowerCase();
+        if (!instructionTerms.any(lower.contains)) continue;
+
+        final explicitValue = RegExp(
+          r'\bpassword\s*(?:is|:)\s*([a-z0-9@#$_-]{4,})',
+          caseSensitive: false,
+        ).firstMatch(candidate)?.group(1)?.toLowerCase();
+        if (explicitValue != null &&
+            !instructionTerms.any((term) => explicitValue.startsWith(term))) {
+          break;
+        }
+
+        return _concisePasswordInstruction(candidate);
+      }
+    }
+
+    const strongFormatTerms = [
+      'ddmm',
+      'dd mm',
+      'yyyymmdd',
+      'yyyy mm dd',
+      'ddmmyyyy',
+      'dd mm yyyy',
+    ];
+    for (final sentence in sentences) {
+      final candidate = sentence.trim();
+      final lower = candidate.toLowerCase();
+      if (!strongFormatTerms.any(lower.contains)) continue;
+      if (!instructionTerms.any(lower.contains)) continue;
+
+      return _concisePasswordInstruction(candidate);
+    }
+    return null;
+  }
+
   /// Common password patterns used by different banks
   static final Map<String, List<String>> bankPasswordPatterns = {
-    'sbi': ['dob_ddmmyyyy', 'dob_yyyymmdd', 'dob_ddmmyy', 'last4_card', 'firstname_lastname', 'lastname_firstname'],
-    'hdfc': ['dob_ddmmyyyy', 'dob_yyyymmdd', 'last4_card', 'pan_last4', 'firstname_dob'],
+    'sbi': [
+      'dob_ddmmyyyy',
+      'dob_yyyymmdd',
+      'dob_ddmmyy',
+      'last4_card',
+      'firstname_lastname',
+      'lastname_firstname',
+    ],
+    'hdfc': [
+      'dob_ddmmyyyy',
+      'dob_yyyymmdd',
+      'last4_card',
+      'pan_last4',
+      'firstname_dob',
+    ],
     'icici': ['dob_ddmmyyyy', 'dob_yyyymmdd', 'last4_card', 'mobile_last4'],
-    'axis': ['dob_ddmmyyyy', 'dob_yyyymmdd', 'last4_card', 'firstname_lastname'],
+    'axis': [
+      'dob_ddmmyyyy',
+      'dob_yyyymmdd',
+      'last4_card',
+      'firstname_lastname',
+    ],
     'kotak': ['dob_ddmmyyyy', 'dob_yyyymmdd', 'last4_card'],
   };
 
@@ -31,12 +188,19 @@ class PdfPasswordDetectionService {
     final content = '$emailSubject $emailBody';
     final contentLower = content.toLowerCase();
 
-    final explicitPassword = _extractExplicitPasswordFromContent(content, contentLower, hints);
+    final explicitPassword = _extractExplicitPasswordFromContent(
+      content,
+      contentLower,
+      hints,
+    );
     if (explicitPassword != null) {
       hints['explicitPassword'] = explicitPassword;
     }
 
-    final passwordFormat = _extractPasswordFormatInstruction(contentLower, hints);
+    final passwordFormat = _extractPasswordFormatInstruction(
+      contentLower,
+      hints,
+    );
     if (passwordFormat != null) {
       hints['passwordFormat'] = passwordFormat;
     }
@@ -53,16 +217,32 @@ class PdfPasswordDetectionService {
     return hints;
   }
 
-  String? _extractExplicitPasswordFromContent(String content, String contentLower, Map<String, dynamic> hints) {
+  String? _extractExplicitPasswordFromContent(
+    String content,
+    String contentLower,
+    Map<String, dynamic> hints,
+  ) {
     final explicitPatterns = [
-      RegExp(r'password\s*(?:is|:)\s*([a-zA-Z0-9]{4,12})', caseSensitive: false),
+      RegExp(
+        r'password\s*(?:is|:)\s*([a-zA-Z0-9]{4,12})',
+        caseSensitive: false,
+      ),
       RegExp(r'the password is\s*([a-zA-Z0-9]{4,12})', caseSensitive: false),
       RegExp(r'password:\s*([a-zA-Z0-9]{4,12})', caseSensitive: false),
-      RegExp(r'access password\s*(?:is|:)\s*([a-zA-Z0-9]{4,12})', caseSensitive: false),
+      RegExp(
+        r'access password\s*(?:is|:)\s*([a-zA-Z0-9]{4,12})',
+        caseSensitive: false,
+      ),
       RegExp(r'pin\s*(?:is|:)\s*([0-9]{4,8})', caseSensitive: false),
       RegExp(r'the pin is\s*([0-9]{4,8})', caseSensitive: false),
-      RegExp(r'access code\s*(?:is|:)\s*([a-zA-Z0-9]{4,12})', caseSensitive: false),
-      RegExp(r'document password\s*(?:is|:)\s*([a-zA-Z0-9]{4,12})', caseSensitive: false),
+      RegExp(
+        r'access code\s*(?:is|:)\s*([a-zA-Z0-9]{4,12})',
+        caseSensitive: false,
+      ),
+      RegExp(
+        r'document password\s*(?:is|:)\s*([a-zA-Z0-9]{4,12})',
+        caseSensitive: false,
+      ),
     ];
 
     for (final pattern in explicitPatterns) {
@@ -75,13 +255,31 @@ class PdfPasswordDetectionService {
     return null;
   }
 
-  String? _extractPasswordFormatInstruction(String contentLower, Map<String, dynamic> hints) {
+  String? _extractPasswordFormatInstruction(
+    String contentLower,
+    Map<String, dynamic> hints,
+  ) {
     final formatPatterns = [
-      RegExp(r'password.*?(?:dob|date\s*of\s*birth).*?(?:ddmmyyyy|dd\s*mm\s*yyyy)', caseSensitive: false),
-      RegExp(r'password.*?(?:dob|date\s*of\s*birth).*?(?:yyyymmdd|yyyy\s*mm\s*dd)', caseSensitive: false),
-      RegExp(r'password.*?(?:dob|date\s*of\s*birth).*?(?:ddmmyy|dd\s*mm\s*yy)', caseSensitive: false),
-      RegExp(r'password.*?(?:dob|date\s*of\s*birth).*?(?:mmddyyyy|mm\s*dd\s*yyyy)', caseSensitive: false),
-      RegExp(r'password.*?last\s*4\s*digits.*?(?:card|account)', caseSensitive: false),
+      RegExp(
+        r'password.*?(?:dob|date\s*of\s*birth).*?(?:ddmmyyyy|dd\s*mm\s*yyyy)',
+        caseSensitive: false,
+      ),
+      RegExp(
+        r'password.*?(?:dob|date\s*of\s*birth).*?(?:yyyymmdd|yyyy\s*mm\s*dd)',
+        caseSensitive: false,
+      ),
+      RegExp(
+        r'password.*?(?:dob|date\s*of\s*birth).*?(?:ddmmyy|dd\s*mm\s*yy)',
+        caseSensitive: false,
+      ),
+      RegExp(
+        r'password.*?(?:dob|date\s*of\s*birth).*?(?:mmddyyyy|mm\s*dd\s*yyyy)',
+        caseSensitive: false,
+      ),
+      RegExp(
+        r'password.*?last\s*4\s*digits.*?(?:card|account)',
+        caseSensitive: false,
+      ),
       RegExp(r'password.*?last\s*4\s*digits.*?mobile', caseSensitive: false),
       RegExp(r'password.*?last\s*4\s*digits.*?pan', caseSensitive: false),
       RegExp(r'password.*?(?:first\s*name|given\s*name)', caseSensitive: false),
@@ -98,35 +296,47 @@ class PdfPasswordDetectionService {
       }
     }
 
-    if (contentLower.contains('ddmmyyyy') || contentLower.contains('dd mm yyyy')) {
+    if (contentLower.contains('ddmmyyyy') ||
+        contentLower.contains('dd mm yyyy')) {
       return 'dob_ddmmyyyy';
     }
-    if (contentLower.contains('yyyymmdd') || contentLower.contains('yyyy mm dd')) {
+    if (contentLower.contains('yyyymmdd') ||
+        contentLower.contains('yyyy mm dd')) {
       return 'dob_yyyymmdd';
     }
     if (contentLower.contains('ddmmyy') || contentLower.contains('dd mm yy')) {
       return 'dob_ddmmyy';
     }
-    if (contentLower.contains('mmddyyyy') || contentLower.contains('mm dd yyyy')) {
+    if (contentLower.contains('mmddyyyy') ||
+        contentLower.contains('mm dd yyyy')) {
       return 'dob_mmddyyyy';
     }
 
     return null;
   }
 
-  void _extractDataBasedOnFormat(String content, String contentLower, Map<String, dynamic> hints) {
+  void _extractDataBasedOnFormat(
+    String content,
+    String contentLower,
+    Map<String, dynamic> hints,
+  ) {
     final format = hints['passwordFormat'] as String?;
 
     if (format != null) {
       if (format.contains('name')) {
-        hints['nameVariations'] = _extractNameVariations(hints['userName'] as String? ?? '');
+        hints['nameVariations'] = _extractNameVariations(
+          hints['userName'] as String? ?? '',
+        );
       }
     }
   }
 
   List<String> _extractNameVariations(String fullName) {
     final variations = <String>[];
-    final nameParts = fullName.split(' ').where((part) => part.isNotEmpty).toList();
+    final nameParts = fullName
+        .split(' ')
+        .where((part) => part.isNotEmpty)
+        .toList();
 
     if (nameParts.isNotEmpty) {
       final firstName = nameParts[0].toLowerCase();
@@ -159,18 +369,26 @@ class PdfPasswordDetectionService {
     final firstName = nameParts.isNotEmpty ? nameParts[0].toLowerCase() : '';
     final lastName = nameParts.length > 1 ? nameParts.last.toLowerCase() : '';
 
-    final nameDataCombinations = _generateNameDateCombinations(userName, userProfile);
+    final nameDataCombinations = _generateNameDateCombinations(
+      userName,
+      userProfile,
+    );
     passwords.addAll(nameDataCombinations);
 
     if (hints.containsKey('explicitPassword')) {
       passwords.insert(0, hints['explicitPassword'] as String);
     }
 
-    final shortName = firstName.length >= 4 ? firstName.substring(0, 4) : firstName;
+    final shortName = firstName.length >= 4
+        ? firstName.substring(0, 4)
+        : firstName;
     final commonPasswords = <String>[shortName, lastName];
     passwords.addAll(commonPasswords);
 
-    final uniquePasswords = passwords.where((p) => p.isNotEmpty).toSet().toList();
+    final uniquePasswords = passwords
+        .where((p) => p.isNotEmpty)
+        .toSet()
+        .toList();
     return uniquePasswords;
   }
 
@@ -188,7 +406,9 @@ class PdfPasswordDetectionService {
 
       try {
         final document = PdfDocument(inputBytes: pdfBytes, password: password);
-        ParsingLogger.summary('Password: PDF decrypted successfully using candidate ${i + 1}/${passwords.length}');
+        ParsingLogger.summary(
+          'Password: PDF decrypted successfully using candidate ${i + 1}/${passwords.length}',
+        );
 
         if (bankName != null && userEmail != null) {
           await PasswordLearningService.storeSuccessfulPassword(
@@ -205,7 +425,9 @@ class PdfPasswordDetectionService {
       }
     }
 
-    ParsingLogger.warning('Password: None of the ${passwords.length} automatic candidates decrypted the PDF.');
+    ParsingLogger.warning(
+      'Password: None of the ${passwords.length} automatic candidates decrypted the PDF.',
+    );
     return null;
   }
 
@@ -223,7 +445,9 @@ class PdfPasswordDetectionService {
       final textExtractor = PdfTextExtractor(document);
       final text = textExtractor.extractText();
       document.dispose();
-      ParsingLogger.summary('Password: PDF decrypted successfully using manual password input');
+      ParsingLogger.summary(
+        'Password: PDF decrypted successfully using manual password input',
+      );
 
       if (bankName != null && userEmail != null) {
         await PasswordLearningService.storeSuccessfulPassword(
@@ -251,10 +475,11 @@ class PdfPasswordDetectionService {
     String? userName,
     Map<String, dynamic>? userProfile,
     String? fileName,
-    Future<String?> Function()? onManualPasswordRequired,
+    Future<String?> Function(int attempt, int maxAttempts, String? hint)?
+    onManualPasswordRequired,
   }) async {
     try {
-      PasswordInputService.resetAttempts();
+      lastManualPasswordOutcome = null;
 
       try {
         final document = PdfDocument(inputBytes: pdfBytes);
@@ -274,13 +499,15 @@ class PdfPasswordDetectionService {
         userName: userName,
         fileName: fileName,
       );
+      final displayHint = extractPasswordInstruction(emailBody);
 
-      final learnedPasswords = await PasswordLearningService.getLearnedPasswordCandidates(
-        bankName: bankName,
-        userEmail: userEmail,
-        userProfile: userProfile,
-        fileName: fileName,
-      );
+      final learnedPasswords =
+          await PasswordLearningService.getLearnedPasswordCandidates(
+            bankName: bankName,
+            userEmail: userEmail,
+            userProfile: userProfile,
+            fileName: fileName,
+          );
 
       final passwords = generatePasswordCandidates(
         bankName: bankName,
@@ -314,16 +541,27 @@ class PdfPasswordDetectionService {
       }
 
       if (onManualPasswordRequired != null) {
-        ParsingLogger.summary('Password: Automatic decryption failed. Requesting manual password input...');
+        ParsingLogger.summary(
+          'Password: Automatic decryption failed. Requesting manual password input...',
+        );
 
-        for (int attempt = 1; attempt <= 2; attempt++) {
-          try {
-            ParsingLogger.summary('Password: Manual input attempt $attempt/2 for $bankName');
-            final manualPassword = await onManualPasswordRequired();
-
-            if (manualPassword != null && manualPassword.isNotEmpty) {
-              ParsingLogger.summary('Password: Manual password received, testing decryption...');
-              final result = await tryManualPassword(
+        try {
+          final manualResult = await runManualPasswordAttempts(
+            requestPassword: (attempt, maxAttempts) async {
+              ParsingLogger.summary(
+                'Password: Manual input attempt $attempt/$maxAttempts for $bankName',
+              );
+              return onManualPasswordRequired(
+                attempt,
+                maxAttempts,
+                displayHint,
+              );
+            },
+            verifyPassword: (manualPassword) async {
+              ParsingLogger.summary(
+                'Password: Manual password received, testing decryption...',
+              );
+              return tryManualPassword(
                 pdfBytes: pdfBytes,
                 password: manualPassword,
                 bankName: bankName,
@@ -331,25 +569,31 @@ class PdfPasswordDetectionService {
                 fileName: fileName,
                 userProfile: userProfile,
               );
-              if (result != null) {
-                ParsingLogger.summary('Password: Manual password verification succeeded.');
-                return result;
-              } else {
-                ParsingLogger.warning('Password: Manual password attempt $attempt failed');
-              }
-            } else {
-              ParsingLogger.warning('Password: No manual password provided, user cancelled');
-              break;
-            }
-          } catch (e) {
-            ParsingLogger.error('Password: Error during manual decryption attempt', e);
-            break;
+            },
+          );
+          lastManualPasswordOutcome = manualResult.outcome;
+          if (manualResult.outcome == ManualPasswordOutcome.succeeded) {
+            ParsingLogger.summary(
+              'Password: Manual password verification succeeded.',
+            );
+            return manualResult.text;
           }
+          if (manualResult.outcome == ManualPasswordOutcome.cancelled) {
+            ParsingLogger.warning(
+              'Password: Manual password entry cancelled by user',
+            );
+          } else {
+            ParsingLogger.warning(
+              'Password: All manual password attempts exhausted',
+            );
+          }
+        } catch (e) {
+          ParsingLogger.error('Password: Error during manual decryption', e);
         }
-
-        ParsingLogger.warning('Password: All manual password attempts exhausted');
       } else {
-        ParsingLogger.warning('Password: No manual password callback available');
+        ParsingLogger.warning(
+          'Password: No manual password callback available',
+        );
       }
 
       return null;
@@ -365,19 +609,30 @@ class PdfPasswordDetectionService {
   }
 
   /// Generate name and date combination passwords
-  List<String> _generateNameDateCombinations(String fullName, Map<String, dynamic>? userProfile) {
+  List<String> _generateNameDateCombinations(
+    String fullName,
+    Map<String, dynamic>? userProfile,
+  ) {
     final combinations = <String>[];
 
     if (fullName.isEmpty) return combinations;
 
-    final nameParts = fullName.trim().split(' ').where((part) => part.isNotEmpty).toList();
+    final nameParts = fullName
+        .trim()
+        .split(' ')
+        .where((part) => part.isNotEmpty)
+        .toList();
     if (nameParts.isEmpty) return combinations;
     final firstName = nameParts[0];
     final firstNameLower = firstName.toLowerCase();
     final firstNameUpper = firstName.toUpperCase();
 
-    final shortNameLower = firstName.length >= 4 ? firstName.toLowerCase().substring(0, 4) : firstNameLower;
-    final shortNameUpper = firstName.length >= 4 ? firstName.toUpperCase().substring(0, 4) : firstNameUpper;
+    final shortNameLower = firstName.length >= 4
+        ? firstName.toLowerCase().substring(0, 4)
+        : firstNameLower;
+    final shortNameUpper = firstName.length >= 4
+        ? firstName.toUpperCase().substring(0, 4)
+        : firstNameUpper;
 
     if (userProfile != null && userProfile.containsKey('birthday')) {
       final birthday = userProfile['birthday'] as Map<String, dynamic>;

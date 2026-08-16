@@ -1,0 +1,3 @@
+ALTER TABLE public.card_catalog_aliases
+  ADD CONSTRAINT card_catalog_aliases_card_id_normalized_alias_key
+  UNIQUE USING INDEX idx_card_catalog_aliases_card_normalized;

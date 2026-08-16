@@ -38,6 +38,16 @@ final _fixture = DashboardData(
   totalCreditLimit: 100000,
   monthlySpend: 1250,
   rewardsEarned: 75,
+  monthlySpendTrend: const [800, 950, 1100, 1000, 1300, 1250],
+  monthlyRewardsTrend: const [40, 55, 60, 50, 70, 75],
+  trendMonths: [
+    DateTime(2026, 3),
+    DateTime(2026, 4),
+    DateTime(2026, 5),
+    DateTime(2026, 6),
+    DateTime(2026, 7),
+    DateTime(2026, 8),
+  ],
 );
 
 Future<void> pumpDashboard(

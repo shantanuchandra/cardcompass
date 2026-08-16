@@ -19,85 +19,95 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'local_supabase_test_support.dart';
+
 void main() {
-  late SupabaseClient client;
-  late String testUserId;
-  late String testUserCardId;
+  group('local Supabase integration', () {
+    late SupabaseClient client;
+    late String testUserId;
+    late String testUserCardId;
 
-  setUpAll(() async {
-    await Supabase.initialize(
-      url: 'http://127.0.0.1:54321',
-      anonKey: const String.fromEnvironment('SUPABASE_ANON_KEY'),
-    );
-    client = Supabase.instance.client;
-    final auth = await client.auth.signUp(
-      email: 'category-check-test-${DateTime.now().microsecondsSinceEpoch}@example.com',
-      password: 'test-password-1234',
-    );
-    testUserId = auth.user!.id;
+    setUpAll(() async {
+      await Supabase.initialize(
+        url: localSupabaseUrl,
+        publishableKey: localSupabaseAnonKey,
+      );
+      client = Supabase.instance.client;
+      final auth = await client.auth.signUp(
+        email:
+            'category-check-test-${DateTime.now().microsecondsSinceEpoch}@example.com',
+        password: 'test-password-1234',
+      );
+      testUserId = auth.user!.id;
 
-    final catalog = await client.from('card_catalog').select('id').limit(1).single();
-    final card = await client.from('user_cards').insert({
-      'user_id': testUserId,
-      'catalog_card_id': catalog['id'],
-    }).select('id').single();
-    testUserCardId = card['id'] as String;
-  });
+      final catalog = await client
+          .from('card_catalog')
+          .select('id')
+          .limit(1)
+          .single();
+      final card = await client
+          .from('user_cards')
+          .insert({'user_id': testUserId, 'catalog_card_id': catalog['id']})
+          .select('id')
+          .single();
+      testUserCardId = card['id'] as String;
+    });
 
-  test('a valid category value is accepted', () async {
-    await expectLater(
-      client.from('transactions').insert({
-        'user_id': testUserId,
-        'user_card_id': testUserCardId,
-        'amount': 100,
-        'description': 'Test valid category',
-        'transaction_date': DateTime.now().toIso8601String(),
-        'category': 'food',
-      }),
-      completes,
-    );
-  });
+    test('a valid category value is accepted', () async {
+      await expectLater(
+        client.from('transactions').insert({
+          'user_id': testUserId,
+          'user_card_id': testUserCardId,
+          'amount': 100,
+          'description': 'Test valid category',
+          'transaction_date': DateTime.now().toIso8601String(),
+          'category': 'food',
+        }),
+        completes,
+      );
+    });
 
-  test('NULL category is accepted (defense-in-depth)', () async {
-    await expectLater(
-      client.from('transactions').insert({
-        'user_id': testUserId,
-        'user_card_id': testUserCardId,
-        'amount': 100,
-        'description': 'Test null category',
-        'transaction_date': DateTime.now().toIso8601String(),
-        'category': null,
-      }),
-      completes,
-    );
-  });
+    test('NULL category is accepted (defense-in-depth)', () async {
+      await expectLater(
+        client.from('transactions').insert({
+          'user_id': testUserId,
+          'user_card_id': testUserCardId,
+          'amount': 100,
+          'description': 'Test null category',
+          'transaction_date': DateTime.now().toIso8601String(),
+          'category': null,
+        }),
+        completes,
+      );
+    });
 
-  test('an invalid category value is rejected', () async {
-    expect(
-      () => client.from('transactions').insert({
-        'user_id': testUserId,
-        'user_card_id': testUserCardId,
-        'amount': 100,
-        'description': 'Test invalid category',
-        'transaction_date': DateTime.now().toIso8601String(),
-        'category': 'not_a_real_category',
-      }),
-      throwsA(isA<PostgrestException>()),
-    );
-  });
+    test('an invalid category value is rejected', () async {
+      expect(
+        () => client.from('transactions').insert({
+          'user_id': testUserId,
+          'user_card_id': testUserCardId,
+          'amount': 100,
+          'description': 'Test invalid category',
+          'transaction_date': DateTime.now().toIso8601String(),
+          'category': 'not_a_real_category',
+        }),
+        throwsA(isA<PostgrestException>()),
+      );
+    });
 
-  test('a legacy pre-fix category value is also rejected (proves NOT '
-      'VALID enforces on new writes immediately)', () async {
-    expect(
-      () => client.from('transactions').insert({
-        'user_id': testUserId,
-        'user_card_id': testUserCardId,
-        'amount': 100,
-        'description': 'Test legacy category',
-        'transaction_date': DateTime.now().toIso8601String(),
-        'category': 'dining',
-      }),
-      throwsA(isA<PostgrestException>()),
-    );
-  });
+    test('a legacy pre-fix category value is also rejected (proves NOT '
+        'VALID enforces on new writes immediately)', () async {
+      expect(
+        () => client.from('transactions').insert({
+          'user_id': testUserId,
+          'user_card_id': testUserCardId,
+          'amount': 100,
+          'description': 'Test legacy category',
+          'transaction_date': DateTime.now().toIso8601String(),
+          'category': 'dining',
+        }),
+        throwsA(isA<PostgrestException>()),
+      );
+    });
+  }, skip: localSupabaseSkipReason);
 }
