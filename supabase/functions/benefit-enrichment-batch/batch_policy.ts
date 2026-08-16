@@ -86,10 +86,17 @@ export function buildJobKey(
   return `${cardId}:${canonicalUrlHash}:${parserVersion}`;
 }
 
+export function assertBenefitParserVersion(parserVersion: string): void {
+  if (parserVersion.trim().toLowerCase() === "catalog-v1") {
+    throw new Error("reserved_parser_version");
+  }
+}
+
 export async function enqueueBenefitEnrichmentJob(
   db: EnrichmentQueueClient,
   input: BenefitEnrichmentQueueInput,
 ): Promise<void> {
+  assertBenefitParserVersion(input.parserVersion);
   const { error } = await db.from("card_catalog_enrichment_jobs").upsert({
     card_id: input.cardId,
     issuer: input.issuer,
@@ -133,7 +140,7 @@ export function simulateLeaseClaim(
   const recoveredIds = jobs
     .filter((job) =>
       job.status === "processing" &&
-      !(job.runMode === "manual" && job.parserVersion === "catalog-v1") &&
+      job.parserVersion?.trim().toLowerCase() !== "catalog-v1" &&
       (job.leaseExpiresAt === null ||
         Date.parse(job.leaseExpiresAt) <= timestamp)
     )
@@ -142,7 +149,7 @@ export function simulateLeaseClaim(
   const eligible = jobs.filter((job) => {
     const status = recovered.has(job.id) ? "queued" : job.status;
     return job.runMode === runMode &&
-      !(job.runMode === "manual" && job.parserVersion === "catalog-v1") &&
+      job.parserVersion?.trim().toLowerCase() !== "catalog-v1" &&
       (status === "queued" || status === "failed") &&
       (job.nextRetryAt === null || Date.parse(job.nextRetryAt) <= timestamp);
   }).sort((left, right) =>

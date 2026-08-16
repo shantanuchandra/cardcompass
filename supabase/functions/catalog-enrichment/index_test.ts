@@ -136,3 +136,98 @@ Deno.test("legacy claim loses ownership safely if a manual job changes lanes", a
     "raced benefit job was claimed or rewritten",
   );
 });
+
+Deno.test("legacy finalization cannot overwrite a post-claim lane change", async () => {
+  const stored: Record<string, unknown> = {
+    id: "post-claim-race",
+    card_id: "card-1",
+    issuer: "Axis Bank",
+    canonical_url: "not-an-official-url",
+    status: "queued",
+    attempt_count: 0,
+    run_mode: "manual",
+    parser_version: "catalog-v1",
+  };
+  let claimReturned = false;
+  const db = {
+    from(table: string) {
+      assert(
+        table === "card_catalog_enrichment_jobs",
+        "failure path escaped the queue table",
+      );
+      let patch: Record<string, unknown> | null = null;
+      const equalFilters = new Map<string, unknown>();
+      let allowedStatuses: unknown[] | null = null;
+      const executeUpdate = () => {
+        const equalMatch = [...equalFilters].every(([column, value]) =>
+          stored[column] === value
+        );
+        const statusMatch = allowedStatuses === null ||
+          allowedStatuses.includes(stored.status);
+        if (!equalMatch || !statusMatch || !patch) {
+          return { data: null, error: null };
+        }
+        Object.assign(stored, patch);
+        return { data: { ...stored }, error: null };
+      };
+      return {
+        select() {
+          return this;
+        },
+        update(value: Record<string, unknown>) {
+          patch = value;
+          return this;
+        },
+        eq(column: string, value: unknown) {
+          equalFilters.set(column, value);
+          return this;
+        },
+        in(column: string, values: unknown[]) {
+          if (column === "status") allowedStatuses = values;
+          return this;
+        },
+        async single() {
+          return { data: { ...stored }, error: null };
+        },
+        async maybeSingle() {
+          const result = executeUpdate();
+          if (!claimReturned && result.data) {
+            claimReturned = true;
+            queueMicrotask(() => {
+              stored.run_mode = "scheduled";
+              stored.parser_version = "benefits-v1";
+            });
+          }
+          return result;
+        },
+        then<TResult1 = unknown, TResult2 = never>(
+          onfulfilled?:
+            | ((value: unknown) => TResult1 | PromiseLike<TResult1>)
+            | null,
+          onrejected?:
+            | ((reason: unknown) => TResult2 | PromiseLike<TResult2>)
+            | null,
+        ) {
+          return Promise.resolve(executeUpdate()).then(onfulfilled, onrejected);
+        },
+      };
+    },
+  };
+
+  let error: unknown;
+  try {
+    await processCatalogEnrichmentJob(db, "post-claim-race");
+  } catch (caught) {
+    error = caught;
+  }
+  assert(
+    error instanceof Error && error.message === "job_not_owned",
+    "lost finalization ownership was not reported",
+  );
+  assert(stored.status === "processing", "lost job status was overwritten");
+  assert(stored.run_mode === "scheduled", "lost job lane was overwritten");
+  assert(
+    stored.parser_version === "benefits-v1",
+    "lost job parser was overwritten",
+  );
+});

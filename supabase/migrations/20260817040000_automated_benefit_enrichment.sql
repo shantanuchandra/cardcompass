@@ -164,6 +164,7 @@ DECLARE
   distinct_card_count integer;
   distinct_profile_count integer;
   distinct_issuer_count integer;
+  inserted_count integer;
 BEGIN
   IF coalesce(auth.role(), '') <> 'service_role' THEN
     RAISE EXCEPTION 'service_role_required';
@@ -172,6 +173,9 @@ BEGIN
      OR jsonb_array_length(_candidates) <> 5
      OR _parser_version IS NULL OR length(trim(_parser_version)) < 3 THEN
     RAISE EXCEPTION 'invalid_pilot_candidates';
+  END IF;
+  IF lower(trim(_parser_version)) = 'catalog-v1' THEN
+    RAISE EXCEPTION 'reserved_parser_version';
   END IF;
 
   PERFORM pg_advisory_xact_lock(
@@ -249,15 +253,12 @@ BEGIN
   FROM jsonb_to_recordset(_candidates)
     AS input(card_id uuid, profile text)
   JOIN public.card_catalog AS card ON card.id = input.card_id
-  ON CONFLICT (job_key) DO UPDATE
-  SET run_mode = 'pilot',
-      status = 'queued',
-      lease_expires_at = NULL,
-      lease_token = NULL,
-      next_retry_at = NULL,
-      failure_category = NULL,
-      result_summary = EXCLUDED.result_summary,
-      updated_at = now();
+  ON CONFLICT (job_key) DO NOTHING;
+
+  GET DIAGNOSTICS inserted_count = ROW_COUNT;
+  IF inserted_count <> 5 THEN
+    RAISE EXCEPTION 'pilot_candidate_conflict';
+  END IF;
 
   SELECT count(*) INTO existing_pilot_count
   FROM public.card_catalog_enrichment_jobs
@@ -317,7 +318,7 @@ BEGIN
       lease_token = NULL,
       updated_at = now()
   WHERE job.status = 'processing'
-    AND NOT (job.run_mode = 'manual' AND job.parser_version = 'catalog-v1')
+    AND lower(trim(job.parser_version)) <> 'catalog-v1'
     AND (job.lease_expires_at IS NULL OR job.lease_expires_at <= now());
 
   SELECT lower(trim(job.issuer))
@@ -327,7 +328,7 @@ BEGIN
   WHERE job.status IN ('queued', 'failed')
     AND (job.next_retry_at IS NULL OR job.next_retry_at <= now())
     AND job.run_mode = _run_mode
-    AND NOT (job.run_mode = 'manual' AND job.parser_version = 'catalog-v1')
+    AND lower(trim(job.parser_version)) <> 'catalog-v1'
     AND NOT EXISTS (
       SELECT 1
       FROM public.card_catalog_enrichment_jobs AS leased
@@ -351,7 +352,7 @@ BEGIN
       AND job.status IN ('queued', 'failed')
       AND (job.next_retry_at IS NULL OR job.next_retry_at <= now())
       AND job.run_mode = _run_mode
-      AND NOT (job.run_mode = 'manual' AND job.parser_version = 'catalog-v1')
+      AND lower(trim(job.parser_version)) <> 'catalog-v1'
     ORDER BY card.card_name, job.created_at
     LIMIT maximum_jobs
     FOR UPDATE SKIP LOCKED

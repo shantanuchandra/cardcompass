@@ -72,9 +72,9 @@ test('claim RPC leases no more than five jobs from one issuer with service-only 
   assert.match(claim, /lower\(trim\(leased\.issuer\)\)\s*=\s*lower\(trim\(job\.issuer\)\)/i);
   assert.match(claim, /lower\(trim\(job\.issuer\)\)\s*=\s*selected_issuer/i);
   assert.equal(
-    [...claim.matchAll(/NOT\s*\(job\.run_mode\s*=\s*'manual'\s+AND\s+job\.parser_version\s*=\s*'catalog-v1'\)/gi)].length,
+    [...claim.matchAll(/lower\(trim\(job\.parser_version\)\)\s*<>\s*'catalog-v1'/gi)].length,
     3,
-    'lease recovery, issuer selection, and row claim must exclude legacy catalog ownership',
+    'lease recovery, issuer selection, and row claim must reserve catalog-v1 in every run mode',
   );
   assert.match(claim, /FOR UPDATE SKIP LOCKED/i);
   assert.match(claim, /LEAST\s*\(\s*GREATEST\s*\([^)]*\)\s*,\s*5\s*\)/i);
@@ -91,8 +91,13 @@ test('migration atomically initializes exactly five validated pilot jobs', async
   assert.match(pilot, /count\(DISTINCT lower\(trim\(bank\)\)\)[\s\S]*<\s*3/i);
   assert.match(pilot, /is_discontinued\s*=\s*false/i);
   assert.match(pilot, /lower\(trim\(card\.card_type\)\)\s*=\s*'credit'/i);
+  assert.match(pilot, /lower\(trim\(_parser_version\)\)\s*=\s*'catalog-v1'[\s\S]*reserved_parser_version/i);
   assert.match(pilot, /INSERT INTO public\.card_catalog_enrichment_jobs[\s\S]*'pilot'/i);
-  assert.match(pilot, /ON CONFLICT \(job_key\) DO UPDATE/i);
+  assert.match(pilot, /ON CONFLICT \(job_key\) DO NOTHING/i);
+  assert.match(pilot, /GET DIAGNOSTICS[\s\S]*ROW_COUNT/i);
+  assert.match(pilot, /inserted_count\s*<>\s*5[\s\S]*pilot_candidate_conflict/i);
+  assert.doesNotMatch(pilot, /ON CONFLICT \(job_key\) DO UPDATE/i);
+  assert.doesNotMatch(pilot, /SET\s+run_mode\s*=\s*'pilot'/i);
   assert.match(pilot, /pilot_state_incomplete/i);
   assert.match(sql, /GRANT EXECUTE ON FUNCTION public\.initialize_card_benefit_enrichment_pilot\(jsonb, text\)\s+TO service_role/i);
 });

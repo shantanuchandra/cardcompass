@@ -87,6 +87,53 @@ Deno.test("batch claims never take the legacy manual catalog ownership lane", ()
   );
 });
 
+Deno.test("batch claims reserve catalog-v1 for the legacy worker in every run mode", () => {
+  const result = simulateLeaseClaim(
+    [
+      {
+        id: "scheduled-catalog",
+        issuer: "Axis Bank",
+        cardName: "A Catalog Job",
+        status: "queued",
+        leaseExpiresAt: null,
+        nextRetryAt: null,
+        runMode: "scheduled",
+        parserVersion: "catalog-v1",
+      },
+      {
+        id: "pilot-catalog",
+        issuer: "Axis Bank",
+        cardName: "B Catalog Job",
+        status: "processing",
+        leaseExpiresAt: null,
+        nextRetryAt: null,
+        runMode: "pilot",
+        parserVersion: "catalog-v1",
+      },
+      {
+        id: "scheduled-benefits",
+        issuer: "Axis Bank",
+        cardName: "C Benefit Job",
+        status: "queued",
+        leaseExpiresAt: null,
+        nextRetryAt: null,
+        runMode: "scheduled",
+        parserVersion: "benefits-v1",
+      },
+    ],
+    new Date("2026-08-17T12:00:00.000Z"),
+    "scheduled",
+  );
+  assert(
+    result.claimed.map((job) => job.id).join(",") === "scheduled-benefits",
+    "scheduled catalog-v1 work entered the benefit worker",
+  );
+  assert(
+    result.recoveredIds.length === 0,
+    "pilot catalog-v1 work was lease-recovered by the benefit worker",
+  );
+});
+
 Deno.test("one-issuer claims group bank casing and whitespace variants", () => {
   const result = simulateLeaseClaim(
     [
@@ -212,6 +259,38 @@ Deno.test("re-enqueueing a leased job preserves its processing state and lease",
     "duplicate enqueue rewound or mutated an active lease",
   );
   assert(upserts === 1, "enqueue skipped its database boundary");
+});
+
+Deno.test("benefit enqueue refuses the reserved catalog-v1 parser", async () => {
+  let writes = 0;
+  const db = {
+    from() {
+      writes += 1;
+      return {
+        async upsert() {
+          return { error: null };
+        },
+      };
+    },
+  };
+  let error: unknown;
+  try {
+    await enqueueBenefitEnrichmentJob(db, {
+      cardId: "card-a",
+      issuer: "Axis Bank",
+      canonicalUrl: "https://axis.example/card-a",
+      finalUrlHash: "a".repeat(64),
+      contentHash: "b".repeat(64),
+      parserVersion: "catalog-v1",
+    });
+  } catch (caught) {
+    error = caught;
+  }
+  assert(
+    error instanceof Error && error.message === "reserved_parser_version",
+    "reserved parser was accepted by benefit enqueue",
+  );
+  assert(writes === 0, "rejected parser reached the queue");
 });
 
 Deno.test("same content and parser reuse an existing staging row", () => {

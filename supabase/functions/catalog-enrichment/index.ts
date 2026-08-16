@@ -40,6 +40,23 @@ async function queueConflictReview(
   }).eq("id", job.discovery_job_id);
 }
 
+async function finalizeOwnedCatalogJob(
+  db: UntypedSupabaseClient,
+  jobId: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  const { data, error } = await db.from("card_catalog_enrichment_jobs")
+    .update(patch)
+    .eq("id", jobId)
+    .eq("status", "processing")
+    .eq("run_mode", "manual")
+    .eq("parser_version", "catalog-v1")
+    .select("id")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("job_not_owned");
+}
+
 export async function processCatalogEnrichmentJob(
   db: UntypedSupabaseClient,
   jobId: string,
@@ -120,7 +137,7 @@ export async function processCatalogEnrichmentJob(
     const status = compared.conflicts.length > 0
       ? "review_required"
       : "completed";
-    const { error } = await db.from("card_catalog_enrichment_jobs").update({
+    await finalizeOwnedCatalogJob(db, claimed.id, {
       status,
       normalized_fields: normalized.patch,
       validation_warnings: compared.conflicts.map((item) => ({
@@ -130,8 +147,7 @@ export async function processCatalogEnrichmentJob(
       failure_category: null,
       next_retry_at: null,
       updated_at: new Date().toISOString(),
-    }).eq("id", claimed.id);
-    if (error) throw error;
+    });
     return status;
   } catch (error) {
     const attempts = Number(claimed.attempt_count ?? 0);
@@ -139,7 +155,7 @@ export async function processCatalogEnrichmentJob(
     const message = error instanceof Error
       ? error.message.slice(0, 120)
       : "enrichment_failed";
-    await db.from("card_catalog_enrichment_jobs").update({
+    await finalizeOwnedCatalogJob(db, claimed.id, {
       status: terminal ? "review_required" : "failed",
       failure_category: message,
       next_retry_at: terminal
@@ -147,7 +163,7 @@ export async function processCatalogEnrichmentJob(
         : new Date(Date.now() + Math.min(60, 2 ** attempts) * 60_000)
           .toISOString(),
       updated_at: new Date().toISOString(),
-    }).eq("id", claimed.id);
+    });
     throw error;
   }
 }

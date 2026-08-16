@@ -14,6 +14,7 @@ import {
 } from "../_shared/issuer_card_crawl.ts";
 import { fetchOfficialIssuerResource } from "../_shared/official_issuer_fetch.ts";
 import {
+  assertBenefitParserVersion,
   evaluatePilotGate,
   failureDisposition,
   LEASE_SECONDS,
@@ -195,6 +196,7 @@ export async function initializePilotJobs(
   candidates: readonly PilotCandidate[],
   parserVersion = "benefits-v1",
 ): Promise<EnrichmentJob[]> {
+  assertBenefitParserVersion(parserVersion);
   const selected = selectPilotCandidates(candidates);
   if (selected.length !== 5) throw new Error("invalid_pilot_candidates");
   const { data, error } = await db.rpc(
