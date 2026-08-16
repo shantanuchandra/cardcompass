@@ -21,11 +21,13 @@ class CardCompassApp extends ConsumerWidget {
       debugShowCheckedModeBanner: false,
       theme: AppTheme.editorial,
       routerConfig: router,
-      builder: (context, child) => MediaQuery(
-        data: MediaQuery.of(
-          context,
-        ).copyWith(textScaler: const TextScaler.linear(1.0)),
-        child: child!,
+      builder: (context, child) => SelectionArea(
+        child: MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: const TextScaler.linear(1.0)),
+          child: child!,
+        ),
       ),
     );
   }
