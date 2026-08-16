@@ -182,6 +182,13 @@ test('Azure CSP permits direct browser calls to the Gmail and People APIs', asyn
   assert.match(policy, /connect-src[^;]*https:\/\/people\.googleapis\.com/);
 });
 
+test('Azure CSP permits loading the signed-in user\'s Google profile photo', async () => {
+  const config = JSON.parse(await readFile(new URL('staticwebapp.config.json', repoRoot), 'utf8'));
+  const policy = config.globalHeaders['Content-Security-Policy'];
+
+  assert.match(policy, /img-src[^;]*https:\/\/\*\.googleusercontent\.com/);
+});
+
 test('deployment environment module serializes public Supabase values as inert JavaScript strings', async () => {
   const child = spawn(process.execPath, ['scripts/write-landing-env.mjs'], {
     cwd: new URL('../..', import.meta.url),
