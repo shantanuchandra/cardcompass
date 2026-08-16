@@ -1,0 +1,268 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { once } from 'node:events';
+import { spawn } from 'node:child_process';
+import { access, mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import net from 'node:net';
+
+const repoRoot = new URL('../../', import.meta.url);
+const chromeCandidates = [
+  process.env.CHROME_BIN,
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  '/usr/bin/google-chrome',
+  '/usr/bin/chromium',
+  '/usr/bin/chromium-browser',
+].filter(Boolean);
+const publicRoutes = [
+  '/',
+  '/tools/best-card/',
+  '/tools/milestone-tracker/',
+  '/tools/movie-offers/',
+  '/data-security/',
+  '/privacy/',
+  '/terms/',
+  '/recommendation-disclaimer/',
+  '/404.html',
+];
+
+async function availableChrome() {
+  for (const candidate of chromeCandidates) {
+    try {
+      await access(candidate);
+      return candidate;
+    } catch {
+      // Try the next standard Chrome/Chromium location.
+    }
+  }
+  return null;
+}
+
+async function unusedPort() {
+  const socket = net.createServer();
+  socket.listen(0, '127.0.0.1');
+  await once(socket, 'listening');
+  const { port } = socket.address();
+  await new Promise((resolve, reject) => {
+    socket.close((error) => error ? reject(error) : resolve());
+  });
+  return port;
+}
+
+function devtoolsWebSocket(child) {
+  return new Promise((resolve, reject) => {
+    let output = '';
+    const timeout = setTimeout(() => {
+      reject(new Error(`Chrome did not expose DevTools: ${output}`));
+    }, 10_000);
+
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk) => {
+      output += chunk;
+      const match = output.match(/DevTools listening on (ws:\/\/[^\s]+)/);
+      if (match) {
+        clearTimeout(timeout);
+        resolve(match[1]);
+      }
+    });
+    child.once('exit', (code) => {
+      clearTimeout(timeout);
+      reject(new Error(`Chrome exited before DevTools was ready (${code}): ${output}`));
+    });
+  });
+}
+
+async function connectCdp(webSocketUrl) {
+  const socket = new WebSocket(webSocketUrl);
+  await once(socket, 'open');
+  let nextId = 0;
+  const pending = new Map();
+
+  socket.addEventListener('message', (event) => {
+    const message = JSON.parse(event.data);
+    const request = pending.get(message.id);
+    if (!request) return;
+    pending.delete(message.id);
+    if (message.error) request.reject(new Error(message.error.message));
+    else request.resolve(message.result);
+  });
+
+  return {
+    close: () => socket.close(),
+    send(method, params = {}) {
+      const id = ++nextId;
+      return new Promise((resolve, reject) => {
+        pending.set(id, { resolve, reject });
+        socket.send(JSON.stringify({ id, method, params }));
+      });
+    },
+  };
+}
+
+async function evaluate(cdp, expression) {
+  const { result, exceptionDetails } = await cdp.send('Runtime.evaluate', {
+    expression,
+    returnByValue: true,
+    awaitPromise: true,
+  });
+  if (exceptionDetails) throw new Error(exceptionDetails.text);
+  return result.value;
+}
+
+async function navigate(cdp, url) {
+  await cdp.send('Page.navigate', { url });
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const ready = await evaluate(cdp, 'document.readyState');
+    if (ready === 'complete') return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`Page did not finish loading: ${url}`);
+}
+
+async function pressTab(cdp) {
+  const key = {
+    key: 'Tab',
+    code: 'Tab',
+    windowsVirtualKeyCode: 9,
+    nativeVirtualKeyCode: 9,
+  };
+  await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...key });
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...key });
+  await new Promise((resolve) => setTimeout(resolve, 25));
+}
+
+test('public pages render without viewport overflow and expose live keyboard focus', { timeout: 30_000 }, async (t) => {
+  if (typeof WebSocket === 'undefined') {
+    t.skip('This rendered assertion requires a Node runtime with WebSocket support');
+    return;
+  }
+  const chrome = await availableChrome();
+  if (!chrome) {
+    t.skip('Chrome/Chromium is required for rendered public-page assertions');
+    return;
+  }
+
+  const serverPort = await unusedPort();
+  const server = spawn(process.execPath, ['server.js', String(serverPort)], {
+    cwd: repoRoot,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  t.after(() => server.kill());
+  await Promise.race([
+    once(server.stdout, 'data'),
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('local server did not start')), 3_000);
+    }),
+  ]);
+
+  const profile = await mkdtemp(join(tmpdir(), 'cardcompass-chrome-'));
+  const chromeProcess = spawn(chrome, [
+    '--headless=new',
+    '--disable-background-networking',
+    '--disable-default-apps',
+    '--disable-extensions',
+    '--disable-gpu',
+    '--no-first-run',
+    '--no-sandbox',
+    '--remote-debugging-port=0',
+    `--user-data-dir=${profile}`,
+    'about:blank',
+  ], { stdio: ['ignore', 'ignore', 'pipe'] });
+  t.after(async () => {
+    chromeProcess.kill();
+    await rm(profile, { recursive: true, force: true });
+  });
+
+  const browserSocket = await devtoolsWebSocket(chromeProcess);
+  const devtoolsPort = new URL(browserSocket).port;
+  const target = await fetch(
+    `http://127.0.0.1:${devtoolsPort}/json/new?${encodeURIComponent('about:blank')}`,
+    { method: 'PUT' },
+  ).then((response) => response.json());
+  const cdp = await connectCdp(target.webSocketDebuggerUrl);
+  t.after(() => cdp.close());
+
+  await cdp.send('Page.enable');
+  await cdp.send('Runtime.enable');
+  await cdp.send('Emulation.setEmulatedMedia', {
+    features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
+  });
+
+  for (const viewport of [{ width: 390, height: 844 }, { width: 1440, height: 900 }]) {
+    await cdp.send('Emulation.setDeviceMetricsOverride', {
+      ...viewport,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+
+    for (const route of publicRoutes) {
+      await navigate(cdp, `http://127.0.0.1:${serverPort}${route}`);
+
+      const layout = await evaluate(cdp, `(() => ({
+        innerWidth: window.innerWidth,
+        scrollWidth: document.documentElement.scrollWidth,
+        reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
+        scrollBehavior: getComputedStyle(document.documentElement).scrollBehavior,
+      }))()`);
+      assert.deepEqual(
+        layout,
+        {
+          innerWidth: viewport.width,
+          scrollWidth: viewport.width,
+          reducedMotion: true,
+          scrollBehavior: 'auto',
+        },
+        `${route} at ${viewport.width}px`,
+      );
+
+      await pressTab(cdp);
+      const firstFocus = await evaluate(cdp, `(() => {
+        const element = document.activeElement;
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return {
+          tag: element.tagName,
+          className: element.className,
+          href: element.getAttribute('href'),
+          rect: { top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height },
+          visible: rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < innerHeight,
+          indicator: style.outlineStyle !== 'none' || style.boxShadow !== 'none',
+        };
+      })()`);
+      const focusContext = `${route} at ${viewport.width}px: ${JSON.stringify(firstFocus)}`;
+      assert.equal(firstFocus.tag, 'A', `${focusContext}: Tab did not reach a link`);
+      assert.equal(firstFocus.visible, true, `${focusContext}: focused link is not visible`);
+      assert.equal(firstFocus.indicator, true, `${focusContext}: focused link has no visible indicator`);
+      if (route !== '/404.html') {
+        assert.match(firstFocus.className, /skip-link/, `${route}: skip link is not first`);
+        assert.equal(firstFocus.href, '#main', `${route}: skip target changed`);
+      }
+
+      await pressTab(cdp);
+      const secondFocus = await evaluate(cdp, `(() => ({
+        tag: document.activeElement.tagName,
+        href: document.activeElement.getAttribute('href'),
+      }))()`);
+      assert.equal(secondFocus.tag, 'A', `${route}: second Tab did not continue traversal`);
+      assert.notEqual(secondFocus.href, firstFocus.href, `${route}: focus did not advance`);
+    }
+  }
+
+  await cdp.send('Emulation.setDeviceMetricsOverride', {
+    width: 390,
+    height: 844,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  await navigate(cdp, `http://127.0.0.1:${serverPort}/data-security/`);
+  const table = await evaluate(cdp, `(() => {
+    const element = document.querySelector('.data-table');
+    return {
+      overflowX: getComputedStyle(element).overflowX,
+      containsWideContent: element.scrollWidth >= element.clientWidth,
+    };
+  })()`);
+  assert.equal(table.overflowX, 'auto');
+  assert.equal(table.containsWideContent, true);
+});
