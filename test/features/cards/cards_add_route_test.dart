@@ -48,12 +48,16 @@ class _MemoryCardsRepository extends CardsRepository {
       );
 
   final List<UserCard> cards;
-  final Completer<void> saveBarrier = Completer<void>();
-  bool pauseSaves = false;
+  Completer<void>? saveBarrier;
+  bool failNextSave = false;
   var saveCount = 0;
+  var loadCount = 0;
 
   @override
-  Future<List<UserCard>> getUserCards(String userId) async => [...cards];
+  Future<List<UserCard>> getUserCards(String userId) async {
+    loadCount++;
+    return [...cards];
+  }
 
   @override
   Future<UserCard> addUserCard({
@@ -66,7 +70,11 @@ class _MemoryCardsRepository extends CardsRepository {
     int? dueDate,
   }) async {
     saveCount++;
-    if (pauseSaves) await saveBarrier.future;
+    await saveBarrier?.future;
+    if (failNextSave) {
+      failNextSave = false;
+      throw StateError('private insert failure');
+    }
     final card = UserCard(
       id: 'card-new',
       userId: userId,
@@ -120,11 +128,15 @@ Future<void> _openAddCard(WidgetTester tester, {required bool empty}) async {
 }
 
 Future<void> _saveCard(WidgetTester tester) async {
+  await _reachConfirmStep(tester);
+  await tester.tap(find.text('Add card'));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _reachConfirmStep(WidgetTester tester) async {
   await tester.enterText(find.byKey(const Key('card-search')), 'astra');
   await tester.pumpAndSettle();
   await tester.tap(find.text('Astra Travel Preferred'));
-  await tester.pumpAndSettle();
-  await tester.tap(find.text('Add card'));
   await tester.pumpAndSettle();
 }
 
@@ -168,38 +180,99 @@ void main() {
   }
 
   testWidgets(
-    'save blocks app and system Back until the inserted card refreshes the list',
+    'pending save can be dismissed immediately and refreshes after success',
     (tester) async {
-      final repository = _MemoryCardsRepository(const [])..pauseSaves = true;
+      final save = Completer<void>();
+      final repository = _MemoryCardsRepository(const [])..saveBarrier = save;
       final router = await _pumpJourney(
         tester,
         initial: const [],
         repository: repository,
       );
       await _openAddCard(tester, empty: true);
-
-      await tester.enterText(find.byKey(const Key('card-search')), 'astra');
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Astra Travel Preferred'));
-      await tester.pumpAndSettle();
+      await _reachConfirmStep(tester);
       await tester.tap(find.text('Add card'));
-      await tester.pump();
-
-      final back = tester.widget<IconButton>(
-        find.widgetWithIcon(IconButton, Icons.arrow_back_rounded),
-      );
-      expect(back.onPressed, isNull);
-      await tester.binding.handlePopRoute();
-      await tester.pump();
-      expect(router.state.uri.path, '/app/cards/add');
-      expect(repository.saveCount, 1);
-
-      repository.saveBarrier.complete();
+      await tester.tap(find.byIcon(Icons.arrow_back_rounded));
       await tester.pumpAndSettle();
 
       expect(router.state.uri.path, '/app/cards');
+      expect(find.text('No cards yet'), findsOneWidget);
+      expect(repository.saveCount, 1);
+      expect(repository.loadCount, 1);
+
+      save.complete();
+      await tester.pumpAndSettle();
+
       expect(find.text('Astra Travel Preferred'), findsOneWidget);
       expect(repository.saveCount, 1);
+      expect(repository.loadCount, 2);
+    },
+  );
+
+  testWidgets('reopening during a pending save cannot insert the card twice', (
+    tester,
+  ) async {
+    final save = Completer<void>();
+    final repository = _MemoryCardsRepository(const [])..saveBarrier = save;
+    await _pumpJourney(tester, initial: const [], repository: repository);
+    await _openAddCard(tester, empty: true);
+    await _reachConfirmStep(tester);
+
+    await tester.tap(find.text('Add card'));
+    await tester.tap(find.byIcon(Icons.arrow_back_rounded));
+    await tester.pumpAndSettle();
+    await _openAddCard(tester, empty: true);
+    await _reachConfirmStep(tester);
+    await tester.tap(find.text('Add card'));
+    await tester.pump();
+
+    expect(repository.saveCount, 1);
+    await tester.tap(find.byIcon(Icons.arrow_back_rounded));
+    await tester.pumpAndSettle();
+    save.complete();
+    await tester.pumpAndSettle();
+
+    expect(repository.saveCount, 1);
+    expect(repository.cards, hasLength(1));
+    expect(find.text('Astra Travel Preferred'), findsOneWidget);
+  });
+
+  testWidgets(
+    'dismissed failed save does not refresh and a dismissed retry can succeed',
+    (tester) async {
+      final firstSave = Completer<void>();
+      final repository = _MemoryCardsRepository(const [])
+        ..saveBarrier = firstSave
+        ..failNextSave = true;
+      await _pumpJourney(tester, initial: const [], repository: repository);
+      await _openAddCard(tester, empty: true);
+      await _reachConfirmStep(tester);
+
+      await tester.tap(find.text('Add card'));
+      await tester.tap(find.byIcon(Icons.arrow_back_rounded));
+      await tester.pumpAndSettle();
+      firstSave.complete();
+      await tester.pumpAndSettle();
+
+      expect(repository.saveCount, 1);
+      expect(repository.loadCount, 1);
+      expect(find.text('No cards yet'), findsOneWidget);
+      expect(find.textContaining('private insert failure'), findsNothing);
+
+      final retry = Completer<void>();
+      repository.saveBarrier = retry;
+      await _openAddCard(tester, empty: true);
+      await _reachConfirmStep(tester);
+      await tester.tap(find.text('Add card'));
+      await tester.tap(find.byIcon(Icons.arrow_back_rounded));
+      await tester.pumpAndSettle();
+      retry.complete();
+      await tester.pumpAndSettle();
+
+      expect(repository.saveCount, 2);
+      expect(repository.loadCount, 2);
+      expect(repository.cards, hasLength(1));
+      expect(find.text('Astra Travel Preferred'), findsOneWidget);
     },
   );
 }

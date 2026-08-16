@@ -110,6 +110,7 @@ Future<void> _startPendingAssignment(
   required Completer<void> resolution,
   required ValueChanged<int> onResolution,
   VoidCallback? onDashboardLoad,
+  bool startResolution = true,
 }) async {
   var resolutionCount = 0;
   final selectedAppTab = ValueNotifier(AppTab.dashboard);
@@ -148,8 +149,10 @@ Future<void> _startPendingAssignment(
   await tester.pumpAndSettle();
   await tester.tap(find.byKey(const Key('resolve-bank-email-1')));
   await tester.pumpAndSettle();
-  await tester.tap(find.text('Astra Preferred'));
-  await tester.pump();
+  if (startResolution) {
+    await tester.tap(find.text('Astra Preferred'));
+    await tester.pump();
+  }
 }
 
 void main() {
@@ -499,4 +502,96 @@ void main() {
     expect(resolutionCount, 1);
     expect(dashboardLoads, 2);
   });
+
+  testWidgets(
+    'two assignment activations before rebuild start one workflow and refresh',
+    (tester) async {
+      final resolution = Completer<void>();
+      var resolutionCount = 0;
+      var dashboardLoads = 0;
+      await _startPendingAssignment(
+        tester,
+        resolution: resolution,
+        onResolution: (count) => resolutionCount = count,
+        onDashboardLoad: () => dashboardLoads++,
+        startResolution: false,
+      );
+
+      await tester.tap(find.text('Astra Preferred'));
+      await tester.tap(find.text('Astra Preferred'));
+      expect(resolutionCount, 1);
+
+      resolution.complete();
+      await tester.pumpAndSettle();
+      expect(dashboardLoads, 2);
+      expect(find.byType(Dialog), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'dismissed assignment failure does not refresh and retry refreshes once',
+    (tester) async {
+      final firstResolution = Completer<void>();
+      final retryResolution = Completer<void>();
+      var resolutionCount = 0;
+      var dashboardLoads = 0;
+      final selectedAppTab = ValueNotifier(AppTab.dashboard);
+      addTearDown(selectedAppTab.dispose);
+      await _pumpDashboard(
+        tester,
+        selectedAppTab: selectedAppTab,
+        onDashboardLoad: () => dashboardLoads++,
+        pendingAssignments: const [
+          {'email_id': 'email-1', 'bank_detected': 'Horizon Bank'},
+        ],
+        catalogSearch: (_, _) async => const [
+          {
+            'id': 'catalog-1',
+            'card_name': 'Astra Preferred',
+            'bank': 'Horizon Bank',
+          },
+        ],
+        cardResolution: (_, _) {
+          resolutionCount++;
+          return resolutionCount == 1
+              ? firstResolution.future
+              : retryResolution.future;
+        },
+      );
+
+      Future<void> openDialogAndResolve() async {
+        await tester.scrollUntilVisible(
+          find.text('Your Cards'),
+          300,
+          scrollable: find
+              .descendant(
+                of: find.byType(CustomScrollView),
+                matching: find.byType(Scrollable),
+              )
+              .first,
+        );
+        await tester.drag(find.byType(PageView), const Offset(-500, 0));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('resolve-bank-email-1')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Astra Preferred'));
+        await tester.tap(find.text('Cancel'));
+        await tester.pumpAndSettle();
+      }
+
+      await openDialogAndResolve();
+      firstResolution.completeError(StateError('private assignment failure'));
+      await tester.pumpAndSettle();
+      expect(resolutionCount, 1);
+      expect(dashboardLoads, 1);
+      expect(find.textContaining('private assignment failure'), findsNothing);
+
+      await openDialogAndResolve();
+      retryResolution.complete();
+      await tester.pumpAndSettle();
+      expect(resolutionCount, 2);
+      expect(dashboardLoads, 2);
+      expect(find.byType(Dialog), findsNothing);
+    },
+  );
 }

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cardcompass/core/providers/supabase_provider.dart';
 import 'package:cardcompass/core/theme/app_theme.dart';
 import 'package:cardcompass/features/cards/screens/cards_screen.dart';
+import 'package:cardcompass/features/cards/providers/cards_provider.dart';
 import 'package:cardcompass/shared/models/user_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';

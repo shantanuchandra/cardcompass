@@ -4,6 +4,7 @@ import '../../../core/theme/brand_tokens.dart';
 import '../../../core/theme/brand_components.dart';
 import '../../../core/providers/repository_providers.dart';
 import '../../../core/providers/supabase_provider.dart';
+import '../providers/cards_provider.dart';
 
 typedef CardCatalogSearch =
     Future<List<Map<String, dynamic>>> Function(String query);
@@ -29,7 +30,6 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
   String? _requestError;
   String? _lastFourError;
   int _searchGeneration = 0;
-  int _saveGeneration = 0;
 
   final _lastFour = TextEditingController();
   final _holderName = TextEditingController();
@@ -37,7 +37,6 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
   @override
   void dispose() {
     _searchGeneration++;
-    _saveGeneration++;
     _search.dispose();
     _lastFour.dispose();
     _holderName.dispose();
@@ -88,7 +87,6 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
     }
     final user = ref.read(currentUserProvider);
     if (user == null) return;
-    final generation = ++_saveGeneration;
     final catalogCardId = _selected!['id'] as String;
     final holderName = _holderName.text.trim();
     setState(() {
@@ -99,15 +97,15 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
     });
     try {
       await ref
-          .read(cardsRepositoryProvider)
-          .addUserCard(
+          .read(addCardSaveCoordinatorProvider)
+          .save(
             userId: user.id,
             catalogCardId: catalogCardId,
             lastFourDigits: lastFour.isEmpty ? null : lastFour,
             cardHolderName: holderName.isEmpty ? null : holderName,
           );
     } catch (_) {
-      if (!mounted || generation != _saveGeneration) return;
+      if (!mounted) return;
       setState(() {
         _saving = false;
         _requestError = 'Could not add this card. Try again.';
@@ -115,14 +113,12 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
       return;
     }
 
-    if (!mounted || generation != _saveGeneration) return;
+    if (!mounted) return;
     setState(() {
       _saving = false;
       _saveSucceeded = true;
       _requestError = null;
     });
-    await WidgetsBinding.instance.endOfFrame;
-    if (!mounted || generation != _saveGeneration) return;
     try {
       await Navigator.of(context).maybePop(true);
     } catch (_) {
@@ -144,12 +140,9 @@ class _AddCardScreenState extends ConsumerState<AddCardScreen> {
             fontWeight: FontWeight.w700,
           ),
         ),
-        leading: PopScope(
-          canPop: !_saving,
-          child: IconButton(
-            icon: const Icon(Icons.arrow_back_rounded),
-            onPressed: _saving ? null : () => Navigator.of(context).maybePop(),
-          ),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded),
+          onPressed: () => Navigator.of(context).maybePop(),
         ),
       ),
       body: BrandContentFrame(

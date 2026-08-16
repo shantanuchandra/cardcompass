@@ -5,25 +5,15 @@ import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/brand_tokens.dart';
 import '../../../core/theme/brand_components.dart';
-import '../../../core/providers/repository_providers.dart';
-import '../../../core/providers/supabase_provider.dart';
 import '../../../shared/models/user_card.dart';
+import '../providers/cards_provider.dart';
 import 'card_detail_screen.dart';
-
-final userCardsProvider = FutureProvider<List<UserCard>>((ref) async {
-  final user = ref.watch(currentUserProvider);
-  if (user == null) return [];
-  return ref.read(cardsRepositoryProvider).getUserCards(user.id);
-});
 
 class CardsScreen extends ConsumerWidget {
   const CardsScreen({super.key});
 
-  Future<void> _openAddCard(BuildContext context, WidgetRef ref) async {
-    final added = await context.push<bool>('/app/cards/add');
-    if (added == true && context.mounted) {
-      ref.invalidate(userCardsProvider);
-    }
+  Future<void> _openAddCard(BuildContext context) async {
+    await context.push<bool>('/app/cards/add');
   }
 
   @override
@@ -44,7 +34,7 @@ class CardsScreen extends ConsumerWidget {
         actions: [
           IconButton(
             icon: const Icon(Icons.add_rounded),
-            onPressed: () => _openAddCard(context, ref),
+            onPressed: () => _openAddCard(context),
             tooltip: 'Add card',
           ),
         ],
@@ -75,7 +65,7 @@ class CardsScreen extends ConsumerWidget {
           ),
         ),
         data: (cards) => cards.isEmpty
-            ? _EmptyCards(onAddCard: () => _openAddCard(context, ref))
+            ? _EmptyCards(onAddCard: () => _openAddCard(context))
             : BrandContentFrame(
                 mode: BrandContentMode.fullWidthData,
                 child: RefreshIndicator(

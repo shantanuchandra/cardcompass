@@ -1161,6 +1161,7 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
   }
 
   Future<void> _resolve(Map<String, dynamic> catalogEntry) async {
+    if (_resolving) return;
     final container = ProviderScope.containerOf(context, listen: false);
     final resolveCard = ref.read(cardResolutionProvider);
     setState(() {

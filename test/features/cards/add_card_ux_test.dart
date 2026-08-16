@@ -38,6 +38,7 @@ class _SavingCardsRepository extends CardsRepository {
 
   var saveCount = 0;
   Completer<void>? pendingSave;
+  bool failNextSave = false;
 
   @override
   Future<UserCard> addUserCard({
@@ -51,6 +52,10 @@ class _SavingCardsRepository extends CardsRepository {
   }) async {
     saveCount++;
     await pendingSave?.future;
+    if (failNextSave) {
+      failNextSave = false;
+      throw StateError('private insert failure');
+    }
     return UserCard(
       id: 'saved-card',
       userId: userId,
@@ -385,4 +390,35 @@ void main() {
       expect(find.textContaining('Card added'), findsOneWidget);
     },
   );
+
+  testWidgets('failed insert is redacted and can be retried once mounted', (
+    tester,
+  ) async {
+    final repository = _SavingCardsRepository()..failNextSave = true;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          currentUserProvider.overrideWithValue(_user),
+          cardsRepositoryProvider.overrideWithValue(repository),
+          cardCatalogSearchProvider.overrideWithValue(
+            (_) async => [_catalogCard],
+          ),
+        ],
+        child: MaterialApp(theme: AppTheme.work, home: const AddCardScreen()),
+      ),
+    );
+    await reachConfirmStep(tester);
+
+    await tester.tap(find.text('Add card'));
+    await tester.pumpAndSettle();
+    expect(find.text('Could not add this card. Try again.'), findsOneWidget);
+    expect(find.textContaining('private insert failure'), findsNothing);
+    expect(repository.saveCount, 1);
+
+    await tester.tap(find.text('Add card'));
+    await tester.pumpAndSettle();
+    expect(repository.saveCount, 2);
+    expect(find.text('Could not add this card. Try again.'), findsNothing);
+    expect(find.textContaining('Card added'), findsOneWidget);
+  });
 }
