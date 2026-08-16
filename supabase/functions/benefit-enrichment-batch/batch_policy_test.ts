@@ -4,6 +4,7 @@ import {
   failureDisposition,
   findReusableStaging,
   runSequentially,
+  secureSecretEqual,
   selectPilotCandidates,
   simulateLeaseClaim,
 } from "./batch_policy.ts";
@@ -93,6 +94,8 @@ Deno.test("same content and parser reuse an existing staging row", () => {
     requestType: "official_benefit_enrichment",
     parserVersion: "benefits-v1",
     contentHash: "content-a",
+    status: "pending",
+    evidenceSafe: true,
   }];
   assert(
     findReusableStaging(rows, {
@@ -111,6 +114,24 @@ Deno.test("same content and parser reuse an existing staging row", () => {
       contentHash: "content-a",
     }) === undefined,
     "different parser reused stale staging",
+  );
+  assert(
+    findReusableStaging([{ ...rows[0], status: "rejected" }], {
+      cardId: "card-a",
+      sourceUrl: "https://example.test/card",
+      parserVersion: "benefits-v1",
+      contentHash: "content-a",
+    }) === undefined,
+    "rejected staging was reused",
+  );
+  assert(
+    findReusableStaging([{ ...rows[0], evidenceSafe: false }], {
+      cardId: "card-a",
+      sourceUrl: "https://example.test/card",
+      parserVersion: "benefits-v1",
+      contentHash: "content-a",
+    }) === undefined,
+    "staging without safe evidence was reused",
   );
 });
 
@@ -200,6 +221,106 @@ Deno.test("pilot selector chooses five profiles across at least three issuers", 
   );
 });
 
+Deno.test("pilot selector backtracks when the first profile must preserve a scarce issuer", () => {
+  const candidates = [
+    {
+      id: "a-first",
+      issuer: "Axis",
+      active: true,
+      approvedUrl: true,
+      profile: "straightforward" as const,
+    },
+    {
+      id: "c-first",
+      issuer: "ICICI",
+      active: true,
+      approvedUrl: true,
+      profile: "straightforward" as const,
+    },
+    {
+      id: "a-heavy",
+      issuer: "Axis",
+      active: true,
+      approvedUrl: true,
+      profile: "redirect_or_js" as const,
+    },
+    {
+      id: "b-heavy",
+      issuer: "HDFC",
+      active: true,
+      approvedUrl: true,
+      profile: "redirect_or_js" as const,
+    },
+    {
+      id: "a-terms",
+      issuer: "Axis",
+      active: true,
+      approvedUrl: true,
+      profile: "terms_linked" as const,
+    },
+    {
+      id: "b-terms",
+      issuer: "HDFC",
+      active: true,
+      approvedUrl: true,
+      profile: "terms_linked" as const,
+    },
+    {
+      id: "a-invalid",
+      issuer: "Axis",
+      active: true,
+      approvedUrl: false,
+      profile: "known_invalid" as const,
+    },
+    {
+      id: "b-invalid",
+      issuer: "HDFC",
+      active: true,
+      approvedUrl: false,
+      profile: "known_invalid" as const,
+    },
+    {
+      id: "a-extra",
+      issuer: "Axis",
+      active: true,
+      approvedUrl: true,
+      profile: "additional_valid" as const,
+    },
+    {
+      id: "b-extra",
+      issuer: "HDFC",
+      active: true,
+      approvedUrl: true,
+      profile: "additional_valid" as const,
+    },
+  ];
+  const selected = selectPilotCandidates(candidates);
+  assert(
+    selected.length === 5,
+    "selector returned empty despite a valid combination",
+  );
+  assert(
+    new Set(selected.map((candidate) => candidate.issuer)).size === 3,
+    "selector did not backtrack to three issuers",
+  );
+  assert(
+    selected.some((candidate) => candidate.id === "c-first"),
+    "scarce issuer candidate was not selected",
+  );
+});
+
+Deno.test("secret comparison hashes unequal-length inputs before fixed-length comparison", async () => {
+  assert(
+    await secureSecretEqual("cron-secret", "cron-secret"),
+    "matching secret was rejected",
+  );
+  assert(
+    !await secureSecretEqual("x", "much-longer-secret"),
+    "unequal secrets matched",
+  );
+  assert(!await secureSecretEqual("", ""), "empty secrets were accepted");
+});
+
 Deno.test("scheduled rollout stays blocked until the exact safe five-job pilot passes", () => {
   const base = Array.from({ length: 5 }, (_, index) => ({
     id: `pilot-${index}`,
@@ -250,5 +371,37 @@ Deno.test("scheduled rollout stays blocked until the exact safe five-job pilot p
       ),
     ).status === "blocked",
     "unjustified quarantine did not block rollout",
+  );
+  const failed = base.map((job, index) =>
+    index === 0
+      ? { ...job, status: "failed", quarantineReason: "timeout" }
+      : job
+  );
+  const failedGate = evaluatePilotGate(failed);
+  assert(
+    failedGate.status === "blocked",
+    "failed pilot was treated as running",
+  );
+  assert(
+    failedGate.blockers.includes("pilot_failed"),
+    "failed pilot omitted its blocker",
+  );
+  const review = base.map((job, index) =>
+    index === 0
+      ? { ...job, status: "review_required", quarantineReason: "timeout" }
+      : job
+  );
+  assert(
+    evaluatePilotGate(review).blockers.includes("pilot_review_required"),
+    "review-required pilot omitted its blocker",
+  );
+  const recovered = failed.map((job, index) =>
+    index === 0
+      ? { ...job, status: "quarantined", quarantineReason: "timeout" }
+      : job
+  );
+  assert(
+    evaluatePilotGate(recovered).status === "passed",
+    "recovered pilot could not pass",
   );
 });

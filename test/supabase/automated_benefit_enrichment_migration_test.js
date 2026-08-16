@@ -31,10 +31,12 @@ test('migration preserves user discovery uniqueness while allowing issuer-crawl 
 
 test('migration adds leaseable enrichment queue metadata without losing compatible rows', async () => {
   const sql = await migrationSql();
+  const queueIdentity = functionBody(sql, 'set_card_catalog_enrichment_job_key');
 
   for (const column of [
     /parser_version text NOT NULL DEFAULT 'benefits-v1'/i,
     /lease_expires_at timestamptz/i,
+    /lease_token uuid/i,
     /staging_id uuid REFERENCES public\.card_benefits_staging\(id\)/i,
     /run_mode text NOT NULL DEFAULT 'scheduled'\s+CHECK \(run_mode IN \('pilot', 'scheduled', 'manual'\)\)/i,
     /job_key text/i,
@@ -47,6 +49,9 @@ test('migration adds leaseable enrichment queue metadata without losing compatib
   assert.match(sql, /UPDATE public\.card_catalog_enrichment_jobs[\s\S]*SET job_key[\s\S]*legacy:/i);
   assert.doesNotMatch(sql, /ALTER COLUMN job_key SET NOT NULL/i);
   assert.match(sql, /ADD CONSTRAINT card_catalog_enrichment_jobs_job_key_key\s+UNIQUE \(job_key\)/i);
+  assert.match(sql, /CREATE TRIGGER set_card_catalog_enrichment_job_key[\s\S]*set_card_catalog_enrichment_job_key\(\)/i);
+  assert.match(queueIdentity, /NEW\.job_key\s*:=\s*NEW\.card_id::text[\s\S]*NEW\.final_url_hash[\s\S]*NEW\.parser_version/i);
+  assert.doesNotMatch(queueIdentity, /IF\s+NEW\.job_key/i);
 });
 
 test('claim RPC leases no more than five jobs from one issuer with service-only access', async () => {
@@ -57,6 +62,8 @@ test('claim RPC leases no more than five jobs from one issuer with service-only 
   assert.match(claim, /SECURITY INVOKER/i);
   assert.match(claim, /auth\.role\(\).*service_role/i);
   assert.match(claim, /lease_expires_at IS NULL\s+OR lease_expires_at\s*<=\s*now\(\)/i);
+  assert.match(claim, /lease_token\s*=\s*NULL/i);
+  assert.match(claim, /lease_token\s*=\s*gen_random_uuid\(\)/i);
   assert.match(claim, /_run_mode IS NULL\s+OR _run_mode NOT IN \('pilot', 'scheduled', 'manual'\)/i);
   assert.match(claim, /pg_advisory_xact_lock\s*\(\s*hashtextextended\s*\(\s*'card_catalog_enrichment_claim'/i);
   assert.match(claim, /pg_advisory_xact_lock[\s\S]*SELECT job\.issuer[\s\S]*INTO selected_issuer/i);
@@ -65,6 +72,48 @@ test('claim RPC leases no more than five jobs from one issuer with service-only 
   assert.match(claim, /LEAST\s*\(\s*GREATEST\s*\([^)]*\)\s*,\s*5\s*\)/i);
   assert.match(sql, /REVOKE ALL ON FUNCTION public\.claim_card_catalog_enrichment_jobs\(integer, integer, text\)\s+FROM PUBLIC, anon, authenticated/i);
   assert.match(sql, /GRANT EXECUTE ON FUNCTION public\.claim_card_catalog_enrichment_jobs\(integer, integer, text\)\s+TO service_role/i);
+});
+
+test('migration atomically initializes exactly five validated pilot jobs', async () => {
+  const sql = await migrationSql();
+  const pilot = functionBody(sql, 'initialize_card_benefit_enrichment_pilot');
+
+  assert.match(pilot, /jsonb_array_length\(_candidates\)\s*<>\s*5/i);
+  assert.match(pilot, /count\(DISTINCT profile\)[\s\S]*distinct_profile_count\s*<>\s*5/i);
+  assert.match(pilot, /count\(DISTINCT[\s\S]*(?:bank|issuer)[\s\S]*<\s*3/i);
+  assert.match(pilot, /is_discontinued\s*=\s*false/i);
+  assert.match(pilot, /lower\(trim\(card\.card_type\)\)\s*=\s*'credit'/i);
+  assert.match(pilot, /INSERT INTO public\.card_catalog_enrichment_jobs[\s\S]*'pilot'/i);
+  assert.match(pilot, /ON CONFLICT \(job_key\) DO UPDATE/i);
+  assert.match(pilot, /pilot_state_incomplete/i);
+  assert.match(sql, /GRANT EXECUTE ON FUNCTION public\.initialize_card_benefit_enrichment_pilot\(jsonb, text\)\s+TO service_role/i);
+});
+
+test('migration fences staging and finalization with a database-issued lease token', async () => {
+  const sql = await migrationSql();
+  const stage = functionBody(sql, 'stage_card_benefit_enrichment');
+  const finalize = functionBody(sql, 'finalize_card_catalog_enrichment_job');
+
+  for (const column of [
+    /request_type text/i,
+    /parser_version text/i,
+    /source_url_hash text/i,
+    /content_hash text/i,
+  ]) assert.match(sql, column);
+  assert.match(sql, /CREATE UNIQUE INDEX[\s\S]*card_benefits_staging_official_identity[\s\S]*card_id\s*,\s*source_url_hash\s*,\s*parser_version\s*,\s*content_hash[\s\S]*request_type\s*=\s*'official_benefit_enrichment'/i);
+  assert.match(stage, /candidate\.id\s*=\s*_job_id[\s\S]*candidate\.status\s*=\s*'processing'[\s\S]*candidate\.lease_token\s*=\s*_lease_token/i);
+  assert.match(stage, /FOR UPDATE/i);
+  assert.match(stage, /extensions\.digest[\s\S]*_source_url_hash/i);
+  assert.match(stage, /ON CONFLICT \(card_id, source_url_hash, parser_version, content_hash\)[\s\S]*request_type\s*=\s*'official_benefit_enrichment'/i);
+  assert.match(stage, /status IN \('pending', 'approved'\)/i);
+  assert.match(stage, /source_evidence IS NOT NULL/i);
+  assert.match(stage, /jsonb_array_length\(_source_evidence\)\s*>\s*0/i);
+  assert.match(finalize, /_status\s*=\s*'staged'[\s\S]*card_benefits_staging/i);
+  assert.match(finalize, /WHERE id\s*=\s*_job_id[\s\S]*status\s*=\s*'processing'[\s\S]*lease_token\s*=\s*_lease_token/i);
+  assert.match(finalize, /GET DIAGNOSTICS[\s\S]*ROW_COUNT/i);
+  assert.match(finalize, /affected_rows\s*<>\s*1/i);
+  assert.match(sql, /GRANT EXECUTE ON FUNCTION public\.stage_card_benefit_enrichment/i);
+  assert.match(sql, /GRANT EXECUTE ON FUNCTION public\.finalize_card_catalog_enrichment_job/i);
 });
 
 test('approval RPC applies only reviewed additions or edits and retains existing data', async () => {

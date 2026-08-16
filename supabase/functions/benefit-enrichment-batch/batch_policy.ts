@@ -25,6 +25,8 @@ export type StagingIdentity = {
 export type StagingCandidate = StagingIdentity & {
   id: string;
   requestType: string;
+  status: string;
+  evidenceSafe: boolean;
 };
 
 export type PilotProfile =
@@ -123,8 +125,32 @@ export function findReusableStaging<T extends StagingCandidate>(
     row.cardId === identity.cardId &&
     row.sourceUrl === identity.sourceUrl &&
     row.parserVersion === identity.parserVersion &&
-    row.contentHash === identity.contentHash
+    row.contentHash === identity.contentHash &&
+    (row.status === "pending" || row.status === "approved") &&
+    row.evidenceSafe
   );
+}
+
+async function secretDigest(value: string): Promise<Uint8Array> {
+  return new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)),
+  );
+}
+
+export async function secureSecretEqual(
+  actual: string | null,
+  expected: string,
+): Promise<boolean> {
+  if (!actual || !expected) return false;
+  const [left, right] = await Promise.all([
+    secretDigest(actual),
+    secretDigest(expected),
+  ]);
+  let difference = 0;
+  for (let index = 0; index < left.length; index++) {
+    difference |= left[index] ^ right[index];
+  }
+  return difference === 0;
 }
 
 export function failureDisposition(
@@ -168,29 +194,27 @@ export function selectPilotCandidates<T extends PilotCandidate>(
     candidate.active &&
     (candidate.profile === "known_invalid" || candidate.approvedUrl)
   );
-  const selection: T[] = [];
+  const choicesByProfile = profiles.map((profile) =>
+    eligible.filter((candidate) => candidate.profile === profile)
+      .sort((left, right) => left.id.localeCompare(right.id))
+  );
+  if (choicesByProfile.some((choices) => choices.length === 0)) return [];
 
-  for (const profile of profiles) {
-    const choices = eligible.filter((candidate) =>
-      candidate.profile === profile &&
-      !selection.some((item) => item.id === candidate.id)
-    );
-    if (choices.length === 0) return [];
-    const issuerCounts = new Map<string, number>();
-    for (const selected of selection) {
-      issuerCounts.set(
-        selected.issuer,
-        (issuerCounts.get(selected.issuer) ?? 0) + 1,
-      );
+  const search = (profileIndex: number, selected: T[]): T[] | null => {
+    if (profileIndex === profiles.length) {
+      return new Set(selected.map((candidate) => candidate.issuer)).size >= 3
+        ? selected
+        : null;
     }
-    choices.sort((left, right) =>
-      (issuerCounts.get(left.issuer) ?? 0) -
-        (issuerCounts.get(right.issuer) ?? 0) ||
-      left.id.localeCompare(right.id)
-    );
-    selection.push(choices[0]);
-  }
-  return new Set(selection.map((candidate) => candidate.issuer)).size >= 3
+    for (const candidate of choicesByProfile[profileIndex]) {
+      if (selected.some((item) => item.id === candidate.id)) continue;
+      const result = search(profileIndex + 1, [...selected, candidate]);
+      if (result) return result;
+    }
+    return null;
+  };
+  const selection = search(0, []);
+  return selection
     ? selection.map((candidate) => ({ ...candidate, run_mode: "pilot" }))
     : [];
 }
@@ -224,6 +248,10 @@ export function evaluatePilotGate(jobs: readonly PilotJob[]): {
     const terminal = job.status === "staged" || job.status === "quarantined";
     if (job.status === "quarantined" && !job.quarantineReason) {
       blockers.push("unjustified_quarantine");
+    }
+    if (job.status === "failed") blockers.push("pilot_failed");
+    if (job.status === "review_required") {
+      blockers.push("pilot_review_required");
     }
     if (job.unsafeMutationCount !== 0) blockers.push("unsafe_mutation");
     if (terminal && !job.idempotencyPassed) blockers.push("idempotency_failed");

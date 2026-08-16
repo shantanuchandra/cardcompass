@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import {readFile} from 'node:fs/promises';
 
 import {
   allowedOfficialUrl,
@@ -15,6 +16,15 @@ import {
   sanitizeEvidence,
   selectSubmittedUrlIdentity,
 } from '../../supabase/functions/_shared/card_discovery.ts';
+
+const cardDiscoveryEntrypoint = new URL(
+  '../../supabase/functions/card-discovery/index.ts',
+  import.meta.url,
+);
+const enrichmentBatchEntrypoint = new URL(
+  '../../supabase/functions/benefit-enrichment-batch/index.ts',
+  import.meta.url,
+);
 
 test('extracts a product identity from legacy issuer page headings', () => {
   const html = `
@@ -32,6 +42,27 @@ test('extracts a product identity from legacy issuer page headings', () => {
       aliases: ['PNB Rupay Select Card'],
     },
   );
+});
+
+test('card discovery emits parser-aware enrichment queue identity', async () => {
+  const source = await readFile(cardDiscoveryEntrypoint, 'utf8');
+  assert.match(source, /parser_version:\s*["']benefits-v1["']/);
+  assert.match(source, /job_key:/);
+  assert.match(source, /onConflict:\s*["']job_key["']/);
+  assert.doesNotMatch(source, /onConflict:\s*["']card_id,final_url_hash,content_hash["']/);
+});
+
+test('benefit enrichment keeps initialization and issuer discovery off unsafe paths', async () => {
+  const source = await readFile(enrichmentBatchEntrypoint, 'utf8');
+
+  assert.match(source, /body\.action\s*===\s*["']initialize_pilot["']/);
+  assert.match(source, /initialize_card_benefit_enrichment_pilot/);
+  assert.match(source, /stage_card_benefit_enrichment/);
+  assert.match(source, /finalize_card_catalog_enrichment_job/);
+  assert.match(source, /EdgeRuntime\.waitUntil\(\s*runIssuerDiscovery/s);
+  assert.match(source, /issuer_discovery_background_failed/);
+  assert.doesNotMatch(source, /await\s+runIssuerDiscovery/);
+  assert.doesNotMatch(source, /\.from\(["']card_benefits_staging["']\)\s*\.select[\s\S]*?\.limit\(20\)/);
 });
 
 test('uses official page identity when statement signals are issuer-only', () => {

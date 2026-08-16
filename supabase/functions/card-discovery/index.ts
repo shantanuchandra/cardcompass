@@ -306,9 +306,11 @@ async function processSubmittedUrl(
       canonical_url: finalUrl,
       final_url_hash: finalHash,
       content_hash: page.contentHash,
+      parser_version: "benefits-v1",
+      job_key: `${cardId}:${finalHash}:benefits-v1`,
       status: "queued",
       updated_at: new Date().toISOString(),
-    }, { onConflict: "card_id,final_url_hash,content_hash" })
+    }, { onConflict: "job_key" })
     .select("id").single();
   if (enrichmentError) throw enrichmentError;
 

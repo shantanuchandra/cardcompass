@@ -16,14 +16,18 @@ import { fetchOfficialIssuerResource } from "../_shared/official_issuer_fetch.ts
 import {
   evaluatePilotGate,
   failureDisposition,
-  findReusableStaging,
   LEASE_SECONDS,
   MAX_BATCH_SIZE,
+  type PilotCandidate,
   type PilotJob,
   type RunMode,
   runSequentially,
   safeFailureCategory,
+  secureSecretEqual,
+  selectPilotCandidates,
 } from "./batch_policy.ts";
+
+declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 
 type UntypedSupabaseClient = any;
 
@@ -35,6 +39,7 @@ type EnrichmentJob = {
   parser_version: string;
   attempt_count: number;
   run_mode: RunMode;
+  lease_token: string;
 };
 
 type JobOutcome = "staged" | "quarantined" | "failed" | "review_required";
@@ -57,29 +62,22 @@ function json(body: unknown, status = 200): Response {
   return Response.json(body, { status });
 }
 
-function equalSecret(actual: string | null, expected: string): boolean {
-  if (!actual || !expected) return false;
-  const encoder = new TextEncoder();
-  const left = encoder.encode(actual);
-  const right = encoder.encode(expected);
-  if (left.length !== right.length) return false;
-  let difference = 0;
-  for (let index = 0; index < left.length; index++) {
-    difference |= left[index] ^ right[index];
-  }
-  return difference === 0;
-}
-
-function authorized(
+async function authorized(
   request: Request,
   serviceKey: string,
   cronSecret: string,
-): boolean {
+): Promise<boolean> {
   const bearer =
     request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1] ??
       null;
-  return equalSecret(bearer, serviceKey) ||
-    equalSecret(request.headers.get("x-cardcompass-cron-secret"), cronSecret);
+  const [serviceAuthorized, cronAuthorized] = await Promise.all([
+    secureSecretEqual(bearer, serviceKey),
+    secureSecretEqual(
+      request.headers.get("x-cardcompass-cron-secret"),
+      cronSecret,
+    ),
+  ]);
+  return serviceAuthorized || cronAuthorized;
 }
 
 function runModeFromRequest(value: unknown): RunMode | null {
@@ -182,36 +180,37 @@ async function readCurrentBenefits(
     );
 }
 
-async function stagingForContent(
+async function sha256Text(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  );
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+export async function initializePilotJobs(
   db: UntypedSupabaseClient,
-  job: EnrichmentJob,
-  sourceUrl: string,
-  contentHash: string,
-): Promise<string | null> {
-  const { data, error } = await db.from("card_benefits_staging")
-    .select("id,card_id,source_url,extracted_data")
-    .eq("card_id", job.card_id)
-    .eq("source_url", sourceUrl)
-    .order("created_at", { ascending: false })
-    .limit(20);
-  if (error) throw error;
-  const reusable = findReusableStaging(
-    (data ?? []).map((row: Record<string, any>) => ({
-      id: String(row.id),
-      cardId: String(row.card_id),
-      sourceUrl: String(row.source_url),
-      requestType: String(row.extracted_data?.request_type ?? ""),
-      parserVersion: String(row.extracted_data?.parser_version ?? ""),
-      contentHash: String(row.extracted_data?.content_hash ?? ""),
-    })),
+  candidates: readonly PilotCandidate[],
+  parserVersion = "benefits-v1",
+): Promise<EnrichmentJob[]> {
+  const selected = selectPilotCandidates(candidates);
+  if (selected.length !== 5) throw new Error("invalid_pilot_candidates");
+  const { data, error } = await db.rpc(
+    "initialize_card_benefit_enrichment_pilot",
     {
-      cardId: job.card_id,
-      sourceUrl,
-      parserVersion: job.parser_version,
-      contentHash,
+      _candidates: selected.map((candidate) => ({
+        card_id: candidate.id,
+        profile: candidate.profile,
+      })),
+      _parser_version: parserVersion,
     },
   );
-  return reusable?.id ?? null;
+  if (error) throw error;
+  const jobs = (data ?? []) as EnrichmentJob[];
+  if (jobs.length !== 5) throw new Error("pilot_initialization_failed");
+  return jobs;
 }
 
 async function catalogIdentity(db: UntypedSupabaseClient, cardId: string) {
@@ -304,26 +303,6 @@ async function processJob(
       page.canonicalUrl,
     );
 
-    stagingId = await stagingForContent(
-      db,
-      job,
-      page.canonicalUrl,
-      page.contentHash,
-    );
-    if (stagingId) {
-      outcome = "staged";
-      resultSummary = {
-        run_id: runId,
-        proposals: 0,
-        reused_staging: true,
-        unsafe_mutation_count: 0,
-        raw_body_stored: false,
-        evidence_passed: true,
-        idempotency_passed: true,
-      };
-      return { outcome, retried };
-    }
-
     const proposed = extractGroundedBenefits([{
       sourceUrl: page.canonicalUrl,
       text: page.text,
@@ -346,31 +325,35 @@ async function processJob(
       proposals: proposed,
       diff: compared,
     };
-    const { data: staged, error: stageError } = await db.from(
-      "card_benefits_staging",
-    )
-      .insert({
-        card_id: job.card_id,
-        source_url: page.canonicalUrl,
-        extracted_data: safeExtraction,
-        status: "pending",
-        validation_version: job.parser_version,
-        calculated_confidence: calculatedConfidence,
-        validation_reasons: [{ code: "official_issuer_source" }],
-        validation_warnings: proposed.flatMap((benefit) => benefit.warnings)
+    const sourceEvidence = proposed.map((benefit) => ({
+      dedupe_key: benefit.dedupeKey,
+      source_url: benefit.sourceUrl,
+      source_excerpt: benefit.sourceExcerpt,
+      evidence: benefit.evidence,
+    }));
+    const { data: stagedRows, error: stageError } = await db.rpc(
+      "stage_card_benefit_enrichment",
+      {
+        _job_id: job.id,
+        _lease_token: job.lease_token,
+        _source_url: page.canonicalUrl,
+        _source_url_hash: await sha256Text(page.canonicalUrl),
+        _parser_version: job.parser_version,
+        _content_hash: page.contentHash,
+        _extracted_data: safeExtraction,
+        _calculated_confidence: calculatedConfidence,
+        _validation_reasons: [{ code: "official_issuer_source" }],
+        _validation_warnings: proposed.flatMap((benefit) => benefit.warnings)
           .map((code) => ({ code })),
-        source_evidence: proposed.map((benefit) => ({
-          dedupe_key: benefit.dedupeKey,
-          source_url: benefit.sourceUrl,
-          source_excerpt: benefit.sourceExcerpt,
-          evidence: benefit.evidence,
-        })),
-        validated_at: new Date().toISOString(),
-      }).select("id").single();
-    if (stageError || !staged) {
+        _source_evidence: sourceEvidence,
+        _validated_at: new Date().toISOString(),
+      },
+    );
+    const staged = Array.isArray(stagedRows) ? stagedRows[0] : stagedRows;
+    if (stageError || !staged?.staging_id) {
       throw stageError ?? new Error("enrichment_failed");
     }
-    stagingId = String(staged.id);
+    stagingId = String(staged.staging_id);
     outcome = "staged";
     normalizedFields = { proposed_count: proposed.length };
     resultSummary = {
@@ -380,7 +363,7 @@ async function processJob(
       modifications: compared.modifications.length,
       possible_removals: compared.possibleRemovals.length,
       conflicts: compared.conflicts.length,
-      reused_staging: false,
+      reused_staging: staged.reused === true,
       unsafe_mutation_count: 0,
       raw_body_stored: false,
       evidence_passed: proposed.every((benefit) =>
@@ -409,20 +392,23 @@ async function processJob(
     }
     return { outcome, retried };
   } finally {
-    const { error: finalizeError } = await db.from(
-      "card_catalog_enrichment_jobs",
-    ).update({
-      status: outcome,
-      lease_expires_at: null,
-      staging_id: stagingId,
-      content_hash: contentHash,
-      normalized_fields: normalizedFields,
-      result_summary: resultSummary,
-      failure_category: failureCategory,
-      next_retry_at: nextRetryAt,
-      updated_at: new Date().toISOString(),
-    }).eq("id", job.id).eq("status", "processing");
-    if (finalizeError) throw finalizeError;
+    const { data: finalizedId, error: finalizeError } = await db.rpc(
+      "finalize_card_catalog_enrichment_job",
+      {
+        _job_id: job.id,
+        _lease_token: job.lease_token,
+        _status: outcome,
+        _staging_id: stagingId,
+        _content_hash: contentHash,
+        _normalized_fields: normalizedFields,
+        _result_summary: resultSummary,
+        _failure_category: failureCategory,
+        _next_retry_at: nextRetryAt,
+      },
+    );
+    if (finalizeError || finalizedId !== job.id) {
+      throw finalizeError ?? new Error("stale_enrichment_lease");
+    }
   }
 }
 
@@ -430,20 +416,15 @@ async function runIssuerDiscovery(
   db: UntypedSupabaseClient,
   job: EnrichmentJob,
 ): Promise<void> {
-  try {
-    const sitemapUrl = new URL("/sitemap.xml", job.canonical_url).toString();
-    const result = await discoverIssuerCardCandidates({
-      issuer: job.issuer,
-      sitemapUrl,
-    });
-    for (const candidate of result.candidates) {
-      if (candidate.kind === "card_product") {
-        await persistCrawlerCandidate(db, job.issuer, candidate);
-      }
+  const sitemapUrl = new URL("/sitemap.xml", job.canonical_url).toString();
+  const result = await discoverIssuerCardCandidates({
+    issuer: job.issuer,
+    sitemapUrl,
+  });
+  for (const candidate of result.candidates) {
+    if (candidate.kind === "card_product") {
+      await persistCrawlerCandidate(db, job.issuer, candidate);
     }
-  } catch {
-    // Issuer-wide discovery is best-effort and must not strand already leased
-    // benefit jobs. The next issuer run can safely retry persisted candidates.
   }
 }
 
@@ -455,7 +436,7 @@ export async function handleBenefitEnrichmentBatch(
   }
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
   const cronSecret = Deno.env.get("BENEFIT_ENRICHMENT_CRON_SECRET") ?? "";
-  if (!authorized(request, serviceKey, cronSecret)) {
+  if (!await authorized(request, serviceKey, cronSecret)) {
     return json({ error: "authentication_required" }, 401);
   }
 
@@ -465,12 +446,25 @@ export async function handleBenefitEnrichmentBatch(
   } catch {
     // An empty scheduler body selects the scheduled lane.
   }
-  const runMode = runModeFromRequest(body.runMode ?? body.run_mode);
+  let runMode = runModeFromRequest(body.runMode ?? body.run_mode);
   if (!runMode) return json({ error: "invalid_run_mode" }, 400);
 
   const db = createClient(Deno.env.get("SUPABASE_URL") ?? "", serviceKey);
   const runId = crypto.randomUUID();
   try {
+    if (body.action === "initialize_pilot") {
+      if (!Array.isArray(body.candidates)) {
+        return json({ error: "invalid_pilot_candidates" }, 400);
+      }
+      await initializePilotJobs(
+        db,
+        body.candidates as PilotCandidate[],
+        typeof body.parserVersion === "string"
+          ? body.parserVersion
+          : "benefits-v1",
+      );
+      runMode = "pilot";
+    }
     const pilot = await readPilotStatus(db);
     if (runMode === "scheduled" && !pilot.scheduledClaimAllowed) {
       return json({
@@ -517,7 +511,17 @@ export async function handleBenefitEnrichmentBatch(
         }
       },
     );
-    if (jobs[0]) await runIssuerDiscovery(db, jobs[0]);
+    if (jobs[0]) {
+      EdgeRuntime.waitUntil(
+        runIssuerDiscovery(db, jobs[0]).catch((error) => {
+          console.error(JSON.stringify({
+            event: "issuer_discovery_background_failed",
+            run_id: runId,
+            category: safeFailureCategory(error),
+          }));
+        }),
+      );
+    }
     const finalPilot = await readPilotStatus(db);
     return json({
       runId,
