@@ -1,0 +1,232 @@
+export type CanonicalCardIdentity = {
+  issuer: string;
+  cardName: string;
+  network: string | null;
+  aliases: string[];
+};
+
+export type AutomaticGateInput = {
+  issuer: string;
+  officialUrl: string;
+  officialProduct: string;
+  statementProducts: string[];
+  confidence: number;
+  catalogCandidateCount: number;
+  conflicts: string[];
+};
+
+export type CardDiscoveryReasonCode =
+  | "invalid_url"
+  | "unapproved_domain"
+  | "issuer_mismatch"
+  | "not_product_page"
+  | "unsafe_redirect"
+  | "fetch_timeout"
+  | "unsupported_content"
+  | "identity_conflict"
+  | "review_required";
+
+const issuerDomains: Record<string, string[]> = {
+  "Axis Bank": ["axis.bank.in", "axisbank.com"],
+  "HDFC Bank": ["hdfcbank.com", "hdfc.bank.in"],
+  "ICICI Bank": ["icicibank.com", "icici.bank.in"],
+  "Kotak Bank": ["kotak.com", "kotak.bank.in"],
+  "IndusInd Bank": ["indusind.com", "indusind.bank.in"],
+  HSBC: ["hsbc.co.in"],
+  "SBI Card": ["sbicard.com"],
+  "IDFC FIRST Bank": ["idfcfirstbank.com", "idfcfirst.bank.in"],
+  "Yes Bank": ["yesbank.in", "yes.bank.in"],
+  "AU Small Finance Bank": ["aubank.in", "au.bank.in"],
+  "RBL Bank": ["rbl.bank", "rblbank.com"],
+  "Bank of Baroda": ["bobfinancial.com"],
+  "Standard Chartered": ["sc.com"],
+  "American Express": ["americanexpress.com"],
+};
+
+const issuerAliases: Record<string, string[]> = {
+  "Axis Bank": ["axis"],
+  "HDFC Bank": ["hdfc"],
+  "ICICI Bank": ["icici"],
+  "Kotak Bank": ["kotak"],
+  "IndusInd Bank": ["indusind"],
+  HSBC: ["hsbc"],
+};
+
+const genericTokens = new Set([
+  "bank",
+  "credit",
+  "card",
+  "statement",
+  "your",
+  "the",
+  "for",
+  "club",
+  "amex",
+  "american",
+  "express",
+  "visa",
+  "mastercard",
+  "rupay",
+]);
+
+export function isAdminEmail(
+  email: string | null | undefined,
+  commaSeparatedAllowlist: string | null | undefined,
+): boolean {
+  if (!email || !commaSeparatedAllowlist) return false;
+  const normalized = email.trim().toLowerCase();
+  return commaSeparatedAllowlist
+    .split(',')
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean)
+    .includes(normalized);
+}
+
+function words(value: string): string[] {
+  return value
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+export function normalizedProduct(value: string, issuer = ""): string {
+  const ignored = new Set(genericTokens);
+  for (const alias of issuerAliases[issuer] ?? []) ignored.add(alias);
+  return words(value).filter((token) => !ignored.has(token)).join("");
+}
+
+function displayProduct(value: string, issuer: string): string {
+  const ignored = new Set(genericTokens);
+  for (const alias of issuerAliases[issuer] ?? []) ignored.add(alias);
+  return words(value)
+    .filter((token) => !ignored.has(token))
+    .map((token) => token === "eazydiner"
+      ? "EazyDiner"
+      : `${token[0].toUpperCase()}${token.slice(1)}`)
+    .join(" ");
+}
+
+export function canonicalCardIdentity(
+  issuer: string,
+  rawProduct: string,
+): CanonicalCardIdentity {
+  const hasAmex = /\b(?:amex|american\s+express)\b/i.test(rawProduct);
+  const cardName = displayProduct(rawProduct, issuer);
+  return {
+    issuer,
+    cardName,
+    network: hasAmex ? "American Express" : null,
+    aliases: rawProduct.trim() === cardName ? [] : [rawProduct.trim()],
+  };
+}
+
+export function officialDomainsForIssuer(issuer: string): string[] {
+  return issuerDomains[issuer] ?? [];
+}
+
+export function allowedOfficialUrl(issuer: string, rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol !== "https:") return false;
+    const hostname = url.hostname.toLowerCase();
+    return officialDomainsForIssuer(issuer).some(
+      (domain) => hostname === domain || hostname.endsWith(`.${domain}`),
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function canonicalOfficialUrl(issuer: string, rawUrl: string): string {
+  let url: URL;
+  try {
+    url = new URL(rawUrl.trim());
+  } catch {
+    throw new Error("invalid_url");
+  }
+  if (url.protocol !== "https:" || url.username || url.password) {
+    throw new Error("invalid_url");
+  }
+  if (!allowedOfficialUrl(issuer, url.toString())) {
+    throw new Error("unapproved_domain");
+  }
+
+  url.hash = "";
+  url.port = "";
+  url.pathname = url.pathname
+    .replace(/\/{2,}/g, "/")
+    .replace(/\/$/, "") || "/";
+
+  const kept = [...url.searchParams.entries()]
+    .filter(([key]) =>
+      !/^utm_/i.test(key) &&
+      !["gclid", "fbclid"].includes(key.toLowerCase())
+    )
+    .sort(([leftKey, leftValue], [rightKey, rightValue]) =>
+      leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue)
+    );
+  url.search = "";
+  for (const [key, value] of kept) url.searchParams.append(key, value);
+  return url.toString();
+}
+
+export function evaluateAutomaticCatalogGate(
+  input: AutomaticGateInput,
+): { autoAdd: boolean; reasons: string[] } {
+  const reasons: string[] = [];
+  if (!allowedOfficialUrl(input.issuer, input.officialUrl)) {
+    reasons.push("unofficial_source");
+  }
+  if (input.confidence < 0.9) reasons.push("low_confidence");
+
+  const official = normalizedProduct(input.officialProduct, input.issuer);
+  if (input.statementProducts.length === 0) {
+    reasons.push("missing_statement_signal");
+  } else if (!input.statementProducts.some((value) => {
+    const statement = normalizedProduct(value, input.issuer);
+    return statement.length >= 4 &&
+      (official === statement || official.includes(statement) || statement.includes(official));
+  })) {
+    reasons.push("product_mismatch");
+  }
+
+  for (const conflict of input.conflicts) {
+    if (!reasons.includes(conflict)) reasons.push(conflict);
+  }
+  if (input.catalogCandidateCount > 1) reasons.push("ambiguous_catalog");
+  return { autoAdd: reasons.length === 0, reasons };
+}
+
+export function rankOfficialUrls(
+  product: string,
+  urls: string[],
+): string[] {
+  const tokens = words(product).filter((token) => !genericTokens.has(token));
+  return [...new Set(urls)].sort((left, right) => {
+    const score = (url: string) => {
+      const normalized = decodeURIComponent(url).toLowerCase();
+      const matched = tokens.filter((token) => normalized.includes(token)).length;
+      return matched * 100 + (matched === tokens.length ? 1000 : 0) - url.length / 1000;
+    };
+    return score(right) - score(left);
+  });
+}
+
+export function sanitizeEvidence(value: string): string {
+  return value
+    .split(/\r?\n/)
+    .filter((line) =>
+      /credit\s*card|primary\s+card|card\s+ending|amex|visa|mastercard|rupay/i.test(line)
+    )
+    .slice(0, 4)
+    .map((line) =>
+      line
+        .replace(/(?<!\d)(?:\d[\s-]*){6,}(?!\d)/g, "[redacted]")
+        .replace(/\s+/g, " ")
+        .trim()
+    )
+    .join("\n");
+}
