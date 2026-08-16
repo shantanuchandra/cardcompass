@@ -53,6 +53,14 @@ type SafeEvidence = {
   confidence?: number;
 };
 
+type CrawlerReviewEvidence = SafeEvidence & {
+  official_url?: string;
+  crawler_evidence?: unknown[];
+  crawler_proposal?: Record<string, unknown>;
+  crawler_source_evidence?: Record<string, unknown>;
+  crawler_existing_candidates?: Array<Record<string, unknown>>;
+};
+
 function json(body: unknown, status = 200): Response {
   return Response.json(body, { status, headers: corsHeaders });
 }
@@ -392,6 +400,38 @@ async function processDiscoveryJob(
   if (error || !rawJob) return;
   const job = rawJob as Record<string, any>;
   const evidence = job.evidence as SafeEvidence;
+  if (job.discovery_source === "issuer_crawl") {
+    const crawlerEvidence = evidence as CrawlerReviewEvidence;
+    const proposal = crawlerEvidence.crawler_proposal ?? {
+      issuer: job.issuer,
+      cardName: job.proposed_product ?? "",
+    };
+    const sourceEvidence = crawlerEvidence.crawler_source_evidence ?? {
+      official_url: typeof crawlerEvidence.official_url === "string"
+        ? crawlerEvidence.official_url
+        : undefined,
+      excerpts: Array.isArray(crawlerEvidence.crawler_evidence)
+        ? crawlerEvidence.crawler_evidence
+        : [],
+    };
+    const existingCandidates = Array.isArray(crawlerEvidence.crawler_existing_candidates)
+      ? crawlerEvidence.crawler_existing_candidates
+      : [];
+    const warnings = [...new Set([
+      ...(evidence.warnings ?? []),
+      "crawler_discovered_without_statement_signal",
+    ])];
+    await putInReview(
+      db,
+      job,
+      proposal,
+      sourceEvidence,
+      warnings,
+      evidence.confidence ?? 0,
+      existingCandidates,
+    );
+    return;
+  }
   const product = evidence.product_signals?.[0] ?? job.proposed_product;
   if (!product) {
     await putInReview(db, job, { issuer: job.issuer }, { evidence }, ["missing_product_identity"], 0);

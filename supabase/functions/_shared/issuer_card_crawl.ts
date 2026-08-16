@@ -1,5 +1,7 @@
 import {
   canonicalOfficialUrl,
+  canonicalCardIdentity,
+  normalizedProduct,
   officialCardIdentityFromHtml,
 } from "./card_discovery.ts";
 import {
@@ -30,6 +32,14 @@ export type IssuerCrawlResult = {
   consideredCount: number;
   fetchedCount: number;
 };
+
+export type PersistCrawlerCandidateResult = {
+  outcome: "existing" | "review" | "duplicate";
+  catalogCardId?: string;
+  reviewId?: string;
+};
+
+type UntypedSupabaseClient = any;
 
 type OfficialFetcher = (input: OfficialFetchInput) => Promise<OfficialFetchResult>;
 
@@ -218,6 +228,214 @@ function sanitizeClassification(page: PageClassification): PageClassification {
     warnings: page.warnings.map(redactLongDigits),
     sanitizedEvidence: page.sanitizedEvidence.map(sanitizeEvidence),
   };
+}
+
+async function sha256(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  );
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function uniqueStrings(values: string[], maxLength = 180): string[] {
+  const result: string[] = [];
+  for (const value of values) {
+    const safe = redactLongDigits(value).trim().slice(0, maxLength);
+    if (safe.length >= 2 && !result.includes(safe)) result.push(safe);
+  }
+  return result;
+}
+
+async function findCatalogCardByUrlHash(
+  supabase: UntypedSupabaseClient,
+  urlHash: string,
+): Promise<string | null> {
+  const { data: urlKey, error: urlKeyError } = await supabase
+    .from("card_catalog_url_keys")
+    .select("card_id")
+    .eq("url_hash", urlHash)
+    .maybeSingle();
+  if (urlKeyError) throw urlKeyError;
+  if (urlKey?.card_id) return urlKey.card_id;
+
+  const { data: provenance, error: provenanceError } = await supabase
+    .from("card_catalog_provenance")
+    .select("card_id")
+    .or(`submitted_url_hash.eq.${urlHash},final_url_hash.eq.${urlHash}`)
+    .maybeSingle();
+  if (provenanceError) throw provenanceError;
+  return provenance?.card_id ?? null;
+}
+
+async function findCrawlerCatalogCandidates(
+  supabase: UntypedSupabaseClient,
+  issuer: string,
+  normalizedNames: string[],
+): Promise<Array<Record<string, unknown>>> {
+  const { data: catalogRows, error: catalogError } = await supabase
+    .from("card_catalog")
+    .select("id, bank, card_name, network")
+    .ilike("bank", issuer)
+    .eq("is_discontinued", false);
+  if (catalogError) throw catalogError;
+  const catalog = ((catalogRows ?? []) as Array<Record<string, unknown>>).filter((row) =>
+    String(row.bank ?? "").trim().toLowerCase() === issuer.trim().toLowerCase()
+  );
+  const byId = new Map(catalog.map((row: Record<string, unknown>) => [String(row.id), row]));
+  const matches = new Map<string, Record<string, unknown>>();
+  for (const row of catalog) {
+    if (normalizedNames.includes(normalizedProduct(String(row.card_name ?? ""), issuer))) {
+      matches.set(String(row.id), row);
+    }
+  }
+
+  if (normalizedNames.length > 0) {
+    const { data: aliasRows, error: aliasError } = await supabase
+      .from("card_catalog_aliases")
+      .select("card_id, normalized_alias")
+      .in("normalized_alias", normalizedNames);
+    if (aliasError) throw aliasError;
+    for (const alias of aliasRows ?? []) {
+      const card = byId.get(String(alias.card_id));
+      if (card) matches.set(String(alias.card_id), card);
+    }
+  }
+
+  return [...matches.values()].map((row) => ({
+    id: row.id,
+    bank: row.bank,
+    card_name: row.card_name,
+    network: row.network ?? null,
+  }));
+}
+
+/**
+ * Persists a crawler result as review-only work. Crawler evidence is never an
+ * independent statement signal, so this function intentionally never calls
+ * the catalog resolver or writes catalog identity/provenance rows.
+ */
+export async function persistCrawlerCandidate(
+  supabase: UntypedSupabaseClient,
+  issuer: string,
+  candidate: PageClassification,
+): Promise<PersistCrawlerCandidateResult> {
+  if (candidate.kind !== "card_product" || !candidate.proposedName?.trim()) {
+    throw new Error("invalid_crawler_candidate");
+  }
+  const canonicalUrl = canonicalOfficialUrl(issuer, candidate.canonicalUrl);
+  const urlHash = await sha256(canonicalUrl);
+  const knownCardId = await findCatalogCardByUrlHash(supabase, urlHash);
+  if (knownCardId) return { outcome: "existing", catalogCardId: knownCardId };
+
+  const canonical = canonicalCardIdentity(issuer, candidate.proposedName);
+  if (normalizedProduct(canonical.cardName, issuer).length < 2) {
+    throw new Error("invalid_crawler_candidate");
+  }
+  const aliases = uniqueStrings([...canonical.aliases, ...candidate.aliases]);
+  const normalizedNames = [...new Set([canonical.cardName, ...aliases]
+    .map((value) => normalizedProduct(value, issuer)))]
+    .filter((value) => value.length >= 2);
+  const candidates = await findCrawlerCatalogCandidates(supabase, issuer, normalizedNames);
+  const warnings = uniqueStrings([
+    ...candidate.warnings,
+    "crawler_discovered_without_statement_signal",
+    ...(candidates.length > 1 ? ["ambiguous_catalog_identity"] : []),
+  ]);
+  const safeEvidence = uniqueStrings(candidate.sanitizedEvidence, 300).slice(0, 3);
+  const dedupeKey = await sha256(`${issuer.trim().toLowerCase()}:${urlHash}`);
+
+  const { data: existingJob, error: existingJobError } = await supabase
+    .from("card_discovery_jobs")
+    .select("id, review_item_id")
+    .eq("discovery_source", "issuer_crawl")
+    .eq("dedupe_key", dedupeKey)
+    .is("user_id", null)
+    .maybeSingle();
+  if (existingJobError) throw existingJobError;
+
+  const proposal = {
+    issuer,
+    cardName: canonical.cardName,
+    network: canonical.network ?? candidate.network ?? null,
+    aliases,
+    official_url: canonicalUrl,
+  };
+  const evidence = {
+    issuer,
+    official_url: canonicalUrl,
+    url_hash: urlHash,
+    product_signals: aliases,
+    crawler_evidence: safeEvidence,
+    warnings,
+    confidence: Math.max(0, Math.min(1, candidate.confidence)),
+    crawler_proposal: proposal,
+    crawler_source_evidence: {
+      official_url: canonicalUrl,
+      url_hash: urlHash,
+      excerpts: safeEvidence,
+    },
+    crawler_existing_candidates: candidates,
+  };
+  let job = existingJob;
+  let duplicate = Boolean(existingJob);
+  if (!job) {
+    const { data, error } = await supabase.from("card_discovery_jobs")
+      .insert({
+        user_id: null,
+        discovery_source: "issuer_crawl",
+        issuer,
+        proposed_product: canonical.cardName,
+        evidence,
+        dedupe_key: dedupeKey,
+        status: "queued",
+        updated_at: new Date().toISOString(),
+      })
+      .select("id")
+      .single();
+    if (!error) {
+      job = data;
+    } else {
+    const { data: racedJob, error: racedJobError } = await supabase
+      .from("card_discovery_jobs")
+      .select("id, review_item_id")
+      .eq("discovery_source", "issuer_crawl")
+      .eq("dedupe_key", dedupeKey)
+      .is("user_id", null)
+      .maybeSingle();
+      if (racedJobError || !racedJob) throw error;
+      job = racedJob;
+      duplicate = true;
+    }
+  }
+
+  const { data: review, error: reviewError } = await supabase.from("card_catalog_review_queue")
+    .upsert({
+      discovery_job_id: job.id,
+      proposed_fields: proposal,
+      source_evidence: evidence.crawler_source_evidence,
+      existing_candidates: candidates,
+      validation_warnings: warnings,
+      confidence: evidence.confidence,
+      status: "pending",
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "discovery_job_id" })
+    .select("id")
+    .single();
+  if (reviewError) throw reviewError;
+  const { error: updateError } = await supabase.from("card_discovery_jobs")
+    .update({
+      status: "review_required",
+      review_item_id: review.id,
+      failure_category: null,
+      next_retry_at: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", job.id);
+  if (updateError) throw updateError;
+  return { outcome: duplicate ? "duplicate" : "review", reviewId: review.id };
 }
 
 /**
