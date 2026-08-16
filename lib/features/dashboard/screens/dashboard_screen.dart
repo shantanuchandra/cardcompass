@@ -720,29 +720,27 @@ class _DashboardContent extends StatelessWidget {
             data: data,
           ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.1),
           const SizedBox(height: BrandSpacing.lg),
-          IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  flex: 3,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      cardsSection,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                flex: 3,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    cardsSection,
+                    const SizedBox(height: BrandSpacing.lg),
+                    billsSection,
+                    if (data.latestStatements.isEmpty) ...[
                       const SizedBox(height: BrandSpacing.lg),
-                      billsSection,
-                      if (data.latestStatements.isEmpty) ...[
-                        const SizedBox(height: BrandSpacing.lg),
-                        statementsUnavailable,
-                      ],
+                      statementsUnavailable,
                     ],
-                  ),
+                  ],
                 ),
-                const SizedBox(width: BrandSpacing.lg),
-                Expanded(flex: 2, child: transactionsSection),
-              ],
-            ),
+              ),
+              const SizedBox(width: BrandSpacing.lg),
+              Expanded(flex: 2, child: transactionsSection),
+            ],
           ),
           const SizedBox(height: BrandSpacing.xxl),
         ]),
@@ -799,31 +797,11 @@ class _DashboardOverview extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         BrandContentFrame(
+          mode: BrandContentMode.fullWidthData,
           child: Padding(
             padding: const EdgeInsets.only(top: BrandSpacing.md),
-            child: const BrandPageHeader(
-              eyebrow: 'Wallet briefing',
-              title: 'Your next money move',
-              description:
-                  'Review what you have spent before your next statement closes.',
-            ),
+            child: _DashboardMetrics(data: data),
           ),
-        ),
-        const SizedBox(height: BrandSpacing.sm),
-        BrandContentFrame(
-          child: BrandActionRow(
-            title: 'Review recent spending',
-            description:
-                'See the latest purchases and rewards across your cards.',
-            leading: const Icon(Icons.receipt_long_rounded),
-            onTap: () =>
-                AppTabSelection.of(context).select(AppTab.transactions),
-          ),
-        ),
-        const SizedBox(height: BrandSpacing.lg),
-        BrandContentFrame(
-          mode: BrandContentMode.fullWidthData,
-          child: _DashboardMetrics(data: data),
         ),
       ],
     );
@@ -836,54 +814,216 @@ class _DashboardMetrics extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(BrandSpacing.lg),
-          decoration: BoxDecoration(
-            color: BrandColors.ledger,
-            borderRadius: BorderRadius.circular(BrandRadius.overlay),
-            border: Border.all(
-              color: BrandColors.focusDark.withValues(alpha: 0.25),
+    final cardCount = data.cards.length;
+    final chips = [
+      _MetricChip(
+        key: const Key('primary-spend-metric'),
+        icon: Icons.credit_card_rounded,
+        tone: _MetricTone.primary,
+        label: "This month's spend",
+        value: _shortCurrency.format(data.monthlySpend),
+        trend: data.monthlySpendTrend,
+      ),
+      _MetricChip(
+        key: const Key('supporting-rewards-metric'),
+        icon: Icons.star_rounded,
+        tone: _MetricTone.reward,
+        label: 'Rewards earned',
+        value: _shortCurrency.format(data.rewardsEarned),
+        trend: data.monthlyRewardsTrend,
+      ),
+      _MetricChip(
+        key: const Key('supporting-limit-metric'),
+        icon: Icons.crop_square_rounded,
+        tone: _MetricTone.limit,
+        label: 'Total credit limit',
+        value: _shortCurrency.format(data.totalCreditLimit),
+        // No month-over-month history exists for a card's credit limit
+        // (it's a live snapshot, not a transaction-derived figure) — show
+        // the chip without a trend rather than fabricate one.
+        trend: null,
+        supportingText:
+            'Across $cardCount card${cardCount == 1 ? '' : 's'}',
+      ),
+    ];
+
+    final usesLargeText = MediaQuery.textScalerOf(context).scale(14) >= 21;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final stack = constraints.maxWidth < 560 || usesLargeText;
+        if (stack) {
+          return Column(
+            children: [
+              for (var i = 0; i < chips.length; i++) ...[
+                if (i > 0) const SizedBox(height: BrandSpacing.sm),
+                chips[i],
+              ],
+            ],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (var i = 0; i < chips.length; i++) ...[
+              if (i > 0) const SizedBox(width: BrandSpacing.sm),
+              Expanded(child: chips[i]),
+            ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+enum _MetricTone { primary, reward, limit }
+
+class _MetricChip extends StatelessWidget {
+  final IconData icon;
+  final _MetricTone tone;
+  final String label;
+  final String value;
+  final List<double>? trend;
+  final String? supportingText;
+
+  const _MetricChip({
+    super.key,
+    required this.icon,
+    required this.tone,
+    required this.label,
+    required this.value,
+    required this.trend,
+    this.supportingText,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final (dotColor, dotOnColor, barColor) = switch (tone) {
+      _MetricTone.primary => (
+        BrandColors.focusDark,
+        BrandColors.signal,
+        BrandColors.focusDark,
+      ),
+      _MetricTone.reward => (
+        BrandColors.reward,
+        BrandColors.rewardInk,
+        BrandColors.rewardInk,
+      ),
+      _MetricTone.limit => (
+        BrandColors.ledger,
+        BrandColors.focusDark,
+        BrandColors.mutedInk,
+      ),
+    };
+
+    return Semantics(
+      label: '$label: $value',
+      child: ExcludeSemantics(
+        child: AspectRatio(
+          aspectRatio: 1,
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(BrandSpacing.md),
+            decoration: BoxDecoration(
+              color: BrandColors.paperDeep,
+              borderRadius: BorderRadius.circular(BrandRadius.overlay),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: dotColor,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(icon, size: 16, color: dotOnColor),
+                ),
+                const SizedBox(height: BrandSpacing.compact),
+                Text(
+                  label.toUpperCase(),
+                  style: const TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.5,
+                    color: BrandColors.mutedInk,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  style: const TextStyle(
+                    fontFamily: 'IBM Plex Mono',
+                    fontSize: 19,
+                    fontWeight: FontWeight.w700,
+                    color: BrandColors.ink,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const Spacer(),
+                if (trend != null && trend!.any((v) => v > 0))
+                  SizedBox(
+                    height: 36,
+                    child: _MonthBars(values: trend!, color: barColor),
+                  )
+                else if (supportingText != null)
+                  Text(
+                    supportingText!,
+                    style: const TextStyle(
+                      fontFamily: 'Manrope',
+                      fontSize: 11.5,
+                      color: BrandColors.mutedInk,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+              ],
             ),
           ),
-          child: BrandMetric(
-            key: const Key('primary-spend-metric'),
-            label: 'This month\'s spend',
-            value: _shortCurrency.format(data.monthlySpend),
-            supportingText: 'Across your active cards',
-          ),
         ),
-        const SizedBox(height: BrandSpacing.md),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(BrandSpacing.md),
-          decoration: BoxDecoration(
-            color: BrandColors.paper,
-            borderRadius: BorderRadius.circular(BrandRadius.overlay),
-            border: Border.all(color: BrandColors.ruleOnPaper),
-          ),
-          child: ResponsiveValueRow(
-            spacing: BrandSpacing.xl,
-            children: [
-              BrandMetric(
-                key: const Key('supporting-rewards-metric'),
-                label: 'Rewards earned',
-                value: _shortCurrency.format(data.rewardsEarned),
-                supportingText: 'This month',
+      ),
+    );
+  }
+}
+
+/// Discrete monthly bars (oldest → newest), current month at full opacity
+/// so it reads unambiguously as "you are here."
+class _MonthBars extends StatelessWidget {
+  final List<double> values;
+  final Color color;
+  const _MonthBars({required this.values, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    final maxValue = values.fold<double>(0, (m, v) => v > m ? v : m);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        for (var i = 0; i < values.length; i++) ...[
+          if (i > 0) const SizedBox(width: 3),
+          Expanded(
+            child: FractionallySizedBox(
+              heightFactor: maxValue <= 0
+                  ? 0.05
+                  : (0.12 + 0.88 * (values[i] / maxValue)).clamp(0.05, 1.0),
+              alignment: Alignment.bottomCenter,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: color.withValues(
+                    alpha: i == values.length - 1 ? 1.0 : 0.28,
+                  ),
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(2),
+                  ),
+                ),
               ),
-              BrandMetric(
-                key: const Key('supporting-limit-metric'),
-                label: 'Total credit limit',
-                value: _shortCurrency.format(data.totalCreditLimit),
-                supportingText:
-                    'Across ${data.cards.length} card${data.cards.length == 1 ? '' : 's'}',
-              ),
-            ],
+            ),
           ),
-        ),
+        ],
       ],
     );
   }
@@ -1426,16 +1566,30 @@ class _CreditCardTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final issuerColor = AppTheme.issuerColor(card.bankCode);
     return Container(
       decoration: BoxDecoration(
-        color: BrandColors.paperDeep,
         borderRadius: BorderRadius.circular(BrandRadius.overlay),
-        border: Border(
-          left: BorderSide(
-            color: AppTheme.issuerColor(card.bankCode),
-            width: 7,
-          ),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color.alphaBlend(
+              issuerColor.withValues(alpha: 0.16),
+              BrandColors.paperDeep,
+            ),
+            BrandColors.paperDeep,
+          ],
+          stops: const [0.0, 0.7],
         ),
+        border: Border.all(color: issuerColor.withValues(alpha: 0.35)),
+        boxShadow: [
+          BoxShadow(
+            color: BrandColors.ink.withValues(alpha: 0.06),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
       ),
       padding: const EdgeInsets.all(BrandSpacing.lg),
       child: Column(
@@ -1443,6 +1597,15 @@ class _CreditCardTile extends StatelessWidget {
         children: [
           Row(
             children: [
+              Container(
+                width: 8,
+                height: 8,
+                margin: const EdgeInsets.only(right: BrandSpacing.xs),
+                decoration: BoxDecoration(
+                  color: issuerColor,
+                  shape: BoxShape.circle,
+                ),
+              ),
               Expanded(
                 child: Text(
                   card.bank ?? '',
@@ -1450,18 +1613,20 @@ class _CreditCardTile extends StatelessWidget {
                     fontFamily: 'Manrope',
                     fontSize: 12,
                     color: BrandColors.mutedInk,
-                    fontWeight: FontWeight.w500,
+                    fontWeight: FontWeight.w600,
                     letterSpacing: 0.5,
                   ),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
               Text(
-                card.network ?? '',
+                (card.network ?? '').toUpperCase(),
                 style: TextStyle(
                   fontFamily: 'Manrope',
-                  fontSize: 12,
-                  color: BrandColors.mutedInk,
-                  fontWeight: FontWeight.w600,
+                  fontSize: 11,
+                  color: issuerColor,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.8,
                 ),
               ),
             ],
@@ -1470,21 +1635,22 @@ class _CreditCardTile extends StatelessWidget {
           if (card.lastFourDigits != null)
             Text(
               '••••  ••••  ••••  ${card.lastFourDigits}',
-              style: TextStyle(
-                fontFamily: 'Manrope',
-                fontSize: 16,
+              style: const TextStyle(
+                fontFamily: 'IBM Plex Mono',
+                fontSize: 18,
                 color: BrandColors.ink,
                 fontWeight: FontWeight.w600,
-                letterSpacing: 2,
+                letterSpacing: 1.5,
               ),
             ),
-          const SizedBox(height: BrandSpacing.sm),
+          const SizedBox(height: BrandSpacing.md),
           Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Expanded(
                 child: Text(
                   card.displayName,
-                  style: TextStyle(
+                  style: const TextStyle(
                     fontFamily: 'Manrope',
                     fontSize: 14,
                     color: BrandColors.ink,
@@ -1497,10 +1663,10 @@ class _CreditCardTile extends StatelessWidget {
                 Text(
                   _currencyFmt.format(card.creditLimit),
                   style: TextStyle(
-                    fontFamily: 'Manrope',
+                    fontFamily: 'IBM Plex Mono',
                     fontSize: 13,
-                    color: BrandColors.ink,
-                    fontWeight: FontWeight.w500,
+                    color: BrandColors.mutedInk,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
             ],
@@ -1521,7 +1687,12 @@ class _BillsPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final pending = cards
-        .where((c) => statements.containsKey(c.id) && !statements[c.id]!.isPaid)
+        .where(
+          (c) =>
+              statements.containsKey(c.id) &&
+              !statements[c.id]!.isPaid &&
+              statements[c.id]!.outstanding > 0,
+        )
         .toList();
 
     if (pending.isEmpty) {
@@ -1587,6 +1758,20 @@ class _BillsPanel extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      if (card.bank != null && card.bank!.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 2),
+                          child: Text(
+                            card.bank!,
+                            style: TextStyle(
+                              fontFamily: 'Manrope',
+                              fontSize: 12,
+                              color: BrandColors.mutedInk,
+                              fontWeight: FontWeight.w500,
+                              letterSpacing: 0.3,
+                            ),
+                          ),
+                        ),
                       Text(
                         card.displayName,
                         style: TextStyle(

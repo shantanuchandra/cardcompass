@@ -41,6 +41,8 @@ final _fixture = DashboardData(
   totalCreditLimit: 100000,
   monthlySpend: 1250,
   rewardsEarned: 75,
+  monthlySpendTrend: const [800, 950, 1100, 1000, 1300, 1250],
+  monthlyRewardsTrend: const [40, 55, 60, 50, 70, 75],
 );
 
 final _cardlessFixture = DashboardData(
@@ -50,6 +52,8 @@ final _cardlessFixture = DashboardData(
   totalCreditLimit: 0,
   monthlySpend: 0,
   rewardsEarned: 0,
+  monthlySpendTrend: const [0, 0, 0, 0, 0, 0],
+  monthlyRewardsTrend: const [0, 0, 0, 0, 0, 0],
 );
 
 class _FailingGmailSyncNotifier extends GmailSyncNotifier {
@@ -241,17 +245,6 @@ void main() {
     await tester.tap(find.text('Retry'));
     await tester.pumpAndSettle();
     expect(dashboardLoads, 2);
-  });
-
-  testWidgets('primary recent-spending action selects Transactions', (
-    tester,
-  ) async {
-    final selectedAppTab = ValueNotifier(AppTab.dashboard);
-    addTearDown(selectedAppTab.dispose);
-    await _pumpDashboard(tester, selectedAppTab: selectedAppTab);
-
-    await tester.tap(find.text('Review recent spending'));
-    expect(selectedAppTab.value, AppTab.transactions);
   });
 
   testWidgets('Gmail sync failures never render internal exception text', (
