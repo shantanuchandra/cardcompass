@@ -288,6 +288,30 @@ test('requires product-specific identity context before classifying generic list
   assert.equal(sitewideTerms.kind, 'ambiguous');
 });
 
+test('rejects generic navigation and legal pages whose headings merely mention credit cards', () => {
+  const genericPages = [
+    ['https://www.axis.bank.in/cards/credit-card/all', '<h1>Compare Credit Card Options</h1>'],
+    ['https://www.axis.bank.in/cards/credit-card/overview', '<h1>Explore Our Credit Card Range</h1>'],
+    ['https://www.axis.bank.in/legal/terms-and-conditions', '<h1>Axis Bank Credit Card Terms and Conditions</h1>'],
+  ];
+
+  for (const [url, html] of genericPages) {
+    const page = classifyIssuerPage({issuer, url, html});
+    assert.equal(page.kind, 'ambiguous', url);
+  }
+});
+
+test('keeps a real product when it contains generic card words alongside a meaningful shared token', () => {
+  const page = classifyIssuerPage({
+    issuer,
+    url: 'https://www.axis.bank.in/cards/credit-card/select-credit-card',
+    html: '<h1>Axis Select Credit Card</h1>',
+  });
+
+  assert.equal(page.kind, 'card_product');
+  assert.equal(page.proposedName, 'Select');
+});
+
 test('passes a nonzero production default delay to an injected delay function', async () => {
   const delays = [];
   await discoverIssuerCardCandidates({

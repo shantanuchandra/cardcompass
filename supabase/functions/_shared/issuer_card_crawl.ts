@@ -64,6 +64,9 @@ const nonProductPathTokens = new Set([
   "card", "cards", "credit", "products", "product", "personal", "bank",
   "benefit", "benefits", "fee", "fees", "charge", "charges", "reward", "rewards",
   "term", "terms", "condition", "conditions", "mitc", "html", "pdf",
+  "all", "overview", "compare", "comparison", "option", "options", "explore", "our",
+  "range", "legal", "navigation", "home", "landing", "page",
+  "and", "or", "the", "for", "of", "to", "in", "with", "your",
 ]);
 
 function decodeXml(value: string): string {
@@ -125,16 +128,47 @@ function isAnchoredToHost(url: string, hostname: string): boolean {
   return hostnameOf(url) === hostname;
 }
 
-function hasProductSpecificUrlContext(url: string): boolean {
+function tokens(value: string): string[] {
+  return value
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+function meaningfulTokens(value: string, issuer: string): Set<string> {
+  const issuerTokens = new Set(tokens(issuer));
+  return new Set(tokens(value).filter((token) =>
+    !nonProductPathTokens.has(token) && !issuerTokens.has(token)
+  ));
+}
+
+function urlPathAndHeadingTokens(url: string, html: string, issuer: string): Set<string> {
   try {
-    const tokens = decodeURIComponent(new URL(url).pathname)
-      .toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .filter(Boolean);
-    return tokens.some((token) => !nonProductPathTokens.has(token));
+    const pathname = decodeURIComponent(new URL(url).pathname);
+    return meaningfulTokens(`${pathname} ${evidenceFromHtml(html).join(" ")}`, issuer);
   } catch {
-    return false;
+    return new Set();
   }
+}
+
+function hasProductSpecificUrlContext(url: string): boolean {
+  return urlPathAndHeadingTokens(url, "", "").size > 0;
+}
+
+function hasSharedProductIdentityContext(
+  identity: { cardName: string; aliases: string[] } | null,
+  url: string,
+  html: string,
+  issuer: string,
+): boolean {
+  if (!identity) return false;
+  const identityTokens = meaningfulTokens(
+    [identity.cardName, ...identity.aliases].join(" "),
+    issuer,
+  );
+  const contextTokens = urlPathAndHeadingTokens(url, html, issuer);
+  return [...identityTokens].some((token) => contextTokens.has(token));
 }
 
 function candidateUrlScore(url: string): number {
@@ -197,7 +231,12 @@ export function classifyIssuerPage(input: ClassifyIssuerPageInput): PageClassifi
   const evidence = pageEvidence(canonicalUrl, html);
   const sanitizedEvidence = evidenceFromHtml(html);
   const identity = officialCardIdentityFromHtml(html, input.issuer);
-  const hasIdentityContext = Boolean(identity) && hasProductSpecificUrlContext(canonicalUrl);
+  const hasIdentityContext = hasSharedProductIdentityContext(
+    identity,
+    canonicalUrl,
+    html,
+    input.issuer,
+  );
   const warnings: string[] = [];
 
   if (unsafePagePattern.test(evidence)) {
