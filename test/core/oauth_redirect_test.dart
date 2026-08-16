@@ -11,10 +11,10 @@ void main() {
     );
   });
 
-  test('www production host redirects OAuth to the canonical app origin', () {
+  test('www production OAuth callback stays on its PKCE storage origin', () {
     expect(
       oauthRedirectUri(Uri.parse('https://www.cardcompass.in/app/#/login')),
-      Uri.parse('https://cardcompass.in/app/'),
+      Uri.parse('https://www.cardcompass.in/app/'),
     );
   });
 
