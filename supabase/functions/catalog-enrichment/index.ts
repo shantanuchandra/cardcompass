@@ -40,10 +40,18 @@ async function queueConflictReview(
   }).eq("id", job.discovery_job_id);
 }
 
-async function processJob(db: UntypedSupabaseClient, jobId: string) {
+export async function processCatalogEnrichmentJob(
+  db: UntypedSupabaseClient,
+  jobId: string,
+) {
   const { data: current, error: readError } = await db
     .from("card_catalog_enrichment_jobs").select("*").eq("id", jobId).single();
   if (readError || !current) throw readError ?? new Error("job_not_found");
+  if (
+    current.run_mode !== "manual" || current.parser_version !== "catalog-v1"
+  ) {
+    throw new Error("job_not_owned");
+  }
   if (current.status === "completed" || current.status === "review_required") {
     return current.status;
   }
@@ -56,6 +64,8 @@ async function processJob(db: UntypedSupabaseClient, jobId: string) {
       updated_at: new Date().toISOString(),
     })
     .eq("id", jobId)
+    .eq("run_mode", "manual")
+    .eq("parser_version", "catalog-v1")
     .in("status", ["queued", "failed"])
     .select("*")
     .maybeSingle();
@@ -107,7 +117,9 @@ async function processJob(db: UntypedSupabaseClient, jobId: string) {
     if (compared.conflicts.length > 0) {
       await queueConflictReview(db, claimed, compared.conflicts);
     }
-    const status = compared.conflicts.length > 0 ? "review_required" : "completed";
+    const status = compared.conflicts.length > 0
+      ? "review_required"
+      : "completed";
     const { error } = await db.from("card_catalog_enrichment_jobs").update({
       status,
       normalized_fields: normalized.patch,
@@ -124,34 +136,46 @@ async function processJob(db: UntypedSupabaseClient, jobId: string) {
   } catch (error) {
     const attempts = Number(claimed.attempt_count ?? 0);
     const terminal = attempts >= 3;
-    const message = error instanceof Error ? error.message.slice(0, 120) : "enrichment_failed";
+    const message = error instanceof Error
+      ? error.message.slice(0, 120)
+      : "enrichment_failed";
     await db.from("card_catalog_enrichment_jobs").update({
       status: terminal ? "review_required" : "failed",
       failure_category: message,
       next_retry_at: terminal
         ? null
-        : new Date(Date.now() + Math.min(60, 2 ** attempts) * 60_000).toISOString(),
+        : new Date(Date.now() + Math.min(60, 2 ** attempts) * 60_000)
+          .toISOString(),
       updated_at: new Date().toISOString(),
     }).eq("id", claimed.id);
     throw error;
   }
 }
 
-serve(async (request) => {
-  if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-  if (!serviceKey || request.headers.get("Authorization") !== `Bearer ${serviceKey}`) {
-    return json({ error: "authentication_required" }, 401);
-  }
-  try {
-    const body = await request.json();
-    if (typeof body.job_id !== "string") return json({ error: "invalid_job" }, 400);
-    const db = createClient(Deno.env.get("SUPABASE_URL") ?? "", serviceKey);
-    const status = await processJob(db, body.job_id);
-    return json({ status });
-  } catch (error) {
-    return json({
-      error: error instanceof Error ? error.message : "enrichment_failed",
-    }, 500);
-  }
-});
+if (import.meta.main) {
+  serve(async (request) => {
+    if (request.method !== "POST") {
+      return json({ error: "method_not_allowed" }, 405);
+    }
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    if (
+      !serviceKey ||
+      request.headers.get("Authorization") !== `Bearer ${serviceKey}`
+    ) {
+      return json({ error: "authentication_required" }, 401);
+    }
+    try {
+      const body = await request.json();
+      if (typeof body.job_id !== "string") {
+        return json({ error: "invalid_job" }, 400);
+      }
+      const db = createClient(Deno.env.get("SUPABASE_URL") ?? "", serviceKey);
+      const status = await processCatalogEnrichmentJob(db, body.job_id);
+      return json({ status });
+    } catch (error) {
+      return json({
+        error: error instanceof Error ? error.message : "enrichment_failed",
+      }, 500);
+    }
+  });
+}

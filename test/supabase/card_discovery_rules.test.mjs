@@ -46,10 +46,10 @@ test('extracts a product identity from legacy issuer page headings', () => {
 
 test('card discovery emits parser-aware enrichment queue identity', async () => {
   const source = await readFile(cardDiscoveryEntrypoint, 'utf8');
-  assert.match(source, /parser_version:\s*["']benefits-v1["']/);
-  assert.match(source, /job_key:/);
-  assert.match(source, /onConflict:\s*["']job_key["']/);
+  assert.match(source, /enqueueBenefitEnrichmentJob\(db,/);
+  assert.match(source, /parserVersion:\s*["']benefits-v1["']/);
   assert.doesNotMatch(source, /onConflict:\s*["']card_id,final_url_hash,content_hash["']/);
+  assert.doesNotMatch(source, /functions\/v1\/catalog-enrichment/);
 });
 
 test('benefit enrichment keeps initialization and issuer discovery off unsafe paths', async () => {

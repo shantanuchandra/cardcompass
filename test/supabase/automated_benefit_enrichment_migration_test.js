@@ -61,13 +61,21 @@ test('claim RPC leases no more than five jobs from one issuer with service-only 
   assert.match(claim, /claim_card_catalog_enrichment_jobs\s*\(\s*_max_jobs integer\s*,\s*_lease_seconds integer\s*,\s*_run_mode text/i);
   assert.match(claim, /SECURITY INVOKER/i);
   assert.match(claim, /auth\.role\(\).*service_role/i);
-  assert.match(claim, /lease_expires_at IS NULL\s+OR lease_expires_at\s*<=\s*now\(\)/i);
+  assert.match(claim, /(?:job\.)?lease_expires_at IS NULL\s+OR (?:job\.)?lease_expires_at\s*<=\s*now\(\)/i);
   assert.match(claim, /lease_token\s*=\s*NULL/i);
   assert.match(claim, /lease_token\s*=\s*gen_random_uuid\(\)/i);
   assert.match(claim, /_run_mode IS NULL\s+OR _run_mode NOT IN \('pilot', 'scheduled', 'manual'\)/i);
   assert.match(claim, /pg_advisory_xact_lock\s*\(\s*hashtextextended\s*\(\s*'card_catalog_enrichment_claim'/i);
-  assert.match(claim, /pg_advisory_xact_lock[\s\S]*SELECT job\.issuer[\s\S]*INTO selected_issuer/i);
+  assert.match(claim, /pg_advisory_xact_lock[\s\S]*SELECT lower\(trim\(job\.issuer\)\)[\s\S]*INTO selected_issuer/i);
   assert.match(claim, /SELECT[\s\S]*issuer[\s\S]*INTO selected_issuer/i);
+  assert.match(claim, /SELECT lower\(trim\(job\.issuer\)\)[\s\S]*INTO selected_issuer/i);
+  assert.match(claim, /lower\(trim\(leased\.issuer\)\)\s*=\s*lower\(trim\(job\.issuer\)\)/i);
+  assert.match(claim, /lower\(trim\(job\.issuer\)\)\s*=\s*selected_issuer/i);
+  assert.equal(
+    [...claim.matchAll(/NOT\s*\(job\.run_mode\s*=\s*'manual'\s+AND\s+job\.parser_version\s*=\s*'catalog-v1'\)/gi)].length,
+    3,
+    'lease recovery, issuer selection, and row claim must exclude legacy catalog ownership',
+  );
   assert.match(claim, /FOR UPDATE SKIP LOCKED/i);
   assert.match(claim, /LEAST\s*\(\s*GREATEST\s*\([^)]*\)\s*,\s*5\s*\)/i);
   assert.match(sql, /REVOKE ALL ON FUNCTION public\.claim_card_catalog_enrichment_jobs\(integer, integer, text\)\s+FROM PUBLIC, anon, authenticated/i);
@@ -80,7 +88,7 @@ test('migration atomically initializes exactly five validated pilot jobs', async
 
   assert.match(pilot, /jsonb_array_length\(_candidates\)\s*<>\s*5/i);
   assert.match(pilot, /count\(DISTINCT profile\)[\s\S]*distinct_profile_count\s*<>\s*5/i);
-  assert.match(pilot, /count\(DISTINCT[\s\S]*(?:bank|issuer)[\s\S]*<\s*3/i);
+  assert.match(pilot, /count\(DISTINCT lower\(trim\(bank\)\)\)[\s\S]*<\s*3/i);
   assert.match(pilot, /is_discontinued\s*=\s*false/i);
   assert.match(pilot, /lower\(trim\(card\.card_type\)\)\s*=\s*'credit'/i);
   assert.match(pilot, /INSERT INTO public\.card_catalog_enrichment_jobs[\s\S]*'pilot'/i);

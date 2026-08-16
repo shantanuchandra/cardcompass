@@ -211,7 +211,7 @@ BEGIN
       )
   )
   SELECT count(*), count(DISTINCT card_id), count(DISTINCT profile),
-         count(DISTINCT bank)
+         count(DISTINCT lower(trim(bank)))
   INTO eligible_count, distinct_card_count, distinct_profile_count,
        distinct_issuer_count
   FROM eligible;
@@ -311,29 +311,31 @@ BEGIN
     hashtextextended('card_catalog_enrichment_claim', 0)
   );
 
-  UPDATE public.card_catalog_enrichment_jobs
+  UPDATE public.card_catalog_enrichment_jobs AS job
   SET status = 'queued',
       lease_expires_at = NULL,
       lease_token = NULL,
       updated_at = now()
-  WHERE status = 'processing'
-    AND (lease_expires_at IS NULL OR lease_expires_at <= now());
+  WHERE job.status = 'processing'
+    AND NOT (job.run_mode = 'manual' AND job.parser_version = 'catalog-v1')
+    AND (job.lease_expires_at IS NULL OR job.lease_expires_at <= now());
 
-  SELECT job.issuer
+  SELECT lower(trim(job.issuer))
   INTO selected_issuer
   FROM public.card_catalog_enrichment_jobs AS job
   JOIN public.card_catalog AS card ON card.id = job.card_id
   WHERE job.status IN ('queued', 'failed')
     AND (job.next_retry_at IS NULL OR job.next_retry_at <= now())
     AND job.run_mode = _run_mode
+    AND NOT (job.run_mode = 'manual' AND job.parser_version = 'catalog-v1')
     AND NOT EXISTS (
       SELECT 1
       FROM public.card_catalog_enrichment_jobs AS leased
-      WHERE leased.issuer = job.issuer
+      WHERE lower(trim(leased.issuer)) = lower(trim(job.issuer))
         AND leased.status = 'processing'
         AND leased.lease_expires_at > now()
     )
-  ORDER BY job.issuer, card.card_name, job.created_at
+  ORDER BY lower(trim(job.issuer)), card.card_name, job.created_at
   LIMIT 1;
 
   IF selected_issuer IS NULL THEN
@@ -345,10 +347,11 @@ BEGIN
     SELECT job.id
     FROM public.card_catalog_enrichment_jobs AS job
     JOIN public.card_catalog AS card ON card.id = job.card_id
-    WHERE job.issuer = selected_issuer
+    WHERE lower(trim(job.issuer)) = selected_issuer
       AND job.status IN ('queued', 'failed')
       AND (job.next_retry_at IS NULL OR job.next_retry_at <= now())
       AND job.run_mode = _run_mode
+      AND NOT (job.run_mode = 'manual' AND job.parser_version = 'catalog-v1')
     ORDER BY card.card_name, job.created_at
     LIMIT maximum_jobs
     FOR UPDATE SKIP LOCKED

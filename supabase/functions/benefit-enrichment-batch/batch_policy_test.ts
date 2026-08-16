@@ -1,5 +1,6 @@
 import {
   buildJobKey,
+  enqueueBenefitEnrichmentJob,
   evaluatePilotGate,
   failureDisposition,
   findReusableStaging,
@@ -48,6 +49,84 @@ Deno.test("a lease claim recovers expired work and claims at most five rows from
   );
 });
 
+Deno.test("batch claims never take the legacy manual catalog ownership lane", () => {
+  const result = simulateLeaseClaim(
+    [
+      {
+        id: "catalog-manual",
+        issuer: "Axis Bank",
+        cardName: "A Catalog Job",
+        status: "processing",
+        leaseExpiresAt: null,
+        nextRetryAt: null,
+        runMode: "manual",
+        parserVersion: "catalog-v1",
+      },
+      {
+        id: "benefit-manual",
+        issuer: "Axis Bank",
+        cardName: "B Benefit Job",
+        status: "queued",
+        leaseExpiresAt: null,
+        nextRetryAt: null,
+        runMode: "manual",
+        parserVersion: "benefits-v1",
+      },
+    ],
+    new Date("2026-08-17T12:00:00.000Z"),
+    "manual",
+    1,
+  );
+  assert(
+    result.claimed.map((job) => job.id).join(",") === "benefit-manual",
+    "batch worker claimed a legacy catalog-owned row",
+  );
+  assert(
+    result.recoveredIds.length === 0,
+    "batch worker recovered a legacy catalog-owned processing row",
+  );
+});
+
+Deno.test("one-issuer claims group bank casing and whitespace variants", () => {
+  const result = simulateLeaseClaim(
+    [
+      {
+        id: "axis-a",
+        issuer: "Axis Bank",
+        cardName: "A Card",
+        status: "queued",
+        leaseExpiresAt: null,
+        nextRetryAt: null,
+        runMode: "scheduled",
+      },
+      {
+        id: "axis-b",
+        issuer: " axis bank ",
+        cardName: "B Card",
+        status: "queued",
+        leaseExpiresAt: null,
+        nextRetryAt: null,
+        runMode: "scheduled",
+      },
+      {
+        id: "hdfc-a",
+        issuer: "HDFC Bank",
+        cardName: "A Card",
+        status: "queued",
+        leaseExpiresAt: null,
+        nextRetryAt: null,
+        runMode: "scheduled",
+      },
+    ],
+    new Date("2026-08-17T12:00:00.000Z"),
+    "scheduled",
+  );
+  assert(
+    result.claimed.map((job) => job.id).sort().join(",") === "axis-a,axis-b",
+    "one bank was split into separate issuer lanes",
+  );
+});
+
 Deno.test("batch work is awaited sequentially", async () => {
   let active = 0;
   let maximumActive = 0;
@@ -84,6 +163,55 @@ Deno.test("job identity is stable for the card, canonical URL hash, and parser",
   );
   assert(first === repeated, "same inputs produced different keys");
   assert(first !== nextParser, "parser version was omitted from identity");
+});
+
+Deno.test("re-enqueueing a leased job preserves its processing state and lease", async () => {
+  const original = {
+    id: "job-1",
+    job_key: `card-a:${"a".repeat(64)}:benefits-v1`,
+    status: "processing",
+    lease_token: "lease-1",
+    lease_expires_at: "2026-08-17T12:15:00.000Z",
+    attempt_count: 2,
+  };
+  let stored = { ...original };
+  let upserts = 0;
+  const db = {
+    from(table: string) {
+      assert(
+        table === "card_catalog_enrichment_jobs",
+        "enqueue targeted the wrong table",
+      );
+      return {
+        async upsert(
+          row: Record<string, unknown>,
+          options: { onConflict?: string; ignoreDuplicates?: boolean },
+        ) {
+          upserts += 1;
+          const conflicts = row.job_key === stored.job_key;
+          if (!conflicts || !options.ignoreDuplicates) {
+            stored = { ...stored, ...row } as typeof stored;
+          }
+          return { error: null };
+        },
+      };
+    },
+  };
+
+  await enqueueBenefitEnrichmentJob(db, {
+    cardId: "card-a",
+    issuer: "Axis Bank",
+    canonicalUrl: "https://axis.example/card-a",
+    finalUrlHash: "a".repeat(64),
+    contentHash: "b".repeat(64),
+    parserVersion: "benefits-v1",
+  });
+
+  assert(
+    JSON.stringify(stored) === JSON.stringify(original),
+    "duplicate enqueue rewound or mutated an active lease",
+  );
+  assert(upserts === 1, "enqueue skipped its database boundary");
 });
 
 Deno.test("same content and parser reuse an existing staging row", () => {
@@ -306,6 +434,34 @@ Deno.test("pilot selector backtracks when the first profile must preserve a scar
   assert(
     selected.some((candidate) => candidate.id === "c-first"),
     "scarce issuer candidate was not selected",
+  );
+});
+
+Deno.test("pilot issuer diversity ignores bank casing and surrounding spaces", () => {
+  const issuers = [
+    "Axis Bank",
+    " axis bank ",
+    "AXIS BANK",
+    "HDFC Bank",
+    " hdfc bank ",
+  ];
+  const profiles = [
+    "straightforward",
+    "redirect_or_js",
+    "terms_linked",
+    "known_invalid",
+    "additional_valid",
+  ] as const;
+  const selected = selectPilotCandidates(profiles.map((profile, index) => ({
+    id: `candidate-${index}`,
+    issuer: issuers[index],
+    active: true,
+    approvedUrl: profile !== "known_invalid",
+    profile,
+  })));
+  assert(
+    selected.length === 0,
+    "issuer spelling variants were counted as distinct banks",
   );
 });
 

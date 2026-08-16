@@ -15,6 +15,7 @@ import {
   selectSubmittedUrlIdentity,
 } from "../_shared/card_discovery.ts";
 import { fetchOfficialIssuerResource } from "../_shared/official_issuer_fetch.ts";
+import { enqueueBenefitEnrichmentJob } from "../benefit-enrichment-batch/batch_policy.ts";
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 type UntypedSupabaseClient = any;
@@ -299,31 +300,14 @@ async function processSubmittedUrl(
     }, { onConflict: "card_id,source_url,content_hash" });
   if (provenanceError) throw provenanceError;
 
-  const { data: enrichment, error: enrichmentError } = await db
-    .from("card_catalog_enrichment_jobs").upsert({
-      card_id: cardId,
-      issuer: job.issuer,
-      canonical_url: finalUrl,
-      final_url_hash: finalHash,
-      content_hash: page.contentHash,
-      parser_version: "benefits-v1",
-      job_key: `${cardId}:${finalHash}:benefits-v1`,
-      status: "queued",
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "job_key" })
-    .select("id").single();
-  if (enrichmentError) throw enrichmentError;
-
-  const functionUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/catalog-enrichment`;
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-  EdgeRuntime.waitUntil(fetch(functionUrl, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${serviceKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ job_id: enrichment.id }),
-  }).catch(() => undefined));
+  await enqueueBenefitEnrichmentJob(db, {
+    cardId,
+    issuer: job.issuer,
+    canonicalUrl: finalUrl,
+    finalUrlHash: finalHash,
+    contentHash: page.contentHash,
+    parserVersion: "benefits-v1",
+  });
   return markResolved(db, job.id, cardId);
 }
 

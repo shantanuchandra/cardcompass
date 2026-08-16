@@ -13,6 +13,7 @@ export type LeaseJob = {
   leaseExpiresAt: string | null;
   nextRetryAt: string | null;
   runMode: RunMode;
+  parserVersion?: string;
 };
 
 export type StagingIdentity = {
@@ -55,12 +56,56 @@ export type PilotJob = {
   rawBodyStored: boolean;
 };
 
+function issuerKey(issuer: string): string {
+  return issuer.trim().toLowerCase();
+}
+
+export type BenefitEnrichmentQueueInput = {
+  cardId: string;
+  issuer: string;
+  canonicalUrl: string;
+  finalUrlHash: string;
+  contentHash: string;
+  parserVersion: string;
+};
+
+type EnrichmentQueueClient = {
+  from(table: string): {
+    upsert(
+      row: Record<string, unknown>,
+      options: { onConflict: string; ignoreDuplicates: boolean },
+    ): PromiseLike<{ error: unknown }>;
+  };
+};
+
 export function buildJobKey(
   cardId: string,
   canonicalUrlHash: string,
   parserVersion: string,
 ): string {
   return `${cardId}:${canonicalUrlHash}:${parserVersion}`;
+}
+
+export async function enqueueBenefitEnrichmentJob(
+  db: EnrichmentQueueClient,
+  input: BenefitEnrichmentQueueInput,
+): Promise<void> {
+  const { error } = await db.from("card_catalog_enrichment_jobs").upsert({
+    card_id: input.cardId,
+    issuer: input.issuer,
+    canonical_url: input.canonicalUrl,
+    final_url_hash: input.finalUrlHash,
+    content_hash: input.contentHash,
+    parser_version: input.parserVersion,
+    job_key: buildJobKey(
+      input.cardId,
+      input.finalUrlHash,
+      input.parserVersion,
+    ),
+    status: "queued",
+    updated_at: new Date().toISOString(),
+  }, { onConflict: "job_key", ignoreDuplicates: true });
+  if (error) throw error;
 }
 
 export async function runSequentially<T, R>(
@@ -88,6 +133,7 @@ export function simulateLeaseClaim(
   const recoveredIds = jobs
     .filter((job) =>
       job.status === "processing" &&
+      !(job.runMode === "manual" && job.parserVersion === "catalog-v1") &&
       (job.leaseExpiresAt === null ||
         Date.parse(job.leaseExpiresAt) <= timestamp)
     )
@@ -96,22 +142,24 @@ export function simulateLeaseClaim(
   const eligible = jobs.filter((job) => {
     const status = recovered.has(job.id) ? "queued" : job.status;
     return job.runMode === runMode &&
+      !(job.runMode === "manual" && job.parserVersion === "catalog-v1") &&
       (status === "queued" || status === "failed") &&
       (job.nextRetryAt === null || Date.parse(job.nextRetryAt) <= timestamp);
   }).sort((left, right) =>
-    left.issuer.localeCompare(right.issuer) ||
+    issuerKey(left.issuer).localeCompare(issuerKey(right.issuer)) ||
     left.cardName.localeCompare(right.cardName) ||
     left.id.localeCompare(right.id)
   );
-  const selectedIssuer = eligible[0]?.issuer;
+  const selectedIssuer = eligible[0] && issuerKey(eligible[0].issuer);
   const maximum = Math.min(MAX_BATCH_SIZE, Math.max(1, requestedMaximum));
   return {
     recoveredIds,
     claimed: selectedIssuer
-      ? eligible.filter((job) => job.issuer === selectedIssuer).slice(
-        0,
-        maximum,
-      )
+      ? eligible.filter((job) => issuerKey(job.issuer) === selectedIssuer)
+        .slice(
+          0,
+          maximum,
+        )
       : [],
   };
 }
@@ -202,7 +250,9 @@ export function selectPilotCandidates<T extends PilotCandidate>(
 
   const search = (profileIndex: number, selected: T[]): T[] | null => {
     if (profileIndex === profiles.length) {
-      return new Set(selected.map((candidate) => candidate.issuer)).size >= 3
+      return new Set(
+          selected.map((candidate) => issuerKey(candidate.issuer)),
+        ).size >= 3
         ? selected
         : null;
     }
