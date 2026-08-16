@@ -126,11 +126,22 @@ class MovieDealsSupabaseRepository implements MovieDealsRepository {
     // Design spec §5 correction: keyed by benefitId, never unioned to the
     // card level.
     final confirmedPlatformsByBenefit = <String, Set<String>>{};
+    // confirmation_count was previously read from the view then discarded —
+    // only isNotEmpty on confirmedPlatformsByBenefit was checked. Kept here
+    // per-benefit (summed across any platform rows for that benefit, since a
+    // UI showing "confirmed by N users" cares about total distinct
+    // confirmers for the benefit, not a specific platform's sub-count) so a
+    // richer UI can show the real number instead of a bare boolean.
+    final confirmationCountByBenefit = <String, int>{};
     for (final row in confirmations) {
       final benefitId = _string(row['benefit_id']);
-      final platform = _string(row['platform']);
+      final platform = _string(row['platform_key']);
       if (benefitId == null || platform == null) continue;
       confirmedPlatformsByBenefit.putIfAbsent(benefitId, () => {}).add(platform);
+      final count = _integer(row['confirmation_count']);
+      if (count != null) {
+        confirmationCountByBenefit[benefitId] = (confirmationCountByBenefit[benefitId] ?? 0) + count;
+      }
     }
 
     final sources = <MovieBenefitSource>[];
@@ -209,6 +220,7 @@ class MovieDealsSupabaseRepository implements MovieDealsRepository {
         usedTransactions: verified ? matching.length : 0,
         milestoneSpend: spendByCatalogCardId[source.catalogCardId],
         confirmedPlatforms: confirmedPlatformsByBenefit[source.benefitId] ?? const {},
+        confirmationCount: confirmationCountByBenefit[source.benefitId],
       );
     }
     return MovieDealsSnapshot(sources: sources, contexts: contexts);
@@ -302,7 +314,7 @@ class SupabaseMovieDealsDataSource implements MovieDealsDataSource {
           ? const []
           : _rows(await _client
               .from('benefit_platform_confirmation_counts')
-              .select('benefit_id, platform_key')
+              .select('benefit_id, platform_key, confirmation_count')
               .inFilter('benefit_id', benefitIds)
               .gt('confirmation_count', 0));
 
@@ -324,7 +336,7 @@ List<Map<String, dynamic>> _rows(dynamic value) => (value as List)
     .map((row) => Map<String, dynamic>.from(row as Map))
     .toList();
 
-String? _string(dynamic value) => value == null ? null : value.toString();
+String? _string(dynamic value) => value?.toString();
 String? _idForBenefit(Map<String, dynamic> row) => _string(row['benefit_id']);
 String? _idForMappingCard(Map<String, dynamic> row) => _string(row['card_id']);
 int? _integer(dynamic value) => value is int

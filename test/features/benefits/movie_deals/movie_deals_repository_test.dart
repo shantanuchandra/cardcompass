@@ -199,7 +199,7 @@ void main() {
           {'id': 'catalog-card-1', 'card_name': 'Test Card'},
         ],
         confirmations: [
-          {'benefit_id': 'b1', 'platform': 'PVR'},
+          {'benefit_id': 'b1', 'platform_key': 'pvr'},
         ],
       );
       final repository = MovieDealsSupabaseRepository(dataSource);
@@ -211,8 +211,8 @@ void main() {
             now: DateTime(2026, 8, 2),
           )
           .then((snapshot) {
-        expect(snapshot.contexts[('catalog-card-1', 'b1')]?.confirmedPlatforms, contains('PVR'));
-        expect(snapshot.contexts[('catalog-card-1', 'b2')]?.confirmedPlatforms ?? const {}, isNot(contains('PVR')));
+        expect(snapshot.contexts[('catalog-card-1', 'b1')]?.confirmedPlatforms, contains('pvr'));
+        expect(snapshot.contexts[('catalog-card-1', 'b2')]?.confirmedPlatforms ?? const {}, isNot(contains('pvr')));
       });
     });
 
@@ -333,6 +333,93 @@ void main() {
 
       expect(dataSource.confirmationCalls, hasLength(1));
       expect(dataSource.confirmationCalls.first, ('b1', 'PVR', 'user1'));
+    });
+
+    test('confirmationCount is read from the confirmation row and threaded onto the context', () async {
+      // benefit_platform_confirmation_counts exposes confirmation_count, but
+      // the repository previously discarded it after only checking
+      // isNotEmpty — the UI could never show "confirmed by N users" without
+      // this. Scoped per (catalogCardId, benefitId) like everything else in
+      // this context map, never card-wide.
+      final dataSource = _FakeDataSource(
+        benefits: [
+          _benefitRow(id: 'b1', title: 'Benefit A', valueConfig: {'discount_type': 'percent', 'discount_percent': 25.0}),
+        ],
+        mappings: [
+          {'benefit_id': 'b1', 'card_id': 'catalog-card-1', 'display_priority': 0},
+        ],
+        catalogCards: [
+          {'id': 'catalog-card-1', 'card_name': 'Test Card'},
+        ],
+        confirmations: [
+          {'benefit_id': 'b1', 'platform_key': 'pvr', 'confirmation_count': 12},
+        ],
+      );
+      final repository = MovieDealsSupabaseRepository(dataSource);
+
+      final snapshot = await repository.loadSnapshot(
+        'user1',
+        const MovieTicketRequest(numberOfTickets: 1, pricePerTicket: 300),
+        now: DateTime(2026, 8, 2),
+      );
+      expect(snapshot.contexts[('catalog-card-1', 'b1')]?.confirmationCount, 12);
+    });
+
+    test('a benefit with no confirmation row has a null confirmationCount, never a fabricated 0', () async {
+      final dataSource = _FakeDataSource(
+        benefits: [
+          _benefitRow(id: 'b1', title: 'Benefit A', valueConfig: {'discount_type': 'percent', 'discount_percent': 25.0}),
+        ],
+        mappings: [
+          {'benefit_id': 'b1', 'card_id': 'catalog-card-1', 'display_priority': 0},
+        ],
+        catalogCards: [
+          {'id': 'catalog-card-1', 'card_name': 'Test Card'},
+        ],
+      );
+      final repository = MovieDealsSupabaseRepository(dataSource);
+
+      final snapshot = await repository.loadSnapshot(
+        'user1',
+        const MovieTicketRequest(numberOfTickets: 1, pricePerTicket: 300),
+        now: DateTime(2026, 8, 2),
+      );
+      expect(snapshot.contexts[('catalog-card-1', 'b1')]?.confirmationCount, isNull);
+    });
+
+    test('a confirmation row keyed by platform_key (the real view\'s column) still resolves to a non-empty confirmedPlatforms', () async {
+      // benefit_platform_confirmation_counts (see the CREATE VIEW in
+      // supabase/migrations/20260802100100_benefit_platform_confirmations.sql)
+      // selects benefit_id, platform_key, confirmation_count — there is no
+      // `platform` column on that view. A prior version of the repository
+      // read row['platform'] instead of row['platform_key'], so every real
+      // row failed the `platform == null` guard and was silently dropped —
+      // confirmedPlatforms could never be non-empty from real data,
+      // regardless of how many users had confirmed. This fixture uses the
+      // exact key the real view returns to guard against that regression.
+      final dataSource = _FakeDataSource(
+        benefits: [
+          _benefitRow(id: 'b1', title: 'Benefit A', valueConfig: {'discount_type': 'percent', 'discount_percent': 25.0}),
+        ],
+        mappings: [
+          {'benefit_id': 'b1', 'card_id': 'catalog-card-1', 'display_priority': 0},
+        ],
+        catalogCards: [
+          {'id': 'catalog-card-1', 'card_name': 'Test Card'},
+        ],
+        confirmations: [
+          {'benefit_id': 'b1', 'platform_key': 'pvr', 'confirmation_count': 3},
+        ],
+      );
+      final repository = MovieDealsSupabaseRepository(dataSource);
+
+      final snapshot = await repository.loadSnapshot(
+        'user1',
+        const MovieTicketRequest(numberOfTickets: 1, pricePerTicket: 300),
+        now: DateTime(2026, 8, 2),
+      );
+      expect(snapshot.contexts[('catalog-card-1', 'b1')]?.confirmedPlatforms, isNotEmpty);
+      expect(snapshot.contexts[('catalog-card-1', 'b1')]?.confirmedPlatforms, contains('pvr'));
     });
   });
 }
