@@ -1,4 +1,5 @@
 import 'package:cardcompass/features/auth/screens/login_screen.dart';
+import 'package:cardcompass/features/auth/screens/splash_screen.dart';
 import 'package:cardcompass/core/theme/brand_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -6,7 +7,10 @@ import 'package:flutter_test/flutter_test.dart';
 Widget _testApp({
   bool disableAnimations = false,
   bool isLoading = false,
+  bool callbackFailed = false,
+  Object? error,
   VoidCallback? onGoogleSignIn,
+  VoidCallback? onBackToLanding,
   ValueChanged<String>? onOpenLegal,
 }) {
   return MaterialApp(
@@ -15,13 +19,13 @@ Widget _testApp({
         size: const Size(1440, 1000),
         disableAnimations: disableAnimations,
       ),
-      child: SelectionArea(
-        child: LoginView(
-          isLoading: isLoading,
-          error: null,
-          onGoogleSignIn: onGoogleSignIn ?? () {},
-          onOpenLegal: onOpenLegal ?? (_) {},
-        ),
+      child: LoginView(
+        isLoading: isLoading,
+        callbackFailed: callbackFailed,
+        error: error,
+        onGoogleSignIn: onGoogleSignIn ?? () {},
+        onBackToLanding: onBackToLanding ?? () {},
+        onOpenLegal: onOpenLegal ?? (_) {},
       ),
     ),
   );
@@ -49,6 +53,26 @@ void main() {
     );
     expect(brandSpan.style?.color, BrandColors.reward);
     expect(root.toPlainText(), 'Continue to your\nCardCompass wallet.');
+  });
+
+  testWidgets('login uses bundled font families and available weights', (
+    tester,
+  ) async {
+    await _setSurface(tester, const Size(1440, 1000));
+    await tester.pumpWidget(_testApp());
+    await tester.pump();
+
+    final accessLabel = tester.widget<Text>(
+      find.text('CARDHOLDER ACCESS · PRIVATE'),
+    );
+    expect(accessLabel.style?.fontFamily, 'IBM Plex Mono');
+    expect(accessLabel.style?.fontWeight, FontWeight.w600);
+
+    final folioHeading = tester.widget<Text>(
+      find.text('Your wallet,\nready when you are.'),
+    );
+    expect(folioHeading.style?.fontFamily, 'Fraunces');
+    expect(folioHeading.style?.fontWeight, FontWeight.w600);
   });
 
   testWidgets('desktop login keeps authentication left of the product proof', (
@@ -147,11 +171,81 @@ void main() {
       'Data & Security': '/data-security/',
       'Terms': '/terms/',
     }.entries) {
+      await tester.ensureVisible(find.text(destination.key));
+      await tester.pumpAndSettle();
       await tester.tap(find.text(destination.key));
       await tester.pump();
       expect(opened.last, destination.value);
     }
   });
+
+  testWidgets(
+    'scenario and legal actions keep 44px targets and selected semantics',
+    (tester) async {
+      await _setSurface(tester, const Size(1440, 1000));
+      await tester.pumpWidget(_testApp());
+      await tester.pump();
+
+      final groceries = find.byKey(const Key('login-scenario-Groceries'));
+      expect(tester.getSize(groceries).height, greaterThanOrEqualTo(44));
+      expect(
+        tester.getSemantics(groceries),
+        matchesSemantics(
+          label: 'Groceries recommendation preview',
+          isButton: true,
+          hasSelectedState: true,
+          isSelected: true,
+          hasTapAction: true,
+        ),
+      );
+
+      final privacy = find.byKey(const Key('login-legal-Privacy'));
+      expect(tester.getSize(privacy).height, greaterThanOrEqualTo(44));
+      expect(
+        tester.widget<Text>(find.text('Privacy')).style?.fontSize,
+        greaterThanOrEqualTo(14),
+      );
+    },
+  );
+
+  testWidgets(
+    'status space is reserved and the proof heading never scales down text',
+    (tester) async {
+      await _setSurface(tester, const Size(1440, 1200));
+      await tester.pumpWidget(_testApp());
+      await tester.pump();
+      final idleButtonTop = tester
+          .getTopLeft(find.text('Continue with Google'))
+          .dy;
+      expect(find.byKey(const Key('login-status-slot')), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('proof-heading')),
+          matching: find.byType(FittedBox),
+        ),
+        findsNothing,
+      );
+
+      await tester.pumpWidget(_testApp(error: StateError('network')));
+      await tester.pump();
+      final errorButtonTop = tester
+          .getTopLeft(find.text('Continue with Google'))
+          .dy;
+      expect(errorButtonTop, closeTo(idleButtonTop, 0.1));
+
+      await tester.pumpWidget(
+        MediaQuery(
+          data: const MediaQueryData(
+            size: Size(1440, 1200),
+            textScaler: TextScaler.linear(2),
+          ),
+          child: _testApp(),
+        ),
+      );
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('Google action fires once and is disabled while loading', (
     tester,
@@ -172,6 +266,78 @@ void main() {
     );
     expect(loadingButton.onPressed, isNull);
     expect(signInCount, 1);
+  });
+
+  testWidgets('login card exposes signing-in and failure feedback', (
+    tester,
+  ) async {
+    await _setSurface(tester, const Size(1440, 1000));
+    await tester.pumpWidget(_testApp(isLoading: true));
+    await tester.pump();
+
+    expect(find.text('Signing in…'), findsOneWidget);
+
+    await tester.pumpWidget(_testApp(error: StateError('network')));
+    await tester.pump();
+    expect(
+      find.text('Sign-in failed. Check your connection and try again.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('failed OAuth callback offers a fresh sign-in and landing exit', (
+    tester,
+  ) async {
+    var signInCount = 0;
+    var landingCount = 0;
+    await _setSurface(tester, const Size(1440, 1000));
+    await tester.pumpWidget(
+      _testApp(
+        callbackFailed: true,
+        onGoogleSignIn: () => signInCount++,
+        onBackToLanding: () => landingCount++,
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      find.text(
+        'We couldn\'t finish this sign-in. The link may have expired. Start again.',
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Start sign-in again'));
+    await tester.tap(find.text('Back to landing'));
+    expect(signInCount, 1);
+    expect(landingCount, 1);
+  });
+
+  testWidgets('splash communicates progress before exposing recovery actions', (
+    tester,
+  ) async {
+    var retried = false;
+    var returnedToSignIn = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SplashScreen(
+          onRetry: () => retried = true,
+          onBackToSignIn: () => returnedToSignIn = true,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Securing your session'), findsOneWidget);
+    expect(find.text('Loading your wallet'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 8));
+    expect(find.text('Retry'), findsOneWidget);
+    expect(find.text('Back to sign in'), findsOneWidget);
+
+    await tester.tap(find.text('Retry'));
+    await tester.tap(find.text('Back to sign in'));
+    expect(retried, isTrue);
+    expect(returnedToSignIn, isTrue);
   });
 
   testWidgets('product proof preserves the landing receipt specification', (
@@ -217,22 +383,12 @@ void main() {
 
       expect(proof.left, closeTo(921, 1));
       expect(proof.top, closeTo(205, 1));
-      expect(
-        {
-          'headingTop': heading.top,
-          'headingHeight': heading.height,
-          'tabsTop': tabs.top,
-          'tabsHeight': tabs.height,
-        },
-        {
-          'headingTop': closeTo(221, 1),
-          'headingHeight': closeTo(89, 1),
-          'tabsTop': closeTo(328, 1),
-          'tabsHeight': closeTo(38, 1),
-        },
-      );
+      expect(heading.top, closeTo(221, 1));
+      expect(heading.height, greaterThanOrEqualTo(89));
+      expect(tabs.top, greaterThan(heading.bottom));
+      expect(tabs.height, greaterThanOrEqualTo(44));
       expect(receipt.left, closeTo(1002, 1));
-      expect(receipt.top, closeTo(378, 1));
+      expect(receipt.top, greaterThan(tabs.bottom));
     },
   );
 

@@ -19,6 +19,7 @@
 - Respect user text scaling through 200%; minimum non-decorative text is 12 logical/CSS pixels and actionable/body copy is at least 14.
 - Interactive targets are at least 44×44 logical/CSS pixels.
 - Preserve landing SEO, attribution, privacy-safe analytics, waitlist behavior, and natural-aspect-ratio imagery.
+- Allow full-width authenticated data views when the extra space improves comparison, charts, tables, or card scanning; keep prose, forms, legal copy, and explanations on readable measures.
 - Do not modify or commit `lib/core/services/gmail_sync_service.dart` or `test/core/services/gmail_sync_service_test.dart`.
 - Each task uses test-first red/green verification and commits only its owned files.
 
@@ -138,6 +139,7 @@ git commit -m "feat: add accessible semantic app themes"
 
 **Interfaces:**
 - Produces: `BrandPageHeader`, `BrandMetric`, `BrandActionRow`, `BrandStateView`, `BrandEvidenceStrip`, and `ResponsiveValueRow`.
+- Produces: `BrandContentFrame` with constrained and full-width data modes.
 - Consumes: `AppTheme.work`, brand tokens, and Material semantics.
 
 - [ ] **Step 1: Write failing component tests**
@@ -157,6 +159,16 @@ testWidgets('disabled action row announces unavailable and has no chevron',
       child: const BrandActionRow(title: 'Notifications', unavailable: true));
   expect(find.text('Coming soon'), findsOneWidget);
   expect(find.byIcon(Icons.chevron_right_rounded), findsNothing);
+});
+
+testWidgets('content frame can expand data views without stretching prose',
+    (tester) async {
+  await pumpBrand(tester, width: 1600,
+      child: const BrandContentFrame(
+        mode: BrandContentMode.fullWidthData,
+        child: Text('Data view'),
+      ));
+  expect(tester.getSize(find.byType(BrandContentFrame)).width, greaterThan(1200));
 });
 ```
 

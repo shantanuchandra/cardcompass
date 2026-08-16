@@ -10,9 +10,13 @@ void main() {
             ).readAsStringSync(),
           )
           .join('\n');
-  test('transaction UI uses ledger and mono evidence roles', () {
-    expect(sources, contains('BrandColors.ledger'));
-    expect(sources, contains("fontFamily: 'IBM Plex Mono'"));
-    expect(sources, isNot(contains('GoogleFonts.inter')));
-  });
+  test(
+    'transaction UI uses the shared ledger metric and mono evidence roles',
+    () {
+      expect(sources, contains('BrandSurfaceTone.ledger'));
+      expect(sources, contains('BrandMetric('));
+      expect(sources, contains("fontFamily: 'IBM Plex Mono'"));
+      expect(sources, isNot(contains('GoogleFonts.inter')));
+    },
+  );
 }

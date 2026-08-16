@@ -239,7 +239,7 @@ function renderMovieOfferResult(documentRef, output, result) {
   );
 }
 
-function setupBestCard(form) {
+export function setupBestCard(form) {
   const output = document.getElementById(form.dataset.output);
   output.hidden = false;
   form.addEventListener('submit', (event) => {
@@ -258,7 +258,7 @@ function setupBestCard(form) {
   });
 }
 
-function setupMilestone(form) {
+export function setupMilestone(form) {
   const output = document.getElementById(form.dataset.output);
   output.hidden = false;
   form.addEventListener('submit', (event) => {
@@ -275,7 +275,7 @@ function setupMilestone(form) {
   });
 }
 
-function setupMovieOffer(form) {
+export function setupMovieOffer(form) {
   const output = document.getElementById(form.dataset.output);
   output.hidden = false;
   form.addEventListener('submit', (event) => {

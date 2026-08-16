@@ -60,7 +60,7 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
         children: [
           _buildHeader(),
           const SizedBox(height: 24),
-          _buildInputForm(),
+          _buildInputForm(context),
           const SizedBox(height: 24),
           _buildOptimizeButton(),
           const SizedBox(height: 24),
@@ -76,6 +76,7 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Icon(
               Icons.local_movies_outlined,
@@ -83,20 +84,22 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
               color: BrandColors.focusDark,
             ),
             const SizedBox(width: 12),
-            Text(
-              'MOVIE TICKET OPTIMIZER',
-              style: const TextStyle(
-                fontFamily: 'Fraunces',
-                fontWeight: FontWeight.w600,
-                fontSize: 22,
-                color: BrandColors.ink,
+            Expanded(
+              child: Text(
+                'Movie ticket optimizer',
+                style: const TextStyle(
+                  fontFamily: 'Fraunces',
+                  fontWeight: FontWeight.w600,
+                  fontSize: 22,
+                  color: BrandColors.ink,
+                ),
               ),
             ),
           ],
         ),
         const SizedBox(height: 8),
         Text(
-          'Query ticket combinations across major platforms and calculate optimal savings route.',
+          'Answer a few quick questions and we’ll find the clearest eligible saving.',
           style: TextStyle(
             fontFamily: 'Manrope',
             color: BrandColors.mutedInk,
@@ -111,20 +114,21 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
             color: BrandColors.reward,
             borderRadius: BorderRadius.circular(BrandRadius.label),
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
+          child: Wrap(
+            spacing: 4,
+            runSpacing: 2,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               const Icon(
                 Icons.confirmation_number_outlined,
                 size: 14,
                 color: BrandColors.ink,
               ),
-              const SizedBox(width: 4),
               Text(
-                'RULES-BASED OFFER CHECK',
+                'Offers checked against current rules',
                 style: TextStyle(
                   fontFamily: 'Manrope',
-                  fontSize: 9,
+                  fontSize: 12,
                   color: BrandColors.ink,
                   fontWeight: FontWeight.bold,
                   letterSpacing: 0.5,
@@ -137,7 +141,7 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
     );
   }
 
-  Widget _buildInputForm() {
+  Widget _buildInputForm(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
         color: BrandColors.paper,
@@ -150,77 +154,74 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'TICKET SPECIFICATIONS',
+              'Tell us about your booking',
               style: TextStyle(
                 fontFamily: 'Manrope',
                 fontWeight: FontWeight.bold,
                 color: BrandColors.ink,
-                fontSize: 11,
-                letterSpacing: 1.0,
+                fontSize: 14,
               ),
             ),
             const SizedBox(height: 18),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _ticketCountController,
-                    keyboardType: TextInputType.number,
-                    style: TextStyle(
-                      fontFamily: 'Manrope',
-                      color: BrandColors.ink,
-                    ),
-                    inputFormatters: [
-                      FilteringTextInputFormatter.digitsOnly,
-                      LengthLimitingTextInputFormatter(2),
-                    ],
-                    decoration: const InputDecoration(
-                      labelText: 'Tickets',
-                      prefixIcon: Icon(
-                        Icons.confirmation_number_outlined,
-                        color: BrandColors.focusDark,
-                      ),
-                    ),
-                    onChanged: (_) => setState(() {}),
+            _responsivePair(
+              context: context,
+              first: Container(
+                key: const Key('ticket-count-question'),
+                child: TextField(
+                  controller: _ticketCountController,
+                  keyboardType: TextInputType.number,
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    color: BrandColors.ink,
                   ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: TextField(
-                    controller: _priceController,
-                    keyboardType: TextInputType.number,
-                    style: TextStyle(
-                      fontFamily: 'Manrope',
-                      color: BrandColors.ink,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                    LengthLimitingTextInputFormatter(2),
+                  ],
+                  decoration: const InputDecoration(
+                    labelText: 'How many tickets?',
+                    prefixIcon: Icon(
+                      Icons.confirmation_number_outlined,
+                      color: BrandColors.focusDark,
                     ),
-                    inputFormatters: [
-                      FilteringTextInputFormatter.allow(RegExp(r'[0-9]')),
-                      LengthLimitingTextInputFormatter(5),
-                    ],
-                    decoration: const InputDecoration(
-                      labelText: 'Price (₹)',
-                      prefixIcon: Icon(
-                        Icons.currency_rupee,
-                        color: BrandColors.focusDark,
-                      ),
-                    ),
-                    onChanged: (_) => setState(() {}),
                   ),
+                  onChanged: (_) => setState(() {}),
                 ),
-              ],
+              ),
+              second: Container(
+                key: const Key('ticket-price-question'),
+                child: TextField(
+                  controller: _priceController,
+                  keyboardType: TextInputType.number,
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    color: BrandColors.ink,
+                  ),
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp(r'[0-9]')),
+                    LengthLimitingTextInputFormatter(5),
+                  ],
+                  decoration: const InputDecoration(
+                    labelText: 'Price per ticket',
+                    prefixIcon: Icon(
+                      Icons.currency_rupee,
+                      color: BrandColors.focusDark,
+                    ),
+                  ),
+                  onChanged: (_) => setState(() {}),
+                ),
+              ),
             ),
             const SizedBox(height: 16),
-            _buildQuickChips(),
+            _buildQuickChips(context),
             const SizedBox(height: 20),
-            Row(
-              children: [
-                Expanded(child: _buildPlatformDropdown()),
-                const SizedBox(width: 16),
-                Expanded(child: _buildCinemaDropdown()),
-              ],
+            _responsivePair(
+              context: context,
+              first: _buildPlatformDropdown(),
+              second: _buildCinemaDropdown(),
             ),
             const SizedBox(height: 20),
-            _buildTotalAmount(),
+            _buildTotalAmount(context),
             const SizedBox(height: 12),
             Row(
               children: [
@@ -236,7 +237,7 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
                     style: TextStyle(
                       fontFamily: 'Manrope',
                       color: BrandColors.mutedInk,
-                      fontSize: 10,
+                      fontSize: 12,
                     ),
                   ),
                 ),
@@ -248,13 +249,37 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
     );
   }
 
+  Widget _responsivePair({
+    required BuildContext context,
+    required Widget first,
+    required Widget second,
+  }) {
+    final shouldStack =
+        MediaQuery.sizeOf(context).width < 600 ||
+        MediaQuery.textScalerOf(context).scale(14) >= 21;
+    if (shouldStack) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [first, const SizedBox(height: 16), second],
+      );
+    }
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(child: first),
+        const SizedBox(width: 16),
+        Expanded(child: second),
+      ],
+    );
+  }
+
   Widget _buildPlatformDropdown() {
     return DropdownButtonFormField<String>(
       initialValue: _selectedPlatform,
       isExpanded: true,
       dropdownColor: BrandColors.paper,
       decoration: const InputDecoration(
-        labelText: 'Platform',
+        labelText: 'Where are you booking?',
         prefixIcon: Icon(
           Icons.smartphone_outlined,
           color: BrandColors.focusDark,
@@ -264,11 +289,11 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
         DropdownMenuItem<String>(
           value: null,
           child: Text(
-            'ANY PLATFORM',
+            'Any platform',
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               fontFamily: 'Manrope',
-              fontSize: 10,
+              fontSize: 14,
               color: BrandColors.mutedInk,
             ),
           ),
@@ -277,11 +302,11 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
           (p) => DropdownMenuItem<String>(
             value: p,
             child: Text(
-              p.toUpperCase(),
+              p,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontFamily: 'Manrope',
-                fontSize: 10,
+                fontSize: 14,
                 color: BrandColors.ink,
               ),
             ),
@@ -298,7 +323,7 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
       isExpanded: true,
       dropdownColor: BrandColors.paper,
       decoration: const InputDecoration(
-        labelText: 'Cinema',
+        labelText: 'Which cinema?',
         prefixIcon: Icon(
           Icons.theater_comedy_outlined,
           color: BrandColors.focusDark,
@@ -308,11 +333,11 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
         DropdownMenuItem<String>(
           value: null,
           child: Text(
-            'ANY CINEMA',
+            'Any cinema',
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               fontFamily: 'Manrope',
-              fontSize: 10,
+              fontSize: 14,
               color: BrandColors.mutedInk,
             ),
           ),
@@ -321,11 +346,11 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
           (c) => DropdownMenuItem<String>(
             value: c,
             child: Text(
-              c.toUpperCase(),
+              c,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontFamily: 'Manrope',
-                fontSize: 10,
+                fontSize: 14,
                 color: BrandColors.ink,
               ),
             ),
@@ -336,68 +361,61 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
     );
   }
 
-  Widget _buildQuickChips() {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          child: Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: _ticketOptions.map((n) {
-              final selected = int.tryParse(_ticketCountController.text) == n;
-              return ChoiceChip(
-                label: Text(
-                  '$n TICKETS',
-                  style: TextStyle(
-                    fontFamily: 'Manrope',
-                    fontSize: 9,
-                    fontWeight: FontWeight.bold,
-                    color: selected ? Colors.black : BrandColors.mutedInk,
-                  ),
-                ),
-                selectedColor: BrandColors.focusDark,
-                backgroundColor: BrandColors.paper,
-                selected: selected,
-                showCheckmark: false,
-                onSelected: (_) =>
-                    setState(() => _ticketCountController.text = '$n'),
-              );
-            }).toList(),
+  Widget _buildQuickChips(BuildContext context) {
+    final ticketChips = Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: _ticketOptions.map((n) {
+        final selected = int.tryParse(_ticketCountController.text) == n;
+        return ChoiceChip(
+          label: Text(
+            '$n TICKETS',
+            style: TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: selected ? Colors.black : BrandColors.mutedInk,
+            ),
           ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: _priceOptions.map((p) {
-              final selected =
-                  double.tryParse(_priceController.text) == p.toDouble();
-              return ChoiceChip(
-                label: Text(
-                  '₹$p',
-                  style: TextStyle(
-                    fontFamily: 'Manrope',
-                    fontSize: 9,
-                    fontWeight: FontWeight.bold,
-                    color: selected ? Colors.black : BrandColors.mutedInk,
-                  ),
-                ),
-                selectedColor: BrandColors.focusDark,
-                backgroundColor: BrandColors.paper,
-                selected: selected,
-                showCheckmark: false,
-                onSelected: (_) => setState(() => _priceController.text = '$p'),
-              );
-            }).toList(),
+          selectedColor: BrandColors.focusDark,
+          backgroundColor: BrandColors.paper,
+          selected: selected,
+          showCheckmark: false,
+          onSelected: (_) => setState(() => _ticketCountController.text = '$n'),
+        );
+      }).toList(),
+    );
+    final priceChips = Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: _priceOptions.map((p) {
+        final selected = double.tryParse(_priceController.text) == p.toDouble();
+        return ChoiceChip(
+          label: Text(
+            '₹$p',
+            style: TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: selected ? Colors.black : BrandColors.mutedInk,
+            ),
           ),
-        ),
-      ],
+          selectedColor: BrandColors.focusDark,
+          backgroundColor: BrandColors.paper,
+          selected: selected,
+          showCheckmark: false,
+          onSelected: (_) => setState(() => _priceController.text = '$p'),
+        );
+      }).toList(),
+    );
+    return _responsivePair(
+      context: context,
+      first: ticketChips,
+      second: priceChips,
     );
   }
 
-  Widget _buildTotalAmount() {
+  Widget _buildTotalAmount(BuildContext context) {
     final tickets = int.tryParse(_ticketCountController.text) ?? 0;
     final price = double.tryParse(_priceController.text) ?? 0.0;
     final total = tickets * price;
@@ -408,20 +426,22 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
         borderRadius: BorderRadius.circular(BrandRadius.card),
         border: Border.all(color: BrandColors.paperDeep),
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final stack =
+              constraints.maxWidth < 600 ||
+              MediaQuery.textScalerOf(context).scale(14) >= 21;
+          final label = Text(
             'TOTAL BASE AMOUNT:',
             style: TextStyle(
               fontFamily: 'Manrope',
               fontWeight: FontWeight.bold,
               color: BrandColors.mutedInk,
-              fontSize: 10,
+              fontSize: 12,
               letterSpacing: 0.5,
             ),
-          ),
-          Text(
+          );
+          final amount = Text(
             total > 0 ? '₹${total.toStringAsFixed(0)}' : '₹0',
             style: TextStyle(
               fontFamily: 'Manrope',
@@ -429,8 +449,17 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
               color: BrandColors.focusDark,
               fontSize: 16,
             ),
-          ),
-        ],
+          );
+          return stack
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [label, const SizedBox(height: 4), amount],
+                )
+              : Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [label, amount],
+                );
+        },
       ),
     );
   }
@@ -441,7 +470,7 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
     final total = tickets * price;
     return SizedBox(
       width: double.infinity,
-      child: ElevatedButton.icon(
+      child: ElevatedButton(
         onPressed: _formValid
             ? () => setState(() {
                 _submittedRequest = MovieTicketRequest(
@@ -452,19 +481,6 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
                 );
               })
             : null,
-        icon: const Icon(Icons.bolt, color: Colors.black, size: 16),
-        label: Text(
-          total > 0
-              ? 'OPTIMIZE DEALS • ₹${total.toStringAsFixed(0)}'
-              : 'OPTIMIZE DEALS',
-          style: TextStyle(
-            fontFamily: 'Manrope',
-            fontSize: 12,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1.0,
-            color: Colors.black,
-          ),
-        ),
         style: ElevatedButton.styleFrom(
           backgroundColor: BrandColors.focusDark,
           disabledBackgroundColor: BrandColors.paperDeep,
@@ -472,6 +488,28 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(BrandRadius.card),
           ),
+        ),
+        child: Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 8,
+          runSpacing: 4,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            const Icon(Icons.bolt, color: Colors.black, size: 16),
+            Text(
+              total > 0
+                  ? 'Find my best option • ₹${total.toStringAsFixed(0)}'
+                  : 'Find my best option',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.5,
+                color: Colors.black,
+              ),
+            ),
+          ],
         ),
       ),
     );

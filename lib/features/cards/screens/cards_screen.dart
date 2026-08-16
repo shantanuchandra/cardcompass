@@ -4,23 +4,20 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/brand_tokens.dart';
-import '../../../core/providers/repository_providers.dart';
-import '../../../core/providers/supabase_provider.dart';
+import '../../../core/theme/brand_components.dart';
 import '../../../shared/models/user_card.dart';
-import 'card_detail_screen.dart';
-
-final _userCardsProvider = FutureProvider<List<UserCard>>((ref) async {
-  final user = ref.watch(currentUserProvider);
-  if (user == null) return [];
-  return ref.read(cardsRepositoryProvider).getUserCards(user.id);
-});
+import '../providers/cards_provider.dart';
 
 class CardsScreen extends ConsumerWidget {
   const CardsScreen({super.key});
 
+  Future<void> _openAddCard(BuildContext context) async {
+    await context.push<bool>('/app/cards/add');
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final cardsAsync = ref.watch(_userCardsProvider);
+    final cardsAsync = ref.watch(userCardsProvider);
 
     return Scaffold(
       backgroundColor: BrandColors.paper,
@@ -36,34 +33,54 @@ class CardsScreen extends ConsumerWidget {
         actions: [
           IconButton(
             icon: const Icon(Icons.add_rounded),
-            onPressed: () => context.go('/app/cards/add'),
+            onPressed: () => _openAddCard(context),
             tooltip: 'Add card',
           ),
         ],
       ),
       body: cardsAsync.when(
-        loading: () => const Center(
-          child: CircularProgressIndicator(color: BrandColors.focusDark),
+        loading: () => const BrandLoadingSkeleton(
+          key: Key('cards-loading'),
+          semanticLabel: 'Loading your cards',
+          minHeight: 280,
         ),
-        error: (e, _) => Center(
-          child: Text(
-            'Error: $e',
-            style: TextStyle(fontFamily: 'Manrope', color: BrandColors.error),
+        error: (_, _) => Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Could not load your cards.',
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 14,
+                  color: BrandColors.error,
+                ),
+              ),
+              TextButton(
+                onPressed: () => ref.invalidate(userCardsProvider),
+                child: const Text('Try again'),
+              ),
+            ],
           ),
         ),
         data: (cards) => cards.isEmpty
-            ? _EmptyCards()
-            : RefreshIndicator(
-                color: BrandColors.focusDark,
-                backgroundColor: BrandColors.paper,
-                onRefresh: () => ref.refresh(_userCardsProvider.future),
-                child: ListView.separated(
-                  padding: const EdgeInsets.all(BrandSpacing.md),
-                  itemCount: cards.length,
-                  separatorBuilder: (_, _a) =>
-                      const SizedBox(height: BrandSpacing.sm),
-                  itemBuilder: (_, i) =>
-                      _CardListTile(card: cards[i], ref: ref),
+            ? _EmptyCards(onAddCard: () => _openAddCard(context))
+            : BrandContentFrame(
+                mode: BrandContentMode.fullWidthData,
+                child: RefreshIndicator(
+                  color: BrandColors.focusDark,
+                  backgroundColor: BrandColors.paper,
+                  onRefresh: () => ref.refresh(userCardsProvider.future),
+                  child: ListView.separated(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: BrandSpacing.md,
+                    ),
+                    itemCount: cards.length,
+                    separatorBuilder: (_, index) =>
+                        const SizedBox(height: BrandSpacing.sm),
+                    itemBuilder: (_, i) =>
+                        _CardListTile(card: cards[i], ref: ref),
+                  ),
                 ),
               ),
       ),
@@ -79,9 +96,7 @@ class _CardListTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return InkWell(
-      onTap: () => Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => CardDetailScreen(cardId: card.id)),
-      ),
+      onTap: () => context.push('/app/cards/${Uri.encodeComponent(card.id)}'),
       borderRadius: BorderRadius.circular(BrandRadius.overlay),
       child: Container(
         padding: const EdgeInsets.all(BrandSpacing.md),
@@ -93,26 +108,9 @@ class _CardListTile extends StatelessWidget {
           ),
         ),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: BrandColors.paperDeep,
-                borderRadius: BorderRadius.circular(BrandRadius.control),
-                border: Border(
-                  left: BorderSide(
-                    color: AppTheme.issuerColor(card.bankCode),
-                    width: 4,
-                  ),
-                ),
-              ),
-              child: const Icon(
-                Icons.credit_card,
-                size: 22,
-                color: BrandColors.ink,
-              ),
-            ),
+            CardIdentityMark(bank: card.bank, bankCode: card.bankCode),
             const SizedBox(width: BrandSpacing.md),
             Expanded(
               child: Column(
@@ -127,38 +125,43 @@ class _CardListTile extends StatelessWidget {
                       color: BrandColors.ink,
                     ),
                   ),
+                  const SizedBox(height: BrandSpacing.xs),
                   Text(
                     card.lastFourDigits != null
-                        ? '••••  ${card.lastFourDigits}'
-                        : card.bank ?? '',
+                        ? '${card.bank ?? 'Issuer'} · •••• ${card.lastFourDigits}'
+                        : card.bank ?? 'Issuer not available',
                     style: TextStyle(
                       fontFamily: 'Manrope',
                       fontSize: 12,
                       color: BrandColors.mutedInk,
                     ),
                   ),
+                  const SizedBox(height: BrandSpacing.xs),
+                  Text(
+                    card.isActive ? 'Active' : 'Inactive',
+                    style: TextStyle(
+                      fontFamily: 'Manrope',
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: card.isActive
+                          ? BrandColors.successInk
+                          : BrandColors.mutedInk,
+                    ),
+                  ),
+                  if (card.creditLimit != null) ...[
+                    const SizedBox(height: BrandSpacing.xs),
+                    Text(
+                      '${NumberFormat.compactCurrency(locale: 'en_IN', symbol: '₹', decimalDigits: 0).format(card.creditLimit)} limit',
+                      style: TextStyle(
+                        fontFamily: 'IBM Plex Mono',
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: BrandColors.ink,
+                      ),
+                    ),
+                  ],
                 ],
               ),
-            ),
-            if (card.creditLimit != null)
-              Text(
-                NumberFormat.compactCurrency(
-                  locale: 'en_IN',
-                  symbol: '₹',
-                  decimalDigits: 0,
-                ).format(card.creditLimit),
-                style: TextStyle(
-                  fontFamily: 'Manrope',
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: BrandColors.ink,
-                ),
-              ),
-            const SizedBox(width: BrandSpacing.xs),
-            const Icon(
-              Icons.chevron_right_rounded,
-              size: 18,
-              color: BrandColors.mutedInk,
             ),
           ],
         ),
@@ -167,9 +170,61 @@ class _CardListTile extends StatelessWidget {
   }
 }
 
-class _EmptyCards extends ConsumerWidget {
+class CardIdentityMark extends StatelessWidget {
+  const CardIdentityMark({
+    super.key,
+    required this.bank,
+    required this.bankCode,
+  });
+
+  final String? bank;
+  final String bankCode;
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
+    final label = (bank ?? '').trim();
+    final monogram = label.isEmpty
+        ? 'CC'
+        : label
+              .split(RegExp(r'\s+'))
+              .where((part) => part.isNotEmpty)
+              .take(2)
+              .map((part) => part.substring(0, 1).toUpperCase())
+              .join();
+    return Semantics(
+      label: label.isEmpty ? 'Card issuer' : '$label card issuer',
+      child: Container(
+        width: 48,
+        height: 48,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: AppTheme.issuerColor(bankCode).withValues(alpha: 0.14),
+          borderRadius: BorderRadius.circular(BrandRadius.control),
+          border: Border.all(
+            color: AppTheme.issuerColor(bankCode).withValues(alpha: 0.4),
+          ),
+        ),
+        child: Text(
+          monogram,
+          style: TextStyle(
+            fontFamily: 'IBM Plex Mono',
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+            color: BrandColors.ink,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptyCards extends StatelessWidget {
+  const _EmptyCards({required this.onAddCard});
+
+  final VoidCallback onAddCard;
+
+  @override
+  Widget build(BuildContext context) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(BrandSpacing.xl),
@@ -204,7 +259,7 @@ class _EmptyCards extends ConsumerWidget {
             ),
             const SizedBox(height: BrandSpacing.xl),
             ElevatedButton.icon(
-              onPressed: () => context.go('/app/cards/add'),
+              onPressed: onAddCard,
               icon: const Icon(Icons.add, size: 18),
               label: const Text('Add Card'),
             ),

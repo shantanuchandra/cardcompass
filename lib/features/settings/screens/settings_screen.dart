@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../core/theme/brand_tokens.dart';
+import 'package:url_launcher/url_launcher.dart';
+
 import '../../../core/providers/supabase_provider.dart';
+import '../../../core/theme/brand_components.dart';
+import '../../../core/theme/brand_tokens.dart';
 import '../../auth/providers/auth_provider.dart';
 
 class SettingsScreen extends ConsumerWidget {
@@ -17,99 +20,13 @@ class SettingsScreen extends ConsumerWidget {
 
     return Scaffold(
       backgroundColor: BrandColors.paper,
-      appBar: AppBar(
-        title: Text(
-          'Settings',
-          style: TextStyle(
-            fontFamily: 'Manrope',
-            fontSize: 20,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ),
+      appBar: AppBar(title: const Text('Settings')),
       body: ListView(
         padding: const EdgeInsets.all(BrandSpacing.md),
         children: [
-          // Profile card
-          Container(
-            padding: const EdgeInsets.all(BrandSpacing.md),
-            decoration: BoxDecoration(
-              color: BrandColors.paper,
-              borderRadius: BorderRadius.circular(BrandRadius.overlay),
-              border: Border.all(
-                color: BrandColors.mutedInk.withValues(alpha: 0.12),
-              ),
-            ),
-            child: Row(
-              children: [
-                CircleAvatar(
-                  radius: 28,
-                  backgroundColor: BrandColors.paperDeep,
-                  backgroundImage: avatar != null ? NetworkImage(avatar) : null,
-                  child: avatar == null
-                      ? Text(
-                          name[0].toUpperCase(),
-                          style: TextStyle(
-                            fontFamily: 'Manrope',
-                            fontSize: 20,
-                            fontWeight: FontWeight.w700,
-                            color: BrandColors.focusDark,
-                          ),
-                        )
-                      : null,
-                ),
-                const SizedBox(width: BrandSpacing.md),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        name,
-                        style: TextStyle(
-                          fontFamily: 'Manrope',
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                          color: BrandColors.ink,
-                        ),
-                      ),
-                      Text(
-                        email,
-                        style: TextStyle(
-                          fontFamily: 'Manrope',
-                          fontSize: 12,
-                          color: BrandColors.mutedInk,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
+          _ProfileCard(name: name, email: email, avatar: avatar),
           const SizedBox(height: BrandSpacing.lg),
-
-          _SettingsTile(
-            icon: Icons.notifications_outlined,
-            title: 'Notifications',
-            subtitle: 'Bill reminders, reward alerts',
-            onTap: () {},
-          ),
-          _SettingsTile(
-            icon: Icons.security_outlined,
-            title: 'Privacy & Security',
-            onTap: () {},
-          ),
-          _SettingsTile(
-            icon: Icons.help_outline_rounded,
-            title: 'Help & Support',
-            onTap: () {},
-          ),
-          _SettingsTile(
-            icon: Icons.info_outline_rounded,
-            title: 'About CardCompass',
-            subtitle: 'Version 2.0.0',
-            onTap: () {},
-          ),
+          const SettingsActionList(),
           const SizedBox(height: BrandSpacing.lg),
           SizedBox(
             width: double.infinity,
@@ -118,21 +35,9 @@ class SettingsScreen extends ConsumerWidget {
                 final confirm = await showDialog<bool>(
                   context: context,
                   builder: (_) => AlertDialog(
-                    title: Text(
-                      'Sign out?',
-                      style: TextStyle(
-                        fontFamily: 'Manrope',
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    content: Text(
+                    title: const Text('Sign out?'),
+                    content: const Text(
                       'You\'ll need to sign in again to access your data.',
-                      style: TextStyle(
-                        fontFamily: 'Manrope',
-                        fontSize: 14,
-                        color: BrandColors.mutedInk,
-                      ),
                     ),
                     actions: [
                       TextButton(
@@ -141,14 +46,7 @@ class SettingsScreen extends ConsumerWidget {
                       ),
                       TextButton(
                         onPressed: () => Navigator.pop(context, true),
-                        child: Text(
-                          'Sign out',
-                          style: TextStyle(
-                            fontFamily: 'Manrope',
-                            color: BrandColors.error,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
+                        child: const Text('Sign out'),
                       ),
                     ],
                   ),
@@ -157,21 +55,11 @@ class SettingsScreen extends ConsumerWidget {
                   await ref.read(authNotifierProvider.notifier).signOut();
                 }
               },
-              icon: const Icon(
-                Icons.logout_rounded,
-                size: 18,
-                color: BrandColors.error,
-              ),
-              label: Text(
-                'Sign out',
-                style: TextStyle(
-                  fontFamily: 'Manrope',
-                  color: BrandColors.error,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
+              icon: const Icon(Icons.logout_rounded, size: 18),
+              label: const Text('Sign out'),
               style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: BrandColors.error, width: 1),
+                foregroundColor: BrandColors.error,
+                side: const BorderSide(color: BrandColors.error),
                 minimumSize: const Size(0, 48),
               ),
             ),
@@ -182,68 +70,121 @@ class SettingsScreen extends ConsumerWidget {
   }
 }
 
-class _SettingsTile extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String? subtitle;
-  final VoidCallback onTap;
-
-  const _SettingsTile({
-    required this.icon,
-    required this.title,
-    this.subtitle,
-    required this.onTap,
+class _ProfileCard extends StatelessWidget {
+  const _ProfileCard({
+    required this.name,
+    required this.email,
+    required this.avatar,
   });
 
+  final String name;
+  final String email;
+  final String? avatar;
+
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: BrandSpacing.xs + 2),
-      child: ListTile(
-        onTap: onTap,
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: BrandSpacing.md,
-          vertical: BrandSpacing.xs,
+  Widget build(BuildContext context) => BrandSurface(
+    padding: const EdgeInsets.all(BrandSpacing.md),
+    child: Row(
+      children: [
+        CircleAvatar(
+          radius: 28,
+          backgroundColor: BrandColors.paperDeep,
+          backgroundImage: avatar != null ? NetworkImage(avatar!) : null,
+          child: avatar == null
+              ? Text(
+                  name[0].toUpperCase(),
+                  style: const TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    color: BrandColors.focusDark,
+                  ),
+                )
+              : null,
         ),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(BrandRadius.card),
-          side: BorderSide(color: BrandColors.mutedInk.withValues(alpha: 0.08)),
-        ),
-        tileColor: BrandColors.paper,
-        leading: Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(
-            color: BrandColors.paperDeep,
-            borderRadius: BorderRadius.circular(BrandRadius.control),
+        const SizedBox(width: BrandSpacing.md),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(name, style: Theme.of(context).textTheme.titleMedium),
+              if (email.isNotEmpty)
+                Text(email, style: Theme.of(context).textTheme.bodySmall),
+            ],
           ),
-          child: Icon(icon, size: 18, color: BrandColors.mutedInk),
         ),
-        title: Text(
-          title,
-          style: TextStyle(
-            fontFamily: 'Manrope',
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
-            color: BrandColors.ink,
-          ),
-        ),
-        subtitle: subtitle != null
-            ? Text(
-                subtitle!,
-                style: TextStyle(
-                  fontFamily: 'Manrope',
-                  fontSize: 12,
-                  color: BrandColors.mutedInk,
-                ),
-              )
-            : null,
-        trailing: const Icon(
-          Icons.chevron_right_rounded,
-          size: 18,
-          color: BrandColors.mutedInk,
-        ),
-      ),
+      ],
+    ),
+  );
+}
+
+/// Product settings with an explicit outcome for every visible row.
+class SettingsActionList extends StatelessWidget {
+  const SettingsActionList({super.key, this.onOpenUri});
+
+  final Future<bool> Function(Uri uri)? onOpenUri;
+
+  Uri _siteUri(String path) => Uri.base.resolve(path);
+
+  Future<void> _open(String uri) async {
+    final destination = uri.startsWith('mailto:')
+        ? Uri.parse(uri)
+        : _siteUri(uri);
+    await (onOpenUri?.call(destination) ??
+        launchUrl(destination, mode: LaunchMode.externalApplication));
+  }
+
+  void _showAbout(BuildContext context) {
+    showAboutDialog(
+      context: context,
+      applicationName: 'CardCompass',
+      applicationVersion: '2.0.0',
+      applicationLegalese:
+          'Understand the calculation behind every recommendation.',
     );
   }
+
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      const BrandActionRow(
+        title: 'Notifications',
+        description: 'Bill reminders and reward alerts',
+        leading: Icon(Icons.notifications_outlined),
+        unavailable: true,
+      ),
+      BrandActionRow(
+        title: 'Privacy',
+        description: 'How CardCompass handles your information',
+        leading: const Icon(Icons.privacy_tip_outlined),
+        onTap: () => _open('/privacy/'),
+      ),
+      BrandActionRow(
+        title: 'Data & Security',
+        description: 'Our data and account safeguards',
+        leading: const Icon(Icons.security_outlined),
+        onTap: () => _open('/data-security/'),
+      ),
+      BrandActionRow(
+        title: 'Terms',
+        description: 'Read the CardCompass terms',
+        leading: const Icon(Icons.description_outlined),
+        onTap: () => _open('/terms/'),
+      ),
+      BrandActionRow(
+        title: 'Help & Support',
+        description: 'Email the CardCompass support team',
+        leading: const Icon(Icons.help_outline_rounded),
+        onTap: () => _open(
+          'mailto:support@cardcompass.in?subject=CardCompass%20support',
+        ),
+      ),
+      BrandActionRow(
+        title: 'About',
+        description: 'CardCompass version information',
+        leading: const Icon(Icons.info_outline_rounded),
+        onTap: () => _showAbout(context),
+      ),
+    ],
+  );
 }

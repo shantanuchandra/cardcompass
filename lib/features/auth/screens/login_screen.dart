@@ -3,10 +3,10 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/theme/brand_tokens.dart';
+import '../../../core/theme/app_theme.dart';
 import '../providers/auth_provider.dart';
 
 class LoginScreen extends ConsumerWidget {
@@ -15,6 +15,9 @@ class LoginScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final auth = ref.watch(authNotifierProvider);
+    final callbackFailed =
+        Uri.base.queryParameters.containsKey('code') &&
+        auth.valueOrNull == AuthStatus.unauthenticated;
     ref.listen(authNotifierProvider, (_, next) {
       if (next.hasError) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -22,13 +25,19 @@ class LoginScreen extends ConsumerWidget {
         );
       }
     });
-    return LoginView(
-      isLoading: auth.isLoading,
-      error: auth.error,
-      onGoogleSignIn: () =>
-          ref.read(authNotifierProvider.notifier).signInWithGoogle(),
-      onOpenLegal: (path) =>
-          launchUrl(Uri.parse(path), webOnlyWindowName: '_blank'),
+    return Theme(
+      data: AppTheme.marketing,
+      child: LoginView(
+        isLoading: auth.isLoading,
+        callbackFailed: callbackFailed,
+        error: auth.error,
+        onGoogleSignIn: () =>
+            ref.read(authNotifierProvider.notifier).signInWithGoogle(),
+        onBackToLanding: () =>
+            launchUrl(Uri.base.resolve('/'), webOnlyWindowName: '_self'),
+        onOpenLegal: (path) =>
+            launchUrl(Uri.parse(path), webOnlyWindowName: '_blank'),
+      ),
     );
   }
 }
@@ -36,15 +45,19 @@ class LoginScreen extends ConsumerWidget {
 class LoginView extends StatefulWidget {
   const LoginView({
     required this.isLoading,
+    required this.callbackFailed,
     required this.error,
     required this.onGoogleSignIn,
+    required this.onBackToLanding,
     required this.onOpenLegal,
     super.key,
   });
 
   final bool isLoading;
+  final bool callbackFailed;
   final Object? error;
   final VoidCallback onGoogleSignIn;
+  final VoidCallback onBackToLanding;
   final ValueChanged<String> onOpenLegal;
 
   @override
@@ -103,72 +116,83 @@ class _LoginViewState extends State<LoginView> {
       body: Stack(
         children: [
           const Positioned.fill(child: CustomPaint(painter: _GridPainter())),
-          SafeArea(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final desktop = constraints.maxWidth >= 900;
-                final horizontal = desktop
-                    ? (constraints.maxWidth * .04).clamp(32.0, 64.0)
-                    : 20.0;
-                return SingleChildScrollView(
-                  padding: EdgeInsets.fromLTRB(horizontal, 20, horizontal, 40),
-                  child: Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 1440),
-                      child: Column(
-                        children: [
-                          const _Header(),
-                          SizedBox(height: desktop ? 82 : 38),
-                          if (desktop)
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Expanded(
-                                  flex: 102,
-                                  child: _LoginColumn(
-                                    isLoading: widget.isLoading,
-                                    error: widget.error,
-                                    onGoogleSignIn: widget.onGoogleSignIn,
-                                    onOpenLegal: widget.onOpenLegal,
-                                  ),
-                                ),
-                                const SizedBox(width: 70),
-                                Expanded(
-                                  flex: 98,
-                                  child: Padding(
-                                    padding: const EdgeInsets.only(top: 75),
-                                    child: _ProofColumn(
-                                      index: _scenarioIndex,
-                                      onSelect: _selectScenario,
-                                      onPauseChanged: _setPaused,
+          SelectionArea(
+            child: SafeArea(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final desktop = constraints.maxWidth >= 900;
+                  final horizontal = desktop
+                      ? (constraints.maxWidth * .04).clamp(32.0, 64.0)
+                      : 20.0;
+                  return SingleChildScrollView(
+                    padding: EdgeInsets.fromLTRB(
+                      horizontal,
+                      20,
+                      horizontal,
+                      40,
+                    ),
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 1440),
+                        child: Column(
+                          children: [
+                            const _Header(),
+                            SizedBox(height: desktop ? 82 : 38),
+                            if (desktop)
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                    flex: 102,
+                                    child: _LoginColumn(
+                                      isLoading: widget.isLoading,
+                                      callbackFailed: widget.callbackFailed,
+                                      error: widget.error,
+                                      onGoogleSignIn: widget.onGoogleSignIn,
+                                      onBackToLanding: widget.onBackToLanding,
+                                      onOpenLegal: widget.onOpenLegal,
                                     ),
                                   ),
-                                ),
-                              ],
-                            )
-                          else
-                            Column(
-                              children: [
-                                _LoginColumn(
-                                  isLoading: widget.isLoading,
-                                  error: widget.error,
-                                  onGoogleSignIn: widget.onGoogleSignIn,
-                                  onOpenLegal: widget.onOpenLegal,
-                                ),
-                                const SizedBox(height: 46),
-                                _ProofColumn(
-                                  index: _scenarioIndex,
-                                  onSelect: _selectScenario,
-                                  onPauseChanged: _setPaused,
-                                ),
-                              ],
-                            ),
-                        ],
+                                  const SizedBox(width: 70),
+                                  Expanded(
+                                    flex: 98,
+                                    child: Padding(
+                                      padding: const EdgeInsets.only(top: 75),
+                                      child: _ProofColumn(
+                                        index: _scenarioIndex,
+                                        onSelect: _selectScenario,
+                                        onPauseChanged: _setPaused,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              )
+                            else
+                              Column(
+                                children: [
+                                  _LoginColumn(
+                                    isLoading: widget.isLoading,
+                                    callbackFailed: widget.callbackFailed,
+                                    error: widget.error,
+                                    onGoogleSignIn: widget.onGoogleSignIn,
+                                    onBackToLanding: widget.onBackToLanding,
+                                    onOpenLegal: widget.onOpenLegal,
+                                  ),
+                                  const SizedBox(height: 46),
+                                  _ProofColumn(
+                                    index: _scenarioIndex,
+                                    onSelect: _selectScenario,
+                                    onPauseChanged: _setPaused,
+                                  ),
+                                ],
+                              ),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                );
-              },
+                  );
+                },
+              ),
             ),
           ),
         ],
@@ -373,14 +397,18 @@ class _CompassMarkPainter extends CustomPainter {
 class _LoginColumn extends StatelessWidget {
   const _LoginColumn({
     required this.isLoading,
+    required this.callbackFailed,
     required this.error,
     required this.onGoogleSignIn,
+    required this.onBackToLanding,
     required this.onOpenLegal,
   });
 
   final bool isLoading;
+  final bool callbackFailed;
   final Object? error;
   final VoidCallback onGoogleSignIn;
+  final VoidCallback onBackToLanding;
   final ValueChanged<String> onOpenLegal;
 
   @override
@@ -396,7 +424,8 @@ class _LoginColumn extends StatelessWidget {
           RichText(
             key: const Key('login-headline'),
             text: TextSpan(
-              style: GoogleFonts.manrope(
+              style: const TextStyle(
+                fontFamily: 'Manrope',
                 color: BrandColors.paper,
                 fontSize: 48,
                 height: .98,
@@ -454,22 +483,24 @@ class _LoginColumn extends StatelessWidget {
                     children: [
                       Text(
                         'CARDHOLDER ACCESS · PRIVATE',
-                        style: GoogleFonts.ibmPlexMono(
-                          color: const Color(0xFF397B76),
-                          fontSize: 9,
-                          fontWeight: FontWeight.w700,
+                        style: const TextStyle(
+                          fontFamily: 'IBM Plex Mono',
+                          color: Color(0xFF397B76),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
                           letterSpacing: 1.25,
                         ),
                       ),
                       const SizedBox(height: 11),
                       Text(
                         'Your wallet,\nready when you are.',
-                        style: GoogleFonts.fraunces(
-                          color: const Color(0xFF141B1E),
+                        style: const TextStyle(
+                          fontFamily: 'Fraunces',
+                          color: Color(0xFF141B1E),
                           fontSize: 29,
                           height: 1.02,
                           letterSpacing: -.8,
-                          fontWeight: FontWeight.w700,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                       const SizedBox(height: 8),
@@ -478,26 +509,52 @@ class _LoginColumn extends StatelessWidget {
                         style: TextStyle(
                           fontFamily: 'Manrope',
                           color: const Color(0xFF526064),
-                          fontSize: 12,
+                          fontSize: 14,
                           height: 1.45,
                         ),
                       ),
-                      if (error != null) ...[
-                        const SizedBox(height: 12),
-                        Text(
-                          'Sign-in failed. Check your connection and try again.',
-                          style: TextStyle(
-                            fontFamily: 'Manrope',
-                            color: const Color(0xFFB3261E),
-                            fontSize: 12,
+                      ConstrainedBox(
+                        key: const Key('login-status-slot'),
+                        constraints: const BoxConstraints(minHeight: 56),
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 12),
+                          child: Text(
+                            callbackFailed
+                                ? 'We couldn\'t finish this sign-in. The link may have expired. Start again.'
+                                : error != null
+                                ? 'Sign-in failed. Check your connection and try again.'
+                                : isLoading
+                                ? 'Signing in securely…'
+                                : '',
+                            style: TextStyle(
+                              fontFamily: 'Manrope',
+                              color: callbackFailed || error != null
+                                  ? const Color(0xFFB3261E)
+                                  : const Color(0xFF526064),
+                              fontSize: 14,
+                              height: 1.45,
+                            ),
                           ),
                         ),
-                      ],
+                      ),
                       const SizedBox(height: 20),
                       _GoogleSignInButton(
                         isLoading: isLoading,
+                        label: callbackFailed
+                            ? 'Start sign-in again'
+                            : 'Continue with Google',
                         onPressed: onGoogleSignIn,
                       ),
+                      if (callbackFailed) ...[
+                        const SizedBox(height: 4),
+                        SizedBox(
+                          width: double.infinity,
+                          child: TextButton(
+                            onPressed: onBackToLanding,
+                            child: const Text('Back to landing'),
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 17),
                       const Divider(color: Color(0xFFB9B4AB), height: 1),
                       const SizedBox(height: 5),
@@ -526,9 +583,10 @@ class _LoginColumn extends StatelessWidget {
                         color: const Color(0xFF142124),
                         child: Text(
                           'NEVER REQUESTED · CVV / PIN / OTP / BANK PASSWORD',
-                          style: GoogleFonts.ibmPlexMono(
-                            color: const Color(0xFFBCE9E4),
-                            fontSize: 8.5,
+                          style: const TextStyle(
+                            fontFamily: 'IBM Plex Mono',
+                            color: Color(0xFFBCE9E4),
+                            fontSize: 12,
                             height: 1.4,
                             letterSpacing: .35,
                           ),
@@ -597,9 +655,9 @@ class _ProofColumn extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const SizedBox(height: 16),
-            SizedBox(
+            Container(
               key: const Key('proof-heading'),
-              height: 89,
+              constraints: const BoxConstraints(minHeight: 89),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
@@ -609,19 +667,14 @@ class _ProofColumn extends StatelessWidget {
                       children: [
                         _Kicker('INTERACTIVE PREVIEW'),
                         const SizedBox(height: 5),
-                        Expanded(
-                          child: FittedBox(
-                            fit: BoxFit.scaleDown,
-                            alignment: Alignment.topLeft,
-                            child: Text(
-                              'One purchase. One clear\ndecision.',
-                              style: GoogleFonts.fraunces(
-                                color: const Color(0xFFF3F0E8),
-                                fontSize: 29,
-                                height: 1.15,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
+                        Text(
+                          'One purchase. One clear\ndecision.',
+                          style: const TextStyle(
+                            fontFamily: 'Fraunces',
+                            color: Color(0xFFF3F0E8),
+                            fontSize: 29,
+                            height: 1.15,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
                       ],
@@ -638,9 +691,10 @@ class _ProofColumn extends StatelessWidget {
                     ),
                     child: Text(
                       'ILLUSTRATIVE',
-                      style: GoogleFonts.ibmPlexMono(
-                        color: const Color(0xFFFFB547),
-                        fontSize: 9,
+                      style: const TextStyle(
+                        fontFamily: 'IBM Plex Mono',
+                        color: Color(0xFFFFB547),
+                        fontSize: 12,
                         letterSpacing: 1.08,
                       ),
                     ),
@@ -654,32 +708,37 @@ class _ProofColumn extends StatelessWidget {
               spacing: 7,
               children: List.generate(_scenarios.length, (i) {
                 final selected = i == index;
-                return SizedBox(
-                  height: 38,
-                  child: TextButton(
-                    onPressed: () => onSelect(i),
-                    style: TextButton.styleFrom(
-                      minimumSize: const Size(0, 38),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      foregroundColor: selected
-                          ? BrandColors.ink
-                          : BrandColors.mutedPaper,
-                      backgroundColor: selected
-                          ? const Color(0xFF62D8CE)
-                          : const Color(0x0AF4F0E6),
-                      side: BorderSide(
-                        color: selected
+                return Semantics(
+                  key: Key('login-scenario-${_scenarios[i].label}'),
+                  label: '${_scenarios[i].label} recommendation preview',
+                  button: true,
+                  selected: selected,
+                  onTap: () => onSelect(i),
+                  child: ExcludeSemantics(
+                    child: TextButton(
+                      onPressed: () => onSelect(i),
+                      style: TextButton.styleFrom(
+                        minimumSize: const Size(44, 44),
+                        foregroundColor: selected
+                            ? BrandColors.ink
+                            : BrandColors.mutedPaper,
+                        backgroundColor: selected
                             ? const Color(0xFF62D8CE)
-                            : Colors.white.withValues(alpha: .13),
+                            : const Color(0x0AF4F0E6),
+                        side: BorderSide(
+                          color: selected
+                              ? const Color(0xFF62D8CE)
+                              : Colors.white.withValues(alpha: .13),
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 13),
                       ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(3),
+                      child: Text(
+                        _scenarios[i].label,
+                        style: const TextStyle(fontSize: 14),
                       ),
-                      padding: const EdgeInsets.symmetric(horizontal: 13),
-                    ),
-                    child: Text(
-                      _scenarios[i].label,
-                      style: const TextStyle(fontSize: 12),
                     ),
                   ),
                 );
@@ -729,19 +788,25 @@ class _Receipt extends StatelessWidget {
               ],
             ),
             child: DefaultTextStyle(
-              style: GoogleFonts.manrope(
-                color: const Color(0xFF0B1015),
-                fontSize: 11,
+              style: const TextStyle(
+                fontFamily: 'Manrope',
+                color: Color(0xFF0B1015),
+                fontSize: 12,
               ),
               child: Column(
                 children: [
                   Padding(
                     padding: const EdgeInsets.only(bottom: 12),
                     child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        _Mono('CARD CHOICE / DEMO'),
-                        _Mono(scenario.code),
+                        const Expanded(child: _Mono('CARD CHOICE / DEMO')),
+                        const SizedBox(width: BrandSpacing.sm),
+                        Flexible(
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: _Mono(scenario.code, maxLines: 1),
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -762,9 +827,10 @@ class _Receipt extends StatelessWidget {
                         ),
                         Text(
                           scenario.amount,
-                          style: GoogleFonts.ibmPlexMono(
+                          style: const TextStyle(
+                            fontFamily: 'IBM Plex Mono',
                             fontSize: 25,
-                            fontWeight: FontWeight.w700,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
                       ],
@@ -802,7 +868,8 @@ class _Receipt extends StatelessWidget {
                         const SizedBox(height: 2),
                         Text(
                           scenario.card,
-                          style: GoogleFonts.fraunces(
+                          style: const TextStyle(
+                            fontFamily: 'Fraunces',
                             fontSize: 27,
                             height: 1.15,
                             fontWeight: FontWeight.w600,
@@ -819,16 +886,17 @@ class _Receipt extends StatelessWidget {
                                 'Illustrative value',
                                 style: TextStyle(
                                   color: Color(0xFF566064),
-                                  fontSize: 10,
+                                  fontSize: 12,
                                 ),
                               ),
                             ),
                             Text(
                               scenario.value,
-                              style: GoogleFonts.ibmPlexMono(
-                                color: const Color(0xFF9B5A00),
+                              style: const TextStyle(
+                                fontFamily: 'IBM Plex Mono',
+                                color: Color(0xFF9B5A00),
                                 fontSize: 27,
-                                fontWeight: FontWeight.w700,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
                           ],
@@ -860,9 +928,10 @@ class _Receipt extends StatelessWidget {
                   Text(
                     'This preview demonstrates the decision format. It is not a live recommendation or financial advice.',
                     textAlign: TextAlign.center,
-                    style: GoogleFonts.manrope(
-                      color: const Color(0xFF777C79),
-                      fontSize: 8,
+                    style: const TextStyle(
+                      fontFamily: 'Manrope',
+                      color: Color(0xFF777C79),
+                      fontSize: 12,
                       height: 1.5,
                     ),
                   ),
@@ -887,9 +956,10 @@ class _VerificationLine extends StatelessWidget {
         width: 86,
         child: Text(
           label,
-          style: GoogleFonts.ibmPlexMono(
-            color: const Color(0xFF3FE0D0),
-            fontSize: 8,
+          style: const TextStyle(
+            fontFamily: 'IBM Plex Mono',
+            color: Color(0xFF3FE0D0),
+            fontSize: 12,
           ),
         ),
       ),
@@ -897,10 +967,11 @@ class _VerificationLine extends StatelessWidget {
         child: Text(
           value,
           textAlign: TextAlign.right,
-          style: GoogleFonts.ibmPlexMono(
-            color: const Color(0xFFF4F0E6),
-            fontSize: 8,
-            fontWeight: FontWeight.w500,
+          style: const TextStyle(
+            fontFamily: 'IBM Plex Mono',
+            color: Color(0xFFF4F0E6),
+            fontSize: 12,
+            fontWeight: FontWeight.w400,
           ),
         ),
       ),
@@ -997,9 +1068,10 @@ class _Kicker extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Text(
     text,
-    style: GoogleFonts.ibmPlexMono(
-      color: const Color(0xFF62D8CE),
-      fontSize: 10,
+    style: const TextStyle(
+      fontFamily: 'IBM Plex Mono',
+      color: Color(0xFF62D8CE),
+      fontSize: 12,
       fontWeight: FontWeight.w600,
       letterSpacing: 1.4,
     ),
@@ -1007,17 +1079,21 @@ class _Kicker extends StatelessWidget {
 }
 
 class _Mono extends StatelessWidget {
-  const _Mono(this.text, {this.color = const Color(0xFF334043)});
+  const _Mono(this.text, {this.color = const Color(0xFF334043), this.maxLines});
   final String text;
   final Color color;
+  final int? maxLines;
   @override
   Widget build(BuildContext context) => Text(
     text,
-    style: GoogleFonts.ibmPlexMono(
+    style: TextStyle(
+      fontFamily: 'IBM Plex Mono',
       color: color,
-      fontSize: 8,
+      fontSize: 12,
       letterSpacing: .8,
     ),
+    maxLines: maxLines,
+    overflow: maxLines == null ? null : TextOverflow.ellipsis,
   );
 }
 
@@ -1034,19 +1110,19 @@ class _LegalLink extends StatelessWidget {
   final bool dark;
   @override
   Widget build(BuildContext context) => TextButton(
+    key: Key('login-legal-$text'),
     onPressed: () => onOpen(destination),
     style: TextButton.styleFrom(
       foregroundColor: dark ? const Color(0xFF536064) : BrandColors.mutedPaper,
       padding: const EdgeInsets.symmetric(horizontal: 5),
-      minimumSize: const Size(44, 36),
-      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      minimumSize: const Size(44, 44),
     ),
     child: Semantics(
       label: 'Open $text in a new tab',
       child: Text(
         text,
         style: const TextStyle(
-          fontSize: 10,
+          fontSize: 14,
           decoration: TextDecoration.underline,
         ),
       ),
@@ -1078,9 +1154,10 @@ class _PermissionRow extends StatelessWidget {
           width: 94,
           child: Text(
             label,
-            style: GoogleFonts.ibmPlexMono(
-              color: const Color(0xFF637174),
-              fontSize: 8.5,
+            style: const TextStyle(
+              fontFamily: 'IBM Plex Mono',
+              color: Color(0xFF637174),
+              fontSize: 14,
               letterSpacing: .65,
             ),
           ),
@@ -1091,7 +1168,7 @@ class _PermissionRow extends StatelessWidget {
             style: TextStyle(
               fontFamily: 'Manrope',
               color: const Color(0xFF202A2D),
-              fontSize: 11,
+              fontSize: 12,
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -1102,8 +1179,13 @@ class _PermissionRow extends StatelessWidget {
 }
 
 class _GoogleSignInButton extends StatelessWidget {
-  const _GoogleSignInButton({required this.isLoading, required this.onPressed});
+  const _GoogleSignInButton({
+    required this.isLoading,
+    required this.label,
+    required this.onPressed,
+  });
   final bool isLoading;
+  final String label;
   final VoidCallback onPressed;
   @override
   Widget build(BuildContext context) => SizedBox(
@@ -1120,13 +1202,28 @@ class _GoogleSignInButton extends StatelessWidget {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
       ),
       child: isLoading
-          ? const SizedBox(
-              width: 21,
-              height: 21,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: Color(0xFF182124),
-              ),
+          ? const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Color(0xFF182124),
+                  ),
+                ),
+                SizedBox(width: 10),
+                Text(
+                  'Signing in…',
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    color: Color(0xFF182124),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
             )
           : Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -1135,7 +1232,7 @@ class _GoogleSignInButton extends StatelessWidget {
                 const SizedBox(width: 10),
                 Flexible(
                   child: Text(
-                    'Continue with Google',
+                    label,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(

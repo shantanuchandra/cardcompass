@@ -19,7 +19,9 @@ Uri oauthRedirectUri(Uri current) {
   }
   return Uri(
     scheme: current.scheme,
-    host: production ? 'cardcompass.in' : current.host,
+    // PKCE stores its verifier per browser origin. Keep a trusted production
+    // host unchanged so the callback can read the verifier created at sign-in.
+    host: current.host,
     port: current.hasPort ? current.port : null,
     path: '/app/',
   );
