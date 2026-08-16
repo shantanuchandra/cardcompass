@@ -143,23 +143,22 @@ function meaningfulTokens(value: string, issuer: string): Set<string> {
   ));
 }
 
-function urlPathAndHeadingTokens(url: string, html: string, issuer: string): Set<string> {
+function urlPathTokens(url: string, issuer: string): Set<string> {
   try {
     const pathname = decodeURIComponent(new URL(url).pathname);
-    return meaningfulTokens(`${pathname} ${evidenceFromHtml(html).join(" ")}`, issuer);
+    return meaningfulTokens(pathname, issuer);
   } catch {
     return new Set();
   }
 }
 
 function hasProductSpecificUrlContext(url: string): boolean {
-  return urlPathAndHeadingTokens(url, "", "").size > 0;
+  return urlPathTokens(url, "").size > 0;
 }
 
 function hasSharedProductIdentityContext(
   identity: { cardName: string; aliases: string[] } | null,
   url: string,
-  html: string,
   issuer: string,
 ): boolean {
   if (!identity) return false;
@@ -167,7 +166,7 @@ function hasSharedProductIdentityContext(
     [identity.cardName, ...identity.aliases].join(" "),
     issuer,
   );
-  const contextTokens = urlPathAndHeadingTokens(url, html, issuer);
+  const contextTokens = urlPathTokens(url, issuer);
   return [...identityTokens].some((token) => contextTokens.has(token));
 }
 
@@ -234,7 +233,6 @@ export function classifyIssuerPage(input: ClassifyIssuerPageInput): PageClassifi
   const hasIdentityContext = hasSharedProductIdentityContext(
     identity,
     canonicalUrl,
-    html,
     input.issuer,
   );
   const warnings: string[] = [];

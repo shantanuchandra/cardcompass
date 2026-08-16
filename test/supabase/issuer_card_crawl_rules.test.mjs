@@ -312,6 +312,30 @@ test('keeps a real product when it contains generic card words alongside a meani
   assert.equal(page.proposedName, 'Select');
 });
 
+test('does not self-validate generic identities using their own heading tokens', () => {
+  const genericPages = [
+    ['https://www.axis.bank.in/cards/credit-card/all', '<h1>Find the Right Credit Card</h1>'],
+    ['https://www.axis.bank.in/cards/credit-card/overview', '<h1>Best Credit Card Offers</h1>'],
+    ['https://www.axis.bank.in/legal/fees-and-charges', '<h1>Credit Card Fees and Charges Guide</h1>'],
+  ];
+
+  for (const [url, html] of genericPages) {
+    assert.equal(classifyIssuerPage({issuer, url, html}).kind, 'ambiguous', url);
+  }
+});
+
+test('matches meaningful identity tokens only against real product URL paths', () => {
+  const pages = [
+    ['https://www.axis.bank.in/cards/credit-card/select-credit-card', '<h1>Axis Select Credit Card</h1>', 'card_product'],
+    ['https://www.axis.bank.in/cards/credit-card/flipkart-axis-bank-credit-card', '<h1>Flipkart Axis Bank Credit Card</h1>', 'card_product'],
+    ['https://www.axis.bank.in/cards/privilege/benefits', '<h1>Axis Privilege Credit Card</h1>', 'supporting_document'],
+  ];
+
+  for (const [url, html, kind] of pages) {
+    assert.equal(classifyIssuerPage({issuer, url, html}).kind, kind, url);
+  }
+});
+
 test('passes a nonzero production default delay to an injected delay function', async () => {
   const delays = [];
   await discoverIssuerCardCandidates({
