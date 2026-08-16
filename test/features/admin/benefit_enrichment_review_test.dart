@@ -4,6 +4,7 @@ import 'package:cardcompass/features/admin/screens/card_catalog_review_screen.da
 import 'package:cardcompass/features/admin/widgets/benefit_enrichment_review_panel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 const _jobJson = <String, dynamic>{
   'id': 'job-1',
@@ -82,14 +83,16 @@ BenefitEnrichmentReviewPage _page() =>
     }).copyWith(items: [BenefitEnrichmentReview.fromJson(_jobJson)]);
 
 class _FakeApi implements AdminCatalogEntryApi {
-  _FakeApi(this.response);
+  _FakeApi(this.response, {this.error});
 
   AdminCatalogEntryResponse response;
+  Object? error;
   final bodies = <Map<String, dynamic>>[];
 
   @override
   Future<AdminCatalogEntryResponse> invoke(Map<String, dynamic> body) async {
     bodies.add(body);
+    if (error != null) throw error!;
     return response;
   }
 }
@@ -203,12 +206,13 @@ void main() {
       expect(page.items.single.cardName, 'Astra Travel');
       expect(page.counts.byStatus['staged'], 1);
       expect(page.hasMore, isTrue);
-      expect(api.bodies.single, {
+      expect(api.bodies.first, {
         'action': 'benefit-list',
         'page': 2,
         'limit': 25,
         'status': 'staged',
       });
+      expect(api.bodies.last['action'], 'benefit-status');
     },
   );
 
@@ -217,7 +221,11 @@ void main() {
     () async {
       final repository = AdminCatalogRepository(
         _FakeApi(
-          AdminCatalogEntryResponse(401, {'error': 'authentication_required'}),
+          AdminCatalogEntryResponse(500, const {}),
+          error: const FunctionException(
+            status: 401,
+            details: {'error': 'authentication_required'},
+          ),
         ),
       );
 
@@ -225,6 +233,58 @@ void main() {
         repository.loadReviewPage(),
         throwsA(isA<AdminAuthorizationRequired>()),
       );
+    },
+  );
+
+  test(
+    'repository derives approval decisions from the safe diff when staging decisions are empty',
+    () async {
+      final api = _FakeApi(
+        AdminCatalogEntryResponse(200, const {'success': true}),
+      );
+      final item = BenefitEnrichmentReview.fromJson({
+        ..._jobJson,
+        'staging': {
+          ...(_jobJson['staging'] as Map<String, dynamic>),
+          'benefit_decisions': [],
+          'extracted_data': {
+            'diff': {
+              'additions': [
+                {'dedupeKey': 'new', 'title': 'New benefit'},
+              ],
+              'modifications': [
+                {
+                  'current': {'dedupeKey': 'old', 'title': 'Old'},
+                  'proposed': {'dedupeKey': 'old', 'title': 'Updated'},
+                },
+              ],
+              'possibleRemovals': [
+                {'dedupeKey': 'legacy', 'title': 'Legacy'},
+              ],
+              'conflicts': [
+                {
+                  'code': 'duplicate',
+                  'current': [
+                    {'dedupeKey': 'current', 'title': 'Current'},
+                  ],
+                  'proposed': [
+                    {'dedupeKey': 'candidate', 'title': 'Candidate'},
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      });
+
+      await AdminCatalogRepository(api).approve(item);
+
+      final decisions = api.bodies.single['decisions'] as List;
+      expect(decisions, hasLength(5));
+      expect(decisions.first, containsPair('change_type', 'addition'));
+      expect(decisions[1], containsPair('change_type', 'modification'));
+      expect(decisions[2], containsPair('action', 'keep_existing'));
+      expect(decisions.last, containsPair('dedupe_key', 'candidate'));
     },
   );
 
@@ -240,7 +300,7 @@ void main() {
 
       expect(find.text('Benefit enrichment'), findsOneWidget);
       expect(
-        find.text('Issuer coverage: 2 scheduled · 1 pilot'),
+        find.text('Job run coverage: 2 scheduled · 1 pilot'),
         findsOneWidget,
       );
       expect(find.text('Last run: 1 completed · 1 failed'), findsOneWidget);

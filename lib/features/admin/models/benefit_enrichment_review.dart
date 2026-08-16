@@ -51,13 +51,15 @@ class BenefitEnrichmentReviewPage {
 
   BenefitEnrichmentReviewPage copyWith({
     List<BenefitEnrichmentReview>? items,
+    BenefitEnrichmentCounts? counts,
+    List<BenefitJobHistory>? history,
   }) => BenefitEnrichmentReviewPage(
     items: items ?? this.items,
-    counts: counts,
+    counts: counts ?? this.counts,
     page: page,
     limit: limit,
     hasMore: hasMore,
-    history: history,
+    history: history ?? this.history,
   );
 }
 
@@ -146,6 +148,8 @@ class BenefitEnrichmentReview {
   bool get canReview =>
       status == 'staged' && staging.id != null && staging.status == 'pending';
   bool get isQuarantined => status == 'quarantined';
+  bool get canQuarantine =>
+      status == 'queued' || status == 'failed' || status == 'review_required';
 }
 
 class BenefitRunSummary {
@@ -214,8 +218,11 @@ class BenefitStaging {
   final BenefitExtraction extractedData;
   final List<BenefitReviewDecision> decisions;
 
-  bool get lacksStatementEvidence =>
-      validationWarnings.contains('crawler_discovered');
+  bool get lacksStatementEvidence => validationWarnings.any(
+    (warning) =>
+        warning == 'crawler_discovered' ||
+        warning == 'crawler_discovered_without_statement_signal',
+  );
 }
 
 class BenefitExtraction {
@@ -248,9 +255,9 @@ class BenefitDiff {
     modifications: _maps(
       json['modifications'],
     ).map(BenefitModification.fromJson).toList(growable: false),
-    possibleRemovals: _maps(
-      json['possibleRemovals'],
-    ).map(BenefitProposal.fromJson).toList(growable: false),
+    possibleRemovals: _maps(json['possibleRemovals'])
+        .map((row) => BenefitProposal.fromJson(_map(row['benefit'] ?? row)))
+        .toList(growable: false),
     conflicts: _maps(
       json['conflicts'],
     ).map(BenefitConflict.fromJson).toList(growable: false),
@@ -268,8 +275,22 @@ class BenefitProposal {
     this.title,
     this.description,
     this.category,
+    this.valueType,
     this.value,
+    this.rate,
+    this.cap,
+    this.threshold,
+    this.frequency,
+    this.period,
+    this.restrictions = const [],
+    this.exclusions = const [],
+    this.effectiveFrom,
+    this.effectiveTo,
     this.sourceUrl,
+    this.sourceUrls = const [],
+    this.sourceExcerpt,
+    this.contentHash,
+    this.parserVersion,
     this.confidence = const {},
     this.evidence = const {},
     this.warnings = const [],
@@ -280,8 +301,28 @@ class BenefitProposal {
     title: _text(json['title']),
     description: _text(json['description']),
     category: _text(json['category']),
-    value: _text(json['value']) ?? _number(json['value'])?.toString(),
+    valueType: _text(json['valueType']),
+    value: json['value'],
+    rate: json['rate'],
+    cap: json['cap'],
+    threshold: json['threshold'],
+    frequency: _text(json['frequency']),
+    period: _text(json['period']),
+    restrictions: (json['restrictions'] as List? ?? const [])
+        .whereType<String>()
+        .toList(growable: false),
+    exclusions: (json['exclusions'] as List? ?? const [])
+        .whereType<String>()
+        .toList(growable: false),
+    effectiveFrom: _text(json['effectiveFrom']),
+    effectiveTo: _text(json['effectiveTo']),
     sourceUrl: _text(json['sourceUrl']),
+    sourceUrls: (json['sourceUrls'] as List? ?? const [])
+        .whereType<String>()
+        .toList(growable: false),
+    sourceExcerpt: _text(json['sourceExcerpt']),
+    contentHash: _text(json['contentHash']),
+    parserVersion: _text(json['parserVersion']),
     confidence: _map(
       json['confidence'],
     ).map((key, value) => MapEntry(key, value as num? ?? 0)),
@@ -297,8 +338,22 @@ class BenefitProposal {
   final String? title;
   final String? description;
   final String? category;
-  final String? value;
+  final String? valueType;
+  final Object? value;
+  final Object? rate;
+  final Object? cap;
+  final Object? threshold;
+  final String? frequency;
+  final String? period;
+  final List<String> restrictions;
+  final List<String> exclusions;
+  final String? effectiveFrom;
+  final String? effectiveTo;
   final String? sourceUrl;
+  final List<String> sourceUrls;
+  final String? sourceExcerpt;
+  final String? contentHash;
+  final String? parserVersion;
   final Map<String, num> confidence;
   final Map<String, String> evidence;
   final List<String> warnings;
@@ -310,7 +365,22 @@ class BenefitProposal {
     if (title != null) 'title': title,
     if (description != null) 'description': description,
     if (category != null) 'category': category,
+    if (valueType != null) 'valueType': valueType,
     if (value != null) 'value': value,
+    if (rate != null) 'rate': rate,
+    if (cap != null) 'cap': cap,
+    if (threshold != null) 'threshold': threshold,
+    if (frequency != null) 'frequency': frequency,
+    if (period != null) 'period': period,
+    if (restrictions.isNotEmpty) 'restrictions': restrictions,
+    if (exclusions.isNotEmpty) 'exclusions': exclusions,
+    if (effectiveFrom != null) 'effectiveFrom': effectiveFrom,
+    if (effectiveTo != null) 'effectiveTo': effectiveTo,
+    if (sourceUrl != null) 'sourceUrl': sourceUrl,
+    if (sourceUrls.isNotEmpty) 'sourceUrls': sourceUrls,
+    if (sourceExcerpt != null) 'sourceExcerpt': sourceExcerpt,
+    if (contentHash != null) 'contentHash': contentHash,
+    if (parserVersion != null) 'parserVersion': parserVersion,
   };
 }
 
@@ -327,10 +397,23 @@ class BenefitModification {
 }
 
 class BenefitConflict {
-  const BenefitConflict({this.code});
-  factory BenefitConflict.fromJson(JsonMap json) =>
-      BenefitConflict(code: _text(json['code']));
+  const BenefitConflict({
+    this.code,
+    this.current = const [],
+    this.proposed = const [],
+  });
+  factory BenefitConflict.fromJson(JsonMap json) => BenefitConflict(
+    code: _text(json['code']),
+    current: _maps(
+      json['current'],
+    ).map(BenefitProposal.fromJson).toList(growable: false),
+    proposed: _maps(
+      json['proposed'],
+    ).map(BenefitProposal.fromJson).toList(growable: false),
+  );
   final String? code;
+  final List<BenefitProposal> current;
+  final List<BenefitProposal> proposed;
 }
 
 class BenefitSourceEvidence {
@@ -358,6 +441,10 @@ class BenefitReviewDecision {
   const BenefitReviewDecision({
     required this.action,
     this.reason,
+    this.changeType,
+    this.dedupeKey,
+    this.displayPriority,
+    this.isPrimary,
     this.benefit,
     this.proposed,
     this.editedBenefit,
@@ -365,21 +452,40 @@ class BenefitReviewDecision {
   factory BenefitReviewDecision.fromJson(JsonMap json) => BenefitReviewDecision(
     action: _text(json['action']) ?? '',
     reason: _text(json['reason']),
-    benefit: BenefitProposal.fromJson(_map(json['benefit'])),
-    proposed: BenefitProposal.fromJson(_map(json['proposed'])),
-    editedBenefit: BenefitProposal.fromJson(_map(json['edited_benefit'])),
+    changeType: _text(json['change_type'] ?? json['changeType']),
+    dedupeKey: _text(json['dedupe_key'] ?? json['dedupeKey']),
+    displayPriority: (json['display_priority'] as num?)?.toInt(),
+    isPrimary: json['is_primary'] as bool?,
+    benefit: json['benefit'] is Map
+        ? BenefitProposal.fromJson(_map(json['benefit']))
+        : null,
+    proposed: json['proposed'] is Map
+        ? BenefitProposal.fromJson(_map(json['proposed']))
+        : null,
+    editedBenefit: json['edited_benefit'] is Map
+        ? BenefitProposal.fromJson(_map(json['edited_benefit']))
+        : null,
   );
   final String action;
   final String? reason;
+  final String? changeType;
+  final String? dedupeKey;
+  final int? displayPriority;
+  final bool? isPrimary;
   final BenefitProposal? benefit;
   final BenefitProposal? proposed;
   final BenefitProposal? editedBenefit;
 
   JsonMap toJson() => {
     'action': action,
+    if (reason != null) 'reason': reason,
     if (benefit != null) 'benefit': benefit!.toJson(),
     if (proposed != null) 'proposed': proposed!.toJson(),
     if (editedBenefit != null) 'edited_benefit': editedBenefit!.toJson(),
+    if (changeType != null) 'change_type': changeType,
+    if (dedupeKey != null) 'dedupe_key': dedupeKey,
+    if (displayPriority != null) 'display_priority': displayPriority,
+    if (isPrimary != null) 'is_primary': isPrimary,
   };
 }
 

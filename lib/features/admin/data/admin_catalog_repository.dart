@@ -73,18 +73,31 @@ class AdminCatalogRepository implements BenefitEnrichmentRepository {
     int limit = 25,
     String? status,
   }) async {
-    final response = await _request({
-      'action': 'benefit-list',
-      'page': page,
-      'limit': limit,
-      if (status != null && status.isNotEmpty) 'status': status,
-    });
-    return BenefitEnrichmentReviewPage.fromJson(response);
+    final responses = await Future.wait([
+      _request({
+        'action': 'benefit-list',
+        'page': page,
+        'limit': limit,
+        if (status != null && status.isNotEmpty) 'status': status,
+      }),
+      _request({
+        'action': 'benefit-status',
+        'page': page,
+        'limit': limit,
+        if (status != null && status.isNotEmpty) 'status': status,
+      }),
+    ]);
+    final list = BenefitEnrichmentReviewPage.fromJson(responses.first);
+    final statusPage = BenefitEnrichmentReviewPage.fromJson(responses.last);
+    return list.copyWith(
+      counts: statusPage.counts.total > 0 ? statusPage.counts : list.counts,
+      history: statusPage.history,
+    );
   }
 
   @override
   Future<void> approve(BenefitEnrichmentReview item) =>
-      _mutate('benefit-approve', item, decisions: item.staging.decisions);
+      _mutate('benefit-approve', item, decisions: _decisionsFor(item));
 
   @override
   Future<void> editApprove(
@@ -96,7 +109,7 @@ class AdminCatalogRepository implements BenefitEnrichmentRepository {
   Future<void> reject(BenefitEnrichmentReview item, String reason) => _mutate(
     'benefit-reject',
     item,
-    decisions: item.staging.decisions
+    decisions: _decisionsFor(item)
         .map(
           (decision) => BenefitReviewDecision(
             action: 'reject',
@@ -147,8 +160,73 @@ class AdminCatalogRepository implements BenefitEnrichmentRepository {
     });
   }
 
+  List<BenefitReviewDecision> _decisionsFor(BenefitEnrichmentReview item) {
+    if (item.staging.decisions.isNotEmpty) return item.staging.decisions;
+    final diff = item.staging.extractedData.diff;
+    return [
+      ...diff.additions.map(
+        (benefit) => BenefitReviewDecision(
+          action: 'approve',
+          changeType: 'addition',
+          dedupeKey: benefit.dedupeKey,
+          benefit: benefit,
+        ),
+      ),
+      ...diff.modifications.map(
+        (change) => BenefitReviewDecision(
+          action: 'approve',
+          changeType: 'modification',
+          dedupeKey: change.proposed.dedupeKey ?? change.current.dedupeKey,
+          benefit: change.proposed,
+          proposed: change.proposed,
+        ),
+      ),
+      ...diff.possibleRemovals.map(
+        (benefit) => BenefitReviewDecision(
+          action: 'keep_existing',
+          changeType: 'possible_removal',
+          dedupeKey: benefit.dedupeKey,
+          benefit: benefit,
+        ),
+      ),
+      ...diff.conflicts.expand(
+        (conflict) => [
+          ...conflict.current.map(
+            (benefit) => BenefitReviewDecision(
+              action: 'keep_existing',
+              changeType: 'conflict',
+              dedupeKey: benefit.dedupeKey,
+              benefit: benefit,
+            ),
+          ),
+          ...conflict.proposed.map(
+            (benefit) => BenefitReviewDecision(
+              action: 'approve',
+              changeType: 'conflict',
+              dedupeKey: benefit.dedupeKey,
+              benefit: benefit,
+              proposed: benefit,
+            ),
+          ),
+        ],
+      ),
+    ];
+  }
+
   Future<JsonMap> _request(Map<String, dynamic> body) async {
-    final response = await _api.invoke(body);
+    final AdminCatalogEntryResponse response;
+    try {
+      response = await _api.invoke(body);
+    } on FunctionException catch (error) {
+      if (error.status == 401) throw AdminAuthorizationRequired();
+      if (error.status == 403) throw AdminAccessDenied();
+      final details = error.details;
+      throw AdminCatalogRequestFailed(
+        details is Map
+            ? (details['error'] as String? ?? 'Admin request failed.')
+            : 'Admin request failed.',
+      );
+    }
     if (response.status == 401) throw AdminAuthorizationRequired();
     if (response.status == 403) throw AdminAccessDenied();
     final data = response.data is Map

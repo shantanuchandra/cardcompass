@@ -24,21 +24,29 @@ class _BenefitEnrichmentReviewPanelState
     extends State<BenefitEnrichmentReviewPanel> {
   late Future<BenefitEnrichmentReviewPage> _page = _load();
   String? _actionError;
+  var _pageNumber = 1;
+  var _mutating = false;
 
   Future<BenefitEnrichmentReviewPage> _load() =>
-      widget.repository.loadReviewPage();
+      widget.repository.loadReviewPage(page: _pageNumber);
 
-  void _reload() => setState(() {
-    _actionError = null;
-    _page = _load();
-  });
+  Future<void> _reload() async {
+    setState(() {
+      _actionError = null;
+      _page = _load();
+    });
+    await _page;
+  }
 
   Future<void> _run(Future<void> Function() action) async {
-    setState(() => _actionError = null);
+    setState(() {
+      _actionError = null;
+      _mutating = true;
+    });
     try {
       await action();
       if (mounted) {
-        _reload();
+        await _reload();
       }
     } on AdminAuthorizationRequired {
       if (mounted) {
@@ -61,6 +69,8 @@ class _BenefitEnrichmentReviewPanelState
           () => _actionError = 'Could not update this enrichment. Try again.',
         );
       }
+    } finally {
+      if (mounted) setState(() => _mutating = false);
     }
   }
 
@@ -181,7 +191,7 @@ class _BenefitEnrichmentReviewPanelState
         }
         final page = snapshot.data!;
         return RefreshIndicator(
-          onRefresh: () async => _reload(),
+          onRefresh: _reload,
           child: ListView(
             padding: const EdgeInsets.all(24),
             children: [
@@ -210,11 +220,13 @@ class _BenefitEnrichmentReviewPanelState
                     child: _BenefitReviewCard(
                       item: item,
                       onOpenUrl: widget.onOpenUrl,
-                      onApprove: item.canReview
+                      onApprove: !_mutating && item.canReview
                           ? () => _run(() => widget.repository.approve(item))
                           : null,
-                      onEdit: item.canReview ? () => _edit(item) : null,
-                      onReject: item.canReview
+                      onEdit: !_mutating && item.canReview
+                          ? () => _edit(item)
+                          : null,
+                      onReject: !_mutating && item.canReview
                           ? () async {
                               final reason = await _askReason(
                                 'Reject benefit enrichment',
@@ -227,14 +239,18 @@ class _BenefitEnrichmentReviewPanelState
                             }
                           : null,
                       onRetry:
-                          (item.status == 'failed' ||
-                              item.status == 'review_required')
+                          !_mutating &&
+                              (item.status == 'failed' ||
+                                  item.status == 'review_required')
                           ? () => _run(() => widget.repository.retry(item))
                           : null,
-                      onQuarantine: item.isQuarantined
+                      onQuarantine: _mutating
+                          ? null
+                          : item.isQuarantined
                           ? () =>
                                 _run(() => widget.repository.unquarantine(item))
-                          : () async {
+                          : item.canQuarantine
+                          ? () async {
                               final reason = await _askReason(
                                 'Quarantine enrichment job',
                               );
@@ -246,9 +262,38 @@ class _BenefitEnrichmentReviewPanelState
                                   ),
                                 );
                               }
-                            },
+                            }
+                          : null,
                     ),
                   ),
+                ),
+              if (page.page > 1 || page.hasMore)
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    OutlinedButton(
+                      onPressed: page.page > 1 && !_mutating
+                          ? () {
+                              setState(() {
+                                _pageNumber = page.page - 1;
+                                _page = _load();
+                              });
+                            }
+                          : null,
+                      child: const Text('Previous page'),
+                    ),
+                    OutlinedButton(
+                      onPressed: page.hasMore && !_mutating
+                          ? () {
+                              setState(() {
+                                _pageNumber = page.page + 1;
+                                _page = _load();
+                              });
+                            }
+                          : null,
+                      child: const Text('Next page'),
+                    ),
+                  ],
                 ),
             ],
           ),
@@ -280,7 +325,7 @@ class _ProgressSummary extends StatelessWidget {
               style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: 8),
-            Text('Issuer coverage: $scheduled scheduled · $pilot pilot'),
+            Text('Job run coverage: $scheduled scheduled · $pilot pilot'),
             Text('Last run: $completed completed · $failed failed'),
             if (history.isNotEmpty) ...[
               const SizedBox(height: 8),
@@ -363,6 +408,22 @@ class _BenefitReviewCard extends StatelessWidget {
               const Text('Proposed'),
               ...diff.additions.map(_ProposalEvidence.new),
             ],
+            if (diff.possibleRemovals.isNotEmpty) ...[
+              const Divider(),
+              const Text('Possible removals (informational)'),
+              ...diff.possibleRemovals.map(_ProposalEvidence.new),
+            ],
+            if (diff.conflicts.isNotEmpty) ...[
+              const Divider(),
+              const Text('Conflicts'),
+              ...diff.conflicts.expand(
+                (conflict) => [
+                  Text(conflict.code ?? 'Unspecified conflict'),
+                  ...conflict.current.map(_ProposalEvidence.new),
+                  ...conflict.proposed.map(_ProposalEvidence.new),
+                ],
+              ),
+            ],
             if (item.staging.sourceEvidence.isNotEmpty) ...[
               const Divider(),
               const Text('Evidence'),
@@ -415,8 +476,14 @@ class _DiffRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.only(top: 6),
-    child: Text(
-      '${current.label}${current.value == null ? '' : ' (${current.value})'} → ${proposed.label}${proposed.value == null ? '' : ' (${proposed.value})'}',
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '${current.label}${current.value == null ? '' : ' (${current.value})'} → ${proposed.label}${proposed.value == null ? '' : ' (${proposed.value})'}',
+        ),
+        _ProposalEvidence(proposed),
+      ],
     ),
   );
 }
