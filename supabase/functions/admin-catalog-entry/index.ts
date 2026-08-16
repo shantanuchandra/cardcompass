@@ -1,10 +1,17 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { isAdminEmail } from "../_shared/card_discovery.ts";
+import {
+  BenefitAdminError,
+  handleBenefitAdminAction,
+  isBenefitAdminAction,
+  type UntypedSupabaseClient,
+} from "./benefit_admin.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -12,22 +19,38 @@ function json(body: unknown, status = 200): Response {
   return Response.json(body, { status, headers: corsHeaders });
 }
 
-serve(async (request) => {
-  if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
-  if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+function safeError(error: unknown): { error: string; status: number } {
+  if (error instanceof BenefitAdminError) {
+    return { error: error.code, status: error.status };
+  }
+  return { error: "Request failed", status: 400 };
+}
+
+export async function handleAdminCatalogEntry(
+  request: Request,
+  providedDb?: UntypedSupabaseClient,
+): Promise<Response> {
+  if (request.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+  if (request.method !== "POST") {
+    return json({ error: "Method not allowed" }, 405);
+  }
 
   const authorization = request.headers.get("Authorization");
   if (!authorization?.startsWith("Bearer ")) {
     return json({ error: "Authentication required" }, 401);
   }
-  const db = createClient(
+  const db = providedDb ?? createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
   );
   const { data: { user }, error: authError } = await db.auth.getUser(
     authorization.slice("Bearer ".length),
   );
-  if (authError || !user) return json({ error: "Authentication required" }, 401);
+  if (authError || !user) {
+    return json({ error: "Authentication required" }, 401);
+  }
   if (
     !user.email_confirmed_at ||
     !isAdminEmail(user.email, Deno.env.get("CARD_CATALOG_ADMIN_EMAILS"))
@@ -37,8 +60,15 @@ serve(async (request) => {
 
   try {
     const body = await request.json();
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return json({ error: "Invalid request" }, 400);
+    }
     const action = body.action;
     if (action === "access") return json({ is_admin: true });
+
+    if (isBenefitAdminAction(action)) {
+      return json(await handleBenefitAdminAction(db, body, { id: user.id }));
+    }
 
     if (action === "list") {
       let query = db.from("card_catalog_review_queue").select(`
@@ -58,10 +88,15 @@ serve(async (request) => {
       return json({ items: data ?? [] });
     }
 
-    if (!["approve", "edit_approve", "merge", "retry", "reject"].includes(action)) {
+    if (
+      !["approve", "edit_approve", "merge", "retry", "reject"].includes(action)
+    ) {
       return json({ error: "Unsupported action" }, 400);
     }
-    if (typeof body.review_item_id !== "string" || body.review_item_id.length === 0) {
+    if (
+      typeof body.review_item_id !== "string" ||
+      body.review_item_id.length === 0
+    ) {
       return json({ error: "review_item_id is required" }, 400);
     }
     const { data, error } = await db.rpc("review_card_catalog_discovery", {
@@ -73,13 +108,14 @@ serve(async (request) => {
       _reason: body.reason ?? null,
     });
     if (error) throw error;
-    return json({ success: true, result: Array.isArray(data) ? data[0] : data });
+    return json({
+      success: true,
+      result: Array.isArray(data) ? data[0] : data,
+    });
   } catch (error) {
-    const message = error instanceof Error
-      ? error.message
-      : error && typeof error === "object" && "message" in error
-      ? String(error.message)
-      : "Request failed";
-    return json({ error: message }, 400);
+    const result = safeError(error);
+    return json({ error: result.error }, result.status);
   }
-});
+}
+
+serve(handleAdminCatalogEntry);
