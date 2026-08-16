@@ -465,53 +465,69 @@ class _CatalogTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    final cardName = card['card_name'] as String? ?? '';
+    final bank = card['bank'] as String? ?? '';
+    final id = card['id'] as String? ?? '$cardName-$bank';
+    return Semantics(
+      key: Key('catalog-card-$id'),
+      label: '$cardName, $bank',
+      button: true,
       onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: BrandSpacing.xs + 2),
-        padding: const EdgeInsets.symmetric(
-          horizontal: BrandSpacing.md,
-          vertical: 12,
-        ),
-        decoration: BoxDecoration(
-          color: BrandColors.paper,
-          borderRadius: BorderRadius.circular(BrandRadius.card),
-          border: Border.all(
-            color: BrandColors.mutedInk.withValues(alpha: 0.1),
-          ),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+      child: ExcludeSemantics(
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(BrandRadius.card),
+            child: Container(
+              margin: const EdgeInsets.only(bottom: BrandSpacing.xs + 2),
+              constraints: const BoxConstraints(minHeight: 44),
+              padding: const EdgeInsets.symmetric(
+                horizontal: BrandSpacing.md,
+                vertical: 12,
+              ),
+              decoration: BoxDecoration(
+                color: BrandColors.paper,
+                borderRadius: BorderRadius.circular(BrandRadius.card),
+                border: Border.all(
+                  color: BrandColors.mutedInk.withValues(alpha: 0.1),
+                ),
+              ),
+              child: Row(
                 children: [
-                  Text(
-                    card['card_name'] ?? '',
-                    style: TextStyle(
-                      fontFamily: 'Manrope',
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: BrandColors.ink,
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          cardName,
+                          style: TextStyle(
+                            fontFamily: 'Manrope',
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: BrandColors.ink,
+                          ),
+                        ),
+                        Text(
+                          bank,
+                          style: TextStyle(
+                            fontFamily: 'Manrope',
+                            fontSize: 12,
+                            color: BrandColors.mutedInk,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  Text(
-                    card['bank'] ?? '',
-                    style: TextStyle(
-                      fontFamily: 'Manrope',
-                      fontSize: 12,
-                      color: BrandColors.mutedInk,
-                    ),
+                  const Icon(
+                    Icons.chevron_right_rounded,
+                    color: BrandColors.mutedInk,
+                    size: 20,
                   ),
                 ],
               ),
             ),
-            const Icon(
-              Icons.chevron_right_rounded,
-              color: BrandColors.mutedInk,
-              size: 20,
-            ),
-          ],
+          ),
         ),
       ),
     );

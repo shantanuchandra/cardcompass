@@ -235,4 +235,29 @@ void main() {
       greaterThanOrEqualTo(14),
     );
   });
+
+  testWidgets(
+    'brand eyebrow and status copy keep the non-decorative type floor',
+    (tester) async {
+      await tester.pumpWidget(
+        host(
+          const Column(
+            children: [
+              BrandSectionHeader(eyebrow: 'Wallet', title: 'Overview'),
+              BrandStatusChip(label: 'Active'),
+            ],
+          ),
+        ),
+      );
+
+      expect(
+        tester.widget<Text>(find.text('WALLET')).style?.fontSize,
+        greaterThanOrEqualTo(12),
+      );
+      expect(
+        tester.widget<Text>(find.text('Active')).style?.fontSize,
+        greaterThanOrEqualTo(12),
+      );
+    },
+  );
 }

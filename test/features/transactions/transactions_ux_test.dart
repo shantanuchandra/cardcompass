@@ -6,6 +6,7 @@ import 'package:cardcompass/shared/models/transaction.dart';
 import 'package:cardcompass/shared/models/user_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 final _card = UserCard(
@@ -108,6 +109,52 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(BottomSheet), findsOneWidget);
+  });
+
+  testWidgets('filter and grouping controls expose 44px keyboard actions', (
+    tester,
+  ) async {
+    await pumpLedger(tester, width: 390);
+
+    final filters = find.byKey(const Key('transactions-filters'));
+    final grouping = find.byKey(const Key('transactions-grouping'));
+    expect(tester.getSize(filters).height, greaterThanOrEqualTo(44));
+    expect(tester.getSize(grouping).height, greaterThanOrEqualTo(44));
+    expect(
+      tester.getSemantics(filters),
+      matchesSemantics(
+        label: 'Filters, All time',
+        isButton: true,
+        hasSelectedState: true,
+        isSelected: false,
+        hasTapAction: true,
+      ),
+    );
+
+    for (
+      var index = 0;
+      index < 8 && find.byType(BottomSheet).evaluate().isEmpty;
+      index++
+    ) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+    }
+    expect(find.byType(BottomSheet), findsOneWidget);
+
+    final allTime = find.byKey(const Key('date-filter-All time'));
+    expect(tester.getSize(allTime).height, greaterThanOrEqualTo(44));
+    expect(
+      tester.getSemantics(allTime),
+      matchesSemantics(
+        label: 'All time',
+        isButton: true,
+        hasSelectedState: true,
+        isSelected: true,
+        hasTapAction: true,
+      ),
+    );
   });
 
   for (final textScale in [1.5, 2.0]) {

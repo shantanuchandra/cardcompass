@@ -491,21 +491,32 @@ class _LoginColumn extends StatelessWidget {
                         style: TextStyle(
                           fontFamily: 'Manrope',
                           color: const Color(0xFF526064),
-                          fontSize: 12,
+                          fontSize: 14,
                           height: 1.45,
                         ),
                       ),
-                      if (error != null) ...[
-                        const SizedBox(height: 12),
-                        Text(
-                          'Sign-in failed. Check your connection and try again.',
-                          style: TextStyle(
-                            fontFamily: 'Manrope',
-                            color: const Color(0xFFB3261E),
-                            fontSize: 12,
+                      ConstrainedBox(
+                        key: const Key('login-status-slot'),
+                        constraints: const BoxConstraints(minHeight: 56),
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 12),
+                          child: Text(
+                            error != null
+                                ? 'Sign-in failed. Check your connection and try again.'
+                                : isLoading
+                                ? 'Signing in securely…'
+                                : '',
+                            style: TextStyle(
+                              fontFamily: 'Manrope',
+                              color: error != null
+                                  ? const Color(0xFFB3261E)
+                                  : const Color(0xFF526064),
+                              fontSize: 14,
+                              height: 1.45,
+                            ),
                           ),
                         ),
-                      ],
+                      ),
                       const SizedBox(height: 20),
                       _GoogleSignInButton(
                         isLoading: isLoading,
@@ -611,9 +622,9 @@ class _ProofColumn extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const SizedBox(height: 16),
-            SizedBox(
+            Container(
               key: const Key('proof-heading'),
-              height: 89,
+              constraints: const BoxConstraints(minHeight: 89),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
@@ -623,20 +634,14 @@ class _ProofColumn extends StatelessWidget {
                       children: [
                         _Kicker('INTERACTIVE PREVIEW'),
                         const SizedBox(height: 5),
-                        Expanded(
-                          child: FittedBox(
-                            fit: BoxFit.scaleDown,
-                            alignment: Alignment.topLeft,
-                            child: Text(
-                              'One purchase. One clear\ndecision.',
-                              style: const TextStyle(
-                                fontFamily: 'Fraunces',
-                                color: Color(0xFFF3F0E8),
-                                fontSize: 29,
-                                height: 1.15,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
+                        Text(
+                          'One purchase. One clear\ndecision.',
+                          style: const TextStyle(
+                            fontFamily: 'Fraunces',
+                            color: Color(0xFFF3F0E8),
+                            fontSize: 29,
+                            height: 1.15,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
                       ],
@@ -670,32 +675,37 @@ class _ProofColumn extends StatelessWidget {
               spacing: 7,
               children: List.generate(_scenarios.length, (i) {
                 final selected = i == index;
-                return SizedBox(
-                  height: 38,
-                  child: TextButton(
-                    onPressed: () => onSelect(i),
-                    style: TextButton.styleFrom(
-                      minimumSize: const Size(0, 38),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      foregroundColor: selected
-                          ? BrandColors.ink
-                          : BrandColors.mutedPaper,
-                      backgroundColor: selected
-                          ? const Color(0xFF62D8CE)
-                          : const Color(0x0AF4F0E6),
-                      side: BorderSide(
-                        color: selected
+                return Semantics(
+                  key: Key('login-scenario-${_scenarios[i].label}'),
+                  label: '${_scenarios[i].label} recommendation preview',
+                  button: true,
+                  selected: selected,
+                  onTap: () => onSelect(i),
+                  child: ExcludeSemantics(
+                    child: TextButton(
+                      onPressed: () => onSelect(i),
+                      style: TextButton.styleFrom(
+                        minimumSize: const Size(44, 44),
+                        foregroundColor: selected
+                            ? BrandColors.ink
+                            : BrandColors.mutedPaper,
+                        backgroundColor: selected
                             ? const Color(0xFF62D8CE)
-                            : Colors.white.withValues(alpha: .13),
+                            : const Color(0x0AF4F0E6),
+                        side: BorderSide(
+                          color: selected
+                              ? const Color(0xFF62D8CE)
+                              : Colors.white.withValues(alpha: .13),
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 13),
                       ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(3),
+                      child: Text(
+                        _scenarios[i].label,
+                        style: const TextStyle(fontSize: 14),
                       ),
-                      padding: const EdgeInsets.symmetric(horizontal: 13),
-                    ),
-                    child: Text(
-                      _scenarios[i].label,
-                      style: const TextStyle(fontSize: 12),
                     ),
                   ),
                 );
@@ -1067,19 +1077,19 @@ class _LegalLink extends StatelessWidget {
   final bool dark;
   @override
   Widget build(BuildContext context) => TextButton(
+    key: Key('login-legal-$text'),
     onPressed: () => onOpen(destination),
     style: TextButton.styleFrom(
       foregroundColor: dark ? const Color(0xFF536064) : BrandColors.mutedPaper,
       padding: const EdgeInsets.symmetric(horizontal: 5),
-      minimumSize: const Size(44, 36),
-      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      minimumSize: const Size(44, 44),
     ),
     child: Semantics(
       label: 'Open $text in a new tab',
       child: Text(
         text,
         style: const TextStyle(
-          fontSize: 12,
+          fontSize: 14,
           decoration: TextDecoration.underline,
         ),
       ),
@@ -1114,7 +1124,7 @@ class _PermissionRow extends StatelessWidget {
             style: const TextStyle(
               fontFamily: 'IBM Plex Mono',
               color: Color(0xFF637174),
-              fontSize: 12,
+              fontSize: 14,
               letterSpacing: .65,
             ),
           ),

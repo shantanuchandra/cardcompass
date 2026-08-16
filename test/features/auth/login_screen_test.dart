@@ -167,11 +167,81 @@ void main() {
       'Data & Security': '/data-security/',
       'Terms': '/terms/',
     }.entries) {
+      await tester.ensureVisible(find.text(destination.key));
+      await tester.pumpAndSettle();
       await tester.tap(find.text(destination.key));
       await tester.pump();
       expect(opened.last, destination.value);
     }
   });
+
+  testWidgets(
+    'scenario and legal actions keep 44px targets and selected semantics',
+    (tester) async {
+      await _setSurface(tester, const Size(1440, 1000));
+      await tester.pumpWidget(_testApp());
+      await tester.pump();
+
+      final groceries = find.byKey(const Key('login-scenario-Groceries'));
+      expect(tester.getSize(groceries).height, greaterThanOrEqualTo(44));
+      expect(
+        tester.getSemantics(groceries),
+        matchesSemantics(
+          label: 'Groceries recommendation preview',
+          isButton: true,
+          hasSelectedState: true,
+          isSelected: true,
+          hasTapAction: true,
+        ),
+      );
+
+      final privacy = find.byKey(const Key('login-legal-Privacy'));
+      expect(tester.getSize(privacy).height, greaterThanOrEqualTo(44));
+      expect(
+        tester.widget<Text>(find.text('Privacy')).style?.fontSize,
+        greaterThanOrEqualTo(14),
+      );
+    },
+  );
+
+  testWidgets(
+    'status space is reserved and the proof heading never scales down text',
+    (tester) async {
+      await _setSurface(tester, const Size(1440, 1200));
+      await tester.pumpWidget(_testApp());
+      await tester.pump();
+      final idleButtonTop = tester
+          .getTopLeft(find.text('Continue with Google'))
+          .dy;
+      expect(find.byKey(const Key('login-status-slot')), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('proof-heading')),
+          matching: find.byType(FittedBox),
+        ),
+        findsNothing,
+      );
+
+      await tester.pumpWidget(_testApp(error: StateError('network')));
+      await tester.pump();
+      final errorButtonTop = tester
+          .getTopLeft(find.text('Continue with Google'))
+          .dy;
+      expect(errorButtonTop, closeTo(idleButtonTop, 0.1));
+
+      await tester.pumpWidget(
+        MediaQuery(
+          data: const MediaQueryData(
+            size: Size(1440, 1200),
+            textScaler: TextScaler.linear(2),
+          ),
+          child: _testApp(),
+        ),
+      );
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('Google action fires once and is disabled while loading', (
     tester,
@@ -282,22 +352,12 @@ void main() {
 
       expect(proof.left, closeTo(921, 1));
       expect(proof.top, closeTo(205, 1));
-      expect(
-        {
-          'headingTop': heading.top,
-          'headingHeight': heading.height,
-          'tabsTop': tabs.top,
-          'tabsHeight': tabs.height,
-        },
-        {
-          'headingTop': closeTo(221, 1),
-          'headingHeight': closeTo(89, 1),
-          'tabsTop': closeTo(328, 1),
-          'tabsHeight': closeTo(38, 1),
-        },
-      );
+      expect(heading.top, closeTo(221, 1));
+      expect(heading.height, greaterThanOrEqualTo(89));
+      expect(tabs.top, greaterThan(heading.bottom));
+      expect(tabs.height, greaterThanOrEqualTo(44));
       expect(receipt.left, closeTo(1002, 1));
-      expect(receipt.top, closeTo(378, 1));
+      expect(receipt.top, greaterThan(tabs.bottom));
     },
   );
 

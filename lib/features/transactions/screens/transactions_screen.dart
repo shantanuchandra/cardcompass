@@ -212,6 +212,7 @@ class _LedgerBodyState extends ConsumerState<_LedgerBody> {
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     _FilterPill(
+                      controlKey: const Key('transactions-filters'),
                       label: 'Filters',
                       summary: _activeFilterCount(s.filter) == 0
                           ? 'All time'
@@ -221,6 +222,7 @@ class _LedgerBodyState extends ConsumerState<_LedgerBody> {
                       icon: Icons.tune_rounded,
                     ),
                     _GroupingPill(
+                      controlKey: const Key('transactions-grouping'),
                       grouping: s.grouping,
                       onChanged: (g) => ref
                           .read(txnsNotifierProvider.notifier)
@@ -373,7 +375,7 @@ class _FilterPanel extends StatelessWidget {
             'Date range',
             style: TextStyle(
               fontFamily: 'Manrope',
-              fontSize: 11,
+              fontSize: 12,
               color: BrandColors.mutedInk,
               fontWeight: FontWeight.w500,
             ),
@@ -427,7 +429,7 @@ class _FilterPanel extends StatelessWidget {
               'Card',
               style: TextStyle(
                 fontFamily: 'Manrope',
-                fontSize: 11,
+                fontSize: 12,
                 color: BrandColors.mutedInk,
                 fontWeight: FontWeight.w500,
               ),
@@ -458,7 +460,7 @@ class _FilterPanel extends StatelessWidget {
               'Category',
               style: TextStyle(
                 fontFamily: 'Manrope',
-                fontSize: 11,
+                fontSize: 12,
                 color: BrandColors.mutedInk,
                 fontWeight: FontWeight.w500,
               ),
@@ -782,12 +784,14 @@ class _CountPill extends StatelessWidget {
 // ── Shared pill/chip widgets ─────────────────────────────────────────────────
 
 class _FilterPill extends StatelessWidget {
+  final Key? controlKey;
   final String label;
   final String summary;
   final bool active;
   final VoidCallback onTap;
   final IconData icon;
   const _FilterPill({
+    this.controlKey,
     required this.label,
     required this.summary,
     required this.active,
@@ -797,61 +801,79 @@ class _FilterPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final compact = MediaQuery.textScalerOf(context).scale(11) >= 16.5;
+    final compact = MediaQuery.textScalerOf(context).scale(14) >= 21;
     return Semantics(
+      key: controlKey,
       button: true,
+      selected: active,
       label: '$label, $summary',
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(
-            color: active
-                ? BrandColors.focusDark.withValues(alpha: 0.12)
-                : BrandColors.paper,
+      onTap: onTap,
+      child: ExcludeSemantics(
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: active
-                  ? BrandColors.focusDark.withValues(alpha: 0.4)
-                  : BrandColors.mutedInk.withValues(alpha: 0.2),
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 44),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: active
+                    ? BrandColors.focusDark.withValues(alpha: 0.12)
+                    : BrandColors.paper,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: active
+                      ? BrandColors.focusDark.withValues(alpha: 0.4)
+                      : BrandColors.mutedInk.withValues(alpha: 0.2),
+                ),
+              ),
+              child: compact
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _FilterPillLabel(
+                          label: label,
+                          icon: icon,
+                          active: active,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          summary,
+                          style: TextStyle(
+                            fontFamily: 'Manrope',
+                            fontSize: 14,
+                            color: active
+                                ? BrandColors.focusDark
+                                : BrandColors.mutedInk,
+                          ),
+                        ),
+                      ],
+                    )
+                  : Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _FilterPillLabel(
+                          label: label,
+                          icon: icon,
+                          active: active,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          summary,
+                          style: TextStyle(
+                            fontFamily: 'Manrope',
+                            fontSize: 14,
+                            color: active
+                                ? BrandColors.focusDark
+                                : BrandColors.mutedInk,
+                          ),
+                        ),
+                      ],
+                    ),
             ),
           ),
-          child: compact
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _FilterPillLabel(label: label, icon: icon, active: active),
-                    const SizedBox(height: 2),
-                    Text(
-                      summary,
-                      style: TextStyle(
-                        fontFamily: 'Manrope',
-                        fontSize: 11,
-                        color: active
-                            ? BrandColors.focusDark
-                            : BrandColors.mutedInk,
-                      ),
-                    ),
-                  ],
-                )
-              : Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _FilterPillLabel(label: label, icon: icon, active: active),
-                    const SizedBox(width: 4),
-                    Text(
-                      summary,
-                      style: TextStyle(
-                        fontFamily: 'Manrope',
-                        fontSize: 11,
-                        color: active
-                            ? BrandColors.focusDark
-                            : BrandColors.mutedInk,
-                      ),
-                    ),
-                  ],
-                ),
         ),
       ),
     );
@@ -883,7 +905,7 @@ class _FilterPillLabel extends StatelessWidget {
         label,
         style: TextStyle(
           fontFamily: 'Manrope',
-          fontSize: 11,
+          fontSize: 14,
           fontWeight: FontWeight.w500,
           color: active ? BrandColors.focusDark : BrandColors.mutedInk,
         ),
@@ -893,9 +915,14 @@ class _FilterPillLabel extends StatelessWidget {
 }
 
 class _GroupingPill extends StatelessWidget {
+  final Key? controlKey;
   final TxnGrouping grouping;
   final ValueChanged<TxnGrouping> onChanged;
-  const _GroupingPill({required this.grouping, required this.onChanged});
+  const _GroupingPill({
+    this.controlKey,
+    required this.grouping,
+    required this.onChanged,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -905,40 +932,59 @@ class _GroupingPill extends StatelessWidget {
       TxnGrouping.byCategory: 'Category',
       TxnGrouping.byDate: 'Date',
     };
-    return GestureDetector(
+    final label = labels[grouping]!;
+    return Semantics(
+      key: controlKey,
+      label: 'Group transactions by $label',
+      button: true,
       onTap: () {
         final values = TxnGrouping.values;
         final next = values[(values.indexOf(grouping) + 1) % values.length];
         onChanged(next);
       },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: BrandColors.paper,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: BrandColors.mutedInk.withValues(alpha: 0.2),
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(
-              Icons.layers_rounded,
-              size: 13,
-              color: BrandColors.mutedInk,
-            ),
-            const SizedBox(width: 4),
-            Text(
-              labels[grouping]!,
-              style: TextStyle(
-                fontFamily: 'Manrope',
-                fontSize: 11,
-                fontWeight: FontWeight.w500,
-                color: BrandColors.mutedInk,
+      child: ExcludeSemantics(
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () {
+              final values = TxnGrouping.values;
+              final next =
+                  values[(values.indexOf(grouping) + 1) % values.length];
+              onChanged(next);
+            },
+            borderRadius: BorderRadius.circular(20),
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 44),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: BrandColors.paper,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: BrandColors.mutedInk.withValues(alpha: 0.2),
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.layers_rounded,
+                    size: 13,
+                    color: BrandColors.mutedInk,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontFamily: 'Manrope',
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: BrandColors.mutedInk,
+                    ),
+                  ),
+                ],
               ),
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -957,29 +1003,43 @@ class _DateChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return Semantics(
+      key: Key('date-filter-$label'),
+      label: label,
+      button: true,
+      selected: active,
       onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: BrandSpacing.xs),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: active
-              ? BrandColors.focusDark.withValues(alpha: 0.15)
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: active
-                ? BrandColors.focusDark.withValues(alpha: 0.5)
-                : BrandColors.mutedInk.withValues(alpha: 0.2),
-          ),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontFamily: 'Manrope',
-            fontSize: 11,
-            fontWeight: active ? FontWeight.w600 : FontWeight.w400,
-            color: active ? BrandColors.focusDark : BrandColors.mutedInk,
+      child: ExcludeSemantics(
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(16),
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 44),
+              margin: const EdgeInsets.only(bottom: BrandSpacing.xs),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: active
+                    ? BrandColors.focusDark.withValues(alpha: 0.15)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: active
+                      ? BrandColors.focusDark.withValues(alpha: 0.5)
+                      : BrandColors.mutedInk.withValues(alpha: 0.2),
+                ),
+              ),
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 14,
+                  fontWeight: active ? FontWeight.w600 : FontWeight.w400,
+                  color: active ? BrandColors.focusDark : BrandColors.mutedInk,
+                ),
+              ),
+            ),
           ),
         ),
       ),

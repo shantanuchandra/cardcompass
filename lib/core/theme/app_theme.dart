@@ -186,7 +186,7 @@ abstract final class AppTheme {
           ),
           labelSmall: TextStyle(
             fontFamily: 'Manrope',
-            fontSize: 10,
+            fontSize: 12,
             fontWeight: FontWeight.w700,
             color: mutedForeground,
             letterSpacing: 1.1,

@@ -108,6 +108,14 @@ void main() {
     expect(label.fontSize, 12);
   });
 
+  test('the smallest semantic theme label never drops below 12 pixels', () {
+    for (final theme in [AppTheme.work, AppTheme.marketing]) {
+      expect(theme.textTheme.labelSmall?.fontSize, greaterThanOrEqualTo(12));
+      expect(theme.textTheme.bodyMedium?.fontSize, greaterThanOrEqualTo(14));
+      expect(theme.textTheme.labelLarge?.fontSize, greaterThanOrEqualTo(14));
+    }
+  });
+
   test('editorial compatibility theme uses dark semantic brand roles', () {
     final theme = AppTheme.editorial;
 

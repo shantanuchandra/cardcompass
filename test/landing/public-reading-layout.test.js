@@ -19,6 +19,11 @@ async function read(path) {
   return readFile(new URL(path, root), 'utf8');
 }
 
+function rule(css, selector) {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`))?.[1] || '';
+}
+
 test('utility form appears before long-form methodology', async () => {
   for (const page of utilityPages) {
     const html = await read(page);
@@ -57,6 +62,31 @@ test('public reading styles use readable body type and line length', async () =>
   assert.doesNotMatch(css, /\.updated\s*\{[^}]*font:\s*[^;]*\b0\.7[0-9]rem\//s);
   assert.match(css, /\.content\s*\{[^}]*max-width:\s*(?:65|66|67|68|69|70|71|72|73|74|75)ch/s);
   assert.match(css, /@media\s*\(max-width:\s*820px\)\s*\{[\s\S]*?\.side-nav-disclosure\s*\{[^}]*display:\s*block/s);
+});
+
+test('public resource navigation and disclosures keep 44px action targets', async () => {
+  const css = await read('landing/resources.css');
+  for (const selector of [
+    '.wordmark',
+    '.nav-links a',
+    '.side-nav a',
+    '.side-nav-disclosure summary',
+    '.side-nav-disclosure a',
+    '.footer-links a',
+    '.faq-list summary',
+  ]) {
+    const declarations = rule(css, selector);
+    assert.match(
+      declarations,
+      /min-height:\s*(?:4[4-9]|[5-9]\d)px/,
+      `${selector} needs a 44px target`,
+    );
+  }
+});
+
+test('public trust metadata keeps the 12px non-decorative type floor', async () => {
+  const css = await read('landing/resources.css');
+  assert.match(rule(css, '.trust-line'), /font:\s*500\s+(?:0\.7[5-9]|0\.[89]\d|1)rem\//);
 });
 
 test('legal update metadata uses the readable override rather than inheriting a smaller utility style', async () => {

@@ -121,7 +121,7 @@ class BrandSectionHeader extends StatelessWidget {
           eyebrow.toUpperCase(),
           style: TextStyle(
             fontFamily: 'Manrope',
-            fontSize: 10,
+            fontSize: 12,
             fontWeight: FontWeight.w800,
             letterSpacing: 1.3,
             color: BrandColors.mutedInk,
@@ -583,7 +583,7 @@ class BrandStatusChip extends StatelessWidget {
                 label,
                 style: TextStyle(
                   fontFamily: 'Manrope',
-                  fontSize: 11,
+                  fontSize: 12,
                   fontWeight: FontWeight.w800,
                   color: foreground,
                 ),

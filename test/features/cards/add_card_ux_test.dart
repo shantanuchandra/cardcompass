@@ -8,6 +8,7 @@ import 'package:cardcompass/features/cards/screens/add_card_screen.dart';
 import 'package:cardcompass/shared/models/user_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -214,6 +215,36 @@ void main() {
     expect(find.byKey(const Key('last-four')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'catalogue result is a 44px semantic button operable by keyboard',
+    (tester) async {
+      await pumpAddCard(tester);
+      await tester.enterText(find.byKey(const Key('card-search')), 'astra');
+      await tester.pumpAndSettle();
+
+      final result = find.byKey(const Key('catalog-card-catalog-1'));
+      expect(tester.getSize(result).height, greaterThanOrEqualTo(44));
+      expect(
+        tester.getSemantics(result),
+        matchesSemantics(
+          label: 'Astra Travel Preferred, Horizon Bank',
+          isButton: true,
+          hasTapAction: true,
+        ),
+      );
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.bySemanticsLabel('Add card progress. Current step: Confirm'),
+        findsOneWidget,
+      );
+    },
+  );
 
   testWidgets(
     'newest catalogue query wins when responses complete out of order',

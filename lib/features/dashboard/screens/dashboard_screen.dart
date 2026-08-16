@@ -386,7 +386,7 @@ class _SyncRangeDialogState extends State<_SyncRangeDialog> {
                       'LOOK BACK',
                       style: TextStyle(
                         fontFamily: 'Manrope',
-                        fontSize: 11,
+                        fontSize: 12,
                         fontWeight: FontWeight.w700,
                         color: BrandColors.mutedInk,
                         letterSpacing: 1.0,
@@ -930,14 +930,35 @@ class _CardsCarouselState extends ConsumerState<_CardsCarousel> {
                       ? _PendingBankTile(
                           email: pending[i - widget.cards.length],
                         )
-                      : GestureDetector(
+                      : Semantics(
+                          key: Key('dashboard-card-${widget.cards[i].id}'),
+                          label:
+                              'Open ${widget.cards[i].displayName} card details',
+                          button: true,
                           onTap: () => Navigator.of(context).push(
                             MaterialPageRoute(
                               builder: (_) =>
                                   CardDetailScreen(cardId: widget.cards[i].id),
                             ),
                           ),
-                          child: _CreditCardTile(card: widget.cards[i]),
+                          child: ExcludeSemantics(
+                            child: Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                onTap: () => Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => CardDetailScreen(
+                                      cardId: widget.cards[i].id,
+                                    ),
+                                  ),
+                                ),
+                                borderRadius: BorderRadius.circular(
+                                  BrandRadius.overlay,
+                                ),
+                                child: _CreditCardTile(card: widget.cards[i]),
+                              ),
+                            ),
+                          ),
                         );
                   return Padding(
                     padding: EdgeInsets.only(
@@ -1018,19 +1039,15 @@ class _PendingBankTile extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              GestureDetector(
-                onTap: () => _showBankResolveDialog(context, email),
-                child: Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: BrandColors.rewardInk.withValues(alpha: 0.15),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.priority_high_rounded,
-                    size: 16,
-                    color: BrandColors.rewardInk,
-                  ),
+              IconButton(
+                key: Key('resolve-bank-${email['email_id'] ?? bankDetected}'),
+                tooltip: 'Resolve $bankDetected card',
+                constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+                onPressed: () => _showBankResolveDialog(context, email),
+                icon: const Icon(
+                  Icons.priority_high_rounded,
+                  size: 20,
+                  color: BrandColors.rewardInk,
                 ),
               ),
             ],
@@ -1558,7 +1575,7 @@ class _TransactionRow extends StatelessWidget {
                   ).format(txn.transactionDate.toLocal()),
                   style: TextStyle(
                     fontFamily: 'Manrope',
-                    fontSize: 11,
+                    fontSize: 12,
                     color: BrandColors.mutedInk,
                   ),
                 ),
@@ -1582,7 +1599,7 @@ class _TransactionRow extends StatelessWidget {
                   '+${txn.rewardEarned!.toStringAsFixed(0)} pts',
                   style: TextStyle(
                     fontFamily: 'Manrope',
-                    fontSize: 10,
+                    fontSize: 12,
                     color: BrandColors.reward,
                   ),
                 ),

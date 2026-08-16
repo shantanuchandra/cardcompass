@@ -78,7 +78,7 @@ class _SpendTrendPanelState extends State<SpendTrendPanel> {
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontFamily: 'Manrope',
-                              fontSize: 11,
+                              fontSize: 12,
                               color: BrandColors.mutedInk,
                             ),
                           ),
@@ -209,7 +209,7 @@ class _SpendTrendPanelState extends State<SpendTrendPanel> {
                   '${d.day}/${d.month}',
                   style: TextStyle(
                     fontFamily: 'Manrope',
-                    fontSize: 9,
+                    fontSize: 12,
                     color: BrandColors.mutedInk,
                   ),
                 );
@@ -259,7 +259,7 @@ class _SpendTrendPanelState extends State<SpendTrendPanel> {
                 '₹${NumberFormat.compact().format(p.total)}',
                 TextStyle(
                   fontFamily: 'Manrope',
-                  fontSize: 11,
+                  fontSize: 12,
                   color: BrandColors.focusDark,
                   fontWeight: FontWeight.w600,
                 ),
@@ -299,7 +299,7 @@ class _StatChip extends StatelessWidget {
             label,
             style: TextStyle(
               fontFamily: 'Manrope',
-              fontSize: 10,
+              fontSize: 12,
               color: BrandColors.mutedInk,
             ),
           ),
@@ -308,7 +308,7 @@ class _StatChip extends StatelessWidget {
             value,
             style: TextStyle(
               fontFamily: 'Manrope',
-              fontSize: 11,
+              fontSize: 12,
               fontWeight: FontWeight.w700,
               color: color,
             ),

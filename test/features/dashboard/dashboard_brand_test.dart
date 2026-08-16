@@ -214,4 +214,34 @@ void main() {
     );
     expect(find.text('Try again'), findsOneWidget);
   });
+
+  testWidgets('dashboard card is a labeled keyboard-sized button', (
+    tester,
+  ) async {
+    final selectedAppTab = ValueNotifier(AppTab.dashboard);
+    addTearDown(selectedAppTab.dispose);
+    await _pumpDashboard(tester, selectedAppTab: selectedAppTab);
+
+    final card = find.byKey(const Key('dashboard-card-card-1'));
+    await tester.scrollUntilVisible(
+      card,
+      300,
+      scrollable: find
+          .descendant(
+            of: find.byType(CustomScrollView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    expect(tester.getSize(card).height, greaterThanOrEqualTo(44));
+    expect(
+      tester.getSemantics(card),
+      matchesSemantics(
+        label: 'Open Horizon Card card details',
+        isButton: true,
+        hasTapAction: true,
+      ),
+    );
+    await tester.pump(const Duration(seconds: 1));
+  });
 }
