@@ -71,7 +71,7 @@ void main() {
   });
 
   test('navigation keeps existing routing behavior and accessible targets', () {
-    expect(source, contains("replaceBrowserHistory('#\${_kTabPaths[i]}')"));
+    expect(source, contains('context.go(_kTabPaths[i])'));
     expect(source, contains('height: navigationHeight'));
     expect(source, contains('Semantics('));
   });

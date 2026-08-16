@@ -15,7 +15,6 @@ import '../theme/brand_components.dart';
 import '../theme/brand_tokens.dart';
 import '../../app.dart' show navigatorKey;
 import 'app_tab_selection.dart';
-import 'browser_history.dart';
 
 const _kTabPaths = [
   '/app',
@@ -35,6 +34,11 @@ int _tabIndexFor(String loc) {
 
 // The current tab index — a simple ValueNotifier so _AppShell rebuilds on change.
 final _tabIndexNotifier = ValueNotifier<int>(0);
+
+NoTransitionPage<void> _appShellPage() => const NoTransitionPage<void>(
+  key: ValueKey('app-shell'),
+  child: _AppShell(),
+);
 
 // Bridges Riverpod's authNotifierProvider to GoRouter's refreshListenable so
 // that auth-state ticks (including background token-refresh emissions from
@@ -58,6 +62,7 @@ class _AuthRefreshListenable extends ChangeNotifier {
 }
 
 final routerProvider = Provider<GoRouter>((ref) {
+  GoRouter.optionURLReflectsImperativeAPIs = true;
   final refreshListenable = _AuthRefreshListenable(ref);
   ref.onDispose(refreshListenable.dispose);
 
@@ -89,28 +94,41 @@ final routerProvider = Provider<GoRouter>((ref) {
     routes: [
       GoRoute(path: '/', builder: (_, s) => const SplashScreen()),
       GoRoute(path: '/login', builder: (_, s) => const LoginScreen()),
-      // Single route for ALL app tabs — GoRouter never re-navigates between tabs.
-      // Tab switches are handled by _AppShell internally via ValueNotifier +
-      // window.history.replaceState to keep the URL in sync.
       GoRoute(
         path: '/app',
-        pageBuilder: (_, s) => const NoTransitionPage(child: _AppShell()),
+        pageBuilder: (_, s) => _appShellPage(),
+      ),
+      GoRoute(
+        path: '/app/cards',
+        pageBuilder: (_, s) => _appShellPage(),
         routes: [
           // A nested page preserves the app shell beneath Add Card. Cards uses
           // push semantics so both Back and a successful save can pop to the
           // existing list without reconstructing navigation state.
           GoRoute(
-            path: 'cards/add',
+            path: 'add',
             pageBuilder: (_, s) =>
                 const NoTransitionPage(child: AddCardScreen()),
           ),
           GoRoute(
-            path: 'cards/:cardId',
+            path: ':cardId',
             pageBuilder: (_, state) => NoTransitionPage(
               child: CardDetailScreen(cardId: state.pathParameters['cardId']!),
             ),
           ),
         ],
+      ),
+      GoRoute(
+        path: '/app/transactions',
+        pageBuilder: (_, s) => _appShellPage(),
+      ),
+      GoRoute(
+        path: '/app/movie-deals',
+        pageBuilder: (_, s) => _appShellPage(),
+      ),
+      GoRoute(
+        path: '/app/settings',
+        pageBuilder: (_, s) => _appShellPage(),
       ),
     ],
   );
@@ -138,8 +156,7 @@ class _AppShell extends ConsumerWidget {
       builder: (context, tabIndex, _) {
         void onTap(int i) {
           _tabIndexNotifier.value = i;
-          // Keep browser URL in sync without triggering a GoRouter navigation
-          replaceBrowserHistory('#${_kTabPaths[i]}');
+          context.go(_kTabPaths[i]);
         }
 
         final isDesktop =
