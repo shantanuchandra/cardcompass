@@ -34,6 +34,13 @@ class GmailAuthException implements Exception {
   String toString() => message;
 }
 
+typedef GmailMessagePageLoader =
+    Future<gmail.ListMessagesResponse> Function({
+      required String query,
+      String? pageToken,
+    });
+typedef GmailMessageLoader = Future<gmail.Message> Function(String messageId);
+
 /// Authenticated HTTP client that attaches a bearer token to every request.
 /// The Gmail API client needs an [http.Client], not a raw token string.
 class _BearerTokenClient extends http.BaseClient {
@@ -59,13 +66,42 @@ class _BearerTokenClient extends http.BaseClient {
 /// OAuth access token obtained elsewhere (this class does not perform
 /// sign-in itself).
 class GmailSyncService {
-  final String _accessToken;
   late final gmail.GmailApi _api;
   late final _BearerTokenClient _client;
+  final GmailMessagePageLoader? _listMessages;
+  final GmailMessageLoader? _getMessage;
 
-  GmailSyncService(this._accessToken) {
-    _client = _BearerTokenClient(_accessToken);
+  GmailSyncService(
+    String accessToken, {
+    GmailMessagePageLoader? listMessages,
+    GmailMessageLoader? getMessage,
+  }) : _listMessages = listMessages,
+       _getMessage = getMessage {
+    _client = _BearerTokenClient(accessToken);
     _api = gmail.GmailApi(_client);
+  }
+
+  Future<gmail.ListMessagesResponse> _loadMessagePage({
+    required String query,
+    String? pageToken,
+  }) {
+    final loader = _listMessages;
+    if (loader != null) {
+      return loader(query: query, pageToken: pageToken);
+    }
+    return _api.users.messages.list(
+      'me',
+      q: query,
+      maxResults: 50,
+      pageToken: pageToken,
+    );
+  }
+
+  Future<gmail.Message> _loadMessage(String messageId) {
+    final loader = _getMessage;
+    return loader != null
+        ? loader(messageId)
+        : _api.users.messages.get('me', messageId);
   }
 
   /// Searches for likely credit-card-statement emails. Ported from
@@ -84,31 +120,36 @@ class GmailSyncService {
       'card statement',
       'credit card',
     ];
-    final subjectPart =
-        subjectKeywords.map((k) => 'subject:"$k"').join(' OR ');
+    final subjectPart = subjectKeywords.map((k) => 'subject:"$k"').join(' OR ');
     query += ' ($subjectPart)';
     if (after != null) {
       query += ' after:${after.year}/${after.month}/${after.day}';
     }
 
     try {
-      final listResponse = await _api.users.messages.list(
-        'me',
-        q: query,
-        maxResults: 50,
-      );
-
-      final messages = listResponse.messages;
-      if (messages == null || messages.isEmpty) return [];
-
       final results = <GmailSearchResult>[];
-      for (final message in messages) {
-        final id = message.id;
-        if (id == null) continue;
-        final full = await _api.users.messages.get('me', id);
-        final parsed = _parseMessage(id, full);
-        if (parsed != null) results.add(parsed);
-      }
+      final seenPageTokens = <String>{};
+      String? pageToken;
+      do {
+        final listResponse = await _loadMessagePage(
+          query: query,
+          pageToken: pageToken,
+        );
+        for (final message
+            in listResponse.messages ?? const <gmail.Message>[]) {
+          final id = message.id;
+          if (id == null) continue;
+          final full = await _loadMessage(id);
+          final parsed = _parseMessage(id, full);
+          if (parsed != null) results.add(parsed);
+        }
+
+        final nextPageToken = listResponse.nextPageToken;
+        if (nextPageToken == null || nextPageToken.isEmpty) break;
+        if (!seenPageTokens.add(nextPageToken)) break;
+        pageToken = nextPageToken;
+      } while (true);
+
       return results;
     } on gmail.DetailedApiRequestError catch (e) {
       if (e.status == 401 || e.status == 403) {
@@ -185,7 +226,11 @@ class GmailSyncService {
     }
     if (candidates.length == 1) {
       final only = candidates.first;
-      return (found: true, attachmentId: only.body?.attachmentId, filename: only.filename);
+      return (
+        found: true,
+        attachmentId: only.body?.attachmentId,
+        filename: only.filename,
+      );
     }
 
     final likelyStatements = candidates.where((part) {
@@ -193,13 +238,21 @@ class GmailSyncService {
       return !_ancillaryDocumentKeywords.any(name.contains);
     }).toList();
 
-    final chosen = likelyStatements.length == 1 ? likelyStatements.first : candidates.first;
-    return (found: true, attachmentId: chosen.body?.attachmentId, filename: chosen.filename);
+    final chosen = likelyStatements.length == 1
+        ? likelyStatements.first
+        : candidates.first;
+    return (
+      found: true,
+      attachmentId: chosen.body?.attachmentId,
+      filename: chosen.filename,
+    );
   }
 
   /// Recursively gathers every PDF attachment part under [parts], however
   /// deeply nested (e.g. inside a `multipart/related` sub-container).
-  List<gmail.MessagePart> _collectPdfAttachments(List<gmail.MessagePart>? parts) {
+  List<gmail.MessagePart> _collectPdfAttachments(
+    List<gmail.MessagePart>? parts,
+  ) {
     if (parts == null) return [];
     final found = <gmail.MessagePart>[];
     for (final part in parts) {
@@ -214,7 +267,10 @@ class GmailSyncService {
   }
 
   /// Downloads and base64url-decodes a Gmail attachment's raw bytes.
-  Future<Uint8List> downloadAttachment(String messageId, String attachmentId) async {
+  Future<Uint8List> downloadAttachment(
+    String messageId,
+    String attachmentId,
+  ) async {
     final attachment = await _api.users.messages.attachments.get(
       'me',
       messageId,
