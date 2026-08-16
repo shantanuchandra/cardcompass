@@ -20,10 +20,10 @@ void main() {
     );
 
     setUpAll(() async {
-      client = SupabaseClient('http://127.0.0.1:54321', localSupabaseAnonKey);
+      client = SupabaseClient(localSupabaseUrl, localSupabaseAnonKey);
       if (serviceRoleKey.isNotEmpty) {
         serviceClient = SupabaseClient(
-          'http://127.0.0.1:54321',
+          localSupabaseUrl,
           serviceRoleKey,
         );
       }

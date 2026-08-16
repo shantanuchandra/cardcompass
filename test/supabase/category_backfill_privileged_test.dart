@@ -26,7 +26,7 @@ void main() {
 
     setUpAll(() async {
       regularClient = SupabaseClient(
-        'http://127.0.0.1:54321',
+        localSupabaseUrl,
         localSupabaseAnonKey,
       );
       final authA = await regularClient.auth.signUp(
@@ -58,7 +58,7 @@ void main() {
       });
 
       final secondClient = SupabaseClient(
-        'http://127.0.0.1:54321',
+        localSupabaseUrl,
         localSupabaseAnonKey,
       );
       final authB = await secondClient.auth.signUp(
@@ -85,7 +85,7 @@ void main() {
         return; // documented skip, no service-role key available
       }
       final serviceClient = SupabaseClient(
-        'http://127.0.0.1:54321',
+        localSupabaseUrl,
         serviceRoleKey,
       );
       final result = await serviceClient
