@@ -41,6 +41,22 @@ async function rejectsWith(input, code) {
   );
 }
 
+function settlesWithin(operation, timeoutMs = 30) {
+  return Promise.race([
+    operation,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('fetch did not settle')), timeoutMs);
+    }),
+  ]);
+}
+
+async function rejectsWithin(input, code) {
+  await assert.rejects(
+    () => settlesWithin(fetchOfficialIssuerResource(input)),
+    (error) => error instanceof Error && error.message === code,
+  );
+}
+
 test('rejects non-HTTPS and off-issuer URLs before requesting them', async () => {
   await rejectsWith({
     issuer,
@@ -188,6 +204,65 @@ test('stops reading, cancels the reader, and aborts once streamed bytes exceed t
   }, 'oversized');
   assert.equal(streamed.wasCancelled(), true);
   assert.equal(signal.aborted, true);
+});
+
+test('does not await a never-settling body cancellation before reporting oversized', async () => {
+  let cancellationRequested = false;
+  const body = new ReadableStream({
+    cancel() {
+      cancellationRequested = true;
+      return new Promise(() => {});
+    },
+  });
+  await rejectsWithin({
+    issuer,
+    url: officialUrl,
+    fetchImpl: async () => new Response(body, {
+      headers: {'content-type': 'text/html', 'content-length': '8388609'},
+    }),
+    resolveHost: publicDns,
+  }, 'oversized');
+  assert.equal(cancellationRequested, true);
+});
+
+test('does not await a never-settling reader cancellation after a stalled read times out', async () => {
+  let cancellationRequested = false;
+  const body = new ReadableStream({
+    pull() {},
+    cancel() {
+      cancellationRequested = true;
+      return new Promise(() => {});
+    },
+  });
+  await rejectsWithin({
+    issuer,
+    url: officialUrl,
+    timeoutMs: 5,
+    fetchImpl: async () => new Response(body, {headers: {'content-type': 'text/html'}}),
+    resolveHost: publicDns,
+  }, 'timeout');
+  assert.equal(cancellationRequested, true);
+});
+
+test('does not let reader cleanup replace an oversized failure code', async () => {
+  const reader = {
+    read: async () => ({done: false, value: new Uint8Array([1, 2, 3, 4])}),
+    cancel: async () => undefined,
+    releaseLock: () => { throw new Error('lock cleanup failed'); },
+  };
+  const mockResponse = {
+    status: 200,
+    ok: true,
+    headers: new Headers({'content-type': 'text/html'}),
+    body: {getReader: () => reader},
+  };
+  await rejectsWith({
+    issuer,
+    url: officialUrl,
+    maxBytes: 3,
+    fetchImpl: async () => mockResponse,
+    resolveHost: publicDns,
+  }, 'oversized');
 });
 
 test('cancels each redirect response body before following the approved location', async () => {

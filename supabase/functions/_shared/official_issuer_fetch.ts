@@ -132,11 +132,27 @@ async function ensurePublicHost(
   if (addresses.some(isPrivateAddress)) throw fetchError("private_address");
 }
 
-async function cancelResponseBody(response: Response): Promise<void> {
+function cancelResponseBody(response: Response): void {
   try {
-    await response.body?.cancel();
+    void response.body?.cancel().catch(() => undefined);
   } catch {
     // Cancellation is best-effort; the primary failure remains deterministic.
+  }
+}
+
+function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): void {
+  try {
+    void reader.cancel().catch(() => undefined);
+  } catch {
+    // Cancellation is best-effort; the primary failure remains deterministic.
+  }
+}
+
+function releaseReader(reader: ReadableStreamDefaultReader<Uint8Array>): void {
+  try {
+    reader.releaseLock();
+  } catch {
+    // A timed-out read can still own the lock; do not replace its failure code.
   }
 }
 
@@ -156,17 +172,17 @@ async function readResponseBytes(
       const nextLength = length + value.length;
       if (nextLength > maxBytes) {
         controller.abort();
-        await reader.cancel().catch(() => undefined);
+        cancelReader(reader);
         throw fetchError("oversized");
       }
       chunks.push(value);
       length = nextLength;
     }
   } catch (error) {
-    if (controller.signal.aborted) await reader.cancel().catch(() => undefined);
+    if (controller.signal.aborted) cancelReader(reader);
     throw error;
   } finally {
-    reader.releaseLock();
+    releaseReader(reader);
   }
   const bytes = new Uint8Array(length);
   let offset = 0;
@@ -239,7 +255,7 @@ export async function fetchOfficialIssuerResource(
       }
 
       if (response.status >= 300 && response.status < 400) {
-        await cancelResponseBody(response);
+        cancelResponseBody(response);
         const location = response.headers.get("location");
         if (!location) throw fetchError("redirect_rejected");
         let redirectUrl: string;
@@ -253,19 +269,19 @@ export async function fetchOfficialIssuerResource(
       }
 
       if (!response.ok) {
-        await cancelResponseBody(response);
+        cancelResponseBody(response);
         throw fetchError("unreachable");
       }
       const contentType = response.headers.get("content-type")?.split(";", 1)[0]
         .trim().toLowerCase() ?? "";
       if (!contentPolicy.contentTypes.has(contentType)) {
-        await cancelResponseBody(response);
+        cancelResponseBody(response);
         throw fetchError("unsupported_content");
       }
       const declaredBytes = Number(response.headers.get("content-length") ?? 0);
       if (declaredBytes > maxBytes) {
         controller.abort();
-        await cancelResponseBody(response);
+        cancelResponseBody(response);
         throw fetchError("oversized");
       }
 
