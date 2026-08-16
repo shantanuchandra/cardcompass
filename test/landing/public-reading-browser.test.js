@@ -140,7 +140,14 @@ async function pressTab(cdp) {
   };
   await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...key });
   await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...key });
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const visible = await evaluate(cdp, `(() => {
+      const rect = document.activeElement.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < innerHeight;
+    })()`);
+    if (visible) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
 }
 
 async function clickSelector(cdp, selector) {
