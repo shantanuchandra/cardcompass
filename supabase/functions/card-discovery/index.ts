@@ -14,6 +14,7 @@ import {
   sanitizeEvidence,
   selectSubmittedUrlIdentity,
 } from "../_shared/card_discovery.ts";
+import { fetchOfficialIssuerResource } from "../_shared/official_issuer_fetch.ts";
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 type UntypedSupabaseClient = any;
@@ -111,60 +112,6 @@ async function sha256Bytes(value: Uint8Array): Promise<string> {
     .join("");
 }
 
-async function fetchOfficial(
-  issuer: string,
-  initialUrl: string,
-): Promise<{ url: string; body: string; contentType: string; hash: string }> {
-  let url = initialUrl;
-  for (let redirects = 0; redirects <= 4; redirects++) {
-    try {
-      url = canonicalOfficialUrl(issuer, url);
-    } catch {
-      throw new Error(redirects === 0 ? "unapproved_domain" : "unsafe_redirect");
-    }
-    const response = await fetch(url, {
-      redirect: "manual",
-      headers: {
-        "User-Agent": "CardCompassCatalogBot/1.0 (+catalog verification)",
-        Accept: "text/html,application/xhtml+xml,application/pdf;q=0.8",
-      },
-      signal: AbortSignal.timeout(12_000),
-    });
-    if (response.status >= 300 && response.status < 400) {
-      const location = response.headers.get("location");
-      if (!location) throw new Error("redirect_without_location");
-      const redirectUrl = new URL(location, url).toString();
-      try {
-        url = canonicalOfficialUrl(issuer, redirectUrl);
-      } catch {
-        throw new Error("unsafe_redirect");
-      }
-      continue;
-    }
-    if (!response.ok) throw new Error(`official_fetch_${response.status}`);
-    const contentType = response.headers.get("content-type")?.split(";")[0] ?? "";
-    if (![
-      'text/html',
-      'application/xhtml+xml',
-      'application/pdf',
-      'application/xml',
-      'text/xml',
-    ].includes(contentType)) {
-      throw new Error("unsupported_content_type");
-    }
-    const declared = Number(response.headers.get("content-length") ?? 0);
-    if (declared > 2_000_000) throw new Error("response_too_large");
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.length > 2_000_000) throw new Error("response_too_large");
-    const hash = await sha256Bytes(bytes);
-    const body = contentType === "application/pdf"
-      ? ""
-      : new TextDecoder().decode(bytes);
-    return { url, body, contentType, hash };
-  }
-  throw new Error("too_many_redirects");
-}
-
 async function findCatalogCardByUrlHashes(
   db: UntypedSupabaseClient,
   hashes: string[],
@@ -241,8 +188,8 @@ async function processSubmittedUrl(
   const knownSubmitted = await findCatalogCardByUrlHashes(db, [submittedHash]);
   if (knownSubmitted) return markResolved(db, job.id, knownSubmitted);
 
-  const page = await fetchOfficial(job.issuer, submittedUrl);
-  const finalUrl = canonicalOfficialUrl(job.issuer, page.url);
+  const page = await fetchOfficialIssuerResource({ issuer: job.issuer, url: submittedUrl });
+  const finalUrl = page.canonicalUrl;
   const finalHash = await sha256(finalUrl);
   const knownFinal = await findCatalogCardByUrlHashes(
     db,
@@ -259,16 +206,16 @@ async function processSubmittedUrl(
     await putInReview(db, job, { ...canonical, official_url: finalUrl }, {
       evidence,
       official_url: finalUrl,
-      content_hash: page.hash,
+      content_hash: page.contentHash,
       source_type: "official_pdf",
     }, ["official_pdf_requires_review"], evidence.confidence ?? 0);
     return (await db.from("card_discovery_jobs").select("*").eq("id", job.id)
       .single()).data;
   }
 
-  const pageText = htmlText(page.body);
+  const pageText = htmlText(page.text);
   const selected = selectSubmittedUrlIdentity({
-    html: page.body,
+    html: page.text,
     issuer: job.issuer,
     statementProducts: evidence.product_signals ?? [],
   });
@@ -292,7 +239,7 @@ async function processSubmittedUrl(
     await putInReview(db, job, { ...canonical, official_url: finalUrl }, {
       evidence,
       official_url: finalUrl,
-      content_hash: page.hash,
+      content_hash: page.contentHash,
       excerpt: sanitizeEvidence(pageText),
     }, gate.reasons, evidence.confidence ?? 0);
     return (await db.from("card_discovery_jobs").select("*").eq("id", job.id)
@@ -334,7 +281,7 @@ async function processSubmittedUrl(
       submitted_url_hash: submittedHash,
       final_url_hash: finalHash,
       source_type: "official_html",
-      content_hash: page.hash,
+      content_hash: page.contentHash,
       extracted_fields: canonical,
       source_evidence: { excerpt: sanitizeEvidence(pageText) },
       validation_version: "card-identity-v2",
@@ -350,7 +297,7 @@ async function processSubmittedUrl(
       issuer: job.issuer,
       canonical_url: finalUrl,
       final_url_hash: finalHash,
-      content_hash: page.hash,
+      content_hash: page.contentHash,
       status: "queued",
       updated_at: new Date().toISOString(),
     }, { onConflict: "card_id,final_url_hash,content_hash" })
@@ -393,8 +340,11 @@ async function discoverOfficialUrl(
   for (const domain of officialDomainsForIssuer(issuer)) {
     for (const sitemapPath of ["/sitemap.xml", "/sitemap_index.xml"]) {
       try {
-        const response = await fetchOfficial(issuer, `https://${domain}${sitemapPath}`);
-        urls.push(...Array.from(response.body.matchAll(/<loc>\s*([^<]+)\s*<\/loc>/gi), (m) => m[1]));
+        const response = await fetchOfficialIssuerResource({
+          issuer,
+          url: `https://${domain}${sitemapPath}`,
+        });
+        urls.push(...Array.from(response.text.matchAll(/<loc>\s*([^<]+)\s*<\/loc>/gi), (m) => m[1]));
       } catch {
         // An issuer may not publish a sitemap at either conventional path.
       }
@@ -460,24 +410,24 @@ async function processDiscoveryJob(
       await putInReview(db, job, canonical, { evidence }, ["official_source_not_found"], evidence.confidence ?? 0);
       return;
     }
-    const page = await fetchOfficial(job.issuer, officialUrl);
+    const page = await fetchOfficialIssuerResource({ issuer: job.issuer, url: officialUrl });
     if (page.contentType === "application/pdf") {
       await putInReview(db, job, canonical, {
         evidence,
-        official_url: page.url,
-        content_hash: page.hash,
+        official_url: page.finalUrl,
+        content_hash: page.contentHash,
         source_type: "official_pdf",
       }, ["official_pdf_requires_review"], evidence.confidence ?? 0);
       return;
     }
-    const pageText = htmlText(page.body);
+    const pageText = htmlText(page.text);
     const pageIdentity = normalizedProduct(pageText, job.issuer);
     const expectedIdentity = normalizedProduct(canonical.cardName, job.issuer);
     if (!pageIdentity.includes(expectedIdentity)) {
-      await putInReview(db, job, { ...canonical, official_url: page.url }, {
+      await putInReview(db, job, { ...canonical, official_url: page.finalUrl }, {
         evidence,
-        official_url: page.url,
-        content_hash: page.hash,
+        official_url: page.finalUrl,
+        content_hash: page.contentHash,
       }, ["official_product_not_found"], evidence.confidence ?? 0);
       return;
     }
@@ -495,7 +445,7 @@ async function processDiscoveryJob(
     );
     const gate = evaluateAutomaticCatalogGate({
       issuer: job.issuer,
-      officialUrl: page.url,
+      officialUrl: page.finalUrl,
       officialProduct,
       statementProducts: evidence.product_signals ?? [],
       confidence: evidence.confidence ?? 0,
@@ -503,10 +453,10 @@ async function processDiscoveryJob(
       conflicts: evidence.warnings ?? [],
     });
     if (!gate.autoAdd) {
-      await putInReview(db, job, { ...canonical, official_url: page.url }, {
+      await putInReview(db, job, { ...canonical, official_url: page.finalUrl }, {
         evidence,
-        official_url: page.url,
-        content_hash: page.hash,
+        official_url: page.finalUrl,
+        content_hash: page.contentHash,
         excerpt: sanitizeEvidence(pageText),
       }, gate.reasons, evidence.confidence ?? 0, existing);
       return;
@@ -520,7 +470,7 @@ async function processDiscoveryJob(
           card_name: canonical.cardName,
           network: canonical.network ?? evidence.network ?? null,
           card_type: "credit",
-          card_url: page.url,
+          card_url: page.finalUrl,
         }).select("id").single();
       if (insertError) throw insertError;
       cardId = card.id;
@@ -531,14 +481,14 @@ async function processDiscoveryJob(
         alias,
         normalized_alias: normalizedProduct(alias, job.issuer),
         evidence_type: "issuer_page",
-        source_url: page.url,
+        source_url: page.finalUrl,
       }, { onConflict: "card_id,normalized_alias" });
     }
     await db.from("card_catalog_provenance").upsert({
       card_id: cardId,
-      source_url: page.url,
+      source_url: page.finalUrl,
       source_type: "official_html",
-      content_hash: page.hash,
+      content_hash: page.contentHash,
       extracted_fields: canonical,
       source_evidence: { excerpt: sanitizeEvidence(pageText) },
       validation_version: "card-identity-v1",
