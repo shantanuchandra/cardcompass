@@ -343,6 +343,7 @@ async function discoverOfficialUrl(
         const response = await fetchOfficialIssuerResource({
           issuer,
           url: `https://${domain}${sitemapPath}`,
+          contentPurpose: "sitemap",
         });
         urls.push(...Array.from(response.text.matchAll(/<loc>\s*([^<]+)\s*<\/loc>/gi), (m) => m[1]));
       } catch {

@@ -66,10 +66,8 @@ async function processJob(db: UntypedSupabaseClient, jobId: string) {
     const page = await fetchOfficialIssuerResource({
       issuer: claimed.issuer,
       url: claimed.canonical_url,
+      contentPurpose: "html",
     });
-    if (!["text/html", "application/xhtml+xml"].includes(page.contentType)) {
-      throw new Error("unsupported_content");
-    }
     const normalized = normalizeOfficialCatalogPage(page.text, page.finalUrl);
     const { data: catalog, error: catalogError } = await db.from("card_catalog")
       .select("id, network, card_type, joining_fee, annual_fee, apr")

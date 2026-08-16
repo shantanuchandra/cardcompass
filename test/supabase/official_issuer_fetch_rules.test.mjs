@@ -14,6 +14,26 @@ function response(body, options = {}) {
   });
 }
 
+function streamingResponse(options = {}) {
+  let cancelled = false;
+  const stream = new ReadableStream({
+    start(controller) {
+      for (const chunk of options.chunks ?? []) controller.enqueue(chunk);
+      if (options.close !== false) controller.close();
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  return {
+    response: new Response(stream, {
+      status: options.status ?? 200,
+      headers: options.headers ?? {'content-type': 'text/html'},
+    }),
+    wasCancelled: () => cancelled,
+  };
+}
+
 async function rejectsWith(input, code) {
   await assert.rejects(
     () => fetchOfficialIssuerResource(input),
@@ -76,13 +96,11 @@ test('sanitizes malformed redirect locations into the redirect rejection code', 
   }, 'redirect_rejected');
 });
 
-test('allows only HTML, XHTML, PDF, and issuer sitemap XML content', async () => {
+test('allows HTML, XHTML, and PDF by default while reserving XML for sitemap fetches', async () => {
   for (const contentType of [
     'text/html',
     'application/xhtml+xml',
     'application/pdf',
-    'application/xml',
-    'text/xml',
   ]) {
     const result = await fetchOfficialIssuerResource({
       issuer,
@@ -97,6 +115,27 @@ test('allows only HTML, XHTML, PDF, and issuer sitemap XML content', async () =>
   await rejectsWith({
     issuer,
     url: officialUrl,
+    fetchImpl: async () => response('<urlset/>', {
+      headers: {'content-type': 'application/xml'},
+    }),
+    resolveHost: publicDns,
+  }, 'unsupported_content');
+  let sitemapAccept = '';
+  const sitemap = await fetchOfficialIssuerResource({
+    issuer,
+    url: officialUrl,
+    contentPurpose: 'sitemap',
+    fetchImpl: async (_url, init) => {
+      sitemapAccept = new Headers(init.headers).get('accept') ?? '';
+      return response('<urlset/>', {headers: {'content-type': 'application/xml'}});
+    },
+    resolveHost: publicDns,
+  });
+  assert.equal(sitemap.contentType, 'application/xml');
+  assert.match(sitemapAccept, /application\/xml/);
+  await rejectsWith({
+    issuer,
+    url: officialUrl,
     fetchImpl: async () => response('{"not":"issuer content"}', {
       headers: {'content-type': 'application/json'},
     }),
@@ -105,14 +144,22 @@ test('allows only HTML, XHTML, PDF, and issuer sitemap XML content', async () =>
 });
 
 test('enforces the eight-megabyte declared and actual response limits', async () => {
+  const declared = streamingResponse({
+    close: false,
+    headers: {'content-type': 'text/html', 'content-length': '8388609'},
+  });
+  let declaredSignal;
   await rejectsWith({
     issuer,
     url: officialUrl,
-    fetchImpl: async () => response('small', {
-      headers: {'content-type': 'text/html', 'content-length': '8388609'},
-    }),
+    fetchImpl: async (_url, init) => {
+      declaredSignal = init.signal;
+      return declared.response;
+    },
     resolveHost: publicDns,
   }, 'oversized');
+  assert.equal(declared.wasCancelled(), true);
+  assert.equal(declaredSignal.aborted, true);
   await rejectsWith({
     issuer,
     url: officialUrl,
@@ -121,6 +168,72 @@ test('enforces the eight-megabyte declared and actual response limits', async ()
     }),
     resolveHost: publicDns,
   }, 'oversized');
+});
+
+test('stops reading, cancels the reader, and aborts once streamed bytes exceed the limit', async () => {
+  const streamed = streamingResponse({
+    chunks: [new Uint8Array([1, 2]), new Uint8Array([3, 4])],
+    close: false,
+  });
+  let signal;
+  await rejectsWith({
+    issuer,
+    url: officialUrl,
+    maxBytes: 3,
+    fetchImpl: async (_url, init) => {
+      signal = init.signal;
+      return streamed.response;
+    },
+    resolveHost: publicDns,
+  }, 'oversized');
+  assert.equal(streamed.wasCancelled(), true);
+  assert.equal(signal.aborted, true);
+});
+
+test('cancels each redirect response body before following the approved location', async () => {
+  const redirect = streamingResponse({
+    close: false,
+    status: 302,
+    headers: {location: '/rd/white-reserve?step=2'},
+  });
+  let calls = 0;
+  await fetchOfficialIssuerResource({
+    issuer,
+    url: officialUrl,
+    fetchImpl: async () => {
+      calls += 1;
+      if (calls === 1) return redirect.response;
+      assert.equal(redirect.wasCancelled(), true);
+      return response('approved content');
+    },
+    resolveHost: publicDns,
+  });
+  assert.equal(calls, 2);
+});
+
+test('uses one timeout deadline for stalled DNS and all redirect hops', async () => {
+  await rejectsWith({
+    issuer,
+    url: officialUrl,
+    timeoutMs: 5,
+    fetchImpl: async () => assert.fail('must not fetch while DNS is stalled'),
+    resolveHost: async () => new Promise(() => {}),
+  }, 'timeout');
+
+  let resolutions = 0;
+  await rejectsWith({
+    issuer,
+    url: officialUrl,
+    timeoutMs: 5,
+    fetchImpl: async () => response('', {
+      status: 302,
+      headers: {location: '/rd/white-reserve?next=1'},
+    }),
+    resolveHost: async () => {
+      resolutions += 1;
+      return resolutions === 1 ? ['203.0.113.20'] : new Promise(() => {});
+    },
+  }, 'timeout');
 });
 
 test('aborts a fetch after its configured timeout and exposes only the timeout code', async () => {
