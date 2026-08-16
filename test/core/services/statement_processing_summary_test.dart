@@ -3,6 +3,22 @@ import 'package:cardcompass/shared/models/user_card.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('normalizes formatted Gemini amounts without aborting persistence', () {
+    expect(parsedGeminiNumber(476612), 476612);
+    expect(parsedGeminiNumber('₹4,76,612.50'), 476612.50);
+    expect(parsedGeminiNumber(''), isNull);
+    expect(parsedGeminiNumber('not available'), isNull);
+  });
+
+  test('falls back when Gemini emits a non-ISO transaction date', () {
+    final fallback = DateTime(2026, 7, 26);
+
+    expect(parsedGeminiDate('2026-07-14', fallback), DateTime(2026, 7, 14));
+    expect(parsedGeminiDate('14/07/2026', fallback), DateTime(2026, 7, 14));
+    expect(parsedGeminiDate('not available', fallback), fallback);
+    expect(parsedGeminiDate(null, fallback), fallback);
+  });
+
   test('reprocesses pending ICICI emails with a unique filename last-four', () {
     final cards = [
       UserCard(
@@ -56,7 +72,7 @@ void main() {
     );
   });
 
-  test('keeps genuinely ambiguous pending email out of automatic retries', () {
+  test('keeps pending same-bank email available for catalog resolution', () {
     final cards = [
       UserCard(
         id: 'one',
@@ -87,7 +103,34 @@ void main() {
     expect(cardMatchedFromEmailFilename(email, cards), isNull);
     expect(
       statementEmailsReadyForProcessing([email], userCards: cards),
-      isEmpty,
+      hasLength(1),
+    );
+  });
+
+  test('retries pending emails when no same-bank wallet card exists', () {
+    final email = {
+      'email_id': 'swiggy-email',
+      'bank_detected': 'HDFC Bank',
+      'subject': 'Your HDFC Bank - Swiggy Credit Card Statement',
+      'metadata': {
+        'attachmentFilename': 'statement.pdf',
+        'needsCardAssignment': true,
+      },
+    };
+    final unrelatedCards = [
+      UserCard(
+        id: 'hsbc',
+        userId: 'user',
+        catalogCardId: 'travelone-catalog',
+        bank: 'HSBC',
+        cardName: 'TravelOne',
+        createdAt: DateTime(2026),
+      ),
+    ];
+
+    expect(
+      statementEmailsReadyForProcessing([email], userCards: unrelatedCards),
+      hasLength(1),
     );
   });
 
@@ -148,6 +191,214 @@ void main() {
           hasLength(1),
         );
       }
+    },
+  );
+
+  test('uniquely matches named statements to same-bank catalog cards', () {
+    const cases = <({String subject, String filename, String cardName})>[
+      (
+        subject: 'ICICI Bank Credit Card Statement',
+        filename: '4786XXXXXXXX3001_Retail_AdaniOne_NORM.pdf',
+        cardName: 'Adani One',
+      ),
+      (
+        subject: 'ICICI Bank Credit Card Statement',
+        filename: '3769XXXXXXXX3003_Retail_Sapphiro_NORM.pdf',
+        cardName: 'Sapphiro',
+      ),
+      (
+        subject: 'Amazon Pay ICICI Bank Credit Card Statement',
+        filename: '4315XXXXXXXX6006_Retail_Amazon_NORM.pdf',
+        cardName: 'Amazon Pay',
+      ),
+      (
+        subject: 'Your HDFC Bank - Tata Neu Infinity Credit Card Statement',
+        filename: 'statement.pdf',
+        cardName: 'Tata Neu Infinity',
+      ),
+      (
+        subject: 'Your HDFC Bank - Swiggy Credit Card Statement',
+        filename: 'statement.pdf',
+        cardName: 'Swiggy',
+      ),
+      (
+        subject: 'Your HDFC Bank - Diners Black Credit Card Statement',
+        filename: 'statement.pdf',
+        cardName: 'Diners Club Black',
+      ),
+      (
+        subject: 'Your Zenith Credit Card Statement is here',
+        filename: 'account_Zenith_998_Aug-26.pdf',
+        cardName: 'Zenith',
+      ),
+      (
+        subject: 'Statement for White Reserve Credit Card',
+        filename: 'statement.pdf',
+        cardName: 'White Reserve',
+      ),
+      (
+        subject: 'Your FIRST Power Plus Credit Card Statement',
+        filename: 'statement.pdf',
+        cardName: 'Power Plus',
+      ),
+    ];
+
+    for (final item in cases) {
+      final match = catalogCardMatchedFromEmailEvidence(
+        {
+          'subject': item.subject,
+          'metadata': {'attachmentFilename': item.filename},
+        },
+        [
+          {'id': 'wanted', 'card_name': item.cardName},
+          {'id': 'other', 'card_name': 'Unrelated Platinum'},
+        ],
+      );
+      expect(match?['id'], 'wanted', reason: item.cardName);
+    }
+  });
+
+  test('does not infer a card from ambiguous or generic catalog evidence', () {
+    expect(
+      catalogCardMatchedFromEmailEvidence(
+        {
+          'subject': 'Your PNB Credit Card Statement',
+          'metadata': {'attachmentFilename': '2231832797.pdf'},
+        },
+        [
+          {'id': 'pnb', 'card_name': 'Punjab National Bank'},
+        ],
+      ),
+      isNull,
+    );
+    expect(
+      catalogCardMatchedFromEmailEvidence(
+        {
+          'subject': 'Your Diners Black Credit Card Statement',
+          'metadata': {'attachmentFilename': 'statement.pdf'},
+        },
+        [
+          {'id': 'black', 'card_name': 'Diners Club Black'},
+          {'id': 'duplicate', 'card_name': 'Diners Black'},
+        ],
+      ),
+      isNull,
+    );
+  });
+
+  test(
+    'catalog evidence prefers White Reserve over the shorter White card',
+    () {
+      final match = catalogCardMatchedFromEmailEvidence(
+        const {
+          'bank_detected': 'Kotak Bank',
+          'subject': 'Jul-2026 Statement for White Reserve Credit Card X0771',
+          'metadata': {'attachmentFilename': '94XXXXXXXXXXX245.pdf'},
+        },
+        const [
+          {'id': 'white', 'bank': 'Kotak Bank', 'card_name': 'White'},
+          {
+            'id': 'white-reserve',
+            'bank': 'Kotak Bank',
+            'card_name': 'White Reserve',
+          },
+        ],
+      );
+
+      expect(match?['id'], 'white-reserve');
+    },
+  );
+
+  test(
+    'catalog evidence uses aliases without treating Amex as the product',
+    () {
+      final match = catalogCardMatchedFromEmailEvidence(
+        const {
+          'bank_detected': 'Axis Bank',
+          'subject': 'Your Axis Bank Amex Privilege Credit Card Statement',
+          'metadata': {'attachmentFilename': 'Credit Card Statement.pdf'},
+        },
+        const [
+          {
+            'id': 'privilege',
+            'bank': 'Axis Bank',
+            'card_name': 'Privilege',
+            'card_catalog_aliases': [
+              {'alias': 'Amex Privilege'},
+            ],
+          },
+        ],
+      );
+
+      expect(match?['id'], 'privilege');
+    },
+  );
+
+  test(
+    'creates a wallet card only for one uniquely named catalog entry',
+    () async {
+      String? createdCatalogId;
+      final resolved = await resolveCatalogCardForEmail(
+        email: const {
+          'subject': 'Your HDFC Bank - Swiggy Credit Card Statement',
+          'metadata': {'attachmentFilename': 'statement.pdf'},
+        },
+        bankName: 'HDFC Bank',
+        existingCards: const [],
+        loadCatalog: (_) async => const [
+          {'id': 'swiggy-catalog', 'card_name': 'Swiggy'},
+          {'id': 'regalia-catalog', 'card_name': 'Regalia Gold'},
+        ],
+        createCard: (catalogId) async {
+          createdCatalogId = catalogId;
+          return UserCard(
+            id: 'created-card',
+            userId: 'user',
+            catalogCardId: catalogId,
+            bank: 'HDFC Bank',
+            cardName: 'Swiggy',
+            createdAt: DateTime(2026),
+          );
+        },
+      );
+
+      expect(createdCatalogId, 'swiggy-catalog');
+      expect(resolved?.id, 'created-card');
+    },
+  );
+
+  test(
+    'reuses an existing wallet card for the matched catalog entry',
+    () async {
+      final existing = UserCard(
+        id: 'amazon-card',
+        userId: 'user',
+        catalogCardId: 'amazon-catalog',
+        bank: 'ICICI Bank',
+        cardName: 'Amazon Pay',
+        createdAt: DateTime(2026),
+      );
+      var createCalls = 0;
+
+      final resolved = await resolveCatalogCardForEmail(
+        email: const {
+          'subject': 'Amazon Pay ICICI Bank Credit Card Statement',
+          'metadata': {'attachmentFilename': 'Retail_Amazon_NORM.pdf'},
+        },
+        bankName: 'ICICI Bank',
+        existingCards: [existing],
+        loadCatalog: (_) async => const [
+          {'id': 'amazon-catalog', 'card_name': 'Amazon Pay'},
+          {'id': 'sapphiro-catalog', 'card_name': 'Sapphiro'},
+        ],
+        createCard: (_) async {
+          createCalls++;
+          throw StateError('must reuse the wallet card');
+        },
+      );
+
+      expect(resolved?.id, 'amazon-card');
+      expect(createCalls, 0);
     },
   );
 

@@ -1,3 +1,5 @@
+// ignore_for_file: prefer_initializing_formals
+
 import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../repositories/email_repository.dart';
@@ -9,23 +11,83 @@ import 'gmail_sync_service.dart';
 import 'pdf_password_resolver.dart';
 import 'gemini_statement_parser.dart';
 import 'card_normalizer_service.dart';
+import 'card_identity_service.dart';
+import 'card_discovery_service.dart';
 import 'parsing_logger.dart';
 import 'transaction_categorizer.dart';
 import 'bank_market.dart';
 import 'transaction_currency_resolver.dart';
 import 'transaction_type_normalizer.dart';
 
-enum EmailOutcome { succeeded, needsPassword, needsCardAssignment, failed }
+enum EmailOutcome {
+  succeeded,
+  needsPassword,
+  needsCardAssignment,
+  discoveryQueued,
+  failed,
+}
+
+/// Gemini generally returns JSON numbers, but statement typography sometimes
+/// causes it to preserve currency symbols and Indian digit grouping. Treat
+/// those values as optional evidence instead of letting one formatted field
+/// abort persistence for the whole statement.
+double? parsedGeminiNumber(Object? value) {
+  if (value is num) return value.toDouble();
+  if (value is! String) return null;
+  final normalized = value
+      .trim()
+      .replaceAll(',', '')
+      .replaceAll(RegExp(r'[^0-9.\-]'), '');
+  if (normalized.isEmpty || normalized == '-' || normalized == '.') {
+    return null;
+  }
+  return double.tryParse(normalized);
+}
+
+/// Accepts the ISO dates requested from Gemini and the common DD/MM/YYYY form
+/// seen in Indian statement tables. Invalid optional dates fall back to the
+/// statement date rather than failing the entire email.
+DateTime parsedGeminiDate(Object? value, DateTime fallback) {
+  if (value is DateTime) return value;
+  if (value is! String || value.trim().isEmpty) return fallback;
+  final raw = value.trim();
+  final iso = DateTime.tryParse(raw);
+  if (iso != null) return iso;
+  final dayFirst = RegExp(
+    r'^(\d{1,2})[\-/](\d{1,2})[\-/](\d{4})$',
+  ).firstMatch(raw);
+  if (dayFirst == null) return fallback;
+  final day = int.parse(dayFirst.group(1)!);
+  final month = int.parse(dayFirst.group(2)!);
+  final year = int.parse(dayFirst.group(3)!);
+  final parsed = DateTime(year, month, day);
+  return parsed.year == year && parsed.month == month && parsed.day == day
+      ? parsed
+      : fallback;
+}
 
 /// Extracts the last four digits from an explicitly-labelled masked primary
 /// card number, as used on HSBC statements.
 String? extractPrimaryCardLastFour(String pdfText) {
-  final labelledNumber = RegExp(
-    r'primary\s+card\s+number\s*[:\-]?\s*((?:\d{2}[xX*]{2}|[xX*]{4})[\s-]+[xX*]{4}[\s-]+[xX*]{4}[\s-]+\d{4})',
+  final label = RegExp(
+    r'primary\s+card\s+number\s*[:\-]?',
     caseSensitive: false,
   ).firstMatch(pdfText);
-  if (labelledNumber == null) return null;
-  return RegExp(r'\d{4}').allMatches(labelledNumber.group(1)!).last.group(0);
+  if (label == null) return null;
+
+  // PDF text layers sometimes insert whitespace between every glyph. Limit
+  // the search to the small labelled field, then remove layout separators so
+  // both `51xx xxxx xxxx 1759` and `5 1 x x ... 1 7 5 9` normalize alike.
+  final fieldEnd = label.end + 80 < pdfText.length
+      ? label.end + 80
+      : pdfText.length;
+  final normalized = pdfText
+      .substring(label.end, fieldEnd)
+      .replaceAll(RegExp(r'[\s\-]'), '');
+  final labelledNumber = RegExp(
+    r'(?:\d{2}[xX*]{10}|[xX*]{12})(\d{4})(?!\d)',
+  ).firstMatch(normalized);
+  return labelledNumber?.group(1);
 }
 
 /// Keeps a valid parser result, otherwise supplements it with deterministic
@@ -93,7 +155,9 @@ List<Map<String, dynamic>> statementEmailsReadyForProcessing(
     if (metadata is! Map || metadata['needsCardAssignment'] != true) {
       return true;
     }
-    return cardMatchedFromEmailFilename(email, userCards) != null;
+    // Pending rows must reach _processOne: it now performs the cheap catalog
+    // evidence check before any PDF parsing or single-bank-card fallback.
+    return true;
   }).toList();
 }
 
@@ -139,12 +203,75 @@ UserCard? cardMatchedFromEmailFilename(
   return productMatches.length == 1 ? productMatches.single : null;
 }
 
+/// Returns a catalog entry only when the statement names exactly one product.
+/// Callers must supply entries already constrained to the detected bank.
+Map<String, dynamic>? catalogCardMatchedFromEmailEvidence(
+  Map<String, dynamic> email,
+  List<Map<String, dynamic>> catalogEntries,
+) {
+  final metadata = email['metadata'];
+  final filename = metadata is Map
+      ? metadata['attachmentFilename'] as String? ?? ''
+      : '';
+  final issuer =
+      email['bank_detected'] as String? ??
+      (catalogEntries.firstOrNull?['bank'] as String?) ??
+      'Unknown Bank';
+  final evidence = CardIdentityEvidence.extract(
+    issuer: issuer,
+    subject: email['subject'] as String? ?? '',
+    attachmentFilename: filename,
+  );
+  final identities = catalogEntries
+      .map((entry) {
+        final aliasRows = entry['card_catalog_aliases'];
+        final aliases = aliasRows is List
+            ? aliasRows
+                  .whereType<Map>()
+                  .map((row) => row['alias'])
+                  .whereType<String>()
+                  .toList(growable: false)
+            : const <String>[];
+        return CardCatalogIdentity(
+          id: entry['id'] as String,
+          issuer: entry['bank'] as String? ?? issuer,
+          name: entry['card_name'] as String? ?? '',
+          network: entry['network'] as String?,
+          aliases: aliases,
+        );
+      })
+      .toList(growable: false);
+  final match = const CardIdentityMatcher().match(evidence, identities);
+  if (match == null) return null;
+  return catalogEntries.where((entry) => entry['id'] == match.id).firstOrNull;
+}
+
+Future<UserCard?> resolveCatalogCardForEmail({
+  required Map<String, dynamic> email,
+  required String bankName,
+  required List<UserCard> existingCards,
+  required Future<List<Map<String, dynamic>>> Function(String bankName)
+  loadCatalog,
+  required Future<UserCard> Function(String catalogCardId) createCard,
+}) async {
+  final catalog = await loadCatalog(bankName);
+  final match = catalogCardMatchedFromEmailEvidence(email, catalog);
+  final catalogCardId = match?['id'] as String?;
+  if (catalogCardId == null) return null;
+  final existing = existingCards
+      .where((card) => card.catalogCardId == catalogCardId)
+      .firstOrNull;
+  if (existing != null) return existing;
+  return createCard(catalogCardId);
+}
+
 enum StatementIssueReason {
   attachmentUnavailable,
   downloadFailed,
   passwordRequired,
   passwordAttemptsExhausted,
   cardAssignmentRequired,
+  cardDiscoveryPending,
   processingFailed,
 }
 
@@ -210,6 +337,8 @@ List<String> buildStatementIssueLines(List<StatementProcessingIssue> issues) {
     StatementIssueReason.passwordAttemptsExhausted =>
       'Password still incorrect after 2 attempts',
     StatementIssueReason.cardAssignmentRequired => 'Choose the correct card',
+    StatementIssueReason.cardDiscoveryPending =>
+      'Card identification is continuing in the background',
     StatementIssueReason.processingFailed =>
       'Could not parse or save statement',
   };
@@ -225,6 +354,7 @@ class StatementProcessingResult {
   final int succeeded;
   final int needsPassword;
   final int needsCardAssignment;
+  final int discoveryQueued;
   final int failed;
   final List<StatementProcessingIssue> issues;
 
@@ -233,6 +363,7 @@ class StatementProcessingResult {
     required this.succeeded,
     required this.needsPassword,
     required this.needsCardAssignment,
+    this.discoveryQueued = 0,
     required this.failed,
     this.issues = const [],
   });
@@ -247,10 +378,10 @@ class StatementProcessingService {
   final StatementsRepository _statementsRepo;
   final TransactionsRepository _transactionsRepo;
   final CardsRepository _cardsRepo;
+  final CardDiscoveryService _discoveryService;
   final String _userId;
   final String _userEmail;
   final String _userName;
-  final Map<String, String> _forcedCardIdByBank;
   final Map<String, String?> _merchantCategoryCache = {};
   final StatementIssueAccumulator _issues = StatementIssueAccumulator();
 
@@ -292,26 +423,21 @@ class StatementProcessingService {
     }).toList();
   }
 
-  /// [forcedCardIdByBank] lets a caller pin a specific bank name (as stored
-  /// in emails.bank_detected) to a card for this run — used right after the
-  /// user manually resolves a previously-unmatched bank, so this pass uses
-  /// their choice instead of (still nonexistent) prior-resolution history.
   StatementProcessingService({
     required GmailSyncService gmailService,
     required SupabaseClient supabaseClient,
     required String userId,
     required String userEmail,
     required String userName,
-    Map<String, String> forcedCardIdByBank = const {},
   }) : _gmailService = gmailService,
        _emailRepo = EmailRepository(),
        _statementsRepo = StatementsRepository(supabaseClient),
        _transactionsRepo = TransactionsRepository(supabaseClient),
        _cardsRepo = CardsRepository(supabaseClient),
+       _discoveryService = CardDiscoveryService(supabaseClient),
        _userId = userId,
        _userEmail = userEmail,
-       _userName = userName,
-       _forcedCardIdByBank = forcedCardIdByBank;
+       _userName = userName;
 
   Future<void> _warmMerchantCategoryCache(String normalizedMerchantName) async {
     if (_merchantCategoryCache.containsKey(normalizedMerchantName)) return;
@@ -330,7 +456,9 @@ class StatementProcessingService {
     var succeeded = 0;
     var needsPassword = 0;
     var needsCardAssignment = 0;
+    var discoveryQueued = 0;
     var failed = 0;
+    final deferredEmails = <Map<String, dynamic>>[];
 
     for (final email in emails) {
       final attemptStart = _issues.beginAttempt();
@@ -367,9 +495,40 @@ class StatementProcessingService {
         case EmailOutcome.needsCardAssignment:
           needsCardAssignment++;
           break;
+        case EmailOutcome.discoveryQueued:
+          discoveryQueued++;
+          deferredEmails.add(email);
+          break;
         case EmailOutcome.failed:
           failed++;
           break;
+      }
+    }
+
+    // Revisit only the statements deferred during this pass. The Edge
+    // Function may have completed while later Gmail messages were processed;
+    // unresolved jobs remain persisted for the next authenticated session.
+    for (final email in deferredEmails) {
+      final metadata = email['metadata'];
+      final jobId = metadata is Map
+          ? metadata['cardDiscoveryJobId'] as String?
+          : null;
+      if (jobId == null) continue;
+      try {
+        final job = await _discoveryService.status(jobId);
+        if (job.status != 'resolved' || job.resolvedCardId == null) continue;
+        final outcome = await _processOne(email, userCards);
+        if (outcome == EmailOutcome.succeeded) {
+          discoveryQueued--;
+          succeeded++;
+        } else if (outcome == EmailOutcome.needsPassword) {
+          discoveryQueued--;
+          needsPassword++;
+        }
+      } catch (error) {
+        ParsingLogger.warning(
+          'Statement Processing: Deferred discovery retry unavailable: $error',
+        );
       }
     }
 
@@ -378,6 +537,7 @@ class StatementProcessingService {
       succeeded: succeeded,
       needsPassword: needsPassword,
       needsCardAssignment: needsCardAssignment,
+      discoveryQueued: discoveryQueued,
       failed: failed,
       issues: _issues.snapshot,
     );
@@ -434,6 +594,53 @@ class StatementProcessingService {
     final metadata = email['metadata'] as Map<String, dynamic>? ?? {};
     final attachmentId = metadata['attachmentId'] as String?;
 
+    final discoveryJobId = metadata['cardDiscoveryJobId'] as String?;
+    if (discoveryJobId != null && discoveryJobId.isNotEmpty) {
+      try {
+        final discovery = await _discoveryService.status(discoveryJobId);
+        if (discovery.status == 'resolved' &&
+            discovery.resolvedCardId != null) {
+          final existing = userCards
+              .where((card) => card.catalogCardId == discovery.resolvedCardId)
+              .firstOrNull;
+          final resolvedCard =
+              existing ??
+              await _cardsRepo.addUserCard(
+                userId: _userId,
+                catalogCardId: discovery.resolvedCardId!,
+              );
+          if (existing == null) userCards.add(resolvedCard);
+          await _emailRepo.updateEmailMetadata(
+            userId: _userId,
+            emailId: emailId,
+            metadata: metadataAfterCardDiscoveryResolved(metadata),
+          );
+          return _processOneWithCard(email, resolvedCard);
+        }
+        final retryDue =
+            discovery.status == 'failed' &&
+            (discovery.retryAfter == null ||
+                !discovery.retryAfter!.isAfter(DateTime.now()));
+        if (retryDue) {
+          email['metadata'] = metadataAfterCardDiscoveryResolved(metadata);
+        } else if (discovery.status == 'queued' ||
+            discovery.status == 'discovering' ||
+            discovery.status == 'review_required' ||
+            discovery.status == 'failed') {
+          _recordIssue(
+            bankName: email['bank_detected'] as String? ?? 'Unknown bank',
+            cardContext: 'Catalog discovery',
+            reason: StatementIssueReason.cardDiscoveryPending,
+          );
+          return EmailOutcome.discoveryQueued;
+        }
+      } catch (error) {
+        ParsingLogger.warning(
+          'Statement Processing: Discovery status unavailable for $emailId: $error',
+        );
+      }
+    }
+
     final bankName = CardNormalizerService.normalizeBankName(
       sender.isNotEmpty ? sender : subject,
     );
@@ -462,16 +669,40 @@ class StatementProcessingService {
       return EmailOutcome.failed;
     }
 
-    if (userCards.isEmpty) {
-      _recordIssue(
-        bankName: bankName,
-        cardContext: 'No cards in wallet',
-        reason: StatementIssueReason.processingFailed,
+    // Product evidence must run before the legacy single-bank-card shortcut.
+    // Otherwise, after the first auto-created ICICI/HDFC card, every other
+    // product from that bank would be incorrectly assigned to it.
+    final catalogCard = await resolveCatalogCardForEmail(
+      email: email,
+      bankName: bankName,
+      existingCards: userCards,
+      loadCatalog: (bank) => _cardsRepo.searchCatalogForBank(bank),
+      createCard: (catalogCardId) =>
+          _cardsRepo.addUserCard(userId: _userId, catalogCardId: catalogCardId),
+    );
+    if (catalogCard != null) {
+      if (!userCards.any((card) => card.id == catalogCard.id)) {
+        userCards.add(catalogCard);
+      }
+      await _emailRepo.updateEmailMetadata(
+        userId: _userId,
+        emailId: emailId,
+        metadata: metadataAfterCardAssignment(metadata),
       );
-      ParsingLogger.warning(
-        'Statement Processing: No cards on file for user, skipping email $emailId',
-      );
-      return EmailOutcome.failed;
+      return _processOneWithCard(email, catalogCard);
+    }
+
+    final initialEvidence = CardIdentityEvidence.extract(
+      issuer: bankName,
+      subject: subject,
+      attachmentFilename: metadata['attachmentFilename'] as String?,
+    );
+
+    // A named product that did not match the catalog must not fall through to
+    // the legacy one-card-per-bank shortcut. Parse the PDF header so discovery
+    // receives all three independent identity sources.
+    if (initialEvidence.productSignals.isNotEmpty) {
+      return _processOneAmbiguousBank(email, candidates, bankName);
     }
 
     if (candidates.length == 1) {
@@ -484,31 +715,7 @@ class StatementProcessingService {
     // the bank, since a prior resolution can't disambiguate between two
     // same-bank cards either.
     if (candidates.isEmpty) {
-      final forcedCardId = _forcedCardIdByBank[bankName];
-      final previousCardId =
-          forcedCardId ??
-          await _emailRepo.findPreviouslyAssignedCard(
-            userId: _userId,
-            bankDetected: bankName,
-          );
-      final previousCard = previousCardId == null
-          ? null
-          : userCards.where((c) => c.id == previousCardId).firstOrNull;
-      if (previousCard != null) {
-        return _processOneWithCard(email, previousCard);
-      }
-
-      await _emailRepo.markNeedsCardAssignment(
-        userId: _userId,
-        emailId: emailId,
-        bankDetected: bankName,
-      );
-      _recordIssue(
-        bankName: bankName,
-        cardContext: 'No matching card',
-        reason: StatementIssueReason.cardAssignmentRequired,
-      );
-      return EmailOutcome.needsCardAssignment;
+      return _processOneAmbiguousBank(email, const [], bankName);
     }
 
     // Multiple cards share this bank (e.g. two HDFC cards). Download and
@@ -635,26 +842,13 @@ class StatementProcessingService {
     }
 
     if (matched == null) {
-      ParsingLogger.warning(
-        'Statement Processing: Ambiguous bank "$bankName" with ${candidates.length} cards on file; '
-        'statement card_last4 "$last4" didn\'t match any of them, asking user to clarify ($emailId)',
-      );
-      await _emailRepo.markNeedsCardAssignment(
-        userId: _userId,
-        emailId: emailId,
-        bankDetected: bankName,
-        identityHints: buildCardIdentityHints(
-          bankName: bankName,
-          statementInfo: statementInfo,
-          attachmentFilename: fileName,
-        ),
-      );
-      _recordIssue(
+      return _resolveParsedIdentityOrDiscover(
+        email: email,
+        candidates: candidates,
         bankName: bankName,
-        cardContext: _cardContext(candidates),
-        reason: StatementIssueReason.cardAssignmentRequired,
+        statementInfo: statementInfo,
+        pdfText: text,
       );
-      return EmailOutcome.needsCardAssignment;
     }
 
     return _persistParsedStatement(
@@ -664,6 +858,110 @@ class StatementProcessingService {
       statementInfo: statementInfo,
       pdfText: text,
     );
+  }
+
+  Future<EmailOutcome> _resolveParsedIdentityOrDiscover({
+    required Map<String, dynamic> email,
+    required List<UserCard> candidates,
+    required String bankName,
+    required Map<String, dynamic> statementInfo,
+    required String pdfText,
+  }) async {
+    final metadata = email['metadata'] as Map<String, dynamic>? ?? {};
+    final evidence = CardIdentityEvidence.extract(
+      issuer: bankName,
+      subject: email['subject'] as String? ?? '',
+      attachmentFilename: metadata['attachmentFilename'] as String?,
+      pdfHeader: pdfText,
+    );
+    final catalog = await _cardsRepo.searchCatalogForBank(bankName);
+    final identities = catalog
+        .map((entry) {
+          final aliasRows = entry['card_catalog_aliases'];
+          final aliases = aliasRows is List
+              ? aliasRows
+                    .whereType<Map>()
+                    .map((row) => row['alias'])
+                    .whereType<String>()
+                    .toList(growable: false)
+              : const <String>[];
+          return CardCatalogIdentity(
+            id: entry['id'] as String,
+            issuer: entry['bank'] as String? ?? bankName,
+            name: entry['card_name'] as String? ?? '',
+            network: entry['network'] as String?,
+            aliases: aliases,
+          );
+        })
+        .toList(growable: false);
+    final catalogMatch = const CardIdentityMatcher().match(
+      evidence,
+      identities,
+    );
+    if (catalogMatch != null) {
+      final freshCards = await _cardsRepo.getUserCards(_userId);
+      final existing = freshCards
+          .where((card) => card.catalogCardId == catalogMatch.id)
+          .firstOrNull;
+      final userCard =
+          existing ??
+          await _cardsRepo.addUserCard(
+            userId: _userId,
+            catalogCardId: catalogMatch.id,
+            lastFourDigits: evidence.lastFour,
+          );
+      await _emailRepo.updateEmailMetadata(
+        userId: _userId,
+        emailId: email['email_id'] as String,
+        metadata: metadataAfterCardAssignment(metadata),
+      );
+      return _persistParsedStatement(
+        email: email,
+        userCard: userCard,
+        bankName: bankName,
+        statementInfo: statementInfo,
+        pdfText: pdfText,
+      );
+    }
+
+    try {
+      final job = await _discoveryService.discover(evidence);
+      final discoveryMetadata = metadataWithCardDiscovery(
+        metadata,
+        jobId: job.id,
+        status: job.status,
+      );
+      discoveryMetadata['identityHints'] = buildCardIdentityHints(
+        bankName: bankName,
+        statementInfo: statementInfo,
+        attachmentFilename: metadata['attachmentFilename'] as String?,
+      );
+      email['metadata'] = discoveryMetadata;
+      await _emailRepo.updateEmailMetadata(
+        userId: _userId,
+        emailId: email['email_id'] as String,
+        metadata: discoveryMetadata,
+      );
+      _recordIssue(
+        bankName: bankName,
+        cardContext: evidence.productSignals.join(' / ').isEmpty
+            ? _cardContext(candidates)
+            : evidence.productSignals.join(' / '),
+        reason: StatementIssueReason.cardDiscoveryPending,
+      );
+      return EmailOutcome.discoveryQueued;
+    } catch (error) {
+      ParsingLogger.error(
+        'Statement Processing: Could not queue catalog discovery for ${email['email_id']}',
+        error,
+      );
+      _recordIssue(
+        bankName: bankName,
+        cardContext: _cardContext(candidates),
+        reason: StatementIssueReason.processingFailed,
+      );
+      return EmailOutcome.failed;
+    }
   }
 
   /// Downloads, unlocks, parses, and persists the statement for [email]
@@ -804,13 +1102,16 @@ class StatementProcessingService {
       // per email — falling back to DateTime.now() instead would make every
       // undated statement for a card collide onto today's date, since
       // statements upsert on (user_card_id, statement_date).
-      final statementDate = statementInfo['statement_date'] != null
-          ? DateTime.parse(statementInfo['statement_date'] as String)
-          : GeminiStatementParser.extractStatementDateFromText(pdfText) ??
-                DateTime.parse(email['received_date'] as String);
-      final dueDate = statementInfo['due_date'] != null
-          ? DateTime.parse(statementInfo['due_date'] as String)
-          : statementDate.add(const Duration(days: 20));
+      final receivedDate = DateTime.parse(email['received_date'] as String);
+      final statementDate = parsedGeminiDate(
+        statementInfo['statement_date'],
+        GeminiStatementParser.extractStatementDateFromText(pdfText) ??
+            receivedDate,
+      );
+      final dueDate = parsedGeminiDate(
+        statementInfo['due_date'],
+        statementDate.add(const Duration(days: 20)),
+      );
 
       final statement = await _statementsRepo.upsertStatement(
         userId: _userId,
@@ -818,22 +1119,21 @@ class StatementProcessingService {
         userCardId: userCardId,
         statementDate: statementDate,
         dueDate: dueDate,
-        totalAmount: (statementInfo['total_amount'] as num?)?.toDouble() ?? 0,
+        totalAmount: parsedGeminiNumber(statementInfo['total_amount']) ?? 0,
         minimumPayment:
-            (statementInfo['minimum_payment'] as num?)?.toDouble() ?? 0,
+            parsedGeminiNumber(statementInfo['minimum_payment']) ?? 0,
         closingBalance:
-            (statementInfo['closing_balance'] as num?)?.toDouble() ?? 0,
+            parsedGeminiNumber(statementInfo['closing_balance']) ?? 0,
         availableCredit:
-            (statementInfo['available_credit'] as num?)?.toDouble() ?? 0,
-        rewardsEarned:
-            (statementInfo['rewards_earned'] as num?)?.toDouble() ?? 0,
+            parsedGeminiNumber(statementInfo['available_credit']) ?? 0,
+        rewardsEarned: parsedGeminiNumber(statementInfo['rewards_earned']) ?? 0,
         transactionCount: transactions.length,
       );
 
       final bankMarketCurrency = currencyForBank(bankName);
 
       for (final txn in transactions) {
-        final amount = (txn['amount'] as num?)?.toDouble() ?? 0;
+        final amount = parsedGeminiNumber(txn['amount']) ?? 0;
         final description =
             txn['description'] as String? ?? 'Unknown transaction';
         final type = TransactionTypeNormalizer.normalize(
@@ -863,14 +1163,12 @@ class StatementProcessingService {
           userCardId: userCardId,
           amount: amount.abs(),
           description: description,
-          transactionDate: txn['date'] != null
-              ? DateTime.parse(txn['date'] as String)
-              : statementDate,
+          transactionDate: parsedGeminiDate(txn['date'], statementDate),
           currency: currency,
           merchantName: rawMerchantName,
           category: categorization.category,
           transactionType: type,
-          rewardEarned: (txn['reward_points'] as num?)?.toDouble(),
+          rewardEarned: parsedGeminiNumber(txn['reward_points']),
           statementId: statement.id,
           metadata: {
             'category_source': categorization.source.name,
@@ -891,7 +1189,7 @@ class StatementProcessingService {
       // a statement reveals them — only fills currently-null fields, never
       // overwrites a value the user entered manually.
       final last4 = (statementInfo['card_last4'] as String?)?.trim();
-      final creditLimit = (statementInfo['credit_limit'] as num?)?.toDouble();
+      final creditLimit = parsedGeminiNumber(statementInfo['credit_limit']);
       if ((last4 != null && last4.isNotEmpty) || creditLimit != null) {
         await _cardsRepo.backfillCardDetails(
           userCardId: userCardId,

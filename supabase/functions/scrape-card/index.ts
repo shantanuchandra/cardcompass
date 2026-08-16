@@ -18,7 +18,7 @@ serve(async (req) => {
   }
 
   try {
-    const { url, headers: customHeaders } = await req.json();
+    const { url } = await req.json();
 
     if (!url || typeof url !== "string") {
       return new Response(
@@ -86,22 +86,46 @@ serve(async (req) => {
       "Accept-Language": "en-US,en;q=0.5",
       "Connection": "keep-alive",
       "Upgrade-Insecure-Requests": "1",
-      ...(customHeaders || {}),
     };
 
-    const response = await fetch(url, {
-      headers: fetchHeaders,
-      redirect: "follow",
-    });
-
+    let currentUrl = url;
+    let response: Response | null = null;
+    for (let redirects = 0; redirects <= 4; redirects++) {
+      const candidate = new URL(currentUrl);
+      const candidateHost = candidate.hostname.toLowerCase();
+      const allowed = allowedDomains.some(
+        (domain) => candidateHost === domain || candidateHost.endsWith(`.${domain}`),
+      );
+      if (candidate.protocol !== "https:" || !allowed) {
+        throw new Error(`Redirect target not allowed: ${candidateHost}`);
+      }
+      response = await fetch(currentUrl, {
+        headers: fetchHeaders,
+        redirect: "manual",
+        signal: AbortSignal.timeout(12_000),
+      });
+      if (response.status < 300 || response.status >= 400) break;
+      const location = response.headers.get("location");
+      if (!location) throw new Error("Redirect missing location");
+      currentUrl = new URL(location, currentUrl).toString();
+      response = null;
+    }
+    if (response == null) throw new Error("Too many redirects");
+    const contentType = response.headers.get("content-type")?.split(";")[0] ?? "";
+    if (!["text/html", "application/xhtml+xml"].includes(contentType)) {
+      throw new Error(`Unsupported content type: ${contentType || "unknown"}`);
+    }
+    const declaredLength = Number(response.headers.get("content-length") ?? 0);
+    if (declaredLength > 2_000_000) throw new Error("Response too large");
     const html = await response.text();
+    if (html.length > 2_000_000) throw new Error("Response too large");
 
     return new Response(
       JSON.stringify({
         success: true,
         html,
         status_code: response.status,
-        final_url: response.url,
+        final_url: currentUrl,
         content_length: html.length,
       }),
       {

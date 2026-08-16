@@ -23,6 +23,7 @@ class GmailSyncResult {
   final int processedSucceeded;
   final int processedNeedsPassword;
   final int processedNeedsCardAssignment;
+  final int processedCardDiscoveryQueued;
   final int processedFailed;
   final List<StatementProcessingIssue> issues;
 
@@ -36,6 +37,7 @@ class GmailSyncResult {
     this.processedSucceeded = 0,
     this.processedNeedsPassword = 0,
     this.processedNeedsCardAssignment = 0,
+    this.processedCardDiscoveryQueued = 0,
     this.processedFailed = 0,
     this.issues = const [],
   });
@@ -52,6 +54,8 @@ class GmailSyncResult {
         '$processedNeedsPassword ${processedNeedsPassword == 1 ? 'needs' : 'need'} a password',
       if (processedNeedsCardAssignment > 0)
         '$processedNeedsCardAssignment ${processedNeedsCardAssignment == 1 ? 'needs' : 'need'} a card assigned',
+      if (processedCardDiscoveryQueued > 0)
+        '$processedCardDiscoveryQueued ${processedCardDiscoveryQueued == 1 ? 'card is' : 'cards are'} being identified',
       if (processedFailed > 0) '$processedFailed failed',
     ];
     final details = issues.isEmpty ? '' : ' View bank/card details.';
@@ -121,6 +125,7 @@ class GmailSyncNotifier extends AsyncNotifier<GmailSyncResult?> {
             processedSucceeded: processingResult.succeeded,
             processedNeedsPassword: processingResult.needsPassword,
             processedNeedsCardAssignment: processingResult.needsCardAssignment,
+            processedCardDiscoveryQueued: processingResult.discoveryQueued,
             processedFailed: processingResult.failed,
             issues: processingResult.issues,
           ),

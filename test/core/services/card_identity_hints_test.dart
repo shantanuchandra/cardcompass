@@ -11,6 +11,15 @@ void main() {
     );
   });
 
+  test('extracts HSBC last-four when the PDF text layer fragments digits', () {
+    expect(
+      extractPrimaryCardLastFour(
+        'Primary card number\n5 1 x x   x x x x   x x x x   1 7 5 9',
+      ),
+      '1759',
+    );
+  });
+
   test('keeps a valid parsed last-four ahead of PDF fallback evidence', () {
     expect(
       statementInfoWithCardLastFour(const {
