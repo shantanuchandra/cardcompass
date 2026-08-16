@@ -233,16 +233,13 @@ test('public pages render without viewport overflow and expose live keyboard and
         reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
         scrollBehavior: getComputedStyle(document.documentElement).scrollBehavior,
       }))()`);
-      assert.deepEqual(
-        layout,
-        {
-          innerWidth: viewport.width,
-          scrollWidth: viewport.width,
-          reducedMotion: true,
-          scrollBehavior: 'auto',
-        },
-        `${route} at ${viewport.width}px`,
+      assert.equal(layout.innerWidth, viewport.width, `${route} viewport width`);
+      assert.ok(
+        layout.scrollWidth <= layout.innerWidth,
+        `${route} at ${viewport.width}px must not overflow horizontally`,
       );
+      assert.equal(layout.reducedMotion, true, `${route} reduced motion`);
+      assert.equal(layout.scrollBehavior, 'auto', `${route} scroll behavior`);
 
       const visitedFocusStops = new Set();
       let firstFocus;
