@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
@@ -17,6 +18,7 @@ import '../../../core/services/statement_processing_service.dart'
     show buildStatementIssueLines;
 import '../../../core/services/card_discovery_service.dart';
 import '../../../core/services/card_identity_service.dart';
+import '../../../core/services/gmail_sync_service.dart';
 import '../../../shared/models/user_card.dart';
 import '../../../shared/models/transaction.dart';
 import '../../../shared/models/statement.dart';
@@ -184,15 +186,24 @@ class _DashboardAppBar extends ConsumerWidget {
           ref.invalidate(dashboardProvider);
           ref.invalidate(pendingCardAssignmentsProvider);
         },
-        error: (_, _) {
+        error: (error, _) {
+          final needsReconnect =
+              error is GmailAuthException || error is NoGmailTokenException;
+          if (needsReconnect) {
+            unawaited(ref.read(gmailReconnectProvider)());
+          }
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: const Text(
-                'Couldn\'t sync Gmail. Check your connection and try again.',
+              content: Text(
+                needsReconnect
+                    ? 'Reconnect Gmail to continue syncing.'
+                    : 'Couldn\'t sync Gmail. Check your connection and try again.',
               ),
               action: SnackBarAction(
-                label: 'Try again',
-                onPressed: () => _showSyncRangeDialog(context, ref),
+                label: needsReconnect ? 'Reconnect' : 'Try again',
+                onPressed: needsReconnect
+                    ? ref.read(gmailReconnectProvider)
+                    : () => _showSyncRangeDialog(context, ref),
               ),
             ),
           );
@@ -1751,6 +1762,15 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
           _needsGmailReconnect = true;
           _error = 'Reconnect Gmail to download and process this statement.';
         });
+        unawaited(ref.read(gmailReconnectProvider)());
+      }
+    } on GmailAuthException {
+      if (mounted) {
+        setState(() {
+          _needsGmailReconnect = true;
+          _error = 'Reconnect Gmail to download and process this statement.';
+        });
+        unawaited(ref.read(gmailReconnectProvider)());
       }
     } catch (_) {
       if (mounted) {

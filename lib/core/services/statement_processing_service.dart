@@ -465,6 +465,8 @@ class StatementProcessingService {
       EmailOutcome outcome;
       try {
         outcome = await _processOne(email, userCards);
+      } on GmailAuthException {
+        rethrow;
       } catch (e) {
         final sender = email['sender'] as String? ?? '';
         final subject = email['subject'] as String? ?? '';
@@ -525,6 +527,8 @@ class StatementProcessingService {
           discoveryQueued--;
           needsPassword++;
         }
+      } on GmailAuthException {
+        rethrow;
       } catch (error) {
         ParsingLogger.warning(
           'Statement Processing: Deferred discovery retry unavailable: $error',
@@ -575,6 +579,8 @@ class StatementProcessingService {
 
     try {
       return await _processOneWithCard(email, userCard);
+    } on GmailAuthException {
+      rethrow;
     } catch (e) {
       ParsingLogger.error(
         'Statement Processing: Unhandled error in targeted reprocess of email $emailId',
@@ -762,6 +768,8 @@ class StatementProcessingService {
     Uint8List pdfBytes;
     try {
       pdfBytes = await _gmailService.downloadAttachment(emailId, attachmentId);
+    } on GmailAuthException {
+      rethrow;
     } catch (e) {
       _recordIssue(
         bankName: bankName,
@@ -998,6 +1006,8 @@ class StatementProcessingService {
     Uint8List pdfBytes;
     try {
       pdfBytes = await _gmailService.downloadAttachment(emailId, attachmentId);
+    } on GmailAuthException {
+      rethrow;
     } catch (e) {
       _recordIssue(
         bankName: bankName,
@@ -1065,6 +1075,8 @@ class StatementProcessingService {
   Future<String> _loadEmailBodyForPasswordHint(String emailId) async {
     try {
       return await _gmailService.loadMessageBodyText(emailId);
+    } on GmailAuthException {
+      rethrow;
     } catch (error) {
       ParsingLogger.warning(
         'Statement Processing: Password hint unavailable for email $emailId',
