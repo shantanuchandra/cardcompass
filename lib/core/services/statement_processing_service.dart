@@ -17,6 +17,20 @@ import 'transaction_type_normalizer.dart';
 
 enum EmailOutcome { succeeded, needsPassword, needsCardAssignment, failed }
 
+/// Returns only statement emails that still need automated processing.
+///
+/// Emails awaiting an explicit card choice stay unprocessed so they remain in
+/// the assignment queue, but rerunning PDF/Gemini parsing cannot resolve that
+/// user decision and only repeats expensive work.
+List<Map<String, dynamic>> statementEmailsReadyForProcessing(
+  Iterable<Map<String, dynamic>> emails,
+) {
+  return emails.where((email) {
+    final metadata = email['metadata'];
+    return metadata is! Map || metadata['needsCardAssignment'] != true;
+  }).toList();
+}
+
 enum StatementIssueReason {
   attachmentUnavailable,
   downloadFailed,
@@ -196,7 +210,9 @@ class StatementProcessingService {
 
   Future<StatementProcessingResult> processUnprocessedEmails() async {
     _issues.clear();
-    final emails = await _emailRepo.getUnprocessedEmails(_userId);
+    final emails = statementEmailsReadyForProcessing(
+      await _emailRepo.getUnprocessedEmails(_userId),
+    );
     final userCards = await _cardsRepo.getUserCards(_userId);
 
     var succeeded = 0;

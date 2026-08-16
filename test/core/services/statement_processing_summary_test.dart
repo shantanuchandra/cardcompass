@@ -2,6 +2,24 @@ import 'package:cardcompass/core/services/statement_processing_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('does not reprocess emails already awaiting card assignment', () {
+    final emails = statementEmailsReadyForProcessing([
+      {
+        'email_id': 'ready',
+        'metadata': {'attachmentId': 'attachment-ready'},
+      },
+      {
+        'email_id': 'awaiting-card',
+        'metadata': {
+          'attachmentId': 'attachment-awaiting',
+          'needsCardAssignment': true,
+        },
+      },
+    ]);
+
+    expect(emails.map((email) => email['email_id']), ['ready']);
+  });
+
   test('unexpected failure replaces earlier issues from the same attempt', () {
     final issues = StatementIssueAccumulator();
     final attempt = issues.beginAttempt();
