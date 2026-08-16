@@ -1,0 +1,21 @@
+{
+  "version": "3.0.0",
+  "color": {
+    "ink": "#0B1015",
+    "inkSoft": "#172027",
+    "paper": "#F4F0E6",
+    "paperDeep": "#E9E3D5",
+    "ledger": "#DDE7E1",
+    "signal": "#3FE0D0",
+    "reward": "#FFB547",
+    "error": "#FF7163",
+    "white": "#FFFDF7",
+    "mutedInk": "#465159",
+    "mutedPaper": "#9CA9A8",
+    "focusDark": "#006D64"
+  },
+  "spacing": { "xs": 4, "sm": 8, "compact": 12, "md": 16, "lg": 24, "xl": 32, "xxl": 48, "section": 64 },
+  "radius": { "label": 2, "control": 4, "card": 8, "overlay": 12, "pill": 999 },
+  "motionMs": { "immediate": 120, "standard": 180, "navigation": 240, "compassEntrance": 1200 },
+  "type": { "display": "Fraunces", "body": "Manrope", "mono": "IBM Plex Mono" }
+}

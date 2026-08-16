@@ -299,9 +299,9 @@ ANALYZE THE STATEMENT:''';
     }
   }
 
-  /// Call Gemini via the proxy, retrying on 429 with a fixed backoff. Trimmed
-  /// from main's _callGeminiWithFallback: no Ollama/Groq branches, no
-  /// multi-model fallback chain (this project always uses AIConfig.geminiModel).
+  /// Call Gemini via the proxy, retrying on 429 with a fixed backoff. The
+  /// authenticated proxy owns model fallback so API lifecycle changes do not
+  /// require every deployed client to update in lockstep.
   static Future<http.Response?> _callGemini(
     Map<String, dynamic> requestBody, {
     int maxRetries = 3,

@@ -8,8 +8,9 @@ enum AuthStatus { loading, authenticated, unauthenticated }
 /// landing root. The origin itself remains subject to Supabase's redirect URL
 /// allow-list in every environment.
 Uri oauthRedirectUri(Uri current) {
-  final production =
-      current.scheme == 'https' && current.host == 'cardcompass.in';
+  final production = current.scheme == 'https' &&
+      (current.host == 'cardcompass.in' ||
+          current.host == 'www.cardcompass.in');
   final local =
       (current.scheme == 'http' || current.scheme == 'https') &&
       (current.host == '127.0.0.1' || current.host == 'localhost');
@@ -18,6 +19,8 @@ Uri oauthRedirectUri(Uri current) {
   }
   return Uri(
     scheme: current.scheme,
+    // PKCE stores its verifier per browser origin. Keep a trusted production
+    // host unchanged so the callback can read the verifier created at sign-in.
     host: current.host,
     port: current.hasPort ? current.port : null,
     path: '/app/',

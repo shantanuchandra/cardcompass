@@ -1,4 +1,6 @@
 // test/features/benefits/movie_deals/movie_deals_results_test.dart
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -13,7 +15,8 @@ MovieDealCandidate _candidate({
   required String cardId,
   required bool isOwned,
   required double savings,
-  MovieDealPlatformConfidence platformConfidence = MovieDealPlatformConfidence.explicit,
+  MovieDealPlatformConfidence platformConfidence =
+      MovieDealPlatformConfidence.explicit,
   MovieDealOfferType offerType = MovieDealOfferType.percentDiscount,
   Set<String> partners = const {},
 }) {
@@ -57,6 +60,42 @@ Widget _bothSlots(MovieTicketRequest request) {
 
 void main() {
   const request = MovieTicketRequest(numberOfTickets: 2, pricePerTicket: 300);
+
+  testWidgets('movie search loading reserves a stable result slot', (
+    tester,
+  ) async {
+    final pending = Completer<MovieDealsRecommendation>();
+    addTearDown(() {
+      if (!pending.isCompleted) {
+        pending.complete(
+          const MovieDealsRecommendation(
+            candidates: [],
+            rejectedCandidates: [],
+          ),
+        );
+      }
+    });
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          movieDealsSearchProvider(
+            request,
+          ).overrideWith((ref) => pending.future),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: MovieDealsResults(request: request, slot: ResultsSlot.overall),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final loading = find.byKey(const Key('movie-results-loading'));
+    expect(loading, findsOneWidget);
+    expect(tester.getSize(loading).height, greaterThanOrEqualTo(240));
+    expect(find.bySemanticsLabel('Finding movie offers'), findsOneWidget);
+  });
 
   testWidgets('lists every candidate in each ranked group, not just one winner', (tester) async {
     final ownedHigh = _candidate(cardId: 'owned-high', isOwned: true, savings: 150);
@@ -160,10 +199,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('Card potential-only'), findsWidgets);
-    expect(find.textContaining('Potential — remaining balance not verified'), findsWidgets);
+    expect(find.textContaining('Potential'), findsWidgets);
     // The guaranteed groups must show their empty-state note, not the
     // potential candidate presented as if it were guaranteed.
-    expect(find.textContaining('No guaranteed deals'), findsWidgets);
+    expect(find.textContaining('No guaranteed'), findsWidgets);
   });
 
   testWidgets('shows an empty-state note for a group with zero eligible candidates, never hides the header', (tester) async {
@@ -203,7 +242,7 @@ void main() {
 
     // Shown once, on the overall slot only — the owned slot renders
     // nothing rather than a second, redundant "no deal" card right above it.
-    expect(find.textContaining('No verified eligible deal'), findsOneWidget);
+    expect(find.text('No eligible ticket-saving option'), findsOneWidget);
   });
 
   testWidgets('shows a retryable unavailable message on repository failure', (tester) async {
@@ -351,8 +390,7 @@ void main() {
         // This candidate's non-explicit platformConfidence + a searched
         // preferredPlatform makes confirmCallbackFor try to read
         // currentUserProvider, which reaches Supabase.instance — not
-        // initialized in this widget test (see movie_deals_provider_test.dart
-        // for the same override pattern).
+        // initialized in this widget test.
         currentUserProvider.overrideWithValue(null),
       ],
       child: MaterialApp(

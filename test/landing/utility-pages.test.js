@@ -8,6 +8,9 @@ import {
   calculateMovieOffer,
   renderBestCardResult,
   renderToolError,
+  setupBestCard,
+  setupMilestone,
+  setupMovieOffer,
 } from '../../landing/tools/tools.js';
 
 class FakeClassList {
@@ -222,7 +225,9 @@ test('utility pages are substantive applications with assumptions and attributed
     assert.match(html, /<form\b[^>]*data-tool-form/);
     assert.match(html, /<form\b[\s\S]*?method="post"[\s\S]*?action="\/tool-unavailable\/"[\s\S]*?>/i);
     assert.match(html, /<noscript>/i);
-    assert.match(html, /<section\b[\s\S]*?class="tool-output"[\s\S]*?aria-live="polite"[\s\S]*?hidden[\s\S]*?><\/section>/);
+    assert.match(html, /<section\b[\s\S]*?class="tool-output"[\s\S]*?aria-live="polite"[^>]*>/);
+    assert.doesNotMatch(html.match(/<section\b[^>]*class="tool-output"[^>]*>/)?.[0] || '', /\bhidden\b/);
+    assert.match(html, /<p class="tool-output-preview">Your calculation will appear here\.<\/p>/);
     assert.match(html, /How this estimate works/i);
     assert.match(html, /What this does not include/i);
     assert.match(html, /Author:\s*CardCompass product team/i);
@@ -237,8 +242,66 @@ test('utility pages are substantive applications with assumptions and attributed
     assert.match(html, /"@type":\s*"WebApplication"/);
   }
 
-  const css = await readFile(new URL('../../landing/resources.css', import.meta.url), 'utf8');
-  assert.doesNotMatch(css, /\.tool-output\[hidden\]\s*\{[^}]*display\s*:\s*block/);
+});
+
+class FakeForm {
+  constructor(dataset, values) {
+    this.dataset = dataset;
+    this.elements = { namedItem: (name) => ({ value: values[name] ?? '' }) };
+    this.submitHandler = null;
+  }
+  addEventListener(type, handler) {
+    if (type === 'submit') this.submitHandler = handler;
+  }
+  submit() { this.submitHandler({ preventDefault() {} }); }
+}
+
+test('each utility replaces its visible empty-state preview after submit', () => {
+  const cases = [
+    {
+      setup: setupBestCard,
+      outputId: 'bestCardOutput',
+      values: {
+        amount: '4000', card_1_name: '5% card', card_1_rate: '5', card_1_cap: '100',
+        card_2_name: '3% card', card_2_rate: '3', card_2_cap: '500',
+      },
+      expected: /3% card leads for this purchase/,
+    },
+    {
+      setup: setupMilestone,
+      outputId: 'milestoneOutput',
+      values: { target: '100000', current_spend: '72000', planned_spend: '8000', days_remaining: '14' },
+      expected: /Your plan leaves a gap/,
+    },
+    {
+      setup: setupMovieOffer,
+      outputId: 'movieOutput',
+      values: {
+        ticket_price: '450', ticket_count: '2', offer_type: 'bogo', offer_value: '0',
+        savings_cap: '300', convenience_fee: '35', remaining_uses: '1',
+      },
+      expected: /₹300\.00 estimated ticket savings/,
+    },
+  ];
+
+  const priorDocument = globalThis.document;
+  try {
+    for (const { setup, outputId, values, expected } of cases) {
+      const output = new FakeNode('section');
+      output.append(Object.assign(new FakeNode('p'), { textContent: 'Your calculation will appear here.' }));
+      const form = new FakeForm({ output: outputId }, values);
+      globalThis.document = { ...fakeDocument, getElementById: (id) => id === outputId ? output : null };
+
+      setup(form);
+      assert.equal(output.hidden, false);
+      form.submit();
+      assert.doesNotMatch(descendantText(output), /Your calculation will appear here/);
+      assert.match(descendantText(output), expected);
+    }
+  } finally {
+    if (priorDocument === undefined) delete globalThis.document;
+    else globalThis.document = priorDocument;
+  }
 });
 
 test('best-card form allows the third card to be omitted', async () => {

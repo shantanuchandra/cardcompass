@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">CardCompass</title>
+  <desc id="desc">A compass needle framed by the protected CardCompass identity arc.</desc>
+  <defs>
+    <linearGradient id="arc" x1="72" y1="382" x2="442" y2="378" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff008a"/>
+      <stop offset=".52" stop-color="#8b50ec"/>
+      <stop offset="1" stop-color="#00dfed"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="108" fill="#0B1015"/>
+  <path d="M99 395A205 205 0 1 1 413 395" fill="none" stroke="url(#arc)" stroke-width="45" stroke-linecap="round"/>
+  <path d="M151 359A145 145 0 1 1 361 359" fill="none" stroke="url(#arc)" stroke-width="11" stroke-linecap="round" opacity=".95"/>
+  <g>
+    <path d="M256 70 281 226 256 174 231 226Z" fill="#fff"/>
+    <path d="M256 442 281 286 256 338 231 286Z" fill="#3FE0D0"/>
+  </g>
+  <circle cx="256" cy="256" r="25" fill="#0B1015" stroke="#FFFDF7" stroke-width="8"/>
+</svg>

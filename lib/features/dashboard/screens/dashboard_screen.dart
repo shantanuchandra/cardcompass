@@ -1,22 +1,98 @@
+import 'dart:math' as math;
+
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/router/app_tab_selection.dart';
+import '../../../core/theme/brand_components.dart';
+import '../../../core/theme/brand_tokens.dart';
 import '../../../core/theme/category_display.dart';
 import '../../../core/providers/supabase_provider.dart';
 import '../../../core/providers/repository_providers.dart';
+import '../../../core/services/statement_processing_service.dart'
+    show buildStatementIssueLines;
+import '../../../core/services/card_discovery_service.dart';
+import '../../../core/services/card_identity_service.dart';
 import '../../../shared/models/user_card.dart';
 import '../../../shared/models/transaction.dart';
 import '../../../shared/models/statement.dart';
-import '../../cards/screens/card_detail_screen.dart';
 import '../providers/dashboard_provider.dart';
 import '../providers/gmail_sync_provider.dart';
 
-final _currencyFmt = NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 0);
-final _shortCurrency = NumberFormat.compactCurrency(locale: 'en_IN', symbol: '₹', decimalDigits: 1);
+final _currencyFmt = NumberFormat.currency(
+  locale: 'en_IN',
+  symbol: '₹',
+  decimalDigits: 0,
+);
+final _shortCurrency = NumberFormat.compactCurrency(
+  locale: 'en_IN',
+  symbol: '₹',
+  decimalDigits: 1,
+);
+
+typedef BankCatalogSearch =
+    Future<List<Map<String, dynamic>>> Function(String bank, String query);
+
+final bankCatalogSearchProvider = Provider<BankCatalogSearch>((ref) {
+  return (bank, query) => ref
+      .read(cardsRepositoryProvider)
+      .searchCatalogForBank(bank, query: query);
+});
+
+typedef CardResolution =
+    Future<void> Function(Map<String, dynamic> email, String catalogCardId);
+
+final cardResolutionProvider = Provider<CardResolution>((ref) {
+  return (email, catalogCardId) => ref
+      .read(cardAssignmentProvider.notifier)
+      .resolveWithCatalogEntry(email: email, catalogCardId: catalogCardId);
+});
+
+typedef CardUrlResolver =
+    Future<CardUrlResolution> Function(
+      Map<String, dynamic> email,
+      String sourceUrl,
+    );
+
+final cardUrlResolverProvider = Provider<CardUrlResolver>((ref) {
+  return (email, sourceUrl) {
+    final metadata = email['metadata'];
+    final safeMetadata = metadata is Map
+        ? Map<String, dynamic>.from(metadata)
+        : const <String, dynamic>{};
+    final rawHints = safeMetadata['identityHints'];
+    final hints = rawHints is Map
+        ? Map<String, dynamic>.from(rawHints)
+        : const <String, dynamic>{};
+    final extracted = CardIdentityEvidence.extract(
+      issuer: email['bank_detected'] as String? ?? '',
+      subject: email['subject'] as String?,
+      attachmentFilename:
+          safeMetadata['attachmentFilename'] as String? ??
+          email['attachment_filename'] as String?,
+      pdfHeader: hints['pdfHeaderExcerpt'] as String?,
+    );
+    final evidence = CardIdentityEvidence(
+      issuer: extracted.issuer,
+      subjectProduct:
+          extracted.subjectProduct ?? hints['productName'] as String?,
+      filenameProduct: extracted.filenameProduct,
+      pdfHeaderProduct: extracted.pdfHeaderProduct,
+      network: extracted.network ?? hints['network'] as String?,
+      lastFour: extracted.lastFour ?? hints['last4'] as String?,
+      attachmentFilename: extracted.attachmentFilename,
+      pdfHeaderExcerpt: extracted.pdfHeaderExcerpt,
+      warnings: extracted.warnings,
+    );
+    return CardDiscoveryService(
+      ref.read(supabaseClientProvider),
+    ).resolveUrl(evidence, sourceUrl);
+  };
+});
 
 class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});
@@ -29,21 +105,24 @@ class DashboardScreen extends ConsumerWidget {
     final isDesktop = MediaQuery.sizeOf(context).width >= 1024;
 
     return Scaffold(
-      backgroundColor: AppColors.surfaceVoid,
+      backgroundColor: BrandColors.paper,
       body: RefreshIndicator(
-        color: AppColors.neonCyan,
-        backgroundColor: AppColors.surface1,
+        color: BrandColors.focusDark,
+        backgroundColor: BrandColors.paper,
         onRefresh: () => ref.refresh(dashboardProvider.future),
         child: Center(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: isDesktop ? 1120 : double.infinity),
+          child: BrandContentFrame(
+            mode: BrandContentMode.fullWidthData,
             child: CustomScrollView(
               slivers: [
                 _DashboardAppBar(user: user),
                 dashAsync.when(
-                  loading: () => const SliverFillRemaining(child: _DashboardSkeleton()),
-                  error: (e, _) => SliverFillRemaining(child: _ErrorState(error: e)),
-                  data: (data) => _DashboardContent(data: data, isDesktop: isDesktop),
+                  loading: () =>
+                      const SliverFillRemaining(child: _DashboardSkeleton()),
+                  error: (_, _) =>
+                      const SliverFillRemaining(child: _ErrorState()),
+                  data: (data) =>
+                      _DashboardContent(data: data, isDesktop: isDesktop),
                 ),
               ],
             ),
@@ -61,99 +140,218 @@ class _DashboardAppBar extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final name = (user?.userMetadata?['full_name'] as String?)?.split(' ').first ?? 'there';
+    final name =
+        (user?.userMetadata?['full_name'] as String?)?.split(' ').first ??
+        'there';
     final avatar = user?.userMetadata?['avatar_url'] as String?;
     final hour = DateTime.now().hour;
-    final greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+    final greeting = hour < 12
+        ? 'Good morning'
+        : hour < 17
+        ? 'Good afternoon'
+        : 'Good evening';
     final syncState = ref.watch(gmailSyncProvider);
 
     ref.listen(gmailSyncProvider, (previous, next) {
       next.whenOrNull(
         data: (result) {
           if (result == null) return;
+          final issueLines = buildStatementIssueLines(result.issues);
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(
-                'Found ${result.foundCount} statement emails, ${result.newlyStoredCount} new. '
-                'Processed ${result.processedAttempted}: ${result.processedSucceeded} succeeded'
-                '${result.processedNeedsPassword > 0 ? ', ${result.processedNeedsPassword} need a password' : ''}'
-                '${result.processedNeedsCardAssignment > 0 ? ', ${result.processedNeedsCardAssignment} need a card assigned' : ''}'
-                '${result.processedFailed > 0 ? ', ${result.processedFailed} failed' : ''}.',
-              ),
+              content: Text(result.summaryMessage),
               duration: const Duration(seconds: 8),
+              action: issueLines.isEmpty
+                  ? null
+                  : SnackBarAction(
+                      label: 'Details',
+                      onPressed: () => showDialog<void>(
+                        context: context,
+                        builder: (_) => Dialog(
+                          child: StatementSyncDetails(issueLines: issueLines),
+                        ),
+                      ),
+                    ),
             ),
           );
           ref.invalidate(dashboardProvider);
           ref.invalidate(pendingCardAssignmentsProvider);
         },
-        error: (error, _) {
+        error: (_, _) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Gmail sync failed: $error')),
+            SnackBar(
+              content: const Text(
+                'Couldn\'t sync Gmail. Check your connection and try again.',
+              ),
+              action: SnackBarAction(
+                label: 'Try again',
+                onPressed: () => _showSyncRangeDialog(context, ref),
+              ),
+            ),
           );
         },
       );
     });
 
-    return SliverAppBar(
-      backgroundColor: AppColors.surfaceVoid,
-      floating: true,
-      snap: true,
-      expandedHeight: 0,
-      toolbarHeight: 72,
-      flexibleSpace: Padding(
-        padding: const EdgeInsets.fromLTRB(AppSpacing.md, 0, AppSpacing.md, 0),
-        child: Row(
+    final usesLargeText = MediaQuery.textScalerOf(context).scale(14) >= 21;
+
+    final identity = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '$greeting, $name',
+          style: const TextStyle(
+            fontFamily: 'Manrope',
+            fontSize: 13,
+            color: BrandColors.mutedInk,
+            fontWeight: FontWeight.w400,
+          ),
+        ),
+        Text(
+          'CardCompass',
+          style: const TextStyle(
+            fontFamily: 'Manrope',
+            fontSize: 22,
+            fontWeight: FontWeight.w800,
+            color: BrandColors.ink,
+            letterSpacing: -0.5,
+          ),
+        ),
+      ],
+    );
+    final controls = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          tooltip: 'Sync Gmail',
+          onPressed: syncState.isLoading
+              ? null
+              : () => _showSyncRangeDialog(context, ref),
+          icon: syncState.isLoading
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: BrandColors.focusDark,
+                  ),
+                )
+              : const Icon(Icons.sync_rounded, color: BrandColors.focusDark),
+        ),
+        const SizedBox(width: BrandSpacing.sm),
+        CircleAvatar(
+          radius: 20,
+          backgroundColor: BrandColors.paperDeep,
+          backgroundImage: avatar != null ? NetworkImage(avatar) : null,
+          child: avatar == null
+              ? Text(
+                  name[0].toUpperCase(),
+                  style: const TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: BrandColors.focusDark,
+                  ),
+                )
+              : null,
+        ),
+      ],
+    );
+
+    return SliverToBoxAdapter(
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.all(BrandSpacing.md),
+          child: usesLargeText
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    identity,
+                    const SizedBox(height: BrandSpacing.sm),
+                    controls,
+                  ],
+                )
+              : Row(
+                  children: [
+                    Expanded(child: identity),
+                    controls,
+                  ],
+                ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Concise, bank-level explanation of statement failures from the latest sync.
+class StatementSyncDetails extends StatelessWidget {
+  const StatementSyncDetails({required this.issueLines, super.key});
+
+  final List<String> issueLines;
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 620, maxHeight: 560),
+      child: Padding(
+        padding: const EdgeInsets.all(BrandSpacing.xl),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '$greeting, $name',
-                    style: GoogleFonts.inter(
-                      fontSize: 13, color: AppColors.textSecondary, fontWeight: FontWeight.w400,
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Statement issues',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                      color: BrandColors.ink,
                     ),
                   ),
-                  Text(
-                    'CardCompass',
-                    style: GoogleFonts.spaceGrotesk(
-                      fontSize: 22, fontWeight: FontWeight.w800,
-                      color: AppColors.textPrimary, letterSpacing: -0.5,
+                ),
+                IconButton(
+                  tooltip: 'Close statement issues',
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close_rounded),
+                ),
+              ],
+            ),
+            const SizedBox(height: BrandSpacing.xs),
+            const Text(
+              'Grouped by bank, possible card, and the stage that needs attention. '
+              '“Attachment unavailable” means the older saved email has no Gmail '
+              'attachment reference; syncing that date range again can repair it.',
+              style: TextStyle(color: BrandColors.mutedInk, height: 1.4),
+            ),
+            const SizedBox(height: BrandSpacing.lg),
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: issueLines.length,
+                separatorBuilder: (_, _) =>
+                    const SizedBox(height: BrandSpacing.sm),
+                itemBuilder: (context, index) => Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(BrandSpacing.md),
+                  decoration: BoxDecoration(
+                    color: BrandColors.paper,
+                    border: Border.all(color: BrandColors.paperDeep),
+                    borderRadius: BorderRadius.circular(BrandRadius.card),
+                  ),
+                  child: Text(
+                    issueLines[index],
+                    style: const TextStyle(
+                      color: BrandColors.ink,
+                      height: 1.45,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
-                ],
+                ),
               ),
-            ),
-            // Sync Gmail button
-            IconButton(
-              tooltip: 'Sync Gmail',
-              onPressed: syncState.isLoading
-                  ? null
-                  : () => _showSyncRangeDialog(context, ref),
-              icon: syncState.isLoading
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: AppColors.neonCyan,
-                      ),
-                    )
-                  : const Icon(Icons.sync_rounded, color: AppColors.neonCyan),
-            ),
-            const SizedBox(width: AppSpacing.sm),
-            // Avatar
-            CircleAvatar(
-              radius: 20,
-              backgroundColor: AppColors.surface2,
-              backgroundImage: avatar != null ? NetworkImage(avatar) : null,
-              child: avatar == null
-                  ? Text(name[0].toUpperCase(),
-                      style: GoogleFonts.spaceGrotesk(
-                        fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.neonCyan,
-                      ))
-                  : null,
             ),
           ],
         ),
@@ -169,14 +367,17 @@ void _showSyncRangeDialog(BuildContext context, WidgetRef ref) {
     barrierDismissible: true,
     barrierColor: Colors.black.withValues(alpha: 0.6),
     transitionDuration: 220.ms,
-    pageBuilder: (dialogContext, _, __) => _SyncRangeDialog(
+    pageBuilder: (dialogContext, _, _) => _SyncRangeDialog(
       onStartSync: (days) {
         Navigator.of(dialogContext).pop();
         ref.read(gmailSyncProvider.notifier).syncGmail(lookbackDays: days);
       },
     ),
     transitionBuilder: (context, animation, _, child) {
-      final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
+      final curved = CurvedAnimation(
+        parent: animation,
+        curve: Curves.easeOutCubic,
+      );
       return FadeTransition(
         opacity: curved,
         child: ScaleTransition(
@@ -225,19 +426,24 @@ class _SyncRangeDialogState extends State<_SyncRangeDialog> {
     final isDesktop = MediaQuery.sizeOf(context).width >= 1024;
     return Center(
       child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.xl),
+        padding: const EdgeInsets.symmetric(
+          horizontal: BrandSpacing.md,
+          vertical: BrandSpacing.xl,
+        ),
         child: ConstrainedBox(
           constraints: BoxConstraints(maxWidth: isDesktop ? 460 : 420),
           child: Material(
             color: Colors.transparent,
             child: Container(
               decoration: BoxDecoration(
-                color: AppColors.surface1,
-                borderRadius: BorderRadius.circular(AppRadius.xl),
-                border: Border.all(color: AppColors.textMuted.withValues(alpha: 0.12)),
+                color: BrandColors.paper,
+                borderRadius: BorderRadius.circular(BrandRadius.overlay),
+                border: Border.all(
+                  color: BrandColors.mutedInk.withValues(alpha: 0.12),
+                ),
                 boxShadow: [
                   BoxShadow(
-                    color: AppColors.neonCyan.withValues(alpha: 0.08),
+                    color: BrandColors.focusDark.withValues(alpha: 0.08),
                     blurRadius: 40,
                     spreadRadius: -8,
                   ),
@@ -254,7 +460,12 @@ class _SyncRangeDialogState extends State<_SyncRangeDialog> {
                 children: [
                   // Header
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.lg, AppSpacing.sm, 0),
+                    padding: const EdgeInsets.fromLTRB(
+                      BrandSpacing.lg,
+                      BrandSpacing.lg,
+                      BrandSpacing.sm,
+                      0,
+                    ),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -262,12 +473,18 @@ class _SyncRangeDialogState extends State<_SyncRangeDialog> {
                           width: 40,
                           height: 40,
                           decoration: BoxDecoration(
-                            gradient: AppTheme.cyanFadeGradient,
-                            borderRadius: BorderRadius.circular(AppRadius.md),
+                            color: BrandColors.signal,
+                            borderRadius: BorderRadius.circular(
+                              BrandRadius.card,
+                            ),
                           ),
-                          child: const Icon(Icons.sync_rounded, size: 20, color: AppColors.textInverse),
+                          child: const Icon(
+                            Icons.sync_rounded,
+                            size: 20,
+                            color: BrandColors.ink,
+                          ),
                         ),
-                        const SizedBox(width: AppSpacing.sm),
+                        const SizedBox(width: BrandSpacing.sm),
                         Expanded(
                           child: Padding(
                             padding: const EdgeInsets.only(top: 2),
@@ -276,14 +493,21 @@ class _SyncRangeDialogState extends State<_SyncRangeDialog> {
                               children: [
                                 Text(
                                   'Sync from Gmail',
-                                  style: GoogleFonts.spaceGrotesk(
-                                    fontSize: 17, fontWeight: FontWeight.w700, color: AppColors.textPrimary,
+                                  style: TextStyle(
+                                    fontFamily: 'Manrope',
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w700,
+                                    color: BrandColors.ink,
                                   ),
                                 ),
                                 const SizedBox(height: 2),
                                 Text(
                                   'Import credit card statements',
-                                  style: GoogleFonts.inter(fontSize: 12.5, color: AppColors.textSecondary),
+                                  style: TextStyle(
+                                    fontFamily: 'Manrope',
+                                    fontSize: 12.5,
+                                    color: BrandColors.mutedInk,
+                                  ),
                                 ),
                               ],
                             ),
@@ -292,32 +516,40 @@ class _SyncRangeDialogState extends State<_SyncRangeDialog> {
                         IconButton(
                           onPressed: () => Navigator.of(context).pop(),
                           icon: const Icon(Icons.close_rounded, size: 20),
-                          color: AppColors.textMuted,
+                          color: BrandColors.mutedInk,
                           tooltip: 'Close',
                           visualDensity: VisualDensity.compact,
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: AppSpacing.md),
+                  const SizedBox(height: BrandSpacing.md),
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: BrandSpacing.lg,
+                    ),
                     child: Text(
                       'LOOK BACK',
-                      style: GoogleFonts.inter(
-                        fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.textMuted, letterSpacing: 1.0,
+                      style: TextStyle(
+                        fontFamily: 'Manrope',
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: BrandColors.mutedInk,
+                        letterSpacing: 1.0,
                       ),
                     ),
                   ),
-                  const SizedBox(height: AppSpacing.sm),
+                  const SizedBox(height: BrandSpacing.sm),
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: BrandSpacing.lg,
+                    ),
                     child: GridView.count(
                       crossAxisCount: 3,
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
-                      mainAxisSpacing: AppSpacing.sm,
-                      crossAxisSpacing: AppSpacing.sm,
+                      mainAxisSpacing: BrandSpacing.sm,
+                      crossAxisSpacing: BrandSpacing.sm,
                       childAspectRatio: 1.7,
                       children: _options.map((opt) {
                         final selected = opt.days == _selectedDays;
@@ -329,26 +561,39 @@ class _SyncRangeDialogState extends State<_SyncRangeDialog> {
                       }).toList(),
                     ),
                   ),
-                  const SizedBox(height: AppSpacing.md),
+                  const SizedBox(height: BrandSpacing.md),
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: BrandSpacing.lg,
+                    ),
                     child: AnimatedSwitcher(
                       duration: 200.ms,
                       child: Container(
                         key: ValueKey(_selectedDays),
-                        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.sm),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: BrandSpacing.sm,
+                          vertical: BrandSpacing.sm,
+                        ),
                         decoration: BoxDecoration(
-                          color: AppColors.surface2,
-                          borderRadius: BorderRadius.circular(AppRadius.md),
+                          color: BrandColors.paperDeep,
+                          borderRadius: BorderRadius.circular(BrandRadius.card),
                         ),
                         child: Row(
                           children: [
-                            const Icon(Icons.info_outline_rounded, size: 15, color: AppColors.textMuted),
+                            const Icon(
+                              Icons.info_outline_rounded,
+                              size: 15,
+                              color: BrandColors.mutedInk,
+                            ),
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
                                 'Fetches statement emails from $_friendlyRange',
-                                style: GoogleFonts.inter(fontSize: 12.5, color: AppColors.textSecondary),
+                                style: TextStyle(
+                                  fontFamily: 'Manrope',
+                                  fontSize: 12.5,
+                                  color: BrandColors.mutedInk,
+                                ),
                               ),
                             ),
                           ],
@@ -356,9 +601,14 @@ class _SyncRangeDialogState extends State<_SyncRangeDialog> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: AppSpacing.lg),
+                  const SizedBox(height: BrandSpacing.lg),
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.lg),
+                    padding: const EdgeInsets.fromLTRB(
+                      BrandSpacing.lg,
+                      0,
+                      BrandSpacing.lg,
+                      BrandSpacing.lg,
+                    ),
                     child: Row(
                       children: [
                         Expanded(
@@ -367,7 +617,7 @@ class _SyncRangeDialogState extends State<_SyncRangeDialog> {
                             child: const Text('Cancel'),
                           ),
                         ),
-                        const SizedBox(width: AppSpacing.sm),
+                        const SizedBox(width: BrandSpacing.sm),
                         Expanded(
                           flex: 2,
                           child: ElevatedButton.icon(
@@ -393,7 +643,11 @@ class _RangeChip extends StatelessWidget {
   final String label;
   final bool selected;
   final VoidCallback onTap;
-  const _RangeChip({required this.label, required this.selected, required this.onTap});
+  const _RangeChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -401,25 +655,30 @@ class _RangeChip extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(AppRadius.md),
+        borderRadius: BorderRadius.circular(BrandRadius.card),
         child: AnimatedContainer(
           duration: 180.ms,
           curve: Curves.easeOut,
           decoration: BoxDecoration(
-            color: selected ? AppColors.neonCyan.withValues(alpha: 0.15) : AppColors.surface2,
-            borderRadius: BorderRadius.circular(AppRadius.md),
+            color: selected
+                ? BrandColors.focusDark.withValues(alpha: 0.15)
+                : BrandColors.paperDeep,
+            borderRadius: BorderRadius.circular(BrandRadius.card),
             border: Border.all(
-              color: selected ? AppColors.neonCyan : AppColors.textMuted.withValues(alpha: 0.18),
+              color: selected
+                  ? BrandColors.focusDark
+                  : BrandColors.mutedInk.withValues(alpha: 0.18),
               width: selected ? 1.5 : 1,
             ),
           ),
           child: Center(
             child: Text(
               label,
-              style: GoogleFonts.spaceGrotesk(
+              style: TextStyle(
+                fontFamily: 'Manrope',
                 fontSize: 14,
                 fontWeight: FontWeight.w700,
-                color: selected ? AppColors.neonCyan : AppColors.textSecondary,
+                color: selected ? BrandColors.focusDark : BrandColors.mutedInk,
               ),
             ),
           ),
@@ -438,15 +697,19 @@ class _DashboardContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cardsSection = data.cards.isEmpty
-        ? _AddFirstCard().animate(delay: 100.ms).fadeIn()
+        ? const SizedBox.shrink()
         : Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _SectionHeader(title: 'Your Cards', action: 'Manage', onTap: () {}),
-              _CardsCarousel(cards: data.cards, statements: data.latestStatements)
-                  .animate(delay: 100.ms)
-                  .fadeIn()
-                  .slideX(begin: 0.05),
+              DashboardSectionHeader(
+                title: 'Your Cards',
+                action: 'Manage cards',
+                onTap: () => AppTabSelection.of(context).select(AppTab.cards),
+              ),
+              _CardsCarousel(
+                cards: data.cards,
+                statements: data.latestStatements,
+              ).animate(delay: 100.ms).fadeIn().slideX(begin: 0.05),
             ],
           );
 
@@ -454,142 +717,500 @@ class _DashboardContent extends StatelessWidget {
         ? Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _SectionHeader(title: 'Bills Due', action: null, onTap: null),
-              _BillsPanel(cards: data.cards, statements: data.latestStatements)
-                  .animate(delay: 150.ms)
-                  .fadeIn(),
+              DashboardSectionHeader(
+                title: 'Bills Due',
+                action: null,
+                onTap: null,
+              ),
+              _BillsPanel(
+                cards: data.cards,
+                statements: data.latestStatements,
+              ).animate(delay: 150.ms).fadeIn(),
             ],
           )
         : const SizedBox.shrink();
 
+    final statementsUnavailable = data.cards.isEmpty
+        ? const SizedBox.shrink()
+        : const Padding(
+            padding: EdgeInsets.symmetric(horizontal: BrandSpacing.md),
+            child: BrandActionRow(
+              title: 'Statement history',
+              description: 'Statement history is not available here yet.',
+              leading: Icon(Icons.description_outlined),
+              unavailable: true,
+            ),
+          );
+
     final transactionsSection = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _SectionHeader(title: 'Recent Spend', action: 'View All', onTap: () {}),
+        DashboardSectionHeader(
+          title: 'Recent Spend',
+          action: 'View all transactions',
+          onTap: () => AppTabSelection.of(context).select(AppTab.transactions),
+        ),
         data.recentTransactions.isEmpty
             ? _EmptyTransactions().animate(delay: 200.ms).fadeIn()
-            : _RecentTransactions(transactions: data.recentTransactions)
-                .animate(delay: 200.ms)
-                .fadeIn(),
+            : _RecentTransactions(
+                transactions: data.recentTransactions,
+              ).animate(delay: 200.ms).fadeIn(),
       ],
     );
 
     if (isDesktop) {
       return SliverList(
         delegate: SliverChildListDelegate([
-          _KpiRow(data: data).animate().fadeIn(duration: 400.ms).slideY(begin: 0.1),
-          const SizedBox(height: AppSpacing.lg),
-          IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  flex: 3,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      cardsSection,
-                      const SizedBox(height: AppSpacing.lg),
-                      billsSection,
+          _DashboardOverview(
+            data: data,
+          ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.1),
+          const SizedBox(height: BrandSpacing.lg),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                flex: 3,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    cardsSection,
+                    const SizedBox(height: BrandSpacing.lg),
+                    billsSection,
+                    if (data.latestStatements.isEmpty) ...[
+                      const SizedBox(height: BrandSpacing.lg),
+                      statementsUnavailable,
                     ],
-                  ),
+                  ],
                 ),
-                const SizedBox(width: AppSpacing.lg),
-                Expanded(flex: 2, child: transactionsSection),
-              ],
-            ),
+              ),
+              const SizedBox(width: BrandSpacing.lg),
+              Expanded(flex: 2, child: transactionsSection),
+            ],
           ),
-          const SizedBox(height: AppSpacing.xxl),
+          const SizedBox(height: BrandSpacing.xxl),
         ]),
       );
     }
 
     return SliverList(
       delegate: SliverChildListDelegate([
-        _KpiRow(data: data).animate().fadeIn(duration: 400.ms).slideY(begin: 0.1),
-        const SizedBox(height: AppSpacing.lg),
+        _DashboardOverview(
+          data: data,
+        ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.1),
+        const SizedBox(height: BrandSpacing.lg),
         cardsSection,
-        const SizedBox(height: AppSpacing.lg),
+        const SizedBox(height: BrandSpacing.lg),
         if (data.latestStatements.isNotEmpty) ...[
           billsSection,
-          const SizedBox(height: AppSpacing.lg),
+          const SizedBox(height: BrandSpacing.lg),
+        ],
+        if (data.latestStatements.isEmpty && data.cards.isNotEmpty) ...[
+          statementsUnavailable,
+          const SizedBox(height: BrandSpacing.lg),
         ],
         transactionsSection,
-        const SizedBox(height: AppSpacing.xxl),
+        const SizedBox(height: BrandSpacing.xxl),
       ]),
     );
   }
 }
 
-// ─── KPI Row ────────────────────────────────────────────────────────────────
-class _KpiRow extends StatelessWidget {
+// ─── Decision overview ──────────────────────────────────────────────────────
+class _DashboardOverview extends StatelessWidget {
   final DashboardData data;
-  const _KpiRow({required this.data});
+  const _DashboardOverview({required this.data});
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-      child: Row(
-        children: [
-          Expanded(child: _KpiCard(
-            label: 'This Month',
-            value: _shortCurrency.format(data.monthlySpend),
-            icon: Icons.trending_up_rounded,
-            color: AppColors.neonCyan,
-          )),
-          const SizedBox(width: AppSpacing.sm),
-          Expanded(child: _KpiCard(
-            label: 'Rewards',
-            value: _shortCurrency.format(data.rewardsEarned),
-            icon: Icons.star_rounded,
-            color: AppColors.violet,
-          )),
-          const SizedBox(width: AppSpacing.sm),
-          Expanded(child: _KpiCard(
-            label: 'Total Limit',
-            value: _shortCurrency.format(data.totalCreditLimit),
-            icon: Icons.account_balance_wallet_rounded,
-            color: AppColors.neonGreen,
-          )),
-        ],
+    if (data.cards.isEmpty) {
+      return BrandContentFrame(
+        child: Padding(
+          padding: const EdgeInsets.only(top: BrandSpacing.md),
+          child: BrandStateView(
+            title: 'Build your dashboard',
+            message:
+                'Add a credit card to see spending, limits, and rewards in one place.',
+            icon: Icons.add_card_rounded,
+            actionLabel: 'Add a card',
+            onAction: () => AppTabSelection.of(context).select(AppTab.cards),
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        BrandContentFrame(
+          mode: BrandContentMode.fullWidthData,
+          child: Padding(
+            padding: const EdgeInsets.only(top: BrandSpacing.md),
+            child: _DashboardMetrics(data: data),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _DashboardMetrics extends StatelessWidget {
+  final DashboardData data;
+  const _DashboardMetrics({required this.data});
+
+  @override
+  Widget build(BuildContext context) {
+    final cardCount = data.cards.length;
+    final chips = [
+      _MetricChip(
+        key: const Key('primary-spend-metric'),
+        icon: Icons.credit_card_rounded,
+        tone: _MetricTone.primary,
+        label: "This month's spend",
+        value: _shortCurrency.format(data.monthlySpend),
+        trend: data.monthlySpendTrend,
+        trendMonths: data.trendMonths,
+      ),
+      _MetricChip(
+        key: const Key('supporting-rewards-metric'),
+        icon: Icons.star_rounded,
+        tone: _MetricTone.reward,
+        label: 'Rewards earned',
+        value: _shortCurrency.format(data.rewardsEarned),
+        trend: data.monthlyRewardsTrend,
+        trendMonths: data.trendMonths,
+      ),
+      _MetricChip(
+        key: const Key('supporting-limit-metric'),
+        icon: Icons.crop_square_rounded,
+        tone: _MetricTone.limit,
+        label: 'Total credit limit',
+        value: _shortCurrency.format(data.totalCreditLimit),
+        // No month-over-month history exists for a card's credit limit
+        // (it's a live snapshot, not a transaction-derived figure) — show
+        // the chip without a trend rather than fabricate one.
+        trend: null,
+        supportingText: 'Across $cardCount card${cardCount == 1 ? '' : 's'}',
+      ),
+    ];
+
+    final usesLargeText = MediaQuery.textScalerOf(context).scale(14) >= 21;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final stack = constraints.maxWidth < 560 || usesLargeText;
+        if (stack) {
+          return Column(
+            children: [
+              for (var i = 0; i < chips.length; i++) ...[
+                if (i > 0) const SizedBox(height: BrandSpacing.sm),
+                chips[i],
+              ],
+            ],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (var i = 0; i < chips.length; i++) ...[
+              if (i > 0) const SizedBox(width: BrandSpacing.sm),
+              Expanded(child: chips[i]),
+            ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+enum _MetricTone { primary, reward, limit }
+
+class _MetricChip extends StatelessWidget {
+  final IconData icon;
+  final _MetricTone tone;
+  final String label;
+  final String value;
+  final List<double>? trend;
+  final List<DateTime>? trendMonths;
+  final String? supportingText;
+
+  const _MetricChip({
+    super.key,
+    required this.icon,
+    required this.tone,
+    required this.label,
+    required this.value,
+    required this.trend,
+    this.trendMonths,
+    this.supportingText,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final (dotColor, dotOnColor, barColor) = switch (tone) {
+      _MetricTone.primary => (
+        BrandColors.focusDark,
+        BrandColors.signal,
+        BrandColors.focusDark,
+      ),
+      _MetricTone.reward => (
+        BrandColors.reward,
+        BrandColors.rewardInk,
+        BrandColors.rewardInk,
+      ),
+      _MetricTone.limit => (
+        BrandColors.ledger,
+        BrandColors.focusDark,
+        BrandColors.mutedInk,
+      ),
+    };
+
+    return Semantics(
+      label: '$label: $value',
+      child: ExcludeSemantics(
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(BrandSpacing.md),
+          decoration: BoxDecoration(
+            color: BrandColors.paperDeep,
+            borderRadius: BorderRadius.circular(BrandRadius.overlay),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: dotColor,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(icon, size: 16, color: dotOnColor),
+                  ),
+                  const SizedBox(width: BrandSpacing.compact),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          label.toUpperCase(),
+                          style: const TextStyle(
+                            fontFamily: 'Manrope',
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.5,
+                            color: BrandColors.mutedInk,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        Text(
+                          value,
+                          style: const TextStyle(
+                            fontFamily: 'IBM Plex Mono',
+                            fontSize: 17,
+                            fontWeight: FontWeight.w700,
+                            color: BrandColors.ink,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              if (trend != null && trend!.any((v) => v > 0)) ...[
+                const SizedBox(height: BrandSpacing.compact),
+                SizedBox(
+                  height: 32,
+                  child: _MonthBars(
+                    values: trend!,
+                    months: trendMonths,
+                    color: barColor,
+                  ),
+                ),
+              ] else if (supportingText != null) ...[
+                const SizedBox(height: BrandSpacing.xs),
+                Text(
+                  supportingText!,
+                  style: const TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 12,
+                    color: BrandColors.mutedInk,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ],
+          ),
+        ),
       ),
     );
   }
 }
 
-class _KpiCard extends StatelessWidget {
-  final String label;
-  final String value;
-  final IconData icon;
-  final Color color;
+final _monthLabelFmt = DateFormat('MMM yyyy');
 
-  const _KpiCard({required this.label, required this.value, required this.icon, required this.color});
+/// Discrete monthly bars (oldest → newest), current month at full opacity
+/// so it reads unambiguously as "you are here." Hovering (or tapping, for
+/// touch) a bar reveals its real month and value — no data is invented,
+/// this only surfaces what's already in [values]/[months].
+class _MonthBars extends StatefulWidget {
+  final List<double> values;
+  final List<DateTime>? months;
+  final Color color;
+  const _MonthBars({required this.values, this.months, required this.color});
+
+  @override
+  State<_MonthBars> createState() => _MonthBarsState();
+}
+
+class _MonthBarsState extends State<_MonthBars> {
+  int? _hovered;
+
+  void _setHovered(int? index) {
+    if (_hovered == index) return;
+    setState(() => _hovered = index);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final values = widget.values;
+    final months = widget.months;
+    final color = widget.color;
+    final maxValue = values.fold<double>(0, (m, v) => v > m ? v : m);
+    final hovered = _hovered;
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            for (var i = 0; i < values.length; i++) ...[
+              if (i > 0) const SizedBox(width: 3),
+              Expanded(
+                child: MouseRegion(
+                  onEnter: (_) => _setHovered(i),
+                  onExit: (_) => _setHovered(null),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(2),
+                      ),
+                      onTap: () => _setHovered(hovered == i ? null : i),
+                      child: AnimatedScale(
+                        scale: hovered == i ? 1.06 : 1.0,
+                        duration: BrandMotion.standard,
+                        curve: Curves.easeOut,
+                        alignment: Alignment.bottomCenter,
+                        child: FractionallySizedBox(
+                          heightFactor: maxValue <= 0
+                              ? 0.05
+                              : (0.12 + 0.88 * (values[i] / maxValue)).clamp(
+                                  0.05,
+                                  1.0,
+                                ),
+                          alignment: Alignment.bottomCenter,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: color.withValues(
+                                alpha: i == values.length - 1
+                                    ? 1.0
+                                    : (hovered == i ? 0.55 : 0.28),
+                              ),
+                              borderRadius: const BorderRadius.vertical(
+                                top: Radius.circular(2),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+        if (hovered != null)
+          Positioned(
+            bottom: 38,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: IgnorePointer(
+                child: _MonthBarTooltip(
+                  month: months != null && hovered < months.length
+                      ? _monthLabelFmt.format(months[hovered])
+                      : null,
+                  value: _shortCurrency.format(values[hovered]),
+                  color: color,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _MonthBarTooltip extends StatelessWidget {
+  final String? month;
+  final String value;
+  final Color color;
+  const _MonthBarTooltip({
+    required this.month,
+    required this.value,
+    required this.color,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(AppSpacing.md),
-      decoration: BoxDecoration(
-        color: AppColors.surface1,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
-        border: Border.all(color: color.withValues(alpha: 0.2), width: 1),
+      padding: const EdgeInsets.symmetric(
+        horizontal: BrandSpacing.sm,
+        vertical: BrandSpacing.xs,
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      decoration: BoxDecoration(
+        color: BrandColors.ink,
+        borderRadius: BorderRadius.circular(BrandRadius.control),
+        boxShadow: [
+          BoxShadow(
+            color: BrandColors.ink.withValues(alpha: 0.25),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 18, color: color),
-          const SizedBox(height: AppSpacing.sm),
+          if (month != null) ...[
+            Text(
+              month!,
+              style: const TextStyle(
+                fontFamily: 'Manrope',
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: BrandColors.mutedPaper,
+              ),
+            ),
+            const SizedBox(width: 6),
+          ],
           Text(
             value,
-            style: GoogleFonts.spaceGrotesk(
-              fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textPrimary,
+            style: TextStyle(
+              fontFamily: 'IBM Plex Mono',
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: color,
             ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            style: GoogleFonts.inter(fontSize: 11, color: AppColors.textMuted),
           ),
         ],
       ),
@@ -598,38 +1219,68 @@ class _KpiCard extends StatelessWidget {
 }
 
 // ─── Section Header ─────────────────────────────────────────────────────────
-class _SectionHeader extends StatelessWidget {
+class DashboardSectionHeader extends StatelessWidget {
   final String title;
   final String? action;
   final VoidCallback? onTap;
 
-  const _SectionHeader({required this.title, required this.action, required this.onTap});
+  const DashboardSectionHeader({
+    super.key,
+    required this.title,
+    required this.action,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final usesLargeText = MediaQuery.textScalerOf(context).scale(14) >= 21;
+    final titleWidget = Text(
+      title,
+      style: const TextStyle(
+        fontFamily: 'Fraunces',
+        fontSize: 16,
+        fontWeight: FontWeight.w700,
+        color: BrandColors.ink,
+      ),
+    );
+    final actionWidget = action == null
+        ? null
+        : TextButton(
+            onPressed: onTap,
+            style: TextButton.styleFrom(
+              padding: EdgeInsets.zero,
+              minimumSize: const Size(44, 44),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: Text(
+              action!,
+              style: const TextStyle(
+                fontFamily: 'Manrope',
+                fontSize: 13,
+                color: BrandColors.focusDark,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          );
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(AppSpacing.md, 0, AppSpacing.md, AppSpacing.sm),
-      child: Row(
-        children: [
-          Text(
-            title,
-            style: GoogleFonts.spaceGrotesk(
-              fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary,
-            ),
-          ),
-          const Spacer(),
-          if (action != null)
-            TextButton(
-              onPressed: onTap,
-              style: TextButton.styleFrom(
-                padding: EdgeInsets.zero, minimumSize: Size.zero, tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              child: Text(
-                action!,
-                style: GoogleFonts.inter(fontSize: 13, color: AppColors.neonCyan, fontWeight: FontWeight.w500),
-              ),
-            ),
-        ],
+      padding: const EdgeInsets.fromLTRB(
+        BrandSpacing.md,
+        0,
+        BrandSpacing.md,
+        BrandSpacing.sm,
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final stack = usesLargeText || constraints.maxWidth < 440;
+          if (stack) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [titleWidget, ?actionWidget],
+            );
+          }
+          return Row(children: [titleWidget, const Spacer(), ?actionWidget]);
+        },
       ),
     );
   }
@@ -667,19 +1318,31 @@ class _CardsCarouselState extends ConsumerState<_CardsCarousel> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final cardWidth = constraints.maxWidth * 0.6 > _maxCardWidth
-            ? _maxCardWidth
+        final usesLargeText = MediaQuery.textScalerOf(context).scale(14) >= 21;
+        final preferredWidth = usesLargeText
+            ? constraints.maxWidth
             : constraints.maxWidth * 0.6;
-        final cardHeight = cardWidth / _cardAspectRatio;
-        final viewportFraction = ((cardWidth + AppSpacing.sm) / constraints.maxWidth).clamp(0.3, 0.9);
+        final cardWidth = math.min(preferredWidth, _maxCardWidth);
+        final cardHeight = math
+            .max(cardWidth / _cardAspectRatio, usesLargeText ? 340.0 : 180.0)
+            .toDouble();
+        final viewportFraction =
+            ((cardWidth + BrandSpacing.sm) / constraints.maxWidth).clamp(
+              0.3,
+              0.9,
+            );
 
         // Only replace the controller when the viewport math actually
         // changes (e.g. window resize) — recreating it on every rebuild
         // (which happens whenever pendingCardAssignmentsProvider refreshes)
         // resets the user's scroll position back to page 0 mid-swipe.
-        if (_controller == null || _controllerViewportFraction != viewportFraction) {
+        if (_controller == null ||
+            _controllerViewportFraction != viewportFraction) {
           _controller?.dispose();
-          _controller = PageController(viewportFraction: viewportFraction, initialPage: _current);
+          _controller = PageController(
+            viewportFraction: viewportFraction,
+            initialPage: _current,
+          );
           _controllerViewportFraction = viewportFraction;
         }
 
@@ -687,47 +1350,81 @@ class _CardsCarouselState extends ConsumerState<_CardsCarousel> {
           children: [
             SizedBox(
               height: cardHeight,
-              child: PageView.builder(
-                itemCount: itemCount,
-                padEnds: false,
-                controller: _controller,
-                onPageChanged: (i) => setState(() => _current = i),
-                itemBuilder: (context, i) {
-                  final isPending = i >= widget.cards.length;
-                  final tile = isPending
-                      ? _PendingBankTile(email: pending[i - widget.cards.length])
-                      : GestureDetector(
-                          onTap: () => Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => CardDetailScreen(cardId: widget.cards[i].id),
+              child: ScrollConfiguration(
+                behavior: const MaterialScrollBehavior().copyWith(
+                  dragDevices: const {
+                    PointerDeviceKind.touch,
+                    PointerDeviceKind.mouse,
+                    PointerDeviceKind.stylus,
+                    PointerDeviceKind.trackpad,
+                  },
+                ),
+                child: PageView.builder(
+                  itemCount: itemCount,
+                  padEnds: false,
+                  controller: _controller,
+                  onPageChanged: (i) => setState(() => _current = i),
+                  itemBuilder: (context, i) {
+                    final isPending = i >= widget.cards.length;
+                    final tile = isPending
+                        ? _PendingBankTile(
+                            email: pending[i - widget.cards.length],
+                          )
+                        : Semantics(
+                            key: Key('dashboard-card-${widget.cards[i].id}'),
+                            label:
+                                'Open ${widget.cards[i].displayName} card details',
+                            button: true,
+                            onTap: () => context.push(
+                              '/app/cards/${Uri.encodeComponent(widget.cards[i].id)}',
                             ),
-                          ),
-                          child: _CreditCardTile(card: widget.cards[i]),
-                        );
-                  return Padding(
-                    padding: EdgeInsets.only(
-                      left: i == 0 ? AppSpacing.md : AppSpacing.sm,
-                      right: i == itemCount - 1 ? AppSpacing.md : AppSpacing.sm,
-                    ),
-                    child: SizedBox(width: cardWidth, child: tile),
-                  );
-                },
+                            child: ExcludeSemantics(
+                              child: Material(
+                                color: Colors.transparent,
+                                child: InkWell(
+                                  onTap: () => context.push(
+                                    '/app/cards/${Uri.encodeComponent(widget.cards[i].id)}',
+                                  ),
+                                  borderRadius: BorderRadius.circular(
+                                    BrandRadius.overlay,
+                                  ),
+                                  child: _CreditCardTile(card: widget.cards[i]),
+                                ),
+                              ),
+                            ),
+                          );
+                    return Padding(
+                      padding: EdgeInsets.only(
+                        left: i == 0 ? BrandSpacing.md : BrandSpacing.sm,
+                        right: i == itemCount - 1
+                            ? BrandSpacing.md
+                            : BrandSpacing.sm,
+                      ),
+                      child: SizedBox(width: cardWidth, child: tile),
+                    );
+                  },
+                ),
               ),
             ),
             if (itemCount > 1) ...[
-              const SizedBox(height: AppSpacing.sm),
+              const SizedBox(height: BrandSpacing.sm),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(itemCount, (i) => AnimatedContainer(
-                  duration: 250.ms,
-                  width: i == _current ? 20 : 6,
-                  height: 6,
-                  margin: const EdgeInsets.symmetric(horizontal: 3),
-                  decoration: BoxDecoration(
-                    color: i == _current ? AppColors.neonCyan : AppColors.textMuted.withValues(alpha: 0.4),
-                    borderRadius: BorderRadius.circular(AppRadius.pill),
+                children: List.generate(
+                  itemCount,
+                  (i) => AnimatedContainer(
+                    duration: 250.ms,
+                    width: i == _current ? 20 : 6,
+                    height: 6,
+                    margin: const EdgeInsets.symmetric(horizontal: 3),
+                    decoration: BoxDecoration(
+                      color: i == _current
+                          ? BrandColors.focusDark
+                          : BrandColors.mutedInk.withValues(alpha: 0.4),
+                      borderRadius: BorderRadius.circular(BrandRadius.pill),
+                    ),
                   ),
-                )),
+                ),
               ),
             ],
           ],
@@ -747,17 +1444,47 @@ class _PendingBankTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bankDetected = email['bank_detected'] as String? ?? 'Unknown bank';
+    final metadata = email['metadata'];
+    final hints = metadata is Map && metadata['identityHints'] is Map
+        ? Map<String, dynamic>.from(metadata['identityHints'] as Map)
+        : const <String, dynamic>{};
+    final last4 = hints['last4'] as String?;
+    final productName = hints['productName'] as String?;
+    final dueDate = DateTime.tryParse(hints['dueDate'] as String? ?? '');
+    final statementDate = DateTime.tryParse(
+      hints['statementDate'] as String? ?? '',
+    );
+    final receivedDate = DateTime.tryParse(
+      email['received_date'] as String? ?? '',
+    );
+    final totalAmount = hints['totalAmount'];
+    final subject = (email['subject'] as String?)?.trim();
+    final attachmentFilename =
+        hints['attachmentFilename'] as String? ??
+        (metadata is Map ? metadata['attachmentFilename'] as String? : null);
+    final sourceDate = statementDate ?? receivedDate;
+    final hasEvidence =
+        hints.isNotEmpty ||
+        (subject?.isNotEmpty ?? false) ||
+        sourceDate != null ||
+        (attachmentFilename?.isNotEmpty ?? false);
+    final amountDue = totalAmount is num && dueDate != null
+        ? '${NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 2).format(totalAmount)} due ${DateFormat('d MMM').format(dueDate)}'
+        : null;
     return Container(
       decoration: BoxDecoration(
-        color: AppColors.surface2,
-        borderRadius: BorderRadius.circular(AppRadius.xl),
+        color: BrandColors.paperDeep,
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
         border: Border.all(
-          color: AppColors.warning.withValues(alpha: 0.4),
+          color: BrandColors.rewardInk.withValues(alpha: 0.4),
           width: 1.5,
           style: BorderStyle.solid,
         ),
       ),
-      padding: const EdgeInsets.all(AppSpacing.lg),
+      padding: const EdgeInsets.symmetric(
+        horizontal: BrandSpacing.lg,
+        vertical: BrandSpacing.md,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -765,31 +1492,114 @@ class _PendingBankTile extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  bankDetected,
-                  style: GoogleFonts.inter(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w500, letterSpacing: 0.5),
+                  last4 == null ? bankDetected : '$bankDetected •••• $last4',
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 12,
+                    color: BrandColors.mutedInk,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 0.5,
+                  ),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              GestureDetector(
-                onTap: () => _showBankResolveDialog(context, email),
-                child: Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: AppColors.warning.withValues(alpha: 0.15),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.priority_high_rounded, size: 16, color: AppColors.warning),
+              IconButton(
+                key: Key('resolve-bank-${email['email_id'] ?? bankDetected}'),
+                tooltip: 'Resolve $bankDetected card',
+                constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+                onPressed: () => _showBankResolveDialog(context, email),
+                icon: Icon(
+                  Icons.priority_high_rounded,
+                  size: 20,
+                  color: BrandColors.rewardInk,
+                  semanticLabel: 'Resolve $bankDetected card',
                 ),
               ),
             ],
           ),
-          const Spacer(),
-          Icon(Icons.help_outline_rounded, size: 28, color: AppColors.textMuted.withValues(alpha: 0.5)),
-          const SizedBox(height: AppSpacing.sm),
-          Text(
-            'Which card is this?',
-            style: GoogleFonts.inter(fontSize: 13, color: AppColors.textMuted),
-          ),
+          if (hasEvidence) ...[
+            if (productName != null)
+              Text(
+                'Possible card: $productName',
+                style: const TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: BrandColors.ink,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            if (subject != null && subject.isNotEmpty) ...[
+              if (productName != null) const SizedBox(height: BrandSpacing.xs),
+              Text(
+                subject,
+                style: const TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 12,
+                  color: BrandColors.ink,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+            if (amountDue != null) ...[
+              const SizedBox(height: BrandSpacing.xs),
+              Text(
+                amountDue,
+                style: const TextStyle(
+                  fontFamily: 'IBM Plex Mono',
+                  fontSize: 12,
+                  color: BrandColors.mutedInk,
+                ),
+              ),
+            ],
+            if (amountDue == null && sourceDate != null)
+              Text(
+                'Statement email · ${DateFormat('d MMM').format(sourceDate)}',
+                style: const TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 12,
+                  color: BrandColors.mutedInk,
+                ),
+              ),
+            if (attachmentFilename != null &&
+                attachmentFilename.isNotEmpty) ...[
+              const SizedBox(height: BrandSpacing.xs),
+              Text(
+                attachmentFilename,
+                style: const TextStyle(
+                  fontFamily: 'IBM Plex Mono',
+                  fontSize: 12,
+                  color: BrandColors.mutedInk,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+            const Spacer(),
+            TextButton.icon(
+              onPressed: () => _showBankResolveDialog(context, email),
+              icon: const Icon(Icons.check_circle_outline_rounded, size: 18),
+              label: const Text('Confirm card'),
+            ),
+          ] else ...[
+            const Spacer(),
+            Icon(
+              Icons.help_outline_rounded,
+              size: 28,
+              color: BrandColors.mutedInk.withValues(alpha: 0.5),
+            ),
+            const SizedBox(height: BrandSpacing.sm),
+            Text(
+              'Which card is this?',
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                fontSize: 13,
+                color: BrandColors.mutedInk,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -800,7 +1610,8 @@ void _showBankResolveDialog(BuildContext context, Map<String, dynamic> email) {
   final bankDetected = email['bank_detected'] as String? ?? '';
   showDialog<void>(
     context: context,
-    builder: (dialogContext) => _BankResolveDialog(email: email, bankDetected: bankDetected),
+    builder: (dialogContext) =>
+        _BankResolveDialog(email: email, bankDetected: bankDetected),
   );
 }
 
@@ -818,6 +1629,13 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
   bool _loading = true;
   bool _resolving = false;
   String? _error;
+  String _lastQuery = '';
+  Map<String, dynamic>? _retryResolution;
+  int _searchGeneration = 0;
+  final TextEditingController _urlController = TextEditingController();
+  bool _showUrlFallback = false;
+  bool _urlResolving = false;
+  String? _urlMessage;
 
   @override
   void initState() {
@@ -825,29 +1643,103 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
     _search('');
   }
 
-  Future<void> _search(String query) async {
-    setState(() => _loading = true);
+  @override
+  void dispose() {
+    _searchGeneration++;
+    _urlController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _resolveUrl() async {
+    if (_urlResolving || _resolving) return;
+    final rawUrl = _urlController.text.trim();
+    final uri = Uri.tryParse(rawUrl);
+    if (uri == null ||
+        uri.scheme.toLowerCase() != 'https' ||
+        uri.host.isEmpty ||
+        uri.userInfo.isNotEmpty) {
+      setState(() => _urlMessage = 'Enter a valid HTTPS card page URL.');
+      return;
+    }
+    setState(() {
+      _urlResolving = true;
+      _urlMessage = null;
+    });
     try {
-      final results = await ref
-          .read(cardsRepositoryProvider)
-          .searchCatalogForBank(widget.bankDetected, query: query);
-      if (mounted) setState(() { _options = results; _loading = false; });
-    } catch (e) {
-      if (mounted) setState(() { _error = e.toString(); _loading = false; });
+      final result = await ref.read(cardUrlResolverProvider)(
+        widget.email,
+        rawUrl,
+      );
+      if (!mounted) return;
+      if (result.isResolved) {
+        await _resolve({'id': result.resolvedCardId});
+      } else {
+        setState(() => _urlMessage = result.userMessage);
+      }
+    } on CardUrlResolutionException catch (error) {
+      if (mounted) setState(() => _urlMessage = error.userMessage);
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => _urlMessage = 'Could not verify this card page. Try again.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _urlResolving = false);
+    }
+  }
+
+  Future<void> _search(String query) async {
+    final generation = ++_searchGeneration;
+    _lastQuery = query;
+    setState(() {
+      _loading = true;
+      _error = null;
+      _retryResolution = null;
+    });
+    try {
+      final results = await ref.read(bankCatalogSearchProvider)(
+        widget.bankDetected,
+        query,
+      );
+      if (!mounted || generation != _searchGeneration) return;
+      setState(() {
+        _options = results;
+        _error = null;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted || generation != _searchGeneration) return;
+      setState(() {
+        _error =
+            'Could not load matching cards. Check your connection and try again.';
+        _loading = false;
+      });
     }
   }
 
   Future<void> _resolve(Map<String, dynamic> catalogEntry) async {
-    setState(() { _resolving = true; _error = null; });
+    if (_resolving) return;
+    final container = ProviderScope.containerOf(context, listen: false);
+    final resolveCard = ref.read(cardResolutionProvider);
+    setState(() {
+      _resolving = true;
+      _error = null;
+      _retryResolution = catalogEntry;
+    });
     try {
-      await ref.read(cardAssignmentProvider.notifier).resolveWithCatalogEntry(
-            email: widget.email,
-            catalogCardId: catalogEntry['id'] as String,
-          );
-      ref.invalidate(dashboardProvider);
-      if (mounted) Navigator.of(context).pop();
-    } catch (e) {
-      if (mounted) setState(() => _error = 'Failed to assign card: $e');
+      await resolveCard(widget.email, catalogEntry['id'] as String);
+      container.invalidate(dashboardProvider);
+      if (!mounted) return;
+      setState(() {
+        _error = null;
+        _retryResolution = null;
+      });
+      Navigator.of(context).pop();
+    } catch (_) {
+      if (mounted) {
+        setState(() => _error = 'Could not assign this card. Try again.');
+      }
     } finally {
       if (mounted) setState(() => _resolving = false);
     }
@@ -855,27 +1747,44 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final metadata = widget.email['metadata'];
+    final hints = metadata is Map && metadata['identityHints'] is Map
+        ? Map<String, dynamic>.from(metadata['identityHints'] as Map)
+        : const <String, dynamic>{};
+    final productName = hints['productName'] as String?;
+    final last4 = hints['last4'] as String?;
     return Dialog(
-      backgroundColor: AppColors.surface1,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadius.xl)),
+      backgroundColor: BrandColors.paper,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
+      ),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 420, maxHeight: 480),
         child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.lg),
+          padding: const EdgeInsets.all(BrandSpacing.lg),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 'Which card is this?',
-                style: GoogleFonts.spaceGrotesk(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: BrandColors.ink,
+                ),
               ),
               const SizedBox(height: 2),
               Text(
-                widget.bankDetected,
-                style: GoogleFonts.inter(fontSize: 12.5, color: AppColors.textSecondary),
+                '${widget.bankDetected}${last4 == null ? '' : ' · •••• $last4'}${productName == null ? '' : ' · $productName'}',
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 12.5,
+                  color: BrandColors.mutedInk,
+                ),
               ),
-              const SizedBox(height: AppSpacing.md),
+              const SizedBox(height: BrandSpacing.md),
               TextField(
                 autofocus: true,
                 decoration: InputDecoration(
@@ -884,54 +1793,163 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
                 ),
                 onChanged: _search,
               ),
-              const SizedBox(height: AppSpacing.sm),
+              const SizedBox(height: BrandSpacing.sm),
               Flexible(
                 child: _loading
                     ? const Padding(
-                        padding: EdgeInsets.symmetric(vertical: AppSpacing.xl),
-                        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                        padding: EdgeInsets.symmetric(
+                          vertical: BrandSpacing.xl,
+                        ),
+                        child: Center(
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
                       )
                     : _error != null
-                        ? Padding(
-                            padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
-                            child: Text(_error!, style: GoogleFonts.inter(fontSize: 12, color: AppColors.error)),
-                          )
-                        : _options.isEmpty
-                            ? Padding(
-                                padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
-                                child: Text(
-                                  'No matching card found. Try a different search.',
-                                  style: GoogleFonts.inter(fontSize: 12.5, color: AppColors.textMuted),
-                                ),
-                              )
-                            : ListView.builder(
-                                shrinkWrap: true,
-                                itemCount: _options.length,
-                                itemBuilder: (context, i) {
-                                  final entry = _options[i];
-                                  return ListTile(
-                                    dense: true,
-                                    contentPadding: EdgeInsets.zero,
-                                    title: Text(
-                                      entry['card_name'] as String? ?? '',
-                                      style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
-                                    ),
-                                    subtitle: Text(
-                                      entry['bank'] as String? ?? '',
-                                      style: GoogleFonts.inter(fontSize: 12, color: AppColors.textMuted),
-                                    ),
-                                    trailing: _resolving
-                                        ? const SizedBox(
-                                            width: 16, height: 16,
-                                            child: CircularProgressIndicator(strokeWidth: 2),
-                                          )
-                                        : const Icon(Icons.chevron_right_rounded, color: AppColors.textMuted),
-                                    onTap: _resolving ? null : () => _resolve(entry),
-                                  );
-                                },
+                    ? Padding(
+                        padding: const EdgeInsets.symmetric(
+                          vertical: BrandSpacing.lg,
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              _error!,
+                              style: TextStyle(
+                                fontFamily: 'Manrope',
+                                fontSize: 14,
+                                color: BrandColors.error,
                               ),
+                            ),
+                            const SizedBox(height: BrandSpacing.sm),
+                            TextButton(
+                              onPressed: _resolving
+                                  ? null
+                                  : _retryResolution == null
+                                  ? () => _search(_lastQuery)
+                                  : () => _resolve(_retryResolution!),
+                              child: Text(
+                                _retryResolution == null
+                                    ? 'Retry search'
+                                    : 'Retry assignment',
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : _options.isEmpty
+                    ? Padding(
+                        padding: const EdgeInsets.symmetric(
+                          vertical: BrandSpacing.lg,
+                        ),
+                        child: Text(
+                          'No matching card found. Try a different search.',
+                          style: TextStyle(
+                            fontFamily: 'Manrope',
+                            fontSize: 12.5,
+                            color: BrandColors.mutedInk,
+                          ),
+                        ),
+                      )
+                    : ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: _options.length,
+                        itemBuilder: (context, i) {
+                          final entry = _options[i];
+                          return ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(
+                              entry['card_name'] as String? ?? '',
+                              style: TextStyle(
+                                fontFamily: 'Manrope',
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: BrandColors.ink,
+                              ),
+                            ),
+                            subtitle: Text(
+                              entry['bank'] as String? ?? '',
+                              style: TextStyle(
+                                fontFamily: 'Manrope',
+                                fontSize: 12,
+                                color: BrandColors.mutedInk,
+                              ),
+                            ),
+                            trailing: _resolving
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(
+                                    Icons.chevron_right_rounded,
+                                    color: BrandColors.mutedInk,
+                                  ),
+                            onTap: _resolving ? null : () => _resolve(entry),
+                          );
+                        },
+                      ),
               ),
-              const SizedBox(height: AppSpacing.sm),
+              const SizedBox(height: BrandSpacing.sm),
+              TextButton.icon(
+                onPressed: _urlResolving
+                    ? null
+                    : () => setState(() {
+                        _showUrlFallback = !_showUrlFallback;
+                        _urlMessage = null;
+                      }),
+                icon: Icon(
+                  _showUrlFallback
+                      ? Icons.expand_less_rounded
+                      : Icons.link_rounded,
+                  size: 18,
+                ),
+                label: const Text("Can't find it? Paste official card page"),
+              ),
+              if (_showUrlFallback) ...[
+                TextField(
+                  key: const Key('official-card-url-field'),
+                  controller: _urlController,
+                  enabled: !_urlResolving,
+                  keyboardType: TextInputType.url,
+                  autocorrect: false,
+                  decoration: const InputDecoration(
+                    hintText: 'https://bank.example/cards/card-name',
+                    prefixIcon: Icon(Icons.language_rounded, size: 20),
+                  ),
+                  onSubmitted: (_) => _resolveUrl(),
+                ),
+                const SizedBox(height: BrandSpacing.xs),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: FilledButton(
+                    onPressed: _urlResolving ? null : _resolveUrl,
+                    child: _urlResolving
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Verify card page'),
+                  ),
+                ),
+                if (_urlMessage != null) ...[
+                  const SizedBox(height: BrandSpacing.xs),
+                  Text(
+                    _urlMessage!,
+                    style: TextStyle(
+                      fontFamily: 'Manrope',
+                      fontSize: 12.5,
+                      color: _urlMessage!.contains('reviewing')
+                          ? BrandColors.mutedInk
+                          : BrandColors.error,
+                    ),
+                  ),
+                ],
+              ],
+              const SizedBox(height: BrandSpacing.sm),
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton(
@@ -953,45 +1971,67 @@ class _CreditCardTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final gradient = AppTheme.cardGradient(card.bankCode);
+    final issuerColor = AppTheme.issuerColor(card.bankCode);
     return Container(
       decoration: BoxDecoration(
-        gradient: gradient,
-        borderRadius: BorderRadius.circular(AppRadius.xl),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.10), width: 1),
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color.alphaBlend(
+              issuerColor.withValues(alpha: 0.16),
+              BrandColors.paperDeep,
+            ),
+            BrandColors.paperDeep,
+          ],
+          stops: const [0.0, 0.7],
+        ),
+        border: Border.all(color: issuerColor.withValues(alpha: 0.35)),
         boxShadow: [
           BoxShadow(
-            color: gradient.colors.last.withValues(alpha: 0.45),
-            blurRadius: 20,
-            spreadRadius: 1,
-            offset: const Offset(0, 8),
-          ),
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.35),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
+            color: BrandColors.ink.withValues(alpha: 0.06),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
           ),
         ],
       ),
-      padding: const EdgeInsets.all(AppSpacing.lg),
+      padding: const EdgeInsets.all(BrandSpacing.lg),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
+              Container(
+                width: 8,
+                height: 8,
+                margin: const EdgeInsets.only(right: BrandSpacing.xs),
+                decoration: BoxDecoration(
+                  color: issuerColor,
+                  shape: BoxShape.circle,
+                ),
+              ),
               Expanded(
                 child: Text(
                   card.bank ?? '',
-                  style: GoogleFonts.inter(
-                    fontSize: 12, color: Colors.white.withValues(alpha: 0.7), fontWeight: FontWeight.w500,
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 12,
+                    color: BrandColors.mutedInk,
+                    fontWeight: FontWeight.w600,
                     letterSpacing: 0.5,
                   ),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
               Text(
-                card.network ?? '',
-                style: GoogleFonts.inter(
-                  fontSize: 12, color: Colors.white.withValues(alpha: 0.7), fontWeight: FontWeight.w600,
+                (card.network ?? '').toUpperCase(),
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 12,
+                  color: issuerColor,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.8,
                 ),
               ),
             ],
@@ -1000,18 +2040,26 @@ class _CreditCardTile extends StatelessWidget {
           if (card.lastFourDigits != null)
             Text(
               '••••  ••••  ••••  ${card.lastFourDigits}',
-              style: GoogleFonts.spaceGrotesk(
-                fontSize: 16, color: Colors.white, fontWeight: FontWeight.w600, letterSpacing: 2,
+              style: const TextStyle(
+                fontFamily: 'IBM Plex Mono',
+                fontSize: 18,
+                color: BrandColors.ink,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 1.5,
               ),
             ),
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(height: BrandSpacing.md),
           Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Expanded(
                 child: Text(
                   card.displayName,
-                  style: GoogleFonts.inter(
-                    fontSize: 14, color: Colors.white, fontWeight: FontWeight.w600,
+                  style: const TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 14,
+                    color: BrandColors.ink,
+                    fontWeight: FontWeight.w600,
                   ),
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -1019,8 +2067,11 @@ class _CreditCardTile extends StatelessWidget {
               if (card.creditLimit != null)
                 Text(
                   _currencyFmt.format(card.creditLimit),
-                  style: GoogleFonts.inter(
-                    fontSize: 13, color: Colors.white.withValues(alpha: 0.85), fontWeight: FontWeight.w500,
+                  style: TextStyle(
+                    fontFamily: 'IBM Plex Mono',
+                    fontSize: 13,
+                    color: BrandColors.mutedInk,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
             ],
@@ -1041,26 +2092,42 @@ class _BillsPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final pending = cards
-        .where((c) => statements.containsKey(c.id) && !statements[c.id]!.isPaid)
+        .where(
+          (c) =>
+              statements.containsKey(c.id) &&
+              !statements[c.id]!.isPaid &&
+              statements[c.id]!.outstanding > 0,
+        )
         .toList();
 
     if (pending.isEmpty) {
       return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+        padding: const EdgeInsets.symmetric(horizontal: BrandSpacing.md),
         child: Container(
-          padding: const EdgeInsets.all(AppSpacing.md),
+          padding: const EdgeInsets.all(BrandSpacing.md),
           decoration: BoxDecoration(
-            color: AppColors.success.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(AppRadius.lg),
-            border: Border.all(color: AppColors.success.withValues(alpha: 0.25)),
+            color: BrandColors.successInk.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(BrandRadius.overlay),
+            border: Border.all(
+              color: BrandColors.successInk.withValues(alpha: 0.25),
+            ),
           ),
           child: Row(
             children: [
-              const Icon(Icons.check_circle_rounded, color: AppColors.success, size: 20),
-              const SizedBox(width: AppSpacing.sm),
+              const Icon(
+                Icons.check_circle_rounded,
+                color: BrandColors.successInk,
+                size: 20,
+              ),
+              const SizedBox(width: BrandSpacing.sm),
               Text(
                 'All bills paid — you\'re good!',
-                style: GoogleFonts.inter(fontSize: 14, color: AppColors.success, fontWeight: FontWeight.w500),
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 14,
+                  color: BrandColors.successInk,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
             ],
           ),
@@ -1073,16 +2140,21 @@ class _BillsPanel extends StatelessWidget {
         final stmt = statements[card.id]!;
         final isOverdue = stmt.isOverdue;
         return Padding(
-          padding: const EdgeInsets.fromLTRB(AppSpacing.md, 0, AppSpacing.md, AppSpacing.sm),
+          padding: const EdgeInsets.fromLTRB(
+            BrandSpacing.md,
+            0,
+            BrandSpacing.md,
+            BrandSpacing.sm,
+          ),
           child: Container(
-            padding: const EdgeInsets.all(AppSpacing.md),
+            padding: const EdgeInsets.all(BrandSpacing.md),
             decoration: BoxDecoration(
-              color: AppColors.surface1,
-              borderRadius: BorderRadius.circular(AppRadius.lg),
+              color: BrandColors.paper,
+              borderRadius: BorderRadius.circular(BrandRadius.overlay),
               border: Border.all(
                 color: isOverdue
-                    ? AppColors.error.withValues(alpha: 0.4)
-                    : AppColors.warning.withValues(alpha: 0.25),
+                    ? BrandColors.error.withValues(alpha: 0.4)
+                    : BrandColors.rewardInk.withValues(alpha: 0.25),
               ),
             ),
             child: Row(
@@ -1091,16 +2163,38 @@ class _BillsPanel extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      if (card.bank != null && card.bank!.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 2),
+                          child: Text(
+                            card.bank!,
+                            style: TextStyle(
+                              fontFamily: 'Manrope',
+                              fontSize: 12,
+                              color: BrandColors.mutedInk,
+                              fontWeight: FontWeight.w500,
+                              letterSpacing: 0.3,
+                            ),
+                          ),
+                        ),
                       Text(
                         card.displayName,
-                        style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                        style: TextStyle(
+                          fontFamily: 'Manrope',
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: BrandColors.ink,
+                        ),
                       ),
                       const SizedBox(height: 2),
                       Text(
                         'Due ${DateFormat('d MMM').format(stmt.dueDate)}',
-                        style: GoogleFonts.inter(
+                        style: TextStyle(
+                          fontFamily: 'Manrope',
                           fontSize: 12,
-                          color: isOverdue ? AppColors.error : AppColors.textSecondary,
+                          color: isOverdue
+                              ? BrandColors.error
+                              : BrandColors.mutedInk,
                         ),
                       ),
                     ],
@@ -1108,9 +2202,11 @@ class _BillsPanel extends StatelessWidget {
                 ),
                 Text(
                   _currencyFmt.format(stmt.outstanding),
-                  style: GoogleFonts.spaceGrotesk(
-                    fontSize: 16, fontWeight: FontWeight.w700,
-                    color: isOverdue ? AppColors.error : AppColors.textPrimary,
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: isOverdue ? BrandColors.error : BrandColors.ink,
                   ),
                 ),
               ],
@@ -1130,7 +2226,7 @@ class _RecentTransactions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+      padding: const EdgeInsets.symmetric(horizontal: BrandSpacing.md),
       child: Column(
         children: transactions.asMap().entries.map((entry) {
           final txn = entry.value;
@@ -1151,41 +2247,62 @@ class _TransactionRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDebit = txn.isDebit;
-    final amount = isDebit ? '-${_currencyFmt.format(txn.amount)}' : '+${_currencyFmt.format(txn.amount)}';
-    final color = isDebit ? AppColors.textPrimary : AppColors.success;
+    final amount = isDebit
+        ? '-${_currencyFmt.format(txn.amount)}'
+        : '+${_currencyFmt.format(txn.amount)}';
+    final color = isDebit ? BrandColors.ink : BrandColors.successInk;
 
     return Container(
-      margin: const EdgeInsets.only(bottom: AppSpacing.xs + 2),
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: 12),
+      margin: const EdgeInsets.only(bottom: BrandSpacing.xs + 2),
+      padding: const EdgeInsets.symmetric(
+        horizontal: BrandSpacing.md,
+        vertical: 12,
+      ),
       decoration: BoxDecoration(
-        color: AppColors.surface1,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        border: Border.all(color: AppColors.textMuted.withValues(alpha: 0.08)),
+        color: BrandColors.paper,
+        borderRadius: BorderRadius.circular(BrandRadius.card),
+        border: Border.all(color: BrandColors.mutedInk.withValues(alpha: 0.08)),
       ),
       child: Row(
         children: [
           // Category icon
           Container(
-            width: 40, height: 40,
+            width: 40,
+            height: 40,
             decoration: BoxDecoration(
               color: _categoryColor(txn.category).withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(AppRadius.sm),
+              borderRadius: BorderRadius.circular(BrandRadius.control),
             ),
-            child: Icon(_categoryIcon(txn.category), size: 18, color: _categoryColor(txn.category)),
+            child: Icon(
+              _categoryIcon(txn.category),
+              size: 18,
+              color: _categoryColor(txn.category),
+            ),
           ),
-          const SizedBox(width: AppSpacing.sm),
+          const SizedBox(width: BrandSpacing.sm),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   txn.merchantName ?? txn.description,
-                  style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w500, color: AppColors.textPrimary),
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: BrandColors.ink,
+                  ),
                   overflow: TextOverflow.ellipsis,
                 ),
                 Text(
-                  DateFormat('d MMM · hh:mm a').format(txn.transactionDate.toLocal()),
-                  style: GoogleFonts.inter(fontSize: 11, color: AppColors.textMuted),
+                  DateFormat(
+                    'd MMM · hh:mm a',
+                  ).format(txn.transactionDate.toLocal()),
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 12,
+                    color: BrandColors.mutedInk,
+                  ),
                 ),
               ],
             ),
@@ -1195,14 +2312,21 @@ class _TransactionRow extends StatelessWidget {
             children: [
               Text(
                 amount,
-                style: GoogleFonts.spaceGrotesk(
-                  fontSize: 14, fontWeight: FontWeight.w700, color: color,
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: color,
                 ),
               ),
               if ((txn.rewardEarned ?? 0) > 0)
                 Text(
                   '+${txn.rewardEarned!.toStringAsFixed(0)} pts',
-                  style: GoogleFonts.inter(fontSize: 10, color: AppColors.violet),
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 12,
+                    color: BrandColors.reward,
+                  ),
                 ),
             ],
           ),
@@ -1216,74 +2340,28 @@ class _TransactionRow extends StatelessWidget {
   static IconData _categoryIcon(String? cat) => categoryIcon(cat);
 }
 
-// ─── Empty / Placeholder States ──────────────────────────────────────────────
-class _AddFirstCard extends ConsumerWidget {
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-      child: Container(
-        padding: const EdgeInsets.all(AppSpacing.xl),
-        decoration: BoxDecoration(
-          color: AppColors.surface1,
-          borderRadius: BorderRadius.circular(AppRadius.xl),
-          border: Border.all(color: AppColors.neonCyan.withValues(alpha: 0.2)),
-        ),
-        child: Column(
-          children: [
-            Container(
-              width: 56, height: 56,
-              decoration: BoxDecoration(
-                color: AppColors.neonCyan.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(AppRadius.md),
-              ),
-              child: const Icon(Icons.add_card_rounded, size: 28, color: AppColors.neonCyan),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            Text(
-              'Add your first card',
-              style: GoogleFonts.spaceGrotesk(
-                fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary,
-              ),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            Text(
-              'Connect your credit cards to see\nspend insights and reward tracking.',
-              textAlign: TextAlign.center,
-              style: GoogleFonts.inter(fontSize: 13, color: AppColors.textSecondary, height: 1.5),
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () => context.go('/app/cards/add'),
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('Add Card'),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _EmptyTransactions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+      padding: const EdgeInsets.symmetric(horizontal: BrandSpacing.md),
       child: Container(
-        padding: const EdgeInsets.all(AppSpacing.xl),
+        padding: const EdgeInsets.all(BrandSpacing.xl),
         decoration: BoxDecoration(
-          color: AppColors.surface1,
-          borderRadius: BorderRadius.circular(AppRadius.lg),
-          border: Border.all(color: AppColors.textMuted.withValues(alpha: 0.1)),
+          color: BrandColors.paper,
+          borderRadius: BorderRadius.circular(BrandRadius.overlay),
+          border: Border.all(
+            color: BrandColors.mutedInk.withValues(alpha: 0.1),
+          ),
         ),
         child: Center(
           child: Text(
             'No transactions yet this month',
-            style: GoogleFonts.inter(fontSize: 13, color: AppColors.textMuted),
+            style: TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 13,
+              color: BrandColors.mutedInk,
+            ),
           ),
         ),
       ),
@@ -1297,27 +2375,33 @@ class _DashboardSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(AppSpacing.md),
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(BrandSpacing.md),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // KPI row skeleton
           Row(
-            children: List.generate(3, (_) => Expanded(
-              child: Padding(
-                padding: const EdgeInsets.only(right: AppSpacing.sm),
-                child: _SkeletonBox(height: 90, radius: AppRadius.lg),
+            children: List.generate(
+              3,
+              (_) => Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(right: BrandSpacing.sm),
+                  child: _SkeletonBox(height: 90, radius: BrandRadius.overlay),
+                ),
               ),
-            )),
+            ),
           ),
-          const SizedBox(height: AppSpacing.lg),
-          _SkeletonBox(height: 200, radius: AppRadius.xl),
-          const SizedBox(height: AppSpacing.lg),
-          ...List.generate(5, (_) => Padding(
-            padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-            child: _SkeletonBox(height: 64, radius: AppRadius.md),
-          )),
+          const SizedBox(height: BrandSpacing.lg),
+          _SkeletonBox(height: 200, radius: BrandRadius.overlay),
+          const SizedBox(height: BrandSpacing.lg),
+          ...List.generate(
+            5,
+            (_) => Padding(
+              padding: const EdgeInsets.only(bottom: BrandSpacing.sm),
+              child: _SkeletonBox(height: 64, radius: BrandRadius.card),
+            ),
+          ),
         ],
       ),
     );
@@ -1333,21 +2417,30 @@ class _SkeletonBox extends StatefulWidget {
   State<_SkeletonBox> createState() => _SkeletonBoxState();
 }
 
-class _SkeletonBoxState extends State<_SkeletonBox> with SingleTickerProviderStateMixin {
-  late final _ctrl = AnimationController(vsync: this, duration: 1200.ms)..repeat(reverse: true);
+class _SkeletonBoxState extends State<_SkeletonBox>
+    with SingleTickerProviderStateMixin {
+  late final _ctrl = AnimationController(vsync: this, duration: 1200.ms)
+    ..repeat(reverse: true);
   late final _anim = CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut);
 
   @override
-  void dispose() { _ctrl.dispose(); super.dispose(); }
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: _anim,
-      builder: (_, __) => Container(
+      builder: (_, _) => Container(
         height: widget.height,
         decoration: BoxDecoration(
-          color: Color.lerp(AppColors.surface1, AppColors.surface3, _anim.value),
+          color: Color.lerp(
+            BrandColors.paper,
+            BrandColors.paperDeep,
+            _anim.value,
+          ),
           borderRadius: BorderRadius.circular(widget.radius),
         ),
       ),
@@ -1357,36 +2450,19 @@ class _SkeletonBoxState extends State<_SkeletonBox> with SingleTickerProviderSta
 
 // ─── Error State ─────────────────────────────────────────────────────────────
 class _ErrorState extends ConsumerWidget {
-  final Object error;
-  const _ErrorState({required this.error});
+  const _ErrorState();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return Center(
+    return BrandContentFrame(
       child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.xl),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.cloud_off_rounded, size: 48, color: AppColors.textMuted),
-            const SizedBox(height: AppSpacing.md),
-            Text(
-              'Couldn\'t load dashboard',
-              style: GoogleFonts.spaceGrotesk(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            Text(
-              error.toString(),
-              textAlign: TextAlign.center,
-              style: GoogleFonts.inter(fontSize: 12, color: AppColors.textMuted),
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            ElevatedButton.icon(
-              onPressed: () => ref.invalidate(dashboardProvider),
-              icon: const Icon(Icons.refresh, size: 18),
-              label: const Text('Retry'),
-            ),
-          ],
+        padding: const EdgeInsets.all(BrandSpacing.xl),
+        child: BrandStateView(
+          title: 'Couldn\'t load dashboard',
+          message: 'Check your connection and try again.',
+          icon: Icons.cloud_off_rounded,
+          actionLabel: 'Retry',
+          onAction: () => ref.invalidate(dashboardProvider),
         ),
       ),
     );

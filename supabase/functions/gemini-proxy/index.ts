@@ -1,5 +1,11 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  allowedModels,
+  modelCandidates,
+  preparePayloadForModel,
+  shouldTryAnotherModel,
+} from "./model_policy.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -7,13 +13,6 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
-
-const allowedModels = new Set([
-  "gemini-3.5-flash",
-  "gemini-3.1-flash-lite",
-  "gemini-2.5-flash",
-  "gemini-2.5-pro",
-]);
 
 serve(async (request) => {
   if (request.method === "OPTIONS") {
@@ -67,15 +66,6 @@ serve(async (request) => {
       });
     }
 
-    const generationConfig = payload.generationConfig ?? {};
-    payload.generationConfig = {
-      ...generationConfig,
-      maxOutputTokens: Math.min(
-        Number(generationConfig.maxOutputTokens) || 4096,
-        8192,
-      ),
-    };
-
     const { data: quotaAvailable, error: quotaError } = await supabase.rpc(
       "consume_gemini_proxy_quota",
       { _user_id: user.id, _limit: 10 },
@@ -93,7 +83,7 @@ serve(async (request) => {
     // are separate keys/projects, so a 429 on one doesn't mean the others
     // are exhausted too — try each in turn before giving up.
     const apiKeys = [Deno.env.get("GEMINI_API_KEY")];
-    for (let i = 2; ; i++) {
+    for (let i = 2;; i++) {
       const key = Deno.env.get(`GEMINI_API_KEY_${i}`);
       if (!key) break;
       apiKeys.push(key);
@@ -104,24 +94,30 @@ serve(async (request) => {
     }
 
     let upstream: Response | null = null;
-    for (const apiKey of configuredKeys) {
-      // Some models (observed: gemini-3.5-flash) can hang with no response
-      // for well over a minute. Bound the upstream call so the client's
-      // fallback chain gets a timely error instead of stalling on a dead
-      // connection.
-      upstream = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(25_000),
-        },
-      );
-      if (upstream.status !== 429) break;
+    let upstreamBody = "";
+    outer:
+    for (const candidateModel of modelCandidates(model)) {
+      const candidatePayload = preparePayloadForModel(candidateModel, payload);
+      for (const apiKey of configuredKeys) {
+        // Bound every upstream attempt so a dead connection cannot stall the
+        // client's processing queue indefinitely.
+        upstream = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${candidateModel}:generateContent?key=${apiKey}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(candidatePayload),
+            signal: AbortSignal.timeout(25_000),
+          },
+        );
+        upstreamBody = await upstream.text();
+        if (upstream.status === 429) continue;
+        if (shouldTryAnotherModel(upstream.status, upstreamBody)) continue;
+        break outer;
+      }
     }
 
-    return new Response(await upstream!.text(), {
+    return new Response(upstreamBody, {
       status: upstream!.status,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

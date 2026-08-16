@@ -27,6 +27,7 @@ test('homepage retains waitlist anchors and exposes the utility CTA apply target
   assert.match(html, /\bid="apply"/);
   assert.doesNotMatch(html, /href="#waitlist"/);
   assert.match(html, /href="#apply"/);
+  assert.match(html, /<script type="module" src="\/oauth-callback\.js"><\/script>/);
 });
 
 test('public deploy-root documents and modules use root asset URLs', async () => {
@@ -46,6 +47,19 @@ test('public deploy-root documents and modules use root asset URLs', async () =>
     const contents = await landingFile(document);
     assert.doesNotMatch(contents, /(?:href|src|from|fetch\()\s*[=(]?['"]\/landing\//, `${document} still requests /landing/`);
   }
+});
+
+test('desktop landing shell uses a 1440px cap and a three-line hero lockup', async () => {
+  const css = await landingFile('style.css');
+  const html = await landingFile('index.html');
+
+  assert.match(
+    css,
+    /--shell:\s*min\(1440px, calc\(100vw - clamp\(40px, 4vw, 64px\)\)\);/,
+  );
+  assert.match(css, /\.hero h1\s*\{[^}]*font-size:\s*clamp\(46px, 5\.2vw, 72px\);/s);
+  assert.match(html, /Know the best card<br>in your wallet <em>before you pay\.<\/em>/);
+  assert.match(css, /--shell:\s*min\(100% - 28px, 620px\);/);
 });
 
 test('local server serves landing, app, and generated environment roots without legacy login', async (t) => {
@@ -69,6 +83,9 @@ test('local server serves landing, app, and generated environment roots without 
   for (const route of ['/', '/style.css', '/privacy/', '/tools/tools.js', '/llms.txt', '/img/social-preview.png', '/app/server-allowlist-test.txt', '/env.js']) {
     const response = await fetch(`http://127.0.0.1:${port}${route}`);
     assert.equal(response.status, 200, route);
+    if (route.startsWith('/app/')) {
+      assert.equal(response.headers.get('cache-control'), 'no-store');
+    }
   }
 
   for (const loginPath of ['/login', '/login/']) {
@@ -77,6 +94,14 @@ test('local server serves landing, app, and generated environment roots without 
     assert.equal(response.headers.get('location'), '/app/#/login');
   }
 
+});
+
+test('local development builds Flutter for the /app/ mount before serving it', async () => {
+  const packageJson = JSON.parse(await readFile(new URL('package.json', repoRoot), 'utf8'));
+
+  assert.match(packageJson.scripts['build:app'], /flutter build web/);
+  assert.match(packageJson.scripts['build:app'], /--base-href \/app\//);
+  assert.equal(packageJson.scripts.predev, 'npm run build:app');
 });
 
 test('local server blocks dotfiles, repository internals, secrets, and traversal', async (t) => {
@@ -147,6 +172,21 @@ test('Azure CSP permits the deployed Flutter WebAssembly engine and CanvasKit mo
   assert.match(policy, /script-src[^;]*https:\/\/www\.gstatic\.com/);
   assert.match(policy, /connect-src[^;]*https:\/\/www\.gstatic\.com/);
   assert.match(policy, /connect-src[^;]*https:\/\/fonts\.gstatic\.com/);
+});
+
+test('Azure CSP permits direct browser calls to the Gmail and People APIs', async () => {
+  const config = JSON.parse(await readFile(new URL('staticwebapp.config.json', repoRoot), 'utf8'));
+  const policy = config.globalHeaders['Content-Security-Policy'];
+
+  assert.match(policy, /connect-src[^;]*https:\/\/gmail\.googleapis\.com/);
+  assert.match(policy, /connect-src[^;]*https:\/\/people\.googleapis\.com/);
+});
+
+test('Azure CSP permits loading the signed-in user\'s Google profile photo', async () => {
+  const config = JSON.parse(await readFile(new URL('staticwebapp.config.json', repoRoot), 'utf8'));
+  const policy = config.globalHeaders['Content-Security-Policy'];
+
+  assert.match(policy, /img-src[^;]*https:\/\/\*\.googleusercontent\.com/);
 });
 
 test('deployment environment module serializes public Supabase values as inert JavaScript strings', async () => {

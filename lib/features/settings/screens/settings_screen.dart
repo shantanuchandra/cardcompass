@@ -1,9 +1,17 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_fonts/google_fonts.dart';
-import '../../../core/theme/app_theme.dart';
+import 'package:url_launcher/url_launcher.dart';
+
 import '../../../core/providers/supabase_provider.dart';
+import '../../../core/repositories/user_data_repository.dart';
+import '../../../core/theme/brand_components.dart';
+import '../../../core/theme/brand_tokens.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../../cards/providers/cards_provider.dart';
+import '../../dashboard/providers/dashboard_provider.dart';
+import '../../dashboard/providers/gmail_sync_provider.dart';
+import '../../transactions/providers/transactions_provider.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -11,80 +19,32 @@ class SettingsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(currentUserProvider);
-    final name = user?.userMetadata?['full_name'] as String? ?? user?.email ?? 'User';
+    final name =
+        user?.userMetadata?['full_name'] as String? ?? user?.email ?? 'User';
     final email = user?.email ?? '';
     final avatar = user?.userMetadata?['avatar_url'] as String?;
 
     return Scaffold(
-      backgroundColor: AppColors.surfaceVoid,
-      appBar: AppBar(
-        title: Text('Settings',
-            style: GoogleFonts.spaceGrotesk(fontSize: 20, fontWeight: FontWeight.w700)),
-      ),
+      backgroundColor: BrandColors.paper,
+      appBar: AppBar(title: const Text('Settings')),
       body: ListView(
-        padding: const EdgeInsets.all(AppSpacing.md),
+        padding: const EdgeInsets.all(BrandSpacing.md),
         children: [
-          // Profile card
-          Container(
-            padding: const EdgeInsets.all(AppSpacing.md),
-            decoration: BoxDecoration(
-              color: AppColors.surface1,
-              borderRadius: BorderRadius.circular(AppRadius.lg),
-              border: Border.all(color: AppColors.textMuted.withValues(alpha: 0.12)),
-            ),
-            child: Row(
-              children: [
-                CircleAvatar(
-                  radius: 28,
-                  backgroundColor: AppColors.surface2,
-                  backgroundImage: avatar != null ? NetworkImage(avatar) : null,
-                  child: avatar == null
-                      ? Text(name[0].toUpperCase(),
-                          style: GoogleFonts.spaceGrotesk(
-                              fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.neonCyan))
-                      : null,
-                ),
-                const SizedBox(width: AppSpacing.md),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(name,
-                          style: GoogleFonts.inter(
-                              fontSize: 15, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
-                      Text(email,
-                          style: GoogleFonts.inter(fontSize: 12, color: AppColors.textMuted)),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+          _ProfileCard(name: name, email: email, avatar: avatar),
+          const SizedBox(height: BrandSpacing.lg),
+          SettingsActionList(
+            onDeleteAllData: () async {
+              await UserDataRepository(
+                ref.read(supabaseClientProvider),
+              ).resetAll();
+              ref.invalidate(userCardsProvider);
+              ref.invalidate(dashboardProvider);
+              ref.invalidate(txnsNotifierProvider);
+              ref.invalidate(pendingCardAssignmentsProvider);
+              ref.invalidate(gmailSyncProvider);
+            },
           ),
-          const SizedBox(height: AppSpacing.lg),
-
-          _SettingsTile(
-            icon: Icons.notifications_outlined,
-            title: 'Notifications',
-            subtitle: 'Bill reminders, reward alerts',
-            onTap: () {},
-          ),
-          _SettingsTile(
-            icon: Icons.security_outlined,
-            title: 'Privacy & Security',
-            onTap: () {},
-          ),
-          _SettingsTile(
-            icon: Icons.help_outline_rounded,
-            title: 'Help & Support',
-            onTap: () {},
-          ),
-          _SettingsTile(
-            icon: Icons.info_outline_rounded,
-            title: 'About CardCompass',
-            subtitle: 'Version 2.0.0',
-            onTap: () {},
-          ),
-          const SizedBox(height: AppSpacing.lg),
+          const SizedBox(height: BrandSpacing.lg),
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
@@ -92,16 +52,19 @@ class SettingsScreen extends ConsumerWidget {
                 final confirm = await showDialog<bool>(
                   context: context,
                   builder: (_) => AlertDialog(
-                    title: Text('Sign out?',
-                        style: GoogleFonts.spaceGrotesk(fontSize: 18, fontWeight: FontWeight.w700)),
-                    content: Text('You\'ll need to sign in again to access your data.',
-                        style: GoogleFonts.inter(fontSize: 14, color: AppColors.textSecondary)),
+                    title: const Text('Sign out?'),
+                    content: const Text(
+                      'You\'ll need to sign in again to access your data.',
+                    ),
                     actions: [
-                      TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
                       TextButton(
-                          onPressed: () => Navigator.pop(context, true),
-                          child: Text('Sign out',
-                              style: GoogleFonts.inter(color: AppColors.error, fontWeight: FontWeight.w600))),
+                        onPressed: () => Navigator.pop(context, false),
+                        child: const Text('Cancel'),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        child: const Text('Sign out'),
+                      ),
                     ],
                   ),
                 );
@@ -109,10 +72,11 @@ class SettingsScreen extends ConsumerWidget {
                   await ref.read(authNotifierProvider.notifier).signOut();
                 }
               },
-              icon: const Icon(Icons.logout_rounded, size: 18, color: AppColors.error),
-              label: Text('Sign out', style: GoogleFonts.inter(color: AppColors.error, fontWeight: FontWeight.w600)),
+              icon: const Icon(Icons.logout_rounded, size: 18),
+              label: const Text('Sign out'),
               style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: AppColors.error, width: 1),
+                foregroundColor: BrandColors.error,
+                side: const BorderSide(color: BrandColors.error),
                 minimumSize: const Size(0, 48),
               ),
             ),
@@ -123,43 +87,211 @@ class SettingsScreen extends ConsumerWidget {
   }
 }
 
-class _SettingsTile extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String? subtitle;
-  final VoidCallback onTap;
-
-  const _SettingsTile({
-    required this.icon, required this.title, this.subtitle, required this.onTap,
+class _ProfileCard extends StatelessWidget {
+  const _ProfileCard({
+    required this.name,
+    required this.email,
+    required this.avatar,
   });
 
+  final String name;
+  final String email;
+  final String? avatar;
+
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: AppSpacing.xs + 2),
-      child: ListTile(
-        onTap: onTap,
-        contentPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.xs),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadius.md),
-          side: BorderSide(color: AppColors.textMuted.withValues(alpha: 0.08)),
+  Widget build(BuildContext context) => BrandSurface(
+    padding: const EdgeInsets.all(BrandSpacing.md),
+    child: Row(
+      children: [
+        CircleAvatar(
+          radius: 28,
+          backgroundColor: BrandColors.paperDeep,
+          backgroundImage: avatar != null ? NetworkImage(avatar!) : null,
+          child: avatar == null
+              ? Text(
+                  name[0].toUpperCase(),
+                  style: const TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    color: BrandColors.focusDark,
+                  ),
+                )
+              : null,
         ),
-        tileColor: AppColors.surface1,
-        leading: Container(
-          width: 36, height: 36,
-          decoration: BoxDecoration(
-            color: AppColors.surface2,
-            borderRadius: BorderRadius.circular(AppRadius.sm),
+        const SizedBox(width: BrandSpacing.md),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(name, style: Theme.of(context).textTheme.titleMedium),
+              if (email.isNotEmpty)
+                Text(email, style: Theme.of(context).textTheme.bodySmall),
+            ],
           ),
-          child: Icon(icon, size: 18, color: AppColors.textSecondary),
         ),
-        title: Text(title,
-            style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w500, color: AppColors.textPrimary)),
-        subtitle: subtitle != null
-            ? Text(subtitle!, style: GoogleFonts.inter(fontSize: 12, color: AppColors.textMuted))
-            : null,
-        trailing: const Icon(Icons.chevron_right_rounded, size: 18, color: AppColors.textMuted),
-      ),
+      ],
+    ),
+  );
+}
+
+/// Product settings with an explicit outcome for every visible row.
+class SettingsActionList extends StatelessWidget {
+  const SettingsActionList({super.key, this.onOpenUri, this.onDeleteAllData});
+
+  final Future<bool> Function(Uri uri)? onOpenUri;
+  final Future<void> Function()? onDeleteAllData;
+
+  Uri _siteUri(String path) => Uri.base.resolve(path);
+
+  Future<void> _open(String uri) async {
+    final destination = uri.startsWith('mailto:')
+        ? Uri.parse(uri)
+        : _siteUri(uri);
+    await (onOpenUri?.call(destination) ??
+        launchUrl(destination, mode: LaunchMode.externalApplication));
+  }
+
+  void _showAbout(BuildContext context) {
+    showAboutDialog(
+      context: context,
+      applicationName: 'CardCompass',
+      applicationVersion: '2.0.0',
+      applicationLegalese:
+          'Understand the calculation behind every recommendation.',
     );
   }
+
+  Future<void> _confirmDataReset(BuildContext context) async {
+    var confirmation = '';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('Delete all CardCompass data?'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'This permanently deletes your cards, statements, '
+                'transactions, synced email metadata, and preferences. '
+                'Your login account and Gmail access stay connected.',
+              ),
+              const SizedBox(height: BrandSpacing.md),
+              const Text('Type DELETE to confirm'),
+              const SizedBox(height: BrandSpacing.sm),
+              TextField(
+                autofocus: true,
+                onChanged: (value) => setState(() => confirmation = value),
+                decoration: const InputDecoration(hintText: 'DELETE'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: confirmation == 'DELETE'
+                  ? () => Navigator.pop(dialogContext, true)
+                  : null,
+              style: FilledButton.styleFrom(backgroundColor: BrandColors.error),
+              child: const Text('Delete data'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (confirmed != true || onDeleteAllData == null || !context.mounted) {
+      return;
+    }
+
+    try {
+      await onDeleteAllData!();
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('CardCompass data deleted.')),
+      );
+    } catch (error) {
+      debugPrint('CardCompass data reset failed: $error');
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not delete your data. Please try again.'),
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      const BrandActionRow(
+        title: 'Notifications',
+        description: 'Bill reminders and reward alerts',
+        leading: Icon(Icons.notifications_outlined),
+        unavailable: true,
+      ),
+      BrandActionRow(
+        title: 'Privacy',
+        description: 'How CardCompass handles your information',
+        leading: const Icon(Icons.privacy_tip_outlined),
+        onTap: () => _open('/privacy/'),
+      ),
+      BrandActionRow(
+        title: 'Data & Security',
+        description: 'Our data and account safeguards',
+        leading: const Icon(Icons.security_outlined),
+        onTap: () => _open('/data-security/'),
+      ),
+      BrandActionRow(
+        title: 'Terms',
+        description: 'Read the CardCompass terms',
+        leading: const Icon(Icons.description_outlined),
+        onTap: () => _open('/terms/'),
+      ),
+      BrandActionRow(
+        title: 'Help & Support',
+        description: 'Email the CardCompass support team',
+        leading: const Icon(Icons.help_outline_rounded),
+        onTap: () => _open(
+          'mailto:support@cardcompass.in?subject=CardCompass%20support',
+        ),
+      ),
+      BrandActionRow(
+        title: 'About',
+        description: 'CardCompass version information',
+        leading: const Icon(Icons.info_outline_rounded),
+        onTap: () => _showAbout(context),
+      ),
+      const SizedBox(height: BrandSpacing.lg),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: Text(
+          'Danger zone',
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+            color: BrandColors.error,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+      const SizedBox(height: BrandSpacing.sm),
+      Semantics(
+        button: true,
+        label: 'Delete all CardCompass data',
+        child: OutlinedButton.icon(
+          onPressed: () => _confirmDataReset(context),
+          icon: const Icon(Icons.delete_forever_outlined),
+          label: const Text('Delete all CardCompass data'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: BrandColors.error,
+            side: const BorderSide(color: BrandColors.error),
+            minimumSize: const Size(double.infinity, 48),
+          ),
+        ),
+      ),
+    ],
+  );
 }

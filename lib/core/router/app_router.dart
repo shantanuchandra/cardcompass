@@ -1,21 +1,29 @@
-import 'package:web/web.dart' as web;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:google_fonts/google_fonts.dart';
 import '../../features/auth/providers/auth_provider.dart';
 import '../../features/auth/screens/login_screen.dart';
 import '../../features/auth/screens/splash_screen.dart';
 import '../../features/dashboard/screens/dashboard_screen.dart';
 import '../../features/cards/screens/cards_screen.dart';
 import '../../features/cards/screens/add_card_screen.dart';
+import '../../features/cards/screens/card_detail_screen.dart';
 import '../../features/transactions/screens/transactions_screen.dart';
 import '../../features/benefits/movie_deals/screens/movie_deals_screen.dart';
 import '../../features/settings/screens/settings_screen.dart';
-import '../theme/app_theme.dart';
+import '../../features/admin/screens/card_catalog_review_screen.dart';
+import '../theme/brand_components.dart';
+import '../theme/brand_tokens.dart';
 import '../../app.dart' show navigatorKey;
+import 'app_tab_selection.dart';
 
-const _kTabPaths = ['/app', '/app/cards', '/app/transactions', '/app/movie-deals', '/app/settings'];
+const _kTabPaths = [
+  '/app',
+  '/app/cards',
+  '/app/transactions',
+  '/app/movie-deals',
+  '/app/settings',
+];
 
 int _tabIndexFor(String loc) {
   if (loc.startsWith('/app/cards')) return 1;
@@ -27,6 +35,11 @@ int _tabIndexFor(String loc) {
 
 // The current tab index — a simple ValueNotifier so _AppShell rebuilds on change.
 final _tabIndexNotifier = ValueNotifier<int>(0);
+
+NoTransitionPage<void> _appShellPage() => const NoTransitionPage<void>(
+  key: ValueKey('app-shell'),
+  child: _AppShell(),
+);
 
 // Bridges Riverpod's authNotifierProvider to GoRouter's refreshListenable so
 // that auth-state ticks (including background token-refresh emissions from
@@ -50,6 +63,7 @@ class _AuthRefreshListenable extends ChangeNotifier {
 }
 
 final routerProvider = Provider<GoRouter>((ref) {
+  GoRouter.optionURLReflectsImperativeAPIs = true;
   final refreshListenable = _AuthRefreshListenable(ref);
   ref.onDispose(refreshListenable.dispose);
 
@@ -64,10 +78,15 @@ final routerProvider = Provider<GoRouter>((ref) {
       final loc = state.matchedLocation;
       if (Uri.base.fragment.contains('access_token')) return null;
       if (!isAuthed && loc.startsWith('/app')) return '/login';
+      if (isAuthed && loc.startsWith('/app')) {
+        _tabIndexNotifier.value = _tabIndexFor(loc);
+      }
       if (isAuthed && (loc == '/login' || loc == '/')) {
         // Restore tab from URL on initial load
         final fragment = Uri.base.fragment;
-        _tabIndexNotifier.value = _tabIndexFor(fragment.isEmpty ? '/app' : '/$fragment');
+        _tabIndexNotifier.value = _tabIndexFor(
+          fragment.isEmpty ? '/app' : '/$fragment',
+        );
         return '/app';
       }
       if (loc == '/' && !isAuthed) return '/login';
@@ -76,17 +95,46 @@ final routerProvider = Provider<GoRouter>((ref) {
     routes: [
       GoRoute(path: '/', builder: (_, s) => const SplashScreen()),
       GoRoute(path: '/login', builder: (_, s) => const LoginScreen()),
-      // Single route for ALL app tabs — GoRouter never re-navigates between tabs.
-      // Tab switches are handled by _AppShell internally via ValueNotifier +
-      // window.history.replaceState to keep the URL in sync.
       GoRoute(
         path: '/app',
-        pageBuilder: (_, s) => const NoTransitionPage(child: _AppShell()),
+        pageBuilder: (_, s) => _appShellPage(),
       ),
-      // add-card is a separate full-page push on top of the shell
       GoRoute(
-        path: '/app/cards/add',
-        pageBuilder: (_, s) => const NoTransitionPage(child: AddCardScreen()),
+        path: '/app/cards',
+        pageBuilder: (_, s) => _appShellPage(),
+        routes: [
+          // A nested page preserves the app shell beneath Add Card. Cards uses
+          // push semantics so both Back and a successful save can pop to the
+          // existing list without reconstructing navigation state.
+          GoRoute(
+            path: 'add',
+            pageBuilder: (_, s) =>
+                const NoTransitionPage(child: AddCardScreen()),
+          ),
+          GoRoute(
+            path: ':cardId',
+            pageBuilder: (_, state) => NoTransitionPage(
+              child: CardDetailScreen(cardId: state.pathParameters['cardId']!),
+            ),
+          ),
+        ],
+      ),
+      GoRoute(
+        path: '/app/transactions',
+        pageBuilder: (_, s) => _appShellPage(),
+      ),
+      GoRoute(
+        path: '/app/movie-deals',
+        pageBuilder: (_, s) => _appShellPage(),
+      ),
+      GoRoute(
+        path: '/app/settings',
+        pageBuilder: (_, s) => _appShellPage(),
+      ),
+      GoRoute(
+        path: '/app/admin/catalog-review',
+        pageBuilder: (_, s) =>
+            const NoTransitionPage(child: CardCatalogReviewScreen()),
       ),
     ],
   );
@@ -114,105 +162,179 @@ class _AppShell extends ConsumerWidget {
       builder: (context, tabIndex, _) {
         void onTap(int i) {
           _tabIndexNotifier.value = i;
-          // Keep browser URL in sync without triggering a GoRouter navigation
-          web.window.history.replaceState(null, '', '#${_kTabPaths[i]}');
+          context.go(_kTabPaths[i]);
         }
 
-        final isDesktop = MediaQuery.sizeOf(context).width >= _kDesktopBreakpoint;
+        final isDesktop =
+            MediaQuery.sizeOf(context).width >= _kDesktopBreakpoint;
 
-        if (isDesktop) {
-          return Scaffold(
-            body: Row(
-              children: [
-                _SideRail(selectedIndex: tabIndex, onTap: onTap),
-                Expanded(
-                  child: IndexedStack(index: tabIndex, children: _bodies),
+        final shell = isDesktop
+            ? Scaffold(
+                body: Row(
+                  children: [
+                    AppSideRail(selectedIndex: tabIndex, onTap: onTap),
+                    Expanded(
+                      child: IndexedStack(index: tabIndex, children: _bodies),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          );
-        }
+              )
+            : Scaffold(
+                body: IndexedStack(index: tabIndex, children: _bodies),
+                bottomNavigationBar: AppBottomNav(
+                  selectedIndex: tabIndex,
+                  onTap: onTap,
+                ),
+              );
 
-        return Scaffold(
-          body: IndexedStack(
-            index: tabIndex,
-            children: _bodies,
-          ),
-          bottomNavigationBar: _BottomNav(
-            selectedIndex: tabIndex,
-            onTap: onTap,
-          ),
+        return AppTabSelection(
+          onSelect: (tab) => onTap(tab.index),
+          child: shell,
         );
       },
     );
   }
 }
 
-class _SideRail extends StatelessWidget {
+class AppSideRail extends StatelessWidget {
   final int selectedIndex;
   final ValueChanged<int> onTap;
-  const _SideRail({required this.selectedIndex, required this.onTap});
+  const AppSideRail({
+    super.key,
+    required this.selectedIndex,
+    required this.onTap,
+  });
 
   static const _items = [
-    (icon: Icons.dashboard_outlined, activeIcon: Icons.dashboard, label: 'Dashboard'),
-    (icon: Icons.credit_card_outlined, activeIcon: Icons.credit_card, label: 'Cards'),
-    (icon: Icons.receipt_long_outlined, activeIcon: Icons.receipt_long, label: 'Ledger'),
-    (icon: Icons.local_movies_outlined, activeIcon: Icons.local_movies, label: 'Movie Deals'),
-    (icon: Icons.settings_outlined, activeIcon: Icons.settings, label: 'Settings'),
+    (
+      icon: Icons.dashboard_outlined,
+      activeIcon: Icons.dashboard,
+      label: 'Dashboard',
+    ),
+    (
+      icon: Icons.credit_card_outlined,
+      activeIcon: Icons.credit_card,
+      label: 'Cards',
+    ),
+    (
+      icon: Icons.receipt_long_outlined,
+      activeIcon: Icons.receipt_long,
+      label: 'Transactions',
+    ),
+    (
+      icon: Icons.local_movies_outlined,
+      activeIcon: Icons.local_movies,
+      label: 'Movies',
+    ),
+    (
+      icon: Icons.settings_outlined,
+      activeIcon: Icons.settings,
+      label: 'Settings',
+    ),
   ];
 
   @override
   Widget build(BuildContext context) {
     return Container(
       width: 220,
-      decoration: BoxDecoration(
-        color: AppColors.surface1,
-        border: Border(right: BorderSide(color: AppColors.surface3, width: 1)),
+      decoration: const BoxDecoration(
+        color: BrandColors.inkSoft,
+        border: Border(right: BorderSide(color: BrandColors.ruleOnInk)),
       ),
       child: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
-              child: Text(
-                'CardCompass',
-                style: GoogleFonts.spaceGrotesk(
-                  fontSize: 20, fontWeight: FontWeight.w800,
-                  color: AppColors.textPrimary, letterSpacing: -0.5,
-                ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 24, 20, 32),
+              child: Row(
+                children: [
+                  BrandCompassMark(size: 30),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'CardCompass',
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontFamily: 'Manrope',
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                        color: BrandColors.paper,
+                        letterSpacing: -.4,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
             ...List.generate(_items.length, (i) {
               final item = _items[i];
               final selected = i == selectedIndex;
               return Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
-                child: Material(
-                  color: selected ? AppColors.neonCyan.withValues(alpha: 0.12) : Colors.transparent,
-                  borderRadius: BorderRadius.circular(AppRadius.md),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(AppRadius.md),
-                    onTap: () => onTap(i),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                      child: Row(
-                        children: [
-                          Icon(
-                            selected ? item.activeIcon : item.icon,
-                            size: 20,
-                            color: selected ? AppColors.neonCyan : AppColors.textMuted,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 3,
+                ),
+                child: Semantics(
+                  selected: selected,
+                  button: true,
+                  label: item.label,
+                  onTap: () => onTap(i),
+                  child: ExcludeSemantics(
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(BrandRadius.control),
+                      onTap: () => onTap(i),
+                      child: Container(
+                        constraints: const BoxConstraints(minHeight: 48),
+                        decoration: BoxDecoration(
+                          color: selected
+                              ? BrandColors.signal
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(
+                            BrandRadius.control,
                           ),
-                          const SizedBox(width: 12),
-                          Text(
-                            item.label,
-                            style: GoogleFonts.inter(
-                              fontSize: 14,
-                              fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-                              color: selected ? AppColors.neonCyan : AppColors.textSecondary,
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 12,
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              selected ? item.activeIcon : item.icon,
+                              size: 19,
+                              color: selected
+                                  ? BrandColors.ink
+                                  : BrandColors.mutedPaper,
                             ),
-                          ),
-                        ],
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                item.label,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontFamily: 'Manrope',
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700,
+                                  color: selected
+                                      ? BrandColors.ink
+                                      : BrandColors.mutedPaper,
+                                ),
+                              ),
+                            ),
+                            if (selected) ...[
+                              const SizedBox(width: 8),
+                              Container(
+                                width: 5,
+                                height: 5,
+                                decoration: const BoxDecoration(
+                                  color: BrandColors.ink,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -226,61 +348,101 @@ class _SideRail extends StatelessWidget {
   }
 }
 
-class _BottomNav extends StatelessWidget {
+class AppBottomNav extends StatelessWidget {
   final int selectedIndex;
   final ValueChanged<int> onTap;
-  const _BottomNav({required this.selectedIndex, required this.onTap});
+  const AppBottomNav({
+    super.key,
+    required this.selectedIndex,
+    required this.onTap,
+  });
 
   static const _items = [
-    (icon: Icons.dashboard_outlined, activeIcon: Icons.dashboard, label: 'Dashboard'),
-    (icon: Icons.credit_card_outlined, activeIcon: Icons.credit_card, label: 'Cards'),
-    (icon: Icons.receipt_long_outlined, activeIcon: Icons.receipt_long, label: 'Ledger'),
-    (icon: Icons.local_movies_outlined, activeIcon: Icons.local_movies, label: 'Movie Deals'),
-    (icon: Icons.settings_outlined, activeIcon: Icons.settings, label: 'Settings'),
+    (
+      icon: Icons.dashboard_outlined,
+      activeIcon: Icons.dashboard,
+      label: 'Dashboard',
+    ),
+    (
+      icon: Icons.credit_card_outlined,
+      activeIcon: Icons.credit_card,
+      label: 'Cards',
+    ),
+    (
+      icon: Icons.receipt_long_outlined,
+      activeIcon: Icons.receipt_long,
+      label: 'Transactions',
+    ),
+    (
+      icon: Icons.local_movies_outlined,
+      activeIcon: Icons.local_movies,
+      label: 'Movies',
+    ),
+    (
+      icon: Icons.settings_outlined,
+      activeIcon: Icons.settings,
+      label: 'Settings',
+    ),
   ];
 
   @override
   Widget build(BuildContext context) {
+    final labelHeight = MediaQuery.textScalerOf(context).scale(14) * 2;
+    final navigationHeight = (labelHeight + 44).clamp(76.0, 132.0);
+
     return Container(
-      decoration: BoxDecoration(
-        color: AppColors.surface1,
-        border: Border(top: BorderSide(color: AppColors.surface3, width: 1)),
+      decoration: const BoxDecoration(
+        color: BrandColors.inkSoft,
+        border: Border(top: BorderSide(color: BrandColors.ruleOnInk)),
       ),
       child: SafeArea(
         top: false,
         child: SizedBox(
-          height: 64,
+          height: navigationHeight,
           child: Row(
             children: List.generate(_items.length, (i) {
               final item = _items[i];
               final selected = i == selectedIndex;
               return Expanded(
-                child: InkWell(
+                child: Semantics(
+                  selected: selected,
+                  button: true,
+                  label: item.label,
                   onTap: () => onTap(i),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      if (selected)
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: AppColors.neonCyan.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(20),
+                  child: ExcludeSemantics(
+                    child: InkWell(
+                      onTap: () => onTap(i),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            selected ? item.activeIcon : item.icon,
+                            size: 20,
+                            color: selected
+                                ? BrandColors.signal
+                                : BrandColors.mutedPaper,
                           ),
-                          child: Icon(item.activeIcon, size: 20, color: AppColors.neonCyan),
-                        )
-                      else
-                        Icon(item.icon, size: 20, color: AppColors.textMuted),
-                      const SizedBox(height: 2),
-                      Text(
-                        item.label,
-                        style: GoogleFonts.inter(
-                          fontSize: 10,
-                          fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-                          color: selected ? AppColors.neonCyan : AppColors.textMuted,
-                        ),
+                          const SizedBox(height: 4),
+                          Text(
+                            item.label,
+                            style: TextStyle(
+                              fontFamily: 'Manrope',
+                              fontSize: 14,
+                              letterSpacing: -0.6,
+                              height: 1,
+                              overflow: TextOverflow.visible,
+                              fontWeight: FontWeight.w700,
+                              color: selected
+                                  ? BrandColors.signal
+                                  : BrandColors.mutedPaper,
+                            ),
+                            maxLines: 2,
+                            softWrap: true,
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
                 ),
               );

@@ -4,6 +4,8 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
+    "build:app": "flutter build web --release --base-href /app/ --dart-define-from-file=dart_defines.json",
+    "predev": "npm run build:app",
     "dev": "node server.js 8080"
   },
   "engines": {

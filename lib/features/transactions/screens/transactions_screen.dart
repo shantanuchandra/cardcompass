@@ -1,16 +1,24 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
-import '../../../core/theme/app_theme.dart';
-import '../../../core/theme/category_display.dart';
+import '../../../core/theme/brand_components.dart';
+import '../../../core/theme/brand_tokens.dart';
 import '../providers/transactions_provider.dart';
 import '../widgets/spend_trend_panel.dart';
 import '../../../shared/models/transaction.dart';
 import '../../../shared/models/user_card.dart';
 
-final _fmt = NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 0);
-final _fmtCompact = NumberFormat.compactCurrency(locale: 'en_IN', symbol: '₹', decimalDigits: 0);
+final _fmt = NumberFormat.currency(
+  locale: 'en_IN',
+  symbol: '₹',
+  decimalDigits: 0,
+);
+final _fmtCompact = NumberFormat.compactCurrency(
+  locale: 'en_IN',
+  symbol: '₹',
+  decimalDigits: 0,
+);
+final _fmtPoints = NumberFormat.decimalPattern('en_IN');
 
 class TransactionsScreen extends ConsumerWidget {
   const TransactionsScreen({super.key});
@@ -20,35 +28,44 @@ class TransactionsScreen extends ConsumerWidget {
     final async = ref.watch(txnsNotifierProvider);
 
     return Scaffold(
-      backgroundColor: AppColors.surfaceVoid,
+      backgroundColor: BrandColors.paper,
       appBar: AppBar(
-        backgroundColor: AppColors.surfaceVoid,
-        title: Text('Ledger',
-            style: GoogleFonts.spaceGrotesk(fontSize: 20, fontWeight: FontWeight.w700)),
+        backgroundColor: BrandColors.paper,
+        title: Text(
+          'Transactions',
+          style: TextStyle(
+            fontFamily: 'Manrope',
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
         actions: [
-          async.whenOrNull(data: (s) => IconButton(
-            icon: const Icon(Icons.refresh_rounded, size: 20, color: AppColors.textMuted),
-            onPressed: () => ref.read(txnsNotifierProvider.notifier).refresh(),
-          )) ?? const SizedBox(),
+          async.whenOrNull(
+                data: (s) => IconButton(
+                  icon: const Icon(
+                    Icons.refresh_rounded,
+                    size: 20,
+                    color: BrandColors.mutedInk,
+                  ),
+                  onPressed: () =>
+                      ref.read(txnsNotifierProvider.notifier).refresh(),
+                ),
+              ) ??
+              const SizedBox(),
         ],
       ),
       body: async.when(
-        loading: () => const Center(child: CircularProgressIndicator(color: AppColors.neonCyan)),
-        error: (e, _) => Center(
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            const Icon(Icons.cloud_off_rounded, size: 48, color: AppColors.textMuted),
-            const SizedBox(height: AppSpacing.md),
-            Text('Couldn\'t load ledger', style: GoogleFonts.spaceGrotesk(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
-            const SizedBox(height: AppSpacing.xs),
-            Text('$e', style: GoogleFonts.inter(fontSize: 12, color: AppColors.textMuted), textAlign: TextAlign.center),
-            const SizedBox(height: AppSpacing.md),
-            FilledButton.icon(
-              onPressed: () => ref.read(txnsNotifierProvider.notifier).refresh(),
-              icon: const Icon(Icons.refresh_rounded, size: 16),
-              label: const Text('Retry'),
-              style: FilledButton.styleFrom(backgroundColor: AppColors.neonCyan, foregroundColor: AppColors.surfaceVoid),
-            ),
-          ]),
+        loading: () => const BrandLoadingSkeleton(
+          key: Key('transactions-loading'),
+          semanticLabel: 'Loading transactions',
+          minHeight: 280,
+        ),
+        error: (_, _) => BrandStateView(
+          title: 'Could not load your transactions.',
+          message: 'Check your connection and try again.',
+          icon: Icons.cloud_off_rounded,
+          actionLabel: 'Try again',
+          onAction: () => ref.read(txnsNotifierProvider.notifier).refresh(),
         ),
         data: (state) => _LedgerBody(state: state),
       ),
@@ -65,7 +82,59 @@ class _LedgerBody extends ConsumerStatefulWidget {
 }
 
 class _LedgerBodyState extends ConsumerState<_LedgerBody> {
-  bool _showFilters = false;
+  int _activeFilterCount(TxnFilter filter) =>
+      (filter.from != null || filter.to != null ? 1 : 0) +
+      (filter.cardId != null ? 1 : 0) +
+      (filter.category != null ? 1 : 0);
+
+  int? _indexForTransactionKey(
+    Key key,
+    Map<String, List<Transaction>> grouped,
+    TxnGrouping grouping,
+  ) {
+    if (key is! ValueKey<String>) return null;
+
+    var index = 0;
+    for (final entry in grouped.entries) {
+      if (grouping != TxnGrouping.flat) index++;
+      for (final transaction in entry.value) {
+        if (transaction.id == key.value) return index;
+        index++;
+      }
+    }
+    return null;
+  }
+
+  void _openFilters(BuildContext context, TxnsState state) {
+    void onChanged(TxnFilter filter) {
+      ref.read(txnsNotifierProvider.notifier).setFilter(filter);
+      Navigator.of(context).pop();
+    }
+
+    final panel = _FilterPanel(state: state, onChanged: onChanged);
+    if (MediaQuery.sizeOf(context).width < 600) {
+      showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: BrandColors.paper,
+        builder: (context) => SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.only(bottom: BrandSpacing.lg),
+            child: panel,
+          ),
+        ),
+      );
+      return;
+    }
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: BrandColors.paper,
+        title: const Text('Filters'),
+        content: SingleChildScrollView(child: panel),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -74,121 +143,189 @@ class _LedgerBodyState extends ConsumerState<_LedgerBody> {
     final grouped = s.grouped;
     final trend = s.spendTrend;
 
-    return RefreshIndicator(
-      color: AppColors.neonCyan,
-      backgroundColor: AppColors.surface1,
-      onRefresh: () => ref.read(txnsNotifierProvider.notifier).refresh(),
-      child: CustomScrollView(
-        slivers: [
-          // ── Summary KPI tiles ──────────────────────────────────────────
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, 0),
-              child: Row(
-                children: [
-                  _KpiTile(label: 'Spent', value: _fmtCompact.format(s.totalSpend), color: AppColors.textPrimary),
-                  const SizedBox(width: AppSpacing.sm),
-                  _KpiTile(label: 'Rewards', value: _fmtCompact.format(s.totalRewards), color: AppColors.success),
-                  const SizedBox(width: AppSpacing.sm),
-                  _KpiTile(
-                    label: 'Top',
-                    value: s.topCategory ?? '—',
-                    color: AppColors.violet,
-                    capitalize: true,
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          // ── Filter bar ────────────────────────────────────────────────
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, 0),
-              child: Row(
-                children: [
-                  _FilterPill(
-                    label: s.filter.label,
-                    active: s.filter.from != null || s.filter.to != null || s.filter.category != null || s.filter.cardId != null,
-                    onTap: () => setState(() => _showFilters = !_showFilters),
-                    icon: Icons.tune_rounded,
-                  ),
-                  const SizedBox(width: AppSpacing.xs),
-                  _GroupingPill(
-                    grouping: s.grouping,
-                    onChanged: (g) => ref.read(txnsNotifierProvider.notifier).setGrouping(g),
-                  ),
-                  const Spacer(),
-                  Text('${filtered.length} txns',
-                      style: GoogleFonts.inter(fontSize: 11, color: AppColors.textMuted)),
-                ],
-              ),
-            ),
-          ),
-
-          if (_showFilters)
-            SliverToBoxAdapter(
-              child: _FilterPanel(
-                state: s,
-                onChanged: (f) => ref.read(txnsNotifierProvider.notifier).setFilter(f),
-              ),
-            ),
-
-          // ── Spend trend chart ─────────────────────────────────────────
-          if (trend.points.isNotEmpty)
+    return BrandContentFrame(
+      mode: BrandContentMode.fullWidthData,
+      child: RefreshIndicator(
+        color: BrandColors.focusDark,
+        backgroundColor: BrandColors.paper,
+        onRefresh: () => ref.read(txnsNotifierProvider.notifier).refresh(),
+        child: CustomScrollView(
+          slivers: [
+            // ── Summary ───────────────────────────────────────────────────
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, 0),
-                child: SpendTrendPanel(trend: trend, caption: s.filter.label),
-              ),
-            ),
-
-          // ── Transaction list ──────────────────────────────────────────
-          if (filtered.isEmpty)
-            SliverFillRemaining(
-              child: Center(
-                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  const Icon(Icons.receipt_long_outlined, size: 48, color: AppColors.textMuted),
-                  const SizedBox(height: AppSpacing.md),
-                  Text('No transactions', style: GoogleFonts.spaceGrotesk(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
-                  const SizedBox(height: AppSpacing.xs),
-                  Text('Try adjusting your filters', style: GoogleFonts.inter(fontSize: 13, color: AppColors.textMuted)),
-                ]),
-              ),
-            )
-          else
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, AppSpacing.lg),
-              sliver: SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) {
-                    final entries = grouped.entries.toList();
-                    int cursor = 0;
-                    for (final entry in entries) {
-                      // Group header (only if not flat)
-                      if (s.grouping != TxnGrouping.flat) {
-                        if (index == cursor) return _GroupHeader(label: entry.key, txns: entry.value, cards: s.cards);
-                        cursor++;
-                      }
-                      for (final txn in entry.value) {
-                        if (index == cursor) {
-                          return _TxnRow(
-                            txn: txn,
-                            isInternational: s.isTransactionInternational(txn),
-                          );
-                        }
-                        cursor++;
-                      }
-                    }
-                    return null;
-                  },
-                  childCount: s.grouping == TxnGrouping.flat
-                      ? filtered.length
-                      : grouped.entries.fold<int>(0, (sum, e) => sum + 1 + e.value.length),
+                padding: const EdgeInsets.fromLTRB(
+                  BrandSpacing.md,
+                  BrandSpacing.sm,
+                  BrandSpacing.md,
+                  0,
+                ),
+                child: BrandSurface(
+                  tone: BrandSurfaceTone.ledger,
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final stack =
+                          constraints.maxWidth < 600 ||
+                          MediaQuery.textScalerOf(context).scale(14) >= 21;
+                      final primary = BrandMetric(
+                        label: 'Total spend',
+                        value: _fmtCompact.format(s.totalSpend),
+                        supportingText: '${filtered.length} transactions',
+                      );
+                      final support = _SupportingMetrics(
+                        rewards: '${_fmtPoints.format(s.totalRewards)} pts',
+                        topCategory: s.topCategory ?? '—',
+                      );
+                      return stack
+                          ? Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                primary,
+                                const SizedBox(height: BrandSpacing.md),
+                                support,
+                              ],
+                            )
+                          : Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(child: primary),
+                                const SizedBox(width: BrandSpacing.xl),
+                                support,
+                              ],
+                            );
+                    },
+                  ),
                 ),
               ),
             ),
-        ],
+
+            // ── Filter bar ────────────────────────────────────────────────
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  BrandSpacing.md,
+                  BrandSpacing.sm,
+                  BrandSpacing.md,
+                  0,
+                ),
+                child: Wrap(
+                  runSpacing: BrandSpacing.xs,
+                  spacing: BrandSpacing.xs,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    _FilterPill(
+                      controlKey: const Key('transactions-filters'),
+                      label: 'Filters',
+                      summary: _activeFilterCount(s.filter) == 0
+                          ? 'All time'
+                          : '${_activeFilterCount(s.filter)} active',
+                      active: _activeFilterCount(s.filter) > 0,
+                      onTap: () => _openFilters(context, s),
+                      icon: Icons.tune_rounded,
+                    ),
+                    _GroupingPill(
+                      controlKey: const Key('transactions-grouping'),
+                      grouping: s.grouping,
+                      onChanged: (g) => ref
+                          .read(txnsNotifierProvider.notifier)
+                          .setGrouping(g),
+                    ),
+                    _CountPill(count: filtered.length),
+                  ],
+                ),
+              ),
+            ),
+
+            // ── Spend trend chart ─────────────────────────────────────────
+            if (trend.points.isNotEmpty)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    BrandSpacing.md,
+                    BrandSpacing.sm,
+                    BrandSpacing.md,
+                    0,
+                  ),
+                  child: SpendTrendPanel(trend: trend, caption: s.filter.label),
+                ),
+              ),
+
+            // ── Transaction list ──────────────────────────────────────────
+            if (filtered.isEmpty)
+              SliverFillRemaining(
+                child: BrandStateView(
+                  title: s.all.isEmpty
+                      ? 'No transactions yet'
+                      : 'No matches for these filters',
+                  message: s.all.isEmpty
+                      ? 'Refresh after your next statement sync to check again.'
+                      : 'Clear the active filters to return to all transactions.',
+                  icon: Icons.receipt_long_outlined,
+                  actionLabel: s.all.isEmpty ? 'Check again' : 'Clear filters',
+                  onAction: s.all.isEmpty
+                      ? () => ref.read(txnsNotifierProvider.notifier).refresh()
+                      : () => ref
+                            .read(txnsNotifierProvider.notifier)
+                            .setFilter(const TxnFilter()),
+                ),
+              )
+            else
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(
+                  BrandSpacing.md,
+                  BrandSpacing.sm,
+                  BrandSpacing.md,
+                  BrandSpacing.lg,
+                ),
+                sliver: SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      final entries = grouped.entries.toList();
+                      int cursor = 0;
+                      for (final entry in entries) {
+                        // Group header (only if not flat)
+                        if (s.grouping != TxnGrouping.flat) {
+                          if (index == cursor) {
+                            return _GroupHeader(
+                              label: entry.key,
+                              txns: entry.value,
+                              cards: s.cards,
+                            );
+                          }
+                          cursor++;
+                        }
+                        for (final txn in entry.value) {
+                          if (index == cursor) {
+                            return _TxnRow(
+                              key: ValueKey(txn.id),
+                              txn: txn,
+                              isInternational: s.isTransactionInternational(
+                                txn,
+                              ),
+                              cardName: s.cards
+                                  .where((card) => card.id == txn.userCardId)
+                                  .firstOrNull
+                                  ?.displayName,
+                            );
+                          }
+                          cursor++;
+                        }
+                      }
+                      return null;
+                    },
+                    findChildIndexCallback: (key) =>
+                        _indexForTransactionKey(key, grouped, s.grouping),
+                    childCount: s.grouping == TxnGrouping.flat
+                        ? filtered.length
+                        : grouped.entries.fold<int>(
+                            0,
+                            (sum, e) => sum + 1 + e.value.length,
+                          ),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -203,69 +340,133 @@ class _FilterPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cats = state.all.map((t) => t.category).whereType<String>().toSet().toList()..sort();
+    final cats =
+        state.all.map((t) => t.category).whereType<String>().toSet().toList()
+          ..sort();
     final now = DateTime.now();
 
     return Container(
-      margin: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, 0),
-      padding: const EdgeInsets.all(AppSpacing.md),
+      margin: const EdgeInsets.symmetric(horizontal: BrandSpacing.md),
+      padding: const EdgeInsets.all(BrandSpacing.md),
       decoration: BoxDecoration(
-        color: AppColors.surface1,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        border: Border.all(color: AppColors.textMuted.withValues(alpha: 0.1)),
+        color: BrandColors.paper,
+        borderRadius: BorderRadius.circular(BrandRadius.card),
+        border: Border.all(color: BrandColors.mutedInk.withValues(alpha: 0.1)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Date presets
-          Text('Date range', style: GoogleFonts.inter(fontSize: 11, color: AppColors.textMuted, fontWeight: FontWeight.w500)),
-          const SizedBox(height: AppSpacing.xs),
+          Text(
+            'Date range',
+            style: TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 12,
+              color: BrandColors.mutedInk,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: BrandSpacing.xs),
           Wrap(
-            spacing: AppSpacing.xs,
+            spacing: BrandSpacing.xs,
             children: [
-              _DateChip(label: 'This month', active: _isThisMonth(state.filter, now),
-                onTap: () => onChanged(state.filter.copyWith(from: DateTime(now.year, now.month, 1), to: null))),
-              _DateChip(label: 'Last month', active: _isLastMonth(state.filter, now),
-                onTap: () => onChanged(state.filter.copyWith(from: DateTime(now.year, now.month - 1, 1), to: DateTime(now.year, now.month, 0)))),
-              _DateChip(label: 'Last 3M', active: _isLast3M(state.filter, now),
-                onTap: () => onChanged(state.filter.copyWith(from: now.subtract(const Duration(days: 90)), to: null))),
-              _DateChip(label: 'All time', active: state.filter.from == null && state.filter.to == null,
-                onTap: () => onChanged(state.filter.copyWith(from: null, to: null))),
+              _DateChip(
+                label: 'This month',
+                active: _isThisMonth(state.filter, now),
+                onTap: () => onChanged(
+                  state.filter.copyWith(
+                    from: DateTime(now.year, now.month, 1),
+                    to: null,
+                  ),
+                ),
+              ),
+              _DateChip(
+                label: 'Last month',
+                active: _isLastMonth(state.filter, now),
+                onTap: () => onChanged(
+                  state.filter.copyWith(
+                    from: DateTime(now.year, now.month - 1, 1),
+                    to: DateTime(now.year, now.month, 0),
+                  ),
+                ),
+              ),
+              _DateChip(
+                label: 'Last 3M',
+                active: _isLast3M(state.filter, now),
+                onTap: () => onChanged(
+                  state.filter.copyWith(
+                    from: now.subtract(const Duration(days: 90)),
+                    to: null,
+                  ),
+                ),
+              ),
+              _DateChip(
+                label: 'All time',
+                active: state.filter.from == null && state.filter.to == null,
+                onTap: () =>
+                    onChanged(state.filter.copyWith(from: null, to: null)),
+              ),
             ],
           ),
           // Card filter
           if (state.cards.length > 1) ...[
-            const SizedBox(height: AppSpacing.sm),
-            Text('Card', style: GoogleFonts.inter(fontSize: 11, color: AppColors.textMuted, fontWeight: FontWeight.w500)),
-            const SizedBox(height: AppSpacing.xs),
+            const SizedBox(height: BrandSpacing.sm),
+            Text(
+              'Card',
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                fontSize: 12,
+                color: BrandColors.mutedInk,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: BrandSpacing.xs),
             Wrap(
-              spacing: AppSpacing.xs,
+              spacing: BrandSpacing.xs,
               children: [
-                _DateChip(label: 'All cards', active: state.filter.cardId == null,
-                  onTap: () => onChanged(state.filter.copyWith(cardId: null))),
-                ...state.cards.map((c) => _DateChip(
-                  label: c.displayName,
-                  active: state.filter.cardId == c.id,
-                  onTap: () => onChanged(state.filter.copyWith(cardId: c.id)),
-                )),
+                _DateChip(
+                  label: 'All cards',
+                  active: state.filter.cardId == null,
+                  onTap: () => onChanged(state.filter.copyWith(cardId: null)),
+                ),
+                ...state.cards.map(
+                  (c) => _DateChip(
+                    label: c.displayName,
+                    active: state.filter.cardId == c.id,
+                    onTap: () => onChanged(state.filter.copyWith(cardId: c.id)),
+                  ),
+                ),
               ],
             ),
           ],
           // Category filter
           if (cats.isNotEmpty) ...[
-            const SizedBox(height: AppSpacing.sm),
-            Text('Category', style: GoogleFonts.inter(fontSize: 11, color: AppColors.textMuted, fontWeight: FontWeight.w500)),
-            const SizedBox(height: AppSpacing.xs),
+            const SizedBox(height: BrandSpacing.sm),
+            Text(
+              'Category',
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                fontSize: 12,
+                color: BrandColors.mutedInk,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: BrandSpacing.xs),
             Wrap(
-              spacing: AppSpacing.xs,
+              spacing: BrandSpacing.xs,
               children: [
-                _DateChip(label: 'All', active: state.filter.category == null,
-                  onTap: () => onChanged(state.filter.copyWith(category: null))),
-                ...cats.map((c) => _DateChip(
-                  label: c[0].toUpperCase() + c.substring(1),
-                  active: state.filter.category == c,
-                  onTap: () => onChanged(state.filter.copyWith(category: c)),
-                )),
+                _DateChip(
+                  label: 'All',
+                  active: state.filter.category == null,
+                  onTap: () => onChanged(state.filter.copyWith(category: null)),
+                ),
+                ...cats.map(
+                  (c) => _DateChip(
+                    label: c[0].toUpperCase() + c.substring(1),
+                    active: state.filter.category == c,
+                    onTap: () => onChanged(state.filter.copyWith(category: c)),
+                  ),
+                ),
               ],
             ),
           ],
@@ -275,11 +476,15 @@ class _FilterPanel extends StatelessWidget {
   }
 
   bool _isThisMonth(TxnFilter f, DateTime now) =>
-      f.from?.year == now.year && f.from?.month == now.month && f.to == null && f.from?.day == 1;
+      f.from?.year == now.year &&
+      f.from?.month == now.month &&
+      f.to == null &&
+      f.from?.day == 1;
   bool _isLastMonth(TxnFilter f, DateTime now) {
     final lm = DateTime(now.year, now.month - 1, 1);
     return f.from?.year == lm.year && f.from?.month == lm.month;
   }
+
   bool _isLast3M(TxnFilter f, DateTime now) {
     if (f.from == null) return false;
     final diff = now.difference(f.from!).inDays;
@@ -293,169 +498,417 @@ class _GroupHeader extends StatelessWidget {
   final String label;
   final List<Transaction> txns;
   final List<UserCard> cards;
-  const _GroupHeader({required this.label, required this.txns, required this.cards});
+  const _GroupHeader({
+    required this.label,
+    required this.txns,
+    required this.cards,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final total = txns.where((t) => t.isDebit).fold(0.0, (s, t) => s + t.amount);
+    final total = txns
+        .where((t) => t.isDebit)
+        .fold(0.0, (s, t) => s + t.amount);
     String displayLabel = label;
     // Resolve card ID to display name
     if (cards.any((c) => c.id == label)) {
       displayLabel = cards.firstWhere((c) => c.id == label).displayName;
     }
     return Padding(
-      padding: const EdgeInsets.fromLTRB(0, AppSpacing.md, 0, AppSpacing.xs),
+      padding: const EdgeInsets.fromLTRB(
+        0,
+        BrandSpacing.md,
+        0,
+        BrandSpacing.xs,
+      ),
       child: Row(
         children: [
-          Text(displayLabel,
-              style: GoogleFonts.spaceGrotesk(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.textSecondary)),
+          Text(
+            displayLabel,
+            style: TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: BrandColors.mutedInk,
+            ),
+          ),
           const Spacer(),
-          Text(_fmt.format(total),
-              style: GoogleFonts.spaceGrotesk(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textMuted)),
+          Text(
+            _fmt.format(total),
+            style: TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: BrandColors.mutedInk,
+            ),
+          ),
         ],
       ),
     );
   }
 }
 
-class _TxnRow extends StatelessWidget {
+class _TxnRow extends StatefulWidget {
+  const _TxnRow({
+    super.key,
+    required this.txn,
+    this.isInternational = false,
+    this.cardName,
+  });
+
   final Transaction txn;
   final bool isInternational;
-  const _TxnRow({required this.txn, this.isInternational = false});
+  final String? cardName;
+
+  @override
+  State<_TxnRow> createState() => _TxnRowState();
+}
+
+class _TxnRowState extends State<_TxnRow> {
+  bool _showDetails = false;
 
   @override
   Widget build(BuildContext context) {
-    final isDebit = txn.isDebit;
-    final amountStr = isDebit ? '-${_fmt.format(txn.amount)}' : '+${_fmt.format(txn.amount)}';
-    final amountColor = isDebit ? AppColors.textPrimary : AppColors.success;
-    final catColor = _categoryColor(txn.category);
+    final txn = widget.txn;
+    final amount = txn.isDebit
+        ? '-${_fmt.format(txn.amount)}'
+        : '+${_fmt.format(txn.amount)}';
+    final amountColor = txn.isDebit ? BrandColors.ink : BrandColors.successInk;
+    final hasDetails =
+        widget.isInternational ||
+        (txn.rewardEarned != null && txn.rewardEarned! > 0);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: 11),
+      padding: const EdgeInsets.all(BrandSpacing.md),
       decoration: BoxDecoration(
-        color: AppColors.surface1,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        border: Border.all(color: AppColors.textMuted.withValues(alpha: 0.07)),
+        color: BrandColors.paper,
+        borderRadius: BorderRadius.circular(BrandRadius.card),
+        border: Border.all(color: BrandColors.mutedInk.withValues(alpha: .07)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 38, height: 38,
-            decoration: BoxDecoration(
-              color: catColor.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(AppRadius.sm),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final stackAmount =
+                  constraints.maxWidth < 420 ||
+                  MediaQuery.textScalerOf(context).scale(14) >= 21;
+              final merchant = Text(
+                txn.merchantName ?? txn.description,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: BrandColors.ink,
+                ),
+              );
+              final amountText = Text(
+                amount,
+                style: TextStyle(
+                  fontFamily: 'IBM Plex Mono',
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: amountColor,
+                ),
+              );
+              return stackAmount
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        merchant,
+                        const SizedBox(height: 2),
+                        amountText,
+                      ],
+                    )
+                  : Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(child: merchant),
+                        const SizedBox(width: BrandSpacing.sm),
+                        amountText,
+                      ],
+                    );
+            },
+          ),
+          const SizedBox(height: BrandSpacing.xs),
+          Text(
+            DateFormat('d MMM · h:mm a').format(txn.transactionDate.toLocal()),
+            style: const TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 12,
+              color: BrandColors.mutedInk,
             ),
-            child: Icon(_categoryIcon(txn.category), size: 17, color: catColor),
           ),
-          const SizedBox(width: AppSpacing.sm),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Flexible(
-                    child: Text(
-                      txn.merchantName ?? txn.description,
-                      style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w500, color: AppColors.textPrimary),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  if (isInternational)
-                    Padding(
-                      padding: const EdgeInsets.only(left: 4),
-                      child: Icon(Icons.public, size: 12, color: AppColors.textMuted),
-                    ),
-                ],
-              ),
-              Text(
-                DateFormat('d MMM · h:mm a').format(txn.transactionDate.toLocal()),
-                style: GoogleFonts.inter(fontSize: 11, color: AppColors.textMuted),
-              ),
-            ]),
+          const SizedBox(height: 2),
+          Text(
+            widget.cardName ?? 'Unlinked card',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 12,
+              color: BrandColors.mutedInk,
+            ),
           ),
-          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-            Text(amountStr,
-                style: GoogleFonts.spaceGrotesk(fontSize: 13, fontWeight: FontWeight.w700, color: amountColor)),
+          const SizedBox(height: 2),
+          Text(
+            txn.category ?? 'Other',
+            style: const TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 12,
+              color: BrandColors.mutedInk,
+            ),
+          ),
+          if (hasDetails) ...[
+            const SizedBox(height: BrandSpacing.xs),
+            TextButton.icon(
+              onPressed: () => setState(() => _showDetails = !_showDetails),
+              icon: Icon(
+                _showDetails
+                    ? Icons.expand_less_rounded
+                    : Icons.expand_more_rounded,
+                size: 18,
+              ),
+              label: Text(_showDetails ? 'Hide details' : 'Details'),
+            ),
+          ],
+          if (_showDetails) ...[
+            if (widget.isInternational)
+              const Text(
+                'International transaction',
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 12,
+                  color: BrandColors.mutedInk,
+                ),
+              ),
             if (txn.rewardEarned != null && txn.rewardEarned! > 0)
-              Text('+${_fmt.format(txn.rewardEarned)} pts',
-                  style: GoogleFonts.inter(fontSize: 10, color: AppColors.success)),
-          ]),
+              Text(
+                '+${_fmtPoints.format(txn.rewardEarned)} pts',
+                style: const TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 12,
+                  color: BrandColors.successInk,
+                ),
+              ),
+          ],
         ],
       ),
     );
   }
+}
 
-  static Color _categoryColor(String? cat) => categoryColor(cat);
+class _SupportingMetrics extends StatelessWidget {
+  const _SupportingMetrics({required this.rewards, required this.topCategory});
 
-  static IconData _categoryIcon(String? cat) => categoryIcon(cat);
+  final String rewards;
+  final String topCategory;
+
+  @override
+  Widget build(BuildContext context) => Wrap(
+    spacing: BrandSpacing.lg,
+    runSpacing: BrandSpacing.sm,
+    children: [
+      _SupportingMetric(label: 'Rewards earned', value: rewards),
+      _SupportingMetric(label: 'Top category', value: topCategory),
+    ],
+  );
+}
+
+class _SupportingMetric extends StatelessWidget {
+  const _SupportingMetric({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Text(
+        label,
+        style: const TextStyle(
+          fontFamily: 'Manrope',
+          fontSize: 12,
+          color: BrandColors.mutedInk,
+        ),
+      ),
+      const SizedBox(height: 2),
+      Text(
+        value,
+        style: const TextStyle(
+          fontFamily: 'IBM Plex Mono',
+          fontSize: 14,
+          fontWeight: FontWeight.w700,
+          color: BrandColors.ink,
+        ),
+      ),
+    ],
+  );
+}
+
+class _CountPill extends StatelessWidget {
+  const _CountPill({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) => Text(
+    '$count txns',
+    style: const TextStyle(
+      fontFamily: 'Manrope',
+      fontSize: 12,
+      color: BrandColors.mutedInk,
+    ),
+  );
 }
 
 // ── Shared pill/chip widgets ─────────────────────────────────────────────────
 
-class _KpiTile extends StatelessWidget {
-  final String label;
-  final String value;
-  final Color color;
-  final bool capitalize;
-  const _KpiTile({required this.label, required this.value, required this.color, this.capitalize = false});
-
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.sm),
-        decoration: BoxDecoration(
-          color: AppColors.surface1,
-          borderRadius: BorderRadius.circular(AppRadius.md),
-          border: Border.all(color: color.withValues(alpha: 0.2)),
-        ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(label, style: GoogleFonts.inter(fontSize: 10, color: AppColors.textMuted)),
-          const SizedBox(height: 2),
-          Text(
-            capitalize ? (value.isNotEmpty ? value[0].toUpperCase() + value.substring(1) : value) : value,
-            style: GoogleFonts.spaceGrotesk(fontSize: 14, fontWeight: FontWeight.w700, color: color),
-            overflow: TextOverflow.ellipsis,
-          ),
-        ]),
-      ),
-    );
-  }
-}
-
 class _FilterPill extends StatelessWidget {
+  final Key? controlKey;
   final String label;
+  final String summary;
   final bool active;
   final VoidCallback onTap;
   final IconData icon;
-  const _FilterPill({required this.label, required this.active, required this.onTap, required this.icon});
+  const _FilterPill({
+    this.controlKey,
+    required this.label,
+    required this.summary,
+    required this.active,
+    required this.onTap,
+    required this.icon,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    final compact = MediaQuery.textScalerOf(context).scale(14) >= 21;
+    return Semantics(
+      key: controlKey,
+      button: true,
+      selected: active,
+      label: '$label, $summary',
       onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: active ? AppColors.neonCyan.withValues(alpha: 0.12) : AppColors.surface1,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: active ? AppColors.neonCyan.withValues(alpha: 0.4) : AppColors.textMuted.withValues(alpha: 0.2)),
+      child: ExcludeSemantics(
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(20),
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 44),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: active
+                    ? BrandColors.focusDark.withValues(alpha: 0.12)
+                    : BrandColors.paper,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: active
+                      ? BrandColors.focusDark.withValues(alpha: 0.4)
+                      : BrandColors.mutedInk.withValues(alpha: 0.2),
+                ),
+              ),
+              child: compact
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _FilterPillLabel(
+                          label: label,
+                          icon: icon,
+                          active: active,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          summary,
+                          style: TextStyle(
+                            fontFamily: 'Manrope',
+                            fontSize: 14,
+                            color: active
+                                ? BrandColors.focusDark
+                                : BrandColors.mutedInk,
+                          ),
+                        ),
+                      ],
+                    )
+                  : Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _FilterPillLabel(
+                          label: label,
+                          icon: icon,
+                          active: active,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          summary,
+                          style: TextStyle(
+                            fontFamily: 'Manrope',
+                            fontSize: 14,
+                            color: active
+                                ? BrandColors.focusDark
+                                : BrandColors.mutedInk,
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
+          ),
         ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, size: 13, color: active ? AppColors.neonCyan : AppColors.textMuted),
-          const SizedBox(width: 4),
-          Text(label, style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w500, color: active ? AppColors.neonCyan : AppColors.textSecondary)),
-        ]),
       ),
     );
   }
 }
 
+class _FilterPillLabel extends StatelessWidget {
+  const _FilterPillLabel({
+    required this.label,
+    required this.icon,
+    required this.active,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Icon(
+        icon,
+        size: 13,
+        color: active ? BrandColors.focusDark : BrandColors.mutedInk,
+      ),
+      const SizedBox(width: 4),
+      Text(
+        label,
+        style: TextStyle(
+          fontFamily: 'Manrope',
+          fontSize: 14,
+          fontWeight: FontWeight.w500,
+          color: active ? BrandColors.focusDark : BrandColors.mutedInk,
+        ),
+      ),
+    ],
+  );
+}
+
 class _GroupingPill extends StatelessWidget {
+  final Key? controlKey;
   final TxnGrouping grouping;
   final ValueChanged<TxnGrouping> onChanged;
-  const _GroupingPill({required this.grouping, required this.onChanged});
+  const _GroupingPill({
+    this.controlKey,
+    required this.grouping,
+    required this.onChanged,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -465,24 +918,60 @@ class _GroupingPill extends StatelessWidget {
       TxnGrouping.byCategory: 'Category',
       TxnGrouping.byDate: 'Date',
     };
-    return GestureDetector(
+    final label = labels[grouping]!;
+    return Semantics(
+      key: controlKey,
+      label: 'Group transactions by $label',
+      button: true,
       onTap: () {
         final values = TxnGrouping.values;
         final next = values[(values.indexOf(grouping) + 1) % values.length];
         onChanged(next);
       },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: AppColors.surface1,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: AppColors.textMuted.withValues(alpha: 0.2)),
+      child: ExcludeSemantics(
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () {
+              final values = TxnGrouping.values;
+              final next =
+                  values[(values.indexOf(grouping) + 1) % values.length];
+              onChanged(next);
+            },
+            borderRadius: BorderRadius.circular(20),
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 44),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: BrandColors.paper,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: BrandColors.mutedInk.withValues(alpha: 0.2),
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.layers_rounded,
+                    size: 13,
+                    color: BrandColors.mutedInk,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontFamily: 'Manrope',
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: BrandColors.mutedInk,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          const Icon(Icons.layers_rounded, size: 13, color: AppColors.textMuted),
-          const SizedBox(width: 4),
-          Text(labels[grouping]!, style: GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w500, color: AppColors.textSecondary)),
-        ]),
       ),
     );
   }
@@ -492,26 +981,53 @@ class _DateChip extends StatelessWidget {
   final String label;
   final bool active;
   final VoidCallback onTap;
-  const _DateChip({required this.label, required this.active, required this.onTap});
+  const _DateChip({
+    required this.label,
+    required this.active,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return Semantics(
+      key: Key('date-filter-$label'),
+      label: label,
+      button: true,
+      selected: active,
       onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: AppSpacing.xs),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: active ? AppColors.neonCyan.withValues(alpha: 0.15) : Colors.transparent,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: active ? AppColors.neonCyan.withValues(alpha: 0.5) : AppColors.textMuted.withValues(alpha: 0.2)),
+      child: ExcludeSemantics(
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(16),
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 44),
+              margin: const EdgeInsets.only(bottom: BrandSpacing.xs),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: active
+                    ? BrandColors.focusDark.withValues(alpha: 0.15)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: active
+                      ? BrandColors.focusDark.withValues(alpha: 0.5)
+                      : BrandColors.mutedInk.withValues(alpha: 0.2),
+                ),
+              ),
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 14,
+                  fontWeight: active ? FontWeight.w600 : FontWeight.w400,
+                  color: active ? BrandColors.focusDark : BrandColors.mutedInk,
+                ),
+              ),
+            ),
+          ),
         ),
-        child: Text(label,
-            style: GoogleFonts.inter(
-              fontSize: 11,
-              fontWeight: active ? FontWeight.w600 : FontWeight.w400,
-              color: active ? AppColors.neonCyan : AppColors.textSecondary,
-            )),
       ),
     );
   }

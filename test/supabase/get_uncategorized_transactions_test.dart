@@ -17,83 +17,81 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cardcompass/core/repositories/transactions_repository.dart';
 
+import 'local_supabase_test_support.dart';
+
 void main() {
-  late SupabaseClient client;
-  late TransactionsRepository repo;
-  late String testUserId;
-  late String testUserCardId;
+  group('local Supabase integration', () {
+    late SupabaseClient client;
+    late TransactionsRepository repo;
+    late String testUserId;
+    late String testUserCardId;
 
-  setUpAll(() async {
-    await Supabase.initialize(
-      url: 'http://127.0.0.1:54321',
-      anonKey: const String.fromEnvironment('SUPABASE_ANON_KEY'),
-    );
-    client = Supabase.instance.client;
-    repo = TransactionsRepository(client);
+    setUpAll(() async {
+      await Supabase.initialize(
+        url: localSupabaseUrl,
+        publishableKey: localSupabaseAnonKey,
+      );
+      client = Supabase.instance.client;
+      repo = TransactionsRepository(client);
 
-    final runId = DateTime.now().microsecondsSinceEpoch;
-    final auth = await client.auth.signUp(
-      email: 'uncategorized-filter-test-$runId@example.com',
-      password: 'test-password-1234',
-    );
-    testUserId = auth.user!.id;
+      final runId = DateTime.now().microsecondsSinceEpoch;
+      final auth = await client.auth.signUp(
+        email: 'uncategorized-filter-test-$runId@example.com',
+        password: 'test-password-1234',
+      );
+      testUserId = auth.user!.id;
 
-    final catalog = await client
-        .from('card_catalog')
-        .select('id')
-        .limit(1)
-        .single();
-    final card = await client
-        .from('user_cards')
-        .insert({
+      final catalog = await client
+          .from('card_catalog')
+          .select('id')
+          .limit(1)
+          .single();
+      final card = await client
+          .from('user_cards')
+          .insert({'user_id': testUserId, 'catalog_card_id': catalog['id']})
+          .select('id')
+          .single();
+      testUserCardId = card['id'] as String;
+
+      final now = DateTime.now().toIso8601String();
+      await client.from('transactions').insert([
+        {
           'user_id': testUserId,
-          'catalog_card_id': catalog['id'],
-        })
-        .select('id')
-        .single();
-    testUserCardId = card['id'] as String;
+          'user_card_id': testUserCardId,
+          'amount': 1,
+          'description': 'null category case',
+          'transaction_date': now,
+          'category': null,
+        },
+        {
+          'user_id': testUserId,
+          'user_card_id': testUserCardId,
+          'amount': 1,
+          'description': 'other category case',
+          'transaction_date': now,
+          'category': 'other',
+        },
+        {
+          'user_id': testUserId,
+          'user_card_id': testUserCardId,
+          'amount': 1,
+          'description': 'legacy invalid category case',
+          'transaction_date': now,
+          'category': 'dining',
+        },
+        {
+          'user_id': testUserId,
+          'user_card_id': testUserCardId,
+          'amount': 1,
+          'description': 'already-correct category, must NOT be selected',
+          'transaction_date': now,
+          'category': 'food',
+        },
+      ]);
+    });
 
-    final now = DateTime.now().toIso8601String();
-    await client.from('transactions').insert([
-      {
-        'user_id': testUserId,
-        'user_card_id': testUserCardId,
-        'amount': 1,
-        'description': 'null category case',
-        'transaction_date': now,
-        'category': null,
-      },
-      {
-        'user_id': testUserId,
-        'user_card_id': testUserCardId,
-        'amount': 1,
-        'description': 'other category case',
-        'transaction_date': now,
-        'category': 'other',
-      },
-      {
-        'user_id': testUserId,
-        'user_card_id': testUserCardId,
-        'amount': 1,
-        'description': 'legacy invalid category case',
-        'transaction_date': now,
-        'category': 'dining',
-      },
-      {
-        'user_id': testUserId,
-        'user_card_id': testUserCardId,
-        'amount': 1,
-        'description': 'already-correct category, must NOT be selected',
-        'transaction_date': now,
-        'category': 'food',
-      },
-    ]);
-  });
-
-  test(
-    'selects NULL, other, and legacy-invalid categories, but not an '
-    'already-correct one',
-    () async {
+    test('selects NULL, other, and legacy-invalid categories, but not an '
+        'already-correct one', () async {
       final result = await repo.getUncategorizedTransactions(testUserId);
       final descriptions = result.map((t) => t.description).toSet();
 
@@ -104,6 +102,6 @@ void main() {
         descriptions,
         isNot(contains('already-correct category, must NOT be selected')),
       );
-    },
-  );
+    });
+  }, skip: localSupabaseSkipReason);
 }
