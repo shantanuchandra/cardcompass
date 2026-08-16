@@ -35,6 +35,7 @@ enum StatementIssueReason {
   attachmentUnavailable,
   downloadFailed,
   passwordRequired,
+  passwordAttemptsExhausted,
   cardAssignmentRequired,
   processingFailed,
 }
@@ -98,6 +99,8 @@ List<String> buildStatementIssueLines(List<StatementProcessingIssue> issues) {
       'Attachment unavailable before card matching',
     StatementIssueReason.downloadFailed => 'Could not download the statement',
     StatementIssueReason.passwordRequired => 'Statement password required',
+    StatementIssueReason.passwordAttemptsExhausted =>
+      'Password still incorrect after 2 attempts',
     StatementIssueReason.cardAssignmentRequired => 'Choose the correct card',
     StatementIssueReason.processingFailed =>
       'Could not parse or save statement',
@@ -465,7 +468,9 @@ class StatementProcessingService {
       _recordIssue(
         bankName: bankName,
         cardContext: _cardContext(candidates),
-        reason: StatementIssueReason.passwordRequired,
+        reason: resolver.manualAttemptsExhausted
+            ? StatementIssueReason.passwordAttemptsExhausted
+            : StatementIssueReason.passwordRequired,
       );
       await _emailRepo.updateEmailStatus(
         userId: _userId,
@@ -598,7 +603,9 @@ class StatementProcessingService {
       _recordIssue(
         bankName: bankName,
         cardContext: _cardName(userCard),
-        reason: StatementIssueReason.passwordRequired,
+        reason: resolver.manualAttemptsExhausted
+            ? StatementIssueReason.passwordAttemptsExhausted
+            : StatementIssueReason.passwordRequired,
       );
       await _emailRepo.updateEmailStatus(
         userId: _userId,

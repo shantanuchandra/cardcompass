@@ -75,4 +75,18 @@ void main() {
       'ICICI Bank · Adani One / Amazon Pay / Sapphiro · 1 email · Choose the correct card',
     ]);
   });
+
+  test('reports exhausted PDF password attempts as retryable', () {
+    final lines = buildStatementIssueLines([
+      const StatementProcessingIssue(
+        bankName: 'HSBC',
+        cardContext: 'TravelOne',
+        reason: StatementIssueReason.passwordAttemptsExhausted,
+      ),
+    ]);
+
+    expect(lines, [
+      'HSBC · TravelOne · 1 email · Password still incorrect after 2 attempts',
+    ]);
+  });
 }
