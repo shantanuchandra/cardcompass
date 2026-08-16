@@ -174,6 +174,14 @@ test('Azure CSP permits the deployed Flutter WebAssembly engine and CanvasKit mo
   assert.match(policy, /connect-src[^;]*https:\/\/fonts\.gstatic\.com/);
 });
 
+test('Azure CSP permits direct browser calls to the Gmail and People APIs', async () => {
+  const config = JSON.parse(await readFile(new URL('staticwebapp.config.json', repoRoot), 'utf8'));
+  const policy = config.globalHeaders['Content-Security-Policy'];
+
+  assert.match(policy, /connect-src[^;]*https:\/\/gmail\.googleapis\.com/);
+  assert.match(policy, /connect-src[^;]*https:\/\/people\.googleapis\.com/);
+});
+
 test('deployment environment module serializes public Supabase values as inert JavaScript strings', async () => {
   const child = spawn(process.execPath, ['scripts/write-landing-env.mjs'], {
     cwd: new URL('../..', import.meta.url),
