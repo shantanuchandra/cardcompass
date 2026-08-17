@@ -7,6 +7,10 @@ const migration = new URL(
   'supabase/migrations/20260817040000_automated_benefit_enrichment.sql',
   repoRoot,
 );
+const ownershipRepairMigration = new URL(
+  'supabase/migrations/20260817071435_repair_legacy_catalog_enrichment_ownership.sql',
+  repoRoot,
+);
 
 async function migrationSql() {
   return readFile(migration, 'utf8');
@@ -149,4 +153,21 @@ test('approval RPC applies only reviewed additions or edits and retains existing
   assert.doesNotMatch(approval, /DELETE\s+FROM\s+public\.benefits/i);
   assert.match(sql, /REVOKE ALL ON FUNCTION public\.approve_card_benefit_enrichment\(uuid, uuid, jsonb\)\s+FROM PUBLIC, anon, authenticated/i);
   assert.match(sql, /GRANT EXECUTE ON FUNCTION public\.approve_card_benefit_enrichment\(uuid, uuid, jsonb\)\s+TO service_role/i);
+});
+
+test('forward migration conservatively repairs only identifiable legacy catalog jobs', async () => {
+  const sql = await readFile(ownershipRepairMigration, 'utf8');
+
+  assert.match(sql, /UPDATE public\.card_catalog_enrichment_jobs AS legacy/i);
+  assert.match(sql, /SET parser_version\s*=\s*'catalog-v1'[\s\S]*run_mode\s*=\s*'manual'/i);
+  assert.match(sql, /legacy\.parser_version\s*=\s*'benefits-v1'/i);
+  assert.match(sql, /legacy\.run_mode\s*=\s*'scheduled'/i);
+  assert.match(sql, /legacy\.content_hash IS NOT NULL/i);
+  assert.match(sql, /legacy\.staging_id IS NULL/i);
+  assert.match(sql, /legacy\.result_summary\s*=\s*'\{\}'::jsonb/i);
+  assert.match(sql, /legacy\.status IN \('completed', 'review_required', 'failed'\)/i);
+  assert.match(sql, /row_number\(\) OVER \([\s\S]*PARTITION BY legacy\.card_id, legacy\.final_url_hash/i);
+  assert.match(sql, /repairable\.identity_rank\s*=\s*1/i);
+  assert.match(sql, /NOT EXISTS[\s\S]*parser_version\s*=\s*'catalog-v1'/i);
+  assert.doesNotMatch(sql, /WHERE\s+parser_version\s*=\s*'benefits-v1'\s*;/i);
 });

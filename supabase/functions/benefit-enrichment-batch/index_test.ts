@@ -1,4 +1,9 @@
-import { initializePilotJobs, seedScheduledQueueIfAllowed } from "./index.ts";
+import {
+  initializePilotJobs,
+  loadCatalogIdentity,
+  requireExactCatalogIdentity,
+  seedScheduledQueueIfAllowed,
+} from "./index.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -23,6 +28,150 @@ Deno.test("pilot API refuses catalog-v1 before selecting or writing jobs", async
     "reserved parser was not rejected at the pilot API boundary",
   );
   assert(rpcCalls === 0, "rejected parser reached the pilot RPC");
+});
+
+Deno.test("catalog identity requires an exact target match instead of a product-name substring", () => {
+  const catalog = [
+    { id: "regalia", card_name: "Regalia" },
+    { id: "regalia-gold", card_name: "Regalia Gold" },
+  ];
+  let wrongVariant: unknown;
+  try {
+    requireExactCatalogIdentity(
+      "regalia-gold",
+      "HDFC Bank",
+      "Regalia",
+      catalog,
+      [],
+    );
+  } catch (error) {
+    wrongVariant = error;
+  }
+  assert(
+    wrongVariant instanceof Error &&
+      wrongVariant.message === "identity_mismatch",
+    "Regalia evidence was accepted for Regalia Gold",
+  );
+  requireExactCatalogIdentity(
+    "regalia-gold",
+    "HDFC Bank",
+    "Regalia Gold",
+    catalog,
+    [],
+  );
+});
+
+Deno.test("catalog identity rejects an alias shared by active issuer variants", () => {
+  let error: unknown;
+  try {
+    requireExactCatalogIdentity(
+      "regalia",
+      "HDFC Bank",
+      "Regalia Premium",
+      [
+        { id: "regalia", card_name: "Regalia" },
+        { id: "regalia-gold", card_name: "Regalia Gold" },
+      ],
+      [
+        { card_id: "regalia", alias: "Regalia Premium" },
+        { card_id: "regalia-gold", alias: "Regalia Premium" },
+      ],
+    );
+  } catch (caught) {
+    error = caught;
+  }
+  assert(
+    error instanceof Error && error.message === "ambiguous_product",
+    "shared alias did not block ambiguous identity",
+  );
+});
+
+Deno.test("catalog identity loading includes active same-issuer variants and aliases", async () => {
+  const catalog = [
+    {
+      id: "regalia",
+      card_name: "Regalia",
+      bank: "HDFC Bank",
+      is_discontinued: false,
+    },
+    {
+      id: "regalia-gold",
+      card_name: "Regalia Gold",
+      bank: "HDFC Bank",
+      is_discontinued: false,
+    },
+    {
+      id: "axis",
+      card_name: "Select",
+      bank: "Axis Bank",
+      is_discontinued: false,
+    },
+  ];
+  const aliases = [
+    { card_id: "regalia", alias: "HDFC Regalia" },
+    { card_id: "regalia-gold", alias: "HDFC Regalia Gold" },
+  ];
+  const db = {
+    from(table: string) {
+      const filters = new Map<string, unknown>();
+      let includedIds: string[] = [];
+      const builder = {
+        select() {
+          return this;
+        },
+        eq(column: string, value: unknown) {
+          filters.set(column, value);
+          return this;
+        },
+        ilike(column: string, value: unknown) {
+          filters.set(column, value);
+          return this;
+        },
+        in(_column: string, values: string[]) {
+          includedIds = values;
+          return this;
+        },
+        async single() {
+          return {
+            data: catalog.find((row) => row.id === filters.get("id")),
+            error: null,
+          };
+        },
+        then<TResult1 = unknown, TResult2 = never>(
+          onfulfilled?:
+            | ((value: unknown) => TResult1 | PromiseLike<TResult1>)
+            | null,
+          onrejected?:
+            | ((reason: unknown) => TResult2 | PromiseLike<TResult2>)
+            | null,
+        ) {
+          const data = table === "card_catalog"
+            ? catalog.filter((row) =>
+              row.bank.toLowerCase() ===
+                String(filters.get("bank")).toLowerCase() &&
+              row.is_discontinued === filters.get("is_discontinued")
+            )
+            : aliases.filter((row) => includedIds.includes(row.card_id));
+          return Promise.resolve({ data, error: null }).then(
+            onfulfilled,
+            onrejected,
+          );
+        },
+      };
+      return builder;
+    },
+  };
+
+  const identity = await loadCatalogIdentity(db, "regalia-gold");
+
+  assert(identity.catalog.length === 2, "same-issuer variant was not loaded");
+  assert(identity.aliases.length === 2, "variant aliases were not loaded");
+  assert(
+    identity.catalog.every((row: Record<string, unknown>) =>
+      row.bank === "HDFC Bank"
+    ),
+    "cross-issuer identity entered matching evidence",
+  );
 });
 
 type CatalogFixture = {
@@ -86,7 +235,17 @@ function scheduledSeederDb(
         table === "card_catalog_enrichment_jobs",
         "seeder wrote an unexpected table",
       );
+      let selecting = false;
+      const filters = new Map<string, unknown>();
       return {
+        select() {
+          selecting = true;
+          return this;
+        },
+        eq(column: string, value: unknown) {
+          filters.set(column, value);
+          return this;
+        },
         async upsert(
           input: Record<string, unknown> | Record<string, unknown>[],
           options: { onConflict?: string; ignoreDuplicates?: boolean },
@@ -98,6 +257,24 @@ function scheduledSeederDb(
             if (!jobs.has(key)) jobs.set(key, { ...row });
           }
           return { error: null };
+        },
+        then<TResult1 = unknown, TResult2 = never>(
+          onfulfilled?:
+            | ((value: unknown) => TResult1 | PromiseLike<TResult1>)
+            | null,
+          onrejected?:
+            | ((reason: unknown) => TResult2 | PromiseLike<TResult2>)
+            | null,
+        ) {
+          const data = selecting
+            ? [...jobs.values()].filter((row) =>
+              [...filters].every(([column, value]) => row[column] === value)
+            )
+            : [];
+          return Promise.resolve({ data, error: null }).then(
+            onfulfilled,
+            onrejected,
+          );
         },
       };
     },
@@ -233,6 +410,23 @@ Deno.test("scheduled seeding skips pilot conflicts and preserves processing and 
       `${original.id} was rewound or changed lanes`,
     );
   }
+});
+
+Deno.test("scheduled seeding excludes pilot card and parser identity despite cosmetic URL hashes", async () => {
+  const pilot = {
+    id: "pilot-cosmetic-url",
+    card_id: "card-valid",
+    parser_version: "benefits-v1",
+    job_key: `card-valid:${"f".repeat(64)}:benefits-v1`,
+    run_mode: "pilot",
+    status: "completed",
+  };
+  const db = scheduledSeederDb([validCatalogCard], [pilot]);
+
+  const seeded = await seedScheduledQueueIfAllowed(db, "scheduled", true);
+
+  assert(seeded === 0, "pilot card/parser identity was scheduled again");
+  assert(db.jobs.size === 1, "cosmetic URL difference duplicated pilot work");
 });
 
 Deno.test("scheduled inventory is not read until the pilot gate passes", async () => {

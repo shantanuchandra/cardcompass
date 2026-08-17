@@ -142,6 +142,9 @@ test('benefit enrichment keeps initialization and issuer discovery off unsafe pa
   assert.match(source, /initialize_card_benefit_enrichment_pilot/);
   assert.match(source, /stage_card_benefit_enrichment/);
   assert.match(source, /finalize_card_catalog_enrichment_job/);
+  assert.match(source, /collectSupportingBenefitDocuments\(/);
+  assert.match(source, /source_documents/);
+  assert.match(source, /issuerDiscoveryFallbackUrls\(/);
   assert.match(source, /EdgeRuntime\.waitUntil\(\s*runIssuerDiscovery/s);
   assert.match(source, /issuer_discovery_background_failed/);
   assert.doesNotMatch(source, /await\s+runIssuerDiscovery/);

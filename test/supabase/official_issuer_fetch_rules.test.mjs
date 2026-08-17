@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import {fetchOfficialIssuerResource} from '../../supabase/functions/_shared/official_issuer_fetch.ts';
+import {
+  fetchOfficialIssuerResource,
+  officialResourceText,
+} from '../../supabase/functions/_shared/official_issuer_fetch.ts';
 
 const issuer = 'Kotak Bank';
 const officialUrl = 'https://www.kotak.com/rd/white-reserve';
@@ -49,6 +52,24 @@ function settlesWithin(operation, timeoutMs = 30) {
     }),
   ]);
 }
+
+test('extracts benefit text from safely fetched PDF bytes', async () => {
+  const pdf = new TextEncoder().encode(
+    '%PDF-1.4\n1 0 obj<</Length 78>>stream\nBT (Get 2 complimentary lounge visits per quarter.) Tj ET\nendstream\nendobj\n%%EOF',
+  );
+  const text = await officialResourceText({
+    submittedUrl: officialUrl,
+    finalUrl: officialUrl,
+    canonicalUrl: officialUrl,
+    contentType: 'application/pdf',
+    bytes: pdf,
+    text: '',
+    contentHash: 'pdf-hash',
+    retrievedAt: '2026-08-17T00:00:00.000Z',
+  });
+
+  assert.match(text, /2 complimentary lounge visits per quarter/i);
+});
 
 async function rejectsWithin(input, code) {
   await assert.rejects(

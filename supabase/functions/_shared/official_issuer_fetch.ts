@@ -1,6 +1,4 @@
-import {
-  canonicalOfficialUrl,
-} from "./card_discovery.ts";
+import { canonicalOfficialUrl } from "./card_discovery.ts";
 
 export type OfficialContentPurpose = "document" | "html" | "sitemap";
 
@@ -25,6 +23,74 @@ export type OfficialFetchResult = {
   retrievedAt: string;
 };
 
+function decodePdfLiteral(value: string): string {
+  return value.replace(/\\([0-7]{1,3}|[nrtbf()\\])/g, (_match, escaped) => {
+    if (/^[0-7]+$/.test(escaped)) {
+      return String.fromCharCode(Number.parseInt(escaped, 8));
+    }
+    return ({ n: "\n", r: "\r", t: "\t", b: "\b", f: "\f" } as Record<
+      string,
+      string
+    >)[
+      escaped
+    ] ?? escaped;
+  });
+}
+
+function textOperators(value: string): string[] {
+  const parts: string[] = [];
+  for (const match of value.matchAll(/\(((?:\\.|[^\\)])*)\)\s*Tj\b/gs)) {
+    parts.push(decodePdfLiteral(match[1] ?? ""));
+  }
+  for (const match of value.matchAll(/\[((?:.|\n|\r)*?)\]\s*TJ\b/g)) {
+    for (const literal of (match[1] ?? "").matchAll(/\(((?:\\.|[^\\)])*)\)/g)) {
+      parts.push(decodePdfLiteral(literal[1] ?? ""));
+    }
+  }
+  return parts;
+}
+
+async function inflatePdfStream(bytes: Uint8Array): Promise<string | null> {
+  try {
+    const stream = new Blob([bytes.slice().buffer]).stream()
+      .pipeThrough(new DecompressionStream("deflate"));
+    return new TextDecoder("latin1").decode(
+      await new Response(stream).arrayBuffer(),
+    );
+  } catch {
+    return null;
+  }
+}
+
+async function extractPdfText(bytes: Uint8Array): Promise<string> {
+  const raw = new TextDecoder("latin1").decode(bytes);
+  if (!raw.startsWith("%PDF-")) throw new Error("unsupported_content");
+  const parts = textOperators(raw);
+  for (const match of raw.matchAll(/stream\r?\n([\s\S]*?)\r?\nendstream/g)) {
+    const streamStart = match.index ?? 0;
+    const dictionary = raw.slice(Math.max(0, streamStart - 500), streamStart);
+    if (!/\/FlateDecode\b/.test(dictionary)) continue;
+    const encoded = new Uint8Array(
+      [...(match[1] ?? "")].map((character) => character.charCodeAt(0) & 0xff),
+    );
+    const inflated = await inflatePdfStream(encoded);
+    if (inflated) parts.push(...textOperators(inflated));
+  }
+  return parts.join(" ").replace(/[\u0000-\u001f]+/g, " ")
+    .replace(/\s+/g, " ").trim().slice(0, 1_000_000);
+}
+
+export async function officialResourceText(
+  resource: OfficialFetchResult,
+): Promise<string> {
+  if (resource.contentType !== "application/pdf") return resource.text;
+  try {
+    return await extractPdfText(resource.bytes);
+  } catch {
+    return "";
+  }
+}
+
 type OfficialFetchCode =
   | "unapproved_domain"
   | "private_address"
@@ -45,7 +111,11 @@ const MAX_REDIRECTS = 4;
 const CONTENT_POLICIES: Record<OfficialContentPurpose, ContentPolicy> = {
   document: {
     accept: "text/html,application/xhtml+xml,application/pdf;q=0.8",
-    contentTypes: new Set(["text/html", "application/xhtml+xml", "application/pdf"]),
+    contentTypes: new Set([
+      "text/html",
+      "application/xhtml+xml",
+      "application/pdf",
+    ]),
   },
   html: {
     accept: "text/html,application/xhtml+xml",
@@ -92,7 +162,10 @@ async function defaultResolveHost(host: string): Promise<string[]> {
   );
 }
 
-function raceWithDeadline<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+function raceWithDeadline<T>(
+  operation: Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
   if (signal.aborted) return Promise.reject(fetchError("timeout"));
   return new Promise<T>((resolve, reject) => {
     const onAbort = () => {
@@ -121,9 +194,14 @@ async function ensurePublicHost(
 ): Promise<void> {
   let addresses: string[];
   try {
-    addresses = await raceWithDeadline(resolveHost(new URL(url).hostname), signal);
+    addresses = await raceWithDeadline(
+      resolveHost(new URL(url).hostname),
+      signal,
+    );
   } catch (error) {
-    if (signal.aborted || (error instanceof Error && error.message === "timeout")) {
+    if (
+      signal.aborted || (error instanceof Error && error.message === "timeout")
+    ) {
       throw fetchError("timeout");
     }
     throw fetchError("unreachable");
@@ -167,7 +245,10 @@ async function readResponseBytes(
   let length = 0;
   try {
     while (true) {
-      const { done, value } = await raceWithDeadline(reader.read(), controller.signal);
+      const { done, value } = await raceWithDeadline(
+        reader.read(),
+        controller.signal,
+      );
       if (done) break;
       const nextLength = length + value.length;
       if (nextLength > maxBytes) {
@@ -237,18 +318,23 @@ export async function fetchOfficialIssuerResource(
       await ensurePublicHost(url, resolveHost, controller.signal);
       let response: Response;
       try {
-        response = await raceWithDeadline(fetchImpl(url, {
-          redirect: "manual",
-          headers: {
-            "User-Agent": "CardCompassCatalogBot/1.0 (+catalog verification)",
-            Accept: contentPolicy.accept,
-          },
-          signal: controller.signal,
-        }), controller.signal);
+        response = await raceWithDeadline(
+          fetchImpl(url, {
+            redirect: "manual",
+            headers: {
+              "User-Agent": "CardCompassCatalogBot/1.0 (+catalog verification)",
+              Accept: contentPolicy.accept,
+            },
+            signal: controller.signal,
+          }),
+          controller.signal,
+        );
       } catch (error) {
-        if (controller.signal.aborted ||
+        if (
+          controller.signal.aborted ||
           (error instanceof DOMException && error.name === "TimeoutError") ||
-          (error instanceof Error && error.message === "timeout")) {
+          (error instanceof Error && error.message === "timeout")
+        ) {
           throw fetchError("timeout");
         }
         throw fetchError("unreachable");
@@ -289,25 +375,33 @@ export async function fetchOfficialIssuerResource(
       try {
         bytes = await readResponseBytes(response, maxBytes, controller);
       } catch (error) {
-        if (error instanceof Error && error.message === "oversized") throw error;
-        if (controller.signal.aborted ||
+        if (error instanceof Error && error.message === "oversized") {
+          throw error;
+        }
+        if (
+          controller.signal.aborted ||
           (error instanceof DOMException && error.name === "TimeoutError") ||
-          (error instanceof Error && error.message === "timeout")) {
+          (error instanceof Error && error.message === "timeout")
+        ) {
           throw fetchError("timeout");
         }
         throw fetchError("unreachable");
       }
 
-      return {
+      const result: OfficialFetchResult = {
         submittedUrl,
         finalUrl: url,
         canonicalUrl: url,
         contentType,
         bytes,
-        text: contentType === "application/pdf" ? "" : new TextDecoder().decode(bytes),
+        text: contentType === "application/pdf"
+          ? ""
+          : new TextDecoder().decode(bytes),
         contentHash: await sha256(bytes),
         retrievedAt: new Date().toISOString(),
       };
+      result.text = await officialResourceText(result);
+      return result;
     }
     throw fetchError("redirect_rejected");
   } finally {

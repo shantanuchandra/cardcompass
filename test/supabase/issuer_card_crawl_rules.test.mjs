@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   classifyIssuerPage,
   discoverIssuerCardCandidates,
+  issuerDiscoveryFallbackUrls,
 } from '../../supabase/functions/_shared/issuer_card_crawl.ts';
 
 const issuer = 'Axis Bank';
@@ -60,6 +61,54 @@ test('stops nested sitemap indexes at depth two and uses a same-domain page inde
   assert.equal(result.consideredCount, 1);
   assert.equal(result.fetchedCount, 1);
   assert.equal(result.candidates[0].kind, 'card_product');
+});
+
+test('builds conventional same-host sitemap and credit-card index fallbacks', () => {
+  assert.deepEqual(
+    issuerDiscoveryFallbackUrls(
+      'https://www.axis.bank.in/cards/credit-card/privilege-credit-card',
+    ),
+    {
+      sitemapUrls: [
+        'https://www.axis.bank.in/sitemap.xml',
+        'https://www.axis.bank.in/sitemap_index.xml',
+        'https://www.axis.bank.in/sitemap-index.xml',
+        'https://www.axis.bank.in/sitemaps/sitemap.xml',
+      ],
+      indexUrls: [
+        'https://www.axis.bank.in/cards/credit-card',
+        'https://www.axis.bank.in/cards/credit-cards',
+        'https://www.axis.bank.in/personal/cards/credit-cards',
+      ],
+    },
+  );
+});
+
+test('falls back from unavailable sitemaps to same-host credit-card indexes', async () => {
+  const product = 'https://www.axis.bank.in/cards/credit-card/select-credit-card';
+  const seeds = issuerDiscoveryFallbackUrls(product);
+  const requested = [];
+  const result = await discoverIssuerCardCandidates({
+    issuer,
+    sitemapUrls: seeds.sitemapUrls,
+    indexUrls: seeds.indexUrls,
+    fetchOfficialIssuerResource: async (input) => {
+      requested.push(input.url);
+      if (seeds.sitemapUrls.includes(input.url)) throw new Error('unreachable');
+      if (input.url === seeds.indexUrls[0]) {
+        return resource(input.url, `<a href="${product}">Select card</a>`);
+      }
+      if (input.url === product) {
+        return resource(input.url, '<h1>Axis Select Credit Card</h1>');
+      }
+      throw new Error('unused fallback');
+    },
+    delay: async () => {},
+  });
+
+  assert.equal(result.candidates[0]?.proposedName, 'Select');
+  assert.equal(result.fetchedCount, 1);
+  assert.deepEqual(requested, [...seeds.sitemapUrls, seeds.indexUrls[0], product]);
 });
 
 test('caps sitemap URLs at 200 and candidate page requests at 40', async () => {

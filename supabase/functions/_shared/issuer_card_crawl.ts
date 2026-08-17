@@ -1,6 +1,6 @@
 import {
-  canonicalOfficialUrl,
   canonicalCardIdentity,
+  canonicalOfficialUrl,
   normalizedProduct,
   officialCardIdentityFromHtml,
 } from "./card_discovery.ts";
@@ -41,16 +41,39 @@ export type PersistCrawlerCandidateResult = {
 
 type UntypedSupabaseClient = any;
 
-type OfficialFetcher = (input: OfficialFetchInput) => Promise<OfficialFetchResult>;
+type OfficialFetcher = (
+  input: OfficialFetchInput,
+) => Promise<OfficialFetchResult>;
 
 export type DiscoverIssuerCardCandidatesInput = {
   issuer: string;
   sitemapUrl?: string;
   sitemapUrls?: string[];
+  indexUrls?: string[];
   fetchOfficialIssuerResource?: OfficialFetcher;
   delay?: (milliseconds: number) => Promise<void> | void;
   delayMs?: number;
 };
+
+export function issuerDiscoveryFallbackUrls(originUrl: string): {
+  sitemapUrls: string[];
+  indexUrls: string[];
+} {
+  const origin = new URL(originUrl).origin;
+  return {
+    sitemapUrls: [
+      "/sitemap.xml",
+      "/sitemap_index.xml",
+      "/sitemap-index.xml",
+      "/sitemaps/sitemap.xml",
+    ].map((path) => new URL(path, origin).toString()),
+    indexUrls: [
+      "/cards/credit-card",
+      "/cards/credit-cards",
+      "/personal/cards/credit-cards",
+    ].map((path) => new URL(path, origin).toString()),
+  };
+}
 
 export type ClassifyIssuerPageInput = {
   issuer: string;
@@ -65,18 +88,62 @@ type SitemapDocument = {
   locations: string[];
 };
 
-const unsafePagePattern = /(?:^|[/?=&_.-])(?:login|log-in|apply|application|track|tracking|blog|stories?|story|protection|insurance|generic|help|support|learning-centre)(?:$|[/?=&_.-])/i;
-const supportingPattern = /(?:benefits?|fees?|charges?|rewards?|terms?|conditions?|mitc)(?:$|[/?=&_.-])/i;
-const productPattern = /(?:credit[-_ ]?cards?|cards?[-_ ]?credit|card[-_ ]?products?|product[-_ ]?cards?)(?:$|[/?=&_.-])/i;
+const unsafePagePattern =
+  /(?:^|[/?=&_.-])(?:login|log-in|apply|application|track|tracking|blog|stories?|story|protection|insurance|generic|help|support|learning-centre)(?:$|[/?=&_.-])/i;
+const supportingPattern =
+  /(?:benefits?|fees?|charges?|rewards?|terms?|conditions?|mitc)(?:$|[/?=&_.-])/i;
+const productPattern =
+  /(?:credit[-_ ]?cards?|cards?[-_ ]?credit|card[-_ ]?products?|product[-_ ]?cards?)(?:$|[/?=&_.-])/i;
 const evidencePattern = /<(?:title|h1|h2)[^>]*>([\s\S]*?)<\/(?:title|h1|h2)>/gi;
 const linkPattern = /<loc\b[^>]*>([\s\S]*?)<\/loc>/gi;
+const htmlLinkPattern =
+  /<a\b[^>]*\bhref\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))[^>]*>/gi;
 const nonProductPathTokens = new Set([
-  "card", "cards", "credit", "products", "product", "personal", "bank",
-  "benefit", "benefits", "fee", "fees", "charge", "charges", "reward", "rewards",
-  "term", "terms", "condition", "conditions", "mitc", "html", "pdf",
-  "all", "overview", "compare", "comparison", "option", "options", "explore", "our",
-  "range", "legal", "navigation", "home", "landing", "page",
-  "and", "or", "the", "for", "of", "to", "in", "with", "your",
+  "card",
+  "cards",
+  "credit",
+  "products",
+  "product",
+  "personal",
+  "bank",
+  "benefit",
+  "benefits",
+  "fee",
+  "fees",
+  "charge",
+  "charges",
+  "reward",
+  "rewards",
+  "term",
+  "terms",
+  "condition",
+  "conditions",
+  "mitc",
+  "html",
+  "pdf",
+  "all",
+  "overview",
+  "compare",
+  "comparison",
+  "option",
+  "options",
+  "explore",
+  "our",
+  "range",
+  "legal",
+  "navigation",
+  "home",
+  "landing",
+  "page",
+  "and",
+  "or",
+  "the",
+  "for",
+  "of",
+  "to",
+  "in",
+  "with",
+  "your",
 ]);
 
 function decodeXml(value: string): string {
@@ -148,9 +215,11 @@ function tokens(value: string): string[] {
 
 function meaningfulTokens(value: string, issuer: string): Set<string> {
   const issuerTokens = new Set(tokens(issuer));
-  return new Set(tokens(value).filter((token) =>
-    !nonProductPathTokens.has(token) && !issuerTokens.has(token)
-  ));
+  return new Set(
+    tokens(value).filter((token) =>
+      !nonProductPathTokens.has(token) && !issuerTokens.has(token)
+    ),
+  );
 }
 
 function urlPathTokens(url: string, issuer: string): Set<string> {
@@ -222,7 +291,9 @@ function sanitizeClassification(page: PageClassification): PageClassification {
   return {
     ...page,
     canonicalUrl: redactLongDigits(page.canonicalUrl),
-    proposedName: page.proposedName ? redactLongDigits(page.proposedName) : undefined,
+    proposedName: page.proposedName
+      ? redactLongDigits(page.proposedName)
+      : undefined,
     aliases: page.aliases.map(redactLongDigits),
     network: page.network ? redactLongDigits(page.network) : undefined,
     warnings: page.warnings.map(redactLongDigits),
@@ -281,13 +352,21 @@ async function findCrawlerCatalogCandidates(
     .ilike("bank", issuer)
     .eq("is_discontinued", false);
   if (catalogError) throw catalogError;
-  const catalog = ((catalogRows ?? []) as Array<Record<string, unknown>>).filter((row) =>
-    String(row.bank ?? "").trim().toLowerCase() === issuer.trim().toLowerCase()
+  const catalog = ((catalogRows ?? []) as Array<Record<string, unknown>>)
+    .filter((row) =>
+      String(row.bank ?? "").trim().toLowerCase() ===
+        issuer.trim().toLowerCase()
+    );
+  const byId = new Map(
+    catalog.map((row: Record<string, unknown>) => [String(row.id), row]),
   );
-  const byId = new Map(catalog.map((row: Record<string, unknown>) => [String(row.id), row]));
   const matches = new Map<string, Record<string, unknown>>();
   for (const row of catalog) {
-    if (normalizedNames.includes(normalizedProduct(String(row.card_name ?? ""), issuer))) {
+    if (
+      normalizedNames.includes(
+        normalizedProduct(String(row.card_name ?? ""), issuer),
+      )
+    ) {
       matches.set(String(row.id), row);
     }
   }
@@ -335,10 +414,16 @@ export async function persistCrawlerCandidate(
     throw new Error("invalid_crawler_candidate");
   }
   const aliases = uniqueStrings([...canonical.aliases, ...candidate.aliases]);
-  const normalizedNames = [...new Set([canonical.cardName, ...aliases]
-    .map((value) => normalizedProduct(value, issuer)))]
+  const normalizedNames = [
+    ...new Set([canonical.cardName, ...aliases]
+      .map((value) => normalizedProduct(value, issuer))),
+  ]
     .filter((value) => value.length >= 2);
-  const candidates = await findCrawlerCatalogCandidates(supabase, issuer, normalizedNames);
+  const candidates = await findCrawlerCatalogCandidates(
+    supabase,
+    issuer,
+    normalizedNames,
+  );
   if (candidates.length === 1) {
     return { outcome: "existing", catalogCardId: String(candidates[0].id) };
   }
@@ -347,7 +432,10 @@ export async function persistCrawlerCandidate(
     "crawler_discovered_without_statement_signal",
     ...(candidates.length > 1 ? ["ambiguous_catalog_identity"] : []),
   ]);
-  const safeEvidence = uniqueStrings(candidate.sanitizedEvidence, 300).slice(0, 3);
+  const safeEvidence = uniqueStrings(candidate.sanitizedEvidence, 300).slice(
+    0,
+    3,
+  );
   const dedupeKey = await sha256(`${issuer.trim().toLowerCase()}:${urlHash}`);
 
   const { data: existingJob, error: existingJobError } = await supabase
@@ -361,7 +449,9 @@ export async function persistCrawlerCandidate(
   if (existingJob && ["resolved", "rejected"].includes(existingJob.status)) {
     return {
       outcome: "duplicate",
-      ...(existingJob.review_item_id ? { reviewId: existingJob.review_item_id } : {}),
+      ...(existingJob.review_item_id
+        ? { reviewId: existingJob.review_item_id }
+        : {}),
     };
   }
 
@@ -407,13 +497,13 @@ export async function persistCrawlerCandidate(
     if (!error) {
       job = data;
     } else {
-    const { data: racedJob, error: racedJobError } = await supabase
-      .from("card_discovery_jobs")
-      .select("id, review_item_id")
-      .eq("discovery_source", "issuer_crawl")
-      .eq("dedupe_key", dedupeKey)
-      .is("user_id", null)
-      .maybeSingle();
+      const { data: racedJob, error: racedJobError } = await supabase
+        .from("card_discovery_jobs")
+        .select("id, review_item_id")
+        .eq("discovery_source", "issuer_crawl")
+        .eq("dedupe_key", dedupeKey)
+        .is("user_id", null)
+        .maybeSingle();
       if (racedJobError || !racedJob) throw error;
       job = racedJob;
       duplicate = true;
@@ -426,7 +516,10 @@ export async function persistCrawlerCandidate(
     .eq("discovery_job_id", job.id)
     .maybeSingle();
   if (existingReviewError) throw existingReviewError;
-  if (existingReview && ["approved", "merged", "rejected"].includes(existingReview.status)) {
+  if (
+    existingReview &&
+    ["approved", "merged", "rejected"].includes(existingReview.status)
+  ) {
     return { outcome: "duplicate", reviewId: existingReview.id };
   }
 
@@ -480,8 +573,11 @@ export async function persistCrawlerCandidate(
  * Classifies only URL and short, redacted heading/title evidence. The supplied
  * page body is deliberately not returned or stored in the classification.
  */
-export function classifyIssuerPage(input: ClassifyIssuerPageInput): PageClassification {
-  const canonicalUrl = input.canonicalUrl ?? canonicalForIssuer(input.issuer, input.url) ?? input.url;
+export function classifyIssuerPage(
+  input: ClassifyIssuerPageInput,
+): PageClassification {
+  const canonicalUrl = input.canonicalUrl ??
+    canonicalForIssuer(input.issuer, input.url) ?? input.url;
   const html = input.html ?? input.text ?? "";
   const evidence = pageEvidence(canonicalUrl, html);
   const sanitizedEvidence = evidenceFromHtml(html);
@@ -565,19 +661,26 @@ export function classifyIssuerPage(input: ClassifyIssuerPageInput): PageClassifi
 export async function discoverIssuerCardCandidates(
   input: DiscoverIssuerCardCandidatesInput,
 ): Promise<IssuerCrawlResult> {
-  const fetchResource = input.fetchOfficialIssuerResource ?? fetchOfficialIssuerResourceDefault;
-  const sitemapStarts = input.sitemapUrls ?? (input.sitemapUrl ? [input.sitemapUrl] : []);
+  const fetchResource = input.fetchOfficialIssuerResource ??
+    fetchOfficialIssuerResourceDefault;
+  const sitemapStarts = input.sitemapUrls ??
+    (input.sitemapUrl ? [input.sitemapUrl] : []);
   const sitemapQueue: Array<{ url: string; depth: number }> = [];
   const seenSitemaps = new Set<string>();
   const candidateUrls: string[] = [];
   const seenCandidates = new Set<string>();
-  const delay = input.delay ?? ((milliseconds: number) => new Promise<void>((resolve) => {
-    setTimeout(resolve, milliseconds);
-  }));
+  const delay = input.delay ??
+    ((milliseconds: number) =>
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, milliseconds);
+      }));
   let hasRequested = false;
   let anchorHost: string | null = null;
 
-  const request = async (url: string, contentPurpose: OfficialFetchInput["contentPurpose"]) => {
+  const request = async (
+    url: string,
+    contentPurpose: OfficialFetchInput["contentPurpose"],
+  ) => {
     if (hasRequested) await delay(input.delayMs ?? DEFAULT_CRAWL_DELAY_MS);
     hasRequested = true;
     return await fetchResource({ issuer: input.issuer, url, contentPurpose });
@@ -604,14 +707,18 @@ export async function discoverIssuerCardCandidates(
     } catch {
       continue;
     }
-    if (!anchorHost || !isAnchoredToHost(response.finalUrl, anchorHost) ||
-      !isAnchoredToHost(response.canonicalUrl, anchorHost)) {
+    if (
+      !anchorHost || !isAnchoredToHost(response.finalUrl, anchorHost) ||
+      !isAnchoredToHost(response.canonicalUrl, anchorHost)
+    ) {
       continue;
     }
     const document = parseSitemap(response.text);
     for (const rawLocation of document.locations) {
       const location = canonicalForIssuer(input.issuer, rawLocation);
-      if (!location || !anchorHost || !isAnchoredToHost(location, anchorHost)) continue;
+      if (!location || !anchorHost || !isAnchoredToHost(location, anchorHost)) {
+        continue;
+      }
 
       if (document.isIndex && isSitemapUrl(location)) {
         if (
@@ -625,9 +732,51 @@ export async function discoverIssuerCardCandidates(
         continue;
       }
 
-      if (candidateUrls.length >= MAX_SITEMAP_URLS || seenCandidates.has(location)) continue;
+      if (
+        candidateUrls.length >= MAX_SITEMAP_URLS || seenCandidates.has(location)
+      ) continue;
       seenCandidates.add(location);
       candidateUrls.push(location);
+    }
+  }
+
+  if (candidateUrls.length === 0) {
+    for (const rawIndexUrl of (input.indexUrls ?? []).slice(0, 8)) {
+      const indexUrl = canonicalForIssuer(input.issuer, rawIndexUrl);
+      const hostname = indexUrl ? hostnameOf(indexUrl) : null;
+      if (!indexUrl || !hostname) continue;
+      if (!anchorHost) anchorHost = hostname;
+      if (hostname !== anchorHost) continue;
+      let response: OfficialFetchResult;
+      try {
+        response = await request(indexUrl, "html");
+      } catch {
+        continue;
+      }
+      if (
+        !isAnchoredToHost(response.finalUrl, anchorHost) ||
+        !isAnchoredToHost(response.canonicalUrl, anchorHost)
+      ) continue;
+      for (const match of response.text.matchAll(htmlLinkPattern)) {
+        let linked: string;
+        try {
+          linked = new URL(
+            match[1] ?? match[2] ?? match[3] ?? "",
+            response.canonicalUrl,
+          ).toString();
+        } catch {
+          continue;
+        }
+        const location = canonicalForIssuer(input.issuer, linked);
+        if (
+          !location || !isAnchoredToHost(location, anchorHost) ||
+          seenCandidates.has(location) || candidateUrlScore(location) <= 0
+        ) continue;
+        seenCandidates.add(location);
+        candidateUrls.push(location);
+        if (candidateUrls.length >= MAX_SITEMAP_URLS) break;
+      }
+      if (candidateUrls.length > 0) break;
     }
   }
 
@@ -644,14 +793,21 @@ export async function discoverIssuerCardCandidates(
       quarantined.push(candidate.classification);
       return false;
     })
-    .sort((left, right) => right.positive - left.positive || left.index - right.index);
+    .sort((left, right) =>
+      right.positive - left.positive || left.index - right.index
+    );
   let fetchedCount = 0;
   for (const { url } of fetchableCandidates.slice(0, MAX_CANDIDATE_FETCHES)) {
     fetchedCount += 1;
     try {
-      const response = await request(url, /\.pdf(?:$|\?)/i.test(url) ? "document" : "html");
-      if (!anchorHost || !isAnchoredToHost(response.finalUrl, anchorHost) ||
-        !isAnchoredToHost(response.canonicalUrl, anchorHost)) {
+      const response = await request(
+        url,
+        /\.pdf(?:$|\?)/i.test(url) ? "document" : "html",
+      );
+      if (
+        !anchorHost || !isAnchoredToHost(response.finalUrl, anchorHost) ||
+        !isAnchoredToHost(response.canonicalUrl, anchorHost)
+      ) {
         quarantined.push(emptyClassification(url, "cross_host_response"));
         continue;
       }
@@ -661,7 +817,9 @@ export async function discoverIssuerCardCandidates(
         canonicalUrl: response.canonicalUrl,
         html: response.text,
       });
-      (page.kind === "card_product" || page.kind === "supporting_document" ? candidates : quarantined)
+      (page.kind === "card_product" || page.kind === "supporting_document"
+        ? candidates
+        : quarantined)
         .push(page);
     } catch {
       quarantined.push(emptyClassification(url, "candidate_fetch_failed"));

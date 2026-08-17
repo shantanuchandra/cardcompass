@@ -14,6 +14,7 @@ import {
 import {
   classifyIssuerPage,
   discoverIssuerCardCandidates,
+  issuerDiscoveryFallbackUrls,
   persistCrawlerCandidate,
 } from "../_shared/issuer_card_crawl.ts";
 import { fetchOfficialIssuerResource } from "../_shared/official_issuer_fetch.ts";
@@ -33,6 +34,7 @@ import {
   secureSecretEqual,
   selectPilotCandidates,
 } from "./batch_policy.ts";
+import { collectSupportingBenefitDocuments } from "./supporting_documents.ts";
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 
@@ -228,6 +230,17 @@ export async function seedScheduledQueueIfAllowed(
   pageSize = 200,
 ): Promise<number> {
   if (runMode !== "scheduled" || !scheduledClaimAllowed) return 0;
+  const { data: pilotRows, error: pilotError } = await db
+    .from("card_catalog_enrichment_jobs")
+    .select("card_id,parser_version")
+    .eq("run_mode", "pilot")
+    .eq("parser_version", "benefits-v1");
+  if (pilotError) throw pilotError;
+  const pilotIdentities = new Set(
+    (pilotRows ?? []).map((row: Record<string, unknown>) =>
+      `${String(row.card_id)}:${String(row.parser_version)}`
+    ),
+  );
   const boundedPageSize = Math.min(1000, Math.max(1, Math.trunc(pageSize)));
   let offset = 0;
   let seeded = 0;
@@ -248,6 +261,7 @@ export async function seedScheduledQueueIfAllowed(
         String(row.card_type ?? "").trim().toLowerCase() !== "credit" ||
         typeof row.bank !== "string" ||
         typeof row.card_url !== "string" ||
+        pilotIdentities.has(`${String(row.id)}:benefits-v1`) ||
         !allowedOfficialUrl(row.bank, row.card_url)
       ) continue;
       const canonicalUrl = canonicalOfficialUrl(row.bank, row.card_url);
@@ -276,31 +290,37 @@ export async function seedScheduledQueueIfAllowed(
   }
 }
 
-async function catalogIdentity(db: UntypedSupabaseClient, cardId: string) {
-  const [
-    { data: card, error: cardError },
-    { data: aliases, error: aliasError },
-  ] = await Promise.all([
-    db.from("card_catalog").select(
-      "id,card_name,bank,network,card_type,card_url,is_discontinued",
-    )
-      .eq("id", cardId).single(),
-    db.from("card_catalog_aliases").select("alias").eq("card_id", cardId),
-  ]);
+export async function loadCatalogIdentity(
+  db: UntypedSupabaseClient,
+  cardId: string,
+) {
+  const { data: card, error: cardError } = await db.from("card_catalog").select(
+    "id,card_name,bank,network,card_type,card_url,is_discontinued",
+  ).eq("id", cardId).single();
   if (cardError || !card) throw cardError ?? new Error("identity_mismatch");
+  const { data: catalogRows, error: catalogError } = await db
+    .from("card_catalog")
+    .select("id,card_name,bank")
+    .ilike("bank", String(card.bank))
+    .eq("is_discontinued", false);
+  if (catalogError) throw catalogError;
+  const catalog = (catalogRows ?? []).filter((row: Record<string, unknown>) =>
+    String(row.bank ?? "").trim().toLowerCase() ===
+      String(card.bank).trim().toLowerCase()
+  );
+  const cardIds = catalog.map((row: Record<string, unknown>) => String(row.id));
+  const { data: aliases, error: aliasError } = cardIds.length === 0
+    ? { data: [], error: null }
+    : await db.from("card_catalog_aliases").select("card_id,alias")
+      .in("card_id", cardIds);
   if (aliasError) throw aliasError;
-  return {
-    card,
-    aliases: (aliases ?? []).map((row: Record<string, any>) =>
-      String(row.alias)
-    ),
-  };
+  return { card, catalog, aliases: aliases ?? [] };
 }
 
 function requireMatchingIdentity(
   job: EnrichmentJob,
-  cardName: string,
-  aliases: string[],
+  catalog: Array<{ id: string; card_name: string }>,
+  aliases: Array<{ card_id: string; alias: string }>,
   html: string,
   canonicalUrl: string,
 ): void {
@@ -312,20 +332,41 @@ function requireMatchingIdentity(
   });
   if (classification.kind === "not_a_card") throw new Error("not_a_card");
   if (classification.kind === "ambiguous") throw new Error("ambiguous_product");
-  const proposed = normalizedProduct(
-    classification.proposedName ?? "",
+  requireExactCatalogIdentity(
+    job.card_id,
     job.issuer,
+    classification.proposedName ?? "",
+    catalog,
+    aliases,
   );
-  const expected = [cardName, ...aliases].map((value) =>
-    normalizedProduct(value, job.issuer)
-  )
-    .filter((value) => value.length >= 2);
-  if (
-    !proposed ||
-    !expected.some((value) =>
-      proposed === value || proposed.includes(value) || value.includes(proposed)
-    )
-  ) {
+}
+
+export function requireExactCatalogIdentity(
+  targetCardId: string,
+  issuer: string,
+  proposedName: string,
+  catalog: Array<{ id: string; card_name: string }>,
+  aliases: Array<{ card_id: string; alias: string }>,
+): void {
+  const proposed = normalizedProduct(proposedName, issuer);
+  if (proposed.length < 2) throw new Error("identity_mismatch");
+  const activeIds = new Set(catalog.map((row) => String(row.id)));
+  const matches = new Set<string>();
+  for (const row of catalog) {
+    if (normalizedProduct(row.card_name, issuer) === proposed) {
+      matches.add(String(row.id));
+    }
+  }
+  for (const alias of aliases) {
+    if (
+      activeIds.has(String(alias.card_id)) &&
+      normalizedProduct(alias.alias, issuer) === proposed
+    ) {
+      matches.add(String(alias.card_id));
+    }
+  }
+  if (matches.size > 1) throw new Error("ambiguous_product");
+  if (matches.size !== 1 || !matches.has(targetCardId)) {
     throw new Error("identity_mismatch");
   }
 }
@@ -351,7 +392,10 @@ async function processJob(
   };
 
   try {
-    const { card, aliases } = await catalogIdentity(db, job.card_id);
+    const { card, catalog, aliases } = await loadCatalogIdentity(
+      db,
+      job.card_id,
+    );
     const page = await fetchOfficialIssuerResource({
       issuer: job.issuer,
       url: job.canonical_url,
@@ -360,17 +404,21 @@ async function processJob(
     contentHash = page.contentHash;
     requireMatchingIdentity(
       job,
-      String(card.card_name),
+      catalog,
       aliases,
       page.text,
       page.canonicalUrl,
     );
-
-    const proposed = extractGroundedBenefits([{
-      sourceUrl: page.canonicalUrl,
-      text: page.text,
-      contentHash: page.contentHash,
-    }], job.parser_version);
+    const documents = await collectSupportingBenefitDocuments({
+      issuer: job.issuer,
+      primary: page,
+    });
+    contentHash = await sha256Text(
+      documents.map((document) =>
+        `${document.sourceUrl}:${document.contentHash ?? ""}`
+      ).join("\n"),
+    );
+    const proposed = extractGroundedBenefits(documents, job.parser_version);
     if (proposed.length === 0) throw new Error("insufficient_evidence");
     const current = await readCurrentBenefits(db, job.card_id);
     const compared = diffBenefits(current, proposed);
@@ -383,8 +431,12 @@ async function processJob(
     const safeExtraction = {
       request_type: "official_benefit_enrichment",
       parser_version: job.parser_version,
-      content_hash: page.contentHash,
+      content_hash: contentHash,
       retrieved_at: page.retrievedAt,
+      source_documents: documents.map((document) => ({
+        source_url: document.sourceUrl,
+        content_hash: document.contentHash ?? null,
+      })),
       proposals: proposed,
       diff: compared,
     };
@@ -402,7 +454,7 @@ async function processJob(
         _source_url: page.canonicalUrl,
         _source_url_hash: await sha256Text(page.canonicalUrl),
         _parser_version: job.parser_version,
-        _content_hash: page.contentHash,
+        _content_hash: contentHash,
         _extracted_data: safeExtraction,
         _calculated_confidence: calculatedConfidence,
         _validation_reasons: [{ code: "official_issuer_source" }],
@@ -418,10 +470,14 @@ async function processJob(
     }
     stagingId = String(staged.staging_id);
     outcome = "staged";
-    normalizedFields = { proposed_count: proposed.length };
+    normalizedFields = {
+      proposed_count: proposed.length,
+      source_document_count: documents.length,
+    };
     resultSummary = {
       run_id: runId,
       proposals: proposed.length,
+      source_documents: documents.length,
       additions: compared.additions.length,
       modifications: compared.modifications.length,
       possible_removals: compared.possibleRemovals.length,
@@ -479,10 +535,11 @@ async function runIssuerDiscovery(
   db: UntypedSupabaseClient,
   job: EnrichmentJob,
 ): Promise<void> {
-  const sitemapUrl = new URL("/sitemap.xml", job.canonical_url).toString();
+  const fallback = issuerDiscoveryFallbackUrls(job.canonical_url);
   const result = await discoverIssuerCardCandidates({
     issuer: job.issuer,
-    sitemapUrl,
+    sitemapUrls: fallback.sitemapUrls,
+    indexUrls: fallback.indexUrls,
   });
   for (const candidate of result.candidates) {
     if (candidate.kind === "card_product") {
