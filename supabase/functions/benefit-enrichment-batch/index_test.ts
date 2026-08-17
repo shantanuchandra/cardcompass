@@ -1,4 +1,4 @@
-import { initializePilotJobs } from "./index.ts";
+import { initializePilotJobs, seedScheduledQueueIfAllowed } from "./index.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -23,4 +23,229 @@ Deno.test("pilot API refuses catalog-v1 before selecting or writing jobs", async
     "reserved parser was not rejected at the pilot API boundary",
   );
   assert(rpcCalls === 0, "rejected parser reached the pilot RPC");
+});
+
+type CatalogFixture = {
+  id: string;
+  bank: string;
+  card_url: string | null;
+  card_type: string;
+  is_discontinued: boolean;
+};
+
+function scheduledSeederDb(
+  catalog: CatalogFixture[],
+  initialJobs: Record<string, unknown>[] = [],
+) {
+  const jobs = new Map(
+    initialJobs.map((job) => [String(job.job_key), { ...job }]),
+  );
+  let catalogReads = 0;
+  const catalogFilters = new Map<string, unknown>();
+  return {
+    jobs,
+    catalogFilters,
+    get catalogReads() {
+      return catalogReads;
+    },
+    from(table: string) {
+      if (table === "card_catalog") {
+        let from = 0;
+        let to = catalog.length - 1;
+        return {
+          select() {
+            return this;
+          },
+          eq(column: string, value: unknown) {
+            catalogFilters.set(`eq:${column}`, value);
+            return this;
+          },
+          ilike(column: string, value: string) {
+            catalogFilters.set(`ilike:${column}`, value);
+            return this;
+          },
+          like(column: string, value: string) {
+            catalogFilters.set(`like:${column}`, value);
+            return this;
+          },
+          order() {
+            return this;
+          },
+          async range(nextFrom: number, nextTo: number) {
+            catalogReads += 1;
+            from = nextFrom;
+            to = nextTo;
+            return {
+              data: catalog.slice(from, to + 1).map((row) => ({ ...row })),
+              error: null,
+            };
+          },
+        };
+      }
+      assert(
+        table === "card_catalog_enrichment_jobs",
+        "seeder wrote an unexpected table",
+      );
+      return {
+        async upsert(
+          input: Record<string, unknown> | Record<string, unknown>[],
+          options: { onConflict?: string; ignoreDuplicates?: boolean },
+        ) {
+          assert(options.onConflict === "job_key", "wrong queue identity");
+          assert(options.ignoreDuplicates === true, "conflicts can overwrite");
+          for (const row of Array.isArray(input) ? input : [input]) {
+            const key = String(row.job_key);
+            if (!jobs.has(key)) jobs.set(key, { ...row });
+          }
+          return { error: null };
+        },
+      };
+    },
+  };
+}
+
+const validCatalogCard: CatalogFixture = {
+  id: "card-valid",
+  bank: "Axis Bank",
+  card_url:
+    "https://www.axis.bank.in/cards/credit-card/privilege/?utm_source=seed#top",
+  card_type: " Credit ",
+  is_discontinued: false,
+};
+
+Deno.test("passed scheduled orchestration seeds an empty queue across bounded catalog pages", async () => {
+  const db = scheduledSeederDb([
+    validCatalogCard,
+    { ...validCatalogCard, id: "card-two" },
+    { ...validCatalogCard, id: "card-three" },
+  ]);
+
+  const seeded = await seedScheduledQueueIfAllowed(
+    db,
+    "scheduled",
+    true,
+    2,
+  );
+
+  assert(seeded === 3, "not all paged catalog cards were seeded");
+  assert(db.catalogReads === 2, "catalog inventory was not read in pages");
+  assert(
+    db.catalogFilters.get("eq:is_discontinued") === false &&
+      db.catalogFilters.get("ilike:card_type") === "credit" &&
+      db.catalogFilters.get("like:card_url") === "https://%",
+    "catalog query did not constrain active HTTPS credit-card inventory",
+  );
+  assert(db.jobs.size === 3, "empty scheduled lane was not populated");
+  const row = db.jobs.get(
+    "card-valid:a9681b52e7105d3d3540076b1705c9d446e1171de165973e833940f671eedadf:benefits-v1",
+  );
+  assert(
+    row?.canonical_url ===
+      "https://www.axis.bank.in/cards/credit-card/privilege",
+    "URL was not canonicalized",
+  );
+  assert(
+    row?.final_url_hash ===
+      "a9681b52e7105d3d3540076b1705c9d446e1171de165973e833940f671eedadf",
+    "URL hash changed",
+  );
+  assert(row?.parser_version === "benefits-v1", "wrong parser lane");
+  assert(row?.run_mode === "scheduled", "wrong run mode");
+  assert(row?.status === "queued", "new inventory was not queued");
+  assert(row?.content_hash === null, "unfetched content was fabricated");
+  assert(
+    JSON.stringify(row?.result_summary) === JSON.stringify({
+      queue_source: "catalog_seed",
+      unsafe_mutation_count: 0,
+      raw_body_stored: false,
+      evidence_passed: false,
+      idempotency_passed: false,
+    }),
+    "initial result summary was not safe",
+  );
+});
+
+Deno.test("scheduled seeding skips discontinued, non-credit, and unsafe catalog URLs", async () => {
+  const db = scheduledSeederDb([
+    validCatalogCard,
+    { ...validCatalogCard, id: "discontinued", is_discontinued: true },
+    { ...validCatalogCard, id: "debit", card_type: "debit" },
+    {
+      ...validCatalogCard,
+      id: "http",
+      card_url: "http://www.axis.bank.in/card",
+    },
+    {
+      ...validCatalogCard,
+      id: "off-domain",
+      card_url: "https://evil.example/card",
+    },
+    { ...validCatalogCard, id: "missing-url", card_url: null },
+  ]);
+
+  const seeded = await seedScheduledQueueIfAllowed(db, "scheduled", true);
+
+  assert(seeded === 1, "unsafe or inactive inventory was seeded");
+  assert(db.jobs.size === 1, "filtered inventory reached the queue");
+});
+
+Deno.test("scheduled seeding skips pilot conflicts and preserves processing and terminal jobs on repeats", async () => {
+  const urlHash =
+    "a9681b52e7105d3d3540076b1705c9d446e1171de165973e833940f671eedadf";
+  const catalog = [
+    validCatalogCard,
+    { ...validCatalogCard, id: "card-processing" },
+    { ...validCatalogCard, id: "card-terminal" },
+  ];
+  const initial = [
+    {
+      id: "pilot-job",
+      job_key: `card-valid:${urlHash}:benefits-v1`,
+      run_mode: "pilot",
+      status: "completed",
+      result_summary: { pilot: true },
+    },
+    {
+      id: "processing-job",
+      job_key: `card-processing:${urlHash}:benefits-v1`,
+      run_mode: "scheduled",
+      status: "processing",
+      lease_token: "lease-1",
+    },
+    {
+      id: "terminal-job",
+      job_key: `card-terminal:${urlHash}:benefits-v1`,
+      run_mode: "scheduled",
+      status: "review_required",
+      failure_category: "manual_review",
+    },
+  ];
+  const db = scheduledSeederDb(catalog, initial);
+
+  await seedScheduledQueueIfAllowed(db, "scheduled", true);
+  await seedScheduledQueueIfAllowed(db, "scheduled", true);
+
+  assert(db.jobs.size === 3, "repeat seeding duplicated queue identities");
+  for (const original of initial) {
+    assert(
+      JSON.stringify(db.jobs.get(String(original.job_key))) ===
+        JSON.stringify(original),
+      `${original.id} was rewound or changed lanes`,
+    );
+  }
+});
+
+Deno.test("scheduled inventory is not read until the pilot gate passes", async () => {
+  const db = scheduledSeederDb([validCatalogCard]);
+
+  assert(
+    await seedScheduledQueueIfAllowed(db, "scheduled", false) === 0,
+    "blocked scheduled call reported seeded jobs",
+  );
+  assert(
+    await seedScheduledQueueIfAllowed(db, "pilot", true) === 0,
+    "pilot call seeded the scheduled lane",
+  );
+  assert(db.catalogReads === 0, "catalog was read before the scheduled gate");
+  assert(db.jobs.size === 0, "queue was written before the scheduled gate");
 });

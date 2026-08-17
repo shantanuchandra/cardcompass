@@ -231,10 +231,11 @@ Deno.test("re-enqueueing a leased job preserves its processing state and lease",
       );
       return {
         async upsert(
-          row: Record<string, unknown>,
+          input: Record<string, unknown> | Record<string, unknown>[],
           options: { onConflict?: string; ignoreDuplicates?: boolean },
         ) {
           upserts += 1;
+          const [row] = Array.isArray(input) ? input : [input];
           const conflicts = row.job_key === stored.job_key;
           if (!conflicts || !options.ignoreDuplicates) {
             stored = { ...stored, ...row } as typeof stored;

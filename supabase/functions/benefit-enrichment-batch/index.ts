@@ -6,7 +6,11 @@ import {
   diffBenefits,
   extractGroundedBenefits,
 } from "../_shared/benefit_enrichment.ts";
-import { normalizedProduct } from "../_shared/card_discovery.ts";
+import {
+  allowedOfficialUrl,
+  canonicalOfficialUrl,
+  normalizedProduct,
+} from "../_shared/card_discovery.ts";
 import {
   classifyIssuerPage,
   discoverIssuerCardCandidates,
@@ -15,6 +19,8 @@ import {
 import { fetchOfficialIssuerResource } from "../_shared/official_issuer_fetch.ts";
 import {
   assertBenefitParserVersion,
+  type BenefitEnrichmentQueueInput,
+  enqueueBenefitEnrichmentJobs,
   evaluatePilotGate,
   failureDisposition,
   LEASE_SECONDS,
@@ -213,6 +219,61 @@ export async function initializePilotJobs(
   const jobs = (data ?? []) as EnrichmentJob[];
   if (jobs.length !== 5) throw new Error("pilot_initialization_failed");
   return jobs;
+}
+
+export async function seedScheduledQueueIfAllowed(
+  db: UntypedSupabaseClient,
+  runMode: RunMode,
+  scheduledClaimAllowed: boolean,
+  pageSize = 200,
+): Promise<number> {
+  if (runMode !== "scheduled" || !scheduledClaimAllowed) return 0;
+  const boundedPageSize = Math.min(1000, Math.max(1, Math.trunc(pageSize)));
+  let offset = 0;
+  let seeded = 0;
+  while (true) {
+    const { data, error } = await db.from("card_catalog")
+      .select("id,bank,card_url,card_type,is_discontinued")
+      .eq("is_discontinued", false)
+      .ilike("card_type", "credit")
+      .like("card_url", "https://%")
+      .order("id", { ascending: true })
+      .range(offset, offset + boundedPageSize - 1);
+    if (error) throw error;
+    const rows = (data ?? []) as Array<Record<string, unknown>>;
+    const queueInputs: BenefitEnrichmentQueueInput[] = [];
+    for (const row of rows) {
+      if (
+        row.is_discontinued !== false ||
+        String(row.card_type ?? "").trim().toLowerCase() !== "credit" ||
+        typeof row.bank !== "string" ||
+        typeof row.card_url !== "string" ||
+        !allowedOfficialUrl(row.bank, row.card_url)
+      ) continue;
+      const canonicalUrl = canonicalOfficialUrl(row.bank, row.card_url);
+      const finalUrlHash = await sha256Text(canonicalUrl);
+      queueInputs.push({
+        cardId: String(row.id),
+        issuer: row.bank,
+        canonicalUrl,
+        finalUrlHash,
+        contentHash: null,
+        parserVersion: "benefits-v1",
+        runMode: "scheduled",
+        resultSummary: {
+          queue_source: "catalog_seed",
+          unsafe_mutation_count: 0,
+          raw_body_stored: false,
+          evidence_passed: false,
+          idempotency_passed: false,
+        },
+      });
+    }
+    await enqueueBenefitEnrichmentJobs(db, queueInputs);
+    seeded += queueInputs.length;
+    if (rows.length < boundedPageSize) return seeded;
+    offset += boundedPageSize;
+  }
 }
 
 async function catalogIdentity(db: UntypedSupabaseClient, cardId: string) {
@@ -480,6 +541,12 @@ export async function handleBenefitEnrichmentBatch(
         pilotStatus: pilot.status,
       });
     }
+
+    await seedScheduledQueueIfAllowed(
+      db,
+      runMode,
+      pilot.scheduledClaimAllowed,
+    );
 
     const { count: queued, error: countError } = await db
       .from("card_catalog_enrichment_jobs")

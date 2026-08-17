@@ -65,14 +65,16 @@ export type BenefitEnrichmentQueueInput = {
   issuer: string;
   canonicalUrl: string;
   finalUrlHash: string;
-  contentHash: string;
+  contentHash: string | null;
   parserVersion: string;
+  runMode?: RunMode;
+  resultSummary?: Record<string, unknown>;
 };
 
 type EnrichmentQueueClient = {
   from(table: string): {
     upsert(
-      row: Record<string, unknown>,
+      row: Record<string, unknown> | Record<string, unknown>[],
       options: { onConflict: string; ignoreDuplicates: boolean },
     ): PromiseLike<{ error: unknown }>;
   };
@@ -96,22 +98,39 @@ export async function enqueueBenefitEnrichmentJob(
   db: EnrichmentQueueClient,
   input: BenefitEnrichmentQueueInput,
 ): Promise<void> {
-  assertBenefitParserVersion(input.parserVersion);
-  const { error } = await db.from("card_catalog_enrichment_jobs").upsert({
-    card_id: input.cardId,
-    issuer: input.issuer,
-    canonical_url: input.canonicalUrl,
-    final_url_hash: input.finalUrlHash,
-    content_hash: input.contentHash,
-    parser_version: input.parserVersion,
-    job_key: buildJobKey(
-      input.cardId,
-      input.finalUrlHash,
-      input.parserVersion,
-    ),
-    status: "queued",
-    updated_at: new Date().toISOString(),
-  }, { onConflict: "job_key", ignoreDuplicates: true });
+  await enqueueBenefitEnrichmentJobs(db, [input]);
+}
+
+export async function enqueueBenefitEnrichmentJobs(
+  db: EnrichmentQueueClient,
+  inputs: readonly BenefitEnrichmentQueueInput[],
+): Promise<void> {
+  if (inputs.length === 0) return;
+  const updatedAt = new Date().toISOString();
+  const rows = inputs.map((input) => {
+    assertBenefitParserVersion(input.parserVersion);
+    return {
+      card_id: input.cardId,
+      issuer: input.issuer,
+      canonical_url: input.canonicalUrl,
+      final_url_hash: input.finalUrlHash,
+      content_hash: input.contentHash,
+      parser_version: input.parserVersion,
+      job_key: buildJobKey(
+        input.cardId,
+        input.finalUrlHash,
+        input.parserVersion,
+      ),
+      status: "queued",
+      run_mode: input.runMode ?? "scheduled",
+      result_summary: input.resultSummary ?? {},
+      updated_at: updatedAt,
+    };
+  });
+  const { error } = await db.from("card_catalog_enrichment_jobs").upsert(
+    rows,
+    { onConflict: "job_key", ignoreDuplicates: true },
+  );
   if (error) throw error;
 }
 
