@@ -42,13 +42,22 @@ export async function handleAdminCatalogEntry(
   if (!authorization?.startsWith("Bearer ")) {
     return json({ error: "Authentication required" }, 401);
   }
-  const db = providedDb ?? createClient(
-    Deno.env.get("SUPABASE_URL") ?? "",
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-  );
-  const { data: { user }, error: authError } = await db.auth.getUser(
-    authorization.slice("Bearer ".length),
-  );
+  let db: UntypedSupabaseClient;
+  let user: Record<string, any> | null = null;
+  let authError: unknown = null;
+  try {
+    db = providedDb ?? createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+    );
+    const authResult = await db.auth.getUser(
+      authorization.slice("Bearer ".length),
+    );
+    user = authResult.data.user;
+    authError = authResult.error;
+  } catch (error) {
+    authError = error;
+  }
   if (authError || !user) {
     return json({ error: "Authentication required" }, 401);
   }
