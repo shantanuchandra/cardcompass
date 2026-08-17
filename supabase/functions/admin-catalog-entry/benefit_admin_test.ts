@@ -149,11 +149,20 @@ Deno.test("benefit list returns evidence and confidence without page bodies or s
     from(table: string) {
       if (table === "card_discovery_jobs") {
         return {
-          select() { return this; },
-          eq() { return this; },
-          in() { return this; },
+          select() {
+            return this;
+          },
+          eq() {
+            return this;
+          },
+          in() {
+            return this;
+          },
           then(resolve: (value: unknown) => unknown) {
-            return Promise.resolve({ data: [{ resolved_card_id: "card-1" }], error: null }).then(resolve);
+            return Promise.resolve({
+              data: [{ resolved_card_id: "card-1" }],
+              error: null,
+            }).then(resolve);
           },
         };
       }
@@ -198,7 +207,10 @@ Deno.test("benefit list returns evidence and confidence without page bodies or s
       "safe evidence was omitted",
     );
     assert(serialized.includes("0.94"), "confidence was omitted");
-    assert(body.items[0].crawler_discovered_without_statement_signal === true, "linked issuer crawl was omitted");
+    assert(
+      body.items[0].crawler_discovered_without_statement_signal === true,
+      "linked issuer crawl was omitted",
+    );
     assert(
       !serialized.includes("private issuer html"),
       "raw page body was exposed",
@@ -331,6 +343,8 @@ Deno.test("benefit quarantine state changes are explicit and a pilot uses the se
     attempt_count: 3,
     run_mode: "pilot",
     parser_version: "benefits-v1",
+    updated_at: "2026-08-17T12:00:00.000Z",
+    result_summary: { run_id: "run-1" },
   };
   let pilotCalls = 0;
   const db = withAuthenticatedUser({
@@ -915,6 +929,174 @@ Deno.test("benefit counts remain complete while list and history use explicit pa
     assert(
       countQueries > 0,
       "run counts did not use an independent aggregate query",
+    );
+  } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  }
+});
+
+function quarantineStateDb(
+  job: Record<string, unknown>,
+  raceAfterRead = false,
+) {
+  return withAuthenticatedUser({
+    from(table: string) {
+      assert(
+        table === "card_catalog_enrichment_jobs",
+        "quarantine used an unexpected table",
+      );
+      let patch: Record<string, unknown> | null = null;
+      const equals = new Map<string, unknown>();
+      const allowed = new Map<string, unknown[]>();
+      let excludesCatalog = false;
+      return {
+        select() {
+          return this;
+        },
+        update(next: Record<string, unknown>) {
+          patch = next;
+          return this;
+        },
+        eq(column: string, value: unknown) {
+          equals.set(column, value);
+          return this;
+        },
+        neq(column: string, value: unknown) {
+          if (column === "parser_version" && value === "catalog-v1") {
+            excludesCatalog = true;
+          }
+          return this;
+        },
+        in(column: string, values: unknown[]) {
+          allowed.set(column, values);
+          return this;
+        },
+        async single() {
+          const eligible =
+            (!excludesCatalog || job.parser_version !== "catalog-v1") &&
+            [...equals].every(([column, value]) => job[column] === value) &&
+            [...allowed].every(([column, values]) =>
+              values.includes(job[column])
+            );
+          if (!patch) {
+            const snapshot = eligible ? structuredClone(job) : null;
+            if (snapshot && raceAfterRead) {
+              job.updated_at = "2026-08-17T12:01:00.000Z";
+            }
+            return { data: snapshot, error: null };
+          }
+          if (eligible) Object.assign(job, patch);
+          return { data: eligible ? structuredClone(job) : null, error: null };
+        },
+      };
+    },
+  });
+}
+
+Deno.test("manual quarantine preserves safety history and records a justified terminal summary", async () => {
+  const handle = await handler();
+  const job: Record<string, unknown> = {
+    id: "pilot-job-1",
+    parser_version: "benefits-v1",
+    run_mode: "pilot",
+    status: "review_required",
+    updated_at: "2026-08-17T12:00:00.000Z",
+    result_summary: {
+      run_id: "run-1",
+      unsafe_mutation_count: 2,
+      raw_body_stored: true,
+      evidence_passed: false,
+      idempotency_passed: false,
+    },
+  };
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
+  try {
+    const response = await handle(
+      request({
+        action: "benefit-quarantine",
+        job_id: "pilot-job-1",
+        reason: "identity mismatch confirmed",
+      }),
+      quarantineStateDb(job),
+    );
+    const summary = job.result_summary as Record<string, unknown>;
+    assert(
+      response.status === 200,
+      "review-required pilot job was not quarantined",
+    );
+    assert(
+      job.status === "quarantined",
+      "quarantine did not reach a terminal state",
+    );
+    assert(summary.run_id === "run-1", "quarantine erased run history");
+    assert(
+      summary.unsafe_mutation_count === 2,
+      "quarantine falsified unsafe mutation history",
+    );
+    assert(
+      summary.raw_body_stored === true,
+      "quarantine falsified raw-body history",
+    );
+    assert(
+      summary.evidence_passed === false,
+      "quarantine falsified evidence history",
+    );
+    assert(
+      summary.quarantine_reason === "identity mismatch confirmed",
+      "quarantine reason was not recorded",
+    );
+    assert(
+      summary.idempotency_passed === true,
+      "justified quarantine was not marked idempotent",
+    );
+  } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  }
+});
+
+Deno.test("manual quarantine loses an optimistic race instead of overwriting newer job state", async () => {
+  const handle = await handler();
+  const job: Record<string, unknown> = {
+    id: "pilot-job-race",
+    parser_version: "benefits-v1",
+    run_mode: "pilot",
+    status: "review_required",
+    updated_at: "2026-08-17T12:00:00.000Z",
+    result_summary: {
+      run_id: "run-race",
+      unsafe_mutation_count: 0,
+      raw_body_stored: false,
+      evidence_passed: true,
+    },
+  };
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
+  try {
+    const response = await handle(
+      request({
+        action: "benefit-quarantine",
+        job_id: "pilot-job-race",
+        reason: "issuer page confirmed invalid",
+      }),
+      quarantineStateDb(job, true),
+    );
+    assert(
+      response.status === 409,
+      "stale quarantine overwrote newer job state",
+    );
+    assert(
+      job.status === "review_required",
+      "stale quarantine changed the job status",
+    );
+    assert(
+      (job.result_summary as Record<string, unknown>).quarantine_reason ===
+        undefined,
+      "stale quarantine changed the result summary",
     );
   } finally {
     if (originalAllowlist === undefined) {

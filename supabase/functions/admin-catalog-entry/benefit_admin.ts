@@ -374,7 +374,15 @@ async function benefitCounts(db: UntypedSupabaseClient) {
 async function readBenefitJobs(
   db: UntypedSupabaseClient,
   body: JsonRecord,
-): Promise<{ rows: JsonRecord[]; page: number; limit: number; hasMore: boolean; crawlerCardIds: Set<string> }> {
+): Promise<
+  {
+    rows: JsonRecord[];
+    page: number;
+    limit: number;
+    hasMore: boolean;
+    crawlerCardIds: Set<string>;
+  }
+> {
   const { page, limit, offset } = pageRequest(body);
   let query = benefitLane(
     db.from("card_catalog_enrichment_jobs").select(safeJobColumns),
@@ -502,11 +510,16 @@ async function resetJob(
   jobId: string,
   allowedStatuses: string[],
   patch: JsonRecord,
+  observedUpdatedAt?: string,
 ) {
-  const { data, error } = await benefitLane(
+  let query = benefitLane(
     db.from("card_catalog_enrichment_jobs").update(patch),
   )
-    .eq("id", jobId)
+    .eq("id", jobId);
+  if (observedUpdatedAt) {
+    query = query.eq("updated_at", observedUpdatedAt);
+  }
+  const { data, error } = await query
     .in("status", allowedStatuses)
     .select(
       "id, status, attempt_count, run_mode, parser_version, result_summary, failure_category, next_retry_at",
@@ -516,6 +529,38 @@ async function resetJob(
     throw new BenefitAdminError("invalid_benefit_job_state", 409);
   }
   return { success: true, job: presentBenefitJob(data) };
+}
+
+async function quarantineJob(
+  db: UntypedSupabaseClient,
+  jobId: string,
+  reason: string,
+) {
+  const allowedStatuses = ["queued", "failed", "review_required"];
+  const { data: current, error } = await benefitLane(
+    db.from("card_catalog_enrichment_jobs").select(
+      "id, status, run_mode, parser_version, result_summary, updated_at",
+    ),
+  )
+    .eq("id", jobId)
+    .in("status", allowedStatuses)
+    .single();
+  if (error || !current || typeof current.updated_at !== "string") {
+    throw new BenefitAdminError("invalid_benefit_job_state", 409);
+  }
+  return await resetJob(db, jobId, allowedStatuses, {
+    status: "quarantined",
+    failure_category: reason,
+    result_summary: {
+      ...(asRecord(current.result_summary) ?? {}),
+      quarantine_reason: reason,
+      idempotency_passed: true,
+    },
+    next_retry_at: null,
+    lease_expires_at: null,
+    lease_token: null,
+    updated_at: new Date().toISOString(),
+  }, current.updated_at);
 }
 
 function pilotCandidates(value: unknown) {
@@ -553,7 +598,12 @@ export async function handleBenefitAdminAction(
         benefitCounts(db),
       ]);
       return {
-        items: page.rows.map((row) => presentBenefitJob(row, page.crawlerCardIds.has(String(row.card_id ?? "")))),
+        items: page.rows.map((row) =>
+          presentBenefitJob(
+            row,
+            page.crawlerCardIds.has(String(row.card_id ?? "")),
+          )
+        ),
         counts,
         page: page.page,
         limit: page.limit,
@@ -566,7 +616,12 @@ export async function handleBenefitAdminAction(
         benefitCounts(db),
       ]);
       return {
-        items: page.rows.map((row) => presentBenefitJob(row, page.crawlerCardIds.has(String(row.card_id ?? "")))),
+        items: page.rows.map((row) =>
+          presentBenefitJob(
+            row,
+            page.crawlerCardIds.has(String(row.card_id ?? "")),
+          )
+        ),
         run_counts: counts,
         history: page.rows.map((row) => ({
           job_id: text(row.id, 100),
@@ -599,18 +654,11 @@ export async function handleBenefitAdminAction(
         updated_at: new Date().toISOString(),
       });
     case "benefit-quarantine":
-      return await resetJob(db, requiredId(body.job_id, "job_id"), [
-        "queued",
-        "failed",
-        "review_required",
-      ], {
-        status: "quarantined",
-        failure_category: requiredReason(body.reason),
-        next_retry_at: null,
-        lease_expires_at: null,
-        lease_token: null,
-        updated_at: new Date().toISOString(),
-      });
+      return await quarantineJob(
+        db,
+        requiredId(body.job_id, "job_id"),
+        requiredReason(body.reason),
+      );
     case "benefit-unquarantine":
       return await resetJob(db, requiredId(body.job_id, "job_id"), [
         "quarantined",
