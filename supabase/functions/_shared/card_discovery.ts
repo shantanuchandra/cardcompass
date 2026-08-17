@@ -193,6 +193,20 @@ function decodeHtmlText(value: string): string {
     .trim();
 }
 
+function stripTitleMarketing(value: string, issuer: string): string {
+  let label = value.trim().replace(/^apply\s+for\s+/i, "");
+  const pipeAt = label.lastIndexOf("|");
+  if (pipeAt >= 0) {
+    const suffix = label.slice(pipeAt + 1).trim();
+    if (suffix && normalizedProduct(suffix, issuer).length === 0) {
+      label = label.slice(0, pipeAt).trim();
+    }
+  }
+  return label
+    .replace(/\s+with\s+unlimited\s+benefits\s*$/i, "")
+    .trim();
+}
+
 export function officialCardIdentityFromHtml(
   html: string,
   issuer: string,
@@ -206,7 +220,10 @@ export function officialCardIdentityFromHtml(
   ];
   for (const pattern of patterns) {
     for (const match of html.matchAll(pattern)) {
-      const candidate = decodeHtmlText(match[1] ?? "");
+      const candidate = stripTitleMarketing(
+        decodeHtmlText(match[1] ?? ""),
+        issuer,
+      );
       if (/\bcard\b/i.test(candidate) && normalizedProduct(candidate, issuer).length >= 4) {
         candidates.push(candidate);
       }

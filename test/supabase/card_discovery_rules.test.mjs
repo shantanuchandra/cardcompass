@@ -52,9 +52,9 @@ test('extracts product identities from ordinary issuer page titles', () => {
     ),
     {
       issuer: 'Axis Bank',
-      cardName: 'Privilege With Unlimited Benefits',
+      cardName: 'Privilege',
       network: null,
-      aliases: ['Privilege Credit Card with Unlimited Benefits | Axis Bank'],
+      aliases: ['Privilege Credit Card'],
     },
   );
   assert.deepEqual(
@@ -66,7 +66,34 @@ test('extracts product identities from ordinary issuer page titles', () => {
       issuer: 'Kotak Bank',
       cardName: 'White Reserve',
       network: null,
-      aliases: ['White Reserve Credit Card | Kotak'],
+      aliases: ['White Reserve Credit Card'],
+    },
+  );
+});
+
+test('strips title marketing wrappers without removing real product variant tokens', () => {
+  assert.deepEqual(
+    officialCardIdentityFromHtml(
+      '<title>Apply for Flipkart Axis Bank Credit Card | Axis Bank</title>',
+      'Axis Bank',
+    ),
+    {
+      issuer: 'Axis Bank',
+      cardName: 'Flipkart',
+      network: null,
+      aliases: ['Flipkart Axis Bank Credit Card'],
+    },
+  );
+  assert.deepEqual(
+    officialCardIdentityFromHtml(
+      '<title>Privilege Select Credit Card | Axis Bank</title>',
+      'Axis Bank',
+    ),
+    {
+      issuer: 'Axis Bank',
+      cardName: 'Privilege Select',
+      network: null,
+      aliases: ['Privilege Select Credit Card'],
     },
   );
 });

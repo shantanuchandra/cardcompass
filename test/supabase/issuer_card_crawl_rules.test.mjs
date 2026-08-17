@@ -355,6 +355,24 @@ test('classifies pilot product pages that expose identity only in an ordinary ti
   }
 });
 
+test('does not match a title marketing suffix against an unrelated product URL token', () => {
+  const html = '<title>Privilege Credit Card with Unlimited Benefits | Axis Bank</title>';
+  const marketingPath = classifyIssuerPage({
+    issuer,
+    url: 'https://www.axis.bank.in/cards/credit-card/unlimited-benefits',
+    html,
+  });
+  const productPath = classifyIssuerPage({
+    issuer,
+    url: 'https://www.axis.bank.in/cards/credit-card/privilege-credit-card',
+    html,
+  });
+
+  assert.equal(marketingPath.kind, 'ambiguous');
+  assert.equal(productPath.kind, 'card_product');
+  assert.equal(productPath.proposedName, 'Privilege');
+});
+
 test('passes a nonzero production default delay to an injected delay function', async () => {
   const delays = [];
   await discoverIssuerCardCandidates({
