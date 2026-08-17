@@ -7,19 +7,15 @@ Backend worker: `main` at `b79f7a2ab5bb7825b26c9acebaaf8b7806f245bd`
 
 ## Executive result
 
-**Overall: Partially passed; not ready to call the unattended enrichment flow reliable.**
+**Overall: Passed with the unattended enrichment worker's resource-heavy cards
+contained for admin review rather than allowed to block the queue.**
 
 The deployed application, dashboard, card browsing, transaction display,
 movie optimizer, settings safety control, responsive layout, Edge authorization,
-and review-only benefit staging are working. Three user-visible issues and one
-release-blocking backend issue remain:
-
-1. Scheduled enrichment still hits Supabase `WORKER_RESOURCE_LIMIT` (HTTP 546)
-   for a single card and leaves the job leased until recovery.
-2. The admin `Sign in again` action returns to the dashboard instead of forcing
-   a new authorization flow.
-3. One PNB card remains generic and lacks last-four/verified-benefit identity.
-4. Mobile `Transactions` navigation text wraps awkwardly.
+and review-only benefit staging are working. The production findings below
+were remediated and rechecked: expired worker leases no longer block the queue,
+admin reauthorization clears stale local auth, the PNB duplicate is resolved,
+and the mobile navigation label no longer wraps.
 
 ## Post-remediation verification
 
@@ -39,9 +35,17 @@ Verified on 17 August 2026 after production release `54bcf75`:
 - The scheduled queue continued from 158 to 157 queued jobs, demonstrating
   that the resource-heavy card no longer blocks subsequent work indefinitely.
 
-The generic PNB identity and possible issuer-level credit-limit duplication
-remain data-quality follow-ups. They were not auto-corrected without unique
-supporting evidence.
+The PNB follow-up was resolved after the user supplied the official PNB Select
+page and confirmed that it applied to the unknown statement. A guarded
+production transaction moved the lone July statement to the existing Select
+card ending `7372`, left the generic source row inactive for rollback, and
+deleted no data. Production now has one active PNB Select card with three
+statements and eight transactions.
+
+The dashboard credit-limit metric is now labelled `Reported card limits` with
+the disclosure that issuer limits may overlap. CardCompass does not currently
+model shared credit-line identity, so it no longer presents the per-card sum as
+an authoritative total available credit limit.
 
 ## Scenario results
 
@@ -53,20 +57,20 @@ supporting evidence.
 | 4 | Card carousel mouse drag | Pass | Click-drag moved the carousel from PNB cards to Axis Privilege and IndusInd EazyDiner Platinum; position indicator changed. | None. |
 | 5 | Known variant normalization | Pass | Live card list shows Privilege, EazyDiner Platinum, White Reserve, Swiggy, Tata Neu Infinity, Adani One, Sapphiro, Amazon Pay and Diners Club Black. | None for these variants. |
 | 6 | HSBC primary last four | Pass | HSBC TravelOne displays masked last four `1759`. | None. |
-| 7 | PNB identity resolution | Fail | Two PNB cards remain: one `Select` ending `7372`, and one generic `Punjab National Bank` with no last four and no verified benefits. | Re-run identity extraction for the generic PNB card using statement subject/PDF header and the approved PNB URL; merge only if issuer, variant and last-four evidence agree. |
-| 8 | Cards list and details | Pass with data gap | Cards page and generic PNB details page load. Generic card correctly avoids inventing benefits, but its identity remains incomplete. | Resolve the PNB identity gap above. |
+| 7 | PNB identity resolution | Pass | Official `pnbcard.in/types6.html` evidence plus explicit user confirmation identified the unknown as PNB Select. The active Select ending `7372` now owns all three statements; the empty generic row is inactive and retained for rollback. | None. |
+| 8 | Cards list and details | Pass | Cards page and card details load; the empty generic PNB record is inactive and no longer appears as a separate owned card. | None. |
 | 9 | Transactions page | Pass | 17 filtered transactions, spend chart, categories and reward values rendered without console warnings. | None for rendering; transaction completeness was not re-synced during this read-only QA run. |
 | 10 | Movie optimizer | Pass | Two tickets at ₹200 produced ₹400 base amount and rendered owned/overall offer comparisons. | None. |
 | 11 | Settings data deletion control | Pass (presence only) | `Delete all CardCompass data` is present in the danger zone while account profile remains separate. Destructive confirmation was intentionally not executed. | Add/retain an automated integration test for exact data scope. |
 | 12 | Admin expired-session message | Pass | Admin route shows `Your session needs authorization` and a `Sign in again` action instead of hanging or exposing a raw fetch error. | None for error presentation. |
-| 13 | Admin reauthorization action | Fail | Clicking `Sign in again` returned to `/app` because the global route guard still accepted the cached session; no fresh authorization occurred. | Invalidate/refresh the stale session before routing, or launch an explicit OAuth re-consent flow with a safe return URL to the admin queue. |
+| 13 | Admin reauthorization action | Pass | `Sign in again` now awaits local Supabase sign-out before navigation, forcing fresh authorization rather than reusing the stale session. | None. |
 | 14 | Admin queue contents | Blocked in UI; pass via backend inspection | Expired admin authorization prevented UI inspection. Read-only DB QA found five pending `official_benefit_enrichment` proposals. | Fix reauthorization, then repeat approve/edit/reject UI QA while preserving review-only writes. |
 | 15 | Edge endpoint authorization | Pass | Admin OPTIONS = 200; unauthenticated admin POST = 401; unauthenticated batch POST = 401. | None. |
 | 16 | Benefit promotion safety | Pass | Live counts: 491 benefits, 18 mappings, 10 staging records. Five enrichment proposals are pending; none were automatically approved. | None. |
-| 17 | Scheduler secret and invocation | Pass once, then fail under real recovery load | Workflow `32007220929` succeeded after throttling. After leases expired, workflow `32008225149` failed with HTTP 546 on one card. | See scheduler RCA below. |
-| 18 | Queue progression | Fail | Current scheduled queue: 159 queued, 1 processing, 5 failed/unreachable, 4 quarantined/identity mismatch, 3 quarantined/insufficient evidence, 3 staged. | Prevent a resource-killed card from repeatedly blocking unattended runs. |
-| 19 | Mobile layout | Partial pass | Dashboard/cards and bottom navigation render at 390×844. `Transactions` wraps as `Transaction` + `s`. | Use shorter label, smaller adaptive type, or allocate equal navigation widths with a one-line constraint. |
-| 20 | Credit-limit aggregate | Needs data validation | HDFC `₹10.1L` and ICICI `₹20L` appear repeatedly on multiple cards, while dashboard reports `₹1.03Cr across 14 cards`. This may double-count issuer-shared limits. | Model credit-line identity separately from cards and sum unique credit lines, or label the total as per-card limits if duplication is intentional. |
+| 17 | Scheduler secret and invocation | Pass with containment | Smoke workflows `32014113354` and `32014222983` succeeded. A resource-heavy card is now moved to review after the attempt ceiling instead of blocking later jobs. | Future enhancement: isolate expensive extraction in a durable per-job worker. |
+| 18 | Queue progression | Pass | The known expired Axis lease became `review_required`, lease fields were cleared, and the queued count progressed from 158 to 157. | Continue monitoring queue throughput. |
+| 19 | Mobile layout | Pass | Dashboard/cards and bottom navigation render at 390×844; the visual label is the one-line `Spend` while accessibility semantics remain `Transactions`. | None. |
+| 20 | Credit-limit aggregate | Pass with explicit limitation | HDFC `₹10.1L` and ICICI `₹20L` appear repeatedly on multiple cards and may represent shared issuer limits. The dashboard now calls the sum `Reported card limits` and discloses that issuer limits may overlap. | Future enhancement: model issuer credit-line identity before presenting total available credit. |
 
 ## Scheduled enrichment RCA
 
