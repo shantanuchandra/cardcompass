@@ -125,6 +125,7 @@ export async function collectSupportingBenefitDocuments(
         issuer: input.issuer,
         url: current.url,
         contentPurpose: "document",
+        maxBytes: 1024 * 1024,
       });
     } catch {
       continue;
