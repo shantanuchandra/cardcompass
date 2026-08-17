@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import {readFile} from 'node:fs/promises';
 
 import {
   allowedOfficialUrl,
@@ -15,6 +16,15 @@ import {
   sanitizeEvidence,
   selectSubmittedUrlIdentity,
 } from '../../supabase/functions/_shared/card_discovery.ts';
+
+const cardDiscoveryEntrypoint = new URL(
+  '../../supabase/functions/card-discovery/index.ts',
+  import.meta.url,
+);
+const enrichmentBatchEntrypoint = new URL(
+  '../../supabase/functions/benefit-enrichment-batch/index.ts',
+  import.meta.url,
+);
 
 test('extracts a product identity from legacy issuer page headings', () => {
   const html = `
@@ -32,6 +42,113 @@ test('extracts a product identity from legacy issuer page headings', () => {
       aliases: ['PNB Rupay Select Card'],
     },
   );
+});
+
+test('extracts product identities from ordinary issuer page titles', () => {
+  assert.deepEqual(
+    officialCardIdentityFromHtml(
+      '<title>Privilege Credit Card with Unlimited Benefits | Axis Bank</title>',
+      'Axis Bank',
+    ),
+    {
+      issuer: 'Axis Bank',
+      cardName: 'Privilege',
+      network: null,
+      aliases: ['Privilege Credit Card'],
+    },
+  );
+  assert.deepEqual(
+    officialCardIdentityFromHtml(
+      '<title>White Reserve Credit Card | Kotak</title>',
+      'Kotak Bank',
+    ),
+    {
+      issuer: 'Kotak Bank',
+      cardName: 'White Reserve',
+      network: null,
+      aliases: ['White Reserve Credit Card'],
+    },
+  );
+});
+
+test('strips title marketing wrappers without removing real product variant tokens', () => {
+  assert.deepEqual(
+    officialCardIdentityFromHtml(
+      '<title>Apply for Flipkart Axis Bank Credit Card | Axis Bank</title>',
+      'Axis Bank',
+    ),
+    {
+      issuer: 'Axis Bank',
+      cardName: 'Flipkart',
+      network: null,
+      aliases: ['Flipkart Axis Bank Credit Card'],
+    },
+  );
+  assert.deepEqual(
+    officialCardIdentityFromHtml(
+      '<title>Privilege Select Credit Card | Axis Bank</title>',
+      'Axis Bank',
+    ),
+    {
+      issuer: 'Axis Bank',
+      cardName: 'Privilege Select',
+      network: null,
+      aliases: ['Privilege Select Credit Card'],
+    },
+  );
+});
+
+test('prefers authoritative document metadata over an earlier navigation title tile', () => {
+  const html = `
+    <div class="title">E-Debit Card</div>
+    <title>Apply for PRIVILEGE Credit Card with unlimited benefits | Axis Bank</title>
+    <h1>PRIVILEGE Credit Card</h1>
+  `;
+
+  assert.deepEqual(officialCardIdentityFromHtml(html, 'Axis Bank'), {
+    issuer: 'Axis Bank',
+    cardName: 'Privilege',
+    network: null,
+    aliases: ['PRIVILEGE Credit Card'],
+  });
+});
+
+test('skips issuer service-portal metadata and falls back to a concrete product heading', () => {
+  const html = `
+    <title>Axis Bank Credit Card Services Portal</title>
+    <h1>Axis Privilege Credit Card</h1>
+  `;
+
+  assert.deepEqual(officialCardIdentityFromHtml(html, 'Axis Bank'), {
+    issuer: 'Axis Bank',
+    cardName: 'Privilege',
+    network: null,
+    aliases: ['Axis Privilege Credit Card'],
+  });
+});
+
+test('card discovery emits parser-aware enrichment queue identity', async () => {
+  const source = await readFile(cardDiscoveryEntrypoint, 'utf8');
+  assert.match(source, /enqueueBenefitEnrichmentJob\(db,/);
+  assert.match(source, /parserVersion:\s*["']benefits-v1["']/);
+  assert.doesNotMatch(source, /onConflict:\s*["']card_id,final_url_hash,content_hash["']/);
+  assert.doesNotMatch(source, /functions\/v1\/catalog-enrichment/);
+});
+
+test('benefit enrichment keeps initialization and issuer discovery off unsafe paths', async () => {
+  const source = await readFile(enrichmentBatchEntrypoint, 'utf8');
+
+  assert.match(source, /body\.action\s*===\s*["']initialize_pilot["']/);
+  assert.match(source, /initialize_card_benefit_enrichment_pilot/);
+  assert.match(source, /stage_card_benefit_enrichment/);
+  assert.match(source, /finalize_card_catalog_enrichment_job/);
+  assert.match(source, /collectSupportingBenefitDocuments\(/);
+  assert.match(source, /source_documents/);
+  assert.match(source, /issuerDiscoveryFallbackUrls\(/);
+  assert.match(source, /EdgeRuntime\.waitUntil\(\s*runIssuerDiscovery/s);
+  assert.match(source, /issuer_discovery_background_failed/);
+  assert.doesNotMatch(source, /await\s+runIssuerDiscovery/);
+  assert.doesNotMatch(source, /\.from\(["']card_benefits_staging["']\)\s*\.select[\s\S]*?\.limit\(20\)/);
 });
 
 test('uses official page identity when statement signals are issuer-only', () => {

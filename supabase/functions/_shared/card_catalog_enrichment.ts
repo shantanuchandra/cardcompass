@@ -19,13 +19,22 @@ export type CatalogPatch = Partial<{
   apr: FieldEvidence<number>;
 }>;
 
-export type BenefitCandidate = {
-  title: string;
-  description: string;
-  category: string;
+import {
+  extractGroundedBenefits,
+  type BenefitProposal,
+} from "./benefit_enrichment.ts";
+
+/**
+ * Legacy catalog-enrichment shape plus the reviewable, grounded proposal fields.
+ * The legacy scalar confidence/evidence fields remain while field-level evidence
+ * is available to the benefit staging flow.
+ */
+export type BenefitCandidate = Omit<BenefitProposal, "confidence" | "evidence"> & {
   confidence: number;
   evidence: string;
   source_url: string;
+  fieldConfidence: Record<string, number>;
+  fieldEvidence: Record<string, string>;
 };
 
 export type FieldConflict = {
@@ -81,15 +90,6 @@ function feeField(text: string, label: RegExp): FieldEvidence<number> | undefine
     : { value, confidence: 0.96, evidence: excerpt(line) };
 }
 
-function benefitCategory(value: string): string {
-  if (/dining|restaurant|food/i.test(value)) return "dining";
-  if (/lounge|airport/i.test(value)) return "travel";
-  if (/fuel/i.test(value)) return "fuel";
-  if (/movie|cinema/i.test(value)) return "entertainment";
-  if (/cashback/i.test(value)) return "cashback";
-  return "rewards";
-}
-
 export function normalizeOfficialCatalogPage(
   html: string,
   sourceUrl: string,
@@ -130,28 +130,18 @@ export function normalizeOfficialCatalogPage(
     };
   }
 
-  const seen = new Set<string>();
-  const benefits: BenefitCandidate[] = [];
-  for (const line of text.split("\n")) {
-    const value = excerpt(line);
-    if (value.length < 20 || !/(?:cashback|reward|lounge|fuel|dining|movie|complimentary|waiver)/i.test(value)) {
-      continue;
-    }
-    if (!/(?:\d+(?:\.\d+)?%|₹\s*[\d,]+|\d+\s+(?:\w+\s+){0,2}(?:visit|point|mile)|fee waiver)/i.test(value)) {
-      continue;
-    }
-    const key = value.toLowerCase().replace(/[^a-z0-9]+/g, "");
-    if (seen.has(key)) continue;
-    seen.add(key);
-    benefits.push({
-      title: value.length > 90 ? `${value.slice(0, 87)}...` : value,
-      description: value,
-      category: benefitCategory(value),
-      confidence: 0.92,
-      evidence: value,
-      source_url: sourceUrl,
-    });
-  }
+  const benefits = extractGroundedBenefits([
+    { sourceUrl, text },
+  ], "official-catalog-v2")
+    .map((benefit): BenefitCandidate => ({
+      ...benefit,
+      confidence: Math.min(...Object.values(benefit.confidence)),
+      evidence: benefit.sourceExcerpt,
+      source_url: benefit.sourceUrl,
+      fieldConfidence: benefit.confidence,
+      fieldEvidence: benefit.evidence,
+    }))
+    .sort((left, right) => text.indexOf(left.sourceExcerpt) - text.indexOf(right.sourceExcerpt));
 
   return {
     patch,

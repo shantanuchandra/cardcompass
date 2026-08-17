@@ -1,54 +1,15 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
-  allowedOfficialUrl,
-  canonicalOfficialUrl,
-} from "../_shared/card_discovery.ts";
-import {
   diffCatalogFields,
   normalizeOfficialCatalogPage,
 } from "../_shared/card_catalog_enrichment.ts";
+import { fetchOfficialIssuerResource } from "../_shared/official_issuer_fetch.ts";
 
 type UntypedSupabaseClient = any;
 
 function json(body: unknown, status = 200): Response {
   return Response.json(body, { status });
-}
-
-async function fetchOfficialHtml(issuer: string, initialUrl: string) {
-  let url = canonicalOfficialUrl(issuer, initialUrl);
-  for (let redirects = 0; redirects <= 4; redirects++) {
-    if (!allowedOfficialUrl(issuer, url)) throw new Error("unsafe_redirect");
-    const response = await fetch(url, {
-      redirect: "manual",
-      headers: {
-        "User-Agent": "CardCompassCatalogBot/1.0 (+catalog verification)",
-        Accept: "text/html,application/xhtml+xml",
-      },
-      signal: AbortSignal.timeout(12_000),
-    });
-    if (response.status >= 300 && response.status < 400) {
-      const location = response.headers.get("location");
-      if (!location) throw new Error("unsafe_redirect");
-      try {
-        url = canonicalOfficialUrl(issuer, new URL(location, url).toString());
-      } catch {
-        throw new Error("unsafe_redirect");
-      }
-      continue;
-    }
-    if (!response.ok) throw new Error(`official_fetch_${response.status}`);
-    const contentType = response.headers.get("content-type")?.split(";")[0] ?? "";
-    if (!["text/html", "application/xhtml+xml"].includes(contentType)) {
-      throw new Error("unsupported_content");
-    }
-    const declared = Number(response.headers.get("content-length") ?? 0);
-    if (declared > 2_000_000) throw new Error("response_too_large");
-    const html = await response.text();
-    if (html.length > 2_000_000) throw new Error("response_too_large");
-    return { html, finalUrl: url };
-  }
-  throw new Error("unsafe_redirect");
 }
 
 async function queueConflictReview(
@@ -79,10 +40,35 @@ async function queueConflictReview(
   }).eq("id", job.discovery_job_id);
 }
 
-async function processJob(db: UntypedSupabaseClient, jobId: string) {
+async function finalizeOwnedCatalogJob(
+  db: UntypedSupabaseClient,
+  jobId: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  const { data, error } = await db.from("card_catalog_enrichment_jobs")
+    .update(patch)
+    .eq("id", jobId)
+    .eq("status", "processing")
+    .eq("run_mode", "manual")
+    .eq("parser_version", "catalog-v1")
+    .select("id")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("job_not_owned");
+}
+
+export async function processCatalogEnrichmentJob(
+  db: UntypedSupabaseClient,
+  jobId: string,
+) {
   const { data: current, error: readError } = await db
     .from("card_catalog_enrichment_jobs").select("*").eq("id", jobId).single();
   if (readError || !current) throw readError ?? new Error("job_not_found");
+  if (
+    current.run_mode !== "manual" || current.parser_version !== "catalog-v1"
+  ) {
+    throw new Error("job_not_owned");
+  }
   if (current.status === "completed" || current.status === "review_required") {
     return current.status;
   }
@@ -95,6 +81,8 @@ async function processJob(db: UntypedSupabaseClient, jobId: string) {
       updated_at: new Date().toISOString(),
     })
     .eq("id", jobId)
+    .eq("run_mode", "manual")
+    .eq("parser_version", "catalog-v1")
     .in("status", ["queued", "failed"])
     .select("*")
     .maybeSingle();
@@ -102,8 +90,12 @@ async function processJob(db: UntypedSupabaseClient, jobId: string) {
   if (!claimed) return "already_processing";
 
   try {
-    const page = await fetchOfficialHtml(claimed.issuer, claimed.canonical_url);
-    const normalized = normalizeOfficialCatalogPage(page.html, page.finalUrl);
+    const page = await fetchOfficialIssuerResource({
+      issuer: claimed.issuer,
+      url: claimed.canonical_url,
+      contentPurpose: "html",
+    });
+    const normalized = normalizeOfficialCatalogPage(page.text, page.finalUrl);
     const { data: catalog, error: catalogError } = await db.from("card_catalog")
       .select("id, network, card_type, joining_fee, annual_fee, apr")
       .eq("id", claimed.card_id).single();
@@ -142,8 +134,10 @@ async function processJob(db: UntypedSupabaseClient, jobId: string) {
     if (compared.conflicts.length > 0) {
       await queueConflictReview(db, claimed, compared.conflicts);
     }
-    const status = compared.conflicts.length > 0 ? "review_required" : "completed";
-    const { error } = await db.from("card_catalog_enrichment_jobs").update({
+    const status = compared.conflicts.length > 0
+      ? "review_required"
+      : "completed";
+    await finalizeOwnedCatalogJob(db, claimed.id, {
       status,
       normalized_fields: normalized.patch,
       validation_warnings: compared.conflicts.map((item) => ({
@@ -153,40 +147,51 @@ async function processJob(db: UntypedSupabaseClient, jobId: string) {
       failure_category: null,
       next_retry_at: null,
       updated_at: new Date().toISOString(),
-    }).eq("id", claimed.id);
-    if (error) throw error;
+    });
     return status;
   } catch (error) {
     const attempts = Number(claimed.attempt_count ?? 0);
     const terminal = attempts >= 3;
-    const message = error instanceof Error ? error.message.slice(0, 120) : "enrichment_failed";
-    await db.from("card_catalog_enrichment_jobs").update({
+    const message = error instanceof Error
+      ? error.message.slice(0, 120)
+      : "enrichment_failed";
+    await finalizeOwnedCatalogJob(db, claimed.id, {
       status: terminal ? "review_required" : "failed",
       failure_category: message,
       next_retry_at: terminal
         ? null
-        : new Date(Date.now() + Math.min(60, 2 ** attempts) * 60_000).toISOString(),
+        : new Date(Date.now() + Math.min(60, 2 ** attempts) * 60_000)
+          .toISOString(),
       updated_at: new Date().toISOString(),
-    }).eq("id", claimed.id);
+    });
     throw error;
   }
 }
 
-serve(async (request) => {
-  if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-  if (!serviceKey || request.headers.get("Authorization") !== `Bearer ${serviceKey}`) {
-    return json({ error: "authentication_required" }, 401);
-  }
-  try {
-    const body = await request.json();
-    if (typeof body.job_id !== "string") return json({ error: "invalid_job" }, 400);
-    const db = createClient(Deno.env.get("SUPABASE_URL") ?? "", serviceKey);
-    const status = await processJob(db, body.job_id);
-    return json({ status });
-  } catch (error) {
-    return json({
-      error: error instanceof Error ? error.message : "enrichment_failed",
-    }, 500);
-  }
-});
+if (import.meta.main) {
+  serve(async (request) => {
+    if (request.method !== "POST") {
+      return json({ error: "method_not_allowed" }, 405);
+    }
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    if (
+      !serviceKey ||
+      request.headers.get("Authorization") !== `Bearer ${serviceKey}`
+    ) {
+      return json({ error: "authentication_required" }, 401);
+    }
+    try {
+      const body = await request.json();
+      if (typeof body.job_id !== "string") {
+        return json({ error: "invalid_job" }, 400);
+      }
+      const db = createClient(Deno.env.get("SUPABASE_URL") ?? "", serviceKey);
+      const status = await processCatalogEnrichmentJob(db, body.job_id);
+      return json({ status });
+    } catch (error) {
+      return json({
+        error: error instanceof Error ? error.message : "enrichment_failed",
+      }, 500);
+    }
+  });
+}
