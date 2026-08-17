@@ -412,6 +412,9 @@ async function processJob(
     const documents = await collectSupportingBenefitDocuments({
       issuer: job.issuer,
       primary: page,
+      // Keep each five-card batch comfortably inside Edge compute limits.
+      // The crawler still supports the audited hard ceiling of eight.
+      maximumLinks: 2,
       identityLabels: [
         String(card.card_name ?? ""),
         ...aliases.filter((alias: Record<string, unknown>) =>
@@ -539,7 +542,7 @@ async function processJob(
 
 async function runIssuerDiscovery(
   db: UntypedSupabaseClient,
-  job: EnrichmentJob,
+  job: Pick<EnrichmentJob, "issuer" | "canonical_url">,
 ): Promise<void> {
   const fallback = issuerDiscoveryFallbackUrls(job.canonical_url);
   const result = await discoverIssuerCardCandidates({
@@ -552,6 +555,29 @@ async function runIssuerDiscovery(
       await persistCrawlerCandidate(db, job.issuer, candidate);
     }
   }
+}
+
+async function loadDiscoverySeed(
+  db: UntypedSupabaseClient,
+): Promise<Pick<EnrichmentJob, "issuer" | "canonical_url"> | null> {
+  const { data, error } = await db.from("card_catalog")
+    .select("bank,card_url,card_type")
+    .eq("is_discontinued", false)
+    .not("card_url", "is", null)
+    .order("bank", { ascending: true })
+    .limit(100);
+  if (error) throw error;
+  for (const row of data ?? []) {
+    const issuer = String(row.bank ?? "");
+    const url = String(row.card_url ?? "");
+    if (
+      String(row.card_type ?? "").trim().toLowerCase() === "credit" &&
+      allowedOfficialUrl(issuer, url)
+    ) {
+      return { issuer, canonical_url: canonicalOfficialUrl(issuer, url) };
+    }
+  }
+  return null;
 }
 
 export async function handleBenefitEnrichmentBatch(
@@ -643,16 +669,22 @@ export async function handleBenefitEnrichmentBatch(
         }
       },
     );
-    if (jobs[0]) {
-      EdgeRuntime.waitUntil(
-        runIssuerDiscovery(db, jobs[0]).catch((error) => {
-          console.error(JSON.stringify({
-            event: "issuer_discovery_background_failed",
-            run_id: runId,
-            category: safeFailureCategory(error),
-          }));
-        }),
-      );
+    // Issuer-wide discovery can inspect dozens of pages. Run it only on an
+    // otherwise idle invocation so it cannot compete with card enrichment for
+    // the Edge worker's compute and memory budget.
+    if (jobs.length === 0 && Number(queued ?? 0) === 0) {
+      const discoverySeed = await loadDiscoverySeed(db);
+      if (discoverySeed) {
+        EdgeRuntime.waitUntil(
+          runIssuerDiscovery(db, discoverySeed).catch((error) => {
+            console.error(JSON.stringify({
+              event: "issuer_discovery_background_failed",
+              run_id: runId,
+              category: safeFailureCategory(error),
+            }));
+          }),
+        );
+      }
     }
     const finalPilot = await readPilotStatus(db);
     return json({
