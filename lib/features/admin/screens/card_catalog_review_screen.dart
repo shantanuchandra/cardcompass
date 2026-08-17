@@ -22,10 +22,17 @@ class _CardCatalogReviewScreenState extends State<CardCatalogReviewScreen> {
   String _status = 'pending';
 
   Future<Map<String, dynamic>> _invoke(Map<String, dynamic> body) async {
-    final response = await Supabase.instance.client.functions.invoke(
-      'admin-catalog-entry',
-      body: body,
-    );
+    late final FunctionResponse response;
+    try {
+      response = await Supabase.instance.client.functions.invoke(
+        'admin-catalog-entry',
+        body: body,
+      );
+    } on FunctionException catch (error) {
+      if (error.status == 401) throw AdminAuthorizationRequired();
+      rethrow;
+    }
+    if (response.status == 401) throw AdminAuthorizationRequired();
     if (response.status < 200 || response.status >= 300) {
       final data = response.data;
       final message = data is Map ? data['error'] : null;
@@ -182,6 +189,7 @@ class _CardCatalogReviewScreenState extends State<CardCatalogReviewScreen> {
                 });
               },
               onReload: _reload,
+              onAuthorizationRequired: () => context.go('/login'),
               onApprove: (item) => _act('approve', item),
               onEditApprove: _editAndApprove,
               onMerge: (item, cardId) =>
@@ -235,6 +243,7 @@ class _IdentityReviewPanel extends StatelessWidget {
     required this.status,
     required this.onStatusChanged,
     required this.onReload,
+    required this.onAuthorizationRequired,
     required this.onApprove,
     required this.onEditApprove,
     required this.onMerge,
@@ -246,6 +255,7 @@ class _IdentityReviewPanel extends StatelessWidget {
   final String status;
   final ValueChanged<String?> onStatusChanged;
   final VoidCallback onReload;
+  final VoidCallback onAuthorizationRequired;
   final ValueChanged<Map<String, dynamic>> onApprove;
   final ValueChanged<Map<String, dynamic>> onEditApprove;
   final void Function(Map<String, dynamic>, String) onMerge;
@@ -291,6 +301,24 @@ class _IdentityReviewPanel extends StatelessWidget {
                 return const Center(child: CircularProgressIndicator());
               }
               if (snapshot.hasError) {
+                if (snapshot.error is AdminAuthorizationRequired) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Text('Your session needs authorization.'),
+                          const SizedBox(height: 12),
+                          FilledButton(
+                            onPressed: onAuthorizationRequired,
+                            child: const Text('Sign in again'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }
                 return Center(
                   child: Padding(
                     padding: const EdgeInsets.all(24),
