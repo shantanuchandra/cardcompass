@@ -11,6 +11,10 @@ const ownershipRepairMigration = new URL(
   'supabase/migrations/20260817071435_repair_legacy_catalog_enrichment_ownership.sql',
   repoRoot,
 );
+const expiredLeaseMigration = new URL(
+  'supabase/migrations/20260817082925_quarantine_expired_benefit_enrichment_leases.sql',
+  repoRoot,
+);
 
 async function migrationSql() {
   return readFile(migration, 'utf8');
@@ -169,4 +173,15 @@ test('forward migration conservatively repairs only identifiable legacy catalog 
   assert.match(sql, /repairable\.identity_rank\s*=\s*1/i);
   assert.match(sql, /NOT EXISTS[\s\S]*parser_version\s*=\s*'catalog-v1'/i);
   assert.doesNotMatch(sql, /WHERE\s+parser_version\s*=\s*'benefits-v1'\s*;/i);
+});
+
+test('expired worker leases back off and reach review instead of blocking forever', async () => {
+  const sql = await readFile(expiredLeaseMigration, 'utf8');
+  const claim = functionBody(sql, 'claim_card_catalog_enrichment_jobs');
+
+  assert.match(claim, /status\s*=\s*CASE[\s\S]*attempt_count\s*>=\s*3[\s\S]*'review_required'[\s\S]*'failed'/i);
+  assert.match(claim, /failure_category\s*=\s*'worker_resource_limit'/i);
+  assert.match(claim, /next_retry_at\s*=\s*CASE[\s\S]*attempt_count\s*=\s*1[\s\S]*15 minutes[\s\S]*60 minutes/i);
+  assert.match(claim, /lease_expires_at\s*=\s*NULL[\s\S]*lease_token\s*=\s*NULL/i);
+  assert.match(claim, /status IN \('queued', 'failed'\)[\s\S]*next_retry_at/i);
 });

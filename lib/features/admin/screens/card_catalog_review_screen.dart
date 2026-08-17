@@ -7,6 +7,14 @@ import '../../../core/theme/brand_tokens.dart';
 import '../data/admin_catalog_repository.dart';
 import '../widgets/benefit_enrichment_review_panel.dart';
 
+Future<void> requestAdminReauthorization({
+  required Future<void> Function() clearSession,
+  required VoidCallback showLogin,
+}) async {
+  await clearSession();
+  showLogin();
+}
+
 class CardCatalogReviewScreen extends StatefulWidget {
   const CardCatalogReviewScreen({super.key});
 
@@ -50,6 +58,14 @@ class _CardCatalogReviewScreenState extends State<CardCatalogReviewScreen> {
   }
 
   void _reload() => setState(() => _items = _load());
+
+  Future<void> _requestAuthorization() => requestAdminReauthorization(
+    clearSession: () =>
+        Supabase.instance.client.auth.signOut(scope: SignOutScope.local),
+    showLogin: () {
+      if (mounted) context.go('/login');
+    },
+  );
 
   Future<void> _act(
     String action,
@@ -189,7 +205,7 @@ class _CardCatalogReviewScreenState extends State<CardCatalogReviewScreen> {
                 });
               },
               onReload: _reload,
-              onAuthorizationRequired: () => context.go('/login'),
+              onAuthorizationRequired: _requestAuthorization,
               onApprove: (item) => _act('approve', item),
               onEditApprove: _editAndApprove,
               onMerge: (item, cardId) =>
@@ -210,7 +226,7 @@ class _CardCatalogReviewScreenState extends State<CardCatalogReviewScreen> {
             ),
             BenefitEnrichmentReviewPanel(
               repository: _benefitRepository,
-              onAuthorizationRequired: () => context.go('/login'),
+              onAuthorizationRequired: _requestAuthorization,
               onOpenUrl: (uri) =>
                   launchUrl(uri, mode: LaunchMode.externalApplication),
             ),
