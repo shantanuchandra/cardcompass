@@ -21,6 +21,28 @@ release-blocking backend issue remain:
 3. One PNB card remains generic and lacks last-four/verified-benefit identity.
 4. Mobile `Transactions` navigation text wraps awkwardly.
 
+## Post-remediation verification
+
+Verified on 17 August 2026 after production release `54bcf75`:
+
+- Frontend deployment workflow `32011436755` completed successfully.
+- The mobile visual label is now the one-line `Spend` label while accessibility
+  continues to expose the destination as `Transactions`.
+- Expired admin authorization now clears the stale local Supabase session
+  before returning the user to login.
+- Migration `20260817082925` is recorded in production and the live claim RPC
+  contains the `worker_resource_limit` recovery guard.
+- Scheduler smoke runs `32014113354` and `32014222983` completed successfully.
+- After the known Axis worker lease expired, it moved to `review_required` with
+  failure category `worker_resource_limit`; its lease token and expiry were
+  cleared and `lease_expired` was recorded in the safe result summary.
+- The scheduled queue continued from 158 to 157 queued jobs, demonstrating
+  that the resource-heavy card no longer blocks subsequent work indefinitely.
+
+The generic PNB identity and possible issuer-level credit-limit duplication
+remain data-quality follow-ups. They were not auto-corrected without unique
+supporting evidence.
+
 ## Scenario results
 
 | # | Scenario | Result | Production evidence | Required change |
