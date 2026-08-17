@@ -113,6 +113,20 @@ test('prefers authoritative document metadata over an earlier navigation title t
   });
 });
 
+test('skips issuer service-portal metadata and falls back to a concrete product heading', () => {
+  const html = `
+    <title>Axis Bank Credit Card Services Portal</title>
+    <h1>Axis Privilege Credit Card</h1>
+  `;
+
+  assert.deepEqual(officialCardIdentityFromHtml(html, 'Axis Bank'), {
+    issuer: 'Axis Bank',
+    cardName: 'Privilege',
+    network: null,
+    aliases: ['Axis Privilege Credit Card'],
+  });
+});
+
 test('card discovery emits parser-aware enrichment queue identity', async () => {
   const source = await readFile(cardDiscoveryEntrypoint, 'utf8');
   assert.match(source, /enqueueBenefitEnrichmentJob\(db,/);

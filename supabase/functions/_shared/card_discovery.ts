@@ -128,6 +128,32 @@ const genericTokens = new Set([
   "rupay",
 ]);
 
+const metadataBoilerplateTokens = new Set([
+  ...genericTokens,
+  "cards",
+  "portal",
+  "navigation",
+  "service",
+  "services",
+  "online",
+  "banking",
+  "website",
+  "official",
+  "home",
+  "homepage",
+  "center",
+  "centre",
+  "platform",
+  "all",
+  "overview",
+  "compare",
+  "comparison",
+  "option",
+  "options",
+  "explore",
+  "range",
+]);
+
 export function isAdminEmail(
   email: string | null | undefined,
   commaSeparatedAllowlist: string | null | undefined,
@@ -149,6 +175,13 @@ function words(value: string): string[] {
     .trim()
     .split(/\s+/)
     .filter(Boolean);
+}
+
+function hasMeaningfulMetadataProductToken(value: string, issuer: string): boolean {
+  const ignored = new Set(metadataBoilerplateTokens);
+  for (const token of words(issuer)) ignored.add(token);
+  for (const alias of issuerAliases[issuer] ?? []) ignored.add(alias);
+  return words(value).some((token) => !ignored.has(token));
 }
 
 export function normalizedProduct(value: string, issuer = ""): string {
@@ -236,7 +269,10 @@ export function officialCardIdentityFromHtml(
         decodeHtmlText(match[1] ?? ""),
         issuer,
       );
-      if (source.documentMetadata && /\bcredit\s+card\s+portal\b/i.test(candidate)) {
+      if (
+        source.documentMetadata &&
+        !hasMeaningfulMetadataProductToken(candidate, issuer)
+      ) {
         continue;
       }
       if (/\bcard\b/i.test(candidate) && normalizedProduct(candidate, issuer).length >= 4) {

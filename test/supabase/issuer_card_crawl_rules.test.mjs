@@ -395,6 +395,20 @@ test('uses authoritative title metadata over navigation tiles while URL context 
   assert.equal(generic.kind, 'ambiguous');
 });
 
+test('falls back from issuer service-portal metadata to a product h1', () => {
+  const page = classifyIssuerPage({
+    issuer,
+    url: 'https://www.axis.bank.in/cards/credit-card/privilege-credit-card',
+    html: `
+      <title>Axis Bank Credit Card Services Portal</title>
+      <h1>Axis Privilege Credit Card</h1>
+    `,
+  });
+
+  assert.equal(page.kind, 'card_product');
+  assert.equal(page.proposedName, 'Privilege');
+});
+
 test('passes a nonzero production default delay to an injected delay function', async () => {
   const delays = [];
   await discoverIssuerCardCandidates({
