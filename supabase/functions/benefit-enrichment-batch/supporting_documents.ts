@@ -23,23 +23,56 @@ type OfficialFetcher = (
 export type SupportingDocumentInput = {
   issuer: string;
   primary: OfficialFetchResult;
+  identityLabels: string[];
   fetchOfficialIssuerResource?: OfficialFetcher;
   maximumLinks?: number;
 };
+
+const genericIdentityTokens = new Set([
+  "bank",
+  "card",
+  "cards",
+  "credit",
+  "debit",
+  "the",
+  "and",
+]);
+
+function identityTokens(labels: string[]): string[] {
+  return [
+    ...new Set(
+      labels.flatMap((label) =>
+        label.toLowerCase().split(/[^a-z0-9]+/).filter((token) =>
+          token.length > 2 && !genericIdentityTokens.has(token)
+        )
+      ),
+    ),
+  ];
+}
 
 function linkedUrls(
   issuer: string,
   baseUrl: string,
   html: string,
+  labels: string[],
+  primaryUrl: string,
 ): string[] {
   const urls: string[] = [];
+  const tokens = identityTokens(labels);
+  const primaryPath = new URL(primaryUrl).pathname.replace(/\/$/, "");
   for (const match of html.matchAll(anchorPattern)) {
     try {
       const raw = new URL(match[1] ?? match[2] ?? match[3] ?? "", baseUrl)
         .toString();
       const url = canonicalOfficialUrl(issuer, raw);
+      const candidatePath = new URL(url).pathname.toLowerCase();
+      const sameProductPath = candidatePath === primaryPath.toLowerCase() ||
+        candidatePath.startsWith(`${primaryPath.toLowerCase()}/`);
+      const namesTargetProduct = tokens.length > 0 &&
+        tokens.every((token) => candidatePath.includes(token));
       if (
-        relevantPath.test(url) && !unsafePath.test(url) && !urls.includes(url)
+        relevantPath.test(url) && !unsafePath.test(url) &&
+        (sameProductPath || namesTargetProduct) && !urls.includes(url)
       ) urls.push(url);
     } catch {
       // Only approved issuer URLs enter the supporting queue.
@@ -73,6 +106,8 @@ export async function collectSupportingBenefitDocuments(
     input.issuer,
     input.primary.canonicalUrl,
     input.primary.text,
+    input.identityLabels,
+    input.primary.canonicalUrl,
   ).map((url) => ({ url, depth: 1 }));
   let fetched = 0;
   for (
@@ -83,6 +118,7 @@ export async function collectSupportingBenefitDocuments(
     const current = queue[position];
     if (seen.has(current.url)) continue;
     seen.add(current.url);
+    fetched += 1;
     let resource: OfficialFetchResult;
     try {
       resource = await fetchResource({
@@ -93,7 +129,6 @@ export async function collectSupportingBenefitDocuments(
     } catch {
       continue;
     }
-    fetched += 1;
     const document = await benefitDocument(resource);
     if (document.text.trim()) documents.push(document);
     if (
@@ -105,6 +140,8 @@ export async function collectSupportingBenefitDocuments(
           input.issuer,
           resource.canonicalUrl,
           resource.text,
+          input.identityLabels,
+          input.primary.canonicalUrl,
         )
       ) {
         if (!seen.has(url)) queue.push({ url, depth: current.depth + 1 });

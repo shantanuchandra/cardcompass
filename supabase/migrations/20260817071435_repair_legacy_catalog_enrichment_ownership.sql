@@ -1,9 +1,9 @@
 BEGIN;
 
 -- The original enrichment migration added benefit defaults to a queue that
--- already contained catalog-metadata work. Only repair rows whose terminal
--- shape proves they were produced by the legacy catalog worker. Queued or
--- otherwise ambiguous benefits-v1 rows intentionally remain untouched.
+-- already contained catalog-metadata work. Legacy rows have the untouched
+-- empty summary and no staging reference; benefit producers always stamp a
+-- queue/run summary. This also safely repairs queued and processing work.
 LOCK TABLE public.card_catalog_enrichment_jobs IN SHARE ROW EXCLUSIVE MODE;
 
 WITH repairable AS (
@@ -15,10 +15,11 @@ WITH repairable AS (
   FROM public.card_catalog_enrichment_jobs AS legacy
   WHERE legacy.parser_version = 'benefits-v1'
     AND legacy.run_mode = 'scheduled'
-    AND legacy.content_hash IS NOT NULL
     AND legacy.staging_id IS NULL
     AND legacy.result_summary = '{}'::jsonb
-    AND legacy.status IN ('completed', 'review_required', 'failed')
+    AND legacy.status IN (
+      'queued', 'processing', 'completed', 'review_required', 'failed'
+    )
     AND NOT EXISTS (
       SELECT 1
       FROM public.card_catalog_enrichment_jobs AS catalog_job

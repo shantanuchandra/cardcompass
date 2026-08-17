@@ -42,6 +42,7 @@ Deno.test("supporting crawl follows relevant official links to depth two and ret
   const documents = await collectSupportingBenefitDocuments({
     issuer: "Axis Bank",
     primary,
+    identityLabels: ["Privilege"],
     fetchOfficialIssuerResource: async (input) => {
       requested.push(input.url);
       if (input.url === benefits) {
@@ -99,6 +100,7 @@ Deno.test("supporting crawl fetches at most eight relevant links", async () => {
   let fetches = 0;
   const documents = await collectSupportingBenefitDocuments({
     issuer: "Axis Bank",
+    identityLabels: ["Privilege"],
     primary: resource(
       product,
       links.map((url) => `<a href="${url}">Benefit</a>`).join(""),
@@ -111,4 +113,30 @@ Deno.test("supporting crawl fetches at most eight relevant links", async () => {
 
   assert(fetches === 8, "supporting fetch budget exceeded eight");
   assert(documents.length === 9, "bounded supporting documents were omitted");
+});
+
+Deno.test("supporting crawl rejects another card variant and counts failed attempts", async () => {
+  const product = "https://www.axis.bank.in/cards/credit-card/privilege";
+  const ownLinks = Array.from(
+    { length: 10 },
+    (_, index) => `${product}/benefits-${index}`,
+  );
+  const other =
+    "https://www.axis.bank.in/cards/credit-card/regalia-gold/benefits";
+  const requested: string[] = [];
+  await collectSupportingBenefitDocuments({
+    issuer: "Axis Bank",
+    identityLabels: ["Privilege"],
+    primary: resource(
+      product,
+      [...ownLinks, other].map((url) => `<a href="${url}">Terms</a>`).join(""),
+    ),
+    fetchOfficialIssuerResource: async (input) => {
+      requested.push(input.url);
+      throw new Error("blocked");
+    },
+  });
+
+  assert(requested.length === 8, "failed requests did not consume the budget");
+  assert(!requested.includes(other), "cross-card supporting link was fetched");
 });

@@ -412,6 +412,12 @@ async function processJob(
     const documents = await collectSupportingBenefitDocuments({
       issuer: job.issuer,
       primary: page,
+      identityLabels: [
+        String(card.card_name ?? ""),
+        ...aliases.filter((alias: Record<string, unknown>) =>
+          String(alias.card_id) === job.card_id
+        ).map((alias: Record<string, unknown>) => String(alias.alias ?? "")),
+      ],
     });
     contentHash = await sha256Text(
       documents.map((document) =>

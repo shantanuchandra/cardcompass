@@ -162,10 +162,9 @@ test('forward migration conservatively repairs only identifiable legacy catalog 
   assert.match(sql, /SET parser_version\s*=\s*'catalog-v1'[\s\S]*run_mode\s*=\s*'manual'/i);
   assert.match(sql, /legacy\.parser_version\s*=\s*'benefits-v1'/i);
   assert.match(sql, /legacy\.run_mode\s*=\s*'scheduled'/i);
-  assert.match(sql, /legacy\.content_hash IS NOT NULL/i);
   assert.match(sql, /legacy\.staging_id IS NULL/i);
   assert.match(sql, /legacy\.result_summary\s*=\s*'\{\}'::jsonb/i);
-  assert.match(sql, /legacy\.status IN \('completed', 'review_required', 'failed'\)/i);
+  assert.match(sql, /legacy\.status IN \([\s\S]*'queued'[\s\S]*'processing'[\s\S]*'completed'[\s\S]*'review_required'[\s\S]*'failed'[\s\S]*\)/i);
   assert.match(sql, /row_number\(\) OVER \([\s\S]*PARTITION BY legacy\.card_id, legacy\.final_url_hash/i);
   assert.match(sql, /repairable\.identity_rank\s*=\s*1/i);
   assert.match(sql, /NOT EXISTS[\s\S]*parser_version\s*=\s*'catalog-v1'/i);
