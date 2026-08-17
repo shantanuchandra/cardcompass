@@ -400,6 +400,7 @@ async function processJob(
       issuer: job.issuer,
       url: job.canonical_url,
       contentPurpose: "document",
+      maxBytes: 1024 * 1024,
     });
     contentHash = page.contentHash;
     requireMatchingIdentity(
@@ -414,7 +415,7 @@ async function processJob(
       primary: page,
       // Keep each five-card batch comfortably inside Edge compute limits.
       // The crawler still supports the audited hard ceiling of eight.
-      maximumLinks: 2,
+      maximumLinks: 1,
       identityLabels: [
         String(card.card_name ?? ""),
         ...aliases.filter((alias: Record<string, unknown>) =>
@@ -650,7 +651,7 @@ export async function handleBenefitEnrichmentBatch(
     const { data: claimed, error: claimError } = await db.rpc(
       "claim_card_catalog_enrichment_jobs",
       {
-        _max_jobs: MAX_BATCH_SIZE,
+        _max_jobs: runMode === "scheduled" ? 1 : MAX_BATCH_SIZE,
         _lease_seconds: LEASE_SECONDS,
         _run_mode: runMode,
       },
