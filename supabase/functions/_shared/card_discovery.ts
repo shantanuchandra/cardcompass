@@ -202,6 +202,7 @@ export function officialCardIdentityFromHtml(
     /<[^>]+class=["'][^"']*\btitle\b[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/gi,
     /<h[1-3][^>]*>([\s\S]*?)<\/h[1-3]>/gi,
     /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["'][^>]*>/gi,
+    /<title\b[^>]*>([\s\S]*?)<\/title>/gi,
   ];
   for (const pattern of patterns) {
     for (const match of html.matchAll(pattern)) {

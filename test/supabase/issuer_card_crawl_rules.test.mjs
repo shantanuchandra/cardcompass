@@ -336,6 +336,25 @@ test('matches meaningful identity tokens only against real product URL paths', (
   }
 });
 
+test('classifies pilot product pages that expose identity only in an ordinary title', () => {
+  const pages = [
+    [
+      'Axis Bank',
+      'https://www.axis.bank.in/cards/credit-card/privilege-credit-card',
+      '<title>Privilege Credit Card with Unlimited Benefits | Axis Bank</title>',
+    ],
+    [
+      'Kotak Bank',
+      'https://www.kotak.com/en/personal-banking/cards/credit-cards/white-reserve-credit-card.html',
+      '<title>White Reserve Credit Card | Kotak</title>',
+    ],
+  ];
+
+  for (const [pageIssuer, url, html] of pages) {
+    assert.equal(classifyIssuerPage({issuer: pageIssuer, url, html}).kind, 'card_product', url);
+  }
+});
+
 test('passes a nonzero production default delay to an injected delay function', async () => {
   const delays = [];
   await discoverIssuerCardCandidates({

@@ -44,6 +44,33 @@ test('extracts a product identity from legacy issuer page headings', () => {
   );
 });
 
+test('extracts product identities from ordinary issuer page titles', () => {
+  assert.deepEqual(
+    officialCardIdentityFromHtml(
+      '<title>Privilege Credit Card with Unlimited Benefits | Axis Bank</title>',
+      'Axis Bank',
+    ),
+    {
+      issuer: 'Axis Bank',
+      cardName: 'Privilege With Unlimited Benefits',
+      network: null,
+      aliases: ['Privilege Credit Card with Unlimited Benefits | Axis Bank'],
+    },
+  );
+  assert.deepEqual(
+    officialCardIdentityFromHtml(
+      '<title>White Reserve Credit Card | Kotak</title>',
+      'Kotak Bank',
+    ),
+    {
+      issuer: 'Kotak Bank',
+      cardName: 'White Reserve',
+      network: null,
+      aliases: ['White Reserve Credit Card | Kotak'],
+    },
+  );
+});
+
 test('card discovery emits parser-aware enrichment queue identity', async () => {
   const source = await readFile(cardDiscoveryEntrypoint, 'utf8');
   assert.match(source, /enqueueBenefitEnrichmentJob\(db,/);
