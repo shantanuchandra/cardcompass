@@ -161,6 +161,17 @@ Future<void> _pumpPanel(
 }
 
 void main() {
+  test('admin reauthorization clears the stale session before login', () async {
+    final events = <String>[];
+
+    await requestAdminReauthorization(
+      clearSession: () async => events.add('session-cleared'),
+      showLogin: () => events.add('login-shown'),
+    );
+
+    expect(events, ['session-cleared', 'login-shown']);
+  });
+
   testWidgets(
     'admin review exposes card identity and benefit enrichment tabs',
     (tester) async {

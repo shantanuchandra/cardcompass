@@ -95,10 +95,7 @@ final routerProvider = Provider<GoRouter>((ref) {
     routes: [
       GoRoute(path: '/', builder: (_, s) => const SplashScreen()),
       GoRoute(path: '/login', builder: (_, s) => const LoginScreen()),
-      GoRoute(
-        path: '/app',
-        pageBuilder: (_, s) => _appShellPage(),
-      ),
+      GoRoute(path: '/app', pageBuilder: (_, s) => _appShellPage()),
       GoRoute(
         path: '/app/cards',
         pageBuilder: (_, s) => _appShellPage(),
@@ -123,14 +120,8 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/app/transactions',
         pageBuilder: (_, s) => _appShellPage(),
       ),
-      GoRoute(
-        path: '/app/movie-deals',
-        pageBuilder: (_, s) => _appShellPage(),
-      ),
-      GoRoute(
-        path: '/app/settings',
-        pageBuilder: (_, s) => _appShellPage(),
-      ),
+      GoRoute(path: '/app/movie-deals', pageBuilder: (_, s) => _appShellPage()),
+      GoRoute(path: '/app/settings', pageBuilder: (_, s) => _appShellPage()),
       GoRoute(
         path: '/app/admin/catalog-review',
         pageBuilder: (_, s) =>
@@ -403,6 +394,7 @@ class AppBottomNav extends StatelessWidget {
             children: List.generate(_items.length, (i) {
               final item = _items[i];
               final selected = i == selectedIndex;
+              final visualLabel = i == 2 ? 'Spend' : item.label;
               return Expanded(
                 child: Semantics(
                   selected: selected,
@@ -424,7 +416,7 @@ class AppBottomNav extends StatelessWidget {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            item.label,
+                            visualLabel,
                             style: TextStyle(
                               fontFamily: 'Manrope',
                               fontSize: 14,
@@ -436,7 +428,7 @@ class AppBottomNav extends StatelessWidget {
                                   ? BrandColors.signal
                                   : BrandColors.mutedPaper,
                             ),
-                            maxLines: 2,
+                            maxLines: 1,
                             softWrap: true,
                             textAlign: TextAlign.center,
                           ),

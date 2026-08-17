@@ -86,7 +86,7 @@ void main() {
     for (final label in const [
       'Dashboard',
       'Cards',
-      'Transactions',
+      'Spend',
       'Movies',
       'Settings',
     ]) {
@@ -94,7 +94,7 @@ void main() {
       expect(tester.widget<Text>(find.text(label)).style?.fontSize, 14);
     }
 
-    await tester.tap(find.text('Transactions'));
+    await tester.tap(find.text('Spend'));
     await tester.pump();
     expect(find.text('Rendered destination: transactions'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -119,7 +119,7 @@ void main() {
     final semantics = tester.ensureSemantics();
     await tester.pumpWidget(const MaterialApp(home: _MobileNavHarness()));
 
-    final node = tester.getSemantics(find.text('Transactions'));
+    final node = tester.getSemantics(find.text('Spend'));
     expect(node.label, 'Transactions');
     expect(node.flagsCollection.isSelected, Tristate.isFalse);
     expect(node.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
@@ -127,7 +127,7 @@ void main() {
     await tester.pump();
     expect(find.text('Rendered destination: transactions'), findsOneWidget);
     expect(
-      tester.getSemantics(find.text('Transactions')).flagsCollection.isSelected,
+      tester.getSemantics(find.text('Spend')).flagsCollection.isSelected,
       Tristate.isTrue,
     );
     semantics.dispose();
@@ -161,7 +161,7 @@ void main() {
     semantics.dispose();
   });
 
-  testWidgets('mobile Transactions label stays whole at 390px and 2x text', (
+  testWidgets('mobile Transactions tab uses a short one-line visual label', (
     tester,
   ) async {
     final semantics = tester.ensureSemantics();
@@ -176,26 +176,21 @@ void main() {
       ),
     );
 
-    final label = tester.widget<Text>(find.text('Transactions'));
-    final paragraph = tester.renderObject<RenderParagraph>(
-      find.text('Transactions'),
-    );
+    final label = tester.widget<Text>(find.text('Spend'));
+    final paragraph = tester.renderObject<RenderParagraph>(find.text('Spend'));
     expect(label.style?.fontSize, 14);
-    expect(label.maxLines, 2);
+    expect(label.maxLines, 1);
     expect(label.overflow, isNot(TextOverflow.ellipsis));
     expect(
       paragraph
           .getBoxesForSelection(
-            const TextSelection(baseOffset: 0, extentOffset: 12),
+            const TextSelection(baseOffset: 0, extentOffset: 5),
           )
           .length,
-      greaterThanOrEqualTo(2),
+      1,
     );
-    expect(paragraph.size.height, greaterThanOrEqualTo(48));
-    expect(
-      tester.getSemantics(find.text('Transactions')).label,
-      'Transactions',
-    );
+    expect(paragraph.size.height, lessThanOrEqualTo(28));
+    expect(tester.getSemantics(find.text('Spend')).label, 'Transactions');
     expect(tester.takeException(), isNull);
     semantics.dispose();
   });
