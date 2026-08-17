@@ -373,6 +373,28 @@ test('does not match a title marketing suffix against an unrelated product URL t
   assert.equal(productPath.proposedName, 'Privilege');
 });
 
+test('uses authoritative title metadata over navigation tiles while URL context rejects generic titles', () => {
+  const liveHtml = `
+    <div class="title">E-Debit Card</div>
+    <title>Apply for PRIVILEGE Credit Card with unlimited benefits | Axis Bank</title>
+    <h1>PRIVILEGE Credit Card</h1>
+  `;
+  const product = classifyIssuerPage({
+    issuer,
+    url: 'https://www.axis.bank.in/cards/credit-card/privilege-credit-card',
+    html: liveHtml,
+  });
+  const generic = classifyIssuerPage({
+    issuer,
+    url: 'https://www.axis.bank.in/cards/credit-card/all',
+    html: '<title>Compare Credit Card Options | Axis Bank</title>',
+  });
+
+  assert.equal(product.kind, 'card_product');
+  assert.equal(product.proposedName, 'Privilege');
+  assert.equal(generic.kind, 'ambiguous');
+});
+
 test('passes a nonzero production default delay to an injected delay function', async () => {
   const delays = [];
   await discoverIssuerCardCandidates({

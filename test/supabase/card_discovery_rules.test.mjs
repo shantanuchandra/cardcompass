@@ -98,6 +98,21 @@ test('strips title marketing wrappers without removing real product variant toke
   );
 });
 
+test('prefers authoritative document metadata over an earlier navigation title tile', () => {
+  const html = `
+    <div class="title">E-Debit Card</div>
+    <title>Apply for PRIVILEGE Credit Card with unlimited benefits | Axis Bank</title>
+    <h1>PRIVILEGE Credit Card</h1>
+  `;
+
+  assert.deepEqual(officialCardIdentityFromHtml(html, 'Axis Bank'), {
+    issuer: 'Axis Bank',
+    cardName: 'Privilege',
+    network: null,
+    aliases: ['PRIVILEGE Credit Card'],
+  });
+});
+
 test('card discovery emits parser-aware enrichment queue identity', async () => {
   const source = await readFile(cardDiscoveryEntrypoint, 'utf8');
   assert.match(source, /enqueueBenefitEnrichmentJob\(db,/);

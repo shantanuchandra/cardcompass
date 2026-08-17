@@ -213,17 +213,32 @@ export function officialCardIdentityFromHtml(
 ): CanonicalCardIdentity | null {
   const candidates: string[] = [];
   const patterns = [
-    /<[^>]+class=["'][^"']*\btitle\b[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/gi,
-    /<h[1-3][^>]*>([\s\S]*?)<\/h[1-3]>/gi,
-    /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["'][^>]*>/gi,
-    /<title\b[^>]*>([\s\S]*?)<\/title>/gi,
+    {
+      pattern: /<title\b[^>]*>([\s\S]*?)<\/title>/gi,
+      documentMetadata: true,
+    },
+    {
+      pattern: /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["'][^>]*>/gi,
+      documentMetadata: true,
+    },
+    {
+      pattern: /<h[1-3][^>]*>([\s\S]*?)<\/h[1-3]>/gi,
+      documentMetadata: false,
+    },
+    {
+      pattern: /<[^>]+class=["'][^"']*\btitle\b[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/gi,
+      documentMetadata: false,
+    },
   ];
-  for (const pattern of patterns) {
-    for (const match of html.matchAll(pattern)) {
+  for (const source of patterns) {
+    for (const match of html.matchAll(source.pattern)) {
       const candidate = stripTitleMarketing(
         decodeHtmlText(match[1] ?? ""),
         issuer,
       );
+      if (source.documentMetadata && /\bcredit\s+card\s+portal\b/i.test(candidate)) {
+        continue;
+      }
       if (/\bcard\b/i.test(candidate) && normalizedProduct(candidate, issuer).length >= 4) {
         candidates.push(candidate);
       }
