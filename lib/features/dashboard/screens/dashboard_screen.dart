@@ -901,13 +901,14 @@ class _DashboardMetrics extends StatelessWidget {
         key: const Key('supporting-limit-metric'),
         icon: Icons.crop_square_rounded,
         tone: _MetricTone.limit,
-        label: 'Total credit limit',
+        label: 'Reported card limits',
         value: _shortCurrency.format(data.totalCreditLimit),
         // No month-over-month history exists for a card's credit limit
         // (it's a live snapshot, not a transaction-derived figure) — show
         // the chip without a trend rather than fabricate one.
         trend: null,
-        supportingText: 'Across $cardCount card${cardCount == 1 ? '' : 's'}',
+        supportingText:
+            '$cardCount card${cardCount == 1 ? '' : 's'} · issuer limits may overlap',
       ),
     ];
 

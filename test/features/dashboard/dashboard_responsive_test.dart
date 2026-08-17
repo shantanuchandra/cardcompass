@@ -104,6 +104,14 @@ void main() {
     },
   );
 
+  testWidgets('credit limits disclose possible issuer overlap', (tester) async {
+    await pumpDashboard(tester, width: 390, textScale: 1);
+
+    expect(find.text('REPORTED CARD LIMITS'), findsOneWidget);
+    expect(find.text('1 card · issuer limits may overlap'), findsOneWidget);
+    expect(find.text('TOTAL CREDIT LIMIT'), findsNothing);
+  });
+
   for (final width in [390.0, 768.0, 1280.0]) {
     for (final textScale in [1.0, 2.0]) {
       testWidgets(
