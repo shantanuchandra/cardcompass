@@ -156,15 +156,21 @@ void main() {
         rewardEarned: double.nan,
       ),
       _transaction(
-        id: 'credit',
+        id: 'infinite',
         date: date.add(const Duration(hours: 3)),
+        amount: 30,
+        rewardEarned: double.infinity,
+      ),
+      _transaction(
+        id: 'credit',
+        date: date.add(const Duration(hours: 4)),
         amount: 80,
         type: TransactionType.credit,
         rewardEarned: 80,
       ),
     ]);
 
-    expect(aggregate.totalSpend, 175);
+    expect(aggregate.totalSpend, 205);
     expect(aggregate.totalRewards, 10);
   });
 

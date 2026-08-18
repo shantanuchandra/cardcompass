@@ -1,3 +1,5 @@
+import 'dart:collection';
+
 import 'package:cardcompass/features/dashboard/domain/dashboard_metrics.dart';
 import 'package:cardcompass/features/transactions/providers/transactions_provider.dart';
 import 'package:cardcompass/shared/models/transaction.dart';
@@ -41,6 +43,31 @@ UserCard _userCard({required String id, String? bank}) {
     createdAt: DateTime(2026, 8, 1),
     bank: bank,
   );
+}
+
+class _TraversalCountingList extends ListBase<Transaction> {
+  _TraversalCountingList(this._rows);
+
+  final List<Transaction> _rows;
+  int traversals = 0;
+
+  @override
+  int get length => _rows.length;
+
+  @override
+  set length(int value) => _rows.length = value;
+
+  @override
+  Transaction operator [](int index) => _rows[index];
+
+  @override
+  void operator []=(int index, Transaction value) => _rows[index] = value;
+
+  @override
+  Iterator<Transaction> get iterator {
+    traversals++;
+    return _rows.iterator;
+  }
 }
 
 void main() {
@@ -256,6 +283,100 @@ void main() {
       expect(state.spendTrend.percentVsPrior, 100);
     },
   );
+
+  test(
+    'category selection cannot resurrect a cross-category natural duplicate',
+    () {
+      final currentDate = DateTime(2026, 8, 10, 9);
+      final priorDate = DateTime(2026, 8, 9, 9);
+      final state = TxnsState(
+        all: [
+          _transaction(
+            id: 'current-first-grocery',
+            amount: 100,
+            category: 'grocery',
+            description: 'Current shared natural key',
+            date: currentDate,
+            rewardEarned: 10,
+          ),
+          _transaction(
+            id: 'current-later-travel-duplicate',
+            amount: 100,
+            category: 'travel',
+            description: 'Current shared natural key',
+            date: currentDate,
+            rewardEarned: 90,
+          ),
+          _transaction(
+            id: 'current-unique-travel',
+            amount: 200,
+            category: 'travel',
+            description: 'Unique travel purchase',
+            date: currentDate.add(const Duration(hours: 1)),
+            rewardEarned: 20,
+          ),
+          _transaction(
+            id: 'prior-first-grocery',
+            amount: 50,
+            category: 'grocery',
+            description: 'Prior shared natural key',
+            date: priorDate,
+            rewardEarned: 5,
+          ),
+          _transaction(
+            id: 'prior-later-travel-duplicate',
+            amount: 50,
+            category: 'travel',
+            description: 'Prior shared natural key',
+            date: priorDate,
+            rewardEarned: 45,
+          ),
+        ],
+        filter: TxnFilter(
+          from: DateTime(2026, 8, 10),
+          to: DateTime(2026, 8, 10),
+          category: 'travel',
+        ),
+        grouping: TxnGrouping.byCategory,
+        reportingCutoff: DateTime(2026, 8, 31),
+      );
+
+      expect(state.filtered.map((transaction) => transaction.id), [
+        'current-later-travel-duplicate',
+        'current-unique-travel',
+      ]);
+      expect(state.totalSpend, 200);
+      expect(state.totalRewards, 20);
+      expect(state.topCategory, 'travel');
+      expect(state.spendTrend.points.single.total, 200);
+      expect(state.spendTrend.percentVsPrior, isNull);
+      expect(state.canonicalSubtotal(state.grouped['travel']!), 200);
+    },
+  );
+
+  test('one immutable state projection scans its source ledger once', () {
+    final rows = _TraversalCountingList([
+      _transaction(
+        id: 'grocery',
+        amount: 100,
+        category: 'grocery',
+        rewardEarned: 10,
+      ),
+      _transaction(id: 'travel', amount: 200, category: 'travel'),
+      _transaction(id: 'food', amount: 300, category: 'food'),
+    ]);
+    final state = TxnsState(all: rows, grouping: TxnGrouping.byCategory);
+
+    expect(state.totalSpend, 600);
+    expect(state.totalRewards, 10);
+    expect(state.topCategory, 'food');
+    expect(state.spendTrend.points.single.total, 600);
+    final groups = state.grouped;
+    expect(state.canonicalSubtotal(groups['grocery']!), 100);
+    expect(state.canonicalSubtotal(groups['travel']!), 200);
+    expect(state.canonicalSubtotal(groups['food']!), 300);
+    expect(rows.traversals, 1);
+  });
 
   test('isTransactionInternational is false when the card is not found', () {
     final txn = _transaction(

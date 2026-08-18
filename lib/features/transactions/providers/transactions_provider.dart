@@ -82,6 +82,9 @@ class SpendTrend {
 }
 
 class TxnsState {
+  static final Expando<_TxnsProjection> _projectionCache =
+      Expando<_TxnsProjection>('TxnsState projection');
+
   final List<Transaction> all;
   final List<UserCard> cards;
   final TxnFilter filter;
@@ -110,48 +113,29 @@ class TxnsState {
     reportingCutoff: reportingCutoff ?? this.reportingCutoff,
   );
 
-  List<Transaction> get filtered {
-    var txns = all;
-    if (reportingCutoff != null) {
-      txns = txns
-          .where((t) => !t.transactionDate.isAfter(reportingCutoff!))
-          .toList();
-    }
-    if (filter.cardId != null) {
-      txns = txns.where((t) => t.userCardId == filter.cardId).toList();
-    }
-    if (filter.from != null) {
-      txns = txns
-          .where((t) => !t.transactionDate.isBefore(filter.from!))
-          .toList();
-    }
-    if (filter.to != null) {
-      final endExclusive = _nextCalendarDay(filter.to!);
-      txns = txns
-          .where((t) => t.transactionDate.isBefore(endExclusive))
-          .toList();
-    }
-    if (filter.category != null) {
-      txns = txns
-          .where(
-            (t) => t.category?.toLowerCase() == filter.category!.toLowerCase(),
-          )
-          .toList();
-    }
-    return txns;
+  _TxnsProjection get _projection {
+    final cached = _projectionCache[this];
+    if (cached != null) return cached;
+    final projection = _buildProjection();
+    _projectionCache[this] = projection;
+    return projection;
   }
 
-  RetailTransactionAggregate get _aggregate =>
-      aggregateRetailTransactions(filtered);
+  List<Transaction> get filtered => _projection.rawRows;
+
+  RetailTransactionAggregate get _aggregate => _projection.aggregate;
 
   double get totalSpend => _aggregate.totalSpend;
   double get totalRewards => _aggregate.totalRewards;
 
   double canonicalSubtotal(Iterable<Transaction> rows) {
-    final groupRows = rows.toSet();
-    return _aggregate.purchases
-        .where(groupRows.contains)
-        .fold(0.0, (sum, transaction) => sum + transaction.amount);
+    final purchaseIdentities = _projection.purchaseIdentities;
+    return rows.fold(
+      0.0,
+      (sum, transaction) =>
+          sum +
+          (purchaseIdentities.contains(transaction) ? transaction.amount : 0),
+    );
   }
 
   String? get topCategory {
@@ -230,21 +214,10 @@ class TxnsState {
       peakLabel = '${d.day} ${_TxnsState._months[d.month - 1]}';
     }
 
-    // prior period comparison
     double? percentVsPrior;
+    final priorTotal = _projection.priorTotal;
     if (filter.from != null && filter.to != null) {
-      final currentEndExclusive = _nextCalendarDay(filter.to!);
-      final duration = currentEndExclusive.difference(filter.from!);
-      final priorFrom = filter.from!.subtract(duration);
-      final priorThrough = filter.from!.subtract(
-        const Duration(microseconds: 1),
-      );
-      final priorTotal = aggregateRetailTransactions(
-        _filteredWithoutDateRange,
-        fromInclusive: priorFrom,
-        throughInclusive: priorThrough,
-      ).totalSpend;
-      if (priorTotal > 0) {
+      if (priorTotal != null && priorTotal > 0) {
         percentVsPrior = (total - priorTotal) / priorTotal * 100;
       }
     }
@@ -257,22 +230,80 @@ class TxnsState {
     );
   }
 
-  List<Transaction> get _filteredWithoutDateRange {
-    return all.where((transaction) {
-      if (reportingCutoff != null &&
-          transaction.transactionDate.isAfter(reportingCutoff!)) {
-        return false;
-      }
+  _TxnsProjection _buildProjection() {
+    final currentRows = <Transaction>[];
+    final priorRows = <Transaction>[];
+    final currentEndExclusive = filter.to == null
+        ? null
+        : _nextCalendarDay(filter.to!);
+    final hasPriorPeriod = filter.from != null && currentEndExclusive != null;
+    final periodDuration = hasPriorPeriod
+        ? currentEndExclusive.difference(filter.from!)
+        : null;
+    final priorFrom = periodDuration == null
+        ? null
+        : filter.from!.subtract(periodDuration);
+    final priorThrough = hasPriorPeriod
+        ? filter.from!.subtract(const Duration(microseconds: 1))
+        : null;
+
+    for (final transaction in all) {
+      final date = transaction.transactionDate;
+      if (reportingCutoff != null && date.isAfter(reportingCutoff!)) continue;
       if (filter.cardId != null && transaction.userCardId != filter.cardId) {
-        return false;
+        continue;
       }
-      if (filter.category != null &&
-          transaction.category?.toLowerCase() !=
-              filter.category!.toLowerCase()) {
-        return false;
+
+      final inCurrentPeriod =
+          (filter.from == null || !date.isBefore(filter.from!)) &&
+          (currentEndExclusive == null || date.isBefore(currentEndExclusive));
+      if (inCurrentPeriod) currentRows.add(transaction);
+
+      if (priorFrom != null &&
+          priorThrough != null &&
+          !date.isBefore(priorFrom) &&
+          !date.isAfter(priorThrough)) {
+        priorRows.add(transaction);
       }
-      return true;
-    }).toList();
+    }
+
+    final currentBeforeCategory = aggregateRetailTransactions(currentRows);
+    final aggregate = _selectCategory(currentBeforeCategory);
+    final category = filter.category?.toLowerCase();
+    final rawRows = category == null
+        ? currentRows
+        : currentRows
+              .where(
+                (transaction) =>
+                    transaction.category?.toLowerCase() == category,
+              )
+              .toList();
+
+    double? priorTotal;
+    if (hasPriorPeriod) {
+      priorTotal = _selectCategory(
+        aggregateRetailTransactions(priorRows),
+      ).totalSpend;
+    }
+
+    return _TxnsProjection(
+      rawRows: List.unmodifiable(rawRows),
+      aggregate: aggregate,
+      purchaseIdentities: Set.unmodifiable(aggregate.purchases),
+      priorTotal: priorTotal,
+    );
+  }
+
+  RetailTransactionAggregate _selectCategory(
+    RetailTransactionAggregate aggregate,
+  ) {
+    final category = filter.category?.toLowerCase();
+    if (category == null) return aggregate;
+    return aggregateRetailTransactions(
+      aggregate.purchases.where(
+        (transaction) => transaction.category?.toLowerCase() == category,
+      ),
+    );
   }
 
   static DateTime _nextCalendarDay(DateTime date) {
@@ -280,6 +311,20 @@ class TxnsState {
         ? DateTime.utc(date.year, date.month, date.day + 1)
         : DateTime(date.year, date.month, date.day + 1);
   }
+}
+
+class _TxnsProjection {
+  const _TxnsProjection({
+    required this.rawRows,
+    required this.aggregate,
+    required this.purchaseIdentities,
+    required this.priorTotal,
+  });
+
+  final List<Transaction> rawRows;
+  final RetailTransactionAggregate aggregate;
+  final Set<Transaction> purchaseIdentities;
+  final double? priorTotal;
 }
 
 // ignore: library_private_types_in_public_api
