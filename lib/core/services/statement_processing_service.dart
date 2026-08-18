@@ -18,6 +18,7 @@ import 'transaction_categorizer.dart';
 import 'bank_market.dart';
 import 'transaction_currency_resolver.dart';
 import 'transaction_type_normalizer.dart';
+import 'statement_transaction_date_resolver.dart';
 
 enum EmailOutcome {
   succeeded,
@@ -149,8 +150,13 @@ Map<String, dynamic> metadataAfterCardAssignment(Map<dynamic, dynamic>? value) {
 List<Map<String, dynamic>> statementEmailsReadyForProcessing(
   Iterable<Map<String, dynamic>> emails, {
   List<UserCard> userCards = const [],
+  Set<String>? allowedEmailIds,
 }) {
   return emails.where((email) {
+    if (allowedEmailIds != null &&
+        !allowedEmailIds.contains(email['email_id'] as String?)) {
+      return false;
+    }
     final metadata = email['metadata'];
     if (metadata is! Map || metadata['needsCardAssignment'] != true) {
       return true;
@@ -445,12 +451,15 @@ class StatementProcessingService {
         .lookupMerchantCategory(normalizedMerchantName);
   }
 
-  Future<StatementProcessingResult> processUnprocessedEmails() async {
+  Future<StatementProcessingResult> processUnprocessedEmails({
+    required Set<String> allowedEmailIds,
+  }) async {
     _issues.clear();
     final userCards = await _cardsRepo.getUserCards(_userId);
     final emails = statementEmailsReadyForProcessing(
       await _emailRepo.getUnprocessedEmails(_userId),
       userCards: userCards,
+      allowedEmailIds: allowedEmailIds,
     );
 
     var succeeded = 0;
@@ -1099,11 +1108,6 @@ class StatementProcessingService {
   }) async {
     final emailId = email['email_id'] as String;
     try {
-      final transactions = await GeminiStatementParser.parseTransactions(
-        pdfText: pdfText,
-        bankName: bankName,
-      );
-
       final userCardId = userCard.id;
       final catalogCardId = userCard.catalogCardId;
 
@@ -1125,6 +1129,32 @@ class StatementProcessingService {
         statementDate.add(const Duration(days: 20)),
       );
 
+      final transactions = await GeminiStatementParser.parseTransactions(
+        pdfText: pdfText,
+        bankName: bankName,
+        statementDate: statementDate,
+      );
+      final resolvedTransactions =
+          <(Map<String, dynamic>, TransactionDateResolution)>[];
+      for (final transaction in transactions) {
+        final description =
+            transaction['description'] as String? ?? 'Unknown transaction';
+        final dateResolution = resolveStatementTransactionDate(
+          parsedValue: transaction['date'],
+          statementDate: statementDate,
+          pdfText: pdfText,
+          description: description,
+        );
+        if (dateResolution.date == null) {
+          ParsingLogger.warning(
+            'Statement Processing: Rejected post-statement transaction date '
+            'for $emailId',
+          );
+          continue;
+        }
+        resolvedTransactions.add((transaction, dateResolution));
+      }
+
       final statement = await _statementsRepo.upsertStatement(
         userId: _userId,
         cardId: catalogCardId,
@@ -1139,12 +1169,14 @@ class StatementProcessingService {
         availableCredit:
             parsedGeminiNumber(statementInfo['available_credit']) ?? 0,
         rewardsEarned: parsedGeminiNumber(statementInfo['rewards_earned']) ?? 0,
-        transactionCount: transactions.length,
+        transactionCount: resolvedTransactions.length,
       );
 
       final bankMarketCurrency = currencyForBank(bankName);
 
-      for (final txn in transactions) {
+      for (final resolved in resolvedTransactions) {
+        final txn = resolved.$1;
+        final dateResolution = resolved.$2;
         final amount = parsedGeminiNumber(txn['amount']) ?? 0;
         final description =
             txn['description'] as String? ?? 'Unknown transaction';
@@ -1175,7 +1207,7 @@ class StatementProcessingService {
           userCardId: userCardId,
           amount: amount.abs(),
           description: description,
-          transactionDate: parsedGeminiDate(txn['date'], statementDate),
+          transactionDate: dateResolution.date!,
           currency: currency,
           merchantName: rawMerchantName,
           category: categorization.category,
@@ -1185,6 +1217,7 @@ class StatementProcessingService {
           metadata: {
             'category_source': categorization.source.name,
             'normalized_transaction_type': type,
+            'transaction_date_source': dateResolution.source.name,
           },
         );
       }

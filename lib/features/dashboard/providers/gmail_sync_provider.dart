@@ -12,6 +12,15 @@ import '../../../core/services/statement_processing_service.dart'
         EmailOutcome,
         metadataAfterCardAssignment;
 
+const gmailSyncLookbackDays = <String, int>{
+  '7d': 7,
+  '30d': 30,
+  '60d': 60,
+  '90d': 90,
+  '8mo': 240,
+  '1yr': 365,
+};
+
 /// Outcome of one Gmail sync run, shown to the user as a summary.
 class GmailSyncResult {
   final int foundCount;
@@ -112,7 +121,11 @@ class GmailSyncNotifier extends AsyncNotifier<GmailSyncResult?> {
           userName: userName,
         );
         final processingResult = await processingService
-            .processUnprocessedEmails();
+            .processUnprocessedEmails(
+              allowedEmailIds: results
+                  .map((result) => result.messageId)
+                  .toSet(),
+            );
 
         state = AsyncValue.data(
           GmailSyncResult(

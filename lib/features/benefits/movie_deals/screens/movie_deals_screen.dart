@@ -27,6 +27,9 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
   // both "zomato" and "district" alias to) into one entry.
   static final _platforms = moviePlatformAliases.values.toSet().toList()
     ..sort();
+
+  static String _platformLabel(String platform) =>
+      platform == 'Zomato' ? 'Zomato/District' : platform;
   static const _cinemas = [
     'PVR Cinemas',
     'INOX',
@@ -359,7 +362,7 @@ class _MovieDealsScreenState extends ConsumerState<MovieDealsScreen> {
           (p) => DropdownMenuItem<String>(
             value: p,
             child: Text(
-              p,
+              _platformLabel(p),
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontFamily: 'Manrope',

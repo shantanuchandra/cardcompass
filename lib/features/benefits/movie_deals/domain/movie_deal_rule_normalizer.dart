@@ -37,14 +37,18 @@ RuleNormalizationResult normalizeMovieDealRule(MovieBenefitSource source) {
   }
 
   final category = _string(config['category'])?.toLowerCase() ?? '';
-  final mentionsMovies = category.split(',').map((c) => c.trim()).contains('movies');
+  final mentionsMovies = category
+      .split(',')
+      .map((c) => c.trim())
+      .contains('movies');
   final rate = _number(config['multiplier']) ?? _number(config['base_rate']);
   if (mentionsMovies && rate != null && rawUnit != null && unit != 'fixed') {
     return _normalizeRewardMultiplier(source, rawUnit, rate, category);
   }
 
   if (unit == 'fixed') {
-    final amount = _number(config['annual_cap']) ??
+    final amount =
+        _number(config['annual_cap']) ??
         _number(config['reward_value']) ??
         _number(config['currency_unit']);
     if (amount != null) {
@@ -69,7 +73,9 @@ RuleNormalizationResult _normalizePercent(
   MovieBenefitSource source,
   double? discountPercent,
 ) {
-  if (discountPercent == null || discountPercent <= 0 || discountPercent > 100) {
+  if (discountPercent == null ||
+      discountPercent <= 0 ||
+      discountPercent > 100) {
     return const RejectedMovieDealRule(
       'A percentage offer requires a rate between 0 and 100.',
     );
@@ -80,21 +86,26 @@ RuleNormalizationResult _normalizePercent(
   // every capped percentDiscount row. Optional: absent means genuinely
   // uncapped, never defaulted to 0 (design spec §4.2's "never invented"
   // convention).
-  final perTransactionCap = _number(source.valueConfig['max_discount_per_transaction']);
-  return AcceptedMovieDealRule(MovieDealRule(
-    benefitId: source.benefitId,
-    catalogCardId: source.catalogCardId,
-    title: source.title,
-    sourceUrl: source.sourceUrl,
-    cardName: source.cardName,
-    displayPriority: source.displayPriority,
-    validityStart: source.validityStart,
-    validityEnd: source.validityEnd,
-    offerType: MovieDealOfferType.percentDiscount,
-    partners: source.partners,
-    discountPercent: discountPercent,
-    perTransactionCap: perTransactionCap,
-  ));
+  final perTransactionCap = _number(
+    source.valueConfig['max_discount_per_transaction'],
+  );
+  return AcceptedMovieDealRule(
+    MovieDealRule(
+      benefitId: source.benefitId,
+      catalogCardId: source.catalogCardId,
+      title: source.title,
+      sourceUrl: source.sourceUrl,
+      cardName: source.cardName,
+      bankName: source.bankName,
+      displayPriority: source.displayPriority,
+      validityStart: source.validityStart,
+      validityEnd: source.validityEnd,
+      offerType: MovieDealOfferType.percentDiscount,
+      partners: source.partners,
+      discountPercent: discountPercent,
+      perTransactionCap: perTransactionCap,
+    ),
+  );
 }
 
 RuleNormalizationResult _normalizeFixed(
@@ -109,20 +120,23 @@ RuleNormalizationResult _normalizeFixed(
   // monthly_cap is a TOTAL-for-the-cycle cap, never a per-transaction one
   // (design spec §4.4) — fixedDiscount only ever populates cycleAmountCap.
   final cycleCap = _number(source.valueConfig['monthly_cap']);
-  return AcceptedMovieDealRule(MovieDealRule(
-    benefitId: source.benefitId,
-    catalogCardId: source.catalogCardId,
-    title: source.title,
-    sourceUrl: source.sourceUrl,
-    cardName: source.cardName,
-    displayPriority: source.displayPriority,
-    validityStart: source.validityStart,
-    validityEnd: source.validityEnd,
-    offerType: MovieDealOfferType.fixedDiscount,
-    partners: source.partners,
-    fixedAmount: discountAmount,
-    cycleAmountCap: cycleCap,
-  ));
+  return AcceptedMovieDealRule(
+    MovieDealRule(
+      benefitId: source.benefitId,
+      catalogCardId: source.catalogCardId,
+      title: source.title,
+      sourceUrl: source.sourceUrl,
+      cardName: source.cardName,
+      bankName: source.bankName,
+      displayPriority: source.displayPriority,
+      validityStart: source.validityStart,
+      validityEnd: source.validityEnd,
+      offerType: MovieDealOfferType.fixedDiscount,
+      partners: source.partners,
+      fixedAmount: discountAmount,
+      cycleAmountCap: cycleCap,
+    ),
+  );
 }
 
 RuleNormalizationResult _normalizeBogo(MovieBenefitSource source) {
@@ -141,22 +155,25 @@ RuleNormalizationResult _normalizeBogo(MovieBenefitSource source) {
       'A BOGO offer requires a positive monthly redemption limit.',
     );
   }
-  return AcceptedMovieDealRule(MovieDealRule(
-    benefitId: source.benefitId,
-    catalogCardId: source.catalogCardId,
-    title: source.title,
-    sourceUrl: source.sourceUrl,
-    cardName: source.cardName,
-    displayPriority: source.displayPriority,
-    validityStart: source.validityStart,
-    validityEnd: source.validityEnd,
-    offerType: MovieDealOfferType.bogo,
-    partners: source.partners,
-    buyCount: 1,
-    freeCount: 1,
-    perTransactionCap: perTxnCap,
-    cycleRedemptionLimit: cycleLimit,
-  ));
+  return AcceptedMovieDealRule(
+    MovieDealRule(
+      benefitId: source.benefitId,
+      catalogCardId: source.catalogCardId,
+      title: source.title,
+      sourceUrl: source.sourceUrl,
+      cardName: source.cardName,
+      bankName: source.bankName,
+      displayPriority: source.displayPriority,
+      validityStart: source.validityStart,
+      validityEnd: source.validityEnd,
+      offerType: MovieDealOfferType.bogo,
+      partners: source.partners,
+      buyCount: 1,
+      freeCount: 1,
+      perTransactionCap: perTxnCap,
+      cycleRedemptionLimit: cycleLimit,
+    ),
+  );
 }
 
 RuleNormalizationResult _normalizeAnnualAllowance(
@@ -168,19 +185,22 @@ RuleNormalizationResult _normalizeAnnualAllowance(
       'An annual allowance requires a positive amount.',
     );
   }
-  return AcceptedMovieDealRule(MovieDealRule(
-    benefitId: source.benefitId,
-    catalogCardId: source.catalogCardId,
-    title: source.title,
-    sourceUrl: source.sourceUrl,
-    cardName: source.cardName,
-    displayPriority: source.displayPriority,
-    validityStart: source.validityStart,
-    validityEnd: source.validityEnd,
-    offerType: MovieDealOfferType.annualAllowance,
-    partners: source.partners,
-    annualCap: annualCap,
-  ));
+  return AcceptedMovieDealRule(
+    MovieDealRule(
+      benefitId: source.benefitId,
+      catalogCardId: source.catalogCardId,
+      title: source.title,
+      sourceUrl: source.sourceUrl,
+      cardName: source.cardName,
+      bankName: source.bankName,
+      displayPriority: source.displayPriority,
+      validityStart: source.validityStart,
+      validityEnd: source.validityEnd,
+      offerType: MovieDealOfferType.annualAllowance,
+      partners: source.partners,
+      annualCap: annualCap,
+    ),
+  );
 }
 
 RuleNormalizationResult _normalizeMilestone(MovieBenefitSource source) {
@@ -191,20 +211,23 @@ RuleNormalizationResult _normalizeMilestone(MovieBenefitSource source) {
       'A milestone requires both a threshold and reward.',
     );
   }
-  return AcceptedMovieDealRule(MovieDealRule(
-    benefitId: source.benefitId,
-    catalogCardId: source.catalogCardId,
-    title: source.title,
-    sourceUrl: source.sourceUrl,
-    cardName: source.cardName,
-    displayPriority: source.displayPriority,
-    validityStart: source.validityStart,
-    validityEnd: source.validityEnd,
-    offerType: MovieDealOfferType.milestone,
-    partners: source.partners,
-    milestoneThreshold: threshold,
-    milestoneReward: reward,
-  ));
+  return AcceptedMovieDealRule(
+    MovieDealRule(
+      benefitId: source.benefitId,
+      catalogCardId: source.catalogCardId,
+      title: source.title,
+      sourceUrl: source.sourceUrl,
+      cardName: source.cardName,
+      bankName: source.bankName,
+      displayPriority: source.displayPriority,
+      validityStart: source.validityStart,
+      validityEnd: source.validityEnd,
+      offerType: MovieDealOfferType.milestone,
+      partners: source.partners,
+      milestoneThreshold: threshold,
+      milestoneReward: reward,
+    ),
+  );
 }
 
 RuleNormalizationResult _normalizeRewardMultiplier(
@@ -223,30 +246,33 @@ RuleNormalizationResult _normalizeRewardMultiplier(
       .map((c) => c.trim())
       .where((c) => c.isNotEmpty)
       .toSet();
-  return AcceptedMovieDealRule(MovieDealRule(
-    benefitId: source.benefitId,
-    catalogCardId: source.catalogCardId,
-    title: source.title,
-    sourceUrl: source.sourceUrl,
-    cardName: source.cardName,
-    displayPriority: source.displayPriority,
-    validityStart: source.validityStart,
-    validityEnd: source.validityEnd,
-    offerType: MovieDealOfferType.rewardMultiplier,
-    partners: source.partners,
-    rewardMultiplierRate: rate,
-    rewardMultiplierUnit: unit,
-    qualifyingCategories: categories,
-    excludedCategories: source.excludedCategories,
-  ));
+  return AcceptedMovieDealRule(
+    MovieDealRule(
+      benefitId: source.benefitId,
+      catalogCardId: source.catalogCardId,
+      title: source.title,
+      sourceUrl: source.sourceUrl,
+      cardName: source.cardName,
+      bankName: source.bankName,
+      displayPriority: source.displayPriority,
+      validityStart: source.validityStart,
+      validityEnd: source.validityEnd,
+      offerType: MovieDealOfferType.rewardMultiplier,
+      partners: source.partners,
+      rewardMultiplierRate: rate,
+      rewardMultiplierUnit: unit,
+      qualifyingCategories: categories,
+      excludedCategories: source.excludedCategories,
+    ),
+  );
 }
 
 double? _number(Object? value) {
   final number = value is num
       ? value.toDouble()
       : value is String
-          ? double.tryParse(value)
-          : null;
+      ? double.tryParse(value)
+      : null;
   return number?.isFinite ?? false ? number : null;
 }
 

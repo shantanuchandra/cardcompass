@@ -8,9 +8,11 @@ import 'package:cardcompass/core/services/gmail_sync_service.dart';
 import 'package:cardcompass/core/theme/app_theme.dart';
 import 'package:cardcompass/features/dashboard/providers/dashboard_provider.dart';
 import 'package:cardcompass/features/dashboard/providers/gmail_sync_provider.dart';
+import 'package:cardcompass/features/dashboard/providers/imported_data_refresh_provider.dart';
 import 'package:cardcompass/features/dashboard/screens/dashboard_screen.dart';
 import 'package:cardcompass/shared/models/transaction.dart';
 import 'package:cardcompass/shared/models/user_card.dart';
+import 'package:cardcompass/shared/models/statement.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -89,6 +91,24 @@ class _ExpiredGmailSyncNotifier extends GmailSyncNotifier {
   }
 }
 
+class CompletingGmailSyncNotifier extends GmailSyncNotifier {
+  @override
+  Future<GmailSyncResult?> build() async => null;
+
+  void complete() {
+    state = const AsyncData(
+      GmailSyncResult(
+        foundCount: 1,
+        newlyStoredCount: 1,
+        skippedCount: 0,
+        failedCount: 0,
+        processedAttempted: 1,
+        processedSucceeded: 1,
+      ),
+    );
+  }
+}
+
 Future<void> _pumpDashboard(
   WidgetTester tester, {
   required ValueNotifier<AppTab> selectedAppTab,
@@ -96,7 +116,9 @@ Future<void> _pumpDashboard(
   bool failDashboard = false,
   bool failGmailSync = false,
   bool expireGmailSync = false,
+  GmailSyncNotifier? gmailSyncNotifier,
   GmailReconnect? gmailReconnect,
+  ImportedDataRefresh? importedDataRefresh,
   VoidCallback? onDashboardLoad,
   List<Map<String, dynamic>> pendingAssignments = const [],
   BankCatalogSearch? catalogSearch,
@@ -129,8 +151,12 @@ Future<void> _pumpDashboard(
           gmailSyncProvider.overrideWith(_FailingGmailSyncNotifier.new),
         if (expireGmailSync)
           gmailSyncProvider.overrideWith(_ExpiredGmailSyncNotifier.new),
+        if (gmailSyncNotifier != null)
+          gmailSyncProvider.overrideWith(() => gmailSyncNotifier),
         if (gmailReconnect != null)
           gmailReconnectProvider.overrideWithValue(gmailReconnect),
+        if (importedDataRefresh != null)
+          importedDataRefreshProvider.overrideWithValue(importedDataRefresh),
       ],
       child: MaterialApp(
         theme: AppTheme.work,
@@ -195,6 +221,62 @@ Future<void> _startPendingAssignment(
 }
 
 void main() {
+  testWidgets('successful sync refreshes every imported-data projection once', (
+    tester,
+  ) async {
+    final selectedAppTab = ValueNotifier(AppTab.dashboard);
+    final syncNotifier = CompletingGmailSyncNotifier();
+    var refreshCount = 0;
+    addTearDown(selectedAppTab.dispose);
+    await _pumpDashboard(
+      tester,
+      selectedAppTab: selectedAppTab,
+      gmailSyncNotifier: syncNotifier,
+      importedDataRefresh: () => refreshCount++,
+    );
+
+    syncNotifier.complete();
+    await tester.pumpAndSettle();
+
+    expect(refreshCount, 1);
+  });
+
+  testWidgets(
+    'bill section distinguishes statement balances from monthly spend',
+    (tester) async {
+      final selectedAppTab = ValueNotifier(AppTab.dashboard);
+      addTearDown(selectedAppTab.dispose);
+      final statement = Statement(
+        id: 'statement-1',
+        userId: 'user-1',
+        cardId: 'catalog-1',
+        userCardId: 'card-1',
+        statementDate: DateTime(2026, 8, 1),
+        dueDate: DateTime(2026, 8, 21),
+        totalAmount: 476612,
+        closingBalance: 476612,
+        paymentStatus: PaymentStatus.pending,
+        createdAt: DateTime(2026, 8, 1),
+      );
+      final data = DashboardData(
+        cards: _fixture.cards,
+        recentTransactions: const [],
+        latestStatements: {'card-1': statement},
+        totalCreditLimit: 1000000,
+        monthlySpend: 0,
+        rewardsEarned: 0,
+        monthlySpendTrend: const [0, 0, 0, 0, 0, 0],
+        monthlyRewardsTrend: const [0, 0, 0, 0, 0, 0],
+        trendMonths: _fixture.trendMonths,
+      );
+
+      await _pumpDashboard(tester, selectedAppTab: selectedAppTab, data: data);
+
+      expect(find.text('Statement balances'), findsOneWidget);
+      expect(find.textContaining("not this month's purchases"), findsOneWidget);
+    },
+  );
+
   final source = File(
     'lib/features/dashboard/screens/dashboard_screen.dart',
   ).readAsStringSync();

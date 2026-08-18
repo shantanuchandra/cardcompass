@@ -12,10 +12,15 @@ import '../config/ai_config.dart';
 /// old category vocabulary or the hardcoded INR example, which neither a
 /// "prompts aren't testable" stance nor a live-Gemini-call test could
 /// catch cheaply.
-String buildTransactionsPrompt({required String bankName}) {
+String buildTransactionsPrompt({
+  required String bankName,
+  required DateTime statementDate,
+}) {
+  final statementDateIso = statementDate.toIso8601String().split('T').first;
   return '''You are an expert at extracting transactions from Indian credit card statements. Analyze this ${bankName.toUpperCase()} statement and extract ALL transactions.
 
 BANK: $bankName
+STATEMENT DATE: $statementDateIso
 
 EXTRACTION STRATEGY:
 1. Find transaction table sections (look for headers like "Date", "Transaction", "Amount")
@@ -25,6 +30,7 @@ EXTRACTION STRATEGY:
 5. Clean merchant names (remove codes, URLs, extra numbers)
 6. Convert all dates to YYYY-MM-DD format
 7. For each transaction, identify the actual currency symbol or code visible on that line (e.g. "Rs.", "₹", "INR", "AED", "د.إ", "USD", "\$"). If no currency marker is visible on that specific line, assume INR only as a last resort — do not assume INR when a different marker is actually present.
+8. A transaction date must not be later than the statement date. PDF text layers may split a visual date around the description: for example, `11 CRED_FASTAG ...` followed by `Aug 26 Dr` means 2026-08-11, not 2026-08-26. Preserve the leading day, month, and two-digit year from the complete row.
 
 JSON OUTPUT (return ONLY this array, no markdown blocks):
 [
@@ -245,9 +251,13 @@ ANALYZE THE STATEMENT:''';
   static Future<List<Map<String, dynamic>>> parseTransactions({
     required String pdfText,
     required String bankName,
+    required DateTime statementDate,
   }) async {
     try {
-      final prompt = buildTransactionsPrompt(bankName: bankName);
+      final prompt = buildTransactionsPrompt(
+        bankName: bankName,
+        statementDate: statementDate,
+      );
 
       final cleanedText = _pruneAndCleanText(pdfText);
       final requestBody = {

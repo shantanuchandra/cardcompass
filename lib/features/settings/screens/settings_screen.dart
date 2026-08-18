@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -8,10 +7,8 @@ import '../../../core/repositories/user_data_repository.dart';
 import '../../../core/theme/brand_components.dart';
 import '../../../core/theme/brand_tokens.dart';
 import '../../auth/providers/auth_provider.dart';
-import '../../cards/providers/cards_provider.dart';
-import '../../dashboard/providers/dashboard_provider.dart';
 import '../../dashboard/providers/gmail_sync_provider.dart';
-import '../../transactions/providers/transactions_provider.dart';
+import '../../dashboard/providers/imported_data_refresh_provider.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -34,14 +31,16 @@ class SettingsScreen extends ConsumerWidget {
           const SizedBox(height: BrandSpacing.lg),
           SettingsActionList(
             onDeleteAllData: () async {
+              final refreshImportedData = ref.read(importedDataRefreshProvider);
+              final providerContainer = ProviderScope.containerOf(
+                context,
+                listen: false,
+              );
               await UserDataRepository(
                 ref.read(supabaseClientProvider),
               ).resetAll();
-              ref.invalidate(userCardsProvider);
-              ref.invalidate(dashboardProvider);
-              ref.invalidate(txnsNotifierProvider);
-              ref.invalidate(pendingCardAssignmentsProvider);
-              ref.invalidate(gmailSyncProvider);
+              refreshImportedData();
+              providerContainer.invalidate(gmailSyncProvider);
             },
           ),
           const SizedBox(height: BrandSpacing.lg),

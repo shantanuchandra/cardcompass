@@ -3,6 +3,24 @@ import 'package:cardcompass/shared/models/user_card.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test(
+    'limits routine processing to emails discovered by the current sync',
+    () {
+      final emails = [
+        {'email_id': 'historical-backlog', 'metadata': <String, dynamic>{}},
+        {'email_id': 'current-window', 'metadata': <String, dynamic>{}},
+      ];
+
+      expect(
+        statementEmailsReadyForProcessing(
+          emails,
+          allowedEmailIds: const {'current-window'},
+        ).map((email) => email['email_id']),
+        ['current-window'],
+      );
+    },
+  );
+
   test('normalizes formatted Gemini amounts without aborting persistence', () {
     expect(parsedGeminiNumber(476612), 476612);
     expect(parsedGeminiNumber('₹4,76,612.50'), 476612.50);

@@ -274,7 +274,10 @@ class _CardDetailBody extends ConsumerWidget {
                     ),
                   ),
                   data: (stmt) => stmt != null
-                      ? _BillPanel(stmt: stmt)
+                      ? _BillPanel(
+                          stmt: stmt,
+                          currentMonthSpend: spendAsync.asData?.value,
+                        )
                       : const BrandSurface(
                           child: Text(
                             'No current bill yet. Import a statement to see what is due.',
@@ -833,7 +836,8 @@ class _StatCardSkeleton extends StatelessWidget {
 
 class _BillPanel extends StatelessWidget {
   final Statement stmt;
-  const _BillPanel({required this.stmt});
+  final double? currentMonthSpend;
+  const _BillPanel({required this.stmt, this.currentMonthSpend});
 
   @override
   Widget build(BuildContext context) {
@@ -853,6 +857,13 @@ class _BillPanel extends StatelessWidget {
         : isOverdue
         ? 'Overdue'
         : 'Due in $daysLeft day${daysLeft == 1 ? '' : 's'}';
+    final balanceNote = stmt.outstanding > 0 && currentMonthSpend == 0
+        ? 'No purchases are recorded this month. This statement balance may '
+              'include earlier balances, EMIs, fees, or transactions not yet '
+              'imported.'
+        : 'Statement balance and this month’s purchases are different '
+              'measures; the balance may include earlier cycles, EMIs, fees, '
+              'or interest.';
 
     final billDetails = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -944,20 +955,38 @@ class _BillPanel extends StatelessWidget {
           final stack =
               constraints.maxWidth < 420 ||
               MediaQuery.textScalerOf(context).scale(14) >= 21;
-          if (stack) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                billDetails,
-                const SizedBox(height: BrandSpacing.sm),
-                Align(alignment: Alignment.centerLeft, child: paymentStatus),
-              ],
-            );
-          }
-          return Row(
+          final summary = stack
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    billDetails,
+                    const SizedBox(height: BrandSpacing.sm),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: paymentStatus,
+                    ),
+                  ],
+                )
+              : Row(
+                  children: [
+                    Expanded(child: billDetails),
+                    paymentStatus,
+                  ],
+                );
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(child: billDetails),
-              paymentStatus,
+              summary,
+              const SizedBox(height: BrandSpacing.sm),
+              Text(
+                balanceNote,
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 12,
+                  height: 1.4,
+                  color: BrandColors.mutedInk,
+                ),
+              ),
             ],
           );
         },

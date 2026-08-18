@@ -4,13 +4,19 @@ import 'package:cardcompass/core/services/gemini_statement_parser.dart';
 void main() {
   group('buildTransactionsPrompt', () {
     test('requests the full transaction-type vocabulary', () {
-      final prompt = buildTransactionsPrompt(bankName: 'HDFC Bank');
+      final prompt = buildTransactionsPrompt(
+        bankName: 'HDFC Bank',
+        statementDate: DateTime(2026, 8, 15),
+      );
       expect(
         prompt,
         contains('debit|credit|refund|fee|interest|reward|cash_withdrawal'),
       );
     });
-    final prompt = buildTransactionsPrompt(bankName: 'HDFC Bank');
+    final prompt = buildTransactionsPrompt(
+      bankName: 'HDFC Bank',
+      statementDate: DateTime(2026, 8, 15),
+    );
 
     test('contains the corrected 16-category vocabulary', () {
       expect(
@@ -49,6 +55,12 @@ void main() {
         'and the BANK: label (as-given)', () {
       expect(prompt, contains('HDFC BANK')); // intro sentence, .toUpperCase()
       expect(prompt, contains('BANK: HDFC Bank')); // label line, raw
+    });
+
+    test('anchors ambiguous PDF dates to the statement cutoff', () {
+      expect(prompt, contains('STATEMENT DATE: 2026-08-15'));
+      expect(prompt, contains('must not be later than the statement date'));
+      expect(prompt, contains('11 CRED_FASTAG'));
     });
   });
 }

@@ -15,8 +15,8 @@ class MovieDealsSnapshot {
   MovieDealsSnapshot({
     required List<MovieBenefitSource> sources,
     required Map<(String, String), MovieDealContext> contexts,
-  })  : sources = List.unmodifiable(sources),
-        contexts = Map.unmodifiable(contexts);
+  }) : sources = List.unmodifiable(sources),
+       contexts = Map.unmodifiable(contexts);
 
   final List<MovieBenefitSource> sources;
   final Map<(String, String), MovieDealContext> contexts;
@@ -103,8 +103,11 @@ class MovieDealsSupabaseRepository implements MovieDealsRepository {
 
     final benefitIds = benefits.map(_idForBenefit).whereType<String>().toList();
     final mappings = await _dataSource.loadMappings(benefitIds);
-    final cardIds =
-        mappings.map(_idForMappingCard).whereType<String>().toSet().toList();
+    final cardIds = mappings
+        .map(_idForMappingCard)
+        .whereType<String>()
+        .toSet()
+        .toList();
     final cards = cardIds.isEmpty
         ? const <Map<String, dynamic>>[]
         : await _dataSource.loadCatalogCards(cardIds);
@@ -137,10 +140,13 @@ class MovieDealsSupabaseRepository implements MovieDealsRepository {
       final benefitId = _string(row['benefit_id']);
       final platform = _string(row['platform_key']);
       if (benefitId == null || platform == null) continue;
-      confirmedPlatformsByBenefit.putIfAbsent(benefitId, () => {}).add(platform);
+      confirmedPlatformsByBenefit
+          .putIfAbsent(benefitId, () => {})
+          .add(platform);
       final count = _integer(row['confirmation_count']);
       if (count != null) {
-        confirmationCountByBenefit[benefitId] = (confirmationCountByBenefit[benefitId] ?? 0) + count;
+        confirmationCountByBenefit[benefitId] =
+            (confirmationCountByBenefit[benefitId] ?? 0) + count;
       }
     }
 
@@ -151,19 +157,22 @@ class MovieDealsSupabaseRepository implements MovieDealsRepository {
       final card = cardId == null ? null : cardById[cardId];
       if (benefit == null || cardId == null || card == null) continue;
 
-      sources.add(MovieBenefitSource(
-        benefitId: _idForBenefit(benefit)!,
-        catalogCardId: cardId,
-        title: _string(benefit['title']) ?? '',
-        valueConfig: _jsonMap(benefit['value_config']),
-        partners: _jsonStringSet(benefit['partners']),
-        excludedCategories: _exclusionCategories(benefit['exclusions']),
-        sourceUrl: _string(benefit['source_url']),
-        cardName: _string(card['card_name']),
-        displayPriority: _integer(mapping['display_priority']) ?? 0,
-        validityStart: _date(benefit['valid_from']),
-        validityEnd: _date(benefit['valid_until']),
-      ));
+      sources.add(
+        MovieBenefitSource(
+          benefitId: _idForBenefit(benefit)!,
+          catalogCardId: cardId,
+          title: _string(benefit['title']) ?? '',
+          valueConfig: _jsonMap(benefit['value_config']),
+          partners: _jsonStringSet(benefit['partners']),
+          excludedCategories: _exclusionCategories(benefit['exclusions']),
+          sourceUrl: _string(benefit['source_url']),
+          cardName: _string(card['card_name']),
+          bankName: _string(card['bank']),
+          displayPriority: _integer(mapping['display_priority']) ?? 0,
+          validityStart: _date(benefit['valid_from']),
+          validityEnd: _date(benefit['valid_until']),
+        ),
+      );
     }
 
     final ownedUserCardIds = activeUserCardByCatalogId.values
@@ -202,14 +211,19 @@ class MovieDealsSupabaseRepository implements MovieDealsRepository {
       final matching = userCardId == null
           ? const <Map<String, dynamic>>[]
           : transactions
-              .where((row) =>
-                  _string(row['user_card_id']) == userCardId &&
-                  _matchesRequest(row, request))
-              .toList();
-      final verified = matching.isNotEmpty && matching.every(_hasNumericTicketCount);
+                .where(
+                  (row) =>
+                      _string(row['user_card_id']) == userCardId &&
+                      _matchesRequest(row, request),
+                )
+                .toList();
+      final verified =
+          matching.isNotEmpty && matching.every(_hasNumericTicketCount);
       final usedTickets = verified
           ? matching.fold<int>(
-              0, (sum, row) => sum + _integer(_metadata(row)['ticket_count'])!)
+              0,
+              (sum, row) => sum + _integer(_metadata(row)['ticket_count'])!,
+            )
           : 0;
       contexts[(source.catalogCardId, source.benefitId)] = MovieDealContext(
         isOwned: isOwned,
@@ -219,7 +233,8 @@ class MovieDealsSupabaseRepository implements MovieDealsRepository {
         usedTickets: usedTickets,
         usedTransactions: verified ? matching.length : 0,
         milestoneSpend: spendByCatalogCardId[source.catalogCardId],
-        confirmedPlatforms: confirmedPlatformsByBenefit[source.benefitId] ?? const {},
+        confirmedPlatforms:
+            confirmedPlatformsByBenefit[source.benefitId] ?? const {},
         confirmationCount: confirmationCountByBenefit[source.benefitId],
       );
     }
@@ -240,8 +255,21 @@ class SupabaseMovieDealsDataSource implements MovieDealsDataSource {
 
   final SupabaseClient _client;
 
-  static const _movieKeywords = ['movie', 'cinema', 'bookmyshow', 'pvr', 'inox', 'cinepolis'];
-  static const _widenedCategories = ['entertainment', 'lifestyle', 'dining', 'rewards', 'offers'];
+  static const _movieKeywords = [
+    'movie',
+    'cinema',
+    'bookmyshow',
+    'pvr',
+    'inox',
+    'cinepolis',
+  ];
+  static const _widenedCategories = [
+    'entertainment',
+    'lifestyle',
+    'dining',
+    'rewards',
+    'offers',
+  ];
 
   static String _buildWidenedOrExpression() {
     final keywordClauses = _movieKeywords
@@ -255,68 +283,91 @@ class SupabaseMovieDealsDataSource implements MovieDealsDataSource {
 
   @override
   Future<List<Map<String, dynamic>>> loadMovieRelatedBenefits() async {
-    final rows = _rows(await _client
-        .from('benefits')
-        .select('benefit_id, title, value_config, source_url, partners, exclusions, valid_from, valid_until')
-        .eq('is_active', true)
-        .or(_buildWidenedOrExpression()));
+    final rows = _rows(
+      await _client
+          .from('benefits')
+          .select(
+            'benefit_id, title, value_config, source_url, partners, exclusions, valid_from, valid_until',
+          )
+          .eq('is_active', true)
+          .or(_buildWidenedOrExpression()),
+    );
     return rows;
   }
 
   @override
-  Future<List<Map<String, dynamic>>> loadMappings(List<String> benefitIds) async =>
-      benefitIds.isEmpty
-          ? const []
-          : _rows(await _client
+  Future<List<Map<String, dynamic>>> loadMappings(
+    List<String> benefitIds,
+  ) async => benefitIds.isEmpty
+      ? const []
+      : _rows(
+          await _client
               .from('card_benefit_mapping')
               .select('benefit_id, card_id, display_priority')
-              .inFilter('benefit_id', benefitIds));
+              .inFilter('benefit_id', benefitIds),
+        );
 
   @override
-  Future<List<Map<String, dynamic>>> loadCatalogCards(List<String> cardIds) async =>
-      cardIds.isEmpty
-          ? const []
-          : _rows(await _client
+  Future<List<Map<String, dynamic>>> loadCatalogCards(
+    List<String> cardIds,
+  ) async => cardIds.isEmpty
+      ? const []
+      : _rows(
+          await _client
               .from('card_catalog')
-              .select('id, card_name')
-              .inFilter('id', cardIds));
+              .select('id, card_name, bank')
+              .inFilter('id', cardIds),
+        );
 
   @override
   Future<List<Map<String, dynamic>>> loadActiveUserCards(String userId) async =>
-      _rows(await _client
-          .from('user_cards')
-          .select('id, catalog_card_id')
-          .eq('user_id', userId)
-          .eq('is_active', true));
+      _rows(
+        await _client
+            .from('user_cards')
+            .select('id, catalog_card_id')
+            .eq('user_id', userId)
+            .eq('is_active', true),
+      );
 
   @override
   Future<List<Map<String, dynamic>>> loadTransactions(
-          String userId, List<String> userCardIds) async =>
-      userCardIds.isEmpty
-          ? const []
-          : _rows(await _client
+    String userId,
+    List<String> userCardIds,
+  ) async => userCardIds.isEmpty
+      ? const []
+      : _rows(
+          await _client
               .from('transactions')
               .select('user_card_id, merchant_name, transaction_date, metadata')
               .eq('user_id', userId)
-              .inFilter('user_card_id', userCardIds));
+              .inFilter('user_card_id', userCardIds),
+        );
 
   @override
-  Future<List<Map<String, dynamic>>> loadMilestones(String userId) async =>
-      _rows(await _client
-          .from('statement_milestone_cache')
-          .select('card_id, statement_start_date, statement_end_date, total_spending')
-          .eq('user_id', userId)
-          .inFilter('benefit_category', _widenedCategories));
+  Future<List<Map<String, dynamic>>> loadMilestones(
+    String userId,
+  ) async => _rows(
+    await _client
+        .from('statement_milestone_cache')
+        .select(
+          'card_id, statement_start_date, statement_end_date, total_spending',
+        )
+        .eq('user_id', userId)
+        .inFilter('benefit_category', _widenedCategories),
+  );
 
   @override
-  Future<List<Map<String, dynamic>>> loadConfirmations(List<String> benefitIds) async =>
-      benefitIds.isEmpty
-          ? const []
-          : _rows(await _client
+  Future<List<Map<String, dynamic>>> loadConfirmations(
+    List<String> benefitIds,
+  ) async => benefitIds.isEmpty
+      ? const []
+      : _rows(
+          await _client
               .from('benefit_platform_confirmation_counts')
               .select('benefit_id, platform_key, confirmation_count')
               .inFilter('benefit_id', benefitIds)
-              .gt('confirmation_count', 0));
+              .gt('confirmation_count', 0),
+        );
 
   @override
   Future<void> insertConfirmation({
@@ -324,11 +375,13 @@ class SupabaseMovieDealsDataSource implements MovieDealsDataSource {
     required String platform,
     required String userId,
   }) async {
-    await _client.from('benefit_platform_confirmations').upsert(
-      {'benefit_id': benefitId, 'platform': platform, 'user_id': userId},
-      onConflict: 'user_id,benefit_id,platform_key',
-      ignoreDuplicates: true,
-    );
+    await _client
+        .from('benefit_platform_confirmations')
+        .upsert(
+          {'benefit_id': benefitId, 'platform': platform, 'user_id': userId},
+          onConflict: 'user_id,benefit_id,platform_key',
+          ignoreDuplicates: true,
+        );
   }
 }
 
@@ -342,8 +395,8 @@ String? _idForMappingCard(Map<String, dynamic> row) => _string(row['card_id']);
 int? _integer(dynamic value) => value is int
     ? value
     : value is num && value == value.roundToDouble()
-        ? value.toInt()
-        : null;
+    ? value.toInt()
+    : null;
 double? _number(dynamic value) =>
     value is num ? value.toDouble() : double.tryParse(value?.toString() ?? '');
 
@@ -388,7 +441,9 @@ bool _hasNumericTicketCount(Map<String, dynamic> transaction) =>
     _integer(_metadata(transaction)['ticket_count']) != null;
 
 bool _matchesRequest(
-    Map<String, dynamic> transaction, MovieTicketRequest request) {
+  Map<String, dynamic> transaction,
+  MovieTicketRequest request,
+) {
   final requested = request.preferredPlatform ?? request.preferredCinema;
   if (requested == null || requested.trim().isEmpty) return false;
   final wanted = requested.trim().toLowerCase();
@@ -398,7 +453,7 @@ bool _matchesRequest(
     metadata['merchant'],
     transaction['merchant_name'],
   ];
-  return values
-      .whereType<String>()
-      .any((value) => value.trim().toLowerCase() == wanted);
+  return values.whereType<String>().any(
+    (value) => value.trim().toLowerCase() == wanted,
+  );
 }

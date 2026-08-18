@@ -59,6 +59,7 @@ Future<void> pumpDetail(
   double textScale = 1,
   Statement? statement,
   List<Transaction> transactions = const [],
+  double currentMonthSpend = 0,
 }) async {
   tester.view.physicalSize = const Size(390, 1200);
   tester.view.devicePixelRatio = 1;
@@ -73,7 +74,9 @@ Future<void> pumpDetail(
           'card-1',
         ).overrideWith((ref) async => transactions),
         cardStatementProvider('card-1').overrideWith((ref) async => statement),
-        cardMonthSpendProvider('card-1').overrideWith((ref) async => 0),
+        cardMonthSpendProvider(
+          'card-1',
+        ).overrideWith((ref) async => currentMonthSpend),
       ],
       child: MaterialApp(
         theme: AppTheme.work,
@@ -154,6 +157,22 @@ void main() {
       expect(find.text('Bill Due'), findsOneWidget);
       expect(find.text(_transaction.merchantName!), findsOneWidget);
       expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a statement balance with no current-month purchases explains the mismatch',
+    (tester) async {
+      await pumpDetail(tester, statement: _statement, currentMonthSpend: 0);
+
+      await tester.ensureVisible(find.text('Current bill'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('No purchases are recorded this month'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('not yet imported'), findsOneWidget);
     },
   );
 

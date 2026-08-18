@@ -1,7 +1,9 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../shared/models/transaction.dart';
 import '../services/mcc_resolver.dart';
+import '../services/reporting_time.dart';
 import '../services/transaction_categorizer.dart' show validCategories;
+import 'paginated_query.dart';
 
 String? parseMerchantCategoryRow(Map<String, dynamic>? row) {
   return row?['category'] as String?;
@@ -23,9 +25,12 @@ class TransactionsRepository {
     var query = _db.from('transactions').select().eq('user_id', userId);
 
     if (userCardId != null) query = query.eq('user_card_id', userCardId);
-    if (from != null)
-      query = query.gte('transaction_date', from.toIso8601String());
-    if (to != null) query = query.lte('transaction_date', to.toIso8601String());
+    if (from != null) {
+      query = query.gte('transaction_date', reportingBoundaryIso(from));
+    }
+    if (to != null) {
+      query = query.lte('transaction_date', reportingBoundaryIso(to));
+    }
     if (category != null) query = query.eq('category', category);
 
     final data = await query
@@ -50,6 +55,50 @@ class TransactionsRepository {
     return (data as List)
         .map((e) => Transaction.fromJson(e as Map<String, dynamic>))
         .toList();
+  }
+
+  /// Returns the user's full ledger without depending on one PostgREST
+  /// response exceeding the server row cap.
+  Future<List<Transaction>> getAllTransactions({required String userId}) {
+    return collectPaginated<Transaction>(
+      loadPage: (offset, limit) async {
+        final data = await _db
+            .from('transactions')
+            .select()
+            .eq('user_id', userId)
+            .order('transaction_date', ascending: false)
+            .order('id', ascending: true)
+            .range(offset, offset + limit - 1);
+        return (data as List)
+            .map((row) => Transaction.fromJson(row as Map<String, dynamic>))
+            .toList(growable: false);
+      },
+    );
+  }
+
+  /// Returns every transaction in a closed reporting window without relying
+  /// on one PostgREST response exceeding the server's row cap.
+  Future<List<Transaction>> getAllTransactionsInRange({
+    required String userId,
+    required DateTime from,
+    required DateTime to,
+  }) {
+    return collectPaginated<Transaction>(
+      loadPage: (offset, limit) async {
+        final data = await _db
+            .from('transactions')
+            .select()
+            .eq('user_id', userId)
+            .gte('transaction_date', reportingBoundaryIso(from))
+            .lte('transaction_date', reportingBoundaryIso(to))
+            .order('transaction_date', ascending: false)
+            .order('id', ascending: true)
+            .range(offset, offset + limit - 1);
+        return (data as List)
+            .map((row) => Transaction.fromJson(row as Map<String, dynamic>))
+            .toList(growable: false);
+      },
+    );
   }
 
   Future<String?> lookupMerchantCategory(String normalizedMerchantName) async {
@@ -148,9 +197,7 @@ class TransactionsRepository {
   /// NULL, exactly 'other', or any value outside the 16 valid categories
   /// (catches legacy vocabulary like 'dining'/'bills'/'transfer' in one
   /// condition). Used by CategoryBackfillService (a later task).
-  Future<List<Transaction>> getUncategorizedTransactions(
-    String userId,
-  ) async {
+  Future<List<Transaction>> getUncategorizedTransactions(String userId) async {
     final data = await _db
         .from('transactions')
         .select()
@@ -171,9 +218,9 @@ class TransactionsRepository {
     required String category,
     required Map<String, dynamic> metadata,
   }) async {
-    await _db.from('transactions').update({
-      'category': category,
-      'metadata': metadata,
-    }).eq('id', transactionId);
+    await _db
+        .from('transactions')
+        .update({'category': category, 'metadata': metadata})
+        .eq('id', transactionId);
   }
 }

@@ -4,6 +4,7 @@ import '../../../core/providers/supabase_provider.dart';
 import '../../../shared/models/user_card.dart';
 import '../../../shared/models/transaction.dart';
 import '../../../shared/models/statement.dart';
+import '../domain/dashboard_metrics.dart';
 
 const trendMonthCount = 6;
 
@@ -54,11 +55,10 @@ final dashboardProvider = FutureProvider<DashboardData>((ref) async {
   final results = await Future.wait([
     cardsRepo.getUserCards(user.id),
     txnRepo.getRecentTransactions(user.id, limit: 12),
-    txnRepo.getTransactions(
+    txnRepo.getAllTransactionsInRange(
       userId: user.id,
       from: trendStart,
       to: now,
-      limit: 2000,
     ),
     stmtRepo.getLatestStatementPerCard(user.id),
   ]);
@@ -68,18 +68,13 @@ final dashboardProvider = FutureProvider<DashboardData>((ref) async {
   final trendTxns = results[2] as List<Transaction>;
   final stmts = results[3] as Map<String, Statement>;
 
-  final totalLimit = cards.fold<double>(0, (s, c) => s + (c.creditLimit ?? 0));
-
-  final spendByMonth = List<double>.filled(trendMonthCount, 0);
-  final rewardsByMonth = List<double>.filled(trendMonthCount, 0);
-  for (final t in trendTxns) {
-    final monthIndex =
-        (t.transactionDate.year - trendStart.year) * 12 +
-        (t.transactionDate.month - trendStart.month);
-    if (monthIndex < 0 || monthIndex >= trendMonthCount) continue;
-    if (t.isDebit) spendByMonth[monthIndex] += t.amount;
-    rewardsByMonth[monthIndex] += t.rewardEarned ?? 0;
-  }
+  final metrics = calculateDashboardMetrics(
+    cards: cards,
+    transactions: trendTxns,
+    trendStart: trendStart,
+    periodEnd: now,
+    monthCount: trendMonthCount,
+  );
 
   final trendMonths = List<DateTime>.generate(
     trendMonthCount,
@@ -90,11 +85,11 @@ final dashboardProvider = FutureProvider<DashboardData>((ref) async {
     cards: cards,
     recentTransactions: recent,
     latestStatements: stmts,
-    totalCreditLimit: totalLimit,
-    monthlySpend: spendByMonth.last,
-    rewardsEarned: rewardsByMonth.last,
-    monthlySpendTrend: spendByMonth,
-    monthlyRewardsTrend: rewardsByMonth,
+    totalCreditLimit: metrics.totalReportedCardLimits,
+    monthlySpend: metrics.monthlySpendTrend.last,
+    rewardsEarned: metrics.monthlyRewardsTrend.last,
+    monthlySpendTrend: metrics.monthlySpendTrend,
+    monthlyRewardsTrend: metrics.monthlyRewardsTrend,
     trendMonths: trendMonths,
   );
 });

@@ -25,6 +25,7 @@ import '../../../shared/models/statement.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../providers/dashboard_provider.dart';
 import '../providers/gmail_sync_provider.dart';
+import '../providers/imported_data_refresh_provider.dart';
 
 typedef GmailReconnect = Future<void> Function();
 
@@ -183,8 +184,7 @@ class _DashboardAppBar extends ConsumerWidget {
                     ),
             ),
           );
-          ref.invalidate(dashboardProvider);
-          ref.invalidate(pendingCardAssignmentsProvider);
+          ref.read(importedDataRefreshProvider)();
         },
         error: (error, _) {
           final needsReconnect =
@@ -423,14 +423,9 @@ class _SyncRangeDialog extends StatefulWidget {
 
 class _SyncRangeDialogState extends State<_SyncRangeDialog> {
   int _selectedDays = 7;
-  static const _options = [
-    _SyncRangeOption(7, '7d'),
-    _SyncRangeOption(30, '30d'),
-    _SyncRangeOption(60, '60d'),
-    _SyncRangeOption(90, '90d'),
-    _SyncRangeOption(240, '8mo'),
-    _SyncRangeOption(369, '1yr'),
-  ];
+  static final _options = gmailSyncLookbackDays.entries
+      .map((entry) => _SyncRangeOption(entry.value, entry.key))
+      .toList(growable: false);
 
   String get _friendlyRange {
     if (_selectedDays >= 365) return 'about a year';
@@ -736,9 +731,26 @@ class _DashboardContent extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               DashboardSectionHeader(
-                title: 'Bills Due',
+                title: 'Statement balances',
                 action: null,
                 onTap: null,
+              ),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(
+                  BrandSpacing.md,
+                  0,
+                  BrandSpacing.md,
+                  BrandSpacing.sm,
+                ),
+                child: Text(
+                  "Issuer statement balances may include earlier cycles, EMIs, fees, or interest; they are not this month's purchases.",
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 12,
+                    height: 1.4,
+                    color: BrandColors.mutedInk,
+                  ),
+                ),
               ),
               _BillsPanel(
                 cards: data.cards,
@@ -1740,8 +1752,8 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
 
   Future<void> _resolve(Map<String, dynamic> catalogEntry) async {
     if (_resolving) return;
-    final container = ProviderScope.containerOf(context, listen: false);
     final resolveCard = ref.read(cardResolutionProvider);
+    final refreshImportedData = ref.read(importedDataRefreshProvider);
     setState(() {
       _resolving = true;
       _needsGmailReconnect = false;
@@ -1750,7 +1762,7 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
     });
     try {
       await resolveCard(widget.email, catalogEntry['id'] as String);
-      container.invalidate(dashboardProvider);
+      refreshImportedData();
       if (!mounted) return;
       setState(() {
         _error = null;
