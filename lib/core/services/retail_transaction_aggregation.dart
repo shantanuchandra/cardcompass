@@ -1,5 +1,6 @@
 import '../../shared/models/transaction.dart';
 import 'eligible_spend.dart';
+import 'reporting_time.dart';
 
 class RetailTransactionAggregate {
   const RetailTransactionAggregate._({
@@ -60,7 +61,7 @@ RetailTransactionAggregate aggregateRetailTransactions(
     categoryTotals[category] =
         (categoryTotals[category] ?? 0) + transaction.amount;
 
-    final localDate = date.toLocal();
+    final localDate = toReportingLocalTime(date);
     final localDay = DateTime(localDate.year, localDate.month, localDate.day);
     localDayTotals[localDay] =
         (localDayTotals[localDay] ?? 0) + transaction.amount;

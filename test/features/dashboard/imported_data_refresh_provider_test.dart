@@ -1,4 +1,5 @@
 import 'package:cardcompass/features/cards/providers/cards_provider.dart';
+import 'package:cardcompass/features/cards/screens/card_detail_screen.dart';
 import 'package:cardcompass/features/dashboard/providers/dashboard_provider.dart';
 import 'package:cardcompass/features/dashboard/providers/gmail_sync_provider.dart';
 import 'package:cardcompass/features/dashboard/providers/imported_data_refresh_provider.dart';
@@ -24,7 +25,7 @@ class CountingTxnsNotifier extends TxnsNotifier {
   @override
   Future<TxnsState> build() async {
     txnLoads++;
-    return const TxnsState();
+    return TxnsState();
   }
 }
 
@@ -72,4 +73,53 @@ void main() {
 
     expect((dashboardLoads, cardsLoads, txnLoads, pendingLoads), (2, 2, 2, 2));
   });
+
+  test(
+    'shared sync/reset refresh reloads every warmed card-detail projection',
+    () async {
+      const cardId = 'card-1';
+      var detailLoads = 0;
+      var transactionLoads = 0;
+      var statementLoads = 0;
+      var monthSpendLoads = 0;
+      final container = ProviderContainer(
+        overrides: [
+          cardDetailProvider(cardId).overrideWith((ref) async {
+            detailLoads++;
+            return null;
+          }),
+          cardTransactionsProvider(cardId).overrideWith((ref) async {
+            transactionLoads++;
+            return const [];
+          }),
+          cardStatementProvider(cardId).overrideWith((ref) async {
+            statementLoads++;
+            return null;
+          }),
+          cardMonthSpendProvider(cardId).overrideWith((ref) async {
+            monthSpendLoads++;
+            return 0;
+          }),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await container.read(cardDetailProvider(cardId).future);
+      await container.read(cardTransactionsProvider(cardId).future);
+      await container.read(cardStatementProvider(cardId).future);
+      await container.read(cardMonthSpendProvider(cardId).future);
+
+      container.read(importedDataRefreshProvider)();
+
+      await container.read(cardDetailProvider(cardId).future);
+      await container.read(cardTransactionsProvider(cardId).future);
+      await container.read(cardStatementProvider(cardId).future);
+      await container.read(cardMonthSpendProvider(cardId).future);
+
+      expect(
+        (detailLoads, transactionLoads, statementLoads, monthSpendLoads),
+        (2, 2, 2, 2),
+      );
+    },
+  );
 }

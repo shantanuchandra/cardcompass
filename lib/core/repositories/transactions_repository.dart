@@ -1,6 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../shared/models/transaction.dart';
 import '../services/mcc_resolver.dart';
+import '../services/reporting_time.dart';
 import '../services/transaction_categorizer.dart' show validCategories;
 import 'paginated_query.dart';
 
@@ -25,9 +26,11 @@ class TransactionsRepository {
 
     if (userCardId != null) query = query.eq('user_card_id', userCardId);
     if (from != null) {
-      query = query.gte('transaction_date', from.toIso8601String());
+      query = query.gte('transaction_date', reportingBoundaryIso(from));
     }
-    if (to != null) query = query.lte('transaction_date', to.toIso8601String());
+    if (to != null) {
+      query = query.lte('transaction_date', reportingBoundaryIso(to));
+    }
     if (category != null) query = query.eq('category', category);
 
     final data = await query
@@ -86,8 +89,8 @@ class TransactionsRepository {
             .from('transactions')
             .select()
             .eq('user_id', userId)
-            .gte('transaction_date', from.toIso8601String())
-            .lte('transaction_date', to.toIso8601String())
+            .gte('transaction_date', reportingBoundaryIso(from))
+            .lte('transaction_date', reportingBoundaryIso(to))
             .order('transaction_date', ascending: false)
             .order('id', ascending: true)
             .range(offset, offset + limit - 1);

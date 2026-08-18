@@ -272,7 +272,7 @@ void main() {
 
       await _pumpDashboard(tester, selectedAppTab: selectedAppTab, data: data);
 
-      expect(find.text('Statement balances due'), findsOneWidget);
+      expect(find.text('Statement balances'), findsOneWidget);
       expect(find.textContaining("not this month's purchases"), findsOneWidget);
     },
   );

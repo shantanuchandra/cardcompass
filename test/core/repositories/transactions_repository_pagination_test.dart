@@ -72,4 +72,47 @@ void main() {
       );
     },
   );
+
+  test(
+    'repository reporting queries serialize local bounds as UTC instants',
+    () async {
+      final requests = <HttpRequest>[];
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final subscription = server.listen((incoming) {
+        requests.add(incoming);
+        incoming.response
+          ..statusCode = HttpStatus.ok
+          ..headers.contentType = ContentType.json
+          ..write('[]');
+        unawaited(incoming.response.close());
+      });
+      final client = SupabaseClient(
+        'http://${server.address.address}:${server.port}',
+        'test-anon-key',
+      );
+      addTearDown(() async {
+        await client.dispose();
+        await subscription.cancel();
+        await server.close(force: true);
+      });
+      final from = DateTime(2026, 8, 1);
+      final to = DateTime(2026, 8, 31, 12, 30);
+      final repository = TransactionsRepository(client);
+
+      await repository.getTransactions(userId: 'user-1', from: from, to: to);
+      await repository.getAllTransactionsInRange(
+        userId: 'user-1',
+        from: from,
+        to: to,
+      );
+
+      expect(requests, hasLength(2));
+      for (final request in requests) {
+        expect(request.uri.queryParametersAll['transaction_date'], [
+          'gte.${from.toUtc().toIso8601String()}',
+          'lte.${to.toUtc().toIso8601String()}',
+        ]);
+      }
+    },
+  );
 }

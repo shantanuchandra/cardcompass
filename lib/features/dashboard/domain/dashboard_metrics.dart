@@ -1,4 +1,5 @@
 import '../../../core/services/retail_transaction_aggregation.dart';
+import '../../../core/services/reporting_time.dart';
 import '../../../shared/models/transaction.dart';
 import '../../../shared/models/user_card.dart';
 
@@ -29,6 +30,7 @@ DashboardMetrics calculateDashboardMetrics({
   required DateTime trendStart,
   required DateTime periodEnd,
   required int monthCount,
+  ReportingLocalizer reportingLocalizer = toReportingLocalTime,
 }) {
   final seenCardIds = <String>{};
   var totalReportedCardLimits = 0.0;
@@ -46,11 +48,13 @@ DashboardMetrics calculateDashboardMetrics({
     fromInclusive: trendStart,
     throughInclusive: periodEnd,
   );
+  final localTrendStart = reportingLocalizer(trendStart);
 
   for (final transaction in aggregate.purchases) {
+    final localDate = reportingLocalizer(transaction.transactionDate);
     final monthIndex =
-        (transaction.transactionDate.year - trendStart.year) * 12 +
-        (transaction.transactionDate.month - trendStart.month);
+        (localDate.year - localTrendStart.year) * 12 +
+        (localDate.month - localTrendStart.month);
     if (monthIndex < 0 || monthIndex >= monthCount) continue;
 
     monthlySpendTrend[monthIndex] += transaction.amount;

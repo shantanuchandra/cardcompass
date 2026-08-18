@@ -378,6 +378,49 @@ void main() {
     expect(rows.traversals, 1);
   });
 
+  test('external list mutation cannot alter or stale a state projection', () {
+    final purchase = _transaction(id: 'purchase', amount: 100);
+    final card = _userCard(id: 'card-1', bank: 'HDFC');
+    final rows = <Transaction>[purchase];
+    final cards = <UserCard>[card];
+    final state = TxnsState(all: rows, cards: cards);
+
+    expect(state.totalSpend, 100);
+
+    rows.clear();
+    cards.clear();
+
+    expect(state.all.map((transaction) => transaction.id), ['purchase']);
+    expect(state.cards.map((userCard) => userCard.id), ['card-1']);
+    expect(state.filtered.map((transaction) => transaction.id), ['purchase']);
+    expect(() => state.all.clear(), throwsUnsupportedError);
+    expect(() => state.cards.clear(), throwsUnsupportedError);
+  });
+
+  test('five-thousand-row ledger snapshot is flattened and indexed once', () {
+    final rows = _TraversalCountingList(
+      List.generate(
+        5000,
+        (index) => _transaction(
+          id: 'txn-${index.toString().padLeft(4, '0')}',
+          amount: index + 1,
+          category: 'category-${index % 4}',
+        ),
+      ),
+    );
+    final state = TxnsState(all: rows, grouping: TxnGrouping.byCategory);
+    final ledgerItems = state.ledgerItems;
+
+    expect(ledgerItems, hasLength(5004));
+    expect(identical(ledgerItems, state.ledgerItems), isTrue);
+    expect(state.ledgerIndexForTransactionId('txn-0000'), 1);
+    expect(state.ledgerIndexForTransactionId('txn-4999'), 5003);
+    for (var index = 0; index < ledgerItems.length; index++) {
+      expect(ledgerItems[index], isA<TxnLedgerItem>());
+    }
+    expect(rows.traversals, 1);
+  });
+
   test('isTransactionInternational is false when the card is not found', () {
     final txn = _transaction(
       id: 'txn-1',

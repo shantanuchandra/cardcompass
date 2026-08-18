@@ -4,6 +4,7 @@ import '../../../core/providers/supabase_provider.dart';
 import '../../../core/services/bank_market.dart';
 import '../../../core/services/card_normalizer_service.dart';
 import '../../../core/services/retail_transaction_aggregation.dart';
+import '../../../core/services/reporting_time.dart';
 import '../../../shared/models/transaction.dart';
 import '../../../shared/models/user_card.dart';
 
@@ -81,6 +82,23 @@ class SpendTrend {
   });
 }
 
+sealed class TxnLedgerItem {
+  const TxnLedgerItem();
+}
+
+final class TxnLedgerGroupHeader extends TxnLedgerItem {
+  const TxnLedgerGroupHeader({required this.label, required this.total});
+
+  final String label;
+  final double total;
+}
+
+final class TxnLedgerTransaction extends TxnLedgerItem {
+  const TxnLedgerTransaction(this.transaction);
+
+  final Transaction transaction;
+}
+
 class TxnsState {
   static final Expando<_TxnsProjection> _projectionCache =
       Expando<_TxnsProjection>('TxnsState projection');
@@ -91,13 +109,14 @@ class TxnsState {
   final TxnGrouping grouping;
   final DateTime? reportingCutoff;
 
-  const TxnsState({
-    this.all = const [],
-    this.cards = const [],
+  TxnsState({
+    List<Transaction> all = const [],
+    List<UserCard> cards = const [],
     this.filter = const TxnFilter(),
     this.grouping = TxnGrouping.flat,
     this.reportingCutoff,
-  });
+  }) : all = List.unmodifiable(all),
+       cards = List.unmodifiable(cards);
 
   TxnsState copyWith({
     List<Transaction>? all,
@@ -122,6 +141,11 @@ class TxnsState {
   }
 
   List<Transaction> get filtered => _projection.rawRows;
+
+  List<TxnLedgerItem> get ledgerItems => _projection.ledgerItems;
+
+  int? ledgerIndexForTransactionId(String transactionId) =>
+      _projection.ledgerIndexes[transactionId];
 
   RetailTransactionAggregate get _aggregate => _projection.aggregate;
 
@@ -162,32 +186,41 @@ class TxnsState {
     return txn.isInternational(marketCurrency);
   }
 
-  Map<String, List<Transaction>> get grouped {
-    final txns = filtered;
+  Map<String, List<Transaction>> get grouped => _projection.grouped;
+
+  Map<String, List<Transaction>> _groupTransactions(
+    List<Transaction> transactions,
+  ) {
+    final groups = <String, List<Transaction>>{};
     switch (grouping) {
       case TxnGrouping.flat:
-        return {'All': txns};
+        groups['All'] = transactions;
       case TxnGrouping.byCard:
-        final m = <String, List<Transaction>>{};
-        for (final t in txns) {
-          (m[t.userCardId] ??= []).add(t);
+        for (final transaction in transactions) {
+          (groups[transaction.userCardId] ??= []).add(transaction);
         }
-        return m;
       case TxnGrouping.byCategory:
-        final m = <String, List<Transaction>>{};
-        for (final t in txns) {
-          (m[t.category ?? 'Other'] ??= []).add(t);
+        for (final transaction in transactions) {
+          (groups[transaction.category ?? 'Other'] ??= []).add(transaction);
         }
-        return m;
       case TxnGrouping.byDate:
-        final m = <String, List<Transaction>>{};
-        for (final t in txns) {
-          final d = t.transactionDate.toLocal();
+        for (final transaction in transactions) {
+          final d = toReportingLocalTime(transaction.transactionDate);
           final key = '${d.day} ${_TxnsState._months[d.month - 1]} ${d.year}';
-          (m[key] ??= []).add(t);
+          (groups[key] ??= []).add(transaction);
         }
-        return m;
     }
+
+    return Map.unmodifiable(
+      groups.map(
+        (key, rows) => MapEntry(
+          key,
+          identical(rows, transactions)
+              ? rows
+              : List<Transaction>.unmodifiable(rows),
+        ),
+      ),
+    );
   }
 
   SpendTrend get spendTrend {
@@ -286,11 +319,39 @@ class TxnsState {
       ).totalSpend;
     }
 
+    final immutableRawRows = List<Transaction>.unmodifiable(rawRows);
+    final purchaseIdentities = Set<Transaction>.unmodifiable(
+      aggregate.purchases,
+    );
+    final grouped = _groupTransactions(immutableRawRows);
+    final ledgerItems = <TxnLedgerItem>[];
+    final ledgerIndexes = <String, int>{};
+    for (final entry in grouped.entries) {
+      if (grouping != TxnGrouping.flat) {
+        final total = entry.value.fold<double>(
+          0,
+          (sum, transaction) =>
+              sum +
+              (purchaseIdentities.contains(transaction)
+                  ? transaction.amount
+                  : 0),
+        );
+        ledgerItems.add(TxnLedgerGroupHeader(label: entry.key, total: total));
+      }
+      for (final transaction in entry.value) {
+        ledgerIndexes.putIfAbsent(transaction.id, () => ledgerItems.length);
+        ledgerItems.add(TxnLedgerTransaction(transaction));
+      }
+    }
+
     return _TxnsProjection(
-      rawRows: List.unmodifiable(rawRows),
+      rawRows: immutableRawRows,
       aggregate: aggregate,
-      purchaseIdentities: Set.unmodifiable(aggregate.purchases),
+      purchaseIdentities: purchaseIdentities,
       priorTotal: priorTotal,
+      grouped: grouped,
+      ledgerItems: List.unmodifiable(ledgerItems),
+      ledgerIndexes: Map.unmodifiable(ledgerIndexes),
     );
   }
 
@@ -319,12 +380,18 @@ class _TxnsProjection {
     required this.aggregate,
     required this.purchaseIdentities,
     required this.priorTotal,
+    required this.grouped,
+    required this.ledgerItems,
+    required this.ledgerIndexes,
   });
 
   final List<Transaction> rawRows;
   final RetailTransactionAggregate aggregate;
   final Set<Transaction> purchaseIdentities;
   final double? priorTotal;
+  final Map<String, List<Transaction>> grouped;
+  final List<TxnLedgerItem> ledgerItems;
+  final Map<String, int> ledgerIndexes;
 }
 
 // ignore: library_private_types_in_public_api
@@ -349,7 +416,7 @@ class TxnsNotifier extends AsyncNotifier<TxnsState> {
   @override
   Future<TxnsState> build() async {
     final user = ref.watch(currentUserProvider);
-    if (user == null) return const TxnsState();
+    if (user == null) return TxnsState();
 
     final txnRepo = ref.read(transactionsRepositoryProvider);
     final cardsRepo = ref.read(cardsRepositoryProvider);

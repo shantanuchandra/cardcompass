@@ -42,6 +42,9 @@ Transaction _transaction({
   );
 }
 
+DateTime _indiaReportingTime(DateTime instant) =>
+    instant.toUtc().add(const Duration(hours: 5, minutes: 30));
+
 void main() {
   final trendStart = DateTime(2026, 7, 1);
   final periodEnd = DateTime(2026, 8, 17, 12);
@@ -198,6 +201,58 @@ void main() {
     expect(metrics.monthlySpendTrend, [400, 600]);
     expect(metrics.monthlyRewardsTrend, [4, 6]);
   });
+
+  test('month buckets use local reporting dates at a UTC month boundary', () {
+    final instant = DateTime.parse('2026-07-31T20:00:00Z');
+    final reportingDate = instant.toLocal();
+    final localTrendStart = DateTime(
+      reportingDate.year,
+      reportingDate.month - 1,
+      1,
+    );
+    final localPeriodEnd = DateTime(
+      reportingDate.year,
+      reportingDate.month + 1,
+      0,
+      23,
+      59,
+      59,
+      999,
+      999,
+    );
+
+    final metrics = calculateDashboardMetrics(
+      cards: const [],
+      transactions: [_transaction(id: 'boundary', date: instant, amount: 275)],
+      trendStart: localTrendStart,
+      periodEnd: localPeriodEnd,
+      monthCount: 2,
+    );
+
+    expect(metrics.monthlySpendTrend, [0, 275]);
+  });
+
+  test(
+    'explicit reporting timezone makes UTC month boundaries deterministic',
+    () {
+      final metrics = calculateDashboardMetrics(
+        cards: const [],
+        transactions: [
+          _transaction(
+            id: 'india-boundary',
+            date: DateTime.parse('2026-07-31T20:00:00Z'),
+            amount: 325,
+          ),
+        ],
+        trendStart: DateTime.parse('2026-06-30T18:30:00Z'),
+        periodEnd: DateTime.parse('2026-08-31T18:29:59.999999Z'),
+        monthCount: 2,
+        reportingLocalizer: _indiaReportingTime,
+      );
+
+      expect(metrics.monthlySpendTrend, [0, 325]);
+    },
+  );
 
   test('dashboard buckets reconcile to the shared canonical aggregate', () {
     final purchaseDate = DateTime(2026, 8, 5);

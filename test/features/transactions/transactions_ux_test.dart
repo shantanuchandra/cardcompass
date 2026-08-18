@@ -117,7 +117,7 @@ void main() {
   testWidgets('transaction destination uses one consistent user-facing name', (
     tester,
   ) async {
-    await pumpLedger(tester, width: 390, load: () async => const TxnsState());
+    await pumpLedger(tester, width: 390, load: () async => TxnsState());
 
     expect(find.text('Transactions'), findsOneWidget);
     expect(find.textContaining('ledger', findRichText: true), findsNothing);
@@ -126,7 +126,7 @@ void main() {
   testWidgets('ledger loading reserves a stable skeleton slot', (tester) async {
     final pending = Completer<TxnsState>();
     addTearDown(() {
-      if (!pending.isCompleted) pending.complete(const TxnsState());
+      if (!pending.isCompleted) pending.complete(TxnsState());
     });
     await tester.pumpWidget(
       ProviderScope(
@@ -151,7 +151,7 @@ void main() {
   testWidgets('ledger distinguishes dataset-empty from filtered-empty', (
     tester,
   ) async {
-    await pumpLedger(tester, width: 390, load: () async => const TxnsState());
+    await pumpLedger(tester, width: 390, load: () async => TxnsState());
     expect(find.text('No transactions yet'), findsOneWidget);
     expect(find.text('Check again'), findsOneWidget);
 

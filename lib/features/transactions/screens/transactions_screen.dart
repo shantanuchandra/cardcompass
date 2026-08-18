@@ -87,24 +87,6 @@ class _LedgerBodyState extends ConsumerState<_LedgerBody> {
       (filter.cardId != null ? 1 : 0) +
       (filter.category != null ? 1 : 0);
 
-  int? _indexForTransactionKey(
-    Key key,
-    Map<String, List<Transaction>> grouped,
-    TxnGrouping grouping,
-  ) {
-    if (key is! ValueKey<String>) return null;
-
-    var index = 0;
-    for (final entry in grouped.entries) {
-      if (grouping != TxnGrouping.flat) index++;
-      for (final transaction in entry.value) {
-        if (transaction.id == key.value) return index;
-        index++;
-      }
-    }
-    return null;
-  }
-
   void _openFilters(BuildContext context, TxnsState state) {
     void onChanged(TxnFilter filter) {
       ref.read(txnsNotifierProvider.notifier).setFilter(filter);
@@ -140,7 +122,7 @@ class _LedgerBodyState extends ConsumerState<_LedgerBody> {
   Widget build(BuildContext context) {
     final s = widget.state;
     final filtered = s.filtered;
-    final grouped = s.grouped;
+    final ledgerItems = s.ledgerItems;
     final trend = s.spendTrend;
 
     return BrandContentFrame(
@@ -280,47 +262,29 @@ class _LedgerBodyState extends ConsumerState<_LedgerBody> {
                 sliver: SliverList(
                   delegate: SliverChildBuilderDelegate(
                     (context, index) {
-                      final entries = grouped.entries.toList();
-                      int cursor = 0;
-                      for (final entry in entries) {
-                        // Group header (only if not flat)
-                        if (s.grouping != TxnGrouping.flat) {
-                          if (index == cursor) {
-                            return _GroupHeader(
-                              label: entry.key,
-                              total: s.canonicalSubtotal(entry.value),
-                              cards: s.cards,
-                            );
-                          }
-                          cursor++;
-                        }
-                        for (final txn in entry.value) {
-                          if (index == cursor) {
-                            return _TxnRow(
-                              key: ValueKey(txn.id),
-                              txn: txn,
-                              isInternational: s.isTransactionInternational(
-                                txn,
-                              ),
-                              cardName: s.cards
-                                  .where((card) => card.id == txn.userCardId)
-                                  .firstOrNull
-                                  ?.displayName,
-                            );
-                          }
-                          cursor++;
-                        }
+                      final item = ledgerItems[index];
+                      if (item is TxnLedgerGroupHeader) {
+                        return _GroupHeader(
+                          label: item.label,
+                          total: item.total,
+                          cards: s.cards,
+                        );
                       }
-                      return null;
+                      final txn = (item as TxnLedgerTransaction).transaction;
+                      return _TxnRow(
+                        key: ValueKey(txn.id),
+                        txn: txn,
+                        isInternational: s.isTransactionInternational(txn),
+                        cardName: s.cards
+                            .where((card) => card.id == txn.userCardId)
+                            .firstOrNull
+                            ?.displayName,
+                      );
                     },
-                    findChildIndexCallback: (key) =>
-                        _indexForTransactionKey(key, grouped, s.grouping),
-                    childCount: s.grouping == TxnGrouping.flat
-                        ? filtered.length
-                        : grouped.entries.fold<int>(
-                            0,
-                            (sum, e) => sum + 1 + e.value.length,
-                          ),
+                    findChildIndexCallback: (key) => key is ValueKey<String>
+                        ? s.ledgerIndexForTransactionId(key.value)
+                        : null,
+                    childCount: ledgerItems.length,
                   ),
                 ),
               ),

@@ -731,7 +731,7 @@ class _DashboardContent extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               DashboardSectionHeader(
-                title: 'Statement balances due',
+                title: 'Statement balances',
                 action: null,
                 onTap: null,
               ),
