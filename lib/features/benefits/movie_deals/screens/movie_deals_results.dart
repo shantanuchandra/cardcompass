@@ -578,7 +578,7 @@ class _DealStatusLabel extends StatelessWidget {
         style: TextStyle(
           fontFamily: 'Manrope',
           fontWeight: FontWeight.w700,
-          fontSize: 11,
+          fontSize: 12,
           height: 1.2,
           color: foreground,
         ),
@@ -626,7 +626,7 @@ class _ComparisonGrid extends StatelessWidget {
                         style: const TextStyle(
                           fontFamily: 'Manrope',
                           fontWeight: FontWeight.w700,
-                          fontSize: 11,
+                          fontSize: 12,
                           letterSpacing: 0.5,
                           color: BrandColors.mutedInk,
                         ),
@@ -679,7 +679,7 @@ class _EmptyGroupsSummary extends StatelessWidget {
                     style: const TextStyle(
                       fontFamily: 'Manrope',
                       fontWeight: FontWeight.w700,
-                      fontSize: 10,
+                      fontSize: 12,
                       letterSpacing: 0.5,
                       color: BrandColors.mutedInk,
                     ),
