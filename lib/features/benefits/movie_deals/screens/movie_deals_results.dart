@@ -638,7 +638,7 @@ class _DealRowState extends State<_DealRow> {
               candidate.rule.bankName!,
               style: TextStyle(
                 fontFamily: 'Manrope',
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0.7,
                 color: DefaultTextStyle.of(
