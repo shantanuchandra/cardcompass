@@ -19,7 +19,9 @@ The main remaining production risk is data completeness. The live approved table
 | Exact URL candidates | 41 unmapped rows have exact source URL → catalog URL matches | Promotion did not create mappings | Automatic backfill limited to IDFC Classic; SBI intentionally excluded due contamination |
 | HDFC duplication | Two Diners Club Black rows describe the same ₹80k monthly voucher milestone | Dedupe key is not semantic | Migration removes only `Monthly Milestone Benefits` mapping; source benefit is retained |
 | Catalog labels | `Firstprivatecreditcard`, `Indianoil`, and two IDFC issuer casings | Scrape-derived display labels were not canonicalized | Exact URL/name-guarded cleanup added |
-| Remote migration | Linked CLI stalls at “Initialising login role” | Supabase database/pooler connectivity | Migration is locally tested but not claimed as deployed |
+| Remote migration | Direct Postgres ports time out from this environment | Network path blocks pooler connections | Restored access through the HTTPS Management API; both migrations applied and recorded |
+| Admin review queue | 134 queued, 28 quarantined, 12 review-required, 5 staged jobs; 8 pending staging rows | Latest issuer crawl is still largely queued/review-gated | No pending proposal contains movie terms, so no movie approval was safe or necessary |
+| SBI validation | 35 movie-query rows span contradictory titles across unrelated product URLs | Legacy scraper mixed shared/navigation text with product-specific benefits | Kept all SBI rows unmapped; 59 current SBI enrichment jobs are queued for clean extraction |
 
 ## Live database funnel (pre-remediation baseline)
 
@@ -44,7 +46,7 @@ The migration `20260818090000_movie_benefit_mapping_remediation.sql`:
 1. Adds the IDFC FIRST Classic “25% Off on Movie Tickets” mapping only where exact card URL, bank, card name, benefit title, and active status agree.
 2. Removes the duplicate HDFC Diners Club Black `Monthly Milestone Benefits` mapping while retaining the benefit evidence row.
 3. Repairs three exact catalog labels with issuer/URL guards.
-4. Adds service-only `get_movie_benefit_mapping_health()` metrics for active, mapped, and orphaned movie benefits.
+4. Adds service-only `get_movie_benefit_mapping_health()` metrics for active, mapped, and orphaned movie benefits. A follow-up migration aligns the predicate exactly with the production repository schema.
 5. Performs no SBI auto-mapping; conflicting titles across SBI product URLs require issuer-source review.
 
 ## Acceptance and verification
@@ -53,18 +55,20 @@ The migration `20260818090000_movie_benefit_mapping_remediation.sql`:
 |---|---|
 | UI widget tests, including adaptive spans and platform mismatch | Pass (16/16 scoped results tests) |
 | Movies feature suite baseline | Pass (121 tests before remediation) |
-| Migration contract tests | Pass (12/12 combined enrichment/remediation tests) |
+| Migration contract tests | Pass, including live-schema regression for the health predicate |
 | Release web build with `/app/` base | Pass |
-| Port 8080 responds with new release build | Pass; unauthenticated Playwright correctly redirects to login |
-| Remote DB migration | Not deployed/verified; linked CLI pooler initialization hangs |
-| Admin staged proposal approvals | Not performed; requires authenticated evidence review, never bulk approval |
+| Port 8080 responds with new release build | Pass; `/app/` base verified and unauthenticated Playwright correctly redirects to login |
+| Remote DB migration | Deployed and recorded through Supabase Management API SQL |
+| Live migration assertions | Classic mapping 1; HDFC duplicate mapping 0; repaired labels 1 each; old IDFC issuer spelling 0 |
+| Live health RPC | `49 active / 8 mapped / 41 orphaned`; anon denied, service role allowed |
+| Admin enrichment status | Health metric added to admin UI; `admin-catalog-entry` deployed ACTIVE version 14 |
+| Admin staged proposal approvals | None performed: all 8 pending rows are non-movie proposals |
 
 ## Remaining operational actions
 
 | Priority | Action | Acceptance check |
 |---|---|---|
-| P0 | Restore linked database connectivity and apply the tested migration | Health RPC returns metrics and the exact mapping/data updates are visible |
-| P0 | Review staged movie proposals by issuer, starting with non-SBI exact-identity rows | Each approval includes correct card identity and official source evidence |
-| P0 | Manually validate SBI proposals against issuer pages before mapping | No ELITE/free-ticket text is attached to unrelated SBI variants |
-| P1 | Add the health RPC to an admin/CI alert and trend orphan count | New orphan growth is visible before release |
-| P1 | Re-run authenticated Zomato/District and BookMyShow searches after migration | Correct variants and benefits appear once, with truthful platform pricing |
+| P0 | Let queued issuer enrichment complete, then review movie proposals by exact product identity | Each approval includes the correct card and official source evidence |
+| P0 | Re-extract SBI from current product pages and reject shared-navigation contamination | No ELITE/free-ticket text is attached to unrelated SBI variants |
+| P1 | Establish an alert threshold on the admin-visible orphan count | New orphan growth is visible before release |
+| P1 | Re-run authenticated Zomato/District and BookMyShow searches after the queued jobs are reviewed | Correct variants and benefits appear once, with truthful platform pricing |

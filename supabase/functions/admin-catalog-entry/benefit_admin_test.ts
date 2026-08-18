@@ -854,6 +854,20 @@ Deno.test("benefit counts remain complete while list and history use explicit pa
   }));
   let countQueries = 0;
   const db = withAuthenticatedUser({
+    async rpc(name: string) {
+      assert(
+        name === "get_movie_benefit_mapping_health",
+        "status used an unexpected RPC",
+      );
+      return {
+        data: [
+          { metric: "active_movie_benefits", value: 49 },
+          { metric: "mapped_active_movie_benefits", value: 8 },
+          { metric: "orphaned_active_movie_benefits", value: 41 },
+        ],
+        error: null,
+      };
+    },
     from(table: string) {
       assert(
         table === "card_catalog_enrichment_jobs",
@@ -929,6 +943,10 @@ Deno.test("benefit counts remain complete while list and history use explicit pa
     assert(
       countQueries > 0,
       "run counts did not use an independent aggregate query",
+    );
+    assert(
+      body.movie_mapping_health[2].value === 41,
+      "movie mapping health was omitted from admin status",
     );
   } finally {
     if (originalAllowlist === undefined) {

@@ -6,6 +6,10 @@ const migration = new URL(
   '../../supabase/migrations/20260818090000_movie_benefit_mapping_remediation.sql',
   import.meta.url,
 );
+const healthFixMigration = new URL(
+  '../../supabase/migrations/20260818100000_fix_movie_benefit_mapping_health.sql',
+  import.meta.url,
+);
 
 async function migrationSql() {
   return readFile(migration, 'utf8');
@@ -55,4 +59,17 @@ test('normalizes only exact known catalog labels', async () => {
   assert.match(sql, /bank\s*=\s*'Axis Bank'[\s\S]*card_name\s*=\s*'Indianoil'/i);
   assert.match(sql, /SET bank\s*=\s*'IDFC FIRST Bank'/i);
   assert.match(sql, /bank\s*=\s*'IDFC First Bank'/i);
+});
+
+test('follow-up health RPC mirrors the repository schema and widened predicate', async () => {
+  const sql = await readFile(healthFixMigration, 'utf8');
+
+  assert.match(sql, /benefit\.benefit_category\s*=\s*'entertainment'/i);
+  assert.match(sql, /benefit\.value_config\s*->>\s*'category'\s+ILIKE\s+'%movie%'/i);
+  assert.match(sql, /benefit\.value_config\s*->>\s*'discount_type'\s+ILIKE\s+'%movie%'/i);
+  for (const keyword of ['movie', 'cinema', 'bookmyshow', 'pvr', 'inox', 'cinepolis']) {
+    assert.match(sql, new RegExp(`benefit\\.title ILIKE '%${keyword}%'`, 'i'));
+    assert.match(sql, new RegExp(`benefit\\.description ILIKE '%${keyword}%'`, 'i'));
+  }
+  assert.doesNotMatch(sql, /benefit\.(?:category|subcategory)\b/i);
 });

@@ -582,6 +582,12 @@ function pilotCandidates(value: unknown) {
   }));
 }
 
+async function movieMappingHealth(db: UntypedSupabaseClient) {
+  const { data, error } = await db.rpc("get_movie_benefit_mapping_health");
+  if (error) throw new BenefitAdminError("movie_mapping_health_unavailable", 503);
+  return Array.isArray(data) ? data : [];
+}
+
 export function isBenefitAdminAction(action: unknown): action is string {
   return typeof action === "string" && benefitActions.has(action);
 }
@@ -611,9 +617,10 @@ export async function handleBenefitAdminAction(
       };
     }
     case "benefit-status": {
-      const [page, counts] = await Promise.all([
+      const [page, counts, mappingHealth] = await Promise.all([
         readBenefitJobs(db, body),
         benefitCounts(db),
+        movieMappingHealth(db),
       ]);
       return {
         items: page.rows.map((row) =>
@@ -623,6 +630,7 @@ export async function handleBenefitAdminAction(
           )
         ),
         run_counts: counts,
+        movie_mapping_health: mappingHealth,
         history: page.rows.map((row) => ({
           job_id: text(row.id, 100),
           status: text(row.status, 50),
