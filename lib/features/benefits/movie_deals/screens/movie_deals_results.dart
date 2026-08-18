@@ -58,9 +58,10 @@ String _bookingPlatformMessage(
     final tied = eligiblePlatforms.any(
       (p) => p.toLowerCase() == selectedPlatform.toLowerCase(),
     );
+    final sortedEligible = eligiblePlatforms.toList()..sort();
     return tied
         ? 'Tied to $selectedPlatform.'
-        : 'This offer is not tied to $selectedPlatform.';
+        : 'This offer is not tied to $selectedPlatform. Available on ${sortedEligible.join(', ')}.';
   }
   if (selectedPlatform != null) {
     return candidate.platformConfidence == MovieDealPlatformConfidence.explicit
@@ -115,6 +116,7 @@ enum _TileWeight { hero, wide, standard, strip }
 /// doesn't allow that split).
 class _BentoTile extends StatelessWidget {
   const _BentoTile({
+    super.key,
     required this.weight,
     required this.accent,
     required this.title,
@@ -287,6 +289,19 @@ class MovieDealsResults extends ConsumerWidget {
         recommendation.potentialOwned.isNotEmpty ||
         recommendation.potentialOverall.isNotEmpty;
 
+    final populatedRankedGroupCount = [
+      recommendation.guaranteedOwned,
+      recommendation.potentialOwned,
+      recommendation.guaranteedOverall,
+      recommendation.potentialOverall,
+    ].where((group) => group.isNotEmpty).length;
+
+    int rankedSpan(List<MovieDealCandidate> group, int preferredSpan) {
+      if (group.isEmpty) return 1;
+      if (populatedRankedGroupCount == 1) return 3;
+      return preferredSpan;
+    }
+
     if (!hasAnyRanked &&
         rewardMultiplierCandidates.isEmpty &&
         annualAllowanceCandidates.isEmpty) {
@@ -347,9 +362,12 @@ class MovieDealsResults extends ConsumerWidget {
 
     final tiles = <_GridItem>[
       _GridItem(
-        2,
+        rankedSpan(recommendation.guaranteedOwned, 2),
         _BentoTile(
-          weight: _TileWeight.hero,
+          key: const Key('movie-group-guaranteed-owned'),
+          weight: recommendation.guaranteedOwned.isEmpty
+              ? _TileWeight.standard
+              : _TileWeight.hero,
           accent: BrandColors.focusDark,
           title: 'GUARANTEED · YOU OWN',
           child: buildTileBody(
@@ -360,8 +378,9 @@ class MovieDealsResults extends ConsumerWidget {
         ),
       ),
       _GridItem(
-        1,
+        rankedSpan(recommendation.potentialOwned, 1),
         _BentoTile(
+          key: const Key('movie-group-potential-owned'),
           weight: _TileWeight.standard,
           accent: BrandColors.rewardInk,
           title: 'POTENTIAL · YOU OWN',
@@ -373,8 +392,9 @@ class MovieDealsResults extends ConsumerWidget {
         ),
       ),
       _GridItem(
-        2,
+        rankedSpan(recommendation.guaranteedOverall, 2),
         _BentoTile(
+          key: const Key('movie-group-guaranteed-overall'),
           weight: _TileWeight.wide,
           accent: BrandColors.focusDark,
           title: 'GUARANTEED · OVERALL',
@@ -386,8 +406,9 @@ class MovieDealsResults extends ConsumerWidget {
         ),
       ),
       _GridItem(
-        1,
+        rankedSpan(recommendation.potentialOverall, 1),
         _BentoTile(
+          key: const Key('movie-group-potential-overall'),
           weight: _TileWeight.standard,
           accent: BrandColors.rewardInk,
           title: 'POTENTIAL · OVERALL',
@@ -540,6 +561,11 @@ class _DealRowState extends State<_DealRow> {
     final effectiveTicketPrice =
         candidate.finalAmount / widget.request.numberOfTickets;
     final tied = _isTiedToSearchedPlatform(candidate, widget.request);
+    final eligiblePlatforms = eligibleMoviePlatformsFor(candidate.rule);
+    final hasExplicitPlatformMismatch =
+        widget.request.preferredPlatform != null &&
+        eligiblePlatforms.isNotEmpty &&
+        !tied;
 
     final details = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -575,50 +601,56 @@ class _DealRowState extends State<_DealRow> {
             style: TextStyle(fontFamily: 'Manrope', fontSize: 12),
           ),
         const SizedBox(height: 4),
-        Text(
-          _plainLanguageReason(candidate),
-          style: const TextStyle(
-            fontFamily: 'Manrope',
-            fontSize: 12,
-            height: 1.35,
+        if (!hasExplicitPlatformMismatch)
+          Text(
+            _plainLanguageReason(candidate),
+            style: const TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 12,
+              height: 1.35,
+            ),
           ),
-        ),
       ],
     );
-    final priceBlock = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          '₹${candidate.grossAmount.toStringAsFixed(0)}',
-          style: const TextStyle(
-            fontFamily: 'Manrope',
-            fontSize: 12,
-            decoration: TextDecoration.lineThrough,
-          ),
-        ),
-        Text(
-          '₹${candidate.finalAmount.toStringAsFixed(0)}',
-          style: const TextStyle(
-            fontFamily: 'Manrope',
-            fontWeight: FontWeight.bold,
-            fontSize: 15,
-          ),
-        ),
-        Text(
-          'Save ₹${candidate.savings.toStringAsFixed(0)}',
-          style: const TextStyle(
-            fontFamily: 'Manrope',
-            fontWeight: FontWeight.bold,
-            fontSize: 12,
-          ),
-        ),
-        Text(
-          '₹${effectiveTicketPrice.toStringAsFixed(0)}/ticket',
-          style: const TextStyle(fontFamily: 'Manrope', fontSize: 12),
-        ),
-      ],
-    );
+    final priceBlock = hasExplicitPlatformMismatch
+        ? const BrandStatusChip(
+            label: 'Not valid on selected platform',
+            tone: BrandStatusTone.neutral,
+          )
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '₹${candidate.grossAmount.toStringAsFixed(0)}',
+                style: const TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 12,
+                  decoration: TextDecoration.lineThrough,
+                ),
+              ),
+              Text(
+                '₹${candidate.finalAmount.toStringAsFixed(0)}',
+                style: const TextStyle(
+                  fontFamily: 'Manrope',
+                  fontWeight: FontWeight.bold,
+                  fontSize: 15,
+                ),
+              ),
+              Text(
+                'Save ₹${candidate.savings.toStringAsFixed(0)}',
+                style: const TextStyle(
+                  fontFamily: 'Manrope',
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                ),
+              ),
+              Text(
+                '₹${effectiveTicketPrice.toStringAsFixed(0)}/ticket',
+                style: const TextStyle(fontFamily: 'Manrope', fontSize: 12),
+              ),
+            ],
+          );
 
     return Container(
       key: Key('movie-card-option-${candidate.cardId}'),

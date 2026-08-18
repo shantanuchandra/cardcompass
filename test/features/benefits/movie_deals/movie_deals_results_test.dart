@@ -331,6 +331,44 @@ void main() {
   );
 
   testWidgets(
+    'expands the only populated ranked group and keeps empty groups compact',
+    (tester) async {
+      final potential = _candidate(
+        cardId: 'only-populated',
+        isOwned: false,
+        savings: 200,
+        platformConfidence: MovieDealPlatformConfidence.unconfirmed,
+      );
+      final recommendation = MovieDealsRecommendation(
+        candidates: [potential],
+        rejectedCandidates: const [],
+        potentialOverall: [potential],
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            movieDealsSearchProvider(
+              request,
+            ).overrideWith((ref) async => recommendation),
+          ],
+          child: _wideHarness(const MovieDealsResults(request: request)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final populated = find.byKey(const Key('movie-group-potential-overall'));
+      final empty = find.byKey(const Key('movie-group-guaranteed-owned'));
+      expect(populated, findsOneWidget);
+      expect(empty, findsOneWidget);
+      expect(
+        tester.getSize(populated).width,
+        greaterThan(tester.getSize(empty).width * 2),
+      );
+    },
+  );
+
+  testWidgets(
     'shows a single no-deal message when every group and every dedicated section is empty',
     (tester) async {
       const recommendation = MovieDealsRecommendation(
@@ -544,6 +582,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.textContaining('not tied to PVR'), findsWidgets);
+      expect(find.textContaining('Available on BookMyShow'), findsWidgets);
+      expect(find.text('Save ₹100'), findsNothing);
+      expect(find.text('₹900'), findsNothing);
     },
   );
 
