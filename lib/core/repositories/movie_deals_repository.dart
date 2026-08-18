@@ -217,10 +217,20 @@ class MovieDealsSupabaseRepository implements MovieDealsRepository {
                       _matchesRequest(row, request),
                 )
                 .toList();
+      final cycleStart = _usageCycleStart(source, now);
+      final cycleMatching = cycleStart == null
+          ? matching
+          : matching.where((row) {
+              final transactionDate = _date(row['transaction_date']);
+              return transactionDate != null &&
+                  !transactionDate.isBefore(cycleStart) &&
+                  !transactionDate.isAfter(now);
+            }).toList();
       final verified =
-          matching.isNotEmpty && matching.every(_hasNumericTicketCount);
+          cycleMatching.isNotEmpty &&
+          cycleMatching.every(_hasNumericTicketCount);
       final usedTickets = verified
-          ? matching.fold<int>(
+          ? cycleMatching.fold<int>(
               0,
               (sum, row) => sum + _integer(_metadata(row)['ticket_count'])!,
             )
@@ -231,7 +241,7 @@ class MovieDealsSupabaseRepository implements MovieDealsRepository {
             ? MovieDealUsageConfidence.verified
             : MovieDealUsageConfidence.unverified,
         usedTickets: usedTickets,
-        usedTransactions: verified ? matching.length : 0,
+        usedTransactions: verified ? cycleMatching.length : 0,
         milestoneSpend: spendByCatalogCardId[source.catalogCardId],
         confirmedPlatforms:
             confirmedPlatformsByBenefit[source.benefitId] ?? const {},
@@ -403,6 +413,30 @@ double? _number(dynamic value) =>
 DateTime? _date(dynamic value) {
   final s = _string(value);
   return s == null ? null : DateTime.tryParse(s);
+}
+
+DateTime? _usageCycleStart(MovieBenefitSource source, DateTime now) {
+  final config = source.valueConfig;
+  if (_integer(config['max_usage_per_month']) != null) {
+    return now.isUtc
+        ? DateTime.utc(now.year, now.month)
+        : DateTime(now.year, now.month);
+  }
+  if (_integer(config['max_usage_per_period']) == null) return null;
+  final period = _string(config['usage_period'])?.trim().toLowerCase();
+  final startMonth = ((now.month - 1) ~/ 3) * 3 + 1;
+  return switch (period) {
+    'month' =>
+      now.isUtc
+          ? DateTime.utc(now.year, now.month)
+          : DateTime(now.year, now.month),
+    'quarter' =>
+      now.isUtc
+          ? DateTime.utc(now.year, startMonth)
+          : DateTime(now.year, startMonth),
+    'year' => now.isUtc ? DateTime.utc(now.year) : DateTime(now.year),
+    _ => null,
+  };
 }
 
 Map<String, dynamic> _jsonMap(dynamic value) {

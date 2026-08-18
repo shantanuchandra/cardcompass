@@ -14,6 +14,8 @@ export type BenefitProposal = {
   rate?: number;
   cap?: number;
   threshold?: number;
+  valueConfig?: Record<string, unknown>;
+  partners?: string[];
   frequency?: string;
   period?: string;
   restrictions: string[];
@@ -36,7 +38,10 @@ export type BenefitDiff = {
   possibleRemovals: Array<{ benefit: BenefitProposal; informational: true }>;
   unchanged: Array<{ current: BenefitProposal; proposed: BenefitProposal }>;
   conflicts: Array<{
-    code: "ambiguous_benefit_match" | "conflicting_proposed_terms" | "dedupe_key_condition_mismatch";
+    code:
+      | "ambiguous_benefit_match"
+      | "conflicting_proposed_terms"
+      | "dedupe_key_condition_mismatch";
     current?: BenefitProposal[];
     proposed: BenefitProposal[];
   }>;
@@ -50,6 +55,8 @@ type ParsedFields = Pick<
   | "rate"
   | "cap"
   | "threshold"
+  | "valueConfig"
+  | "partners"
   | "frequency"
   | "period"
   | "restrictions"
@@ -83,7 +90,9 @@ function stableHash(value: string): string {
     first = Math.imul(first ^ code, 0x01000193) >>> 0;
     second = Math.imul(second ^ (code + index), 0x27d4eb2d) >>> 0;
   }
-  return `benefit-${first.toString(16).padStart(8, "0")}${second.toString(16).padStart(8, "0")}`;
+  return `benefit-${first.toString(16).padStart(8, "0")}${
+    second.toString(16).padStart(8, "0")
+  }`;
 }
 
 function sanitize(value: string): string {
@@ -98,6 +107,10 @@ function readableText(value: string): string {
   return value
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
     .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(
+      /<a\b[^>]*\bhref=["']([^"']*(?:bookmyshow|district|zomato|pvr|inox|cinepolis)[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi,
+      "$2 $1",
+    )
     .replace(/<\/(?:p|div|li|dd|dt|h[1-6]|tr)>/gi, "\n")
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;|&#160;/gi, " ")
@@ -115,11 +128,15 @@ function decimal(value: string | undefined): number | undefined {
 }
 
 function money(text: string): number | undefined {
-  return decimal(text.match(/(?:₹|rs\.?|inr)\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i)?.[1]);
+  return decimal(
+    text.match(/(?:₹|rs\.?|inr)\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i)?.[1],
+  );
 }
 
 function period(text: string): string | undefined {
-  const matched = text.match(/\bper\s+(statement\s+month|calendar\s+month|month|quarter|year|annum|week|day)\b/i)?.[1];
+  const matched = text.match(
+    /\bper\s+(statement\s+month|calendar\s+month|month|quarter|year|annum|week|day)\b/i,
+  )?.[1];
   if (!matched) return undefined;
   return normalize(matched).replace("annum", "year");
 }
@@ -136,13 +153,27 @@ function exclusions(text: string): string[] {
 }
 
 function dateToIso(text: string): string | undefined {
-  const matched = text.match(/\b(?:valid\s+(?:until|through)|offer\s+ends?|expires?\s+(?:on)?|effective\s+until)\s*(?:on\s*)?(\d{1,2})\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{4})\b/i);
+  const matched = text.match(
+    /\b(?:valid\s+(?:until|through)|offer\s+ends?|expires?\s+(?:on)?|effective\s+until)\s*(?:on\s*)?(\d{1,2})\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{4})\b/i,
+  );
   if (!matched) return undefined;
   const month = [
-    "january", "february", "march", "april", "may", "june",
-    "july", "august", "september", "october", "november", "december",
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
   ].indexOf(matched[2].toLowerCase()) + 1;
-  return `${matched[3]}-${String(month).padStart(2, "0")}-${matched[1].padStart(2, "0")}`;
+  return `${matched[3]}-${String(month).padStart(2, "0")}-${
+    matched[1].padStart(2, "0")
+  }`;
 }
 
 function field(
@@ -155,7 +186,10 @@ function field(
   evidence[key] = excerpt;
 }
 
-function withCommonFields(text: string, fields: ParsedFields): Pick<ParsedBenefit, "confidence" | "evidence"> {
+function withCommonFields(
+  text: string,
+  fields: ParsedFields,
+): Pick<ParsedBenefit, "confidence" | "evidence"> {
   const sourceExcerpt = sanitize(text);
   const confidence: Record<string, number> = {
     title: 0.92,
@@ -167,26 +201,52 @@ function withCommonFields(text: string, fields: ParsedFields): Pick<ParsedBenefi
     description: sourceExcerpt,
     category: sourceExcerpt,
   };
-  for (const key of [
-    "valueType", "value", "rate", "cap", "threshold", "frequency", "period",
-    "effectiveFrom", "effectiveTo",
-  ]) {
-    if (fields[key as keyof ParsedFields] !== undefined) field(confidence, evidence, key, sourceExcerpt);
+  for (
+    const key of [
+      "valueType",
+      "value",
+      "rate",
+      "cap",
+      "threshold",
+      "frequency",
+      "period",
+      "effectiveFrom",
+      "effectiveTo",
+    ]
+  ) {
+    if (fields[key as keyof ParsedFields] !== undefined) {
+      field(confidence, evidence, key, sourceExcerpt);
+    }
   }
-  if (fields.restrictions.length > 0) field(confidence, evidence, "restrictions", sourceExcerpt);
-  if (fields.exclusions.length > 0) field(confidence, evidence, "exclusions", sourceExcerpt);
+  if (fields.restrictions.length > 0) {
+    field(confidence, evidence, "restrictions", sourceExcerpt);
+  }
+  if (fields.exclusions.length > 0) {
+    field(confidence, evidence, "exclusions", sourceExcerpt);
+  }
   return { confidence, evidence };
 }
 
 function parseCashback(text: string): ParsedFields | null {
   if (!/\bcashback\b/i.test(text)) return null;
-  const rate = decimal(text.match(/\b([0-9]+(?:\.\d+)?)\s*%\s*cashback\b/i)?.[1]);
+  const rate = decimal(
+    text.match(/\b([0-9]+(?:\.\d+)?)\s*%\s*cashback\b/i)?.[1],
+  );
   const fixedValue = rate === undefined
-    ? money(text.match(/(?:₹|rs\.?|inr)\s*[0-9][0-9,]*(?:\.\d{1,2})?\s+cashback/i)?.[0] ?? "")
+    ? money(
+      text.match(/(?:₹|rs\.?|inr)\s*[0-9][0-9,]*(?:\.\d{1,2})?\s+cashback/i)
+        ?.[0] ?? "",
+    )
     : undefined;
   if (rate === undefined && fixedValue === undefined) return null;
-  const cap = money(text.match(/\b(?:capp?ed\s+(?:at|to)|maximum\s+(?:of\s+)?|up\s+to)\s*((?:₹|rs\.?|inr)\s*[0-9][0-9,]*(?:\.\d{1,2})?)/i)?.[1] ?? "");
-  const restriction = text.match(/\bcashback\s+on\s+(.+?)(?=\s*,?\s*(?:capp?ed|excluding|valid|until|per\b)|[.;]|$)/i)?.[1];
+  const cap = money(
+    text.match(
+      /\b(?:capp?ed\s+(?:at|to)|maximum\s+(?:of\s+)?|up\s+to)\s*((?:₹|rs\.?|inr)\s*[0-9][0-9,]*(?:\.\d{1,2})?)/i,
+    )?.[1] ?? "",
+  );
+  const restriction = text.match(
+    /\bcashback\s+on\s+(.+?)(?=\s*,?\s*(?:capp?ed|excluding|valid|until|per\b)|[.;]|$)/i,
+  )?.[1];
   return {
     category: "cashback",
     valueType: "cashback",
@@ -200,25 +260,256 @@ function parseCashback(text: string): ParsedFields | null {
 }
 
 function parseRewards(text: string): ParsedFields | null {
-  const matched = text.match(/\bearn\s+([0-9]+(?:\.\d+)?)\s+reward\s+points?\b/i);
+  const matched = text.match(
+    /\bearn\s+([0-9]+(?:\.\d+)?)\s+reward\s+points?\b/i,
+  );
   if (!matched) return null;
-  const thresholdMatch = text.match(/\b(?:for\s+every|per)\s*((?:₹|rs\.?|inr)\s*[0-9][0-9,]*(?:\.\d{1,2})?)/i)?.[1];
-  const restriction = text.match(/\bspent\s+on\s+(.+?)(?=\s*,?\s*(?:valid|until|excluding)|[.;]|$)/i)?.[1];
+  const thresholdMatch = text.match(
+    /\b(?:for\s+every|per)\s*((?:₹|rs\.?|inr)\s*[0-9][0-9,]*(?:\.\d{1,2})?)/i,
+  )?.[1];
+  const restriction = text.match(
+    /\bspent\s+on\s+(.+?)(?=\s*,?\s*(?:valid|until|excluding)|[.;]|$)/i,
+  )?.[1];
+  const threshold = money(thresholdMatch ?? "");
+  const normalizedRestriction = restriction
+    ? normalize(restriction)
+    : undefined;
+  const isMovieReward = normalizedRestriction != null &&
+    /\bmovies?\b/i.test(normalizedRestriction);
   return {
     category: "rewards",
     valueType: "reward_points",
     value: decimal(matched[1]),
-    ...(money(thresholdMatch ?? "") === undefined ? {} : { threshold: money(thresholdMatch ?? "") }),
-    restrictions: restriction ? [normalize(restriction)] : [],
+    ...(threshold === undefined ? {} : { threshold }),
+    ...(isMovieReward && threshold !== undefined
+      ? {
+        valueConfig: {
+          category: "movies",
+          multiplier: decimal(matched[1]),
+          unit: `reward points per Rs. ${threshold}`,
+        },
+      }
+      : {}),
+    restrictions: normalizedRestriction ? [normalizedRestriction] : [],
     exclusions: exclusions(text),
     ...(dateToIso(text) === undefined ? {} : { effectiveTo: dateToIso(text) }),
   };
 }
 
+function moviePartners(text: string): string[] {
+  const partners: string[] = [];
+  if (/\bbook\s*my\s*show\b/i.test(text)) partners.push("BookMyShow");
+  if (/\bdistrict\b/i.test(text)) partners.push("District");
+  if (/\bzomato\b/i.test(text)) partners.push("Zomato");
+  if (/\bpvr\b/i.test(text)) partners.push("PVR");
+  if (/\binox\b/i.test(text)) partners.push("INOX");
+  if (/\bcinepolis\b/i.test(text)) partners.push("Cinepolis");
+  return partners;
+}
+
+function usageLimit(
+  text: string,
+): { count: number; period: "month" | "quarter" | "year" } | undefined {
+  const matched = text.match(
+    /\b(?:up\s+to\s+|(?:a\s+)?maximum\s+of\s+)?(once|twice|[0-9]+)\s+(?:times?\s+)?(?:per|in|a)\s+(?:a\s+)?(?:calendar\s+)?(month|quarter|year)\b/i,
+  );
+  const rawCount = matched?.[1]?.toLowerCase();
+  const period = matched?.[2]?.toLowerCase() as
+    | "month"
+    | "quarter"
+    | "year"
+    | undefined;
+  if (!rawCount || !period) return undefined;
+  const count = rawCount === "once"
+    ? 1
+    : rawCount === "twice"
+    ? 2
+    : decimal(rawCount);
+  return count === undefined ? undefined : { count, period };
+}
+
+function cappedAmount(text: string): number | undefined {
+  const matched = text.match(
+    /\b(?:capp?ed\s+(?:at|to)|maximum(?:\s+discount)?(?:\s+per\s+(?:ticket\s+)?(?:booking|transaction))?(?:\s+(?:is|of))?|up\s+to)\s*((?:₹|rs\.?|inr)\s*[0-9][0-9,]*(?:\.\d{1,2})?)/i,
+  )?.[1];
+  return money(matched ?? "");
+}
+
+function mentionsBogo(text: string): boolean {
+  return /\bbuy\s+(?:one|1)\b[\s\S]*\bget\s+(?:one|1|the\s+second|second)\b/i
+    .test(text) &&
+    /\b(?:free|complimentary)\b/i.test(text);
+}
+
+function startsIndependentBenefitClause(text: string): boolean {
+  return mentionsBogo(text) ||
+    /\b[0-9]+(?:\.[0-9]+)?\s*%\s*(?:off|discount)\b/i.test(text) ||
+    /\bget\s+[0-9]+\s+(?:pvr\s+inox\s+)?movie\s+tickets?\s+on\s+every\s+spend\b/i
+      .test(text) ||
+    (/\b(?:free|complimentary)\b[\s\S]*\bmovie\s+tickets?\b/i.test(text) &&
+      /\b(?:year|annual|annum)\b/i.test(text)) ||
+    /\b(?:cashback|reward\s+points?|lounge)\b/i.test(text) ||
+    /(?:₹|rs\.?|inr)\s*[0-9][0-9,]*(?:\.\d{1,2})?\s*(?:off|discount)\b/i
+      .test(text);
+}
+
+function adjacentClauses(
+  lines: readonly string[],
+  index: number,
+  maximumLines: number,
+): string {
+  const clauses = [lines[index]];
+  for (const candidate of lines.slice(index + 1, index + maximumLines)) {
+    if (startsIndependentBenefitClause(candidate)) break;
+    clauses.push(candidate);
+  }
+  return clauses.join(" ");
+}
+
+function parseMovieBenefit(text: string): ParsedFields | null {
+  if (
+    !/\b(?:movies?|movie\s+tickets?|cinema|book\s*my\s*show|district|zomato|pvr|inox|cinepolis)\b/i
+      .test(text)
+  ) {
+    return null;
+  }
+  if (
+    /\b(?:food\s*(?:&|and)\s*beverages?|f\s*&\s*b)\b/i.test(text) &&
+    !/\bmovie\s+tickets?\b/i.test(text)
+  ) {
+    return null;
+  }
+  const partners = moviePartners(text);
+  const percent = decimal(
+    text.match(/\b([0-9]+(?:\.\d+)?)\s*%\s*(?:off|discount)\b/i)?.[1] ??
+      text.match(/\bdiscount(?:ed)?\s+(?:of\s+)?([0-9]+(?:\.\d+)?)\s*%\b/i)
+        ?.[1],
+  );
+  if (percent !== undefined) {
+    const cap = cappedAmount(text);
+    return {
+      category: "entertainment",
+      valueType: "percent_discount",
+      rate: percent,
+      valueConfig: {
+        category: "movie_tickets",
+        discount_type: "percent",
+        discount_percent: percent,
+        ...(cap === undefined ? {} : { max_discount_per_transaction: cap }),
+      },
+      partners,
+      restrictions: [],
+      exclusions: exclusions(text),
+    };
+  }
+
+  if (mentionsBogo(text)) {
+    const cap = cappedAmount(text);
+    const usage = usageLimit(text);
+    if (cap === undefined || usage === undefined) return null;
+    return {
+      category: "entertainment",
+      valueType: "bogo",
+      value: cap,
+      frequency: `${usage.count} redemptions`,
+      period: usage.period,
+      valueConfig: {
+        category: "movie_tickets",
+        discount_type: "bogo",
+        max_discount_per_transaction: cap,
+        ...(usage.period === "month" ? { max_usage_per_month: usage.count } : {
+          max_usage_per_period: usage.count,
+          usage_period: usage.period,
+        }),
+      },
+      partners,
+      restrictions: [],
+      exclusions: exclusions(text),
+    };
+  }
+
+  const fixedDiscount = money(
+    text.match(
+      /((?:₹|rs\.?|inr)\s*[0-9][0-9,]*(?:\.\d{1,2})?)\s*(?:off|discount)\b/i,
+    )?.[1] ?? "",
+  );
+  if (fixedDiscount !== undefined) {
+    return {
+      category: "entertainment",
+      valueType: "fixed_discount",
+      value: fixedDiscount,
+      valueConfig: {
+        category: "movie_tickets",
+        discount_type: "fixed",
+        discount_amount: fixedDiscount,
+      },
+      partners,
+      restrictions: [],
+      exclusions: exclusions(text),
+    };
+  }
+
+  const milestone = text.match(
+    /\bget\s+([0-9]+)\s+(?:pvr\s+inox\s+)?movie\s+tickets?\s+on\s+every\s+spend\s+of\s+((?:₹|rs\.?|inr)\s*[0-9][0-9,]*(?:\.\d{1,2})?)/i,
+  );
+  const ticketValue = text.match(
+    /\btickets?\s+worth\s+((?:₹|rs\.?|inr)\s*[0-9][0-9,]*(?:\.\d{1,2})?)\s+each\b/i,
+  )?.[1];
+  if (milestone && ticketValue && /\bmonthly\s+billing\s+cycle\b/i.test(text)) {
+    const threshold = money(milestone[2]);
+    const rewardValue = money(ticketValue);
+    if (threshold === undefined || rewardValue === undefined) return null;
+    return {
+      category: "entertainment",
+      valueType: "milestone",
+      value: rewardValue,
+      threshold,
+      period: "month",
+      valueConfig: {
+        category: "movie_tickets",
+        milestone_type: "monthly",
+        threshold_amount: threshold,
+        reward_value: rewardValue,
+      },
+      partners,
+      restrictions: [],
+      exclusions: exclusions(text),
+    };
+  }
+
+  if (
+    /\b(?:free|complimentary)\b[\s\S]*\bmovie\s+tickets?\b/i.test(text) &&
+    /\b(?:year|annual|annum)\b/i.test(text)
+  ) {
+    const annualCap = money(text);
+    if (annualCap === undefined) return null;
+    return {
+      category: "entertainment",
+      valueType: "annual_allowance",
+      value: annualCap,
+      period: "year",
+      valueConfig: {
+        category: "movie_tickets",
+        unit: "fixed",
+        annual_cap: annualCap,
+      },
+      partners,
+      restrictions: [],
+      exclusions: exclusions(text),
+    };
+  }
+
+  return null;
+}
+
 function parseLounge(text: string): ParsedFields | null {
   if (!/\b(?:airport\s+)?lounge\b/i.test(text)) return null;
-  const beforeLounge = text.match(/\b([0-9]+)\s+(?:complimentary\s+)?(?:airport\s+)?lounge\s+(?:access\s+)?visits?\b/i)?.[1];
-  const afterLounge = text.match(/\b(?:airport\s+)?lounge\s+access\s*:\s*([0-9]+)\s+complimentary\s+visits?\b/i)?.[1];
+  const beforeLounge = text.match(
+    /\b([0-9]+)\s+(?:complimentary\s+)?(?:airport\s+)?lounge\s+(?:access\s+)?visits?\b/i,
+  )?.[1];
+  const afterLounge = text.match(
+    /\b(?:airport\s+)?lounge\s+access\s*:\s*([0-9]+)\s+complimentary\s+visits?\b/i,
+  )?.[1];
   const visitCount = beforeLounge ?? afterLounge;
   if (!visitCount) return null;
   const visits = decimal(visitCount);
@@ -234,16 +525,33 @@ function parseLounge(text: string): ParsedFields | null {
   };
 }
 
-function parseLine(text: string, document: BenefitDocument, parserVersion: string): ParsedBenefit | null {
-  const fields = parseCashback(text) ?? parseRewards(text) ?? parseLounge(text);
+function parseLine(
+  text: string,
+  document: BenefitDocument,
+  parserVersion: string,
+): ParsedBenefit | null {
+  const fields = parseMovieBenefit(text) ?? parseCashback(text) ??
+    parseRewards(text) ?? parseLounge(text);
   if (!fields) return null;
   const sourceExcerpt = sanitize(text);
   const { confidence, evidence } = withCommonFields(text, fields);
   const title = fields.valueType === "cashback"
-    ? `${fields.rate ?? fields.value} ${fields.rate === undefined ? "cashback" : "% cashback"}`
+    ? `${fields.rate ?? fields.value} ${
+      fields.rate === undefined ? "cashback" : "% cashback"
+    }`
     : fields.valueType === "reward_points"
     ? `${fields.value} reward points`
-    : `${fields.value} lounge visits`;
+    : fields.valueType === "lounge_access"
+    ? `${fields.value} lounge visits`
+    : fields.valueType === "percent_discount"
+    ? `${fields.rate}% off movie tickets`
+    : fields.valueType === "bogo"
+    ? "Buy 1 get 1 movie ticket"
+    : fields.valueType === "fixed_discount"
+    ? `₹${fields.value} off movie tickets`
+    : fields.valueType === "milestone"
+    ? `₹${fields.value} movie ticket milestone`
+    : `₹${fields.value} annual movie tickets`;
   return {
     ...fields,
     title,
@@ -258,16 +566,40 @@ function parseLine(text: string, document: BenefitDocument, parserVersion: strin
   };
 }
 
+function canonicalJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => [key, canonicalJson(item)]),
+    );
+  }
+  return value;
+}
+
 function conditionKey(benefit: ParsedFields): string {
+  const hasStructuredValue = benefit.valueConfig !== undefined &&
+    Object.keys(benefit.valueConfig).length > 0;
   return JSON.stringify({
     category: benefit.category,
     valueType: benefit.valueType,
-    value: benefit.value,
-    rate: benefit.rate,
-    cap: benefit.cap,
-    threshold: benefit.threshold,
-    frequency: benefit.frequency === undefined ? undefined : normalize(benefit.frequency),
-    period: benefit.period === undefined ? undefined : normalize(benefit.period),
+    // Movie proposals persist their commercial terms in value_config. The
+    // flat parser fields are a transient projection of those same terms and
+    // are not stored in benefits, so comparing both creates false conflicts
+    // on the next identical crawl.
+    value: hasStructuredValue ? undefined : benefit.value,
+    rate: hasStructuredValue ? undefined : benefit.rate,
+    cap: hasStructuredValue ? undefined : benefit.cap,
+    threshold: hasStructuredValue ? undefined : benefit.threshold,
+    valueConfig: canonicalJson(benefit.valueConfig),
+    partners: benefit.partners?.map(normalize).sort(),
+    frequency: hasStructuredValue || benefit.frequency === undefined
+      ? undefined
+      : normalize(benefit.frequency),
+    period: hasStructuredValue || benefit.period === undefined
+      ? undefined
+      : normalize(benefit.period),
     restrictions: benefit.restrictions.map(normalize).sort(),
     exclusions: benefit.exclusions.map(normalize).sort(),
     effectiveFrom: benefit.effectiveFrom,
@@ -275,17 +607,27 @@ function conditionKey(benefit: ParsedFields): string {
   });
 }
 
-function semanticKey(benefit: Pick<BenefitProposal, "category" | "valueType" | "restrictions" | "exclusions">): string {
+function semanticKey(
+  benefit: Pick<
+    BenefitProposal,
+    "category" | "valueType" | "partners" | "restrictions" | "exclusions"
+  >,
+): string {
   return JSON.stringify({
     category: normalize(benefit.category),
-    valueType: benefit.valueType === undefined ? undefined : normalize(benefit.valueType),
+    valueType: benefit.valueType === undefined
+      ? undefined
+      : normalize(benefit.valueType),
+    partners: benefit.partners?.map(normalize).sort(),
     restrictions: benefit.restrictions.map(normalize).sort(),
     exclusions: benefit.exclusions.map(normalize).sort(),
   });
 }
 
 function sorted<T extends { dedupeKey: string }>(benefits: T[]): T[] {
-  return [...benefits].sort((left, right) => left.dedupeKey.localeCompare(right.dedupeKey));
+  return [...benefits].sort((left, right) =>
+    left.dedupeKey.localeCompare(right.dedupeKey)
+  );
 }
 
 /**
@@ -298,10 +640,53 @@ export function extractGroundedBenefits(
 ): BenefitProposal[] {
   const parsed = documents.flatMap((source) => {
     const document = { ...source, text: readableText(source.text) };
-    return document.text
-    .split(/(?:\r?\n|(?<=[.!?])\s+)/)
-    .map((line) => parseLine(line.trim(), document, parserVersion))
-    .filter((benefit): benefit is ParsedBenefit => benefit !== null);
+    const lines = document.text
+      .split(/(?:\r?\n|(?<=[!?])\s+|(?<=\.)\s+(?=[A-Z]))/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    return lines.flatMap((line, index) => {
+      const direct = parseLine(line, document, parserVersion);
+      if (
+        direct?.valueType === "percent_discount" &&
+        direct.valueConfig?.max_discount_per_transaction === undefined
+      ) {
+        const assembled = parseLine(
+          adjacentClauses(lines, index, 4),
+          document,
+          parserVersion,
+        );
+        if (
+          assembled?.valueConfig?.max_discount_per_transaction !== undefined
+        ) {
+          return [assembled];
+        }
+      }
+      if (
+        direct?.valueType === "annual_allowance" &&
+        (direct.partners?.length ?? 0) === 0
+      ) {
+        const assembled = parseLine(
+          adjacentClauses(lines, index, 7),
+          document,
+          parserVersion,
+        );
+        if ((assembled?.partners?.length ?? 0) > 0) return [assembled!];
+      }
+      if (direct) return [direct];
+      const isMilestoneLead =
+        /\bget\s+[0-9]+\s+(?:pvr\s+inox\s+)?movie\s+tickets?\s+on\s+every\s+spend\b/i
+          .test(line);
+      if (!mentionsBogo(line) && !isMilestoneLead) {
+        return [];
+      }
+      const clauses = [line];
+      for (const candidate of lines.slice(index + 1, index + 7)) {
+        if (startsIndependentBenefitClause(candidate)) break;
+        clauses.push(candidate);
+      }
+      const assembled = parseLine(clauses.join(" "), document, parserVersion);
+      return assembled ? [assembled] : [];
+    });
   });
   const byKey = new Map<string, ParsedBenefit[]>();
   for (const benefit of parsed) {
@@ -312,13 +697,23 @@ export function extractGroundedBenefits(
   const semanticGroups = new Map<string, string[]>();
   for (const [key, benefits] of byKey) {
     const semantic = semanticKey(benefits[0]);
-    semanticGroups.set(semantic, [...(semanticGroups.get(semantic) ?? []), key]);
+    semanticGroups.set(semantic, [
+      ...(semanticGroups.get(semantic) ?? []),
+      key,
+    ]);
   }
 
   return sorted([...byKey.entries()].map(([dedupeKey, matches]) => {
-    const representative = [...matches].sort((left, right) => left.sourceUrl.localeCompare(right.sourceUrl))[0];
-    const sources = [...new Set(matches.map((item) => item.sourceUrl))].sort();
-    const conflict = (semanticGroups.get(semanticKey(representative)) ?? []).length > 1;
+    const representative = [...matches].sort((left, right) =>
+      left.sourceUrl.localeCompare(right.sourceUrl)
+    )[0];
+    const sources = [
+      ...new Set(matches.map((item) =>
+        item.sourceUrl
+      )),
+    ].sort();
+    const conflict =
+      (semanticGroups.get(semanticKey(representative)) ?? []).length > 1;
     return {
       ...representative,
       dedupeKey,
@@ -333,18 +728,30 @@ export function extractGroundedBenefits(
  * Computes a review-only diff. `possibleRemovals` deliberately contains no action
  * field, so absence from a crawl cannot be approved as a destructive mutation.
  */
-export function diffBenefits(current: BenefitProposal[], proposed: BenefitProposal[]): BenefitDiff {
+export function diffBenefits(
+  current: BenefitProposal[],
+  proposed: BenefitProposal[],
+): BenefitDiff {
   const currentByKey = new Map<string, BenefitProposal[]>();
   const proposedByKey = new Map<string, BenefitProposal[]>();
   for (const benefit of current) {
-    currentByKey.set(benefit.dedupeKey, [...(currentByKey.get(benefit.dedupeKey) ?? []), benefit]);
+    currentByKey.set(benefit.dedupeKey, [
+      ...(currentByKey.get(benefit.dedupeKey) ?? []),
+      benefit,
+    ]);
   }
   for (const benefit of proposed) {
-    proposedByKey.set(benefit.dedupeKey, [...(proposedByKey.get(benefit.dedupeKey) ?? []), benefit]);
+    proposedByKey.set(benefit.dedupeKey, [
+      ...(proposedByKey.get(benefit.dedupeKey) ?? []),
+      benefit,
+    ]);
   }
   const unchanged: BenefitDiff["unchanged"] = [];
   const conflicts: BenefitDiff["conflicts"] = [];
-  const allDedupeKeys = new Set([...currentByKey.keys(), ...proposedByKey.keys()]);
+  const allDedupeKeys = new Set([
+    ...currentByKey.keys(),
+    ...proposedByKey.keys(),
+  ]);
   for (const key of allDedupeKeys) {
     const currentMatches = sorted(currentByKey.get(key) ?? []);
     const proposedMatches = sorted(proposedByKey.get(key) ?? []);
@@ -363,20 +770,29 @@ export function diffBenefits(current: BenefitProposal[], proposed: BenefitPropos
   const proposedBySemantic = new Map<string, BenefitProposal[]>();
   for (const benefit of proposed) {
     const key = semanticKey(benefit);
-    proposedBySemantic.set(key, [...(proposedBySemantic.get(key) ?? []), benefit]);
+    proposedBySemantic.set(key, [
+      ...(proposedBySemantic.get(key) ?? []),
+      benefit,
+    ]);
   }
   for (const [key, candidates] of proposedBySemantic) {
     if (new Set(candidates.map(conditionKey)).size < 2) continue;
-    const currentMatches = current.filter((benefit) => semanticKey(benefit) === key);
+    const currentMatches = current.filter((benefit) =>
+      semanticKey(benefit) === key
+    );
     conflicts.push({
       code: "conflicting_proposed_terms",
       ...(currentMatches.length > 0 ? { current: sorted(currentMatches) } : {}),
       proposed: sorted(candidates),
     });
     for (const benefit of candidates) proposedByKey.delete(benefit.dedupeKey);
-    for (const benefit of currentMatches) currentByKey.delete(benefit.dedupeKey);
+    for (const benefit of currentMatches) {
+      currentByKey.delete(benefit.dedupeKey);
+    }
   }
-  const sharedDedupeKeys = [...currentByKey.keys()].filter((key) => proposedByKey.has(key)).sort();
+  const sharedDedupeKeys = [...currentByKey.keys()].filter((key) =>
+    proposedByKey.has(key)
+  ).sort();
   for (const key of sharedDedupeKeys) {
     const currentMatches = sorted(currentByKey.get(key)!);
     const proposedMatches = sorted(proposedByKey.get(key)!);
@@ -396,7 +812,10 @@ export function diffBenefits(current: BenefitProposal[], proposed: BenefitPropos
       proposedByKey.delete(key);
       continue;
     }
-    unchanged.push({ current: currentMatches[0], proposed: proposedMatches[0] });
+    unchanged.push({
+      current: currentMatches[0],
+      proposed: proposedMatches[0],
+    });
     currentByKey.delete(key);
     proposedByKey.delete(key);
   }
@@ -406,40 +825,68 @@ export function diffBenefits(current: BenefitProposal[], proposed: BenefitPropos
   for (const benefits of currentByKey.values()) {
     for (const benefit of benefits) {
       const key = semanticKey(benefit);
-      currentBySemantic.set(key, [...(currentBySemantic.get(key) ?? []), benefit]);
+      currentBySemantic.set(key, [
+        ...(currentBySemantic.get(key) ?? []),
+        benefit,
+      ]);
     }
   }
   for (const benefits of proposedByKey.values()) {
     for (const benefit of benefits) {
       const key = semanticKey(benefit);
-      unmatchedProposedBySemantic.set(key, [...(unmatchedProposedBySemantic.get(key) ?? []), benefit]);
+      unmatchedProposedBySemantic.set(key, [
+        ...(unmatchedProposedBySemantic.get(key) ?? []),
+        benefit,
+      ]);
     }
   }
 
   const modifications: BenefitDiff["modifications"] = [];
-  for (const key of [...currentBySemantic.keys()].filter((key) => unmatchedProposedBySemantic.has(key)).sort()) {
+  for (
+    const key of [...currentBySemantic.keys()].filter((key) =>
+      unmatchedProposedBySemantic.has(key)
+    ).sort()
+  ) {
     const currentMatches = sorted(currentBySemantic.get(key)!);
     const proposedMatches = sorted(unmatchedProposedBySemantic.get(key)!);
     if (currentMatches.length === 1 && proposedMatches.length === 1) {
-      modifications.push({ current: currentMatches[0], proposed: proposedMatches[0] });
+      modifications.push({
+        current: currentMatches[0],
+        proposed: proposedMatches[0],
+      });
       currentByKey.delete(currentMatches[0].dedupeKey);
       proposedByKey.delete(proposedMatches[0].dedupeKey);
     } else {
-      conflicts.push({ code: "ambiguous_benefit_match", current: currentMatches, proposed: proposedMatches });
-      for (const benefit of currentMatches) currentByKey.delete(benefit.dedupeKey);
-      for (const benefit of proposedMatches) proposedByKey.delete(benefit.dedupeKey);
+      conflicts.push({
+        code: "ambiguous_benefit_match",
+        current: currentMatches,
+        proposed: proposedMatches,
+      });
+      for (const benefit of currentMatches) {
+        currentByKey.delete(benefit.dedupeKey);
+      }
+      for (const benefit of proposedMatches) {
+        proposedByKey.delete(benefit.dedupeKey);
+      }
     }
   }
 
   for (const benefits of unmatchedProposedBySemantic.values()) {
-    const unmatched = sorted(benefits.filter((benefit) => proposedByKey.has(benefit.dedupeKey)));
+    const unmatched = sorted(
+      benefits.filter((benefit) => proposedByKey.has(benefit.dedupeKey)),
+    );
     if (unmatched.length > 1) {
-      conflicts.push({ code: "conflicting_proposed_terms", proposed: unmatched });
+      conflicts.push({
+        code: "conflicting_proposed_terms",
+        proposed: unmatched,
+      });
       for (const benefit of unmatched) proposedByKey.delete(benefit.dedupeKey);
     }
   }
 
   const additions = sorted([...proposedByKey.values()].flat());
-  const possibleRemovals = sorted([...currentByKey.values()].flat()).map((benefit) => ({ benefit, informational: true as const }));
+  const possibleRemovals = sorted([...currentByKey.values()].flat()).map((
+    benefit,
+  ) => ({ benefit, informational: true as const }));
   return { additions, modifications, possibleRemovals, unchanged, conflicts };
 }

@@ -87,6 +87,26 @@ const evidenceFields = [
   "effectiveFrom",
   "effectiveTo",
 ] as const;
+const valueConfigFields = [
+  "category",
+  "discount_type",
+  "discount_percent",
+  "discount_amount",
+  "max_discount_per_transaction",
+  "max_usage_per_month",
+  "max_usage_per_period",
+  "usage_period",
+  "monthly_cap",
+  "annual_cap",
+  "unit",
+  "milestone_type",
+  "threshold_amount",
+  "reward_value",
+  "multiplier",
+  "base_rate",
+  "currency_unit",
+  "platform",
+] as const;
 
 function asRecord(value: unknown): JsonRecord | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -122,6 +142,20 @@ function textList(value: unknown): string[] {
       typeof item === "string" ? [item.slice(0, 500)] : []
     )
     : [];
+}
+
+function valueConfig(value: unknown): JsonRecord {
+  const row = asRecord(value) ?? {};
+  const sanitized: JsonRecord = {};
+  for (const field of valueConfigFields) {
+    const item = row[field];
+    if (typeof item === "string") sanitized[field] = item.slice(0, 500);
+    if (typeof item === "number" && Number.isFinite(item)) {
+      sanitized[field] = item;
+    }
+    if (typeof item === "boolean") sanitized[field] = item;
+  }
+  return sanitized;
 }
 
 function objectList(value: unknown): JsonRecord[] {
@@ -167,6 +201,8 @@ function benefitForOutput(value: unknown) {
   }
   return {
     ...scalar,
+    valueConfig: valueConfig(row.valueConfig ?? row.value_config),
+    partners: textList(row.partners),
     sourceUrl: text(row.sourceUrl),
     sourceUrls: textList(row.sourceUrls),
     sourceExcerpt: text(row.sourceExcerpt, 500),
@@ -584,7 +620,9 @@ function pilotCandidates(value: unknown) {
 
 async function movieMappingHealth(db: UntypedSupabaseClient) {
   const { data, error } = await db.rpc("get_movie_benefit_mapping_health");
-  if (error) throw new BenefitAdminError("movie_mapping_health_unavailable", 503);
+  if (error) {
+    throw new BenefitAdminError("movie_mapping_health_unavailable", 503);
+  }
   return Array.isArray(data) ? data : [];
 }
 
@@ -681,8 +719,8 @@ export async function handleBenefitAdminAction(
     case "benefit-start-pilot": {
       const parserVersion = typeof body.parser_version === "string"
         ? body.parser_version.trim()
-        : "benefits-v1";
-      if (!parserVersion || parserVersion.toLowerCase() === "catalog-v1") {
+        : "benefits-v5";
+      if (parserVersion !== "benefits-v5") {
         throw new BenefitAdminError("invalid_pilot_parser_version");
       }
       const { data, error } = await db.rpc(

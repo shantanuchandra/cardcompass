@@ -253,6 +253,103 @@ void main() {
       expect(snapshot.contexts[('catalog-card-1', 'b1')]?.usageConfidence, MovieDealUsageConfidence.unverified);
     });
 
+    for (final fixture
+        in <
+          ({
+            String label,
+            Map<String, dynamic> config,
+            String outside,
+            String inside,
+          })
+        >[
+          (
+            label: 'month',
+            config: {
+              'discount_type': 'BOGO',
+              'max_usage_per_month': 2,
+              'max_discount_per_transaction': 500.0,
+            },
+            outside: '2026-07-31T23:59:59Z',
+            inside: '2026-08-01T00:00:00Z',
+          ),
+          (
+            label: 'quarter',
+            config: {
+              'discount_type': 'BOGO',
+              'max_usage_per_period': 2,
+              'usage_period': 'quarter',
+              'max_discount_per_transaction': 500.0,
+            },
+            outside: '2026-06-30T23:59:59Z',
+            inside: '2026-07-01T00:00:00Z',
+          ),
+          (
+            label: 'year',
+            config: {
+              'discount_type': 'BOGO',
+              'max_usage_per_period': 2,
+              'usage_period': 'year',
+              'max_discount_per_transaction': 500.0,
+            },
+            outside: '2025-12-31T23:59:59Z',
+            inside: '2026-01-01T00:00:00Z',
+          ),
+        ]) {
+      test(
+        '${fixture.label} usage excludes transactions before the current cycle',
+        () async {
+          final dataSource = _FakeDataSource(
+            benefits: [
+              _benefitRow(
+                id: 'b1',
+                title: 'BOGO',
+                valueConfig: fixture.config,
+                partners: ['BookMyShow'],
+              ),
+            ],
+            mappings: [
+              {
+                'benefit_id': 'b1',
+                'card_id': 'catalog-card-1',
+                'display_priority': 0,
+              },
+            ],
+            catalogCards: [
+              {'id': 'catalog-card-1', 'card_name': 'Test Card'},
+            ],
+            userCards: [
+              {'id': 'user-card-1', 'catalog_card_id': 'catalog-card-1'},
+            ],
+            transactions: [
+              for (final date in [fixture.outside, fixture.inside])
+                {
+                  'user_card_id': 'user-card-1',
+                  'merchant_name': 'BookMyShow',
+                  'transaction_date': date,
+                  'metadata': <String, dynamic>{'ticket_count': 1},
+                },
+            ],
+          );
+
+          final snapshot = await MovieDealsSupabaseRepository(dataSource)
+              .loadSnapshot(
+                'user1',
+                const MovieTicketRequest(
+                  numberOfTickets: 1,
+                  pricePerTicket: 300,
+                  preferredPlatform: 'BookMyShow',
+                ),
+                now: DateTime.utc(2026, 8, 18),
+              );
+
+          final context = snapshot.contexts[('catalog-card-1', 'b1')];
+          expect(context?.usageConfidence, MovieDealUsageConfidence.verified);
+          expect(context?.usedTransactions, 1);
+          expect(context?.usedTickets, 1);
+        },
+      );
+    }
+
     test('milestone spend selects the most recently COMPLETED cycle, not the most recently UPDATED row', () async {
       // A partial current-cycle row (updated recently) must not be preferred
       // over an older, genuinely completed prior cycle (design spec §7).

@@ -347,6 +347,7 @@ Deno.test("benefit quarantine state changes are explicit and a pilot uses the se
     result_summary: { run_id: "run-1" },
   };
   let pilotCalls = 0;
+  let pilotParserVersion: unknown;
   const db = withAuthenticatedUser({
     from(table: string) {
       assert(
@@ -386,6 +387,7 @@ Deno.test("benefit quarantine state changes are explicit and a pilot uses the se
     },
     async rpc(name: string, args: Record<string, unknown>) {
       pilotCalls += 1;
+      pilotParserVersion = args._parser_version;
       assert(
         name === "initialize_card_benefit_enrichment_pilot",
         "pilot bypassed the initialization RPC",
@@ -428,6 +430,14 @@ Deno.test("benefit quarantine state changes are explicit and a pilot uses the se
       }),
       db,
     );
+    const stalePilot = await handle(
+      request({
+        action: "benefit-start-pilot",
+        parser_version: "benefits-v4",
+        candidates,
+      }),
+      db,
+    );
     const startedPilot = await handle(
       request({ action: "benefit-start-pilot", candidates }),
       db,
@@ -442,7 +452,12 @@ Deno.test("benefit quarantine state changes are explicit and a pilot uses the se
       "quarantined job was not queued",
     );
     assert(invalidPilot.status === 400, "reserved parser started a pilot");
+    assert(stalePilot.status === 400, "stale parser started a pilot");
     assert(startedPilot.status === 200, "valid pilot was not initialized");
+    assert(
+      pilotParserVersion === "benefits-v5",
+      "admin pilot defaulted to the stale parser lane",
+    );
     assert(
       pilotCalls === 1,
       "invalid pilot input reached the initialization RPC",
@@ -745,6 +760,14 @@ Deno.test("benefit DTOs allow only documented nested output fields", async () =>
                   diff: {
                     additions: [{
                       title: "Dining credit",
+                      valueConfig: {
+                        category: "movie_tickets",
+                        discount_type: "percent",
+                        discount_percent: 25,
+                        max_discount_per_transaction: 100,
+                        internal_note: "must not escape",
+                      },
+                      partners: ["BookMyShow"],
                       warnings: ["low_confidence"],
                       responseBody: "must not escape",
                     }],
@@ -835,6 +858,15 @@ Deno.test("benefit DTOs allow only documented nested output fields", async () =>
     assert(
       serialized.includes("low_confidence"),
       "allowlisted warning was omitted",
+    );
+    assert(
+      serialized.includes("max_discount_per_transaction") &&
+        serialized.includes("BookMyShow"),
+      "movie value config or partners were omitted from review",
+    );
+    assert(
+      !serialized.includes("internal_note"),
+      "unknown value-config fields escaped the review DTO",
     );
   } finally {
     if (originalAllowlist === undefined) {

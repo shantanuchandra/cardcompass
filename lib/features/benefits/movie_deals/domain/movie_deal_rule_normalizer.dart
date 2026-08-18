@@ -141,10 +141,19 @@ RuleNormalizationResult _normalizeFixed(
 
 RuleNormalizationResult _normalizeBogo(MovieBenefitSource source) {
   // max_discount_per_transaction caps a SINGLE redemption — perTransactionCap,
-  // never cycleAmountCap. max_usage_per_month counts REDEMPTIONS, never
-  // tickets (design spec §4.4).
+  // never cycleAmountCap. Usage limits count REDEMPTIONS, never tickets.
   final perTxnCap = _number(source.valueConfig['max_discount_per_transaction']);
-  final cycleLimit = _integer(source.valueConfig['max_usage_per_month']);
+  final monthlyLimit = _integer(source.valueConfig['max_usage_per_month']);
+  final periodLimit = _integer(source.valueConfig['max_usage_per_period']);
+  final cycleLimit = monthlyLimit ?? periodLimit;
+  final cyclePeriod = monthlyLimit != null
+      ? MovieDealCyclePeriod.month
+      : switch (_string(source.valueConfig['usage_period'])?.toLowerCase()) {
+          'month' => MovieDealCyclePeriod.month,
+          'quarter' => MovieDealCyclePeriod.quarter,
+          'year' => MovieDealCyclePeriod.year,
+          _ => null,
+        };
   if (perTxnCap == null || perTxnCap <= 0) {
     return const RejectedMovieDealRule(
       'A BOGO offer requires a positive per-transaction discount cap.',
@@ -152,7 +161,12 @@ RuleNormalizationResult _normalizeBogo(MovieBenefitSource source) {
   }
   if (cycleLimit == null || cycleLimit <= 0) {
     return const RejectedMovieDealRule(
-      'A BOGO offer requires a positive monthly redemption limit.',
+      'A BOGO offer requires a positive redemption limit.',
+    );
+  }
+  if (cyclePeriod == null) {
+    return const RejectedMovieDealRule(
+      'A BOGO offer requires an explicit month, quarter, or year usage period.',
     );
   }
   return AcceptedMovieDealRule(
@@ -172,6 +186,7 @@ RuleNormalizationResult _normalizeBogo(MovieBenefitSource source) {
       freeCount: 1,
       perTransactionCap: perTxnCap,
       cycleRedemptionLimit: cycleLimit,
+      cyclePeriod: cyclePeriod,
     ),
   );
 }

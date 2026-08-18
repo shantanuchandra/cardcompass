@@ -8,6 +8,222 @@ import {
 
 const SOURCE = 'https://issuer.example/cards/aurora';
 
+test('extracts movie discounts, BOGO tickets, and annual allowances into the approved value-config contract', () => {
+  // Catches the production failure where issuer pages were crawled but every
+  // movie-specific sentence was discarded before staging.
+  const benefits = extractGroundedBenefits([{
+    sourceUrl: SOURCE,
+    text: [
+      'Get 25% off movie tickets up to Rs. 100 per transaction on BookMyShow.',
+      'Buy one movie ticket and get the second ticket free on District, capped at ₹500, twice per month.',
+      'Get free movie tickets worth Rs. 6,000 every year on BookMyShow.',
+    ].join('\n'),
+  }], 'benefits-v2');
+
+  assert.deepEqual(
+    benefits.map(({valueType, valueConfig, partners}) => ({
+      valueType,
+      valueConfig,
+      partners,
+    })).sort((left, right) => left.valueType.localeCompare(right.valueType)),
+    [
+      {
+        valueType: 'annual_allowance',
+        valueConfig: {
+          category: 'movie_tickets',
+          unit: 'fixed',
+          annual_cap: 6000,
+        },
+        partners: ['BookMyShow'],
+      },
+      {
+        valueType: 'bogo',
+        valueConfig: {
+          category: 'movie_tickets',
+          discount_type: 'bogo',
+          max_discount_per_transaction: 500,
+          max_usage_per_month: 2,
+        },
+        partners: ['District'],
+      },
+      {
+        valueType: 'percent_discount',
+        valueConfig: {
+          category: 'movie_tickets',
+          discount_type: 'percent',
+          discount_percent: 25,
+          max_discount_per_transaction: 100,
+        },
+        partners: ['BookMyShow'],
+      },
+    ],
+  );
+});
+
+test('keeps Rs abbreviations inside reward sentences so movie eligibility survives', () => {
+  // Catches the sentence splitter treating the period in "Rs." as the end of
+  // the sentence and silently dropping the threshold and movie restriction.
+  const [benefit] = extractGroundedBenefits([{
+    sourceUrl: SOURCE,
+    text: 'Earn 10 reward points for every Rs. 100 spent on dining and movies.',
+  }], 'benefits-v2');
+
+  assert.equal(benefit.threshold, 100);
+  assert.deepEqual(benefit.restrictions, ['dining and movies']);
+  assert.deepEqual(benefit.valueConfig, {
+    category: 'movies',
+    multiplier: 10,
+    unit: 'reward points per Rs. 100',
+  });
+});
+
+test('extracts fixed-value movie discounts without mistaking the discount for a cap', () => {
+  // Covers issuer wording such as Kotak's monthly PVR ticket discount. The
+  // approved contract must retain the discount amount and booking partner.
+  const [benefit] = extractGroundedBenefits([{
+    sourceUrl: SOURCE,
+    text: 'Get Rs. 500 off on booking 2 movie tickets on BookMyShow every month.',
+  }], 'benefits-v2');
+
+  assert.equal(benefit.valueType, 'fixed_discount');
+  assert.deepEqual(benefit.valueConfig, {
+    category: 'movie_tickets',
+    discount_type: 'fixed',
+    discount_amount: 500,
+  });
+  assert.deepEqual(benefit.partners, ['BookMyShow']);
+});
+
+test('assembles adjacent official clauses for quarterly BOGO limits without converting them to monthly limits', () => {
+  // AU Zenith+ publishes the offer, quarterly usage limit, cap, and partner
+  // as separate bullets. They are one benefit contract, not independent rows.
+  const [benefit] = extractGroundedBenefits([{
+    sourceUrl: SOURCE,
+    text: [
+      'Complimentary (Buy 1 Get 1) 16 Movie & Event tickets.',
+      'This benefit can be availed for a maximum of 4 times in calendar quarter.',
+      'Maximum discount per ticket booking is Rs. 500.',
+      'Plan your bookings on BookMyShow app or website.',
+    ].join('\n'),
+  }], 'benefits-v2');
+
+  assert.equal(benefit.valueType, 'bogo');
+  assert.deepEqual(benefit.valueConfig, {
+    category: 'movie_tickets',
+    discount_type: 'bogo',
+    max_discount_per_transaction: 500,
+    max_usage_per_period: 4,
+    usage_period: 'quarter',
+  });
+  assert.deepEqual(benefit.partners, ['BookMyShow']);
+});
+
+test('does not classify cinema food and beverage discounts as movie-ticket discounts', () => {
+  const benefits = extractGroundedBenefits([{
+    sourceUrl: SOURCE,
+    text: 'Get a flat 20% discount on Food & Beverages at any PVR INOX theater on your next visit to the Movies!',
+  }], 'benefits-v2');
+
+  assert.deepEqual(benefits, []);
+});
+
+test('attaches an adjacent per-transaction cap to a movie percentage discount', () => {
+  const [benefit] = extractGroundedBenefits([{
+    sourceUrl: SOURCE,
+    text: [
+      '50% off on movie tickets via BookMyShow.',
+      'Up to 4 discounted tickets per card monthly.',
+      'Maximum discount is ₹600 per transaction.',
+    ].join('\n'),
+  }], 'benefits-v3');
+
+  assert.deepEqual(benefit.valueConfig, {
+    category: 'movie_tickets',
+    discount_type: 'percent',
+    discount_percent: 50,
+    max_discount_per_transaction: 600,
+  });
+});
+
+test('assembles a monthly movie-ticket milestone and its adjacent ticket value', () => {
+  const [benefit] = extractGroundedBenefits([{
+    sourceUrl: SOURCE,
+    text: [
+      'Get 1 PVR INOX Movie Ticket on every spend of Rs. 10,000 in a monthly billing cycle.',
+      'Earn tickets worth Rs. 300 each for achieving every spends milestone of Rs. 10,000.',
+    ].join('\n'),
+  }], 'benefits-v3');
+
+  assert.equal(benefit.valueType, 'milestone');
+  assert.deepEqual(benefit.valueConfig, {
+    category: 'movie_tickets',
+    milestone_type: 'monthly',
+    threshold_amount: 10000,
+    reward_value: 300,
+  });
+  assert.deepEqual(benefit.partners, ['PVR', 'INOX']);
+});
+
+test('attaches an adjacent redemption platform to an annual movie allowance', () => {
+  const [benefit] = extractGroundedBenefits([{
+    sourceUrl: SOURCE,
+    text: [
+      '<li>Free Movie Tickets worth Rs. 6,000 every year</li>',
+      '<li>Transaction valid for at least 2 tickets per booking per month.</li>',
+      '<li>Maximum discount is Rs. 250 per ticket for 2 tickets only.</li>',
+      '<li>Convenience Fee would be chargeable</li>',
+      '<li>This offer is valid on Primary Cards only</li>',
+      '<li>To know the Redemption process <a href="https://in.bookmyshow.com/offers/sbi-elite">click here</a></li>',
+    ].join('\n'),
+  }], 'benefits-v5');
+
+  assert.equal(benefit.valueType, 'annual_allowance');
+  assert.deepEqual(benefit.valueConfig, {
+    category: 'movie_tickets',
+    unit: 'fixed',
+    annual_cap: 6000,
+  });
+  assert.deepEqual(benefit.partners, ['BookMyShow']);
+});
+
+test('keeps the cap from an adjacent BOGO offer out of a percentage offer', () => {
+  const benefits = extractGroundedBenefits(
+    [{
+      sourceUrl: SOURCE,
+      text: [
+        'Get 5% off movie tickets.',
+        'Buy 1 movie ticket and get 1 free on BookMyShow, capped at Rs. 500 per booking, twice per quarter.',
+      ].join('\n'),
+    }],
+    'benefits-v5',
+  );
+
+  const percent = benefits.find((benefit) => benefit.valueType === 'percent_discount');
+  const bogo = benefits.find((benefit) => benefit.valueType === 'bogo');
+  assert.ok(percent, 'percentage offer was not extracted');
+  assert.ok(bogo, 'BOGO offer was not extracted');
+  assert.equal(percent.valueConfig.max_discount_per_transaction, undefined);
+  assert.equal(bogo.valueConfig.max_discount_per_transaction, 500);
+});
+
+test('treats an annual offer as a boundary when the period comes first', () => {
+  const benefits = extractGroundedBenefits([{
+    sourceUrl: SOURCE,
+    text: [
+      'Get 5% off movie tickets.',
+      'Every year get free movie tickets worth Rs. 6,000.',
+      'Maximum discount is Rs. 250 per ticket.',
+    ].join('\n'),
+  }], 'benefits-v5');
+
+  const percent = benefits.find((benefit) => benefit.valueType === 'percent_discount');
+  const annual = benefits.find((benefit) => benefit.valueType === 'annual_allowance');
+  assert.ok(percent, 'percentage offer was not extracted');
+  assert.ok(annual, 'annual offer was not extracted');
+  assert.equal(percent.valueConfig.max_discount_per_transaction, undefined);
+  assert.equal(annual.valueConfig.annual_cap, 6000);
+});
+
 test('extracts only explicit cashback values, caps, periods, and exclusions', () => {
   // Catches an extractor that invents a cap, merchant, or eligibility from marketing copy.
   const benefits = extractGroundedBenefits([{

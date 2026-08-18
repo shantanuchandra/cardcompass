@@ -442,10 +442,12 @@ void main() {
       final annualRule = MovieDealRule(
         benefitId: 'b-annual-card',
         catalogCardId: 'annual-card',
-        title: 'SBI Card ELITE Free Movie Tickets',
-        cardName: 'SBI Card ELITE',
+        title: 'Annual movie tickets',
+        bankName: 'SBI Card',
+        cardName: 'Elite',
         offerType: MovieDealOfferType.annualAllowance,
         annualCap: 6000,
+        partners: const {'BookMyShow'},
       );
       final annualCandidate = MovieDealCandidate(
         cardId: 'annual-card',
@@ -483,6 +485,11 @@ void main() {
       // assert on the more specific candidate-level string instead.
       expect(
         find.textContaining('remaining balance not tracked'),
+        findsOneWidget,
+      );
+      expect(find.text('SBI Card — Elite'), findsOneWidget);
+      expect(
+        find.textContaining('Eligible booking platform: BookMyShow.'),
         findsOneWidget,
       );
       expect(find.textContaining('Save ₹0'), findsNothing);

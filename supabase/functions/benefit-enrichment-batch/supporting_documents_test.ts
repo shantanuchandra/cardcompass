@@ -140,3 +140,52 @@ Deno.test("supporting crawl rejects another card variant and counts failed attem
   assert(requested.length === 8, "failed requests did not consume the budget");
   assert(!requested.includes(other), "cross-card supporting link was fetched");
 });
+
+Deno.test("SBI Card ELITE receives its exact official campaign terms before generic links", async () => {
+  const product =
+    "https://www.sbicard.com/en/personal/credit-cards/sbi-card-elite.html";
+  const campaign = "https://www.sbicard.com/en/eapply/sbicampaign.page";
+  const genericTerms =
+    "https://www.sbicard.com/en/most-important-terms-and-conditions.page";
+  const requested: string[] = [];
+  const documents = await collectSupportingBenefitDocuments({
+    issuer: "SBI Card",
+    identityLabels: ["Elite"],
+    maximumLinks: 1,
+    primary: resource(
+      product,
+      `<h1>SBI Card ELITE</h1><a href="${genericTerms}">Terms</a>`,
+    ),
+    fetchOfficialIssuerResource: async (input) => {
+      requested.push(input.url);
+      return resource(
+        input.url,
+        "Free movie tickets worth Rs. 6,000 every year. Maximum discount is Rs. 250 per ticket.",
+      );
+    },
+  });
+
+  assert(
+    requested.join(",") === campaign,
+    "the exact ELITE source did not receive the bounded supporting slot",
+  );
+  assert(documents.length === 2, "the ELITE campaign evidence was omitted");
+});
+
+Deno.test("curated SBI ELITE terms do not leak to another SBI card variant", async () => {
+  const product =
+    "https://www.sbicard.com/en/personal/credit-cards/simplyclick-sbi-card.html";
+  const requested: string[] = [];
+  await collectSupportingBenefitDocuments({
+    issuer: "SBI Card",
+    identityLabels: ["SimplyCLICK"],
+    maximumLinks: 1,
+    primary: resource(product, "<h1>SimplyCLICK SBI Card</h1>"),
+    fetchOfficialIssuerResource: async (input) => {
+      requested.push(input.url);
+      return resource(input.url, "unexpected");
+    },
+  });
+
+  assert(requested.length === 0, "ELITE evidence leaked across SBI variants");
+});

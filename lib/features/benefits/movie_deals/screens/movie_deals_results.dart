@@ -18,6 +18,19 @@ String _formatAmount(double amount) => amount == amount.roundToDouble()
 String _platformDisplayLabel(String platform) =>
     platform.toLowerCase() == 'zomato' ? 'Zomato/District' : platform;
 
+String _bankAndCardLabel(MovieDealCandidate candidate) {
+  final bank = candidate.rule.bankName?.trim();
+  final card = candidate.rule.cardName?.trim();
+  if (bank != null && bank.isNotEmpty && card != null && card.isNotEmpty) {
+    return '$bank — $card';
+  }
+  return card?.isNotEmpty == true
+      ? card!
+      : bank?.isNotEmpty == true
+      ? bank!
+      : candidate.title;
+}
+
 String _plainLanguageReason(MovieDealCandidate candidate) {
   final rule = candidate.rule;
   return switch (rule.offerType) {
@@ -362,8 +375,8 @@ class MovieDealsResults extends ConsumerWidget {
             title: 'ANNUAL ALLOWANCE — BALANCE NOT TRACKED',
             child: _buildStripSection(
               annualAllowanceCandidates,
-              (c) => c.rule.cardName ?? c.title,
-              (c) => c.explanation,
+              _bankAndCardLabel,
+              (c) => '${c.explanation}\n${_bookingPlatformMessage(c, request)}',
             ),
           ),
         ],

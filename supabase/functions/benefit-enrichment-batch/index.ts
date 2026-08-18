@@ -58,6 +58,8 @@ type ProcessResult = {
   retried: boolean;
 };
 
+export const CURRENT_BENEFIT_PARSER_VERSION = "benefits-v5";
+
 const PERMANENT_FAILURES = new Set([
   "not_a_card",
   "ambiguous_product",
@@ -114,15 +116,20 @@ function pilotJob(row: Record<string, any>): PilotJob {
   };
 }
 
-async function readPilotStatus(db: UntypedSupabaseClient) {
+export async function readPilotStatus(
+  db: UntypedSupabaseClient,
+  parserVersion = CURRENT_BENEFIT_PARSER_VERSION,
+) {
+  assertBenefitParserVersion(parserVersion);
   const { data, error } = await db.from("card_catalog_enrichment_jobs")
     .select("id,run_mode,status,failure_category,result_summary")
-    .eq("run_mode", "pilot");
+    .eq("run_mode", "pilot")
+    .eq("parser_version", parserVersion);
   if (error) throw error;
   return evaluatePilotGate((data ?? []).map(pilotJob));
 }
 
-function currentBenefitProposal(
+export function currentBenefitProposal(
   row: Record<string, any>,
 ): BenefitProposal | null {
   const benefit = row.benefit ?? row.benefits ?? row;
@@ -153,6 +160,10 @@ function currentBenefitProposal(
       : {}),
     ...(config.frequency ? { frequency: String(config.frequency) } : {}),
     ...(config.period ? { period: String(config.period) } : {}),
+    valueConfig: config,
+    partners: Array.isArray(benefit.partners)
+      ? benefit.partners.map(String)
+      : [],
     restrictions: Array.isArray(config.restrictions)
       ? config.restrictions.map(String)
       : [],
@@ -202,9 +213,12 @@ async function sha256Text(value: string): Promise<string> {
 export async function initializePilotJobs(
   db: UntypedSupabaseClient,
   candidates: readonly PilotCandidate[],
-  parserVersion = "benefits-v1",
+  parserVersion = CURRENT_BENEFIT_PARSER_VERSION,
 ): Promise<EnrichmentJob[]> {
   assertBenefitParserVersion(parserVersion);
+  if (parserVersion !== CURRENT_BENEFIT_PARSER_VERSION) {
+    throw new Error("unsupported_pilot_parser_version");
+  }
   const selected = selectPilotCandidates(candidates);
   if (selected.length !== 5) throw new Error("invalid_pilot_candidates");
   const { data, error } = await db.rpc(
@@ -228,13 +242,15 @@ export async function seedScheduledQueueIfAllowed(
   runMode: RunMode,
   scheduledClaimAllowed: boolean,
   pageSize = 200,
+  parserVersion = CURRENT_BENEFIT_PARSER_VERSION,
 ): Promise<number> {
   if (runMode !== "scheduled" || !scheduledClaimAllowed) return 0;
+  assertBenefitParserVersion(parserVersion);
   const { data: pilotRows, error: pilotError } = await db
     .from("card_catalog_enrichment_jobs")
     .select("card_id,parser_version")
     .eq("run_mode", "pilot")
-    .eq("parser_version", "benefits-v1");
+    .eq("parser_version", parserVersion);
   if (pilotError) throw pilotError;
   const pilotIdentities = new Set(
     (pilotRows ?? []).map((row: Record<string, unknown>) =>
@@ -261,7 +277,7 @@ export async function seedScheduledQueueIfAllowed(
         String(row.card_type ?? "").trim().toLowerCase() !== "credit" ||
         typeof row.bank !== "string" ||
         typeof row.card_url !== "string" ||
-        pilotIdentities.has(`${String(row.id)}:benefits-v1`) ||
+        pilotIdentities.has(`${String(row.id)}:${parserVersion}`) ||
         !allowedOfficialUrl(row.bank, row.card_url)
       ) continue;
       const canonicalUrl = canonicalOfficialUrl(row.bank, row.card_url);
@@ -272,7 +288,7 @@ export async function seedScheduledQueueIfAllowed(
         canonicalUrl,
         finalUrlHash,
         contentHash: null,
-        parserVersion: "benefits-v1",
+        parserVersion,
         runMode: "scheduled",
         resultSummary: {
           queue_source: "catalog_seed",
@@ -400,7 +416,7 @@ async function processJob(
       issuer: job.issuer,
       url: job.canonical_url,
       contentPurpose: "document",
-      maxBytes: 1024 * 1024,
+      maxBytes: 2 * 1024 * 1024,
     });
     contentHash = page.contentHash;
     requireMatchingIdentity(
@@ -500,7 +516,7 @@ async function processJob(
           Boolean(benefit.evidence[field])
         )
       ),
-      idempotency_passed: true,
+      idempotency_passed: compared.conflicts.length === 0,
     };
     return { outcome, retried };
   } catch (error) {
@@ -609,12 +625,16 @@ export async function handleBenefitEnrichmentBatch(
       if (!Array.isArray(body.candidates)) {
         return json({ error: "invalid_pilot_candidates" }, 400);
       }
+      const requestedParserVersion = typeof body.parserVersion === "string"
+        ? body.parserVersion.trim()
+        : CURRENT_BENEFIT_PARSER_VERSION;
+      if (requestedParserVersion !== CURRENT_BENEFIT_PARSER_VERSION) {
+        return json({ error: "unsupported_pilot_parser_version" }, 400);
+      }
       await initializePilotJobs(
         db,
         body.candidates as PilotCandidate[],
-        typeof body.parserVersion === "string"
-          ? body.parserVersion
-          : "benefits-v1",
+        requestedParserVersion,
       );
       runMode = "pilot";
     }
@@ -636,12 +656,15 @@ export async function handleBenefitEnrichmentBatch(
       db,
       runMode,
       pilot.scheduledClaimAllowed,
+      200,
+      CURRENT_BENEFIT_PARSER_VERSION,
     );
 
     const { count: queued, error: countError } = await db
       .from("card_catalog_enrichment_jobs")
       .select("id", { count: "exact", head: true })
       .eq("run_mode", runMode)
+      .eq("parser_version", CURRENT_BENEFIT_PARSER_VERSION)
       .in("status", ["queued", "failed"])
       .or(
         `next_retry_at.is.null,next_retry_at.lte.${new Date().toISOString()}`,
@@ -654,6 +677,7 @@ export async function handleBenefitEnrichmentBatch(
         _max_jobs: runMode === "scheduled" ? 1 : MAX_BATCH_SIZE,
         _lease_seconds: LEASE_SECONDS,
         _run_mode: runMode,
+        _parser_version: CURRENT_BENEFIT_PARSER_VERSION,
       },
     );
     if (claimError) throw claimError;
