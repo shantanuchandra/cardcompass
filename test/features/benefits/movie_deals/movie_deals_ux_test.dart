@@ -179,6 +179,24 @@ void main() {
     );
   });
 
+  testWidgets('movie platform names Zomato and District together', (
+    tester,
+  ) async {
+    await pumpMovieDeals(tester, width: 390);
+
+    await tester.tap(
+      find
+          .byWidgetPredicate(
+            (widget) => widget is DropdownButtonFormField<String>,
+          )
+          .first,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Zomato/District'), findsOneWidget);
+    expect(find.text('Zomato'), findsNothing);
+  });
+
   for (final width in [390.0, 768.0, 1280.0]) {
     for (final textScale in [1.0, 2.0]) {
       testWidgets(

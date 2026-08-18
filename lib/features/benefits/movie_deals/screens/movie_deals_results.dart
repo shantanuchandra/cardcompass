@@ -132,13 +132,17 @@ class _BentoTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final background = _isHero ? BrandColors.inkSoft : BrandColors.paper;
     final foreground = _isHero ? BrandColors.paper : BrandColors.ink;
-    final mutedForeground = _isHero ? BrandColors.mutedPaper : BrandColors.mutedInk;
+    final mutedForeground = _isHero
+        ? BrandColors.mutedPaper
+        : BrandColors.mutedInk;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: background,
         borderRadius: BorderRadius.circular(BrandRadius.overlay),
         border: Border.all(
-          color: _isHero ? accent.withValues(alpha: 0.4) : accent.withValues(alpha: 0.22),
+          color: _isHero
+              ? accent.withValues(alpha: 0.4)
+              : accent.withValues(alpha: 0.22),
           width: _isHero ? 1.4 : 1,
         ),
       ),
@@ -155,7 +159,10 @@ class _BentoTile extends StatelessWidget {
                   Container(
                     width: 7,
                     height: 7,
-                    decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
+                    decoration: BoxDecoration(
+                      color: accent,
+                      shape: BoxShape.circle,
+                    ),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
@@ -214,7 +221,8 @@ class _BentoGrid extends StatelessWidget {
           children: [
             for (final item in items)
               SizedBox(
-                width: (unitWidth * item.span.clamp(1, columns)) +
+                width:
+                    (unitWidth * item.span.clamp(1, columns)) +
                     gap * (item.span.clamp(1, columns) - 1),
                 child: item.child,
               ),
@@ -246,7 +254,8 @@ class MovieDealsResults extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(movieDealsSearchProvider(request));
     return async.when(
-      data: (recommendation) => _buildRecommendation(context, ref, recommendation),
+      data: (recommendation) =>
+          _buildRecommendation(context, ref, recommendation),
       loading: () => const BrandLoadingSkeleton(
         key: Key('movie-results-loading'),
         semanticLabel: 'Finding movie offers',
@@ -272,7 +281,8 @@ class MovieDealsResults extends ConsumerWidget {
         .where((c) => c.rule.offerType == MovieDealOfferType.annualAllowance)
         .toList();
 
-    final hasAnyRanked = recommendation.guaranteedOwned.isNotEmpty ||
+    final hasAnyRanked =
+        recommendation.guaranteedOwned.isNotEmpty ||
         recommendation.guaranteedOverall.isNotEmpty ||
         recommendation.potentialOwned.isNotEmpty ||
         recommendation.potentialOverall.isNotEmpty;
@@ -285,7 +295,8 @@ class MovieDealsResults extends ConsumerWidget {
 
     Future<void> Function()? confirmCallbackFor(MovieDealCandidate candidate) {
       if (request.preferredPlatform == null) return null;
-      if (candidate.platformConfidence == MovieDealPlatformConfidence.explicit) {
+      if (candidate.platformConfidence ==
+          MovieDealPlatformConfidence.explicit) {
         return null;
       }
       // Read once, not force-unwrapped: the button that invokes this closure
@@ -295,14 +306,20 @@ class MovieDealsResults extends ConsumerWidget {
       // (preferredPlatform, platformConfidence) rather than crashing.
       final userId = ref.read(currentUserProvider)?.id;
       if (userId == null) return null;
-      return () => ref.read(movieDealsRepositoryProvider).confirmPlatform(
+      return () => ref
+          .read(movieDealsRepositoryProvider)
+          .confirmPlatform(
             benefitId: candidate.benefitId,
             platform: request.preferredPlatform!,
             userId: userId,
           );
     }
 
-    Widget buildTileBody(String emptyNoun, List<MovieDealCandidate> group, {required bool isOverallFlavor}) {
+    Widget buildTileBody(
+      String emptyNoun,
+      List<MovieDealCandidate> group, {
+      required bool isOverallFlavor,
+    }) {
       if (group.isEmpty) {
         return Padding(
           padding: const EdgeInsets.only(bottom: 4),
@@ -317,7 +334,7 @@ class MovieDealsResults extends ConsumerWidget {
         children: [
           for (var i = 0; i < group.length; i++)
             Padding(
-              padding: EdgeInsets.only(bottom: i == group.length - 1 ? 0 : 10),
+              padding: EdgeInsets.only(bottom: i == group.length - 1 ? 0 : 12),
               child: _DealRow(
                 candidate: group[i],
                 request: request,
@@ -335,7 +352,11 @@ class MovieDealsResults extends ConsumerWidget {
           weight: _TileWeight.hero,
           accent: BrandColors.focusDark,
           title: 'GUARANTEED · YOU OWN',
-          child: buildTileBody('guaranteed', recommendation.guaranteedOwned, isOverallFlavor: false),
+          child: buildTileBody(
+            'guaranteed',
+            recommendation.guaranteedOwned,
+            isOverallFlavor: false,
+          ),
         ),
       ),
       _GridItem(
@@ -344,7 +365,11 @@ class MovieDealsResults extends ConsumerWidget {
           weight: _TileWeight.standard,
           accent: BrandColors.rewardInk,
           title: 'POTENTIAL · YOU OWN',
-          child: buildTileBody('potential', recommendation.potentialOwned, isOverallFlavor: false),
+          child: buildTileBody(
+            'potential',
+            recommendation.potentialOwned,
+            isOverallFlavor: false,
+          ),
         ),
       ),
       _GridItem(
@@ -353,7 +378,11 @@ class MovieDealsResults extends ConsumerWidget {
           weight: _TileWeight.wide,
           accent: BrandColors.focusDark,
           title: 'GUARANTEED · OVERALL',
-          child: buildTileBody('guaranteed', recommendation.guaranteedOverall, isOverallFlavor: true),
+          child: buildTileBody(
+            'guaranteed',
+            recommendation.guaranteedOverall,
+            isOverallFlavor: true,
+          ),
         ),
       ),
       _GridItem(
@@ -362,7 +391,11 @@ class MovieDealsResults extends ConsumerWidget {
           weight: _TileWeight.standard,
           accent: BrandColors.rewardInk,
           title: 'POTENTIAL · OVERALL',
-          child: buildTileBody('potential', recommendation.potentialOverall, isOverallFlavor: true),
+          child: buildTileBody(
+            'potential',
+            recommendation.potentialOverall,
+            isOverallFlavor: true,
+          ),
         ),
       ),
       if (rewardMultiplierCandidates.isNotEmpty)
@@ -504,7 +537,8 @@ class _DealRowState extends State<_DealRow> {
   @override
   Widget build(BuildContext context) {
     final candidate = widget.candidate;
-    final effectiveTicketPrice = candidate.finalAmount / widget.request.numberOfTickets;
+    final effectiveTicketPrice =
+        candidate.finalAmount / widget.request.numberOfTickets;
     final tied = _isTiedToSearchedPlatform(candidate, widget.request);
 
     final details = Column(
@@ -543,7 +577,11 @@ class _DealRowState extends State<_DealRow> {
         const SizedBox(height: 4),
         Text(
           _plainLanguageReason(candidate),
-          style: const TextStyle(fontFamily: 'Manrope', fontSize: 12, height: 1.35),
+          style: const TextStyle(
+            fontFamily: 'Manrope',
+            fontSize: 12,
+            height: 1.35,
+          ),
         ),
       ],
     );
@@ -582,58 +620,95 @@ class _DealRowState extends State<_DealRow> {
       ],
     );
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // A genuine Row + Expanded, not ResponsiveValueRow — that shared
-        // component's row-mode is a bare `Row(mainAxisSize: min)` with no
-        // Expanded on either child, which is fine for short metric-style
-        // content but leaves prose Text widgets (the platform/reason
-        // sentences here) with no width ceiling to wrap against; their
-        // own intrinsic on-one-line width can then exceed the tile and
-        // overflow the whole Row (confirmed: reproduced reliably at
-        // certain tile widths with real candidate text). Expanded gives
-        // the details column a real constraint to wrap within; the
-        // narrow-width stack still needs its own explicit switch below,
-        // since a plain Row+Expanded never stacks on its own.
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final shouldStack = constraints.maxWidth < 320 ||
-                MediaQuery.textScalerOf(context).scale(14) >= 1.5;
-            if (shouldStack) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [details, const SizedBox(height: 8), priceBlock],
-              );
-            }
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(child: details),
-                const SizedBox(width: 12),
-                priceBlock,
-              ],
-            );
-          },
+    return Container(
+      key: Key('movie-card-option-${candidate.cardId}'),
+      padding: const EdgeInsets.all(BrandSpacing.md),
+      decoration: BoxDecoration(
+        color: BrandColors.paper.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(BrandRadius.card),
+        border: Border.all(
+          color: BrandColors.paperDeep.withValues(alpha: 0.55),
         ),
-        if (widget.onConfirmPlatform != null && !_confirmed)
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton(
-              style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: Size.zero),
-              onPressed: () async {
-                await widget.onConfirmPlatform!();
-                if (mounted) setState(() => _confirmed = true);
-              },
-              child: const Text('Did this work here? Let us know', style: TextStyle(fontSize: 12)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (candidate.rule.bankName != null) ...[
+            Text(
+              candidate.rule.bankName!,
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.7,
+                color: DefaultTextStyle.of(
+                  context,
+                ).style.color?.withValues(alpha: 0.72),
+              ),
             ),
+            const SizedBox(height: 2),
+          ],
+          // A genuine Row + Expanded, not ResponsiveValueRow — that shared
+          // component's row-mode is a bare `Row(mainAxisSize: min)` with no
+          // Expanded on either child, which is fine for short metric-style
+          // content but leaves prose Text widgets (the platform/reason
+          // sentences here) with no width ceiling to wrap against; their
+          // own intrinsic on-one-line width can then exceed the tile and
+          // overflow the whole Row (confirmed: reproduced reliably at
+          // certain tile widths with real candidate text). Expanded gives
+          // the details column a real constraint to wrap within; the
+          // narrow-width stack still needs its own explicit switch below,
+          // since a plain Row+Expanded never stacks on its own.
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final shouldStack =
+                  constraints.maxWidth < 320 ||
+                  MediaQuery.textScalerOf(context).scale(14) >= 1.5;
+              if (shouldStack) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [details, const SizedBox(height: 8), priceBlock],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: details),
+                  const SizedBox(width: 12),
+                  priceBlock,
+                ],
+              );
+            },
           ),
-        if (_confirmed)
-          const Text(
-            'Thanks — this helps other users.',
-            style: TextStyle(fontFamily: 'Manrope', fontSize: 12, color: BrandColors.focusDark),
-          ),
-      ],
+          if (widget.onConfirmPlatform != null && !_confirmed)
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                style: TextButton.styleFrom(
+                  padding: EdgeInsets.zero,
+                  minimumSize: Size.zero,
+                ),
+                onPressed: () async {
+                  await widget.onConfirmPlatform!();
+                  if (mounted) setState(() => _confirmed = true);
+                },
+                child: const Text(
+                  'Did this work here? Let us know',
+                  style: TextStyle(fontSize: 12),
+                ),
+              ),
+            ),
+          if (_confirmed)
+            const Text(
+              'Thanks — this helps other users.',
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                fontSize: 12,
+                color: BrandColors.focusDark,
+              ),
+            ),
+        ],
+      ),
     );
   }
 }

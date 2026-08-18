@@ -14,12 +14,13 @@ class MovieBenefitSource {
     Set<String> excludedCategories = const {},
     this.sourceUrl,
     this.cardName,
+    this.bankName,
     this.displayPriority = 0,
     this.validityStart,
     this.validityEnd,
-  })  : valueConfig = Map.unmodifiable(valueConfig),
-        partners = Set.unmodifiable(partners),
-        excludedCategories = Set.unmodifiable(excludedCategories);
+  }) : valueConfig = Map.unmodifiable(valueConfig),
+       partners = Set.unmodifiable(partners),
+       excludedCategories = Set.unmodifiable(excludedCategories);
 
   final String benefitId;
   final String catalogCardId;
@@ -29,6 +30,7 @@ class MovieBenefitSource {
   final Set<String> excludedCategories;
   final String? sourceUrl;
   final String? cardName;
+  final String? bankName;
   final int displayPriority;
   final DateTime? validityStart;
   final DateTime? validityEnd;
@@ -53,6 +55,7 @@ class MovieDealRule {
     required this.offerType,
     this.sourceUrl,
     this.cardName,
+    this.bankName,
     this.displayPriority = 0,
     Set<String> partners = const {},
     this.validityStart,
@@ -71,15 +74,16 @@ class MovieDealRule {
     this.rewardMultiplierUnit,
     Set<String> qualifyingCategories = const {},
     Set<String> excludedCategories = const {},
-  })  : partners = Set.unmodifiable(partners),
-        qualifyingCategories = Set.unmodifiable(qualifyingCategories),
-        excludedCategories = Set.unmodifiable(excludedCategories);
+  }) : partners = Set.unmodifiable(partners),
+       qualifyingCategories = Set.unmodifiable(qualifyingCategories),
+       excludedCategories = Set.unmodifiable(excludedCategories);
 
   final String benefitId;
   final String catalogCardId;
   final String title;
   final String? sourceUrl;
   final String? cardName;
+  final String? bankName;
   final int displayPriority;
   final MovieDealOfferType offerType;
 
