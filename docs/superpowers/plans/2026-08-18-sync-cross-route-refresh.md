@@ -254,9 +254,103 @@ If the existing data cannot exercise transition from cached empty state, use the
 
 Leave the internal browser open on the Cards page showing the imported cards. Report sync outcome, route counts, aggregate reconciliation, automated verification, and any remaining blocker without exposing financial details beyond user-visible aggregate values.
 
+### Task 5: Unify Dashboard and Transaction Aggregation Contracts
+
+**Files:**
+- Create: `lib/core/services/retail_transaction_aggregation.dart`
+- Create: `test/core/services/retail_transaction_aggregation_test.dart`
+- Modify: `lib/features/dashboard/domain/dashboard_metrics.dart`
+- Modify: `lib/core/repositories/transactions_repository.dart`
+- Modify: `lib/features/transactions/providers/transactions_provider.dart`
+- Modify: `lib/features/transactions/screens/transactions_screen.dart`
+- Modify: `test/features/dashboard/dashboard_metrics_test.dart`
+- Modify: `test/features/transactions/transactions_state_test.dart`
+- Modify: `test/features/transactions/transactions_ux_test.dart`
+- Test or create: a focused transaction pagination regression near `test/core/repositories/` or `test/core/services/paginated_query_test.dart`
+
+**Interfaces:**
+- Produces: `RetailTransactionAggregate aggregateRetailTransactions(Iterable<Transaction> rows, {DateTime? fromInclusive, DateTime? throughInclusive})` as the shared spend/reward/category/day contract.
+- Produces: `TransactionsRepository.getAllTransactions({required String userId})` using `collectPaginated` with deterministic `transaction_date desc, id` ordering.
+- Preserves: every legitimate in-range ledger row remains visible; only derived spend, rewards, top category, trend, and group subtotals use canonical retail purchases.
+
+- [ ] **Step 1: Write shared aggregation RED tests**
+
+Cover closed date bounds; exclusion of credit/refund/fee/interest/reward/cash, nonpositive and nonfinite amounts; natural-key deduplication across different IDs; positive finite rewards only on canonical unique purchases; and category/local-day totals derived from that identical purchase set.
+
+Run: `flutter test test/core/services/retail_transaction_aggregation_test.dart`
+
+Expected: FAIL because the shared API does not exist.
+
+- [ ] **Step 2: Write Transactions equivalence and cutoff RED tests**
+
+Extend state/widget coverage with adversarial rows containing an ordinary purchase, future ₹500 debit, natural-key duplicate, cash withdrawal, refund/credit rewards, and negative/NaN rewards. Assert current-period Transactions spend/rewards/category/day totals equal `calculateDashboardMetrics`; explicit end date excludes exactly next-day midnight; all-time excludes future rows while retaining history; group subtotal uses only canonical purchases but ledger rows remain visible.
+
+Run:
+
+```bash
+flutter test test/features/transactions/transactions_state_test.dart
+flutter test test/features/transactions/transactions_ux_test.dart
+```
+
+Expected: FAIL on the current unbounded, non-deduplicated aggregation behavior.
+
+- [ ] **Step 3: Implement the canonical aggregation service**
+
+Use natural key `(userId, userCardId, transactionDate.microsecondsSinceEpoch, description, amount)`. Apply bounds first, then `isEligibleRetailSpend`, positive finite amount, and first-seen deduplication. Sum only positive finite rewards belonging to canonical purchases; build category and local-midnight day totals from the same purchase list.
+
+- [ ] **Step 4: Make Dashboard consume the shared service**
+
+Replace the local eligibility/dedup/reward loop in `calculateDashboardMetrics` with the shared aggregate bounded by `trendStart` and `periodEnd`. Preserve the existing six-month bucket behavior and all current dashboard metric tests.
+
+- [ ] **Step 5: Remove the Transactions 500-row cap and capture one cutoff**
+
+Implement paginated `getAllTransactions`. In `TxnsNotifier.build`, capture one `reportingCutoff = DateTime.now()`, load all rows, derive the month-start filter from that same cutoff, and store the cutoff in `TxnsState`. Default/all-time filtering must exclude rows after the cutoff. Explicit calendar end dates use half-open `< next-day-midnight` semantics.
+
+- [ ] **Step 6: Wire every Transactions aggregate to the canonical projection**
+
+Use the shared aggregate for `totalSpend`, `totalRewards`, `topCategory`, spend trend, prior-period comparison, and group subtotals. Preserve raw ledger rows, grouping, row reward labels, filter count, descriptions, badges, and sort order.
+
+- [ ] **Step 7: Add pagination and Dashboard equivalence regressions**
+
+Prove a dataset larger than 500 rows is fully loaded through deterministic pages, and add a Dashboard assertion against the shared aggregate to prevent future policy drift.
+
+- [ ] **Step 8: Run focused and full verification, then commit**
+
+Run:
+
+```bash
+dart format --output=none --set-exit-if-changed <all Task 5 files>
+flutter test test/core/services/retail_transaction_aggregation_test.dart test/features/dashboard/dashboard_metrics_test.dart test/features/transactions/transactions_state_test.dart test/features/transactions/transactions_ux_test.dart
+flutter test
+flutter analyze
+```
+
+Expected: all focused and full tests pass; no analyzer diagnostics in Task 5 files. Global baseline diagnostics outside Task 5 may remain recorded.
+
+Commit:
+
+```bash
+git add <Task 5 files only>
+git commit -m "fix: unify dashboard and ledger aggregates"
+```
+
+### Task 6: Final Live Aggregate and Idempotency Verification
+
+**Files:**
+- No production changes expected.
+
+**Interfaces:**
+- Consumes: Tasks 1-5.
+- Produces: browser evidence that Dashboard and Transactions agree and idempotent sync preserves counts.
+
+- [ ] **Step 1:** Build configured release assets and reload the original authenticated `localhost` tab.
+- [ ] **Step 2:** Record Dashboard card count, current-month spend, rewards, and reported limits without private row details.
+- [ ] **Step 3:** Navigate normally to Cards and Transactions; verify six cards, stable ledger count, and equal spend/rewards under the shared contract.
+- [ ] **Step 4:** Reload Cards and Transactions and verify counts/totals persist.
+- [ ] **Step 5:** Keep the internal browser persistent on the populated Cards route and append final evidence to the verification report.
+
 ## Self-Review
 
 - Spec coverage: the plan addresses the proven cache invalidation gap, all mutation entry points, provider-level regression, widget integration, route persistence, and full live verification.
 - Placeholder scan: no deferred implementation items or unspecified error-handling steps remain.
 - Type consistency: the coordinator is consistently named `ImportedDataRefresh` / `importedDataRefreshProvider`; every consumer invokes the zero-argument callback once after successful mutation.
-
