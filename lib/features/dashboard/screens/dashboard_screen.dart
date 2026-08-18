@@ -25,6 +25,7 @@ import '../../../shared/models/statement.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../providers/dashboard_provider.dart';
 import '../providers/gmail_sync_provider.dart';
+import '../providers/imported_data_refresh_provider.dart';
 
 typedef GmailReconnect = Future<void> Function();
 
@@ -183,8 +184,7 @@ class _DashboardAppBar extends ConsumerWidget {
                     ),
             ),
           );
-          ref.invalidate(dashboardProvider);
-          ref.invalidate(pendingCardAssignmentsProvider);
+          ref.read(importedDataRefreshProvider)();
         },
         error: (error, _) {
           final needsReconnect =
@@ -1752,8 +1752,8 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
 
   Future<void> _resolve(Map<String, dynamic> catalogEntry) async {
     if (_resolving) return;
-    final container = ProviderScope.containerOf(context, listen: false);
     final resolveCard = ref.read(cardResolutionProvider);
+    final refreshImportedData = ref.read(importedDataRefreshProvider);
     setState(() {
       _resolving = true;
       _needsGmailReconnect = false;
@@ -1762,7 +1762,7 @@ class _BankResolveDialogState extends ConsumerState<_BankResolveDialog> {
     });
     try {
       await resolveCard(widget.email, catalogEntry['id'] as String);
-      container.invalidate(dashboardProvider);
+      refreshImportedData();
       if (!mounted) return;
       setState(() {
         _error = null;

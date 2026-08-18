@@ -8,6 +8,7 @@ import 'package:cardcompass/core/services/gmail_sync_service.dart';
 import 'package:cardcompass/core/theme/app_theme.dart';
 import 'package:cardcompass/features/dashboard/providers/dashboard_provider.dart';
 import 'package:cardcompass/features/dashboard/providers/gmail_sync_provider.dart';
+import 'package:cardcompass/features/dashboard/providers/imported_data_refresh_provider.dart';
 import 'package:cardcompass/features/dashboard/screens/dashboard_screen.dart';
 import 'package:cardcompass/shared/models/transaction.dart';
 import 'package:cardcompass/shared/models/user_card.dart';
@@ -90,6 +91,24 @@ class _ExpiredGmailSyncNotifier extends GmailSyncNotifier {
   }
 }
 
+class CompletingGmailSyncNotifier extends GmailSyncNotifier {
+  @override
+  Future<GmailSyncResult?> build() async => null;
+
+  void complete() {
+    state = const AsyncData(
+      GmailSyncResult(
+        foundCount: 1,
+        newlyStoredCount: 1,
+        skippedCount: 0,
+        failedCount: 0,
+        processedAttempted: 1,
+        processedSucceeded: 1,
+      ),
+    );
+  }
+}
+
 Future<void> _pumpDashboard(
   WidgetTester tester, {
   required ValueNotifier<AppTab> selectedAppTab,
@@ -97,7 +116,9 @@ Future<void> _pumpDashboard(
   bool failDashboard = false,
   bool failGmailSync = false,
   bool expireGmailSync = false,
+  GmailSyncNotifier? gmailSyncNotifier,
   GmailReconnect? gmailReconnect,
+  ImportedDataRefresh? importedDataRefresh,
   VoidCallback? onDashboardLoad,
   List<Map<String, dynamic>> pendingAssignments = const [],
   BankCatalogSearch? catalogSearch,
@@ -130,8 +151,12 @@ Future<void> _pumpDashboard(
           gmailSyncProvider.overrideWith(_FailingGmailSyncNotifier.new),
         if (expireGmailSync)
           gmailSyncProvider.overrideWith(_ExpiredGmailSyncNotifier.new),
+        if (gmailSyncNotifier != null)
+          gmailSyncProvider.overrideWith(() => gmailSyncNotifier),
         if (gmailReconnect != null)
           gmailReconnectProvider.overrideWithValue(gmailReconnect),
+        if (importedDataRefresh != null)
+          importedDataRefreshProvider.overrideWithValue(importedDataRefresh),
       ],
       child: MaterialApp(
         theme: AppTheme.work,
@@ -196,6 +221,27 @@ Future<void> _startPendingAssignment(
 }
 
 void main() {
+  testWidgets(
+    'successful sync refreshes every imported-data projection once',
+    (tester) async {
+      final selectedAppTab = ValueNotifier(AppTab.dashboard);
+      final syncNotifier = CompletingGmailSyncNotifier();
+      var refreshCount = 0;
+      addTearDown(selectedAppTab.dispose);
+      await _pumpDashboard(
+        tester,
+        selectedAppTab: selectedAppTab,
+        gmailSyncNotifier: syncNotifier,
+        importedDataRefresh: () => refreshCount++,
+      );
+
+      syncNotifier.complete();
+      await tester.pumpAndSettle();
+
+      expect(refreshCount, 1);
+    },
+  );
+
   testWidgets(
     'bill section distinguishes statement balances from monthly spend',
     (tester) async {

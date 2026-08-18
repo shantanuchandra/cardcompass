@@ -8,10 +8,8 @@ import '../../../core/repositories/user_data_repository.dart';
 import '../../../core/theme/brand_components.dart';
 import '../../../core/theme/brand_tokens.dart';
 import '../../auth/providers/auth_provider.dart';
-import '../../cards/providers/cards_provider.dart';
-import '../../dashboard/providers/dashboard_provider.dart';
 import '../../dashboard/providers/gmail_sync_provider.dart';
-import '../../transactions/providers/transactions_provider.dart';
+import '../../dashboard/providers/imported_data_refresh_provider.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -37,10 +35,7 @@ class SettingsScreen extends ConsumerWidget {
               await UserDataRepository(
                 ref.read(supabaseClientProvider),
               ).resetAll();
-              ref.invalidate(userCardsProvider);
-              ref.invalidate(dashboardProvider);
-              ref.invalidate(txnsNotifierProvider);
-              ref.invalidate(pendingCardAssignmentsProvider);
+              ref.read(importedDataRefreshProvider)();
               ref.invalidate(gmailSyncProvider);
             },
           ),
