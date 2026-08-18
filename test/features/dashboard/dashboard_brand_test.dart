@@ -221,26 +221,25 @@ Future<void> _startPendingAssignment(
 }
 
 void main() {
-  testWidgets(
-    'successful sync refreshes every imported-data projection once',
-    (tester) async {
-      final selectedAppTab = ValueNotifier(AppTab.dashboard);
-      final syncNotifier = CompletingGmailSyncNotifier();
-      var refreshCount = 0;
-      addTearDown(selectedAppTab.dispose);
-      await _pumpDashboard(
-        tester,
-        selectedAppTab: selectedAppTab,
-        gmailSyncNotifier: syncNotifier,
-        importedDataRefresh: () => refreshCount++,
-      );
+  testWidgets('successful sync refreshes every imported-data projection once', (
+    tester,
+  ) async {
+    final selectedAppTab = ValueNotifier(AppTab.dashboard);
+    final syncNotifier = CompletingGmailSyncNotifier();
+    var refreshCount = 0;
+    addTearDown(selectedAppTab.dispose);
+    await _pumpDashboard(
+      tester,
+      selectedAppTab: selectedAppTab,
+      gmailSyncNotifier: syncNotifier,
+      importedDataRefresh: () => refreshCount++,
+    );
 
-      syncNotifier.complete();
-      await tester.pumpAndSettle();
+    syncNotifier.complete();
+    await tester.pumpAndSettle();
 
-      expect(refreshCount, 1);
-    },
-  );
+    expect(refreshCount, 1);
+  });
 
   testWidgets(
     'bill section distinguishes statement balances from monthly spend',
