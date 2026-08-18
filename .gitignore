@@ -71,5 +71,6 @@ db_cluster*
 android/
 ios/
 .playwright-mcp/*
+.firecrawl/
 .superpowers/brainstorm/
 .worktrees/

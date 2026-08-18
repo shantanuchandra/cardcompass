@@ -285,6 +285,24 @@ Deno.test("catalog identity rejects an alias shared by active issuer variants", 
   );
 });
 
+Deno.test("catalog identity keeps payment-network words when sibling variants would otherwise collide", () => {
+  const catalog = [
+    { id: "hpcl-coral", card_name: "Hpcl Coral" },
+    {
+      id: "hpcl-coral-amex",
+      card_name: "Hpcl Coral American Express",
+    },
+  ];
+
+  requireExactCatalogIdentity(
+    "hpcl-coral",
+    "ICICI Bank",
+    "HPCL Coral Credit Card",
+    catalog,
+    [],
+  );
+});
+
 Deno.test("catalog identity loading includes active same-issuer variants and aliases", async () => {
   const catalog = [
     {

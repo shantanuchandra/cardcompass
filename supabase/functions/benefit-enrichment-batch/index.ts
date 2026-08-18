@@ -364,19 +364,30 @@ export function requireExactCatalogIdentity(
   catalog: Array<{ id: string; card_name: string }>,
   aliases: Array<{ card_id: string; alias: string }>,
 ): void {
-  const proposed = normalizedProduct(proposedName, issuer);
-  if (proposed.length < 2) throw new Error("identity_mismatch");
+  const exactProduct = (value: string): string => {
+    const base = normalizedProduct(value, issuer);
+    const networks = [
+      /\b(?:amex|american\s+express)\b/i.test(value) ? "amex" : "",
+      /\bmastercard\b/i.test(value) ? "mastercard" : "",
+      /\brupay\b/i.test(value) ? "rupay" : "",
+      /\bvisa\b/i.test(value) ? "visa" : "",
+    ].filter(Boolean).sort();
+    return [base, ...networks].join("|");
+  };
+  const proposedBase = normalizedProduct(proposedName, issuer);
+  const proposed = exactProduct(proposedName);
+  if (proposedBase.length < 2) throw new Error("identity_mismatch");
   const activeIds = new Set(catalog.map((row) => String(row.id)));
   const matches = new Set<string>();
   for (const row of catalog) {
-    if (normalizedProduct(row.card_name, issuer) === proposed) {
+    if (exactProduct(row.card_name) === proposed) {
       matches.add(String(row.id));
     }
   }
   for (const alias of aliases) {
     if (
       activeIds.has(String(alias.card_id)) &&
-      normalizedProduct(alias.alias, issuer) === proposed
+      exactProduct(alias.alias) === proposed
     ) {
       matches.add(String(alias.card_id));
     }
