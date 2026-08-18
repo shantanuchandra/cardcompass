@@ -30,6 +30,7 @@ class CountingTxnsNotifier extends TxnsNotifier {
 
 void main() {
   test('refreshes every imported-data provider after statement sync', () async {
+    txnLoads = 0;
     var dashboardLoads = 0;
     var cardsLoads = 0;
     var pendingLoads = 0;
