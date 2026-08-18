@@ -93,96 +93,86 @@ void main() {
     expect(find.bySemanticsLabel('Finding movie offers'), findsOneWidget);
   });
 
-  testWidgets(
-    'lists every candidate in each ranked group, not just one winner',
-    (tester) async {
-      final ownedHigh = _candidate(
-        cardId: 'owned-high',
-        isOwned: true,
-        savings: 150,
-      );
-      final ownedLow = _candidate(
-        cardId: 'owned-low',
-        isOwned: true,
-        savings: 50,
-      );
-      final unowned = _candidate(
-        cardId: 'unowned',
-        isOwned: false,
-        savings: 300,
-      );
-      final recommendation = MovieDealsRecommendation(
-        candidates: [ownedHigh, ownedLow, unowned],
-        rejectedCandidates: const [],
-        guaranteedOwned: [ownedHigh, ownedLow],
-        guaranteedOverall: [unowned, ownedHigh, ownedLow],
-      );
+  testWidgets('shows one best match and deduplicates remaining card options', (
+    tester,
+  ) async {
+    final ownedHigh = _candidate(
+      cardId: 'owned-high',
+      isOwned: true,
+      savings: 150,
+    );
+    final ownedLow = _candidate(
+      cardId: 'owned-low',
+      isOwned: true,
+      savings: 50,
+    );
+    final unowned = _candidate(cardId: 'unowned', isOwned: false, savings: 300);
+    final recommendation = MovieDealsRecommendation(
+      candidates: [ownedHigh, ownedLow, unowned],
+      rejectedCandidates: const [],
+      guaranteedOwned: [ownedHigh, ownedLow],
+      guaranteedOverall: [unowned, ownedHigh, ownedLow],
+    );
 
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            movieDealsSearchProvider(
-              request,
-            ).overrideWith((ref) async => recommendation),
-          ],
-          child: _wideHarness(const MovieDealsResults(request: request)),
-        ),
-      );
-      await tester.pumpAndSettle();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          movieDealsSearchProvider(
+            request,
+          ).overrideWith((ref) async => recommendation),
+        ],
+        child: _wideHarness(const MovieDealsResults(request: request)),
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      expect(find.textContaining('GUARANTEED · YOU OWN'), findsOneWidget);
-      expect(find.textContaining('GUARANTEED · OVERALL'), findsOneWidget);
-      // owned-high/owned-low each appear TWICE: once in the "you own" tile
-      // and once again in the "overall" tile (overall is never ownership-
-      // filtered) — proving the same candidate can legitimately render in
-      // both tiles.
-      expect(find.textContaining('Card owned-high'), findsNWidgets(2));
-      expect(find.textContaining('Card owned-low'), findsNWidgets(2));
-      expect(find.textContaining('Card unowned'), findsOneWidget);
-    },
-  );
+    expect(find.byKey(const Key('movie-best-match')), findsOneWidget);
+    expect(find.text('Best match'), findsOneWidget);
+    expect(find.text('Other cards to consider'), findsOneWidget);
+    expect(find.textContaining('Card owned-high'), findsOneWidget);
+    expect(find.textContaining('Card owned-low'), findsOneWidget);
+    expect(find.textContaining('Card unowned'), findsOneWidget);
+  });
 
-  testWidgets(
-    'each tile only ever shows its own group — Guaranteed·Own never leaks into Guaranteed·Overall content',
-    (tester) async {
-      final owned = _candidate(
-        cardId: 'owned-only',
-        isOwned: true,
-        savings: 100,
-      );
-      final unowned = _candidate(
-        cardId: 'unowned-only',
-        isOwned: false,
-        savings: 200,
-      );
-      final recommendation = MovieDealsRecommendation(
-        candidates: [owned, unowned],
-        rejectedCandidates: const [],
-        guaranteedOwned: [owned],
-        guaranteedOverall: [unowned],
-      );
+  testWidgets('best-match priority favors a guaranteed owned card', (
+    tester,
+  ) async {
+    final owned = _candidate(cardId: 'owned-only', isOwned: true, savings: 100);
+    final unowned = _candidate(
+      cardId: 'unowned-only',
+      isOwned: false,
+      savings: 200,
+    );
+    final recommendation = MovieDealsRecommendation(
+      candidates: [owned, unowned],
+      rejectedCandidates: const [],
+      guaranteedOwned: [owned],
+      guaranteedOverall: [unowned],
+    );
 
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            movieDealsSearchProvider(
-              request,
-            ).overrideWith((ref) async => recommendation),
-          ],
-          child: _wideHarness(const MovieDealsResults(request: request)),
-        ),
-      );
-      await tester.pumpAndSettle();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          movieDealsSearchProvider(
+            request,
+          ).overrideWith((ref) async => recommendation),
+        ],
+        child: _wideHarness(const MovieDealsResults(request: request)),
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      expect(find.textContaining('GUARANTEED · YOU OWN'), findsOneWidget);
-      expect(find.textContaining('GUARANTEED · OVERALL'), findsOneWidget);
-      // The owned-only candidate never appears where only the unowned one
-      // was placed, and vice versa — each tile renders exactly its own
-      // recommendation field, not a merged/deduped view.
-      expect(find.textContaining('Card owned-only'), findsOneWidget);
-      expect(find.textContaining('Card unowned-only'), findsOneWidget);
-    },
-  );
+    final bestMatch = find.byKey(const Key('movie-best-match'));
+    expect(
+      find.descendant(
+        of: bestMatch,
+        matching: find.textContaining('Card owned-only'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Card owned-only'), findsOneWidget);
+    expect(find.textContaining('Card unowned-only'), findsOneWidget);
+  });
 
   testWidgets('shows an ownership badge on a candidate that is owned', (
     tester,
@@ -207,7 +197,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('You own this'), findsNWidgets(2));
+    expect(find.text('You own this'), findsOneWidget);
   });
 
   testWidgets('renders every bank and card variant in its own option box', (
@@ -330,43 +320,41 @@ void main() {
     },
   );
 
-  testWidgets(
-    'expands the only populated ranked group and keeps empty groups compact',
-    (tester) async {
-      final potential = _candidate(
-        cardId: 'only-populated',
-        isOwned: false,
-        savings: 200,
-        platformConfidence: MovieDealPlatformConfidence.unconfirmed,
-      );
-      final recommendation = MovieDealsRecommendation(
-        candidates: [potential],
-        rejectedCandidates: const [],
-        potentialOverall: [potential],
-      );
+  testWidgets('renders the only populated option as a full-width best match', (
+    tester,
+  ) async {
+    final potential = _candidate(
+      cardId: 'only-populated',
+      isOwned: false,
+      savings: 200,
+      platformConfidence: MovieDealPlatformConfidence.unconfirmed,
+    );
+    final recommendation = MovieDealsRecommendation(
+      candidates: [potential],
+      rejectedCandidates: const [],
+      potentialOverall: [potential],
+    );
 
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            movieDealsSearchProvider(
-              request,
-            ).overrideWith((ref) async => recommendation),
-          ],
-          child: _wideHarness(const MovieDealsResults(request: request)),
-        ),
-      );
-      await tester.pumpAndSettle();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          movieDealsSearchProvider(
+            request,
+          ).overrideWith((ref) async => recommendation),
+        ],
+        child: _wideHarness(const MovieDealsResults(request: request)),
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      final populated = find.byKey(const Key('movie-group-potential-overall'));
-      final empty = find.byKey(const Key('movie-group-guaranteed-owned'));
-      expect(populated, findsOneWidget);
-      expect(empty, findsOneWidget);
-      expect(
-        tester.getSize(populated).width,
-        greaterThan(tester.getSize(empty).width * 2),
-      );
-    },
-  );
+    final bestMatch = find.byKey(const Key('movie-best-match'));
+    expect(bestMatch, findsOneWidget);
+    expect(
+      tester.getSize(bestMatch).width,
+      tester.getSize(find.byType(MovieDealsResults)).width,
+    );
+    expect(find.byKey(const Key('movie-empty-groups-summary')), findsOneWidget);
+  });
 
   testWidgets(
     'shows a single no-deal message when every group and every dedicated section is empty',
@@ -539,6 +527,37 @@ void main() {
       expect(find.textContaining('BookMyShow'), findsWidgets);
     },
   );
+
+  testWidgets('displays Zomato movie offers as Zomato/District', (
+    tester,
+  ) async {
+    final zomato = _candidate(
+      cardId: 'zomato-card',
+      isOwned: false,
+      savings: 300,
+      partners: {'zomato'},
+    );
+    final recommendation = MovieDealsRecommendation(
+      candidates: [zomato],
+      rejectedCandidates: const [],
+      potentialOverall: [zomato],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          movieDealsSearchProvider(
+            request,
+          ).overrideWith((ref) async => recommendation),
+        ],
+        child: _wideHarness(const MovieDealsResults(request: request)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Zomato/District'), findsOneWidget);
+    expect(find.text('Eligible booking platform: Zomato.'), findsNothing);
+  });
 
   testWidgets(
     'does not claim a platform tie when the rule is tied to a different platform',
