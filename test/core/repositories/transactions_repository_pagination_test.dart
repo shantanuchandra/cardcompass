@@ -115,4 +115,36 @@ void main() {
       }
     },
   );
+
+  test('card archive query stays user-scoped and card-scoped', () async {
+    final requests = <HttpRequest>[];
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final subscription = server.listen((request) {
+      requests.add(request);
+      request.response
+        ..statusCode = HttpStatus.ok
+        ..headers.contentType = ContentType.json
+        ..write('[]');
+      unawaited(request.response.close());
+    });
+    final client = SupabaseClient(
+      'http://${server.address.address}:${server.port}',
+      'test-anon-key',
+    );
+    addTearDown(() async {
+      await client.dispose();
+      await subscription.cancel();
+      await server.close(force: true);
+    });
+
+    await TransactionsRepository(
+      client,
+    ).getAllTransactionsForCard(userId: 'user-1', userCardId: 'card-1');
+
+    expect(requests, hasLength(1));
+    expect(requests.single.uri.queryParametersAll['user_id'], ['eq.user-1']);
+    expect(requests.single.uri.queryParametersAll['user_card_id'], [
+      'eq.card-1',
+    ]);
+  });
 }

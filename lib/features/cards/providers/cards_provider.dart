@@ -2,11 +2,22 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/providers/repository_providers.dart';
 import '../../../core/providers/supabase_provider.dart';
 import '../../../shared/models/user_card.dart';
+import '../../../shared/models/statement.dart';
 
 final userCardsProvider = FutureProvider<List<UserCard>>((ref) async {
   final user = ref.watch(currentUserProvider);
   if (user == null) return [];
   return ref.read(cardsRepositoryProvider).getUserCards(user.id);
+});
+
+final latestCardStatementsProvider = FutureProvider<Map<String, Statement>>((
+  ref,
+) async {
+  final user = ref.watch(currentUserProvider);
+  if (user == null) return const {};
+  return ref
+      .read(statementsRepositoryProvider)
+      .getLatestStatementPerCard(user.id);
 });
 
 final addCardSaveCoordinatorProvider = Provider<AddCardSaveCoordinator>(

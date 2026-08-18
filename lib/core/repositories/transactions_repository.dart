@@ -76,6 +76,27 @@ class TransactionsRepository {
     );
   }
 
+  Future<List<Transaction>> getAllTransactionsForCard({
+    required String userId,
+    required String userCardId,
+  }) {
+    return collectPaginated<Transaction>(
+      loadPage: (offset, limit) async {
+        final data = await _db
+            .from('transactions')
+            .select()
+            .eq('user_id', userId)
+            .eq('user_card_id', userCardId)
+            .order('transaction_date', ascending: false)
+            .order('id', ascending: true)
+            .range(offset, offset + limit - 1);
+        return (data as List)
+            .map((row) => Transaction.fromJson(row as Map<String, dynamic>))
+            .toList(growable: false);
+      },
+    );
+  }
+
   /// Returns every transaction in a closed reporting window without relying
   /// on one PostgREST response exceeding the server's row cap.
   Future<List<Transaction>> getAllTransactionsInRange({

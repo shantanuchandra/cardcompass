@@ -12,11 +12,13 @@ final importedDataRefreshProvider = Provider<ImportedDataRefresh>((ref) {
   return () {
     ref.invalidate(dashboardProvider);
     ref.invalidate(userCardsProvider);
+    ref.invalidate(latestCardStatementsProvider);
     ref.invalidate(txnsNotifierProvider);
     ref.invalidate(pendingCardAssignmentsProvider);
     ref.invalidate(cardDetailProvider);
     ref.invalidate(cardTransactionsProvider);
     ref.invalidate(cardStatementProvider);
+    ref.invalidate(cardStatementArchiveProvider);
     ref.invalidate(cardMonthSpendProvider);
   };
 });

@@ -6,6 +6,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/brand_tokens.dart';
 import '../../../core/theme/brand_components.dart';
 import '../../../shared/models/user_card.dart';
+import '../../../shared/models/statement.dart';
 import '../providers/cards_provider.dart';
 
 class CardsScreen extends ConsumerWidget {
@@ -18,6 +19,7 @@ class CardsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final cardsAsync = ref.watch(userCardsProvider);
+    final statements = ref.watch(latestCardStatementsProvider).asData?.value;
 
     return Scaffold(
       backgroundColor: BrandColors.paper,
@@ -78,8 +80,11 @@ class CardsScreen extends ConsumerWidget {
                     itemCount: cards.length,
                     separatorBuilder: (_, index) =>
                         const SizedBox(height: BrandSpacing.sm),
-                    itemBuilder: (_, i) =>
-                        _CardListTile(card: cards[i], ref: ref),
+                    itemBuilder: (_, i) => _CardListTile(
+                      card: cards[i],
+                      statement: statements?[cards[i].id],
+                      ref: ref,
+                    ),
                   ),
                 ),
               ),
@@ -90,8 +95,13 @@ class CardsScreen extends ConsumerWidget {
 
 class _CardListTile extends StatelessWidget {
   final UserCard card;
+  final Statement? statement;
   final WidgetRef ref;
-  const _CardListTile({required this.card, required this.ref});
+  const _CardListTile({
+    required this.card,
+    required this.statement,
+    required this.ref,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -107,67 +117,202 @@ class _CardListTile extends StatelessWidget {
             color: BrandColors.mutedInk.withValues(alpha: 0.12),
           ),
         ),
-        child: Row(
+        child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            CardIdentityMark(bank: card.bank, bankCode: card.bankCode),
-            const SizedBox(width: BrandSpacing.md),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    card.displayName,
-                    style: TextStyle(
-                      fontFamily: 'Manrope',
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: BrandColors.ink,
-                    ),
-                  ),
-                  const SizedBox(height: BrandSpacing.xs),
-                  Text(
-                    card.lastFourDigits != null
-                        ? '${card.bank ?? 'Issuer'} · •••• ${card.lastFourDigits}'
-                        : card.bank ?? 'Issuer not available',
-                    style: TextStyle(
-                      fontFamily: 'Manrope',
-                      fontSize: 12,
-                      color: BrandColors.mutedInk,
-                    ),
-                  ),
-                  const SizedBox(height: BrandSpacing.xs),
-                  Text(
-                    card.isActive ? 'Active' : 'Inactive',
-                    style: TextStyle(
-                      fontFamily: 'Manrope',
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: card.isActive
-                          ? BrandColors.successInk
-                          : BrandColors.mutedInk,
-                    ),
-                  ),
-                  if (card.creditLimit != null) ...[
-                    const SizedBox(height: BrandSpacing.xs),
-                    Text(
-                      '${NumberFormat.compactCurrency(locale: 'en_IN', symbol: '₹', decimalDigits: 0).format(card.creditLimit)} limit',
-                      style: TextStyle(
-                        fontFamily: 'IBM Plex Mono',
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color: BrandColors.ink,
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                CardIdentityMark(bank: card.bank, bankCode: card.bankCode),
+                const SizedBox(width: BrandSpacing.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        card.displayName,
+                        style: TextStyle(
+                          fontFamily: 'Manrope',
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: BrandColors.ink,
+                        ),
                       ),
-                    ),
-                  ],
-                ],
-              ),
+                      const SizedBox(height: BrandSpacing.xs),
+                      Text(
+                        card.lastFourDigits != null
+                            ? '${card.bank ?? 'Issuer'} · •••• ${card.lastFourDigits}'
+                            : card.bank ?? 'Issuer not available',
+                        style: TextStyle(
+                          fontFamily: 'Manrope',
+                          fontSize: 12,
+                          color: BrandColors.mutedInk,
+                        ),
+                      ),
+                      const SizedBox(height: BrandSpacing.xs),
+                      Text(
+                        card.isActive ? 'Active' : 'Inactive',
+                        style: TextStyle(
+                          fontFamily: 'Manrope',
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: card.isActive
+                              ? BrandColors.successInk
+                              : BrandColors.mutedInk,
+                        ),
+                      ),
+                      if (card.creditLimit != null) ...[
+                        const SizedBox(height: BrandSpacing.xs),
+                        Text(
+                          '${NumberFormat.compactCurrency(locale: 'en_IN', symbol: '₹', decimalDigits: 0).format(card.creditLimit)} limit',
+                          style: TextStyle(
+                            fontFamily: 'IBM Plex Mono',
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: BrandColors.ink,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
             ),
+            const SizedBox(height: BrandSpacing.md),
+            if (statement != null) ...[
+              _StatementStatus(statement: statement!),
+              const SizedBox(height: BrandSpacing.sm),
+              _CardBillingStrip(statement: statement!),
+            ] else
+              Text(
+                'No statement imported',
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 12,
+                  color: BrandColors.mutedInk,
+                ),
+              ),
           ],
         ),
       ),
     );
   }
+}
+
+class _StatementStatus extends StatelessWidget {
+  const _StatementStatus({required this.statement});
+
+  final Statement statement;
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final days = DateTime(
+      statement.dueDate.year,
+      statement.dueDate.month,
+      statement.dueDate.day,
+    ).difference(DateTime(now.year, now.month, now.day)).inDays;
+    final label = switch (statement.paymentStatus) {
+      PaymentStatus.paid => 'Paid',
+      PaymentStatus.partial => 'Partially paid',
+      PaymentStatus.overdue => 'Overdue',
+      PaymentStatus.pending when days < 0 => 'Overdue',
+      PaymentStatus.pending when days == 0 => 'Due today',
+      PaymentStatus.pending => 'Due in $days days',
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: BrandColors.paperDeep,
+        borderRadius: BorderRadius.circular(BrandRadius.pill),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontFamily: 'Manrope',
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: BrandColors.ink,
+        ),
+      ),
+    );
+  }
+}
+
+class _CardBillingStrip extends StatelessWidget {
+  const _CardBillingStrip({required this.statement});
+
+  final Statement statement;
+
+  @override
+  Widget build(BuildContext context) {
+    final money = NumberFormat.currency(
+      locale: 'en_IN',
+      symbol: '₹',
+      decimalDigits: 0,
+    );
+    final date = DateFormat('d MMM');
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.only(top: BrandSpacing.sm),
+      decoration: BoxDecoration(
+        border: Border(
+          top: BorderSide(color: BrandColors.mutedInk.withValues(alpha: 0.12)),
+        ),
+      ),
+      child: Wrap(
+        spacing: BrandSpacing.lg,
+        runSpacing: BrandSpacing.sm,
+        children: [
+          _BillingValue(
+            label: 'Statement',
+            value: money.format(statement.totalAmount),
+          ),
+          _BillingValue(
+            label: 'Remaining',
+            value: money.format(statement.outstanding),
+          ),
+          _BillingValue(
+            label: 'Closed',
+            value: date.format(statement.statementDate),
+          ),
+          _BillingValue(label: 'Due', value: date.format(statement.dueDate)),
+        ],
+      ),
+    );
+  }
+}
+
+class _BillingValue extends StatelessWidget {
+  const _BillingValue({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Text(
+        label,
+        style: TextStyle(
+          fontFamily: 'Manrope',
+          fontSize: 12,
+          color: BrandColors.mutedInk,
+        ),
+      ),
+      Text(
+        value,
+        style: TextStyle(
+          fontFamily: 'IBM Plex Mono',
+          fontSize: 13,
+          fontWeight: FontWeight.w700,
+          color: BrandColors.ink,
+        ),
+      ),
+    ],
+  );
 }
 
 class CardIdentityMark extends StatelessWidget {

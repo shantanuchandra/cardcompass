@@ -1,4 +1,5 @@
 import 'package:cardcompass/features/cards/providers/cards_provider.dart';
+import 'package:cardcompass/features/cards/domain/card_statement_archive.dart';
 import 'package:cardcompass/features/cards/screens/card_detail_screen.dart';
 import 'package:cardcompass/features/dashboard/providers/dashboard_provider.dart';
 import 'package:cardcompass/features/dashboard/providers/gmail_sync_provider.dart';
@@ -81,6 +82,7 @@ void main() {
       var detailLoads = 0;
       var transactionLoads = 0;
       var statementLoads = 0;
+      var archiveLoads = 0;
       var monthSpendLoads = 0;
       final container = ProviderContainer(
         overrides: [
@@ -96,6 +98,13 @@ void main() {
             statementLoads++;
             return null;
           }),
+          cardStatementArchiveProvider(cardId).overrideWith((ref) async {
+            archiveLoads++;
+            return CardStatementArchive(
+              statements: const [],
+              transactions: const [],
+            );
+          }),
           cardMonthSpendProvider(cardId).overrideWith((ref) async {
             monthSpendLoads++;
             return 0;
@@ -107,6 +116,7 @@ void main() {
       await container.read(cardDetailProvider(cardId).future);
       await container.read(cardTransactionsProvider(cardId).future);
       await container.read(cardStatementProvider(cardId).future);
+      await container.read(cardStatementArchiveProvider(cardId).future);
       await container.read(cardMonthSpendProvider(cardId).future);
 
       container.read(importedDataRefreshProvider)();
@@ -114,11 +124,18 @@ void main() {
       await container.read(cardDetailProvider(cardId).future);
       await container.read(cardTransactionsProvider(cardId).future);
       await container.read(cardStatementProvider(cardId).future);
+      await container.read(cardStatementArchiveProvider(cardId).future);
       await container.read(cardMonthSpendProvider(cardId).future);
 
       expect(
-        (detailLoads, transactionLoads, statementLoads, monthSpendLoads),
-        (2, 2, 2, 2),
+        (
+          detailLoads,
+          transactionLoads,
+          statementLoads,
+          archiveLoads,
+          monthSpendLoads,
+        ),
+        (2, 2, 2, 2, 2),
       );
     },
   );

@@ -5,6 +5,7 @@ import 'package:cardcompass/core/theme/app_theme.dart';
 import 'package:cardcompass/features/cards/screens/cards_screen.dart';
 import 'package:cardcompass/features/cards/providers/cards_provider.dart';
 import 'package:cardcompass/shared/models/user_card.dart';
+import 'package:cardcompass/shared/models/statement.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -20,6 +21,18 @@ void main() {
     creditLimit: 250000,
     createdAt: DateTime(2026),
   );
+  final statement = Statement(
+    id: 'statement-1',
+    userId: 'user-1',
+    cardId: 'catalog-1',
+    userCardId: 'card-1',
+    statementDate: DateTime(2026, 8, 15),
+    dueDate: DateTime(2026, 9, 4),
+    totalAmount: 10000,
+    paidAmount: 8000,
+    paymentStatus: PaymentStatus.partial,
+    createdAt: DateTime(2026, 8, 15),
+  );
 
   testWidgets('card list shows a complete, readable identity at 200% scale', (
     tester,
@@ -34,6 +47,9 @@ void main() {
         overrides: [
           currentUserProvider.overrideWithValue(null),
           userCardsProvider.overrideWith((ref) async => [card]),
+          latestCardStatementsProvider.overrideWith(
+            (ref) async => {'card-1': statement},
+          ),
         ],
         child: MaterialApp(
           theme: AppTheme.work,
@@ -51,6 +67,15 @@ void main() {
     expect(find.text('Horizon Bank · •••• 4242'), findsOneWidget);
     expect(find.text('Active'), findsOneWidget);
     expect(find.text('₹2.5L limit'), findsOneWidget);
+    expect(find.text('Partially paid'), findsOneWidget);
+    expect(find.text('Statement'), findsOneWidget);
+    expect(find.text('₹10,000'), findsOneWidget);
+    expect(find.text('Remaining'), findsOneWidget);
+    expect(find.text('₹2,000'), findsOneWidget);
+    expect(find.text('Closed'), findsOneWidget);
+    expect(find.text('15 Aug'), findsOneWidget);
+    expect(find.text('Due'), findsOneWidget);
+    expect(find.text('4 Sep'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cardcompass/core/theme/app_theme.dart';
 import 'package:cardcompass/core/providers/supabase_provider.dart';
 import 'package:cardcompass/features/cards/screens/card_detail_screen.dart';
+import 'package:cardcompass/features/cards/domain/card_statement_archive.dart';
 import 'package:cardcompass/shared/models/statement.dart';
 import 'package:cardcompass/shared/models/transaction.dart';
 import 'package:cardcompass/shared/models/user_card.dart';
@@ -54,6 +55,19 @@ final _transaction = Transaction(
   createdAt: DateTime(2026, 8, 15),
 );
 
+final _previousStatement = Statement(
+  id: 'statement-july',
+  userId: 'user-1',
+  cardId: 'catalog-1',
+  userCardId: 'card-1',
+  statementDate: DateTime(2026, 7, 5),
+  dueDate: DateTime(2026, 7, 22),
+  totalAmount: 7000,
+  paymentStatus: PaymentStatus.paid,
+  paidAmount: 7000,
+  createdAt: DateTime(2026, 7, 5),
+);
+
 Future<void> pumpDetail(
   WidgetTester tester, {
   double textScale = 1,
@@ -91,6 +105,84 @@ Future<void> pumpDetail(
 }
 
 void main() {
+  testWidgets('statement chips switch the bill and exact transaction set', (
+    tester,
+  ) async {
+    final augustTransaction = Transaction(
+      id: 'august-transaction',
+      userId: 'user-1',
+      userCardId: 'card-1',
+      amount: 490,
+      description: 'August merchant',
+      transactionType: TransactionType.debit,
+      transactionDate: DateTime(2026, 8, 11),
+      statementId: 'statement-1',
+      createdAt: DateTime(2026, 8, 11),
+    );
+    final julyTransaction = Transaction(
+      id: 'july-transaction',
+      userId: 'user-1',
+      userCardId: 'card-1',
+      amount: 7000,
+      description: 'July merchant',
+      transactionType: TransactionType.debit,
+      transactionDate: DateTime(2026, 7, 3),
+      statementId: 'statement-july',
+      createdAt: DateTime(2026, 7, 3),
+    );
+    final unbilled = Transaction(
+      id: 'unbilled',
+      userId: 'user-1',
+      userCardId: 'card-1',
+      amount: 250,
+      description: 'Unbilled merchant',
+      transactionType: TransactionType.debit,
+      transactionDate: DateTime(2026, 8, 16),
+      createdAt: DateTime(2026, 8, 16),
+    );
+    final archive = CardStatementArchive(
+      statements: [_previousStatement, _statement],
+      transactions: [julyTransaction, unbilled, augustTransaction],
+    );
+
+    tester.view.physicalSize = const Size(390, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          currentUserProvider.overrideWithValue(null),
+          cardDetailProvider('card-1').overrideWith((ref) async => _card),
+          cardStatementArchiveProvider(
+            'card-1',
+          ).overrideWith((ref) async => archive),
+          cardMonthSpendProvider('card-1').overrideWith((ref) async => 490),
+        ],
+        child: MaterialApp(
+          theme: AppTheme.work,
+          home: const CardDetailScreen(cardId: 'card-1'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Statement transactions'));
+    await tester.pumpAndSettle();
+    expect(find.text('Aug ’26'), findsOneWidget);
+    expect(find.text('Jul ’26'), findsOneWidget);
+    expect(find.text('August merchant'), findsOneWidget);
+    expect(find.text('July merchant'), findsNothing);
+    expect(find.text('Unbilled merchant'), findsOneWidget);
+
+    await tester.tap(find.text('Jul ’26'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('July merchant'), findsOneWidget);
+    expect(find.text('August merchant'), findsNothing);
+    expect(find.text('Paid'), findsWidgets);
+  });
+
   testWidgets('detail puts decisions before disclosures', (tester) async {
     await pumpDetail(tester);
 
@@ -99,8 +191,8 @@ void main() {
       'Best uses',
       'Milestone',
       'Current bill',
-      'Rewards & fees',
       'History',
+      'Rewards & fees',
     ];
     for (final heading in headings) {
       expect(find.text(heading), findsOneWidget);

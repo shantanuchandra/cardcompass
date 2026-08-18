@@ -11,6 +11,7 @@ import '../../../core/providers/supabase_provider.dart';
 import '../../../shared/models/user_card.dart';
 import '../../../shared/models/transaction.dart';
 import '../../../shared/models/statement.dart';
+import '../domain/card_statement_archive.dart';
 
 // ─── providers ───────────────────────────────────────────────────────────────
 
@@ -49,6 +50,29 @@ final cardStatementProvider = FutureProvider.family<Statement?, String>((
   return map[cardId];
 });
 
+final cardStatementArchiveProvider =
+    FutureProvider.family<CardStatementArchive, String>((ref, cardId) async {
+      final user = ref.watch(currentUserProvider);
+      if (user == null) {
+        return CardStatementArchive(
+          statements: const [],
+          transactions: const [],
+        );
+      }
+      final results = await Future.wait([
+        ref
+            .read(statementsRepositoryProvider)
+            .getStatementsForCard(userId: user.id, userCardId: cardId),
+        ref
+            .read(transactionsRepositoryProvider)
+            .getAllTransactionsForCard(userId: user.id, userCardId: cardId),
+      ]);
+      return CardStatementArchive(
+        statements: results[0] as List<Statement>,
+        transactions: results[1] as List<Transaction>,
+      );
+    });
+
 final cardMonthSpendProvider = FutureProvider.family<double, String>((
   ref,
   cardId,
@@ -70,6 +94,9 @@ final cardMonthSpendProvider = FutureProvider.family<double, String>((
       .where((t) => t.isDebit)
       .fold<double>(0.0, (sum, t) => sum + t.amount);
 });
+
+final selectedCardStatementProvider = StateProvider.autoDispose
+    .family<String?, String>((ref, cardId) => null);
 
 // ─── screen ──────────────────────────────────────────────────────────────────
 
@@ -151,7 +178,25 @@ class _CardDetailBody extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final txnsAsync = ref.watch(cardTransactionsProvider(cardId));
     final stmtAsync = ref.watch(cardStatementProvider(cardId));
+    final archiveAsync = ref.watch(cardStatementArchiveProvider(cardId));
     final spendAsync = ref.watch(cardMonthSpendProvider(cardId));
+    final selectedStatementId = ref.watch(
+      selectedCardStatementProvider(cardId),
+    );
+    final loadedArchive = archiveAsync.asData?.value;
+    final legacyStatement = stmtAsync.asData?.value;
+    final legacyTransactions = txnsAsync.asData?.value ?? const <Transaction>[];
+    final archive = loadedArchive != null && loadedArchive.statements.isNotEmpty
+        ? loadedArchive
+        : CardStatementArchive(
+            statements: [?legacyStatement],
+            transactions: legacyTransactions,
+          );
+    final selectedStatement =
+        archive.statements
+            .where((statement) => statement.id == selectedStatementId)
+            .firstOrNull ??
+        archive.latestStatement;
 
     return RefreshIndicator(
       color: BrandColors.focusDark,
@@ -160,6 +205,7 @@ class _CardDetailBody extends ConsumerWidget {
         ref.invalidate(cardDetailProvider(cardId));
         ref.invalidate(cardTransactionsProvider(cardId));
         ref.invalidate(cardStatementProvider(cardId));
+        ref.invalidate(cardStatementArchiveProvider(cardId));
         ref.invalidate(cardMonthSpendProvider(cardId));
       },
       child: ListView(
@@ -263,26 +309,47 @@ class _CardDetailBody extends ConsumerWidget {
                 const SizedBox(height: BrandSpacing.lg),
                 const _SectionHeader(title: 'Current bill'),
                 const SizedBox(height: BrandSpacing.sm),
-                stmtAsync.when(
-                  loading: _BillPanelSkeleton.new,
-                  error: (_, _) => BrandSurface(
+                if (selectedStatement != null)
+                  _BillPanel(
+                    stmt: selectedStatement,
+                    currentMonthSpend: spendAsync.asData?.value,
+                  )
+                else if (archiveAsync.isLoading || stmtAsync.isLoading)
+                  _BillPanelSkeleton()
+                else if (archiveAsync.hasError && stmtAsync.hasError)
+                  BrandSurface(
                     child: _RetryMessage(
                       message: 'Could not load the current bill.',
                       actionLabel: 'Retry bill',
-                      onRetry: () =>
-                          ref.invalidate(cardStatementProvider(cardId)),
+                      onRetry: () {
+                        ref.invalidate(cardStatementProvider(cardId));
+                        ref.invalidate(cardStatementArchiveProvider(cardId));
+                      },
+                    ),
+                  )
+                else
+                  const BrandSurface(
+                    child: Text(
+                      'No current bill yet. Import a statement to see what is due.',
                     ),
                   ),
-                  data: (stmt) => stmt != null
-                      ? _BillPanel(
-                          stmt: stmt,
-                          currentMonthSpend: spendAsync.asData?.value,
-                        )
-                      : const BrandSurface(
-                          child: Text(
-                            'No current bill yet. Import a statement to see what is due.',
-                          ),
-                        ),
+                const SizedBox(height: BrandSpacing.lg),
+                _StatementArchivePanel(
+                  key: _historyAnchorKey,
+                  archive: archive,
+                  selectedStatement: selectedStatement,
+                  onSelectStatement: (statementId) =>
+                      ref
+                              .read(
+                                selectedCardStatementProvider(cardId).notifier,
+                              )
+                              .state =
+                          statementId,
+                  isLoading:
+                      archiveAsync.isLoading && archive.statements.isEmpty,
+                  error: archiveAsync.hasError && archive.statements.isEmpty,
+                  onRetry: () =>
+                      ref.invalidate(cardStatementArchiveProvider(cardId)),
                 ),
                 const SizedBox(height: BrandSpacing.lg),
                 ExpansionTile(
@@ -303,37 +370,6 @@ class _CardDetailBody extends ConsumerWidget {
                       subtitle: Text(
                         'Verified rewards and fee waivers will appear here.',
                       ),
-                    ),
-                  ],
-                ),
-                ExpansionTile(
-                  key: _historyAnchorKey,
-                  title: const Text('History'),
-                  subtitle: const Text('Open recent transactions'),
-                  children: [
-                    txnsAsync.when(
-                      loading: () => const Padding(
-                        padding: EdgeInsets.all(BrandSpacing.lg),
-                        child: CircularProgressIndicator(
-                          color: BrandColors.focusDark,
-                        ),
-                      ),
-                      error: (_, _) => Padding(
-                        padding: const EdgeInsets.all(BrandSpacing.md),
-                        child: _RetryMessage(
-                          message: 'Could not load transactions.',
-                          actionLabel: 'Retry history',
-                          onRetry: () =>
-                              ref.invalidate(cardTransactionsProvider(cardId)),
-                        ),
-                      ),
-                      data: (txns) => txns.isEmpty
-                          ? _EmptyTransactions()
-                          : Column(
-                              children: txns
-                                  .map((t) => _TxnTile(txn: t))
-                                  .toList(),
-                            ),
                     ),
                   ],
                 ),
@@ -373,6 +409,112 @@ class _RetryMessage extends StatelessWidget {
       TextButton(onPressed: onRetry, child: Text(actionLabel)),
     ],
   );
+}
+
+class _StatementArchivePanel extends StatelessWidget {
+  const _StatementArchivePanel({
+    super.key,
+    required this.archive,
+    required this.selectedStatement,
+    required this.onSelectStatement,
+    required this.isLoading,
+    required this.error,
+    required this.onRetry,
+  });
+
+  final CardStatementArchive archive;
+  final Statement? selectedStatement;
+  final ValueChanged<String> onSelectStatement;
+  final bool isLoading;
+  final bool error;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    if (isLoading) {
+      return const BrandLoadingSkeleton(
+        semanticLabel: 'Loading statement history',
+        minHeight: 180,
+      );
+    }
+    if (error) {
+      return BrandSurface(
+        child: _RetryMessage(
+          message: 'Could not load statement history.',
+          actionLabel: 'Retry history',
+          onRetry: onRetry,
+        ),
+      );
+    }
+    if (archive.statements.isEmpty) {
+      return const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _SectionHeader(title: 'History'),
+          SizedBox(height: BrandSpacing.sm),
+          BrandSurface(
+            child: Text(
+              'No statements imported yet. Statement transactions will appear here after a sync.',
+            ),
+          ),
+        ],
+      );
+    }
+
+    final statementTransactions = selectedStatement == null
+        ? const <Transaction>[]
+        : archive.transactionsFor(selectedStatement!.id);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _SectionHeader(title: 'History'),
+        const SizedBox(height: BrandSpacing.md),
+        const _SectionHeader(title: 'Since statement'),
+        const SizedBox(height: BrandSpacing.xs),
+        Text(
+          'Activity after ${DateFormat('d MMM').format(archive.latestStatement!.statementDate)}',
+          style: TextStyle(
+            fontFamily: 'Manrope',
+            fontSize: 12,
+            color: BrandColors.mutedInk,
+          ),
+        ),
+        const SizedBox(height: BrandSpacing.sm),
+        if (archive.unbilledTransactions.isEmpty)
+          const _EmptyTransactions(message: 'No unbilled activity')
+        else
+          ...archive.unbilledTransactions.map((txn) => _TxnTile(txn: txn)),
+        const SizedBox(height: BrandSpacing.lg),
+        const _SectionHeader(title: 'Statement transactions'),
+        const SizedBox(height: BrandSpacing.sm),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              for (final statement in archive.statements) ...[
+                ChoiceChip(
+                  key: Key('statement-chip-${statement.id}'),
+                  label: Text(
+                    DateFormat("MMM ’yy").format(statement.statementDate),
+                  ),
+                  selected: statement.id == selectedStatement?.id,
+                  onSelected: (_) => onSelectStatement(statement.id),
+                ),
+                const SizedBox(width: BrandSpacing.xs),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: BrandSpacing.sm),
+        if (statementTransactions.isEmpty)
+          const _EmptyTransactions(
+            message: 'No transactions linked to this statement',
+          )
+        else
+          ...statementTransactions.map((txn) => _TxnTile(txn: txn)),
+      ],
+    );
+  }
 }
 
 class _DetailStatsRow extends StatelessWidget {
@@ -1111,6 +1253,10 @@ class _TxnTile extends StatelessWidget {
 }
 
 class _EmptyTransactions extends StatelessWidget {
+  const _EmptyTransactions({this.message = 'No transactions yet'});
+
+  final String message;
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -1125,7 +1271,7 @@ class _EmptyTransactions extends StatelessWidget {
           ),
           const SizedBox(height: BrandSpacing.sm),
           Text(
-            'No transactions yet',
+            message,
             style: TextStyle(
               fontFamily: 'Manrope',
               fontSize: 14,

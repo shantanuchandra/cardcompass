@@ -39,7 +39,8 @@ class Statement {
     required this.createdAt,
   });
 
-  double get outstanding => totalAmount - paidAmount;
+  double get outstanding =>
+      (totalAmount - paidAmount).clamp(0, double.infinity);
   bool get isPaid => paymentStatus == PaymentStatus.paid;
   bool get isOverdue => paymentStatus == PaymentStatus.overdue;
 
@@ -58,7 +59,9 @@ class Statement {
       rewardsEarned: (json['rewards_earned'] as num?)?.toDouble() ?? 0,
       paymentStatus: _parseStatus(json['payment_status'] as String?),
       paidAmount: (json['paid_amount'] as num?)?.toDouble() ?? 0,
-      paidAt: json['paid_at'] != null ? DateTime.parse(json['paid_at'] as String) : null,
+      paidAt: json['paid_at'] != null
+          ? DateTime.parse(json['paid_at'] as String)
+          : null,
       processed: json['processed'] as bool? ?? false,
       transactionCount: json['transaction_count'] as int?,
       createdAt: DateTime.parse(json['created_at'] as String),
@@ -67,10 +70,14 @@ class Statement {
 
   static PaymentStatus _parseStatus(String? s) {
     switch (s) {
-      case 'partial': return PaymentStatus.partial;
-      case 'paid': return PaymentStatus.paid;
-      case 'overdue': return PaymentStatus.overdue;
-      default: return PaymentStatus.pending;
+      case 'partial':
+        return PaymentStatus.partial;
+      case 'paid':
+        return PaymentStatus.paid;
+      case 'overdue':
+        return PaymentStatus.overdue;
+      default:
+        return PaymentStatus.pending;
     }
   }
 }
