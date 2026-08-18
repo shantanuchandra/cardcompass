@@ -2,6 +2,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../shared/models/transaction.dart';
 import '../services/mcc_resolver.dart';
 import '../services/transaction_categorizer.dart' show validCategories;
+import 'paginated_query.dart';
 
 String? parseMerchantCategoryRow(Map<String, dynamic>? row) {
   return row?['category'] as String?;
@@ -50,6 +51,31 @@ class TransactionsRepository {
     return (data as List)
         .map((e) => Transaction.fromJson(e as Map<String, dynamic>))
         .toList();
+  }
+
+  /// Returns every transaction in a closed reporting window without relying
+  /// on one PostgREST response exceeding the server's row cap.
+  Future<List<Transaction>> getAllTransactionsInRange({
+    required String userId,
+    required DateTime from,
+    required DateTime to,
+  }) {
+    return collectPaginated<Transaction>(
+      loadPage: (offset, limit) async {
+        final data = await _db
+            .from('transactions')
+            .select()
+            .eq('user_id', userId)
+            .gte('transaction_date', from.toIso8601String())
+            .lte('transaction_date', to.toIso8601String())
+            .order('transaction_date', ascending: false)
+            .order('id')
+            .range(offset, offset + limit - 1);
+        return (data as List)
+            .map((row) => Transaction.fromJson(row as Map<String, dynamic>))
+            .toList(growable: false);
+      },
+    );
   }
 
   Future<String?> lookupMerchantCategory(String normalizedMerchantName) async {

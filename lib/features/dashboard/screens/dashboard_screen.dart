@@ -423,14 +423,9 @@ class _SyncRangeDialog extends StatefulWidget {
 
 class _SyncRangeDialogState extends State<_SyncRangeDialog> {
   int _selectedDays = 7;
-  static const _options = [
-    _SyncRangeOption(7, '7d'),
-    _SyncRangeOption(30, '30d'),
-    _SyncRangeOption(60, '60d'),
-    _SyncRangeOption(90, '90d'),
-    _SyncRangeOption(240, '8mo'),
-    _SyncRangeOption(369, '1yr'),
-  ];
+  static final _options = gmailSyncLookbackDays.entries
+      .map((entry) => _SyncRangeOption(entry.value, entry.key))
+      .toList(growable: false);
 
   String get _friendlyRange {
     if (_selectedDays >= 365) return 'about a year';

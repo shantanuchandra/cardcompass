@@ -149,8 +149,13 @@ Map<String, dynamic> metadataAfterCardAssignment(Map<dynamic, dynamic>? value) {
 List<Map<String, dynamic>> statementEmailsReadyForProcessing(
   Iterable<Map<String, dynamic>> emails, {
   List<UserCard> userCards = const [],
+  Set<String>? allowedEmailIds,
 }) {
   return emails.where((email) {
+    if (allowedEmailIds != null &&
+        !allowedEmailIds.contains(email['email_id'] as String?)) {
+      return false;
+    }
     final metadata = email['metadata'];
     if (metadata is! Map || metadata['needsCardAssignment'] != true) {
       return true;
@@ -445,12 +450,15 @@ class StatementProcessingService {
         .lookupMerchantCategory(normalizedMerchantName);
   }
 
-  Future<StatementProcessingResult> processUnprocessedEmails() async {
+  Future<StatementProcessingResult> processUnprocessedEmails({
+    required Set<String> allowedEmailIds,
+  }) async {
     _issues.clear();
     final userCards = await _cardsRepo.getUserCards(_userId);
     final emails = statementEmailsReadyForProcessing(
       await _emailRepo.getUnprocessedEmails(_userId),
       userCards: userCards,
+      allowedEmailIds: allowedEmailIds,
     );
 
     var succeeded = 0;
