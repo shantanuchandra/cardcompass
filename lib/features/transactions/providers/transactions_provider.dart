@@ -3,7 +3,7 @@ import '../../../core/providers/repository_providers.dart';
 import '../../../core/providers/supabase_provider.dart';
 import '../../../core/services/bank_market.dart';
 import '../../../core/services/card_normalizer_service.dart';
-import '../../../core/services/eligible_spend.dart';
+import '../../../core/services/retail_transaction_aggregation.dart';
 import '../../../shared/models/transaction.dart';
 import '../../../shared/models/user_card.dart';
 
@@ -86,12 +86,14 @@ class TxnsState {
   final List<UserCard> cards;
   final TxnFilter filter;
   final TxnGrouping grouping;
+  final DateTime? reportingCutoff;
 
   const TxnsState({
     this.all = const [],
     this.cards = const [],
     this.filter = const TxnFilter(),
     this.grouping = TxnGrouping.flat,
+    this.reportingCutoff,
   });
 
   TxnsState copyWith({
@@ -99,49 +101,61 @@ class TxnsState {
     List<UserCard>? cards,
     TxnFilter? filter,
     TxnGrouping? grouping,
+    DateTime? reportingCutoff,
   }) => TxnsState(
     all: all ?? this.all,
     cards: cards ?? this.cards,
     filter: filter ?? this.filter,
     grouping: grouping ?? this.grouping,
+    reportingCutoff: reportingCutoff ?? this.reportingCutoff,
   );
 
   List<Transaction> get filtered {
     var txns = all;
-    if (filter.cardId != null)
+    if (reportingCutoff != null) {
+      txns = txns
+          .where((t) => !t.transactionDate.isAfter(reportingCutoff!))
+          .toList();
+    }
+    if (filter.cardId != null) {
       txns = txns.where((t) => t.userCardId == filter.cardId).toList();
-    if (filter.from != null)
+    }
+    if (filter.from != null) {
       txns = txns
           .where((t) => !t.transactionDate.isBefore(filter.from!))
           .toList();
-    if (filter.to != null)
+    }
+    if (filter.to != null) {
+      final endExclusive = _nextCalendarDay(filter.to!);
       txns = txns
-          .where(
-            (t) => !t.transactionDate.isAfter(
-              filter.to!.add(const Duration(days: 1)),
-            ),
-          )
+          .where((t) => t.transactionDate.isBefore(endExclusive))
           .toList();
-    if (filter.category != null)
+    }
+    if (filter.category != null) {
       txns = txns
           .where(
             (t) => t.category?.toLowerCase() == filter.category!.toLowerCase(),
           )
           .toList();
+    }
     return txns;
   }
 
-  double get totalSpend =>
-      filtered.where(isEligibleRetailSpend).fold(0, (s, t) => s + t.amount);
-  double get totalRewards =>
-      filtered.fold(0, (s, t) => s + (t.rewardEarned ?? 0));
+  RetailTransactionAggregate get _aggregate =>
+      aggregateRetailTransactions(filtered);
+
+  double get totalSpend => _aggregate.totalSpend;
+  double get totalRewards => _aggregate.totalRewards;
+
+  double canonicalSubtotal(Iterable<Transaction> rows) {
+    final groupRows = rows.toSet();
+    return _aggregate.purchases
+        .where(groupRows.contains)
+        .fold(0.0, (sum, transaction) => sum + transaction.amount);
+  }
+
   String? get topCategory {
-    final map = <String, double>{};
-    for (final t in filtered) {
-      if (isEligibleRetailSpend(t) && t.category != null) {
-        map[t.category!] = (map[t.category!] ?? 0) + t.amount;
-      }
-    }
+    final map = _aggregate.categoryTotals;
     if (map.isEmpty) return null;
     return map.entries.reduce((a, b) => a.value > b.value ? a : b).key;
   }
@@ -193,21 +207,15 @@ class TxnsState {
   }
 
   SpendTrend get spendTrend {
-    final txns = filtered.where(isEligibleRetailSpend).toList();
-    if (txns.isEmpty) return const SpendTrend(points: [], dailyAverage: 0);
-
-    // bucket by day
-    final byDay = <String, double>{};
-    final dayMap = <String, DateTime>{};
-    for (final t in txns) {
-      final d = t.transactionDate.toLocal();
-      final key =
-          '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-      byDay[key] = (byDay[key] ?? 0) + t.amount;
-      dayMap[key] = DateTime(d.year, d.month, d.day);
+    final aggregate = _aggregate;
+    if (aggregate.purchases.isEmpty) {
+      return const SpendTrend(points: [], dailyAverage: 0);
     }
-    final keys = byDay.keys.toList()..sort();
-    final points = keys.map((k) => TrendPoint(dayMap[k]!, byDay[k]!)).toList();
+
+    final days = aggregate.localDayTotals.keys.toList()..sort();
+    final points = days
+        .map((day) => TrendPoint(day, aggregate.localDayTotals[day]!))
+        .toList();
 
     final total = points.fold(0.0, (s, p) => s + p.total);
     final avg = points.isEmpty ? 0.0 : total / points.length;
@@ -225,19 +233,17 @@ class TxnsState {
     // prior period comparison
     double? percentVsPrior;
     if (filter.from != null && filter.to != null) {
-      final duration = filter.to!.difference(filter.from!);
+      final currentEndExclusive = _nextCalendarDay(filter.to!);
+      final duration = currentEndExclusive.difference(filter.from!);
       final priorFrom = filter.from!.subtract(duration);
-      final priorTo = filter.from!.subtract(const Duration(days: 1));
-      final priorTotal = all
-          .where(
-            (t) =>
-                isEligibleRetailSpend(t) &&
-                !t.transactionDate.isBefore(priorFrom) &&
-                !t.transactionDate.isAfter(
-                  priorTo.add(const Duration(days: 1)),
-                ),
-          )
-          .fold(0.0, (s, t) => s + t.amount);
+      final priorThrough = filter.from!.subtract(
+        const Duration(microseconds: 1),
+      );
+      final priorTotal = aggregateRetailTransactions(
+        _filteredWithoutDateRange,
+        fromInclusive: priorFrom,
+        throughInclusive: priorThrough,
+      ).totalSpend;
       if (priorTotal > 0) {
         percentVsPrior = (total - priorTotal) / priorTotal * 100;
       }
@@ -249,6 +255,30 @@ class TxnsState {
       peakLabel: peakLabel,
       percentVsPrior: percentVsPrior,
     );
+  }
+
+  List<Transaction> get _filteredWithoutDateRange {
+    return all.where((transaction) {
+      if (reportingCutoff != null &&
+          transaction.transactionDate.isAfter(reportingCutoff!)) {
+        return false;
+      }
+      if (filter.cardId != null && transaction.userCardId != filter.cardId) {
+        return false;
+      }
+      if (filter.category != null &&
+          transaction.category?.toLowerCase() !=
+              filter.category!.toLowerCase()) {
+        return false;
+      }
+      return true;
+    }).toList();
+  }
+
+  static DateTime _nextCalendarDay(DateTime date) {
+    return date.isUtc
+        ? DateTime.utc(date.year, date.month, date.day + 1)
+        : DateTime(date.year, date.month, date.day + 1);
   }
 }
 
@@ -278,22 +308,25 @@ class TxnsNotifier extends AsyncNotifier<TxnsState> {
 
     final txnRepo = ref.read(transactionsRepositoryProvider);
     final cardsRepo = ref.read(cardsRepositoryProvider);
+    final reportingCutoff = DateTime.now();
 
     final results = await Future.wait([
-      txnRepo.getTransactions(userId: user.id, limit: 500),
+      txnRepo.getAllTransactions(userId: user.id),
       cardsRepo.getUserCards(user.id),
     ]);
 
     return TxnsState(
       all: results[0] as List<Transaction>,
       cards: results[1] as List<UserCard>,
-      filter: _defaultThisMonthFilter(),
+      filter: _defaultThisMonthFilter(reportingCutoff),
+      reportingCutoff: reportingCutoff,
     );
   }
 
-  TxnFilter _defaultThisMonthFilter() {
-    final now = DateTime.now();
-    return TxnFilter(from: DateTime(now.year, now.month, 1));
+  TxnFilter _defaultThisMonthFilter(DateTime reportingCutoff) {
+    return TxnFilter(
+      from: DateTime(reportingCutoff.year, reportingCutoff.month, 1),
+    );
   }
 
   void setFilter(TxnFilter filter) {

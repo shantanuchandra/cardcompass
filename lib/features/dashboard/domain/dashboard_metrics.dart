@@ -1,4 +1,4 @@
-import '../../../core/services/eligible_spend.dart';
+import '../../../core/services/retail_transaction_aggregation.dart';
 import '../../../shared/models/transaction.dart';
 import '../../../shared/models/user_card.dart';
 
@@ -41,36 +41,20 @@ DashboardMetrics calculateDashboardMetrics({
 
   final monthlySpendTrend = List<double>.filled(monthCount, 0);
   final monthlyRewardsTrend = List<double>.filled(monthCount, 0);
-  final seenTransactions = <(String, String, int, String, double)>{};
+  final aggregate = aggregateRetailTransactions(
+    transactions,
+    fromInclusive: trendStart,
+    throughInclusive: periodEnd,
+  );
 
-  for (final transaction in transactions) {
-    if (transaction.transactionDate.isBefore(trendStart) ||
-        transaction.transactionDate.isAfter(periodEnd) ||
-        !isEligibleRetailSpend(transaction) ||
-        !transaction.amount.isFinite ||
-        transaction.amount <= 0) {
-      continue;
-    }
-
-    final dedupKey = (
-      transaction.userId,
-      transaction.userCardId,
-      transaction.transactionDate.microsecondsSinceEpoch,
-      transaction.description,
-      transaction.amount,
-    );
-    if (!seenTransactions.add(dedupKey)) continue;
-
+  for (final transaction in aggregate.purchases) {
     final monthIndex =
         (transaction.transactionDate.year - trendStart.year) * 12 +
         (transaction.transactionDate.month - trendStart.month);
     if (monthIndex < 0 || monthIndex >= monthCount) continue;
 
     monthlySpendTrend[monthIndex] += transaction.amount;
-    final reward = transaction.rewardEarned;
-    if (reward != null && reward.isFinite && reward > 0) {
-      monthlyRewardsTrend[monthIndex] += reward;
-    }
+    monthlyRewardsTrend[monthIndex] += aggregate.rewardFor(transaction);
   }
 
   return DashboardMetrics(

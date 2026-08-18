@@ -49,6 +49,29 @@ final _travelTransaction = Transaction(
   createdAt: DateTime(2026, 8, 16),
 );
 
+Transaction _groupTransaction({
+  required String id,
+  required double amount,
+  required String merchant,
+  TransactionType type = TransactionType.debit,
+  Map<String, dynamic> metadata = const {},
+  String category = 'Dining',
+}) {
+  return Transaction(
+    id: id,
+    userId: 'user-1',
+    userCardId: 'card-1',
+    amount: amount,
+    description: 'Shared natural key',
+    merchantName: merchant,
+    category: category,
+    transactionType: type,
+    transactionDate: DateTime(2026, 8, 15, 14, 30),
+    metadata: metadata,
+    createdAt: DateTime(2026, 8, 15),
+  );
+}
+
 class _LedgerNotifier extends TxnsNotifier {
   _LedgerNotifier(this.load);
 
@@ -326,6 +349,52 @@ void main() {
     await tester.tap(find.text('Details'));
     await tester.pumpAndSettle();
     expect(find.text('+36 pts'), findsOneWidget);
+  });
+
+  testWidgets('group subtotal is canonical while every raw row stays visible', (
+    tester,
+  ) async {
+    final purchase = _groupTransaction(
+      id: 'purchase',
+      amount: 100,
+      merchant: 'Canonical purchase',
+    );
+    final duplicate = _groupTransaction(
+      id: 'duplicate',
+      amount: 100,
+      merchant: 'Duplicate ledger evidence',
+      category: 'Travel',
+    );
+    final cash = _groupTransaction(
+      id: 'cash',
+      amount: 300,
+      merchant: 'Cash ledger evidence',
+      metadata: const {'normalized_transaction_type': 'cash_withdrawal'},
+    );
+    final refund = _groupTransaction(
+      id: 'refund',
+      amount: 40,
+      merchant: 'Refund ledger evidence',
+      type: TransactionType.refund,
+    );
+
+    await pumpLedger(
+      tester,
+      width: 768,
+      load: () async => TxnsState(
+        all: [purchase, duplicate, cash, refund],
+        cards: [_card],
+        grouping: TxnGrouping.byCategory,
+        reportingCutoff: DateTime(2026, 8, 31),
+      ),
+    );
+
+    expect(find.text('₹500'), findsNothing);
+    expect(find.text('₹0'), findsOneWidget);
+    expect(find.text('Canonical purchase'), findsOneWidget);
+    expect(find.text('Duplicate ledger evidence'), findsOneWidget);
+    expect(find.text('Cash ledger evidence'), findsOneWidget);
+    expect(find.text('Refund ledger evidence'), findsOneWidget);
   });
 
   for (final width in [390.0, 768.0, 1280.0]) {

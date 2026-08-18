@@ -24,8 +24,9 @@ class TransactionsRepository {
     var query = _db.from('transactions').select().eq('user_id', userId);
 
     if (userCardId != null) query = query.eq('user_card_id', userCardId);
-    if (from != null)
+    if (from != null) {
       query = query.gte('transaction_date', from.toIso8601String());
+    }
     if (to != null) query = query.lte('transaction_date', to.toIso8601String());
     if (category != null) query = query.eq('category', category);
 
@@ -53,6 +54,25 @@ class TransactionsRepository {
         .toList();
   }
 
+  /// Returns the user's full ledger without depending on one PostgREST
+  /// response exceeding the server row cap.
+  Future<List<Transaction>> getAllTransactions({required String userId}) {
+    return collectPaginated<Transaction>(
+      loadPage: (offset, limit) async {
+        final data = await _db
+            .from('transactions')
+            .select()
+            .eq('user_id', userId)
+            .order('transaction_date', ascending: false)
+            .order('id', ascending: true)
+            .range(offset, offset + limit - 1);
+        return (data as List)
+            .map((row) => Transaction.fromJson(row as Map<String, dynamic>))
+            .toList(growable: false);
+      },
+    );
+  }
+
   /// Returns every transaction in a closed reporting window without relying
   /// on one PostgREST response exceeding the server's row cap.
   Future<List<Transaction>> getAllTransactionsInRange({
@@ -69,7 +89,7 @@ class TransactionsRepository {
             .gte('transaction_date', from.toIso8601String())
             .lte('transaction_date', to.toIso8601String())
             .order('transaction_date', ascending: false)
-            .order('id')
+            .order('id', ascending: true)
             .range(offset, offset + limit - 1);
         return (data as List)
             .map((row) => Transaction.fromJson(row as Map<String, dynamic>))
@@ -174,9 +194,7 @@ class TransactionsRepository {
   /// NULL, exactly 'other', or any value outside the 16 valid categories
   /// (catches legacy vocabulary like 'dining'/'bills'/'transfer' in one
   /// condition). Used by CategoryBackfillService (a later task).
-  Future<List<Transaction>> getUncategorizedTransactions(
-    String userId,
-  ) async {
+  Future<List<Transaction>> getUncategorizedTransactions(String userId) async {
     final data = await _db
         .from('transactions')
         .select()
@@ -197,9 +215,9 @@ class TransactionsRepository {
     required String category,
     required Map<String, dynamic> metadata,
   }) async {
-    await _db.from('transactions').update({
-      'category': category,
-      'metadata': metadata,
-    }).eq('id', transactionId);
+    await _db
+        .from('transactions')
+        .update({'category': category, 'metadata': metadata})
+        .eq('id', transactionId);
   }
 }

@@ -1,3 +1,4 @@
+import 'package:cardcompass/core/services/retail_transaction_aggregation.dart';
 import 'package:cardcompass/features/dashboard/domain/dashboard_metrics.dart';
 import 'package:cardcompass/shared/models/transaction.dart';
 import 'package:cardcompass/shared/models/user_card.dart';
@@ -196,5 +197,67 @@ void main() {
 
     expect(metrics.monthlySpendTrend, [400, 600]);
     expect(metrics.monthlyRewardsTrend, [4, 6]);
+  });
+
+  test('dashboard buckets reconcile to the shared canonical aggregate', () {
+    final purchaseDate = DateTime(2026, 8, 5);
+    final transactions = [
+      _transaction(
+        id: 'purchase',
+        date: purchaseDate,
+        amount: 1000,
+        description: 'Same billed purchase',
+        rewardEarned: 25,
+      ),
+      _transaction(
+        id: 'duplicate-id',
+        date: purchaseDate,
+        amount: 1000,
+        description: 'Same billed purchase',
+        rewardEarned: 75,
+      ),
+      _transaction(
+        id: 'cash',
+        date: DateTime(2026, 8, 6),
+        amount: 500,
+        rewardEarned: 50,
+        metadata: const {'normalized_transaction_type': 'cash_withdrawal'},
+      ),
+      _transaction(
+        id: 'refund',
+        date: DateTime(2026, 8, 7),
+        amount: 300,
+        type: TransactionType.refund,
+        rewardEarned: 30,
+      ),
+      _transaction(
+        id: 'negative-reward',
+        date: DateTime(2026, 7, 5),
+        amount: 400,
+        rewardEarned: -4,
+      ),
+    ];
+    final aggregate = aggregateRetailTransactions(
+      transactions,
+      fromInclusive: trendStart,
+      throughInclusive: periodEnd,
+    );
+
+    final metrics = calculateDashboardMetrics(
+      cards: const [],
+      transactions: transactions,
+      trendStart: trendStart,
+      periodEnd: periodEnd,
+      monthCount: 2,
+    );
+
+    expect(
+      metrics.monthlySpendTrend.fold<double>(0, (sum, value) => sum + value),
+      aggregate.totalSpend,
+    );
+    expect(
+      metrics.monthlyRewardsTrend.fold<double>(0, (sum, value) => sum + value),
+      aggregate.totalRewards,
+    );
   });
 }

@@ -288,7 +288,7 @@ class _LedgerBodyState extends ConsumerState<_LedgerBody> {
                           if (index == cursor) {
                             return _GroupHeader(
                               label: entry.key,
-                              txns: entry.value,
+                              total: s.canonicalSubtotal(entry.value),
                               cards: s.cards,
                             );
                           }
@@ -343,7 +343,7 @@ class _FilterPanel extends StatelessWidget {
     final cats =
         state.all.map((t) => t.category).whereType<String>().toSet().toList()
           ..sort();
-    final now = DateTime.now();
+    final now = state.reportingCutoff ?? DateTime.now();
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: BrandSpacing.md),
@@ -496,19 +496,16 @@ class _FilterPanel extends StatelessWidget {
 
 class _GroupHeader extends StatelessWidget {
   final String label;
-  final List<Transaction> txns;
+  final double total;
   final List<UserCard> cards;
   const _GroupHeader({
     required this.label,
-    required this.txns,
+    required this.total,
     required this.cards,
   });
 
   @override
   Widget build(BuildContext context) {
-    final total = txns
-        .where((t) => t.isDebit)
-        .fold(0.0, (s, t) => s + t.amount);
     String displayLabel = label;
     // Resolve card ID to display name
     if (cards.any((c) => c.id == label)) {
