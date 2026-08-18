@@ -15,6 +15,30 @@ void main() {
     expect(source, isNot(contains('AppColors.neonCyan')));
   });
 
+  test('successful reset captures shared refresh actions before the RPC', () {
+    const refreshCapture =
+        'final refreshImportedData = ref.read(importedDataRefreshProvider);';
+    const containerCapture =
+        'final providerContainer = ProviderScope.containerOf(';
+    const resetCall = ').resetAll();';
+    const refreshCall = 'refreshImportedData();';
+    const gmailInvalidation =
+        'providerContainer.invalidate(gmailSyncProvider);';
+
+    final refreshCaptureIndex = source.indexOf(refreshCapture);
+    final containerCaptureIndex = source.indexOf(containerCapture);
+    final resetCallIndex = source.indexOf(resetCall);
+    final refreshCallIndex = source.indexOf(refreshCall);
+    final gmailInvalidationIndex = source.indexOf(gmailInvalidation);
+
+    expect(refreshCaptureIndex, greaterThanOrEqualTo(0));
+    expect(containerCaptureIndex, greaterThanOrEqualTo(0));
+    expect(resetCallIndex, greaterThan(refreshCaptureIndex));
+    expect(resetCallIndex, greaterThan(containerCaptureIndex));
+    expect(refreshCallIndex, greaterThan(resetCallIndex));
+    expect(gmailInvalidationIndex, greaterThan(refreshCallIndex));
+  });
+
   testWidgets('every enabled settings row has an action', (tester) async {
     await tester.pumpWidget(
       MaterialApp(theme: AppTheme.work, home: const SettingsActionList()),

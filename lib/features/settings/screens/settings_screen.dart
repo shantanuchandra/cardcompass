@@ -32,11 +32,16 @@ class SettingsScreen extends ConsumerWidget {
           const SizedBox(height: BrandSpacing.lg),
           SettingsActionList(
             onDeleteAllData: () async {
+              final refreshImportedData = ref.read(importedDataRefreshProvider);
+              final providerContainer = ProviderScope.containerOf(
+                context,
+                listen: false,
+              );
               await UserDataRepository(
                 ref.read(supabaseClientProvider),
               ).resetAll();
-              ref.read(importedDataRefreshProvider)();
-              ref.invalidate(gmailSyncProvider);
+              refreshImportedData();
+              providerContainer.invalidate(gmailSyncProvider);
             },
           ),
           const SizedBox(height: BrandSpacing.lg),
