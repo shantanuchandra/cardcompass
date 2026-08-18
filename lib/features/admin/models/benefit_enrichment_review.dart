@@ -23,6 +23,7 @@ class BenefitEnrichmentReviewPage {
     required this.limit,
     required this.hasMore,
     this.history = const [],
+    this.movieMappingHealth = const MovieBenefitMappingHealth(),
   });
 
   factory BenefitEnrichmentReviewPage.fromJson(JsonMap json) {
@@ -39,6 +40,9 @@ class BenefitEnrichmentReviewPage {
       history: _maps(
         json['history'],
       ).map(BenefitJobHistory.fromJson).toList(growable: false),
+      movieMappingHealth: MovieBenefitMappingHealth.fromJson(
+        _maps(json['movie_mapping_health']),
+      ),
     );
   }
 
@@ -48,11 +52,13 @@ class BenefitEnrichmentReviewPage {
   final int limit;
   final bool hasMore;
   final List<BenefitJobHistory> history;
+  final MovieBenefitMappingHealth movieMappingHealth;
 
   BenefitEnrichmentReviewPage copyWith({
     List<BenefitEnrichmentReview>? items,
     BenefitEnrichmentCounts? counts,
     List<BenefitJobHistory>? history,
+    MovieBenefitMappingHealth? movieMappingHealth,
   }) => BenefitEnrichmentReviewPage(
     items: items ?? this.items,
     counts: counts ?? this.counts,
@@ -60,7 +66,33 @@ class BenefitEnrichmentReviewPage {
     limit: limit,
     hasMore: hasMore,
     history: history ?? this.history,
+    movieMappingHealth: movieMappingHealth ?? this.movieMappingHealth,
   );
+}
+
+class MovieBenefitMappingHealth {
+  const MovieBenefitMappingHealth({
+    this.active = 0,
+    this.mapped = 0,
+    this.orphaned = 0,
+  });
+
+  factory MovieBenefitMappingHealth.fromJson(List<JsonMap> rows) {
+    final values = <String, int>{};
+    for (final row in rows) {
+      final metric = _text(row['metric']);
+      if (metric != null) values[metric] = (row['value'] as num?)?.toInt() ?? 0;
+    }
+    return MovieBenefitMappingHealth(
+      active: values['active_movie_benefits'] ?? 0,
+      mapped: values['mapped_active_movie_benefits'] ?? 0,
+      orphaned: values['orphaned_active_movie_benefits'] ?? 0,
+    );
+  }
+
+  final int active;
+  final int mapped;
+  final int orphaned;
 }
 
 class BenefitEnrichmentCounts {

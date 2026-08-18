@@ -76,6 +76,11 @@ BenefitEnrichmentReviewPage _page() =>
         'by_status': {'staged': 1, 'completed': 1, 'failed': 1},
         'by_run_mode': {'scheduled': 2, 'pilot': 1},
       },
+      'movie_mapping_health': [
+        {'metric': 'active_movie_benefits', 'value': 49},
+        {'metric': 'mapped_active_movie_benefits', 'value': 8},
+        {'metric': 'orphaned_active_movie_benefits', 'value': 41},
+      ],
       'page': 1,
       'limit': 25,
       'has_more': false,
@@ -200,6 +205,11 @@ void main() {
             'by_status': {'staged': 1},
             'by_run_mode': {'scheduled': 2},
           },
+          'movie_mapping_health': [
+            {'metric': 'active_movie_benefits', 'value': 49},
+            {'metric': 'mapped_active_movie_benefits', 'value': 8},
+            {'metric': 'orphaned_active_movie_benefits', 'value': 41},
+          ],
           'page': 2,
           'limit': 25,
           'has_more': true,
@@ -215,6 +225,9 @@ void main() {
 
       expect(page.items.single.cardName, 'Astra Travel');
       expect(page.counts.byStatus['staged'], 1);
+      expect(page.movieMappingHealth.active, 49);
+      expect(page.movieMappingHealth.mapped, 8);
+      expect(page.movieMappingHealth.orphaned, 41);
       expect(page.hasMore, isTrue);
       expect(api.bodies.first, {
         'action': 'benefit-list',
@@ -315,6 +328,10 @@ void main() {
       );
       expect(
         find.text('All jobs by status: 1 completed · 1 failed'),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Movies mapping health: 8 / 49 mapped · 41 orphaned'),
         findsOneWidget,
       );
       expect(find.text('Current'), findsOneWidget);

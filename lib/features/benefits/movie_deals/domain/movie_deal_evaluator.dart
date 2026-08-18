@@ -19,37 +19,43 @@ MovieDealsRecommendation evaluateMovieDeals({
   final rejected = <RejectedMovieDealCandidate>[];
 
   for (final rule in rules) {
-    final context = contexts[(rule.catalogCardId, rule.benefitId)] ?? const MovieDealContext();
+    final context =
+        contexts[(rule.catalogCardId, rule.benefitId)] ??
+        const MovieDealContext();
     final reason = _ineligibilityReason(rule, request, context, now);
     if (reason != null) {
-      rejected.add(RejectedMovieDealCandidate(
-        cardId: rule.catalogCardId,
-        benefitId: rule.benefitId,
-        rule: rule,
-        reason: reason,
-      ));
+      rejected.add(
+        RejectedMovieDealCandidate(
+          cardId: rule.catalogCardId,
+          benefitId: rule.benefitId,
+          rule: rule,
+          reason: reason,
+        ),
+      );
       continue;
     }
 
     final platformConfidence = _platformConfidence(rule, request, context);
     final gross = request.totalAmount;
     final saving = _calculateSavings(rule, request, gross);
-    candidates.add(MovieDealCandidate(
-      cardId: rule.catalogCardId,
-      benefitId: rule.benefitId,
-      title: rule.title,
-      rule: rule,
-      isOwned: context.isOwned,
-      grossAmount: gross,
-      savings: saving,
-      finalAmount: gross - saving,
-      usageConfidence: context.usageConfidence,
-      platformConfidence: platformConfidence,
-      explanation: _explanation(rule, saving, context.usageConfidence),
-      usedTransactions: context.usedTransactions,
-      milestoneSpend: context.milestoneSpend,
-      confirmationCount: context.confirmationCount,
-    ));
+    candidates.add(
+      MovieDealCandidate(
+        cardId: rule.catalogCardId,
+        benefitId: rule.benefitId,
+        title: rule.title,
+        rule: rule,
+        isOwned: context.isOwned,
+        grossAmount: gross,
+        savings: saving,
+        finalAmount: gross - saving,
+        usageConfidence: context.usageConfidence,
+        platformConfidence: platformConfidence,
+        explanation: _explanation(rule, saving, context.usageConfidence),
+        usedTransactions: context.usedTransactions,
+        milestoneSpend: context.milestoneSpend,
+        confirmationCount: context.confirmationCount,
+      ),
+    );
   }
 
   // rewardMultiplier and annualAllowance both always report savings=0 (no
@@ -61,11 +67,15 @@ MovieDealsRecommendation evaluateMovieDeals({
   // (no competing candidate to lose to) — excluded here explicitly so a
   // best* field can never surface either type as if it won a comparison,
   // while both remain fully present in `candidates` for their own section.
-  final winnerEligible = candidates.where((c) =>
-      c.rule.offerType != MovieDealOfferType.rewardMultiplier &&
-      c.rule.offerType != MovieDealOfferType.annualAllowance);
-  final guaranteed = winnerEligible.where(_isGuaranteed).toList()..sort(_compareCandidates);
-  final potential = winnerEligible.where((c) => !_isGuaranteed(c)).toList()..sort(_compareCandidates);
+  final winnerEligible = candidates.where(
+    (c) =>
+        c.rule.offerType != MovieDealOfferType.rewardMultiplier &&
+        c.rule.offerType != MovieDealOfferType.annualAllowance,
+  );
+  final guaranteed = winnerEligible.where(_isGuaranteed).toList()
+    ..sort(_compareCandidates);
+  final potential = winnerEligible.where((c) => !_isGuaranteed(c)).toList()
+    ..sort(_compareCandidates);
 
   final guaranteedOwned = guaranteed.where((c) => c.isOwned).toList();
   final potentialOwned = potential.where((c) => c.isOwned).toList();
@@ -114,14 +124,18 @@ MovieDealsRecommendation evaluateMovieDeals({
 /// usage problem bogo/fixedDiscount already have, and must be gated
 /// identically rather than treated as if the cap didn't exist.
 bool _isGuaranteed(MovieDealCandidate candidate) {
-  final hasNoCapToVerify = (candidate.rule.offerType == MovieDealOfferType.percentDiscount &&
+  final hasNoCapToVerify =
+      (candidate.rule.offerType == MovieDealOfferType.percentDiscount &&
           candidate.rule.perTransactionCap == null) ||
       (candidate.rule.offerType == MovieDealOfferType.bogo &&
           candidate.rule.cycleRedemptionLimit == null) ||
       (candidate.rule.offerType == MovieDealOfferType.fixedDiscount &&
           candidate.rule.cycleAmountCap == null);
-  final usageOk = candidate.usageConfidence == MovieDealUsageConfidence.verified || hasNoCapToVerify;
-  final platformOk = candidate.platformConfidence == MovieDealPlatformConfidence.explicit;
+  final usageOk =
+      candidate.usageConfidence == MovieDealUsageConfidence.verified ||
+      hasNoCapToVerify;
+  final platformOk =
+      candidate.platformConfidence == MovieDealPlatformConfidence.explicit;
   return usageOk && platformOk;
 }
 
@@ -159,7 +173,7 @@ String? _ineligibilityReason(
       rule.cycleRedemptionLimit != null &&
       context.usageConfidence == MovieDealUsageConfidence.verified &&
       context.usedTransactions >= rule.cycleRedemptionLimit!) {
-    return 'Monthly redemption limit has been reached.';
+    return '${_cyclePeriodLabel(rule)} redemption limit has been reached.';
   }
 
   return null;
@@ -173,8 +187,12 @@ MovieDealPlatformConfidence _platformConfidence(
   final eligible = eligibleMoviePlatformsFor(rule);
 
   if (eligible.isNotEmpty) {
-    if (request.preferredPlatform == null) return MovieDealPlatformConfidence.explicit;
-    final matches = eligible.any((p) => p.toLowerCase() == request.preferredPlatform!.toLowerCase());
+    if (request.preferredPlatform == null) {
+      return MovieDealPlatformConfidence.explicit;
+    }
+    final matches = eligible.any(
+      (p) => p.toLowerCase() == request.preferredPlatform!.toLowerCase(),
+    );
     if (matches) return MovieDealPlatformConfidence.explicit;
   }
 
@@ -182,8 +200,9 @@ MovieDealPlatformConfidence _platformConfidence(
   // check confirmations before falling to notRequested/unconfirmed.
   final hasAnyConfirmation = request.preferredPlatform == null
       ? context.confirmedPlatforms.isNotEmpty
-      : context.confirmedPlatforms
-          .any((p) => p.toLowerCase() == request.preferredPlatform!.toLowerCase());
+      : context.confirmedPlatforms.any(
+          (p) => p.toLowerCase() == request.preferredPlatform!.toLowerCase(),
+        );
   if (hasAnyConfirmation) return MovieDealPlatformConfidence.communityConfirmed;
 
   return request.preferredPlatform == null
@@ -192,7 +211,10 @@ MovieDealPlatformConfidence _platformConfidence(
 }
 
 double _calculateSavings(
-    MovieDealRule rule, MovieTicketRequest request, double gross) {
+  MovieDealRule rule,
+  MovieTicketRequest request,
+  double gross,
+) {
   final tickets = request.numberOfTickets;
   final price = request.pricePerTicket;
   double savings;
@@ -246,33 +268,43 @@ double _calculateSavings(
 // compile in _calculateSavings above — a generic explanation string is a
 // deliberate choice for percentDiscount/fixedDiscount/milestone, not a
 // fallback for types nobody has decided the wording for.
-String _explanation(MovieDealRule rule, double savings,
-        MovieDealUsageConfidence confidence) =>
-    switch (rule.offerType) {
-      MovieDealOfferType.rewardMultiplier =>
-        '${rule.rewardMultiplierRate} ${rule.rewardMultiplierUnit} (points program, not a direct discount).',
-      MovieDealOfferType.bogo =>
-        'BOGO — up to ₹${rule.perTransactionCap?.toStringAsFixed(0)} off, '
-            '${rule.cycleRedemptionLimit} redemptions/month.',
-      // States the real, unconditional term (the annual cap) rather than a
-      // computed ₹ figure for this specific purchase — how much of the
-      // ₹X/year budget remains is unknowable (see _calculateSavings), so
-      // this must never read like a guaranteed discount on THIS transaction.
-      MovieDealOfferType.annualAllowance =>
-        'Up to ₹${rule.annualCap?.toStringAsFixed(0)}/year in movie tickets — remaining balance not tracked.',
-      MovieDealOfferType.percentDiscount ||
-      MovieDealOfferType.fixedDiscount ||
-      MovieDealOfferType.milestone =>
-        '${rule.offerType.name} saves ₹${savings.toStringAsFixed(2)} (${confidence.name} usage).',
-    };
+String _explanation(
+  MovieDealRule rule,
+  double savings,
+  MovieDealUsageConfidence confidence,
+) => switch (rule.offerType) {
+  MovieDealOfferType.rewardMultiplier =>
+    '${rule.rewardMultiplierRate} ${rule.rewardMultiplierUnit} (points program, not a direct discount).',
+  MovieDealOfferType.bogo =>
+    'BOGO — up to ₹${rule.perTransactionCap?.toStringAsFixed(0)} off, '
+        '${rule.cycleRedemptionLimit} redemptions/${_cyclePeriodLabel(rule).toLowerCase()}.',
+  // States the real, unconditional term (the annual cap) rather than a
+  // computed ₹ figure for this specific purchase — how much of the
+  // ₹X/year budget remains is unknowable (see _calculateSavings), so
+  // this must never read like a guaranteed discount on THIS transaction.
+  MovieDealOfferType.annualAllowance =>
+    'Up to ₹${rule.annualCap?.toStringAsFixed(0)}/year in movie tickets — remaining balance not tracked.',
+  MovieDealOfferType.percentDiscount ||
+  MovieDealOfferType.fixedDiscount ||
+  MovieDealOfferType.milestone =>
+    '${rule.offerType.name} saves ₹${savings.toStringAsFixed(2)} (${confidence.name} usage).',
+};
+
+String _cyclePeriodLabel(MovieDealRule rule) => switch (rule.cyclePeriod) {
+  MovieDealCyclePeriod.month => 'Month',
+  MovieDealCyclePeriod.quarter => 'Quarter',
+  MovieDealCyclePeriod.year => 'Year',
+  null => 'Cycle',
+};
 
 int _compareCandidates(MovieDealCandidate left, MovieDealCandidate right) {
   var result = right.savings.compareTo(left.savings);
   if (result != 0) return result;
   result = left.finalAmount.compareTo(right.finalAmount);
   if (result != 0) return result;
-  result = _platformConfidenceRank(right.platformConfidence)
-      .compareTo(_platformConfidenceRank(left.platformConfidence));
+  result = _platformConfidenceRank(
+    right.platformConfidence,
+  ).compareTo(_platformConfidenceRank(left.platformConfidence));
   if (result != 0) return result;
   result = right.rule.displayPriority.compareTo(left.rule.displayPriority);
   if (result != 0) return result;

@@ -16,6 +16,12 @@ const unsafePath =
 const anchorPattern =
   /<a\b[^>]*\bhref\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))[^>]*>/gi;
 
+const exactSupportingSources: Record<string, Record<string, string[]>> = {
+  "SBI Card": {
+    elite: ["https://www.sbicard.com/en/eapply/sbicampaign.page"],
+  },
+};
+
 type OfficialFetcher = (
   input: OfficialFetchInput,
 ) => Promise<OfficialFetchResult>;
@@ -48,6 +54,18 @@ function identityTokens(labels: string[]): string[] {
       ),
     ),
   ];
+}
+
+function exactSupportingUrls(issuer: string, labels: string[]): string[] {
+  const sources = exactSupportingSources[issuer] ?? {};
+  const exactLabels = new Set(
+    labels.map((label) =>
+      label.toLowerCase()
+        .replace(/\bsbi\s+card\b/g, "")
+        .replace(/[^a-z0-9]+/g, "")
+    ).filter(Boolean),
+  );
+  return [...exactLabels].flatMap((label) => sources[label] ?? []);
 }
 
 function linkedUrls(
@@ -102,13 +120,19 @@ export async function collectSupportingBenefitDocuments(
   );
   const documents = [await benefitDocument(input.primary)];
   const seen = new Set([input.primary.canonicalUrl]);
-  const queue = linkedUrls(
-    input.issuer,
-    input.primary.canonicalUrl,
-    input.primary.text,
-    input.identityLabels,
-    input.primary.canonicalUrl,
-  ).map((url) => ({ url, depth: 1 }));
+  const queue = [
+    ...exactSupportingUrls(input.issuer, input.identityLabels),
+    ...linkedUrls(
+      input.issuer,
+      input.primary.canonicalUrl,
+      input.primary.text,
+      input.identityLabels,
+      input.primary.canonicalUrl,
+    ),
+  ].map((url) => ({
+    url: canonicalOfficialUrl(input.issuer, url),
+    depth: 1,
+  }));
   let fetched = 0;
   for (
     let position = 0;

@@ -317,11 +317,17 @@ Future<Map<String, dynamic>> _insertManualJob(
 Future<Map<String, dynamic>> _claimManualJob(
   SupabaseClient service,
   String expectedJobId,
+  String parserVersion,
 ) async {
   final claimed = _rows(
     await service.rpc(
       'claim_card_catalog_enrichment_jobs',
-      params: {'_max_jobs': 1, '_lease_seconds': 60, '_run_mode': 'manual'},
+      params: {
+        '_max_jobs': 1,
+        '_lease_seconds': 60,
+        '_run_mode': 'manual',
+        '_parser_version': parserVersion,
+      },
     ),
   );
   expect(claimed, hasLength(1));
@@ -688,6 +694,7 @@ void main() {
         var claimedRejected = await _claimManualJob(
           service,
           rejectedJob['id'] as String,
+          rejectedParserVersion,
         );
         final firstLeaseToken = claimedRejected['lease_token'];
         await service
@@ -702,6 +709,7 @@ void main() {
         claimedRejected = await _claimManualJob(
           service,
           rejectedJob['id'] as String,
+          rejectedParserVersion,
         );
         expect(claimedRejected['attempt_count'], 2);
         expect(claimedRejected['lease_token'], isNot(firstLeaseToken));

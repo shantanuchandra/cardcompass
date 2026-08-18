@@ -73,7 +73,10 @@ export function publicDiscoveryResult(job: DiscoveryJobPublicSource) {
   };
 }
 
-export function reviewRequiredJobPatch(reviewItemId: string, updatedAt: string) {
+export function reviewRequiredJobPatch(
+  reviewItemId: string,
+  updatedAt: string,
+) {
   return {
     status: "review_required",
     review_item_id: reviewItemId,
@@ -105,10 +108,12 @@ const issuerAliases: Record<string, string[]> = {
   "Axis Bank": ["axis"],
   "HDFC Bank": ["hdfc"],
   "ICICI Bank": ["icici"],
-  "Kotak Bank": ["kotak"],
+  "Kotak Bank": ["kotak", "mahindra"],
   "IndusInd Bank": ["indusind"],
   HSBC: ["hsbc"],
   "Punjab National Bank": ["pnb", "punjab", "national"],
+  "SBI Card": ["sbi"],
+  "AU Small Finance Bank": ["au"],
 };
 
 const genericTokens = new Set([
@@ -161,7 +166,7 @@ export function isAdminEmail(
   if (!email || !commaSeparatedAllowlist) return false;
   const normalized = email.trim().toLowerCase();
   return commaSeparatedAllowlist
-    .split(',')
+    .split(",")
     .map((item) => item.trim().toLowerCase())
     .filter(Boolean)
     .includes(normalized);
@@ -177,7 +182,10 @@ function words(value: string): string[] {
     .filter(Boolean);
 }
 
-function hasMeaningfulMetadataProductToken(value: string, issuer: string): boolean {
+function hasMeaningfulMetadataProductToken(
+  value: string,
+  issuer: string,
+): boolean {
   const ignored = new Set(metadataBoilerplateTokens);
   for (const token of words(issuer)) ignored.add(token);
   for (const alias of issuerAliases[issuer] ?? []) ignored.add(alias);
@@ -195,9 +203,11 @@ function displayProduct(value: string, issuer: string): string {
   for (const alias of issuerAliases[issuer] ?? []) ignored.add(alias);
   return words(value)
     .filter((token) => !ignored.has(token))
-    .map((token) => token === "eazydiner"
-      ? "EazyDiner"
-      : `${token[0].toUpperCase()}${token.slice(1)}`)
+    .map((token) =>
+      token === "eazydiner"
+        ? "EazyDiner"
+        : `${token[0].toUpperCase()}${token.slice(1)}`
+    )
     .join(" ");
 }
 
@@ -236,6 +246,10 @@ function stripTitleMarketing(value: string, issuer: string): string {
     }
   }
   return label
+    .replace(
+      /\s*[-–—:]\s*(?:best\s+entertainment(?:\s+credit\s+card)?|[0-9]+%\s+fuel\s+cashback|exclusive\s+rewards?\s*(?:&|and)\s*benefits?|benefits?\s*(?:&|and)\s*features?(?:\s*[-–—]\s*apply\s+now)?)\s*$/i,
+      "",
+    )
     .replace(/\s+with\s+unlimited\s+benefits\s*$/i, "")
     .trim();
 }
@@ -251,7 +265,8 @@ export function officialCardIdentityFromHtml(
       documentMetadata: true,
     },
     {
-      pattern: /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["'][^>]*>/gi,
+      pattern:
+        /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["'][^>]*>/gi,
       documentMetadata: true,
     },
     {
@@ -259,7 +274,8 @@ export function officialCardIdentityFromHtml(
       documentMetadata: false,
     },
     {
-      pattern: /<[^>]+class=["'][^"']*\btitle\b[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/gi,
+      pattern:
+        /<[^>]+class=["'][^"']*\btitle\b[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/gi,
       documentMetadata: false,
     },
   ];
@@ -275,7 +291,10 @@ export function officialCardIdentityFromHtml(
       ) {
         continue;
       }
-      if (/\bcard\b/i.test(candidate) && normalizedProduct(candidate, issuer).length >= 4) {
+      if (
+        /\bcard\b/i.test(candidate) &&
+        normalizedProduct(candidate, issuer).length >= 4
+      ) {
         candidates.push(candidate);
       }
     }
@@ -292,6 +311,20 @@ export function officialCardIdentityFromHtml(
     ? "Mastercard"
     : identity.network;
   return { ...identity, network };
+}
+
+export function exactOfficialPageIdentity(
+  html: string,
+  issuer: string,
+  expectedProduct: string,
+): CanonicalCardIdentity | null {
+  const official = officialCardIdentityFromHtml(html, issuer);
+  if (!official) return null;
+  const expected = normalizedProduct(expectedProduct, issuer);
+  if (expected.length < 4) return null;
+  const officialLabels = [official.cardName, ...official.aliases]
+    .map((label) => normalizedProduct(label, issuer));
+  return officialLabels.includes(expected) ? official : null;
 }
 
 export function selectSubmittedUrlIdentity(input: {
@@ -374,11 +407,12 @@ export function evaluateAutomaticCatalogGate(
   const official = normalizedProduct(input.officialProduct, input.issuer);
   if (input.statementProducts.length === 0) {
     reasons.push("missing_statement_signal");
-  } else if (!input.statementProducts.some((value) => {
-    const statement = normalizedProduct(value, input.issuer);
-    return statement.length >= 4 &&
-      (official === statement || official.includes(statement) || statement.includes(official));
-  })) {
+  } else if (
+    !input.statementProducts.some((value) => {
+      const statement = normalizedProduct(value, input.issuer);
+      return statement.length >= 4 && official === statement;
+    })
+  ) {
     reasons.push("product_mismatch");
   }
 
@@ -397,8 +431,11 @@ export function rankOfficialUrls(
   return [...new Set(urls)].sort((left, right) => {
     const score = (url: string) => {
       const normalized = decodeURIComponent(url).toLowerCase();
-      const matched = tokens.filter((token) => normalized.includes(token)).length;
-      return matched * 100 + (matched === tokens.length ? 1000 : 0) - url.length / 1000;
+      const matched = tokens.filter((token) =>
+        normalized.includes(token)
+      ).length;
+      return matched * 100 + (matched === tokens.length ? 1000 : 0) -
+        url.length / 1000;
     };
     return score(right) - score(left);
   });
@@ -408,7 +445,8 @@ export function sanitizeEvidence(value: string): string {
   return value
     .split(/\r?\n/)
     .filter((line) =>
-      /credit\s*card|primary\s+card|card\s+ending|amex|visa|mastercard|rupay/i.test(line)
+      /credit\s*card|primary\s+card|card\s+ending|amex|visa|mastercard|rupay/i
+        .test(line)
     )
     .slice(0, 4)
     .map((line) =>

@@ -15,6 +15,22 @@ String _formatAmount(double amount) => amount == amount.roundToDouble()
     ? amount.toStringAsFixed(0)
     : amount.toStringAsFixed(2);
 
+String _platformDisplayLabel(String platform) =>
+    platform.toLowerCase() == 'zomato' ? 'Zomato/District' : platform;
+
+String _bankAndCardLabel(MovieDealCandidate candidate) {
+  final bank = candidate.rule.bankName?.trim();
+  final card = candidate.rule.cardName?.trim();
+  if (bank != null && bank.isNotEmpty && card != null && card.isNotEmpty) {
+    return '$bank — $card';
+  }
+  return card?.isNotEmpty == true
+      ? card!
+      : bank?.isNotEmpty == true
+      ? bank!
+      : candidate.title;
+}
+
 String _plainLanguageReason(MovieDealCandidate candidate) {
   final rule = candidate.rule;
   return switch (rule.offerType) {
@@ -58,17 +74,20 @@ String _bookingPlatformMessage(
     final tied = eligiblePlatforms.any(
       (p) => p.toLowerCase() == selectedPlatform.toLowerCase(),
     );
+    final sortedEligible = eligiblePlatforms.map(_platformDisplayLabel).toList()
+      ..sort();
     return tied
-        ? 'Tied to $selectedPlatform.'
-        : 'This offer is not tied to $selectedPlatform.';
+        ? 'Tied to ${_platformDisplayLabel(selectedPlatform)}.'
+        : 'This offer is not tied to $selectedPlatform. Available on ${sortedEligible.join(', ')}.';
   }
   if (selectedPlatform != null) {
     return candidate.platformConfidence == MovieDealPlatformConfidence.explicit
-        ? 'Book on $selectedPlatform.'
-        : 'Selected platform: $selectedPlatform — this offer needs confirmation there.';
+        ? 'Book on ${_platformDisplayLabel(selectedPlatform)}.'
+        : 'Selected platform: ${_platformDisplayLabel(selectedPlatform)} — this offer needs confirmation there.';
   }
 
-  final sortedEligible = eligiblePlatforms.toList()..sort();
+  final sortedEligible = eligiblePlatforms.map(_platformDisplayLabel).toList()
+    ..sort();
   if (sortedEligible.isNotEmpty) {
     final platformLabel = sortedEligible.join(', ');
     return sortedEligible.length == 1
@@ -98,14 +117,19 @@ bool _isTiedToSearchedPlatform(
 const _cinemaNotSupportedMessage =
     'Cinema filtering is not yet supported — no benefit data is tied to a specific chain.';
 
+class _RankedDeal {
+  _RankedDeal(this.candidate, this.groupLabel);
+
+  final MovieDealCandidate candidate;
+  String groupLabel;
+}
+
 /// A bento tile's declared weight — how many grid columns it claims at
 /// the current column count, and whether it gets the ink-filled "hero"
 /// treatment (reserved for Guaranteed·Own — the one group that is both
 /// certain AND already in the user's wallet, so it earns the strongest
 /// visual claim on the page) versus the quieter outlined paper treatment
 /// every other tile uses.
-enum _TileWeight { hero, wide, standard, strip }
-
 /// One cell in the results bento grid. Renders on [BrandColors.inkSoft]
 /// with paper text for [_TileWeight.hero], [BrandColors.paper] with a
 /// tone-colored outline otherwise — reusing the exact fill/outline pairing
@@ -115,41 +139,27 @@ enum _TileWeight { hero, wide, standard, strip }
 /// doesn't allow that split).
 class _BentoTile extends StatelessWidget {
   const _BentoTile({
-    required this.weight,
     required this.accent,
     required this.title,
     required this.child,
   });
 
-  final _TileWeight weight;
   final Color accent;
   final String title;
   final Widget child;
 
-  bool get _isHero => weight == _TileWeight.hero;
-
   @override
   Widget build(BuildContext context) {
-    final background = _isHero ? BrandColors.inkSoft : BrandColors.paper;
-    final foreground = _isHero ? BrandColors.paper : BrandColors.ink;
-    final mutedForeground = _isHero
-        ? BrandColors.mutedPaper
-        : BrandColors.mutedInk;
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: background,
+        color: BrandColors.paper,
         borderRadius: BorderRadius.circular(BrandRadius.overlay),
-        border: Border.all(
-          color: _isHero
-              ? accent.withValues(alpha: 0.4)
-              : accent.withValues(alpha: 0.22),
-          width: _isHero ? 1.4 : 1,
-        ),
+        border: Border.all(color: accent.withValues(alpha: 0.22)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(BrandSpacing.md),
         child: DefaultTextStyle.merge(
-          style: TextStyle(color: foreground),
+          style: const TextStyle(color: BrandColors.ink),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
@@ -173,7 +183,7 @@ class _BentoTile extends StatelessWidget {
                         fontWeight: FontWeight.bold,
                         fontSize: 12,
                         letterSpacing: 0.5,
-                        color: mutedForeground,
+                        color: BrandColors.mutedInk,
                       ),
                     ),
                   ),
@@ -185,50 +195,6 @@ class _BentoTile extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-/// Lays [tiles] out as a bento grid: [columns] evenly-sized units per row
-/// (computed from available width, matching the app's 600/1024 responsive
-/// conventions used elsewhere), where a tile's [_GridItem.span] claims
-/// that many units. Plain flow layout (Wrap of fixed-width boxes) rather
-/// than a real CSS-grid engine — Flutter has none built in, and this is
-/// the correct-enough primitive for a handful of variably-sized tiles
-/// that never need to backfill a gap left by a taller neighbor.
-class _GridItem {
-  const _GridItem(this.span, this.child);
-  final int span;
-  final Widget child;
-}
-
-class _BentoGrid extends StatelessWidget {
-  const _BentoGrid({required this.items});
-
-  final List<_GridItem> items;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        final columns = width >= 1024 ? 3 : (width >= 600 ? 2 : 1);
-        const gap = BrandSpacing.md;
-        final unitWidth = (width - gap * (columns - 1)) / columns;
-        return Wrap(
-          spacing: gap,
-          runSpacing: gap,
-          children: [
-            for (final item in items)
-              SizedBox(
-                width:
-                    (unitWidth * item.span.clamp(1, columns)) +
-                    gap * (item.span.clamp(1, columns) - 1),
-                child: item.child,
-              ),
-          ],
-        );
-      },
     );
   }
 }
@@ -315,94 +281,84 @@ class MovieDealsResults extends ConsumerWidget {
           );
     }
 
-    Widget buildTileBody(
-      String emptyNoun,
-      List<MovieDealCandidate> group, {
-      required bool isOverallFlavor,
-    }) {
-      if (group.isEmpty) {
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 4),
-          child: Text(
-            'No $emptyNoun deals ${isOverallFlavor ? 'available' : 'on cards you own'} for this search.',
-            style: const TextStyle(fontFamily: 'Manrope', fontSize: 12),
-          ),
-        );
+    final ranked = <_RankedDeal>[];
+    final seen = <String>{};
+    void addGroup(List<MovieDealCandidate> candidates, String label) {
+      for (final candidate in candidates) {
+        final identity = '${candidate.cardId}|${candidate.benefitId}';
+        if (seen.add(identity)) {
+          ranked.add(_RankedDeal(candidate, label));
+        } else {
+          final existing = ranked.firstWhere(
+            (deal) =>
+                deal.candidate.cardId == candidate.cardId &&
+                deal.candidate.benefitId == candidate.benefitId,
+          );
+          existing.groupLabel = '${existing.groupLabel} / $label';
+        }
       }
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          for (var i = 0; i < group.length; i++)
-            Padding(
-              padding: EdgeInsets.only(bottom: i == group.length - 1 ? 0 : 12),
-              child: _DealRow(
-                candidate: group[i],
-                request: request,
-                onConfirmPlatform: confirmCallbackFor(group[i]),
-              ),
-            ),
-        ],
-      );
     }
 
-    final tiles = <_GridItem>[
-      _GridItem(
-        2,
-        _BentoTile(
-          weight: _TileWeight.hero,
-          accent: BrandColors.focusDark,
-          title: 'GUARANTEED · YOU OWN',
-          child: buildTileBody(
-            'guaranteed',
-            recommendation.guaranteedOwned,
-            isOverallFlavor: false,
+    addGroup(recommendation.guaranteedOwned, 'GUARANTEED · YOU OWN');
+    addGroup(recommendation.guaranteedOverall, 'GUARANTEED · OVERALL');
+    addGroup(recommendation.potentialOwned, 'POTENTIAL · YOU OWN');
+    addGroup(recommendation.potentialOverall, 'POTENTIAL · OVERALL');
+
+    final emptyGroups = <(String, String)>[
+      if (recommendation.guaranteedOwned.isEmpty)
+        ('GUARANTEED · YOU OWN', 'No guaranteed deals on cards you own'),
+      if (recommendation.potentialOwned.isEmpty)
+        ('POTENTIAL · YOU OWN', 'No potential deals on cards you own'),
+      if (recommendation.guaranteedOverall.isEmpty)
+        ('GUARANTEED · OVERALL', 'No guaranteed deals available'),
+      if (recommendation.potentialOverall.isEmpty)
+        ('POTENTIAL · OVERALL', 'No potential deals available'),
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (ranked.isNotEmpty) ...[
+          _BestMatchCard(
+            deal: ranked.first,
+            request: request,
+            onConfirmPlatform: confirmCallbackFor(ranked.first.candidate),
           ),
-        ),
-      ),
-      _GridItem(
-        1,
-        _BentoTile(
-          weight: _TileWeight.standard,
-          accent: BrandColors.rewardInk,
-          title: 'POTENTIAL · YOU OWN',
-          child: buildTileBody(
-            'potential',
-            recommendation.potentialOwned,
-            isOverallFlavor: false,
-          ),
-        ),
-      ),
-      _GridItem(
-        2,
-        _BentoTile(
-          weight: _TileWeight.wide,
-          accent: BrandColors.focusDark,
-          title: 'GUARANTEED · OVERALL',
-          child: buildTileBody(
-            'guaranteed',
-            recommendation.guaranteedOverall,
-            isOverallFlavor: true,
-          ),
-        ),
-      ),
-      _GridItem(
-        1,
-        _BentoTile(
-          weight: _TileWeight.standard,
-          accent: BrandColors.rewardInk,
-          title: 'POTENTIAL · OVERALL',
-          child: buildTileBody(
-            'potential',
-            recommendation.potentialOverall,
-            isOverallFlavor: true,
-          ),
-        ),
-      ),
-      if (rewardMultiplierCandidates.isNotEmpty)
-        _GridItem(
-          3,
+          if (ranked.length > 1) ...[
+            const SizedBox(height: BrandSpacing.lg),
+            const Text(
+              'Other cards to consider',
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                fontWeight: FontWeight.w800,
+                fontSize: 18,
+                color: BrandColors.ink,
+              ),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Compare each bank and card variant side by side.',
+              style: TextStyle(
+                fontFamily: 'Manrope',
+                fontSize: 13,
+                color: BrandColors.mutedInk,
+              ),
+            ),
+            const SizedBox(height: BrandSpacing.md),
+            _ComparisonGrid(
+              deals: ranked.skip(1).toList(),
+              request: request,
+              confirmCallbackFor: confirmCallbackFor,
+            ),
+          ],
+        ],
+        if (emptyGroups.isNotEmpty) ...[
+          const SizedBox(height: BrandSpacing.md),
+          _EmptyGroupsSummary(groups: emptyGroups),
+        ],
+        if (rewardMultiplierCandidates.isNotEmpty) ...[
+          const SizedBox(height: BrandSpacing.md),
           _BentoTile(
-            weight: _TileWeight.strip,
             accent: BrandColors.mutedInk,
             title: 'REWARD RATE — NOT A TICKET-PRICE SAVING',
             child: _buildStripSection(
@@ -411,24 +367,21 @@ class MovieDealsResults extends ConsumerWidget {
               (c) => _plainLanguageReason(c),
             ),
           ),
-        ),
-      if (annualAllowanceCandidates.isNotEmpty)
-        _GridItem(
-          3,
+        ],
+        if (annualAllowanceCandidates.isNotEmpty) ...[
+          const SizedBox(height: BrandSpacing.md),
           _BentoTile(
-            weight: _TileWeight.strip,
             accent: BrandColors.mutedInk,
             title: 'ANNUAL ALLOWANCE — BALANCE NOT TRACKED',
             child: _buildStripSection(
               annualAllowanceCandidates,
-              (c) => c.rule.cardName ?? c.title,
-              (c) => c.explanation,
+              _bankAndCardLabel,
+              (c) => '${c.explanation}\n${_bookingPlatformMessage(c, request)}',
             ),
           ),
-        ),
-    ];
-
-    return _BentoGrid(items: tiles);
+        ],
+      ],
+    );
   }
 
   Widget _buildStripSection(
@@ -511,6 +464,244 @@ class MovieDealsResults extends ConsumerWidget {
   }
 }
 
+class _BestMatchCard extends StatelessWidget {
+  const _BestMatchCard({
+    required this.deal,
+    required this.request,
+    this.onConfirmPlatform,
+  });
+
+  final _RankedDeal deal;
+  final MovieTicketRequest request;
+  final Future<void> Function()? onConfirmPlatform;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const Key('movie-best-match'),
+      width: double.infinity,
+      padding: const EdgeInsets.all(BrandSpacing.lg),
+      decoration: BoxDecoration(
+        color: BrandColors.inkSoft,
+        borderRadius: BorderRadius.circular(BrandRadius.overlay),
+        border: Border.all(
+          color: BrandColors.focusDark.withValues(alpha: 0.55),
+          width: 1.4,
+        ),
+      ),
+      child: DefaultTextStyle.merge(
+        style: const TextStyle(color: BrandColors.paper),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            LayoutBuilder(
+              builder: (context, constraints) {
+                const heading = Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Best match',
+                      style: TextStyle(
+                        fontFamily: 'Manrope',
+                        fontWeight: FontWeight.w800,
+                        fontSize: 20,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Strongest eligible option for this booking',
+                      style: TextStyle(
+                        fontFamily: 'Manrope',
+                        fontSize: 12,
+                        color: BrandColors.mutedPaper,
+                      ),
+                    ),
+                  ],
+                );
+                final status = _DealStatusLabel(label: deal.groupLabel);
+                if (constraints.maxWidth < 560 ||
+                    MediaQuery.textScalerOf(context).scale(1) >= 1.5) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      heading,
+                      const SizedBox(height: BrandSpacing.sm),
+                      status,
+                    ],
+                  );
+                }
+                return Row(
+                  children: [
+                    const Expanded(child: heading),
+                    const SizedBox(width: BrandSpacing.md),
+                    Flexible(child: status),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: BrandSpacing.md),
+            SizedBox(
+              width: double.infinity,
+              child: _DealRow(
+                candidate: deal.candidate,
+                request: request,
+                onConfirmPlatform: onConfirmPlatform,
+                featured: true,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DealStatusLabel extends StatelessWidget {
+  const _DealStatusLabel({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final foreground =
+        DefaultTextStyle.of(context).style.color ?? BrandColors.ink;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: BrandColors.focusDark.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(BrandRadius.pill),
+        border: Border.all(color: BrandColors.focusDark.withValues(alpha: 0.3)),
+      ),
+      child: Text(
+        label,
+        softWrap: true,
+        style: TextStyle(
+          fontFamily: 'Manrope',
+          fontWeight: FontWeight.w700,
+          fontSize: 12,
+          height: 1.2,
+          color: foreground,
+        ),
+      ),
+    );
+  }
+}
+
+class _ComparisonGrid extends StatelessWidget {
+  const _ComparisonGrid({
+    required this.deals,
+    required this.request,
+    required this.confirmCallbackFor,
+  });
+
+  final List<_RankedDeal> deals;
+  final MovieTicketRequest request;
+  final Future<void> Function()? Function(MovieDealCandidate)
+  confirmCallbackFor;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 1000
+            ? 3
+            : (constraints.maxWidth >= 640 ? 2 : 1);
+        const gap = BrandSpacing.md;
+        final cardWidth =
+            (constraints.maxWidth - gap * (columns - 1)) / columns;
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [
+            for (final deal in deals)
+              SizedBox(
+                width: cardWidth,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(left: 4, bottom: 6),
+                      child: Text(
+                        deal.groupLabel.toUpperCase(),
+                        style: const TextStyle(
+                          fontFamily: 'Manrope',
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12,
+                          letterSpacing: 0.5,
+                          color: BrandColors.mutedInk,
+                        ),
+                      ),
+                    ),
+                    _DealRow(
+                      candidate: deal.candidate,
+                      request: request,
+                      onConfirmPlatform: confirmCallbackFor(deal.candidate),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _EmptyGroupsSummary extends StatelessWidget {
+  const _EmptyGroupsSummary({required this.groups});
+
+  final List<(String, String)> groups;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const Key('movie-empty-groups-summary'),
+      width: double.infinity,
+      padding: const EdgeInsets.all(BrandSpacing.md),
+      decoration: BoxDecoration(
+        color: BrandColors.paper,
+        borderRadius: BorderRadius.circular(BrandRadius.card),
+        border: Border.all(color: BrandColors.paperDeep),
+      ),
+      child: Wrap(
+        spacing: BrandSpacing.lg,
+        runSpacing: BrandSpacing.sm,
+        children: [
+          for (final group in groups)
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 260),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    group.$1,
+                    style: const TextStyle(
+                      fontFamily: 'Manrope',
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                      letterSpacing: 0.5,
+                      color: BrandColors.mutedInk,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    group.$2,
+                    style: const TextStyle(
+                      fontFamily: 'Manrope',
+                      fontSize: 12,
+                      color: BrandColors.ink,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 /// One candidate inside a bento tile — a compact row rather than the
 /// prior standalone card, since a tile now groups multiple candidates.
 /// Keeps every existing piece of information (ownership badge, platform-
@@ -521,11 +712,13 @@ class _DealRow extends StatefulWidget {
     required this.candidate,
     required this.request,
     this.onConfirmPlatform,
+    this.featured = false,
   });
 
   final MovieDealCandidate candidate;
   final MovieTicketRequest request;
   final Future<void> Function()? onConfirmPlatform;
+  final bool featured;
 
   @override
   State<_DealRow> createState() => _DealRowState();
@@ -540,24 +733,26 @@ class _DealRowState extends State<_DealRow> {
     final effectiveTicketPrice =
         candidate.finalAmount / widget.request.numberOfTickets;
     final tied = _isTiedToSearchedPlatform(candidate, widget.request);
+    final eligiblePlatforms = eligibleMoviePlatformsFor(candidate.rule);
+    final hasExplicitPlatformMismatch =
+        widget.request.preferredPlatform != null &&
+        eligiblePlatforms.isNotEmpty &&
+        !tied;
 
     final details = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
         if (candidate.isOwned) ...[
-          const BrandStatusChip(
-            label: 'You own this',
-            tone: BrandStatusTone.success,
-          ),
+          const _DealStatusLabel(label: 'You own this'),
           const SizedBox(height: 4),
         ],
         Text(
           candidate.rule.cardName ?? candidate.title,
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: 'Manrope',
             fontWeight: FontWeight.bold,
-            fontSize: 13,
+            fontSize: widget.featured ? 17 : 14,
           ),
         ),
         const SizedBox(height: 4),
@@ -575,59 +770,66 @@ class _DealRowState extends State<_DealRow> {
             style: TextStyle(fontFamily: 'Manrope', fontSize: 12),
           ),
         const SizedBox(height: 4),
-        Text(
-          _plainLanguageReason(candidate),
-          style: const TextStyle(
-            fontFamily: 'Manrope',
-            fontSize: 12,
-            height: 1.35,
+        if (!hasExplicitPlatformMismatch)
+          Text(
+            _plainLanguageReason(candidate),
+            style: const TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 12,
+              height: 1.35,
+            ),
           ),
-        ),
       ],
     );
-    final priceBlock = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          '₹${candidate.grossAmount.toStringAsFixed(0)}',
-          style: const TextStyle(
-            fontFamily: 'Manrope',
-            fontSize: 12,
-            decoration: TextDecoration.lineThrough,
-          ),
-        ),
-        Text(
-          '₹${candidate.finalAmount.toStringAsFixed(0)}',
-          style: const TextStyle(
-            fontFamily: 'Manrope',
-            fontWeight: FontWeight.bold,
-            fontSize: 15,
-          ),
-        ),
-        Text(
-          'Save ₹${candidate.savings.toStringAsFixed(0)}',
-          style: const TextStyle(
-            fontFamily: 'Manrope',
-            fontWeight: FontWeight.bold,
-            fontSize: 12,
-          ),
-        ),
-        Text(
-          '₹${effectiveTicketPrice.toStringAsFixed(0)}/ticket',
-          style: const TextStyle(fontFamily: 'Manrope', fontSize: 12),
-        ),
-      ],
-    );
+    final priceBlock = hasExplicitPlatformMismatch
+        ? const _DealStatusLabel(label: 'Not valid on selected platform')
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '₹${candidate.grossAmount.toStringAsFixed(0)}',
+                style: const TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 12,
+                  decoration: TextDecoration.lineThrough,
+                ),
+              ),
+              Text(
+                '₹${candidate.finalAmount.toStringAsFixed(0)}',
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontWeight: FontWeight.bold,
+                  fontSize: widget.featured ? 24 : 18,
+                ),
+              ),
+              Text(
+                'Save ₹${candidate.savings.toStringAsFixed(0)}',
+                style: const TextStyle(
+                  fontFamily: 'Manrope',
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                ),
+              ),
+              Text(
+                '₹${effectiveTicketPrice.toStringAsFixed(0)}/ticket',
+                style: const TextStyle(fontFamily: 'Manrope', fontSize: 12),
+              ),
+            ],
+          );
 
     return Container(
       key: Key('movie-card-option-${candidate.cardId}'),
       padding: const EdgeInsets.all(BrandSpacing.md),
       decoration: BoxDecoration(
-        color: BrandColors.paper.withValues(alpha: 0.08),
+        color: widget.featured
+            ? BrandColors.paper.withValues(alpha: 0.07)
+            : BrandColors.paper,
         borderRadius: BorderRadius.circular(BrandRadius.card),
         border: Border.all(
-          color: BrandColors.paperDeep.withValues(alpha: 0.55),
+          color: widget.featured
+              ? BrandColors.paper.withValues(alpha: 0.22)
+              : BrandColors.paperDeep,
         ),
       ),
       child: Column(
@@ -663,7 +865,7 @@ class _DealRowState extends State<_DealRow> {
             builder: (context, constraints) {
               final shouldStack =
                   constraints.maxWidth < 320 ||
-                  MediaQuery.textScalerOf(context).scale(14) >= 1.5;
+                  MediaQuery.textScalerOf(context).scale(1) >= 1.5;
               if (shouldStack) {
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,

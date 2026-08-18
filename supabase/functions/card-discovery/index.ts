@@ -2,9 +2,10 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   allowedOfficialUrl,
-  canonicalOfficialUrl,
   canonicalCardIdentity,
+  canonicalOfficialUrl,
   evaluateAutomaticCatalogGate,
+  exactOfficialPageIdentity,
   normalizedProduct,
   officialDomainsForIssuer,
   publicDiscoveryResult,
@@ -22,7 +23,8 @@ type UntypedSupabaseClient = any;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -96,10 +98,14 @@ function safeEvidence(raw: unknown): SafeEvidence {
       /(?<!\d)\d{6,}(?!\d)/g,
       "[redacted]",
     ),
-    pdf_header_excerpt: sanitizeEvidence(short("pdf_header_excerpt", 1000) ?? ""),
+    pdf_header_excerpt: sanitizeEvidence(
+      short("pdf_header_excerpt", 1000) ?? "",
+    ),
     product_signals: signals,
     warnings: Array.isArray(value.warnings)
-      ? value.warnings.filter((item): item is string => typeof item === "string").slice(0, 10)
+      ? value.warnings.filter((item): item is string =>
+        typeof item === "string"
+      ).slice(0, 10)
       : [],
     confidence: typeof value.confidence === "number"
       ? Math.max(0, Math.min(1, value.confidence))
@@ -154,7 +160,9 @@ async function upsertDiscoveryJob(
 ) {
   const product = evidence.product_signals?.[0] ?? "unknown";
   const dedupeKey = await sha256(
-    `${evidence.issuer}:${normalizedProduct(product, evidence.issuer) || "unknown"}`,
+    `${evidence.issuer}:${
+      normalizedProduct(product, evidence.issuer) || "unknown"
+    }`,
   );
   const { data, error } = await db.from("card_discovery_jobs").upsert({
     user_id: userId,
@@ -197,7 +205,10 @@ async function processSubmittedUrl(
   const knownSubmitted = await findCatalogCardByUrlHashes(db, [submittedHash]);
   if (knownSubmitted) return markResolved(db, job.id, knownSubmitted);
 
-  const page = await fetchOfficialIssuerResource({ issuer: job.issuer, url: submittedUrl });
+  const page = await fetchOfficialIssuerResource({
+    issuer: job.issuer,
+    url: submittedUrl,
+  });
   const finalUrl = page.canonicalUrl;
   const finalHash = await sha256(finalUrl);
   const knownFinal = await findCatalogCardByUrlHashes(
@@ -210,14 +221,23 @@ async function processSubmittedUrl(
     const product = evidence.product_signals?.find((value) =>
       normalizedProduct(value, job.issuer).length >= 4
     ) ?? job.proposed_product;
-    if (!product) throw new Error("not_product_page");
+    if (!product) {
+      throw new Error("not_product_page");
+    }
     const canonical = canonicalCardIdentity(job.issuer, product);
-    await putInReview(db, job, { ...canonical, official_url: finalUrl }, {
-      evidence,
-      official_url: finalUrl,
-      content_hash: page.contentHash,
-      source_type: "official_pdf",
-    }, ["official_pdf_requires_review"], evidence.confidence ?? 0);
+    await putInReview(
+      db,
+      job,
+      { ...canonical, official_url: finalUrl },
+      {
+        evidence,
+        official_url: finalUrl,
+        content_hash: page.contentHash,
+        source_type: "official_pdf",
+      },
+      ["official_pdf_requires_review"],
+      evidence.confidence ?? 0,
+    );
     return (await db.from("card_discovery_jobs").select("*").eq("id", job.id)
       .single()).data;
   }
@@ -230,27 +250,37 @@ async function processSubmittedUrl(
   });
   const canonical = selected.identity;
   if (!canonical) throw new Error("not_product_page");
-  const expectedIdentity = normalizedProduct(canonical.cardName, job.issuer);
-  if (expectedIdentity.length < 4 ||
-      !normalizedProduct(pageText, job.issuer).includes(expectedIdentity)) {
+  const officialIdentity = exactOfficialPageIdentity(
+    page.text,
+    job.issuer,
+    canonical.cardName,
+  );
+  if (!officialIdentity) {
     throw new Error("not_product_page");
   }
   const gate = evaluateAutomaticCatalogGate({
     issuer: job.issuer,
     officialUrl: finalUrl,
-    officialProduct: canonical.cardName,
+    officialProduct: officialIdentity.cardName,
     statementProducts: selected.statementProducts,
     confidence: evidence.confidence ?? 0,
     catalogCandidateCount: 0,
     conflicts: evidence.warnings ?? [],
   });
   if (!gate.autoAdd) {
-    await putInReview(db, job, { ...canonical, official_url: finalUrl }, {
-      evidence,
-      official_url: finalUrl,
-      content_hash: page.contentHash,
-      excerpt: sanitizeEvidence(pageText),
-    }, gate.reasons, evidence.confidence ?? 0);
+    await putInReview(
+      db,
+      job,
+      { ...officialIdentity, official_url: finalUrl },
+      {
+        evidence,
+        official_url: finalUrl,
+        content_hash: page.contentHash,
+        excerpt: sanitizeEvidence(pageText),
+      },
+      gate.reasons,
+      evidence.confidence ?? 0,
+    );
     return (await db.from("card_discovery_jobs").select("*").eq("id", job.id)
       .single()).data;
   }
@@ -259,16 +289,20 @@ async function processSubmittedUrl(
     "resolve_card_catalog_identity",
     {
       _issuer: job.issuer,
-      _card_name: canonical.cardName,
+      _card_name: officialIdentity.cardName,
       _network: canonical.network ?? evidence.network ?? null,
       _source_url: finalUrl,
       _submitted_url_hash: submittedHash,
       _final_url_hash: finalHash,
     },
   );
-  if (resolveError || !cardId) throw resolveError ?? new Error("identity_conflict");
+  if (resolveError || !cardId) {
+    throw resolveError ?? new Error("identity_conflict");
+  }
 
-  for (const alias of [...canonical.aliases, ...(evidence.product_signals ?? [])]) {
+  for (
+    const alias of [...canonical.aliases, ...(evidence.product_signals ?? [])]
+  ) {
     const normalizedAlias = normalizedProduct(alias, job.issuer);
     if (normalizedAlias.length < 2) continue;
     const { error } = await db.from("card_catalog_aliases").upsert({
@@ -306,7 +340,7 @@ async function processSubmittedUrl(
     canonicalUrl: finalUrl,
     finalUrlHash: finalHash,
     contentHash: page.contentHash,
-    parserVersion: "benefits-v1",
+    parserVersion: "benefits-v5",
   });
   return markResolved(db, job.id, cardId);
 }
@@ -339,7 +373,12 @@ async function discoverOfficialUrl(
           url: `https://${domain}${sitemapPath}`,
           contentPurpose: "sitemap",
         });
-        urls.push(...Array.from(response.text.matchAll(/<loc>\s*([^<]+)\s*<\/loc>/gi), (m) => m[1]));
+        urls.push(
+          ...Array.from(
+            response.text.matchAll(/<loc>\s*([^<]+)\s*<\/loc>/gi),
+            (m) => m[1],
+          ),
+        );
       } catch {
         // An issuer may not publish a sitemap at either conventional path.
       }
@@ -366,7 +405,10 @@ async function putInReview(
       .eq("discovery_job_id", job.id)
       .maybeSingle();
     if (currentReviewError) throw currentReviewError;
-    if (currentReview && ["approved", "merged", "rejected"].includes(currentReview.status)) {
+    if (
+      currentReview &&
+      ["approved", "merged", "rejected"].includes(currentReview.status)
+    ) {
       return;
     }
 
@@ -394,7 +436,9 @@ async function putInReview(
           .eq("discovery_job_id", job.id)
           .maybeSingle();
         if (racedReviewError || !racedReview) throw error;
-        if (["approved", "merged", "rejected"].includes(racedReview.status)) return;
+        if (["approved", "merged", "rejected"].includes(racedReview.status)) {
+          return;
+        }
         review = racedReview;
       }
     }
@@ -453,13 +497,16 @@ async function processDiscoveryJob(
         ? crawlerEvidence.crawler_evidence
         : [],
     };
-    const existingCandidates = Array.isArray(crawlerEvidence.crawler_existing_candidates)
-      ? crawlerEvidence.crawler_existing_candidates
-      : [];
-    const warnings = [...new Set([
-      ...(evidence.warnings ?? []),
-      "crawler_discovered_without_statement_signal",
-    ])];
+    const existingCandidates =
+      Array.isArray(crawlerEvidence.crawler_existing_candidates)
+        ? crawlerEvidence.crawler_existing_candidates
+        : [];
+    const warnings = [
+      ...new Set([
+        ...(evidence.warnings ?? []),
+        "crawler_discovered_without_statement_signal",
+      ]),
+    ];
     await putInReview(
       db,
       job,
@@ -474,7 +521,9 @@ async function processDiscoveryJob(
   }
   const product = evidence.product_signals?.[0] ?? job.proposed_product;
   if (!product) {
-    await putInReview(db, job, { issuer: job.issuer }, { evidence }, ["missing_product_identity"], 0);
+    await putInReview(db, job, { issuer: job.issuer }, { evidence }, [
+      "missing_product_identity",
+    ], 0);
     return;
   }
 
@@ -486,33 +535,58 @@ async function processDiscoveryJob(
 
   try {
     const canonical = canonicalCardIdentity(job.issuer, product);
-    const officialUrl = await discoverOfficialUrl(job.issuer, canonical.cardName);
+    const officialUrl = await discoverOfficialUrl(
+      job.issuer,
+      canonical.cardName,
+    );
     if (!officialUrl) {
-      await putInReview(db, job, canonical, { evidence }, ["official_source_not_found"], evidence.confidence ?? 0);
+      await putInReview(db, job, canonical, { evidence }, [
+        "official_source_not_found",
+      ], evidence.confidence ?? 0);
       return;
     }
-    const page = await fetchOfficialIssuerResource({ issuer: job.issuer, url: officialUrl });
+    const page = await fetchOfficialIssuerResource({
+      issuer: job.issuer,
+      url: officialUrl,
+    });
     if (page.contentType === "application/pdf") {
-      await putInReview(db, job, canonical, {
-        evidence,
-        official_url: page.finalUrl,
-        content_hash: page.contentHash,
-        source_type: "official_pdf",
-      }, ["official_pdf_requires_review"], evidence.confidence ?? 0);
+      await putInReview(
+        db,
+        job,
+        canonical,
+        {
+          evidence,
+          official_url: page.finalUrl,
+          content_hash: page.contentHash,
+          source_type: "official_pdf",
+        },
+        ["official_pdf_requires_review"],
+        evidence.confidence ?? 0,
+      );
       return;
     }
     const pageText = htmlText(page.text);
-    const pageIdentity = normalizedProduct(pageText, job.issuer);
-    const expectedIdentity = normalizedProduct(canonical.cardName, job.issuer);
-    if (!pageIdentity.includes(expectedIdentity)) {
-      await putInReview(db, job, { ...canonical, official_url: page.finalUrl }, {
-        evidence,
-        official_url: page.finalUrl,
-        content_hash: page.contentHash,
-      }, ["official_product_not_found"], evidence.confidence ?? 0);
+    const officialIdentity = exactOfficialPageIdentity(
+      page.text,
+      job.issuer,
+      canonical.cardName,
+    );
+    if (!officialIdentity) {
+      await putInReview(
+        db,
+        job,
+        { ...canonical, official_url: page.finalUrl },
+        {
+          evidence,
+          official_url: page.finalUrl,
+          content_hash: page.contentHash,
+        },
+        ["official_product_not_found"],
+        evidence.confidence ?? 0,
+      );
       return;
     }
-    const officialProduct = canonical.cardName;
+    const officialProduct = officialIdentity.cardName;
 
     const { data: catalogRows, error: catalogError } = await db
       .from("card_catalog")
@@ -520,9 +594,11 @@ async function processDiscoveryJob(
       .ilike("bank", job.issuer)
       .eq("is_discontinued", false);
     if (catalogError) throw catalogError;
-    const existing = (catalogRows ?? []).filter((row: Record<string, unknown>) =>
+    const existing = (catalogRows ?? []).filter((
+      row: Record<string, unknown>,
+    ) =>
       normalizedProduct(String(row.card_name ?? ""), job.issuer) ===
-        normalizedProduct(canonical.cardName, job.issuer)
+        normalizedProduct(officialProduct, job.issuer)
     );
     const gate = evaluateAutomaticCatalogGate({
       issuer: job.issuer,
@@ -534,12 +610,20 @@ async function processDiscoveryJob(
       conflicts: evidence.warnings ?? [],
     });
     if (!gate.autoAdd) {
-      await putInReview(db, job, { ...canonical, official_url: page.finalUrl }, {
-        evidence,
-        official_url: page.finalUrl,
-        content_hash: page.contentHash,
-        excerpt: sanitizeEvidence(pageText),
-      }, gate.reasons, evidence.confidence ?? 0, existing);
+      await putInReview(
+        db,
+        job,
+        { ...officialIdentity, official_url: page.finalUrl },
+        {
+          evidence,
+          official_url: page.finalUrl,
+          content_hash: page.contentHash,
+          excerpt: sanitizeEvidence(pageText),
+        },
+        gate.reasons,
+        evidence.confidence ?? 0,
+        existing,
+      );
       return;
     }
 
@@ -547,16 +631,23 @@ async function processDiscoveryJob(
     if (!cardId) {
       const { data: card, error: insertError } = await db.from("card_catalog")
         .insert({
-          bank: canonical.issuer,
-          card_name: canonical.cardName,
-          network: canonical.network ?? evidence.network ?? null,
+          bank: officialIdentity.issuer,
+          card_name: officialIdentity.cardName,
+          network: officialIdentity.network ?? canonical.network ??
+            evidence.network ?? null,
           card_type: "credit",
           card_url: page.finalUrl,
         }).select("id").single();
       if (insertError) throw insertError;
       cardId = card.id;
     }
-    for (const alias of [...canonical.aliases, ...(evidence.product_signals ?? [])]) {
+    for (
+      const alias of [
+        ...officialIdentity.aliases,
+        ...canonical.aliases,
+        ...(evidence.product_signals ?? []),
+      ]
+    ) {
       await db.from("card_catalog_aliases").upsert({
         card_id: cardId,
         alias,
@@ -570,7 +661,7 @@ async function processDiscoveryJob(
       source_url: page.finalUrl,
       source_type: "official_html",
       content_hash: page.contentHash,
-      extracted_fields: canonical,
+      extracted_fields: officialIdentity,
       source_evidence: { excerpt: sanitizeEvidence(pageText) },
       validation_version: "card-identity-v1",
       confidence: evidence.confidence ?? 0,
@@ -604,17 +695,24 @@ async function processDiscoveryJob(
     await db.from("card_discovery_jobs").update({
       status: "failed",
       failure_category: failure,
-      next_retry_at: new Date(Date.now() + Math.min(60, 2 ** attempt) * 60_000).toISOString(),
+      next_retry_at: new Date(Date.now() + Math.min(60, 2 ** attempt) * 60_000)
+        .toISOString(),
       updated_at: new Date().toISOString(),
     }).eq("id", jobId);
   }
 }
 
 serve(async (request) => {
-  if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
-  if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+  if (request.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+  if (request.method !== "POST") {
+    return json({ error: "Method not allowed" }, 405);
+  }
   const authorization = request.headers.get("Authorization");
-  if (!authorization?.startsWith("Bearer ")) return json({ error: "Authentication required" }, 401);
+  if (!authorization?.startsWith("Bearer ")) {
+    return json({ error: "Authentication required" }, 401);
+  }
 
   const db = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
@@ -623,14 +721,18 @@ serve(async (request) => {
   const { data: { user }, error: authError } = await db.auth.getUser(
     authorization.slice("Bearer ".length),
   );
-  if (authError || !user) return json({ error: "Authentication required" }, 401);
+  if (authError || !user) {
+    return json({ error: "Authentication required" }, 401);
+  }
 
   try {
     const body = await request.json();
     const action = body.action;
     if (action === "resolve_url") {
       const evidence = safeEvidence(body.evidence);
-      if (typeof body.source_url !== "string" || body.source_url.length > 2048) {
+      if (
+        typeof body.source_url !== "string" || body.source_url.length > 2048
+      ) {
         return json({ error: "invalid_url", reason_code: "invalid_url" }, 400);
       }
       const job = await upsertDiscoveryJob(db, user.id, evidence);
@@ -647,23 +749,30 @@ serve(async (request) => {
             : null,
           updated_at: new Date().toISOString(),
         }).eq("id", job.id);
-        return json({
-          ...publicDiscoveryResult({
-            id: job.id,
-            status: reason === "fetch_timeout" ? "failed" : "review_required",
-            failure_category: reason,
-            next_retry_at: reason === "fetch_timeout"
-              ? new Date(Date.now() + 120_000).toISOString()
-              : null,
-          }),
-        }, reason === "invalid_url" || reason === "unapproved_domain" ? 400 : 200);
+        return json(
+          {
+            ...publicDiscoveryResult({
+              id: job.id,
+              status: reason === "fetch_timeout" ? "failed" : "review_required",
+              failure_category: reason,
+              next_retry_at: reason === "fetch_timeout"
+                ? new Date(Date.now() + 120_000).toISOString()
+                : null,
+            }),
+          },
+          reason === "invalid_url" || reason === "unapproved_domain"
+            ? 400
+            : 200,
+        );
       }
     }
     if (action === "discover") {
       const evidence = safeEvidence(body.evidence);
       const product = evidence.product_signals?.[0] ?? "unknown";
       const dedupeKey = await sha256(
-        `${evidence.issuer}:${normalizedProduct(product, evidence.issuer) || "unknown"}`,
+        `${evidence.issuer}:${
+          normalizedProduct(product, evidence.issuer) || "unknown"
+        }`,
       );
       const { data: job, error } = await db.from("card_discovery_jobs").upsert({
         user_id: user.id,
@@ -703,6 +812,8 @@ serve(async (request) => {
     }
     return json({ error: "Unsupported action" }, 400);
   } catch (error) {
-    return json({ error: error instanceof Error ? error.message : "Request failed" }, 400);
+    return json({
+      error: error instanceof Error ? error.message : "Request failed",
+    }, 400);
   }
 });

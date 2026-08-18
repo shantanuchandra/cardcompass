@@ -7,6 +7,7 @@ import {
   canonicalOfficialUrl,
   canonicalCardIdentity,
   evaluateAutomaticCatalogGate,
+  exactOfficialPageIdentity,
   isAdminEmail,
   officialCardIdentityFromHtml,
   publicDiscoveryResult,
@@ -96,6 +97,68 @@ test('strips title marketing wrappers without removing real product variant toke
       aliases: ['Privilege Select Credit Card'],
     },
   );
+  assert.deepEqual(
+    officialCardIdentityFromHtml(
+      '<title>Platinum Times Card - Best Entertainment Credit Card | HDFC Bank</title>',
+      'HDFC Bank',
+    ),
+    {
+      issuer: 'HDFC Bank',
+      cardName: 'Platinum Times',
+      network: null,
+      aliases: ['Platinum Times Card'],
+    },
+  );
+  assert.deepEqual(
+    officialCardIdentityFromHtml(
+      '<title>ICICI Bank HPCL Coral Credit Card – 25% Fuel Cashback</title>',
+      'ICICI Bank',
+    ),
+    {
+      issuer: 'ICICI Bank',
+      cardName: 'Hpcl Coral',
+      network: null,
+      aliases: ['ICICI Bank HPCL Coral Credit Card'],
+    },
+  );
+  assert.deepEqual(
+    officialCardIdentityFromHtml(
+      '<title>PVR Inox Kotak Credit Card: Exclusive Rewards &amp; Benefits | Kotak Mahindra Bank</title>',
+      'Kotak Bank',
+    ),
+    {
+      issuer: 'Kotak Bank',
+      cardName: 'Pvr Inox',
+      network: null,
+      aliases: ['PVR Inox Kotak Credit Card'],
+    },
+  );
+  assert.deepEqual(
+    officialCardIdentityFromHtml(
+      '<title>SBI Elite Credit Card - Benefits &amp; Features - Apply Now | SBI Card</title>',
+      'SBI Card',
+    ),
+    {
+      issuer: 'SBI Card',
+      cardName: 'Elite',
+      network: null,
+      aliases: ['SBI Elite Credit Card'],
+    },
+  );
+});
+
+test('requires the official page title to match the exact statement variant', () => {
+  const html = '<title>Regalia Gold Credit Card | HDFC Bank</title>';
+
+  assert.equal(
+    exactOfficialPageIdentity(html, 'HDFC Bank', 'Regalia'),
+    null,
+    'Regalia incorrectly matched the Regalia Gold product page',
+  );
+  assert.equal(
+    exactOfficialPageIdentity(html, 'HDFC Bank', 'Regalia Gold')?.cardName,
+    'Regalia Gold',
+  );
 });
 
 test('prefers authoritative document metadata over an earlier navigation title tile', () => {
@@ -130,9 +193,11 @@ test('skips issuer service-portal metadata and falls back to a concrete product 
 test('card discovery emits parser-aware enrichment queue identity', async () => {
   const source = await readFile(cardDiscoveryEntrypoint, 'utf8');
   assert.match(source, /enqueueBenefitEnrichmentJob\(db,/);
-  assert.match(source, /parserVersion:\s*["']benefits-v1["']/);
+  assert.match(source, /parserVersion:\s*["']benefits-v5["']/);
   assert.doesNotMatch(source, /onConflict:\s*["']card_id,final_url_hash,content_hash["']/);
   assert.doesNotMatch(source, /functions\/v1\/catalog-enrichment/);
+  assert.match(source, /exactOfficialPageIdentity\(/);
+  assert.doesNotMatch(source, /pageIdentity\.includes\(expectedIdentity\)/);
 });
 
 test('benefit enrichment keeps initialization and issuer discovery off unsafe paths', async () => {
@@ -143,6 +208,11 @@ test('benefit enrichment keeps initialization and issuer discovery off unsafe pa
   assert.match(source, /stage_card_benefit_enrichment/);
   assert.match(source, /finalize_card_catalog_enrichment_job/);
   assert.match(source, /collectSupportingBenefitDocuments\(/);
+  assert.match(
+    source,
+    /contentPurpose:\s*["']document["'][\s\S]*maxBytes:\s*2\s*\*\s*1024\s*\*\s*1024/,
+    'primary issuer pages must accommodate current HDFC product pages without removing the byte ceiling',
+  );
   assert.match(source, /source_documents/);
   assert.match(source, /issuerDiscoveryFallbackUrls\(/);
   assert.match(source, /EdgeRuntime\.waitUntil\(\s*runIssuerDiscovery/s);
@@ -335,6 +405,21 @@ test('requires official issuer evidence plus an agreeing statement signal', () =
   });
   assert.equal(missingStatementSignal.autoAdd, false);
   assert.ok(missingStatementSignal.reasons.includes('missing_statement_signal'));
+});
+
+test('does not auto-resolve a shorter statement variant to a longer official product', () => {
+  const result = evaluateAutomaticCatalogGate({
+    issuer: 'HDFC Bank',
+    officialUrl: 'https://www.hdfc.bank.in/credit-cards/regalia-gold-credit-card',
+    officialProduct: 'Regalia Gold',
+    statementProducts: ['Regalia'],
+    confidence: 0.95,
+    catalogCandidateCount: 0,
+    conflicts: [],
+  });
+
+  assert.equal(result.autoAdd, false);
+  assert.ok(result.reasons.includes('product_mismatch'));
 });
 
 test('rejects low confidence and conflicting automatic additions', () => {

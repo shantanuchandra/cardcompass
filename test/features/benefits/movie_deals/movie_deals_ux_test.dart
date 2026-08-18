@@ -291,11 +291,11 @@ void main() {
       recommendation: recommendation,
     );
 
-    // Appears in BOTH slots — this candidate is both the owned and
-    // overall potential winner, so it renders in both columns.
+    // The same bank/card benefit can qualify for both owned and overall,
+    // but the comparison UI deliberately renders it only once.
     expect(
       find.text('Booking platform is not confirmed for this offer.'),
-      findsNWidgets(2),
+      findsOneWidget,
     );
   });
 

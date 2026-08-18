@@ -45,6 +45,8 @@ enum MovieDealOfferType {
   rewardMultiplier,
 }
 
+enum MovieDealCyclePeriod { month, quarter, year }
+
 /// An immutable, validated movie-deal rule. Null commercial terms are
 /// unknown, never inferred from a default (design spec §4.2/§4.4).
 class MovieDealRule {
@@ -67,6 +69,7 @@ class MovieDealRule {
     this.buyCount,
     this.freeCount,
     this.cycleRedemptionLimit,
+    this.cyclePeriod,
     this.annualCap,
     this.milestoneThreshold,
     this.milestoneReward,
@@ -120,6 +123,10 @@ class MovieDealRule {
   /// "N redemptions/uses per cycle" — counts REDEMPTIONS, NOT tickets
   /// (design spec §4.4: `max_usage_per_month: 2` means 2 redemptions/month).
   final int? cycleRedemptionLimit;
+
+  /// Source-declared period for [cycleRedemptionLimit]. Null means the
+  /// source did not provide a usable period; it is never inferred.
+  final MovieDealCyclePeriod? cyclePeriod;
 
   /// annualAllowance only — total ₹ available per calendar year.
   final double? annualCap;

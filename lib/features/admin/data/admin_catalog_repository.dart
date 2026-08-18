@@ -92,6 +92,7 @@ class AdminCatalogRepository implements BenefitEnrichmentRepository {
     return list.copyWith(
       counts: statusPage.counts.total > 0 ? statusPage.counts : list.counts,
       history: statusPage.history,
+      movieMappingHealth: statusPage.movieMappingHealth,
     );
   }
 

@@ -207,7 +207,11 @@ class _BenefitEnrichmentReviewPanelState
           child: ListView(
             padding: const EdgeInsets.all(24),
             children: [
-              _ProgressSummary(counts: page.counts, history: page.history),
+              _ProgressSummary(
+                counts: page.counts,
+                history: page.history,
+                movieMappingHealth: page.movieMappingHealth,
+              ),
               if (_actionError != null) ...[
                 const SizedBox(height: 16),
                 MaterialBanner(
@@ -316,9 +320,14 @@ class _BenefitEnrichmentReviewPanelState
 }
 
 class _ProgressSummary extends StatelessWidget {
-  const _ProgressSummary({required this.counts, required this.history});
+  const _ProgressSummary({
+    required this.counts,
+    required this.history,
+    required this.movieMappingHealth,
+  });
   final BenefitEnrichmentCounts counts;
   final List<BenefitJobHistory> history;
+  final MovieBenefitMappingHealth movieMappingHealth;
 
   @override
   Widget build(BuildContext context) {
@@ -339,6 +348,9 @@ class _ProgressSummary extends StatelessWidget {
             const SizedBox(height: 8),
             Text('Job run coverage: $scheduled scheduled · $pilot pilot'),
             Text('All jobs by status: $completed completed · $failed failed'),
+            Text(
+              'Movies mapping health: ${movieMappingHealth.mapped} / ${movieMappingHealth.active} mapped · ${movieMappingHealth.orphaned} orphaned',
+            ),
             if (history.isNotEmpty) ...[
               const SizedBox(height: 8),
               Text(
