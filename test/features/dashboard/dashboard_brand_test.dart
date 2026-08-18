@@ -11,6 +11,7 @@ import 'package:cardcompass/features/dashboard/providers/gmail_sync_provider.dar
 import 'package:cardcompass/features/dashboard/screens/dashboard_screen.dart';
 import 'package:cardcompass/shared/models/transaction.dart';
 import 'package:cardcompass/shared/models/user_card.dart';
+import 'package:cardcompass/shared/models/statement.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -195,6 +196,42 @@ Future<void> _startPendingAssignment(
 }
 
 void main() {
+  testWidgets(
+    'bill section distinguishes statement balances from monthly spend',
+    (tester) async {
+      final selectedAppTab = ValueNotifier(AppTab.dashboard);
+      addTearDown(selectedAppTab.dispose);
+      final statement = Statement(
+        id: 'statement-1',
+        userId: 'user-1',
+        cardId: 'catalog-1',
+        userCardId: 'card-1',
+        statementDate: DateTime(2026, 8, 1),
+        dueDate: DateTime(2026, 8, 21),
+        totalAmount: 476612,
+        closingBalance: 476612,
+        paymentStatus: PaymentStatus.pending,
+        createdAt: DateTime(2026, 8, 1),
+      );
+      final data = DashboardData(
+        cards: _fixture.cards,
+        recentTransactions: const [],
+        latestStatements: {'card-1': statement},
+        totalCreditLimit: 1000000,
+        monthlySpend: 0,
+        rewardsEarned: 0,
+        monthlySpendTrend: const [0, 0, 0, 0, 0, 0],
+        monthlyRewardsTrend: const [0, 0, 0, 0, 0, 0],
+        trendMonths: _fixture.trendMonths,
+      );
+
+      await _pumpDashboard(tester, selectedAppTab: selectedAppTab, data: data);
+
+      expect(find.text('Statement balances due'), findsOneWidget);
+      expect(find.textContaining("not this month's purchases"), findsOneWidget);
+    },
+  );
+
   final source = File(
     'lib/features/dashboard/screens/dashboard_screen.dart',
   ).readAsStringSync();

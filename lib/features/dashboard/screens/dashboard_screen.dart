@@ -731,9 +731,26 @@ class _DashboardContent extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               DashboardSectionHeader(
-                title: 'Bills Due',
+                title: 'Statement balances due',
                 action: null,
                 onTap: null,
+              ),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(
+                  BrandSpacing.md,
+                  0,
+                  BrandSpacing.md,
+                  BrandSpacing.sm,
+                ),
+                child: Text(
+                  "Issuer statement balances may include earlier cycles, EMIs, fees, or interest; they are not this month's purchases.",
+                  style: TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 12,
+                    height: 1.4,
+                    color: BrandColors.mutedInk,
+                  ),
+                ),
               ),
               _BillsPanel(
                 cards: data.cards,
