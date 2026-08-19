@@ -21,6 +21,8 @@ test('eval run schema exposes bounded service-only lifecycle contracts', async (
   assert.match(sql, /least\(_batch_limit, 5\)/);
   assert.doesNotMatch(sql, /_maximum_projected_cost_per_case/);
   assert.match(sql, /per_case_max_cost_usd > 0/);
+  assert.match(sql, /insufficient_fixture/);
+  assert.match(sql, /failure_categories/);
   for (const rpc of ['admin_create_ai_eval_run', 'admin_ai_eval_run_action', 'claim_ai_eval_run_batch', 'record_ai_eval_result', 'finish_ai_eval_run']) {
     assert.match(sql, new RegExp(`function public\\.${rpc}`));
     assert.match(sql, new RegExp(`grant execute on function public\\.${rpc}[^;]+ to service_role`));
@@ -86,6 +88,16 @@ test('eval lifecycle is idempotent, fenced, bounded, resumable and immutable in 
     psql(disposable, `select public.record_ai_eval_result('${versionTwo.run_id}','${five.lease_token}','${retryCase.case_id}',${retryCase.revision},'${resultPayload('succeeded', 0.01)}');`);
     assert.equal(psql(disposable, `select execution_status||':'||attempt_count||':'||estimated_cost_usd from public.ai_eval_results where run_id='${versionTwo.run_id}' and case_id='${retryCase.case_id}';`), 'succeeded:2:0.020000');
     assert.throws(() => psql(disposable, `select public.admin_create_ai_eval_run('10000000-0000-4000-8000-000000000001',gen_random_uuid(),2,'captured-production-v1','unknown','gemini-3.6-flash-blind-judge-v1',100,1.0,25000);`), /invalid_request/);
+
+    const incomplete = JSON.parse(psql(disposable, `select public.admin_create_ai_eval_run('10000000-0000-4000-8000-000000000001','60000000-0000-4000-8000-000000000088',2,'captured-production-v1','gemini-3.6-flash-card-data-v1','gemini-3.6-flash-blind-judge-v1',100,1.0,25000);`));
+    const incompleteClaim = JSON.parse(psql(disposable, `select public.claim_ai_eval_run_batch('${incomplete.run_id}',5);`));
+    for (const item of incompleteClaim.cases) {
+      const payload = JSON.stringify({ feature_key: item.feature_key, baseline_output: {}, candidate_output: {}, deterministic_assertions: [], judge_verdict: {}, regression: false, severe_regression: false, estimated_cost_usd: 0, execution_status: 'failed', safe_failure_category: 'insufficient_fixture' });
+      psql(disposable, `select public.record_ai_eval_result('${incomplete.run_id}','${incompleteClaim.lease_token}','${item.case_id}',${item.revision},'${payload}');`);
+    }
+    assert.equal(JSON.parse(psql(disposable, `select public.finish_ai_eval_run('${incomplete.run_id}','${incompleteClaim.lease_token}');`)).status, 'completed_with_failures');
+    assert.equal(psql(disposable, `select safe_failure_category from public.ai_eval_runs where id='${incomplete.run_id}';`), 'insufficient_fixture');
+    assert.equal(JSON.parse(psql(disposable, `select aggregate_metrics from public.ai_eval_runs where id='${incomplete.run_id}';`)).failure_categories.insufficient_fixture, incompleteClaim.cases.length);
     const cancelRequest = '60000000-0000-4000-8000-000000000003';
     psql(disposable, `select public.admin_ai_eval_run_action('10000000-0000-4000-8000-000000000001','${cancelRequest}','${versionTwo.run_id}','cancel'); select public.admin_ai_eval_run_action('10000000-0000-4000-8000-000000000001','${cancelRequest}','${versionTwo.run_id}','cancel');`);
     assert.equal(psql(disposable, `select count(*) from public.admin_audit_log where request_id='${cancelRequest}';`), '1');

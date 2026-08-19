@@ -44,13 +44,15 @@ export async function resolveFeedbackContext(
       amount: row.amount,
       currency: row.currency,
       merchant_name: boundedText(row.merchant_name, 200),
-      category: row.category,
-      transaction_type: row.transaction_type,
       transaction_date: row.transaction_date,
     };
     return {
       safeInputContext: { kind: "transaction", transaction },
-      outputSnapshot: transaction,
+      outputSnapshot: {
+        ...transaction,
+        category: row.category,
+        transaction_type: row.transaction_type,
+      },
       authoritativeContext: {},
       metadata: { parser_version: "persisted_transaction_v1" },
     };
@@ -76,7 +78,10 @@ export async function resolveFeedbackContext(
       transaction_count: row.transaction_count,
     };
     return {
-      safeInputContext: { kind: "statement_metadata", statement },
+      safeInputContext: {
+        kind: "statement_requires_review",
+        statement_id: row.id,
+      },
       outputSnapshot: statement,
       authoritativeContext: {},
       metadata: { parser_version: "persisted_statement_v1" },
@@ -106,17 +111,11 @@ export async function resolveFeedbackContext(
     const benefits = (mappings ?? []).slice(0, 50)
       .map((entry: Record<string, unknown>) => entry.benefit)
       .filter((entry: unknown) => entry && typeof entry === "object");
-    const currentCard = {
-      id: row.id,
-      catalog_card_id: row.catalog_card_id,
-      is_active: row.is_active,
-    };
     return {
       safeInputContext: {
-        kind: "card_data",
-        user_card: currentCard,
-        catalog_card: catalog,
-        benefits,
+        kind: "card_requires_review",
+        user_card_id: row.id,
+        last_four_digits: boundedText(row.last_four_digits, 4),
       },
       outputSnapshot: { user_card: row, catalog_card: catalog },
       authoritativeContext: { catalog_card: catalog, benefits },
@@ -136,7 +135,10 @@ export async function resolveFeedbackContext(
       new Date(trace.expires_at).getTime() <= Date.now()
     ) throw Object.assign(new Error("not_found"), { status: 404 });
     return {
-      safeInputContext: trace.safe_input_context,
+      safeInputContext: {
+        ...trace.safe_input_context,
+        task: "explain_fixed_selection",
+      },
       outputSnapshot: trace.output_snapshot,
       authoritativeContext: trace.authoritative_context,
       metadata: {

@@ -102,6 +102,14 @@ Deno.test("trace fixture copies authoritative facts and rejects foreign or expir
     "trace",
   );
   assertEquals(resolved.authoritativeContext, base.authoritative_context);
+  assertEquals(resolved.safeInputContext, {
+    ...base.safe_input_context,
+    task: "explain_fixed_selection",
+  });
+  assertEquals(
+    JSON.stringify(resolved.safeInputContext).includes("client_reported"),
+    false,
+  );
   assertEquals(resolved.metadata.engine_version, "engine-v1");
   await assertRejects(
     () =>
@@ -176,12 +184,42 @@ Deno.test("transaction and statement fixtures contain bounded reproducible field
       amount: 1249,
       currency: "INR",
       merchant_name: "Big Bazaar",
-      category: "shopping",
-      transaction_type: "debit",
       transaction_date: "2026-08-01",
     },
   });
   assertEquals(JSON.stringify(resolved).includes("secret raw line"), false);
+  assertEquals(resolved.outputSnapshot.category, "shopping");
+  assertEquals(resolved.outputSnapshot.transaction_type, "debit");
+  assertEquals(
+    JSON.stringify(resolved.safeInputContext).includes("shopping"),
+    false,
+  );
+
+  const statement = await resolveFeedbackContext(
+    fakeDb({
+      statements: [{
+        id: "st-1",
+        user_id: "owner",
+        user_card_id: "uc-1",
+        statement_date: "2026-08-01",
+        due_date: "2026-08-20",
+        total_amount: 1000,
+        minimum_payment: 100,
+        closing_balance: 1000,
+        fees_charged: 0,
+        processed: true,
+        transaction_count: 4,
+      }],
+    }),
+    "owner",
+    "statement_processing",
+    "statement",
+    "st-1",
+  );
+  assertEquals(statement.safeInputContext, {
+    kind: "statement_requires_review",
+    statement_id: "st-1",
+  });
 });
 
 Deno.test("card fixture carries authoritative current identity facts", async () => {
@@ -227,10 +265,9 @@ Deno.test("card fixture carries authoritative current identity facts", async () 
     "uc-1",
   );
   assertEquals(resolved.safeInputContext, {
-    kind: "card_data",
-    user_card: { id: "uc-1", catalog_card_id: "card-1", is_active: true },
-    catalog_card: resolved.authoritativeContext.catalog_card,
-    benefits: resolved.authoritativeContext.benefits,
+    kind: "card_requires_review",
+    user_card_id: "uc-1",
+    last_four_digits: "1234",
   });
   assertEquals((resolved.authoritativeContext.benefits as unknown[]).length, 1);
 });

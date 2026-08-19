@@ -28,8 +28,6 @@ const fixture = (
           amount: 1249,
           currency: "INR",
           merchant_name: "Big Bazaar",
-          category: "shopping",
-          transaction_type: "debit",
           transaction_date: "2026-08-01",
         },
       },
@@ -39,38 +37,53 @@ const fixture = (
     ? {
       safe_input_context: {
         kind: "card_data",
-        user_card: { id: "uc-1", catalog_card_id: "card-1", is_active: true },
-        catalog_card: {
-          id: "card-1",
-          card_name: "Regalia Gold",
-          bank: "HDFC",
-          network: "Visa",
-          card_type: "credit",
-          annual_fee: 2500,
-          joining_fee: 2500,
-          is_discontinued: false,
-          updated_at: "2026-08-01",
+        identifiers: {
+          entered_name: "Regalia Gold",
+          issuer_hint: "HDFC",
+          last_four_digits: "1234",
         },
+        official_sources: [{
+          id: "source-1",
+          url: "https://bank.example/card",
+          snippet: "Regalia Gold by HDFC. Annual fee INR 2500.",
+          facts: {
+            card_id: "card-1",
+            card_name: "Regalia Gold",
+            bank: "HDFC",
+            network: "Visa",
+            annual_fee: 2500,
+            joining_fee: 2500,
+            benefits: [{
+              id: "benefit-1",
+              dedupe_key: "lounge",
+              title: "Lounge",
+              type: "access",
+              category: "travel",
+              value_config: { limit: 4 },
+              limit: 4,
+              period: "quarter",
+              eligibility: "primary cardholder",
+            }],
+          },
+        }],
       },
-      authoritative_context: {
-        catalog_card: {
-          id: "card-1",
-          card_name: "Regalia Gold",
-          bank: "HDFC",
-          network: "Visa",
-          card_type: "credit",
-          annual_fee: 2500,
-          joining_fee: 2500,
-          is_discontinued: false,
-          updated_at: "2026-08-01",
-        },
-      },
+      authoritative_context: {},
     }
     : {
-      safe_input_context: { number_of_tickets: 2, price_per_ticket: 400 },
+      safe_input_context: {
+        number_of_tickets: 2,
+        price_per_ticket: 400,
+        task: "explain_fixed_selection",
+      },
       authoritative_context: {
         cards: [{ id: "card-1" }],
-        benefits: [{ benefit_id: "benefit-1" }],
+        benefits: [{
+          benefit_id: "benefit-1",
+          value_config: {
+            discount_percent: 25,
+            max_discount_per_transaction: 200,
+          },
+        }],
         owned_card_ids: ["card-1"],
       },
     },
@@ -223,19 +236,19 @@ Deno.test("candidate receives only deeply sanitized fixture inside a fixed, deli
     generate: async (input) => {
       seen.push(input);
       return fakeGeneration({
-        user_card: { id: "uc-1", catalog_card_id: "card-1", is_active: true },
-        catalog_card: {
+        mode: "identity",
+        card: {
           id: "card-1",
-          card_name: "Regalia Gold",
+          name: "Regalia Gold",
           bank: "HDFC",
           network: "Visa",
-          card_type: "credit",
           annual_fee: 2500,
           joining_fee: 2500,
-          is_discontinued: false,
-          updated_at: "2026-08-01",
         },
-        sources: [{ id: "card-1", field_paths: ["catalog_card.card_name"] }],
+        sources: [{
+          id: "source-1",
+          field_paths: ["facts.card_name", "facts.annual_fee"],
+        }],
       });
     },
   });
@@ -253,6 +266,20 @@ Deno.test("candidate receives only deeply sanitized fixture inside a fixed, deli
   }
   assertEquals(serialized.includes("BEGIN_UNTRUSTED_INPUT_FIXTURE"), true);
   assertEquals(serialized.includes("No tools are available"), true);
+});
+
+Deno.test("candidate model data excludes captured statement labels and output", async () => {
+  const item = fixture("statement_processing");
+  let serialized = "";
+  const result = await executeEvalCase(item, "gemini-3.6-flash-statement-v1", {
+    generate: async (input) => {
+      serialized = JSON.stringify(input);
+      return fakeGeneration(item.capturedOutput);
+    },
+  });
+  assertEquals(result.executionStatus, "succeeded");
+  assertEquals(serialized.includes("shopping"), false);
+  assertEquals(serialized.includes('"transaction_type":"debit"'), false);
 });
 
 Deno.test("fixture rejects nested ground-truth fields before model execution", async () => {
@@ -311,17 +338,14 @@ Deno.test("candidate output is exact, bounded, typed, and grounded", async () =>
       }],
     },
     {
-      user_card: { id: "uc-1", catalog_card_id: "foreign", is_active: true },
-      catalog_card: {
+      mode: "identity",
+      card: {
         id: "foreign",
-        card_name: "X",
+        name: "X",
         bank: "Y",
         network: "Visa",
-        card_type: "credit",
         annual_fee: 1,
         joining_fee: 1,
-        is_discontinued: false,
-        updated_at: "x",
       },
       sources: [],
     },
@@ -356,13 +380,19 @@ Deno.test("real captured-shape candidates succeed for every feature family", asy
         fixture("statement_processing").capturedOutput,
       ],
       ["card_data", "gemini-3.6-flash-card-data-v1", {
-        user_card: { id: "uc-1", catalog_card_id: "card-1", is_active: true },
-        catalog_card:
-          (fixture("card_data").inputFixture.safe_input_context as Record<
-            string,
-            unknown
-          >).catalog_card,
-        sources: [{ id: "card-1", field_paths: ["catalog_card.card_name"] }],
+        mode: "identity",
+        card: {
+          id: "card-1",
+          name: "Regalia Gold",
+          bank: "HDFC",
+          network: "Visa",
+          annual_fee: 2500,
+          joining_fee: 2500,
+        },
+        sources: [{
+          id: "source-1",
+          field_paths: ["facts.card_name", "facts.annual_fee"],
+        }],
       }],
       [
         "recommendation",
@@ -383,8 +413,8 @@ Deno.test("empty and foreign-id outputs never count as successful evidence", asy
     const [feature, key, output] of [
       ["statement_processing", "gemini-3.6-flash-statement-v1", {}],
       ["card_data", "gemini-3.6-flash-card-data-v1", {
-        user_card: {},
-        catalog_card: {},
+        mode: "identity",
+        card: {},
         sources: [],
       }],
       ["recommendation", "gemini-3.6-flash-recommendation-v1", {
@@ -401,6 +431,83 @@ Deno.test("empty and foreign-id outputs never count as successful evidence", asy
     });
     assertEquals(result.safeFailureCategory, "invalid_model_output");
   }
+});
+
+Deno.test("immutable transaction evidence, card paths and financial math are enforced deeply", async () => {
+  const wrongTransaction = {
+    ...fixture("statement_processing").capturedOutput,
+    amount: 999,
+  };
+  const badPath = {
+    mode: "identity",
+    card: {
+      id: "card-1",
+      name: "Regalia Gold",
+      bank: "HDFC",
+      network: "Visa",
+      annual_fee: 2500,
+      joining_fee: 2500,
+    },
+    sources: [{ id: "source-1", field_paths: ["facts.missing"] }],
+  };
+  const wrongMath = {
+    ...fixture("recommendation").capturedOutput,
+    savings: 199,
+    final_amount: 601,
+  };
+  for (
+    const [feature, key, output] of [
+      [
+        "statement_processing",
+        "gemini-3.6-flash-statement-v1",
+        wrongTransaction,
+      ],
+      ["card_data", "gemini-3.6-flash-card-data-v1", badPath],
+      ["recommendation", "gemini-3.6-flash-recommendation-v1", wrongMath],
+    ] as const
+  ) {
+    const result = await executeEvalCase(fixture(feature), key, {
+      generate: async () => fakeGeneration(output),
+    });
+    assertEquals(result.safeFailureCategory, "invalid_model_output");
+  }
+});
+
+Deno.test("grounded benefit extraction accepts the exact official benefit only", async () => {
+  const benefit = {
+    id: "benefit-1",
+    dedupe_key: "lounge",
+    title: "Lounge",
+    type: "access",
+    category: "travel",
+    value_config: { limit: 4 },
+    limit: 4,
+    period: "quarter",
+    eligibility: "primary cardholder",
+  };
+  const valid = {
+    mode: "benefits",
+    card_id: "card-1",
+    benefits: [benefit],
+    sources: [{ id: "source-1", field_paths: ["facts.benefits"] }],
+  };
+  assertEquals(
+    (await executeEvalCase(
+      fixture("card_data"),
+      "gemini-3.6-flash-card-data-v1",
+      { generate: async () => fakeGeneration(valid) },
+    )).executionStatus,
+    "succeeded",
+  );
+  const hallucinated = { ...valid, benefits: [{ ...benefit, limit: 8 }] };
+  assertEquals(
+    (await executeEvalCase(
+      fixture("card_data"),
+      "gemini-3.6-flash-card-data-v1",
+      { generate: async () => fakeGeneration(hallucinated) },
+    )).safeFailureCategory,
+    "invalid_model_output",
+  );
 });
 
 Deno.test("invalid output retains metering in a safe failure", async () => {

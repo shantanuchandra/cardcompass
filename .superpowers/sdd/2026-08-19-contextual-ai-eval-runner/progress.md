@@ -74,3 +74,14 @@ Ruling: Import the migration SQL as text in the registry test and derive its can
 Ruling: Treat legacy cases without a closed reproducible fixture as `insufficient_fixture`, including captured baselines, rather than accepting unevaluable output. Cost if wrong: older approved cases require a reviewed new revision before they can contribute evidence.
 
 Ruling: Keep statement feedback reproducible at its selected target granularity: one exact transaction or bounded statement metadata, never a full statement history reconstructed from unsafe/raw inputs. Cost if wrong: feedback about an unselected missing transaction remains human-review evidence until a safe selected-transaction fixture is authored.
+
+### Task 4 evaluation-integrity corrections
+
+- Candidate inputs and captured answers are now separated by construction. Transaction evidence excludes production category/type labels; statement metadata and current resolved card snapshots without original source evidence are explicitly non-runnable.
+- Card execution supports discriminated identity and benefit outputs. Official source paths must resolve, identity values must equal source facts, and benefit objects must deeply equal bounded sourced facts.
+- Fixed-selection recommendation evaluation receives request constraints plus selected authoritative facts, never captured savings/final amount/explanation. Candidate financials must reconcile to the source discount rule and gross ticket amount within one paisa.
+- `insufficient_fixture` is accepted by run/result storage, persisted as a failed case, summarized by failure category, and completes an all-incomplete run as `completed_with_failures`. Conditional disposable-PostgreSQL coverage exercises the lifecycle when its admin URL is supplied.
+
+Ruling: Prefer no model call over an answer-contaminated or commercially under-specified fixture. Cost if wrong: current statement-level and card-data feedback may stay in human review until capture has original bounded source evidence, preserving evaluation validity over dataset coverage.
+
+Ruling: Scope recommendation candidates to `explain_fixed_selection` for MVP and validate their money against authoritative offer rules. Cost if wrong: reranking quality requires a later fixture contract containing the full eligible candidate set and ownership constraints, rather than being inferred from one selected trace.
