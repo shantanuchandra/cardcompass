@@ -37,6 +37,22 @@ void main() {
     }
   });
 
+  test('admin2 survives a browser refresh', () async {
+    final container = ProviderContainer(
+      overrides: [
+        authNotifierProvider.overrideWith(_AuthenticatedAuthNotifier.new),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await container.read(authNotifierProvider.future);
+    final router = container.read(routerProvider);
+    final match = router.configuration.findMatch(Uri.parse('/app/admin2'));
+
+    expect(match.error, isNull);
+    expect(match.uri.path, '/app/admin2');
+  });
+
   testWidgets('pushed card routes update the browser-visible location', (
     tester,
   ) async {
@@ -73,9 +89,6 @@ void main() {
     await tester.tap(find.text('Add card'));
     await tester.pumpAndSettle();
 
-    expect(
-      router.routeInformationProvider.value.uri.path,
-      '/app/cards/add',
-    );
+    expect(router.routeInformationProvider.value.uri.path, '/app/cards/add');
   });
 }

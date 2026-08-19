@@ -12,6 +12,7 @@ import '../../features/transactions/screens/transactions_screen.dart';
 import '../../features/benefits/movie_deals/screens/movie_deals_screen.dart';
 import '../../features/settings/screens/settings_screen.dart';
 import '../../features/admin/screens/card_catalog_review_screen.dart';
+import '../../features/admin2/screens/admin_operator_screen.dart';
 import '../theme/brand_components.dart';
 import '../theme/brand_tokens.dart';
 import '../../app.dart' show navigatorKey;
@@ -122,6 +123,11 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(path: '/app/movie-deals', pageBuilder: (_, s) => _appShellPage()),
       GoRoute(path: '/app/settings', pageBuilder: (_, s) => _appShellPage()),
+      GoRoute(
+        path: '/app/admin2',
+        pageBuilder: (_, s) =>
+            const NoTransitionPage(child: AdminOperatorScreen()),
+      ),
       GoRoute(
         path: '/app/admin/catalog-review',
         pageBuilder: (_, s) =>
