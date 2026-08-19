@@ -17,7 +17,7 @@ Ruling: Carry the Feedback plan's final adjudication into the Tasks 1–3 code-b
 ## Tasks
 
 - Tasks 1–3: complete — immutable run storage/lifecycle and metered transport
-- Task 4: pending — code-owned configs and executors
+- Task 4: complete — code-owned configs and feature-safe executors
 - Task 5: pending — deterministic and blind scoring
 - Task 6: pending — private bounded resumable worker
 - Task 7: pending — Admin2 controls and decision support
@@ -55,3 +55,11 @@ Ruling: Select one latest applicable revision per source feedback lineage for ea
 Ruling: Apply retirement after selecting the newest historically approved revision in a lineage. Cost if wrong: retirement removes the logical case from later datasets instead of resurrecting an older superseded revision.
 
 Ruling: Bind each run manifest to the single feature family derived from its allowlisted candidate configuration. Cost if wrong: cross-feature comparison requires separate runs, ensuring every manifest case is executable by the selected candidate.
+
+## Task 4 evidence
+
+- RED: the focused Deno command failed because the runner modules/config did not exist; the nested-ground-truth test then failed until recursive fixture rejection was implemented.
+- GREEN: seven focused tests pass for exact reviewed keys, migration-derived cost parity, pre-model key/feature rejection, zero-cost captured baselines across all three feature families, forbidden-field isolation, prompt delimiting, grounded exact output validation, and metering retention on invalid model output. Deno type-check and formatting pass.
+- Candidate prompts contain only the bounded safe fixture and a fixed server-owned schema instruction. Expected outputs, feedback, rubrics, severe conditions, and captured baselines never enter candidate generation.
+
+Ruling: Import the migration SQL as text in the registry test and derive its candidate key/cost mapping for direct parity with the code registry. Cost if wrong: SQL formatting changes may require updating the narrow extractor, but a cost or allowlist drift fails before release.
