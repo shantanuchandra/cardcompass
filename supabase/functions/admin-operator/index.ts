@@ -85,8 +85,8 @@ export async function handleAdminOperator(
         )) as never,
         db as never,
       );
+    if (!Object.hasOwn(actionHandlers, body.action)) invalidRequest();
     const handler = actionHandlers[body.action];
-    if (!handler) invalidRequest();
 
     const requestId = typeof body.request_id === "string"
       ? body.request_id

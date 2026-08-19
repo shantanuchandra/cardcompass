@@ -112,6 +112,28 @@ Deno.test("gateway rejects unsupported actions with a stable invalid_request cod
   assertEquals(await response.json(), { error: "invalid_request" });
 });
 
+Deno.test("gateway rejects inherited constructor actions without echoing the body", async () => {
+  const response = await handleAdminOperator(
+    jsonRequest(
+      JSON.stringify({ action: "constructor", secret: "do-not-echo" }),
+    ),
+    dependencies(),
+  );
+
+  assertEquals(response.status, 400);
+  assertEquals(await response.json(), { error: "invalid_request" });
+});
+
+Deno.test("gateway rejects inherited toString actions without echoing the body", async () => {
+  const response = await handleAdminOperator(
+    jsonRequest(JSON.stringify({ action: "toString", secret: "do-not-echo" })),
+    dependencies(),
+  );
+
+  assertEquals(response.status, 400);
+  assertEquals(await response.json(), { error: "invalid_request" });
+});
+
 Deno.test("gateway hides unexpected internal errors behind a stable response", async () => {
   const request = jsonRequest(JSON.stringify({ action: "access" }));
   Object.defineProperty(request, "text", {
