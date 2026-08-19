@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/theme/app_theme.dart';
 import 'core/router/app_router.dart';
+import 'core/providers/supabase_provider.dart';
+import 'features/feedback/feedback_repository.dart';
 
 /// Global navigator key so services (Gmail sync's password/DOB dialogs) can
 /// show a dialog mid-async-flow without a BuildContext being threaded
@@ -27,6 +29,14 @@ class CardCompassApp extends ConsumerWidget {
           final path = routeInformation.uri.path;
           final content = child ?? const SizedBox.shrink();
 
+          if (path.startsWith('/app')) {
+            return FeedbackRepositoryScope.lazy(
+              repositoryFactory: () => FeedbackRepository(
+                SupabaseFeedbackApi(ref.read(supabaseClientProvider)),
+              ),
+              child: content,
+            );
+          }
           if (path != '/' && path != '/login') return content;
 
           return Theme(data: AppTheme.marketing, child: content);

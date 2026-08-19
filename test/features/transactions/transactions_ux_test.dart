@@ -4,6 +4,7 @@ import 'package:cardcompass/core/theme/app_theme.dart';
 import 'package:cardcompass/core/theme/brand_components.dart';
 import 'package:cardcompass/features/transactions/providers/transactions_provider.dart';
 import 'package:cardcompass/features/transactions/screens/transactions_screen.dart';
+import 'package:cardcompass/features/feedback/feedback_repository.dart';
 import 'package:cardcompass/shared/models/transaction.dart';
 import 'package:cardcompass/shared/models/user_card.dart';
 import 'package:flutter/material.dart';
@@ -21,7 +22,7 @@ final _card = UserCard(
 );
 
 final _transaction = Transaction(
-  id: 'transaction-1',
+  id: '10000000-0000-4000-8000-000000000001',
   userId: 'user-1',
   userCardId: 'card-1',
   amount: 1834,
@@ -86,6 +87,7 @@ Future<void> pumpLedger(
   required double width,
   double textScale = 1,
   Future<TxnsState> Function()? load,
+  FeedbackRepository? feedbackRepository,
 }) async {
   tester.view.physicalSize = Size(width, 1100);
   tester.view.devicePixelRatio = 1;
@@ -101,11 +103,14 @@ Future<void> pumpLedger(
           ),
         ),
       ],
-      child: MaterialApp(
-        theme: AppTheme.work,
-        home: MediaQuery(
-          data: MediaQueryData(textScaler: TextScaler.linear(textScale)),
-          child: const TransactionsScreen(),
+      child: FeedbackRepositoryScope(
+        repository: feedbackRepository ?? FeedbackRepository(_FeedbackApi()),
+        child: MaterialApp(
+          theme: AppTheme.work,
+          home: MediaQuery(
+            data: MediaQueryData(textScaler: TextScaler.linear(textScale)),
+            child: const TransactionsScreen(),
+          ),
         ),
       ),
     ),
@@ -114,6 +119,46 @@ Future<void> pumpLedger(
 }
 
 void main() {
+  testWidgets('transaction feedback submits the exact owned transaction id', (
+    tester,
+  ) async {
+    final api = _FeedbackApi();
+    await pumpLedger(
+      tester,
+      width: 390,
+      feedbackRepository: FeedbackRepository(
+        api,
+        requestIds: ['20000000-0000-4000-8000-000000000001'].iterator,
+      ),
+    );
+
+    await tester.scrollUntilVisible(find.text('Give feedback'), 300);
+    expect(find.text('Give feedback'), findsOneWidget);
+    await tester.tap(find.text('Give feedback'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byType(TextField),
+      'This transaction category is incorrect.',
+    );
+    await tester.pump();
+    await tester.ensureVisible(find.text('Send feedback'));
+    await tester.tap(find.text('Send feedback'));
+    await tester.pumpAndSettle();
+
+    expect(api.body?['output_ref_id'], _transaction.id);
+    expect(api.body?['output_ref_type'], 'transaction');
+    expect(
+      api.body?.keys,
+      unorderedEquals([
+        'action',
+        'feature_key',
+        'output_ref_type',
+        'output_ref_id',
+        'feedback_text',
+        'request_id',
+      ]),
+    );
+  });
   testWidgets('transaction destination uses one consistent user-facing name', (
     tester,
   ) async {
@@ -419,5 +464,18 @@ void main() {
         },
       );
     }
+  }
+}
+
+class _FeedbackApi implements FeedbackApi {
+  Map<String, Object?>? body;
+
+  @override
+  Future<FeedbackApiResponse> invoke(Map<String, Object?> body) async {
+    this.body = body;
+    return const FeedbackApiResponse(202, {
+      'feedback_id': '30000000-0000-4000-8000-000000000001',
+      'triage_status': 'awaiting_triage',
+    });
   }
 }

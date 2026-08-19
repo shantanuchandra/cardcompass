@@ -7,6 +7,8 @@ import '../providers/transactions_provider.dart';
 import '../widgets/spend_trend_panel.dart';
 import '../../../shared/models/transaction.dart';
 import '../../../shared/models/user_card.dart';
+import '../../feedback/contextual_feedback_button.dart';
+import '../../feedback/feedback_models.dart';
 
 final _fmt = NumberFormat.currency(
   locale: 'en_IN',
@@ -656,6 +658,11 @@ class _TxnRowState extends State<_TxnRow> {
                 ),
               ),
           ],
+          ContextualFeedbackButton(
+            target: TransactionFeedbackTarget(txn.id),
+            preview:
+                '${(txn.merchantName ?? txn.description).characters.take(80).toString()} · $amount',
+          ),
         ],
       ),
     );

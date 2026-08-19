@@ -19,7 +19,7 @@ Ruling: Carry the Cutover final-fix adjudication into the Tasks 1–3 code-beari
 - Tasks 1–3: complete — private storage/RPCs and authenticated endpoint
 - Task 4: complete — asynchronous tool-free LLM triage
 - Task 5: complete — reusable Flutter feedback surface
-- Task 6: pending — attach three product families
+- Task 6: complete — attach three product families
 - Task 7: pending — Admin2 review and Inbox integration
 - Task 8: pending — full verification
 
@@ -78,3 +78,17 @@ Ruling: Enforce a 32 KiB UTF-8 limit over the complete client request even thoug
 - Controlled-completion widget tests exercise attempted edits and Escape during flight, success association, and failure retry identity. Focused coverage now passes 14/14.
 
 Ruling: Treat an in-flight feedback submission as an immutable UI transaction: freeze text/request identity and block editing or dismissal until the endpoint settles. Cost if wrong: users cannot abandon a slow request mid-flight, but the displayed outcome can never describe a different payload than the one actually sent.
+
+## Task 6 evidence
+
+- RED: focused transaction, owned-card, and movie-result widget tests first failed because the rendered outputs had no contextual actions.
+- GREEN: every rendered transaction row submits its exact transaction UUID with only a short merchant/amount preview; Card Detail submits the loaded owned `user_card` UUID rather than its catalog-card identity; each movie candidate lazily creates an exact recommendation trace only when feedback opens.
+- Recommendation traces contain allowlisted ticket request fields, the selected card/benefit IDs, and a bounded selected-output snapshot only. No candidate list, rejected history, provider token, raw context metadata, or unrelated user history enters the client payload.
+- Expired recommendation traces recreate once inside the open sheet while preserving entered text; the refreshed trace/request becomes the retryable submission if its send fails. Other trace/open failures render a safe retry message.
+- The authenticated `/app` subtree installs a real repository through the Riverpod-provided Supabase client, while focused widget tests explicitly install backend-free repositories.
+- The three focused feature suites plus all feedback tests pass 62/62; the expiry regression passes in the 8-test sheet suite; scoped analysis is clean and repository-wide analysis has only the 12 pre-existing unrelated info diagnostics.
+- The broader Admin2 regression run exposed eager Supabase resolution on a non-feedback route. Repository construction is now lazy until a feedback control actually opens; all 152 Admin2 tests and all 15 feedback tests pass.
+
+Ruling: Create recommendation traces per selected rendered candidate, only when its feedback control opens, and capture only that candidate's card/benefit IDs and displayed monetary result. Cost if wrong: cross-candidate comparison context is intentionally unavailable to eval triage, preventing unrelated catalog/history leakage.
+
+Ruling: Install the production feedback repository only beneath authenticated `/app` routes while keeping `FeedbackRepositoryScope` as the explicit widget-test override seam. Cost if wrong: a future non-`/app` authenticated route must opt into the scope before showing contextual feedback.

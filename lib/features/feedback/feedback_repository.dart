@@ -165,18 +165,27 @@ class FeedbackRepositoryScope extends InheritedWidget {
     super.key,
     required this.repository,
     required super.child,
-  });
+  }) : repositoryFactory = null;
 
-  final FeedbackRepository repository;
+  const FeedbackRepositoryScope.lazy({
+    super.key,
+    required FeedbackRepository Function() repositoryFactory,
+    required super.child,
+  }) : repository = null,
+       repositoryFactory = repositoryFactory;
+
+  final FeedbackRepository? repository;
+  final FeedbackRepository Function()? repositoryFactory;
 
   static FeedbackRepository of(BuildContext context) {
     final scope = context
         .dependOnInheritedWidgetOfExactType<FeedbackRepositoryScope>();
     assert(scope != null, 'FeedbackRepositoryScope is missing');
-    return scope!.repository;
+    return scope!.repository ?? scope.repositoryFactory!();
   }
 
   @override
   bool updateShouldNotify(FeedbackRepositoryScope oldWidget) =>
-      repository != oldWidget.repository;
+      repository != oldWidget.repository ||
+      repositoryFactory != oldWidget.repositoryFactory;
 }

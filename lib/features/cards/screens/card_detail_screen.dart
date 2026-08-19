@@ -12,6 +12,8 @@ import '../../../shared/models/user_card.dart';
 import '../../../shared/models/transaction.dart';
 import '../../../shared/models/statement.dart';
 import '../domain/card_statement_archive.dart';
+import '../../feedback/contextual_feedback_button.dart';
+import '../../feedback/feedback_models.dart';
 
 // ─── providers ───────────────────────────────────────────────────────────────
 
@@ -253,6 +255,11 @@ class _CardDetailBody extends ConsumerWidget {
                     icon: const Icon(Icons.receipt_long_outlined),
                     label: const Text('Review history'),
                   ),
+                ),
+                ContextualFeedbackButton(
+                  target: UserCardFeedbackTarget(card.id),
+                  preview:
+                      '${card.displayName.characters.take(80).toString()} · ${card.bank ?? 'Card details'}',
                 ),
                 const SizedBox(height: BrandSpacing.md),
                 _DetailStatsRow(

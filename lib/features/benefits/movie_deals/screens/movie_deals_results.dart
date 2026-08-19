@@ -10,6 +10,9 @@ import '../domain/movie_deal_rule.dart';
 import '../domain/movie_platform_aliases.dart';
 import '../domain/movie_ticket_request.dart';
 import '../providers/movie_deals_provider.dart';
+import '../../../feedback/contextual_feedback_sheet.dart';
+import '../../../feedback/feedback_models.dart';
+import '../../../feedback/feedback_repository.dart';
 
 String _formatAmount(double amount) => amount == amount.roundToDouble()
     ? amount.toStringAsFixed(0)
@@ -909,8 +912,105 @@ class _DealRowState extends State<_DealRow> {
                 color: BrandColors.focusDark,
               ),
             ),
+          _RecommendationFeedbackAction(
+            request: widget.request,
+            candidate: candidate,
+          ),
         ],
       ),
     );
   }
+}
+
+class _RecommendationFeedbackAction extends StatefulWidget {
+  const _RecommendationFeedbackAction({
+    required this.request,
+    required this.candidate,
+  });
+
+  final MovieTicketRequest request;
+  final MovieDealCandidate candidate;
+
+  @override
+  State<_RecommendationFeedbackAction> createState() =>
+      _RecommendationFeedbackActionState();
+}
+
+class _RecommendationFeedbackActionState
+    extends State<_RecommendationFeedbackAction> {
+  bool _opening = false;
+
+  Future<RecommendationFeedbackTarget> _createTarget() {
+    final request = widget.request;
+    final candidate = widget.candidate;
+    final safeInput = <String, Object?>{
+      'number_of_tickets': request.numberOfTickets,
+      'price_per_ticket': request.pricePerTicket,
+      if (request.preferredPlatform != null)
+        'preferred_platform': request.preferredPlatform!.characters
+            .take(80)
+            .toString(),
+      if (request.preferredCinema != null)
+        'preferred_cinema': request.preferredCinema!.characters
+            .take(80)
+            .toString(),
+    };
+    return FeedbackRepositoryScope.of(context).createRecommendationTarget(
+      RecommendationTraceInput(
+        safeInputContext: safeInput,
+        outputSnapshot: {
+          'selected_card_id': candidate.cardId,
+          'selected_benefit_id': candidate.benefitId,
+          'savings': candidate.savings,
+          'final_amount': candidate.finalAmount,
+        },
+        cardIds: [candidate.cardId],
+        benefitIds: [candidate.benefitId],
+        engineVersion: 'movie-deals-v2',
+      ),
+    );
+  }
+
+  Future<void> _open() async {
+    if (_opening) return;
+    setState(() => _opening = true);
+    try {
+      final target = await _createTarget();
+      if (!mounted) return;
+      final candidate = widget.candidate;
+      await showContextualFeedbackSheet(
+        context,
+        target: target,
+        preview:
+            '${(candidate.rule.cardName ?? candidate.title).characters.take(80).toString()} · Save ₹${candidate.savings.toStringAsFixed(0)}',
+        recreateTarget: _createTarget,
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          const SnackBar(content: Text('Could not open feedback. Try again.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _opening = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    label:
+        'Give feedback about ${widget.candidate.rule.cardName ?? widget.candidate.title}',
+    excludeSemantics: true,
+    child: TextButton.icon(
+      onPressed: _opening ? null : _open,
+      icon: _opening
+          ? const SizedBox.square(
+              dimension: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.rate_review_outlined, size: 18),
+      label: const Text('Give feedback'),
+    ),
+  );
 }

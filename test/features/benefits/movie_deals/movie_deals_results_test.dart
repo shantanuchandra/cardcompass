@@ -10,6 +10,7 @@ import 'package:cardcompass/features/benefits/movie_deals/domain/movie_deal_rule
 import 'package:cardcompass/features/benefits/movie_deals/domain/movie_ticket_request.dart';
 import 'package:cardcompass/features/benefits/movie_deals/providers/movie_deals_provider.dart';
 import 'package:cardcompass/features/benefits/movie_deals/screens/movie_deals_results.dart';
+import 'package:cardcompass/features/feedback/feedback_repository.dart';
 
 MovieDealCandidate _candidate({
   required String cardId,
@@ -50,16 +51,73 @@ MovieDealCandidate _candidate({
 /// always resolves to its 3-column desktop arrangement — most assertions
 /// below don't care about column count, only that a group's own tile
 /// shows the right content, so a stable, roomy width keeps them simple.
-Widget _wideHarness(Widget child) {
-  return MaterialApp(
+Widget _wideHarness(Widget child, {FeedbackRepository? feedbackRepository}) {
+  final app = MaterialApp(
     home: Scaffold(
       body: SizedBox(width: 1200, child: SingleChildScrollView(child: child)),
     ),
   );
+  return feedbackRepository == null
+      ? app
+      : FeedbackRepositoryScope(repository: feedbackRepository, child: app);
 }
 
 void main() {
   const request = MovieTicketRequest(numberOfTickets: 2, pricePerTicket: 300);
+
+  testWidgets('recommendation feedback lazily creates a bounded exact trace', (
+    tester,
+  ) async {
+    final candidate = _candidate(
+      cardId: '70000000-0000-4000-8000-000000000001',
+      isOwned: true,
+      savings: 150,
+    );
+    final recommendation = MovieDealsRecommendation(
+      candidates: [candidate],
+      rejectedCandidates: const [],
+      guaranteedOwned: [candidate],
+    );
+    final api = _RecommendationFeedbackApi();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          movieDealsSearchProvider(
+            request,
+          ).overrideWith((ref) async => recommendation),
+        ],
+        child: _wideHarness(
+          const MovieDealsResults(request: request),
+          feedbackRepository: FeedbackRepository(
+            api,
+            requestIds: [
+              '80000000-0000-4000-8000-000000000001',
+              '80000000-0000-4000-8000-000000000002',
+            ].iterator,
+          ),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(api.bodies, isEmpty);
+    await tester.tap(
+      find.bySemanticsLabel(RegExp(r'^Give feedback about Card')),
+    );
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(api.bodies, hasLength(1));
+    final trace = api.bodies.single;
+    expect(trace['action'], 'trace-create');
+    expect(trace['card_ids'], [candidate.cardId]);
+    expect(trace['benefit_ids'], [candidate.benefitId]);
+    expect(trace['safe_input_context'], {
+      'number_of_tickets': 2,
+      'price_per_ticket': 300.0,
+    });
+    expect(
+      trace.toString(),
+      isNot(anyOf(contains('providerToken'), contains('rejectedCandidates'))),
+    );
+  });
 
   testWidgets('movie search loading reserves a stable result slot', (
     tester,
@@ -684,4 +742,16 @@ void main() {
 
     expect(find.textContaining('Cinema filtering'), findsNothing);
   });
+}
+
+class _RecommendationFeedbackApi implements FeedbackApi {
+  final bodies = <Map<String, Object?>>[];
+  @override
+  Future<FeedbackApiResponse> invoke(Map<String, Object?> body) async {
+    bodies.add(body);
+    return const FeedbackApiResponse(201, {
+      'trace_id': '90000000-0000-4000-8000-000000000001',
+      'expires_at': '2026-08-20T00:00:00Z',
+    });
+  }
 }

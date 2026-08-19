@@ -98,6 +98,48 @@ void main() {
     ]);
   });
 
+  testWidgets('an expired recommendation trace is recreated exactly once', (
+    tester,
+  ) async {
+    final repository = _ExpiredTraceRepository();
+    await _pump(
+      tester,
+      repository: repository,
+      child: Builder(
+        builder: (context) => TextButton(
+          onPressed: () => showContextualFeedbackSheet(
+            context,
+            target: const RecommendationFeedbackTarget(
+              '70000000-0000-4000-8000-000000000001',
+            ),
+            preview: 'Movie offer · Save ₹150',
+            recreateTarget: repository.recreate,
+          ),
+          child: const Text('Open'),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byType(TextField),
+      'This movie recommendation used the wrong card.',
+    );
+    await _tapAction(tester, 'Send feedback');
+    await tester.pumpAndSettle();
+
+    expect(repository.recreateCalls, 1);
+    expect(repository.submissions.map((s) => s.text), [
+      'This movie recommendation used the wrong card.',
+      'This movie recommendation used the wrong card.',
+    ]);
+    expect(repository.submissions.map((s) => s.target.outputRefId), [
+      '70000000-0000-4000-8000-000000000001',
+      '70000000-0000-4000-8000-000000000002',
+    ]);
+    expect(find.text('Feedback sent'), findsOneWidget);
+  });
+
   testWidgets('editing after failure creates a fresh submission id', (
     tester,
   ) async {
@@ -266,6 +308,34 @@ class _UnusedApi implements FeedbackApi {
   @override
   Future<FeedbackApiResponse> invoke(Map<String, Object?> body) =>
       throw UnimplementedError();
+}
+
+class _ExpiredTraceRepository extends FeedbackRepository {
+  _ExpiredTraceRepository()
+    : super(
+        _UnusedApi(),
+        requestIds: [
+          '80000000-0000-4000-8000-000000000001',
+          '80000000-0000-4000-8000-000000000002',
+        ].iterator,
+      );
+
+  final submissions = <FeedbackSubmission>[];
+  int recreateCalls = 0;
+
+  Future<FeedbackTarget> recreate() async {
+    recreateCalls++;
+    return const RecommendationFeedbackTarget(
+      '70000000-0000-4000-8000-000000000002',
+    );
+  }
+
+  @override
+  Future<FeedbackSubmitResult> submit(FeedbackSubmission submission) async {
+    submissions.add(submission);
+    if (submissions.length == 1) throw const FeedbackFailed('not_found');
+    return const FeedbackSubmitResult('feedback-id', 'awaiting_triage');
+  }
 }
 
 const _firstRequestId = '10000000-0000-4000-8000-000000000001';

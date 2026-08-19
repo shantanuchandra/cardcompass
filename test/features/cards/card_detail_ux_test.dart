@@ -4,6 +4,7 @@ import 'package:cardcompass/core/theme/app_theme.dart';
 import 'package:cardcompass/core/providers/supabase_provider.dart';
 import 'package:cardcompass/features/cards/screens/card_detail_screen.dart';
 import 'package:cardcompass/features/cards/domain/card_statement_archive.dart';
+import 'package:cardcompass/features/feedback/feedback_repository.dart';
 import 'package:cardcompass/shared/models/statement.dart';
 import 'package:cardcompass/shared/models/transaction.dart';
 import 'package:cardcompass/shared/models/user_card.dart';
@@ -12,7 +13,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 final _card = UserCard(
-  id: 'card-1',
+  id: '40000000-0000-4000-8000-000000000001',
   userId: 'user-1',
   catalogCardId: 'catalog-1',
   cardName: 'A very long preferred travel rewards card name',
@@ -74,6 +75,7 @@ Future<void> pumpDetail(
   Statement? statement,
   List<Transaction> transactions = const [],
   double currentMonthSpend = 0,
+  FeedbackRepository? feedbackRepository,
 }) async {
   tester.view.physicalSize = const Size(390, 1200);
   tester.view.devicePixelRatio = 1;
@@ -92,11 +94,15 @@ Future<void> pumpDetail(
           'card-1',
         ).overrideWith((ref) async => currentMonthSpend),
       ],
-      child: MaterialApp(
-        theme: AppTheme.work,
-        home: MediaQuery(
-          data: MediaQueryData(textScaler: TextScaler.linear(textScale)),
-          child: const CardDetailScreen(cardId: 'card-1'),
+      child: FeedbackRepositoryScope(
+        repository:
+            feedbackRepository ?? FeedbackRepository(_CardFeedbackApi()),
+        child: MaterialApp(
+          theme: AppTheme.work,
+          home: MediaQuery(
+            data: MediaQueryData(textScaler: TextScaler.linear(textScale)),
+            child: const CardDetailScreen(cardId: 'card-1'),
+          ),
         ),
       ),
     ),
@@ -105,6 +111,35 @@ Future<void> pumpDetail(
 }
 
 void main() {
+  testWidgets('card feedback targets the exact owned user card UUID', (
+    tester,
+  ) async {
+    final api = _CardFeedbackApi();
+    await pumpDetail(
+      tester,
+      feedbackRepository: FeedbackRepository(
+        api,
+        requestIds: ['50000000-0000-4000-8000-000000000001'].iterator,
+      ),
+    );
+    await tester.tap(
+      find.bySemanticsLabel(
+        RegExp(r'^Give feedback about A very long preferred'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byType(TextField),
+      'The benefits shown for this card are wrong.',
+    );
+    await tester.pump();
+    await tester.ensureVisible(find.text('Send feedback'));
+    await tester.tap(find.text('Send feedback'));
+    await tester.pumpAndSettle();
+    expect(api.body?['output_ref_id'], _card.id);
+    expect(api.body?['output_ref_type'], 'user_card');
+    expect(api.body.toString(), isNot(contains('catalog-1')));
+  });
   testWidgets('statement chips switch the bill and exact transaction set', (
     tester,
   ) async {
@@ -336,4 +371,16 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Open missing card'), findsOneWidget);
   });
+}
+
+class _CardFeedbackApi implements FeedbackApi {
+  Map<String, Object?>? body;
+  @override
+  Future<FeedbackApiResponse> invoke(Map<String, Object?> body) async {
+    this.body = body;
+    return const FeedbackApiResponse(202, {
+      'feedback_id': '60000000-0000-4000-8000-000000000001',
+      'triage_status': 'awaiting_triage',
+    });
+  }
 }

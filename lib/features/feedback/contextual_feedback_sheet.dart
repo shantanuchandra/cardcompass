@@ -9,6 +9,7 @@ Future<void> showContextualFeedbackSheet(
   BuildContext context, {
   required FeedbackTarget target,
   required String preview,
+  Future<FeedbackTarget> Function()? recreateTarget,
 }) => showModalBottomSheet<void>(
   context: context,
   isScrollControlled: true,
@@ -16,7 +17,11 @@ Future<void> showContextualFeedbackSheet(
   backgroundColor: BrandColors.paper,
   builder: (_) => FeedbackRepositoryScope(
     repository: FeedbackRepositoryScope.of(context),
-    child: ContextualFeedbackSheet(target: target, preview: preview),
+    child: ContextualFeedbackSheet(
+      target: target,
+      preview: preview,
+      recreateTarget: recreateTarget,
+    ),
   ),
 );
 
@@ -25,10 +30,12 @@ class ContextualFeedbackSheet extends StatefulWidget {
     super.key,
     required this.target,
     required this.preview,
+    this.recreateTarget,
   });
 
   final FeedbackTarget target;
   final String preview;
+  final Future<FeedbackTarget> Function()? recreateTarget;
 
   @override
   State<ContextualFeedbackSheet> createState() =>
@@ -42,6 +49,7 @@ class _ContextualFeedbackSheetState extends State<ContextualFeedbackSheet> {
   _SendState _state = _SendState.editing;
   FeedbackSubmission? _failedSubmission;
   FeedbackSubmission? _activeSubmission;
+  bool _recreatedExpiredTarget = false;
 
   String get _trimmed => _controller.text.trim();
   bool get _valid => _trimmed.length >= 10 && _trimmed.length <= 2000;
@@ -91,6 +99,42 @@ class _ContextualFeedbackSheetState extends State<ContextualFeedbackSheet> {
           _activeSubmission = null;
         });
       }
+    } on FeedbackFailed catch (error) {
+      var retrySubmission = submission;
+      if (error.code == 'not_found' &&
+          !_recreatedExpiredTarget &&
+          widget.recreateTarget != null) {
+        _recreatedExpiredTarget = true;
+        try {
+          final refreshedTarget = await widget.recreateTarget!();
+          final refreshed = repository.newSubmission(
+            refreshedTarget,
+            submission.text,
+          );
+          retrySubmission = refreshed;
+          _activeSubmission = refreshed;
+          await repository.submit(refreshed);
+          if (mounted) {
+            setState(() {
+              _state = _SendState.sent;
+              _activeSubmission = null;
+            });
+          }
+          return;
+        } catch (_) {
+          // Fall through to the same safe retry state as other failures.
+        }
+      }
+      if (!mounted) return;
+      _failedSubmission = retrySubmission;
+      _controller.value = TextEditingValue(
+        text: retrySubmission.text,
+        selection: TextSelection.collapsed(offset: retrySubmission.text.length),
+      );
+      setState(() {
+        _state = _SendState.failed;
+        _activeSubmission = null;
+      });
     } catch (_) {
       if (!mounted) return;
       _failedSubmission = submission;
