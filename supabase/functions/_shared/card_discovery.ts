@@ -286,7 +286,7 @@ const weakIdentityAliases = new Set([
 function identityKey(value: string, issuer: string): string {
   return normalizedProduct(
     value.replace(
-      /\b(?:visa\s+(?:infinite|signature|platinum)|master\s*card\s+(?:world(?:\s+elite)?|platinum)|rupay\s+platinum)\b/gi,
+      /\b(?:visa\s+(?:infinite|signature|platinum)|master\s*card\s+(?:world(?:\s+elite)?|signature|platinum)|rupay\s+platinum)\b/gi,
       " ",
     ),
     issuer,
@@ -304,11 +304,15 @@ function networkVariantKey(value: string): string | null {
     return "mastercard:world-elite";
   }
   if (/\bmaster\s*card world\b/.test(normalized)) return "mastercard:world";
+  if (/\bmaster\s*card signature\b/.test(normalized)) {
+    return "mastercard:signature";
+  }
   if (/\bmaster\s*card platinum\b/.test(normalized)) {
     return "mastercard:platinum";
   }
   if (/\bmaster\s*card\b/.test(normalized)) return "mastercard";
   if (/\brupay platinum\b/.test(normalized)) return "rupay:platinum";
+  if (/\brupay select\b/.test(normalized)) return "rupay:select";
   if (/\brupay\b/.test(normalized)) return "rupay";
   return null;
 }
@@ -331,13 +335,13 @@ function networkVariantMatches(
   if (actual === expected) return true;
   const [actualFamily] = actual.split(":");
   const [expectedFamily] = expected.split(":");
-  return actualFamily === expectedFamily &&
-    (!actual.includes(":") || !expected.includes(":"));
+  return actualFamily === expectedFamily && !expected.includes(":");
 }
 
 function strongExpectedIdentity(value: string, issuer: string): boolean {
   const key = identityKey(value, issuer);
-  return key.length >= 4 && !weakIdentityAliases.has(key);
+  return key.length >= 4 &&
+    (!weakIdentityAliases.has(key) || networkVariantKey(value) !== null);
 }
 
 function identityWords(value: string, issuer: string): string[] {
@@ -373,8 +377,9 @@ function identityFromLabel(
   value: string,
   issuer: string,
 ): CanonicalCardIdentity | null {
+  const decodedLabel = decodeHtmlText(value);
   const rawProduct = redactSensitiveUrlsInText(stripTitleMarketing(
-    decodeHtmlText(value),
+    decodedLabel,
     issuer,
   )).replace(/\[redacted(?:-encoded)?-url\]/g, " ")
     .replace(/\s+/g, " ").trim();
@@ -383,16 +388,18 @@ function identityFromLabel(
     identityKey(rawProduct, issuer).length < 4
   ) return null;
   const withoutNetworkVariant = rawProduct.replace(
-    /\b(?:visa\s+(?:infinite|signature|platinum)|master\s*card\s+(?:world(?:\s+elite)?|platinum)|rupay\s+platinum)\b/gi,
+    /\b(?:visa\s+(?:infinite|signature|platinum)|master\s*card\s+(?:world(?:\s+elite)?|signature|platinum)|rupay\s+platinum)\b/gi,
     " ",
   ).replace(/\s+/g, " ").trim();
   const identity = canonicalCardIdentity(issuer, withoutNetworkVariant);
-  const network = /\brupay\b/i.test(rawProduct)
+  const network = /\brupay\b/i.test(decodedLabel)
     ? "RuPay"
-    : /\bvisa\b/i.test(rawProduct)
+    : /\bvisa\b/i.test(decodedLabel)
     ? "Visa"
-    : /\bmaster\s*card\b/i.test(rawProduct)
+    : /\bmaster\s*card\b/i.test(decodedLabel)
     ? "Mastercard"
+    : /\b(?:american express|amex)\b/i.test(decodedLabel)
+    ? "American Express"
     : identity.network;
   return { ...identity, network };
 }
@@ -438,6 +445,21 @@ const relationshipCardLabels = new Set([
   "partner",
 ]);
 
+const bodyIdentityPrefixTokens = new Set([
+  "a",
+  "an",
+  "and",
+  "about",
+  "each",
+  "for",
+  "of",
+  "or",
+  "the",
+  "terms",
+  "to",
+  "with",
+]);
+
 function targetBodyIdentityLabels(
   content: string,
   issuer: string,
@@ -451,10 +473,19 @@ function targetBodyIdentityLabels(
   const labels: string[] = [];
   for (
     const match of visible.matchAll(
-      /\b([A-Z][A-Za-z0-9&'-]*(?:\s+[A-Z][A-Za-z0-9&'-]*){0,4})\s+(?:[Cc]redit\s+)?[Cc]ard\b/g,
+      /\b((?:(?!card\b)[a-z0-9&'-]+\s+){0,6})(?:credit\s+)?card\b/gi,
     )
   ) {
-    const label = `${match[1]} Card`;
+    const candidateWords = words(match[1] ?? "").slice(-7);
+    while (
+      candidateWords.length > 0 &&
+      bodyIdentityPrefixTokens.has(candidateWords[0])
+    ) candidateWords.shift();
+    if (
+      candidateWords.length === 0 ||
+      candidateWords.some((word) => relationshipCardLabels.has(word))
+    ) continue;
+    const label = `${candidateWords.join(" ")} Card`;
     const key = identityKey(label, issuer);
     if (
       !key || relationshipCardLabels.has(key) ||
@@ -528,12 +559,20 @@ export function assessOfficialCardIdentity(
       key: identityKey(label, issuer),
       networkKey: networkVariantKey(label),
     }));
-  const matchesExpected = expected.some((target) =>
-    target.key === productKeys[0] &&
-    candidates.every((candidate) =>
-      networkVariantMatches(candidate.networkKey, target.networkKey)
-    )
+  const sameFamily = expected.some((target) => target.key === productKeys[0]);
+  const strongExpectedVariants = expected.filter((target) =>
+    target.key === productKeys[0] && target.networkKey !== null
   );
+  const actualVariants = candidates.map((candidate) => candidate.networkKey)
+    .filter((value): value is string => value !== null);
+  const strongestVariantMatches = strongExpectedVariants.length === 0 ||
+    (actualVariants.length > 0 &&
+      actualVariants.every((actual) =>
+        strongExpectedVariants.some((target) =>
+          networkVariantMatches(actual, target.networkKey)
+        )
+      ));
+  const matchesExpected = sameFamily && strongestVariantMatches;
   return matchesExpected
     ? { status: "match", identity, candidateKeys }
     : { status: "mismatch", identity: null, candidateKeys };
@@ -575,6 +614,46 @@ export function selectCatalogUrlIdentityMatch(
     ) matchingIds.add(candidate.cardId);
   }
   return matchingIds.size === 1 ? [...matchingIds][0] : null;
+}
+
+export async function selectBoundCatalogResourceIdentity(input: {
+  submittedResourceIdentityHash?: string;
+  finalResourceIdentityHash?: string;
+  issuer: string;
+  content: string;
+  lookupCardIds: (resourceIdentityHash: string) => Promise<string[]>;
+  loadCandidates: (
+    cardIds: string[],
+  ) => Promise<CatalogUrlIdentityCandidate[]>;
+}): Promise<string | null> {
+  const hashes = [
+    input.submittedResourceIdentityHash,
+    input.finalResourceIdentityHash,
+  ].filter((value): value is string => Boolean(value));
+  if (hashes.some((hash) => !/^[0-9a-f]{64}$/i.test(hash))) {
+    throw new Error("identity_conflict");
+  }
+  const distinctHashes = [...new Set(hashes.map((hash) => hash.toLowerCase()))];
+  if (distinctHashes.length === 0) return null;
+  const resolved = await Promise.all(
+    distinctHashes.map(async (hash) => ({
+      hash,
+      cardIds: [...new Set(await input.lookupCardIds(hash))],
+    })),
+  );
+  if (resolved.some(({ cardIds }) => cardIds.length > 1)) {
+    throw new Error("identity_conflict");
+  }
+  const boundIds = [...new Set(resolved.flatMap(({ cardIds }) => cardIds))];
+  if (boundIds.length > 1) throw new Error("identity_conflict");
+  if (boundIds.length === 0) return null;
+  const matched = selectCatalogUrlIdentityMatch(
+    input.content,
+    input.issuer,
+    await input.loadCandidates(boundIds),
+  );
+  if (matched !== boundIds[0]) throw new Error("identity_conflict");
+  return matched;
 }
 
 export function selectSubmittedUrlIdentity(input: {

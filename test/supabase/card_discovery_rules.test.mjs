@@ -232,6 +232,48 @@ test('treats conflicting payment-network product variants as different identitie
   );
 });
 
+test('requires the strongest stored network and tier variant', () => {
+  const expected = 'Privilege Visa Infinite';
+  for (const html of [
+    '<h1>Privilege Mastercard World Credit Card</h1>',
+    '<h1>Privilege Mastercard Signature Credit Card</h1>',
+    '<h1>Privilege Credit Card</h1>',
+    '<h1>Privilege Visa Credit Card</h1>',
+  ]) {
+    assert.equal(
+      exactOfficialPageIdentity(html, 'Axis Bank', expected),
+      null,
+      `generic/other variant overrode ${expected}: ${html}`,
+    );
+  }
+  assert.equal(
+    exactOfficialPageIdentity(
+      '<h1>Privilege Visa Infinite Credit Card</h1>',
+      'Axis Bank',
+      expected,
+    )?.network,
+    'Visa',
+  );
+  assert.equal(
+    exactOfficialPageIdentity(
+      '<title>The Platinum Card | American Express</title>',
+      'American Express',
+      'The Platinum Card | American Express',
+    )?.cardName,
+    'Platinum',
+    'a tier-named Amex product was discarded as a weak alias',
+  );
+  assert.equal(
+    exactOfficialPageIdentity(
+      '<h1>Marriott Bonvoy HDFC Mastercard World Credit Card</h1>',
+      'HDFC Bank',
+      'Marriott Bonvoy HDFC Visa Infinite',
+    ),
+    null,
+    'co-brand network mismatch was accepted',
+  );
+});
+
 test('uses target-aware body evidence without treating relationship card prose as product identity', () => {
   const terms = `
     <p>Privilege Credit Card terms apply to the Primary Card and each
@@ -253,6 +295,35 @@ test('uses target-aware body evidence without treating relationship card prose a
       'Privilege',
     ),
     null,
+  );
+});
+
+test('target body identity is case-insensitive and ignores relationship-prefixed mentions', () => {
+  assert.equal(
+    exactOfficialPageIdentity(
+      '<p>privilege visa infinite credit card terms and fees.</p>',
+      'Axis Bank',
+      'Privilege Visa Infinite',
+    )?.cardName,
+    'Privilege',
+  );
+  assert.equal(
+    exactOfficialPageIdentity(
+      '<p>privilege credit card terms. regalia gold credit card fees.</p>',
+      'Axis Bank',
+      'Privilege',
+    ),
+    null,
+    'lowercase wrong named-card evidence did not conflict',
+  );
+  assert.equal(
+    exactOfficialPageIdentity(
+      '<p>Privilege Credit Card terms for the supplementary Regalia Gold Credit Card and PARTNER card.</p>',
+      'Axis Bank',
+      'Privilege',
+    )?.cardName,
+    'Privilege',
+    'relationship-prefixed mention became a competing product',
   );
 });
 
@@ -287,6 +358,74 @@ test('selects URL-hash catalog candidates only after exact fetched body identity
     ),
     null,
     'a URL hash alone resolved a card whose fetched identity disagreed',
+  );
+});
+
+test('reconciles submitted and final opaque bindings with separate lookups before body resolution', async () => {
+  const submitted = 'b'.repeat(64);
+  const final = 'c'.repeat(64);
+  const calls = [];
+  let loaded = false;
+  await assert.rejects(
+    cardDiscovery.selectBoundCatalogResourceIdentity({
+      submittedResourceIdentityHash: submitted,
+      finalResourceIdentityHash: final,
+      issuer: 'HDFC Bank',
+      content: '<h1>Regalia Platinum Credit Card</h1>',
+      lookupCardIds: async (hash) => {
+        calls.push(hash);
+        return hash === submitted ? ['gold'] : ['platinum'];
+      },
+      loadCandidates: async () => {
+        loaded = true;
+        return [];
+      },
+    }),
+    /identity_conflict/,
+  );
+  assert.deepEqual(calls.sort(), [submitted, final].sort());
+  assert.equal(loaded, false, 'conflicting bindings reached body resolution');
+
+  const same = await cardDiscovery.selectBoundCatalogResourceIdentity({
+    submittedResourceIdentityHash: submitted,
+    finalResourceIdentityHash: final,
+    issuer: 'HDFC Bank',
+    content: '<h1>Regalia Gold Credit Card</h1>',
+    lookupCardIds: async (hash) => {
+      calls.push(hash);
+      return hash === submitted ? ['gold'] : [];
+    },
+    loadCandidates: async (ids) => {
+      assert.deepEqual(ids, ['gold']);
+      return [{cardId: 'gold', cardName: 'Regalia Gold', aliases: []}];
+    },
+  });
+  assert.equal(same, 'gold');
+});
+
+test('opaque resource lookup fails closed on a non-unique binding or body mismatch', async () => {
+  const hash = 'd'.repeat(64);
+  await assert.rejects(
+    cardDiscovery.selectBoundCatalogResourceIdentity({
+      submittedResourceIdentityHash: hash,
+      issuer: 'HDFC Bank',
+      content: '<h1>Regalia Gold Credit Card</h1>',
+      lookupCardIds: async () => ['gold', 'platinum'],
+      loadCandidates: async () => [],
+    }),
+    /identity_conflict/,
+  );
+  await assert.rejects(
+    cardDiscovery.selectBoundCatalogResourceIdentity({
+      submittedResourceIdentityHash: hash,
+      issuer: 'HDFC Bank',
+      content: '<h1>Regalia Platinum Credit Card</h1>',
+      lookupCardIds: async () => ['gold'],
+      loadCandidates: async () => [
+        {cardId: 'gold', cardName: 'Regalia Gold', aliases: []},
+      ],
+    }),
+    /identity_conflict/,
   );
 });
 

@@ -13,6 +13,7 @@ import {
   reviewRequiredJobPatch,
   sanitizeDiscoveryEvidence,
   sanitizeEvidence,
+  selectBoundCatalogResourceIdentity,
   selectCatalogUrlIdentityMatch,
   selectSubmittedUrlIdentity,
 } from "../_shared/card_discovery.ts";
@@ -135,23 +136,18 @@ async function sha256Bytes(value: Uint8Array): Promise<string> {
     .join("");
 }
 
-async function findCatalogCardsByUrlHashes(
+async function findCatalogCardsByUrlHash(
   db: UntypedSupabaseClient,
-  hashes: string[],
+  hash: string,
 ): Promise<string[]> {
-  const unique = [...new Set(hashes.filter(Boolean))];
-  if (unique.length === 0) return [];
+  if (!/^[0-9a-f]{64}$/.test(hash)) throw new Error("identity_conflict");
   const { data: keys, error: keyError } = await db.from("card_catalog_url_keys")
     .select("card_id")
-    .in("url_hash", unique);
+    .eq("url_hash", hash);
   if (keyError) throw keyError;
-  const filter = unique.flatMap((hash) => [
-    `submitted_url_hash.eq.${hash}`,
-    `final_url_hash.eq.${hash}`,
-  ]).join(",");
   const { data, error } = await db.from("card_catalog_provenance")
     .select("card_id")
-    .or(filter);
+    .or(`submitted_url_hash.eq.${hash},final_url_hash.eq.${hash}`);
   if (error) throw error;
   return [
     ...new Set(
@@ -253,26 +249,31 @@ async function processSubmittedUrl(
   const finalUrl = page.canonicalUrl;
   const legacyFinalHash = await sha256(finalUrl);
   const finalHash = page.finalResourceIdentityHash ?? legacyFinalHash;
-  const opaqueHashes = [
-    page.sourceIdentityHash,
-    page.finalResourceIdentityHash,
-  ].filter((hash): hash is string => Boolean(hash));
-  const opaqueCardIds = await findCatalogCardsByUrlHashes(db, opaqueHashes);
-  if (opaqueCardIds.length > 0) {
-    const exactKnownIdentity = selectCatalogUrlIdentityMatch(
-      page.text,
-      job.issuer,
-      await loadCatalogUrlIdentityCandidates(db, opaqueCardIds),
-    );
-    if (!exactKnownIdentity) throw new Error("identity_conflict");
+  const exactKnownIdentity = await selectBoundCatalogResourceIdentity({
+    submittedResourceIdentityHash: page.sourceIdentityHash,
+    finalResourceIdentityHash: page.finalResourceIdentityHash,
+    issuer: job.issuer,
+    content: page.text,
+    lookupCardIds: (hash) => findCatalogCardsByUrlHash(db, hash),
+    loadCandidates: (ids) => loadCatalogUrlIdentityCandidates(db, ids),
+  });
+  if (exactKnownIdentity) {
     return markResolved(db, job.id, exactKnownIdentity);
   }
-  const legacyCardIds = await findCatalogCardsByUrlHashes(
-    db,
-    [legacySubmittedHash, legacyFinalHash].filter((hash) =>
-      !opaqueHashes.includes(hash)
+  const opaqueHashes = new Set(
+    [page.sourceIdentityHash, page.finalResourceIdentityHash].filter(
+      (hash): hash is string => Boolean(hash),
     ),
   );
+  const legacyHashes = [...new Set([legacySubmittedHash, legacyFinalHash])]
+    .filter((hash) => !opaqueHashes.has(hash));
+  const legacyCardIds = [
+    ...new Set(
+      (await Promise.all(
+        legacyHashes.map((hash) => findCatalogCardsByUrlHash(db, hash)),
+      )).flat(),
+    ),
+  ];
   if (legacyCardIds.length > 0) {
     const compatibleLegacyIdentity = selectCatalogUrlIdentityMatch(
       page.text,
@@ -352,20 +353,26 @@ async function processSubmittedUrl(
       .single()).data;
   }
 
-  const { data: cardId, error: resolveError } = await db.rpc(
-    "resolve_card_catalog_identity",
-    {
+  const resolveOneResource = async (resourceHash: string) => {
+    const { data, error } = await db.rpc("resolve_card_catalog_identity", {
       _issuer: job.issuer,
       _card_name: officialIdentity.cardName,
       _network: canonical.network ?? evidence.network ?? null,
       _source_url: finalUrl,
-      _submitted_url_hash: submittedHash,
-      _final_url_hash: finalHash,
-    },
-  );
-  if (resolveError || !cardId) {
-    throw resolveError ?? new Error("identity_conflict");
+      _submitted_url_hash: resourceHash,
+      _final_url_hash: resourceHash,
+    });
+    if (error || !data) throw new Error("identity_conflict");
+    return String(data);
+  };
+  const submittedCardId = await resolveOneResource(submittedHash);
+  const finalCardId = finalHash === submittedHash
+    ? submittedCardId
+    : await resolveOneResource(finalHash);
+  if (submittedCardId !== finalCardId) {
+    throw new Error("identity_conflict");
   }
+  const cardId = submittedCardId;
 
   for (
     const alias of [...canonical.aliases, ...(evidence.product_signals ?? [])]
@@ -694,6 +701,18 @@ async function processDiscoveryJob(
       return;
     }
     const officialProduct = officialIdentity.cardName;
+    const boundCardId = await selectBoundCatalogResourceIdentity({
+      submittedResourceIdentityHash: page.sourceIdentityHash,
+      finalResourceIdentityHash: page.finalResourceIdentityHash,
+      issuer: job.issuer,
+      content: page.text,
+      lookupCardIds: (hash) => findCatalogCardsByUrlHash(db, hash),
+      loadCandidates: (ids) => loadCatalogUrlIdentityCandidates(db, ids),
+    });
+    if (boundCardId) {
+      await markResolved(db, job.id, boundCardId);
+      return;
+    }
 
     const { data: catalogRows, error: catalogError } = await db
       .from("card_catalog")

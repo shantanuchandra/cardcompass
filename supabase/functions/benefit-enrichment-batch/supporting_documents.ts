@@ -99,6 +99,7 @@ type SourceCandidate = {
   url: string;
   anchorText: string;
   requiredHint: boolean;
+  rejectionCode?: "unapproved_query" | "invalid_source_url";
 };
 
 function sourceRole(
@@ -122,43 +123,67 @@ function linkedUrls(
   const tokens = identityTokens(labels);
   const primaryPath = new URL(primaryUrl).pathname.replace(/\/$/, "");
   for (const match of html.matchAll(anchorPattern)) {
+    const anchorText = (match[4] ?? "").replace(/<[^>]*>/g, " ")
+      .replace(/&(?:amp|nbsp);/gi, " ").replace(/\s+/g, " ").trim()
+      .slice(0, 256);
+    const requiredHint = requiredAnchorPattern.test(anchorText);
+    const encodedHref = match[1] ?? match[2] ?? match[3] ?? "";
+    const href = encodedHref
+      .replace(/&amp;|&#0*38;|&#x0*26;/gi, "&")
+      .replace(/&quot;|&#0*34;|&#x0*22;/gi, '"')
+      .replace(/&apos;|&#0*39;|&#x0*27;/gi, "'");
+    let raw: string;
     try {
-      const raw = new URL(match[1] ?? match[2] ?? match[3] ?? "", baseUrl)
-        .toString();
+      raw = new URL(href, baseUrl).toString();
+    } catch {
+      if (requiredHint) {
+        candidates.set(`invalid:${href.slice(0, 512)}`, {
+          url: href,
+          anchorText,
+          requiredHint,
+          rejectionCode: "invalid_source_url",
+        });
+      }
+      continue;
+    }
+    const candidatePath = new URL(raw).pathname.toLowerCase();
+    const sameProductPath = candidatePath === primaryPath.toLowerCase() ||
+      candidatePath.startsWith(`${primaryPath.toLowerCase()}/`);
+    const namesTargetProduct = tokens.length > 0 &&
+      tokens.every((token) => candidatePath.includes(token));
+    if (
+      !((relevantPath.test(raw) || requiredHint ||
+        relevantAnchorPattern.test(anchorText)) &&
+        !unsafePath.test(raw) && (sameProductPath || namesTargetProduct))
+    ) continue;
+    try {
       const url = canonicalOfficialRequestUrl(
         issuer,
         raw,
         approvedStoredQueryParameters(raw),
       );
-      const anchorText = (match[4] ?? "").replace(/<[^>]*>/g, " ")
-        .replace(/&(?:amp|nbsp);/gi, " ").replace(/\s+/g, " ").trim()
-        .slice(0, 256);
-      const candidatePath = new URL(url).pathname.toLowerCase();
-      const sameProductPath = candidatePath === primaryPath.toLowerCase() ||
-        candidatePath.startsWith(`${primaryPath.toLowerCase()}/`);
-      const namesTargetProduct = tokens.length > 0 &&
-        tokens.every((token) => candidatePath.includes(token));
-      if (
-        (relevantPath.test(url) || requiredAnchorPattern.test(anchorText) ||
-          relevantAnchorPattern.test(anchorText)) &&
-        !unsafePath.test(url) && (sameProductPath || namesTargetProduct)
-      ) {
-        const existing = candidates.get(url);
-        const anchorTexts = [
-          ...new Set([
-            existing?.anchorText ?? "",
-            anchorText,
-          ].filter(Boolean)),
-        ].sort();
-        candidates.set(url, {
-          url,
-          anchorText: anchorTexts.join(" ").slice(0, 256),
-          requiredHint: existing?.requiredHint === true ||
-            requiredAnchorPattern.test(anchorText),
-        });
-      }
-    } catch {
-      // Only approved issuer URLs enter the supporting queue.
+      const existing = candidates.get(url);
+      const anchorTexts = [
+        ...new Set([
+          existing?.anchorText ?? "",
+          anchorText,
+        ].filter(Boolean)),
+      ].sort();
+      candidates.set(url, {
+        url,
+        anchorText: anchorTexts.join(" ").slice(0, 256),
+        requiredHint: existing?.requiredHint === true || requiredHint,
+      });
+    } catch (error) {
+      const code = sanitizedSourceErrorCode(error);
+      candidates.set(`rejected:${raw}`, {
+        url: raw,
+        anchorText,
+        requiredHint,
+        rejectionCode: code === "unapproved_query"
+          ? "unapproved_query"
+          : "invalid_source_url",
+      });
     }
   }
   return [...candidates.values()].sort((left, right) =>
@@ -211,6 +236,11 @@ export async function collectSupportingBenefitDocuments(
             : "empty_document",
         }),
       attemptedAt: input.primary.retrievedAt,
+      ...(input.primary.finalResourceIdentityHash
+        ? {
+          finalResourceIdentityHash: input.primary.finalResourceIdentityHash,
+        }
+        : {}),
     }];
   const recordRequiredOverflow = async (
     url: string,
@@ -258,7 +288,7 @@ export async function collectSupportingBenefitDocuments(
       )
     ),
   );
-  const initialCandidates = [
+  const initialCandidates: SourceCandidate[] = [
     ...[...exactSet].map((url) => ({
       url,
       anchorText: "curated exact source",
@@ -272,7 +302,21 @@ export async function collectSupportingBenefitDocuments(
       input.primary.canonicalUrl,
     ),
   ];
-  const uniqueInitial = initialCandidates.filter((candidate, index, all) =>
+  const rejectedInitial = initialCandidates.filter((candidate) =>
+    candidate.rejectionCode
+  );
+  for (const candidate of rejectedInitial) {
+    attempts.push({
+      requestedUrl: candidate.url,
+      role: sourceRole(candidate, false),
+      status: "failed",
+      errorCode: candidate.rejectionCode,
+      attemptedAt: new Date().toISOString(),
+    });
+  }
+  const uniqueInitial = initialCandidates.filter((candidate) =>
+    !candidate.rejectionCode
+  ).filter((candidate, index, all) =>
     all.findIndex((item) => item.url === candidate.url) === index
   ).map((candidate) => ({
     ...candidate,
@@ -438,6 +482,9 @@ export async function collectSupportingBenefitDocuments(
         role: current.role,
         status: "failed",
         ...(resource.status ? { httpStatus: resource.status } : {}),
+        ...(resource.finalResourceIdentityHash
+          ? { finalResourceIdentityHash: resource.finalResourceIdentityHash }
+          : {}),
         errorCode: sanitizedSourceErrorCode(error),
         attemptedAt: resource.retrievedAt,
       });
@@ -454,6 +501,9 @@ export async function collectSupportingBenefitDocuments(
         errorCode: resource.contentType === "application/pdf"
           ? "corrupt_pdf"
           : "empty_document",
+        ...(resource.finalResourceIdentityHash
+          ? { finalResourceIdentityHash: resource.finalResourceIdentityHash }
+          : {}),
         attemptedAt: resource.retrievedAt,
       });
       continue;
@@ -471,6 +521,9 @@ export async function collectSupportingBenefitDocuments(
         status: "failed",
         httpStatus: resource.status,
         contentHash: resource.contentHash,
+        ...(resource.finalResourceIdentityHash
+          ? { finalResourceIdentityHash: resource.finalResourceIdentityHash }
+          : {}),
         errorCode: identityAssessment.status === "ambiguous"
           ? "identity_ambiguous"
           : "identity_mismatch",
@@ -488,6 +541,9 @@ export async function collectSupportingBenefitDocuments(
         status: "success",
         httpStatus: 200,
         contentHash: resource.contentHash,
+        ...(resource.finalResourceIdentityHash
+          ? { finalResourceIdentityHash: resource.finalResourceIdentityHash }
+          : {}),
         attemptedAt: resource.retrievedAt,
       });
     } else {
@@ -500,6 +556,9 @@ export async function collectSupportingBenefitDocuments(
         errorCode: resource.contentType === "application/pdf"
           ? "corrupt_pdf"
           : "empty_document",
+        ...(resource.finalResourceIdentityHash
+          ? { finalResourceIdentityHash: resource.finalResourceIdentityHash }
+          : {}),
         attemptedAt: resource.retrievedAt,
       });
     }
@@ -521,6 +580,19 @@ export async function collectSupportingBenefitDocuments(
           depth: current.depth + 1,
           role: sourceRole(candidate, false),
         };
+        if (candidate.rejectionCode) {
+          if (!seen.has(candidate.url) && !scheduled.has(candidate.url)) {
+            seen.add(candidate.url);
+            attempts.push({
+              requestedUrl: candidate.url,
+              role: discovered.role,
+              status: "failed",
+              errorCode: candidate.rejectionCode,
+              attemptedAt: resource.retrievedAt,
+            });
+          }
+          continue;
+        }
         if (discovered.role === "required_supporting") {
           await upgradeRequired(
             discovered.url,

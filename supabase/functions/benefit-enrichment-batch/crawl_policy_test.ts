@@ -87,6 +87,72 @@ Deno.test("an attempted optional identity failure blocks completeness until that
   );
 });
 
+Deno.test("selected query-policy failures are explicit and block absence decisions", () => {
+  for (const role of ["required_supporting", "supporting"] as const) {
+    const result = assessCrawlCompleteness([
+      attempt(),
+      attempt({
+        requestedUrl: `${PRIMARY}/terms?product=aurora`,
+        role,
+        status: "failed",
+        contentHash: undefined,
+        errorCode: "unapproved_query",
+        attemptedAt: "2026-08-19T00:00:01.000Z",
+      }),
+    ], "2026-08-19T00:01:00.000Z");
+    assert(!result.complete, `${role} query rejection enabled removals`);
+    assert(
+      result.attempts.some((item) =>
+        item.errorCode === "unapproved_query" && !item.url.includes("?")
+      ),
+      `${role} rejection was lost or exposed its query`,
+    );
+  }
+});
+
+Deno.test("final resource identities survive compaction and conflicting redirects fail closed", () => {
+  const firstFinal = "b".repeat(64);
+  const secondFinal = "c".repeat(64);
+  const attempts = [
+    attemptWithUntrusted({
+      status: "failed",
+      contentHash: undefined,
+      errorCode: "http_5xx",
+      attemptedAt: "2026-08-19T00:00:00.000Z",
+    }, { finalResourceIdentityHash: firstFinal }),
+    attemptWithUntrusted({
+      attemptedAt: "2026-08-19T00:00:01.000Z",
+    }, { finalResourceIdentityHash: secondFinal }),
+  ];
+  const result = compactSourceAttempts(
+    attempts.map((item) => ({
+      ...item,
+      url: item.requestedUrl,
+      logicalSourceKey: "f".repeat(64),
+    })) as never,
+    "2026-08-19T00:01:00.000Z",
+  );
+  const terminal = result.attempts[0] as unknown as Record<string, unknown>;
+  const history = terminal.attemptHistory as Array<Record<string, unknown>>;
+  assert(
+    terminal.finalResourceIdentityHash === secondFinal,
+    "terminal final resource identity was dropped",
+  );
+  assert(
+    history.map((item) => item.finalResourceIdentityHash).join(",") ===
+      `${firstFinal},${secondFinal}`,
+    "redirect identity transition disappeared from retry history",
+  );
+  assert(
+    !result.complete,
+    "conflicting final resources established completeness",
+  );
+  assert(
+    result.reason === "final_resource_identity_conflict",
+    "final resource conflict reason was not explicit",
+  );
+});
+
 Deno.test("attempt compaction is idempotent and preserves existing retry history", () => {
   const attempts = [
     attempt({

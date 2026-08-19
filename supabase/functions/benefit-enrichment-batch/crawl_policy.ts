@@ -12,6 +12,8 @@ export type SourceAttemptInput = {
   status: SourceAttemptStatus;
   httpStatus?: number;
   contentHash?: string;
+  /** Opaque SHA-256 of the exact redirect-resolved resource identity. */
+  finalResourceIdentityHash?: string;
   etag?: string;
   lastModified?: string;
   errorCode?: string;
@@ -25,6 +27,7 @@ export type SourceAttemptHistory = {
   status: SourceAttemptStatus;
   httpStatus?: number;
   errorCode?: string;
+  finalResourceIdentityHash?: string;
   attemptedAt: string;
 };
 
@@ -34,6 +37,7 @@ export type SourceAttempt = {
   status: SourceAttemptStatus;
   httpStatus?: number;
   contentHash?: string;
+  finalResourceIdentityHash?: string;
   etag?: string;
   lastModified?: string;
   errorCode?: string;
@@ -79,6 +83,7 @@ const SAFE_ERROR_CODES = new Set([
   "identity_review",
   "identity_mismatch",
   "identity_ambiguous",
+  "final_resource_identity_conflict",
   "insufficient_evidence",
   "js_challenge",
   "not_a_card",
@@ -250,6 +255,10 @@ export function sanitizedSourceAttempt(
     ? "unreachable"
     : undefined;
   const contentHash = bounded(attempt.contentHash, 128);
+  const finalResourceIdentityHash = bounded(
+    attempt.finalResourceIdentityHash,
+    64,
+  );
   const requestedUrl = canonicalLogicalSourceUrl(attempt.requestedUrl);
   const finalUrl = canonicalLogicalSourceUrl(
     attempt.finalUrl ?? attempt.requestedUrl,
@@ -274,6 +283,13 @@ export function sanitizedSourceAttempt(
       ...(entry.errorCode && SAFE_ERROR_CODES.has(entry.errorCode)
         ? { errorCode: entry.errorCode }
         : {}),
+      ...(entry.finalResourceIdentityHash &&
+          /^[0-9a-f]{64}$/i.test(entry.finalResourceIdentityHash)
+        ? {
+          finalResourceIdentityHash: entry.finalResourceIdentityHash
+            .toLowerCase(),
+        }
+        : {}),
       attemptedAt: bounded(entry.attemptedAt, 64) ?? "",
     }));
   return {
@@ -286,6 +302,10 @@ export function sanitizedSourceAttempt(
       : {}),
     ...(contentHash && /^[0-9a-f]{64}$/i.test(contentHash)
       ? { contentHash: contentHash.toLowerCase() }
+      : {}),
+    ...(finalResourceIdentityHash &&
+        /^[0-9a-f]{64}$/i.test(finalResourceIdentityHash)
+      ? { finalResourceIdentityHash: finalResourceIdentityHash.toLowerCase() }
       : {}),
     ...(bounded(attempt.etag, 256) ? { etag: bounded(attempt.etag, 256) } : {}),
     ...(bounded(attempt.lastModified, 128)
@@ -321,6 +341,9 @@ function validSourceAttemptInput(value: unknown): value is SourceAttemptInput {
       typeof attempt.httpStatus === "number") &&
     (attempt.contentHash === undefined ||
       typeof attempt.contentHash === "string") &&
+    (attempt.finalResourceIdentityHash === undefined ||
+      (typeof attempt.finalResourceIdentityHash === "string" &&
+        /^[0-9a-f]{64}$/i.test(attempt.finalResourceIdentityHash))) &&
     (attempt.etag === undefined || typeof attempt.etag === "string") &&
     (attempt.lastModified === undefined ||
       typeof attempt.lastModified === "string") &&
@@ -343,7 +366,17 @@ function validSourceAttemptInput(value: unknown): value is SourceAttemptInput {
             typeof (entry as Record<string, unknown>).httpStatus ===
               "number") &&
           ((entry as Record<string, unknown>).errorCode === undefined ||
-            typeof (entry as Record<string, unknown>).errorCode === "string")
+            typeof (entry as Record<string, unknown>).errorCode === "string") &&
+          ((entry as Record<string, unknown>).finalResourceIdentityHash ===
+              undefined ||
+            (typeof (entry as Record<string, unknown>)
+                  .finalResourceIdentityHash === "string" &&
+              /^[0-9a-f]{64}$/i.test(
+                String(
+                  (entry as Record<string, unknown>)
+                    .finalResourceIdentityHash,
+                ),
+              )))
         )));
 }
 
@@ -468,6 +501,24 @@ function assessPreparedAttempts(
     };
   }
   const grouped = groupedAttempts(persisted);
+  const finalIdentityConflict = [...grouped.values()].some((entries) => {
+    const identities = new Set(
+      entries.flatMap(({ attempt }) => [
+        attempt.finalResourceIdentityHash,
+        ...(attempt.attemptHistory ?? []).map((history) =>
+          history.finalResourceIdentityHash
+        ),
+      ]).filter((value): value is string => Boolean(value)),
+    );
+    return identities.size > 1;
+  });
+  if (finalIdentityConflict) {
+    return {
+      complete: false,
+      reason: "final_resource_identity_conflict",
+      attempts: persisted,
+    };
+  }
   if (
     [...grouped.values()].some((entries) =>
       entries.length > MAX_ATTEMPT_HISTORY ||
@@ -515,6 +566,8 @@ function assessPreparedAttempts(
         "js_challenge",
         "identity_mismatch",
         "identity_ambiguous",
+        "unapproved_query",
+        "invalid_source_url",
       ]
         .includes(attempt.errorCode ?? "")
     );
@@ -568,6 +621,9 @@ export function compactSourceAttempts(
       ? { httpStatus: attempt.httpStatus }
       : {}),
     ...(attempt.errorCode ? { errorCode: attempt.errorCode } : {}),
+    ...(attempt.finalResourceIdentityHash
+      ? { finalResourceIdentityHash: attempt.finalResourceIdentityHash }
+      : {}),
     attemptedAt: attempt.attemptedAt,
   });
   const sameHistory = (
@@ -576,6 +632,7 @@ export function compactSourceAttempts(
   ) =>
     left.status === right.status && left.httpStatus === right.httpStatus &&
     left.errorCode === right.errorCode &&
+    left.finalResourceIdentityHash === right.finalResourceIdentityHash &&
     left.attemptedAt === right.attemptedAt;
   for (const entries of grouped.values()) {
     const terminal = terminalAttempt(entries, assessmentTimestamp);

@@ -1,4 +1,7 @@
-import { discoverIssuerCardCandidates } from "./issuer_card_crawl.ts";
+import {
+  classifyIssuerPage,
+  discoverIssuerCardCandidates,
+} from "./issuer_card_crawl.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -55,4 +58,34 @@ Deno.test("issuer crawl checks the absolute deadline immediately before every re
       `${mode} first request changed`,
     );
   }
+});
+
+Deno.test("issuer classifications retain only validated opaque resource identities", () => {
+  const submitted = "b".repeat(64);
+  const final = "c".repeat(64);
+  const page = classifyIssuerPage({
+    issuer: "Axis Bank",
+    url: "https://www.axis.bank.in/cards/credit-card/privilege?variant=gold",
+    canonicalUrl: "https://www.axis.bank.in/cards/credit-card/privilege",
+    html: "<h1>Privilege Credit Card</h1>",
+    submittedResourceIdentityHash: submitted,
+    finalResourceIdentityHash: final,
+  } as never) as unknown as Record<string, unknown>;
+  assert(
+    page.submittedResourceIdentityHash === submitted &&
+      page.finalResourceIdentityHash === final,
+    "opaque fetch identities disappeared from classification",
+  );
+  const invalid = classifyIssuerPage({
+    issuer: "Axis Bank",
+    url: "https://www.axis.bank.in/cards/credit-card/privilege",
+    html: "<h1>Privilege Credit Card</h1>",
+    submittedResourceIdentityHash: "not-a-hash",
+    finalResourceIdentityHash: "d".repeat(65),
+  } as never) as unknown as Record<string, unknown>;
+  assert(
+    invalid.submittedResourceIdentityHash === undefined &&
+      invalid.finalResourceIdentityHash === undefined,
+    "invalid opaque identities entered sanitized classification",
+  );
 });

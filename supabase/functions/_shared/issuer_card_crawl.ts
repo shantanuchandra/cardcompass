@@ -33,6 +33,8 @@ export type PageClassification = {
   confidence: number;
   warnings: string[];
   sanitizedEvidence: string[];
+  submittedResourceIdentityHash?: string;
+  finalResourceIdentityHash?: string;
 };
 
 export type IssuerCrawlResult = {
@@ -92,6 +94,8 @@ export type ClassifyIssuerPageInput = {
   canonicalUrl?: string;
   html?: string;
   text?: string;
+  submittedResourceIdentityHash?: string;
+  finalResourceIdentityHash?: string;
 };
 
 type SitemapDocument = {
@@ -352,8 +356,15 @@ function emptyClassification(url: string, warning: string): PageClassification {
 }
 
 function sanitizeClassification(page: PageClassification): PageClassification {
+  const {
+    submittedResourceIdentityHash,
+    finalResourceIdentityHash,
+    ...classification
+  } = page;
+  const validHash = (value: string | undefined): value is string =>
+    typeof value === "string" && /^[0-9a-f]{64}$/i.test(value);
   return {
-    ...page,
+    ...classification,
     canonicalUrl: safeHttpsDisplayUrl(page.canonicalUrl) ?? "invalid-source",
     proposedName: page.proposedName
       ? redactSensitiveUrlsInText(redactLongDigits(page.proposedName))
@@ -368,6 +379,15 @@ function sanitizeClassification(page: PageClassification): PageClassification {
       redactSensitiveUrlsInText(redactLongDigits(value))
     ),
     sanitizedEvidence: page.sanitizedEvidence.map(sanitizeEvidence),
+    ...(validHash(submittedResourceIdentityHash)
+      ? {
+        submittedResourceIdentityHash: submittedResourceIdentityHash
+          .toLowerCase(),
+      }
+      : {}),
+    ...(validHash(finalResourceIdentityHash)
+      ? { finalResourceIdentityHash: finalResourceIdentityHash.toLowerCase() }
+      : {}),
   };
 }
 
@@ -400,7 +420,6 @@ async function findCatalogCardByUrlHash(
     .eq("url_hash", urlHash)
     .maybeSingle();
   if (urlKeyError) throw urlKeyError;
-  if (urlKey?.card_id) return urlKey.card_id;
 
   const { data: provenance, error: provenanceError } = await supabase
     .from("card_catalog_provenance")
@@ -408,7 +427,15 @@ async function findCatalogCardByUrlHash(
     .or(`submitted_url_hash.eq.${urlHash},final_url_hash.eq.${urlHash}`)
     .maybeSingle();
   if (provenanceError) throw provenanceError;
-  return provenance?.card_id ?? null;
+  const cardIds = [
+    ...new Set(
+      [urlKey?.card_id, provenance?.card_id].filter(
+        (value): value is string => typeof value === "string" && Boolean(value),
+      ),
+    ),
+  ];
+  if (cardIds.length > 1) throw new Error("identity_conflict");
+  return cardIds[0] ?? null;
 }
 
 async function findCrawlerCatalogCandidates(
@@ -475,8 +502,33 @@ export async function persistCrawlerCandidate(
     throw new Error("invalid_crawler_candidate");
   }
   const canonicalUrl = canonicalOfficialUrl(issuer, candidate.canonicalUrl);
-  const urlHash = await sha256(canonicalUrl);
-  const knownCardId = await findCatalogCardByUrlHash(supabase, urlHash);
+  const validOpaqueHash = (value: string | undefined): value is string =>
+    typeof value === "string" && /^[0-9a-f]{64}$/i.test(value);
+  const urlHash = validOpaqueHash(candidate.finalResourceIdentityHash)
+    ? candidate.finalResourceIdentityHash.toLowerCase()
+    : validOpaqueHash(candidate.submittedResourceIdentityHash)
+    ? candidate.submittedResourceIdentityHash.toLowerCase()
+    : await sha256(canonicalUrl);
+  const resourceHashes = [
+    candidate.submittedResourceIdentityHash,
+    candidate.finalResourceIdentityHash,
+  ].filter((value): value is string => validOpaqueHash(value)).map((value) =>
+    value.toLowerCase()
+  );
+  const boundCardIds = [
+    ...new Set(
+      (await Promise.all(
+        [...new Set(resourceHashes)].map((hash) =>
+          findCatalogCardByUrlHash(supabase, hash)
+        ),
+      )).filter((value): value is string => Boolean(value)),
+    ),
+  ];
+  if (boundCardIds.length > 1) throw new Error("identity_conflict");
+  const knownCardId = boundCardIds[0] ??
+    (resourceHashes.length === 0
+      ? await findCatalogCardByUrlHash(supabase, urlHash)
+      : null);
   const canonical = canonicalCardIdentity(issuer, candidate.proposedName);
   if (normalizedProduct(canonical.cardName, issuer).length < 2) {
     throw new Error("invalid_crawler_candidate");
@@ -540,6 +592,18 @@ export async function persistCrawlerCandidate(
     issuer,
     official_url: canonicalUrl,
     url_hash: urlHash,
+    ...(validOpaqueHash(candidate.submittedResourceIdentityHash)
+      ? {
+        submitted_resource_identity_hash: candidate
+          .submittedResourceIdentityHash.toLowerCase(),
+      }
+      : {}),
+    ...(validOpaqueHash(candidate.finalResourceIdentityHash)
+      ? {
+        final_resource_identity_hash: candidate.finalResourceIdentityHash
+          .toLowerCase(),
+      }
+      : {}),
     product_signals: aliases,
     crawler_evidence: safeEvidence,
     warnings,
@@ -548,6 +612,18 @@ export async function persistCrawlerCandidate(
     crawler_source_evidence: {
       official_url: canonicalUrl,
       url_hash: urlHash,
+      ...(validOpaqueHash(candidate.submittedResourceIdentityHash)
+        ? {
+          submitted_resource_identity_hash: candidate
+            .submittedResourceIdentityHash.toLowerCase(),
+        }
+        : {}),
+      ...(validOpaqueHash(candidate.finalResourceIdentityHash)
+        ? {
+          final_resource_identity_hash: candidate.finalResourceIdentityHash
+            .toLowerCase(),
+        }
+        : {}),
       excerpts: safeEvidence,
     },
     crawler_existing_candidates: candidates,
@@ -662,6 +738,16 @@ export function classifyIssuerPage(
     input.issuer,
   );
   const warnings: string[] = [];
+  const resourceIdentities = {
+    ...(input.submittedResourceIdentityHash
+      ? {
+        submittedResourceIdentityHash: input.submittedResourceIdentityHash,
+      }
+      : {}),
+    ...(input.finalResourceIdentityHash
+      ? { finalResourceIdentityHash: input.finalResourceIdentityHash }
+      : {}),
+  };
 
   if (
     nonProductUrlPattern.test(canonicalUrl) || unsafePagePattern.test(evidence)
@@ -673,6 +759,7 @@ export function classifyIssuerPage(
       confidence: 0.99,
       warnings: ["quarantined_page_pattern"],
       sanitizedEvidence,
+      ...resourceIdentities,
     });
   }
 
@@ -689,6 +776,7 @@ export function classifyIssuerPage(
       confidence: identity ? 0.86 : 0.72,
       warnings,
       sanitizedEvidence,
+      ...resourceIdentities,
     });
   }
 
@@ -702,6 +790,7 @@ export function classifyIssuerPage(
       confidence: identity ? 0.95 : 0.82,
       warnings,
       sanitizedEvidence,
+      ...resourceIdentities,
     });
   }
 
@@ -715,6 +804,7 @@ export function classifyIssuerPage(
       confidence: identity ? 0.86 : 0.72,
       warnings,
       sanitizedEvidence,
+      ...resourceIdentities,
     });
   }
 
@@ -726,6 +816,7 @@ export function classifyIssuerPage(
     confidence: 0.2,
     warnings,
     sanitizedEvidence,
+    ...resourceIdentities,
   });
 }
 
@@ -960,6 +1051,8 @@ export async function discoverIssuerCardCandidates(
         url,
         canonicalUrl: response.canonicalUrl,
         html: response.text,
+        submittedResourceIdentityHash: response.sourceIdentityHash,
+        finalResourceIdentityHash: response.finalResourceIdentityHash,
       });
       (page.kind === "card_product" || page.kind === "supporting_document"
         ? candidates

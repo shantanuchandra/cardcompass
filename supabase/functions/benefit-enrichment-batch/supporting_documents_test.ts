@@ -196,6 +196,78 @@ Deno.test("supporting functional query keys are explicitly approved without pers
   );
 });
 
+Deno.test("linked query rejections remain bounded evidence and approved entity selectors are fetched exactly", async () => {
+  const product = "https://www.axis.bank.in/cards/credit-card/privilege";
+  const approved = `${product}/terms?document=mitc&variant=entity`;
+  const fetched: string[] = [];
+  const collected = await collectSupportingBenefitDocuments({
+    issuer: "Axis Bank",
+    primary: resource(
+      product,
+      `<h1>Privilege Credit Card</h1>
+       <a href="${product}/terms?product=privilege">Terms product selector</a>
+       <a href="${product}/fees?token=private-secret">Fees</a>
+       <a href="${product}/terms?document=%E0%A4%A">Malformed terms selector</a>
+       <a href="https://[invalid/mitc">MITC</a>
+       <a href="${product}/terms?document=mitc&amp;variant=entity">MITC entity selector</a>`,
+    ),
+    identityLabels: ["Privilege Credit Card"],
+    fetchOfficialIssuerResource: async (input) => {
+      fetched.push(input.url);
+      return resource(input.url, "Privilege Credit Card MITC and fees");
+    },
+  });
+  assert(
+    fetched.join(",") === approved,
+    `approved selector was not preserved exactly: ${fetched.join(",")}`,
+  );
+  const rejected = collected.attempts.filter((item) =>
+    item.errorCode === "unapproved_query" ||
+    item.errorCode === "invalid_source_url"
+  );
+  assert(rejected.length === 4, "rejected required candidates vanished");
+  assert(
+    rejected.every((item) => item.role === "required_supporting"),
+    "required anchor metadata was lost on rejection",
+  );
+  const assessment = assessCrawlCompleteness(
+    collected.attempts,
+    "2026-08-20T00:00:00.000Z",
+  );
+  assert(!assessment.complete, "required rejected query enabled removals");
+  const persisted = JSON.stringify(assessment.attempts);
+  assert(!persisted.includes("private-secret"), "query secret was persisted");
+  assert(!persisted.includes("?"), "query value entered persisted evidence");
+});
+
+Deno.test("supporting attempts retain opaque final resource identity", async () => {
+  const product = "https://www.axis.bank.in/cards/credit-card/privilege";
+  const terms = `${product}/terms?document=mitc`;
+  const finalHash = "d".repeat(64);
+  const collected = await collectSupportingBenefitDocuments({
+    issuer: "Axis Bank",
+    primary: resource(
+      product,
+      `<h1>Privilege Credit Card</h1><a href="${terms}">MITC</a>`,
+    ),
+    identityLabels: ["Privilege Credit Card"],
+    fetchOfficialIssuerResource: async () => ({
+      ...resource(terms, "Privilege Credit Card MITC"),
+      finalResourceIdentityHash: finalHash,
+    }),
+  });
+  const persisted = assessCrawlCompleteness(
+    collected.attempts,
+    "2026-08-20T00:00:00.000Z",
+  ).attempts.find((item) =>
+    item.role === "required_supporting"
+  ) as unknown as Record<string, unknown>;
+  assert(
+    persisted.finalResourceIdentityHash === finalHash,
+    "supporting final identity was dropped from evidence",
+  );
+});
+
 Deno.test("supporting crawl follows relevant official links to depth two and retains PDF provenance", async () => {
   const product = "https://www.axis.bank.in/cards/credit-card/privilege";
   const benefits = `${product}/benefits`;

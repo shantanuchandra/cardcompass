@@ -516,3 +516,92 @@ Supabase command, production data, external network request, migration command,
 or live write was used. The ordered Task 2–5 database/application verification
 and explicitly authorized live issuer behavior remain the unresolved integration
 gate.
+
+## Review fix round 5/5 — 2026-08-20
+
+### Red proof
+
+The final six findings were reproduced against `67a8fdb` before their
+corresponding production changes:
+
+- Crawl-policy and supporting-document rules reported **66 passed / 4 failed**.
+  Required and optional rejected query candidates disappeared or remained
+  removal-complete, supporting attempts omitted final-resource identities, and
+  compaction erased redirect identity transitions.
+- Focused identity rules reported two exact failures for a generic label
+  overriding a stored strong network/tier variant and case-sensitive body-only
+  evidence. Follow-up reds covered a generic Visa label overriding Visa
+  Infinite and malformed percent-encoded query selectors reaching the fetcher.
+- Issuer classification/persistence rules reproduced one missing opaque-hash
+  classification, one Gold/Platinum query variant dedupe collision, and one
+  conflicting same-hash database binding.
+- Catalog binding rules reproduced two missing behaviors: submitted and final
+  resource hashes were not queried independently, and non-unique/body-mismatched
+  bindings did not fail closed before resolution.
+
+### Fixes
+
+- Supporting-link discovery now returns policy-rejected candidates with bounded
+  anchor-derived role and reason instead of dropping them. Required and selected
+  optional query failures are retained as attempts and block removal evidence.
+  Entity-encoded approved selectors retain their exact query bytes; unknown,
+  sensitive, malformed UTF-8/percent, oversized, and invalid candidates fail
+  closed without persisting query values.
+- Exact-card reconciliation now treats the stored strongest network and tier as
+  mandatory. A generic label cannot override missing or different Visa,
+  Mastercard, RuPay, Amex, or co-brand variants. Tier-named families such as
+  American Express Platinum remain valid products. Bounded HTML/PDF body
+  candidates are case-insensitive, while Primary, Supplementary, add-on,
+  companion, and partner mentions remain contextual rather than competing card
+  identities.
+- Submitted and final opaque resource hashes are looked up independently. A
+  non-unique hash or hashes bound to different card IDs produces
+  `identity_conflict` before body resolution or persistence. Every surviving
+  URL-hash match is still reconciled against the fetched card body. The legacy
+  resolver is invoked once per resource identity with the same hash in both
+  compatibility arguments; different submitted/final keys are never passed as
+  one first-match set. Resolver/unique-race errors fail closed.
+- Issuer page classifications now carry validated bounded submitted/final
+  resource identities through sanitization, persistence evidence, and review
+  dedupe. Query-selected Gold and Platinum resources therefore remain distinct
+  even though their public display URL is queryless. Invalid or raw query
+  identities never enter review evidence.
+- `SourceAttempt` and bounded retry history now preserve the fetched
+  `finalResourceIdentityHash` for primary and supporting successes and failures.
+  Retries remain grouped by submitted identity, but a transition between final
+  resources is visible and makes the observation incomplete with
+  `final_resource_identity_conflict`. Manifest hashing includes the ordered
+  opaque transition while continuing to remove timestamps recursively.
+
+No HTTP, query, redirect, identity, hash, or attempt result changes acquisition
+discontinuation, benefit state, or mappings.
+
+### Green verification
+
+- Official-fetch rules — **47 passed, 0 failed**.
+- Benefit batch, supporting-document, and crawl-policy rules — **136 passed, 0
+  failed**.
+- Card discovery, issuer discovery/crawl, catalog, and benefit rules — **104
+  passed, 0 failed**.
+- Direct issuer-crawl/catalog Deno callers — **5 passed, 0 failed**.
+- Admin privacy/integration regression gate — **40 passed, 0 failed**, with only
+  its unchanged loopback-listener permission.
+- Total unique behavioral/static tests: **332 passed, 0 failed**.
+- Whole official-fetch production-caller and all changed TypeScript `deno check`
+  gates — passed.
+- `deno fmt --check` on all changed TypeScript source/test files — passed.
+- `git diff --check` — passed.
+
+### Changed files and remaining gate
+
+This final round changes shared official-fetch query validation, card identity
+and issuer classification, supporting/crawl evidence, benefit-batch carriage,
+card-discovery resource binding, focused tests, and this report. No schema or
+migration changed; existing opaque hash, provenance JSON, job evidence, and
+result-summary fields are sufficient.
+
+Live applied: **no**. No Docker, local database/PostgreSQL, local or linked
+Supabase command, production data, external network request, migration command,
+or live write was used. The ordered Task 2–5 database/application verification
+and explicitly authorized live issuer behavior remain the unresolved integration
+gate.

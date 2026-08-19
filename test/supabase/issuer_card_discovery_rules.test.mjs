@@ -216,6 +216,23 @@ test("does not resolve a crawler candidate from a mismatched URL hash alone", as
   assert.deepEqual(result, { outcome: "existing", catalogCardId: "card-neo" });
 });
 
+test("fails closed when one opaque resource hash has conflicting DB bindings", async () => {
+  const hash = "d".repeat(64);
+  const db = createDb({
+    urlCardId: "card-gold",
+    provenanceCardId: "card-platinum",
+  });
+  await assert.rejects(
+    persistCrawlerCandidate(db, "Axis Bank", candidate({
+      submittedResourceIdentityHash: hash,
+      finalResourceIdentityHash: hash,
+    })),
+    /identity_conflict/,
+  );
+  assert.equal(db.state.jobs.length, 0);
+  assert.equal(db.state.reviews.length, 0);
+});
+
 test("returns one canonical issuer/name catalog candidate without queueing crawler work", async () => {
   const db = createDb({
     catalogRows: [{
@@ -308,6 +325,37 @@ test("queues a genuinely new crawler product for review and reuses that service 
     aliases: ["Neo Credit Card", "Axis Neo Credit Card"],
     official_url: "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
   });
+});
+
+test("query-selected crawler variants keep distinct opaque review identities", async () => {
+  const db = createDb();
+  const display = "https://www.axis.bank.in/cards/credit-card/regalia";
+  const goldHash = "b".repeat(64);
+  const platinumHash = "c".repeat(64);
+
+  const gold = await persistCrawlerCandidate(db, "Axis Bank", candidate({
+    canonicalUrl: display,
+    proposedName: "Regalia Gold Credit Card",
+    aliases: ["Regalia Gold"],
+    submittedResourceIdentityHash: goldHash,
+    finalResourceIdentityHash: goldHash,
+  }));
+  const platinum = await persistCrawlerCandidate(db, "Axis Bank", candidate({
+    canonicalUrl: display,
+    proposedName: "Regalia Platinum Credit Card",
+    aliases: ["Regalia Platinum"],
+    submittedResourceIdentityHash: platinumHash,
+    finalResourceIdentityHash: platinumHash,
+  }));
+
+  assert.deepEqual(gold, { outcome: "review", reviewId: "review-1" });
+  assert.deepEqual(platinum, { outcome: "review", reviewId: "review-2" });
+  assert.equal(db.state.jobs.length, 2, "query variants suppressed each other");
+  assert.deepEqual(
+    db.state.jobs.map((job) => job.evidence.url_hash),
+    [goldHash, platinumHash],
+    "opaque final identities were replaced by display hashes",
+  );
 });
 
 test("repairs a review-less crawler service job without creating a second job", async () => {

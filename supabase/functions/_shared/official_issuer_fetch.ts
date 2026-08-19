@@ -575,9 +575,30 @@ function boundedQueryEntries(url: URL): Array<[string, string]> {
   return entries;
 }
 
+function validateRawQueryEncoding(value: string): void {
+  const queryStart = value.indexOf("?");
+  if (queryStart < 0) return;
+  const fragmentStart = value.indexOf("#", queryStart);
+  const query = value.slice(
+    queryStart + 1,
+    fragmentStart < 0 ? undefined : fragmentStart,
+  );
+  for (const component of query.split(/[&=]/)) {
+    if (/%(?![0-9a-f]{2})/i.test(component)) {
+      throw fetchError("unapproved_query");
+    }
+    try {
+      decodeURIComponent(component.replace(/\+/g, "%20"));
+    } catch {
+      throw fetchError("unapproved_query");
+    }
+  }
+}
+
 export function approvedStoredQueryParameters(value: string): string[] {
   try {
     if (value.trim().length > MAX_REQUEST_URL_LENGTH) return [];
+    validateRawQueryEncoding(value.trim());
     const url = new URL(value);
     boundedQueryEntries(url);
     removeTrackingQuery(url);
@@ -604,6 +625,7 @@ export function canonicalOfficialRequestUrl(
     if (exact.length > MAX_REQUEST_URL_LENGTH) {
       throw fetchError("unapproved_query");
     }
+    validateRawQueryEncoding(exact);
     const submitted = new URL(exact);
     boundedQueryEntries(submitted);
     removeTrackingQuery(submitted);

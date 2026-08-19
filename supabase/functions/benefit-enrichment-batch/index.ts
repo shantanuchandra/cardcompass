@@ -1041,6 +1041,11 @@ function sourceAttemptInputs(
         : "failed",
       ...(attempt.status !== undefined ? { httpStatus: attempt.status } : {}),
       ...(terminal?.contentHash ? { contentHash: terminal.contentHash } : {}),
+      ...(terminal?.finalResourceIdentityHash
+        ? {
+          finalResourceIdentityHash: terminal.finalResourceIdentityHash,
+        }
+        : {}),
       ...(terminal?.etag ? { etag: terminal.etag } : {}),
       ...(terminal?.lastModified
         ? { lastModified: terminal.lastModified }
@@ -1244,6 +1249,11 @@ async function processJob(
             status: "failed" as const,
             httpStatus: 200,
             contentHash: page.contentHash,
+            ...(page.finalResourceIdentityHash
+              ? {
+                finalResourceIdentityHash: page.finalResourceIdentityHash,
+              }
+              : {}),
             errorCode,
             attemptedAt: page.retrievedAt,
           }
