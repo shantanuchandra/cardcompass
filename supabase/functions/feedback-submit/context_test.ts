@@ -365,3 +365,163 @@ Deno.test("real provenance-shaped card feedback becomes a runnable immutable eva
   );
   assertEquals(result.executionStatus, "succeeded");
 });
+
+Deno.test("benefit mode selects only linked official benefit evidence and caps deterministic sources", async () => {
+  const benefits = Array.from({ length: 24 }, (_, index) => ({
+    benefit: {
+      benefit_id: `benefit-${String(index).padStart(2, "0")}`,
+      title: `Benefit ${index}`,
+      description: `Official benefit ${index}`,
+      benefit_type: "discount",
+      benefit_category: "shopping",
+      value_config: { limit: index + 1 },
+      source_url: `https://issuer.example/benefit-${index}`,
+      valid_from: "2026-01-01",
+      valid_until: null,
+      updated_at: "2026-08-01",
+    },
+    card_id: "card-1",
+  }));
+  const context = await resolveFeedbackContext(
+    fakeDb({
+      user_cards: [{
+        id: "uc-1",
+        user_id: "owner",
+        catalog_card_id: "card-1",
+        last_four_digits: "1234",
+      }],
+      card_catalog: [{
+        id: "card-1",
+        card_name: "Card",
+        bank: "Bank",
+        network: "Visa",
+        annual_fee: 1,
+        joining_fee: 1,
+      }],
+      card_benefit_mapping: benefits,
+      card_catalog_provenance: [{
+        id: "identity",
+        card_id: "card-1",
+        source_url: "https://issuer.example/card",
+        source_type: "official_html",
+        extracted_fields: { issuer: "Bank", cardName: "Card" },
+      }],
+    }),
+    "owner",
+    "card_data",
+    "user_card",
+    "uc-1",
+    "benefit_extraction",
+  );
+  const safe = context.safeInputContext;
+  const sources = safe.official_sources as Record<string, unknown>[];
+  assertEquals(safe.evaluation_mode, "benefit_extraction");
+  assertEquals(sources.length, 20);
+  assertEquals(sources.some((source) => source.id === "identity"), false);
+  assertEquals((context.outputSnapshot.benefits as unknown[]).length, 24);
+  const fixture = {
+    caseId: "case-benefit",
+    revision: 1,
+    featureKey: "card_data" as const,
+    inputFixture: {
+      safe_input_context: safe,
+      authoritative_context: context.authoritativeContext,
+    },
+    capturedOutput: context.outputSnapshot,
+  };
+  const baseline = await executeEvalCase(fixture, "captured-production-v1", {
+    generate: () => {
+      throw new Error("must_not_call");
+    },
+  });
+  assertEquals(baseline.executionStatus, "failed");
+  assertEquals(baseline.safeFailureCategory, "insufficient_fixture");
+});
+
+Deno.test("benefit mode without official linked evidence is review-only and never guesses", async () => {
+  const context = await resolveFeedbackContext(
+    fakeDb({
+      user_cards: [{
+        id: "uc-1",
+        user_id: "owner",
+        catalog_card_id: "card-1",
+        last_four_digits: "1234",
+      }],
+      card_catalog: [{
+        id: "card-1",
+        card_name: "Card",
+        bank: "Bank",
+        network: "Visa",
+      }],
+      card_benefit_mapping: [{
+        card_id: "card-1",
+        benefit: { benefit_id: "b", title: "No source" },
+      }],
+      card_catalog_provenance: [],
+    }),
+    "owner",
+    "card_data",
+    "user_card",
+    "uc-1",
+    "benefit_extraction",
+  );
+  assertEquals(context.safeInputContext.kind, "card_requires_review");
+});
+
+Deno.test("real captured benefit output normalizes through the production eval executor", async () => {
+  const benefit = {
+    benefit_id: "benefit-1",
+    title: "Lounge",
+    description: "Four visits",
+    benefit_type: "access",
+    benefit_category: "travel",
+    value_config: { limit: 4, usage_period: "quarter" },
+    source_url: "https://issuer.example/lounge",
+    valid_from: "2026-01-01",
+    valid_until: null,
+    updated_at: "2026-08-01",
+  };
+  const context = await resolveFeedbackContext(
+    fakeDb({
+      user_cards: [{
+        id: "uc-1",
+        user_id: "owner",
+        catalog_card_id: "card-1",
+        last_four_digits: "1234",
+      }],
+      card_catalog: [{
+        id: "card-1",
+        card_name: "Card",
+        bank: "Bank",
+        network: "Visa",
+      }],
+      card_benefit_mapping: [{ card_id: "card-1", benefit }],
+      card_catalog_provenance: [],
+    }),
+    "owner",
+    "card_data",
+    "user_card",
+    "uc-1",
+    "benefit_extraction",
+  );
+  const result = await executeEvalCase(
+    {
+      caseId: "case-benefit",
+      revision: 1,
+      featureKey: "card_data",
+      inputFixture: {
+        safe_input_context: context.safeInputContext,
+        authoritative_context: context.authoritativeContext,
+      },
+      capturedOutput: context.outputSnapshot,
+    },
+    "captured-production-v1",
+    {
+      generate: () => {
+        throw new Error("must_not_call");
+      },
+    },
+  );
+  assertEquals(result.executionStatus, "succeeded");
+  assertEquals((result.output as Record<string, unknown>).mode, "benefits");
+});

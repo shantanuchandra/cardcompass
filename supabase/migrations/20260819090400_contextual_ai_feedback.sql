@@ -104,11 +104,11 @@ language plpgsql security definer set search_path = '' as $$ declare row public.
   values(_user_id,_request_id,_feature_key,_output_ref_type,_output_ref_id,btrim(_feedback_text),_safe_input,_output,coalesce(_metadata->'authoritative_context','{}'::jsonb),(_metadata->>'trace_id')::uuid,_metadata->>'provider',_metadata->>'engine_version',_metadata->>'model',_metadata->>'prompt_version',_metadata->>'parser_version') returning * into row;
   return jsonb_build_object('id',row.id,'triage_status',row.triage_status); end $$;
 
-create or replace function public.find_ai_feedback_receipt(_user_id uuid, _request_id uuid, _feature_key text, _output_ref_type text, _output_ref_id text, _feedback_text text) returns jsonb
+create or replace function public.find_ai_feedback_receipt(_user_id uuid, _request_id uuid, _feature_key text, _output_ref_type text, _output_ref_id text, _feedback_text text, _evaluation_mode text) returns jsonb
 language plpgsql security definer set search_path = '' as $$ declare row public.ai_feedback; begin
   select * into row from public.ai_feedback where user_id=_user_id and request_id=_request_id;
   if not found then return null; end if;
-  if row.feature_key is distinct from _feature_key or row.output_ref_type is distinct from _output_ref_type or row.output_ref_id is distinct from _output_ref_id or row.feedback_text is distinct from btrim(_feedback_text) then raise exception 'request_id_collision'; end if;
+  if row.feature_key is distinct from _feature_key or row.output_ref_type is distinct from _output_ref_type or row.output_ref_id is distinct from _output_ref_id or row.feedback_text is distinct from btrim(_feedback_text) or row.safe_input_context->>'evaluation_mode' is distinct from _evaluation_mode then raise exception 'request_id_collision'; end if;
   return jsonb_build_object('id',row.id,'triage_status','awaiting_triage'); end $$;
 
 create or replace function public.claim_ai_feedback_triage(_feedback_id uuid) returns jsonb
@@ -182,7 +182,7 @@ language plpgsql security definer set search_path = '' as $$ declare current_cas
 
 revoke all on function public.create_ai_output_trace(uuid,uuid,text,jsonb,jsonb,jsonb,jsonb) from public, anon, authenticated;
 revoke all on function public.submit_ai_feedback(uuid,uuid,text,text,text,text,jsonb,jsonb,jsonb) from public, anon, authenticated;
-revoke all on function public.find_ai_feedback_receipt(uuid,uuid,text,text,text,text) from public, anon, authenticated;
+revoke all on function public.find_ai_feedback_receipt(uuid,uuid,text,text,text,text,text) from public, anon, authenticated;
 revoke all on function public.claim_ai_feedback_triage(uuid) from public, anon, authenticated;
 revoke all on function public.complete_ai_feedback_triage(uuid,uuid,boolean,jsonb,text) from public, anon, authenticated;
 revoke all on function public.admin_review_ai_feedback(uuid,uuid,uuid,text,jsonb,text) from public, anon, authenticated;
@@ -190,7 +190,7 @@ revoke all on function public.admin_retry_ai_feedback_triage(uuid,uuid,uuid) fro
 revoke all on function public.admin_ai_eval_case_action(uuid,uuid,uuid,text,jsonb,text,timestamptz) from public, anon, authenticated;
 grant execute on function public.create_ai_output_trace(uuid,uuid,text,jsonb,jsonb,jsonb,jsonb) to service_role;
 grant execute on function public.submit_ai_feedback(uuid,uuid,text,text,text,text,jsonb,jsonb,jsonb) to service_role;
-grant execute on function public.find_ai_feedback_receipt(uuid,uuid,text,text,text,text) to service_role;
+grant execute on function public.find_ai_feedback_receipt(uuid,uuid,text,text,text,text,text) to service_role;
 grant execute on function public.claim_ai_feedback_triage(uuid) to service_role;
 grant execute on function public.complete_ai_feedback_triage(uuid,uuid,boolean,jsonb,text) to service_role;
 grant execute on function public.admin_review_ai_feedback(uuid,uuid,uuid,text,jsonb,text) to service_role;

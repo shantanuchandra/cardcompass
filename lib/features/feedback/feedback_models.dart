@@ -28,15 +28,17 @@ sealed class FeedbackTarget {
   final String outputRefId;
   String get featureKey;
   String get outputRefType;
+  String? get evaluationMode => null;
 
   @override
   bool operator ==(Object other) =>
       other.runtimeType == runtimeType &&
       other is FeedbackTarget &&
-      other.outputRefId == outputRefId;
+      other.outputRefId == outputRefId &&
+      other.evaluationMode == evaluationMode;
 
   @override
-  int get hashCode => Object.hash(runtimeType, outputRefId);
+  int get hashCode => Object.hash(runtimeType, outputRefId, evaluationMode);
 }
 
 final class TransactionFeedbackTarget extends FeedbackTarget {
@@ -56,12 +58,24 @@ final class StatementFeedbackTarget extends FeedbackTarget {
 }
 
 final class UserCardFeedbackTarget extends FeedbackTarget {
-  const UserCardFeedbackTarget(super.outputRefId);
+  const UserCardFeedbackTarget(
+    super.outputRefId, {
+    this.mode = CardDataFeedbackMode.catalogIdentityValidation,
+  });
+  final CardDataFeedbackMode mode;
   @override
   String get featureKey => 'card_data';
   @override
   String get outputRefType => 'user_card';
+  @override
+  String get evaluationMode => switch (mode) {
+    CardDataFeedbackMode.catalogIdentityValidation =>
+      'catalog_identity_validation',
+    CardDataFeedbackMode.benefitExtraction => 'benefit_extraction',
+  };
 }
+
+enum CardDataFeedbackMode { catalogIdentityValidation, benefitExtraction }
 
 final class RecommendationFeedbackTarget extends FeedbackTarget {
   const RecommendationFeedbackTarget(super.outputRefId);

@@ -15,6 +15,29 @@ const target = TransactionFeedbackTarget(
 );
 
 void main() {
+  testWidgets(
+    'card feedback explicitly selects identity or benefit evaluation',
+    (tester) async {
+      final repository = _ModeRepository();
+      await _pumpSheet(
+        tester,
+        repository,
+        sheetTarget: const UserCardFeedbackTarget(
+          '10000000-0000-4000-8000-000000000001',
+        ),
+      );
+      await tester.tap(find.byKey(const Key('feedback-card-mode')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Benefit extraction').last);
+      await tester.enterText(
+        find.byType(TextField),
+        'The lounge benefit terms are wrong',
+      );
+      await _tapAction(tester, 'Send feedback');
+      await tester.pumpAndSettle();
+      expect(repository.mode, 'benefit_extraction');
+    },
+  );
   test('shared preview boundary caps code points and UTF-8 bytes', () {
     final bounded = boundedFeedbackPreview(
       '${List.filled(200, '₹').join()}transaction',
@@ -328,8 +351,9 @@ void main() {
 
 Future<void> _pumpSheet(
   WidgetTester tester,
-  FeedbackRepository repository,
-) async {
+  FeedbackRepository repository, {
+  FeedbackTarget sheetTarget = target,
+}) async {
   await _pump(
     tester,
     repository: repository,
@@ -337,7 +361,7 @@ Future<void> _pumpSheet(
       builder: (context) => TextButton(
         onPressed: () => showContextualFeedbackSheet(
           context,
-          target: target,
+          target: sheetTarget,
           preview: 'Coffee ¹420 · Food & dining',
         ),
         child: const Text('Open'),
@@ -398,6 +422,15 @@ class _UnusedApi implements FeedbackApi {
   @override
   Future<FeedbackApiResponse> invoke(Map<String, Object?> body) =>
       throw UnimplementedError();
+}
+
+class _ModeRepository extends _FakeRepository {
+  String? mode;
+  @override
+  Future<FeedbackSubmitResult> submit(FeedbackSubmission submission) async {
+    mode = submission.target.evaluationMode;
+    return super.submit(submission);
+  }
 }
 
 class _ExpiredTraceRepository extends FeedbackRepository {

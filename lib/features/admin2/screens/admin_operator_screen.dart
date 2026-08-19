@@ -391,7 +391,12 @@ final class _RepositoryEvalDataSource implements EvalDataSource {
     feature: feature,
   );
   @override
-  Future<EvalRunDetail> detail(String id) => _repository.detail(id);
+  Future<EvalRunDetail> detail(
+    String id, {
+    int resultPage = 1,
+    int resultLimit = 25,
+  }) =>
+      _repository.detail(id, resultPage: resultPage, resultLimit: resultLimit);
   @override
   Future<EvalRunReceipt> start(EvalStartRequest request) =>
       _repository.start(request);

@@ -76,6 +76,7 @@ export type FeedbackBody =
     output_ref_id: string;
     feedback_text: string;
     request_id: string;
+    evaluation_mode?: "catalog_identity_validation" | "benefit_extraction";
   }
   | {
     action: "trace-create";
@@ -90,14 +91,16 @@ export type FeedbackBody =
 export function parseFeedbackBody(raw: unknown): FeedbackBody {
   const value = object(raw);
   if (value.action === "feedback-submit") {
-    exact(value, [
+    const keys = [
       "action",
       "feature_key",
       "output_ref_type",
       "output_ref_id",
       "feedback_text",
       "request_id",
-    ]);
+    ];
+    if (value.feature_key === "card_data") keys.push("evaluation_mode");
+    exact(value, keys);
     if (
       typeof value.feature_key !== "string" ||
       !Object.hasOwn(outputRefByFeature, value.feature_key)
@@ -113,6 +116,13 @@ export function parseFeedbackBody(raw: unknown): FeedbackBody {
       !uuid.test(value.request_id) || typeof value.feedback_text !== "string" ||
       value.feedback_text.trim().length < 10 ||
       value.feedback_text.trim().length > 2000
+    ) throw new Error("invalid_request");
+    if (
+      value.feature_key === "card_data" &&
+        !["catalog_identity_validation", "benefit_extraction"].includes(
+          String(value.evaluation_mode),
+        ) || value.feature_key !== "card_data" &&
+        Object.hasOwn(value, "evaluation_mode")
     ) throw new Error("invalid_request");
     return value as FeedbackBody;
   }

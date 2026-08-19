@@ -76,6 +76,7 @@ class FeedbackRepository {
       'output_ref_id': submission.target.outputRefId,
       'feedback_text': text,
       'request_id': submission.requestId,
+      'evaluation_mode': ?submission.target.evaluationMode,
     };
     _ensureBounded(body);
     final response = await _invoke(body);

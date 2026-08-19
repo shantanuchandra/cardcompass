@@ -33,6 +33,7 @@ type Dependencies = {
     feature: string,
     refType: string,
     refId: string,
+    evaluationMode?: string,
   ) => Promise<SafeContext>;
   resolveCatalog?: (
     cardIds: string[],
@@ -87,8 +88,8 @@ async function defaultDependencies(request: Request): Promise<Dependencies> {
       return { id: data.user.id };
     },
     requireActive: (id) => requireActiveProfile(serviceDb, id),
-    resolveContext: (id, feature, type, ref) =>
-      resolveFeedbackContext(serviceDb, id, feature, type, ref),
+    resolveContext: (id, feature, type, ref, mode) =>
+      resolveFeedbackContext(serviceDb, id, feature, type, ref, mode),
     resolveCatalog: (cards, benefits) =>
       resolveRecommendationCatalog(serviceDb, cards, benefits),
     rpc,
@@ -147,6 +148,7 @@ export async function handleFeedbackRequest(
       _output_ref_type: body.output_ref_type,
       _output_ref_id: body.output_ref_id,
       _feedback_text: body.feedback_text.trim(),
+      _evaluation_mode: body.evaluation_mode ?? null,
     });
     if (replay) {
       return json(
@@ -159,6 +161,7 @@ export async function handleFeedbackRequest(
       body.feature_key,
       body.output_ref_type,
       body.output_ref_id,
+      body.evaluation_mode,
     );
     const result = await deps.rpc("submit_ai_feedback", {
       _user_id: actor.id,

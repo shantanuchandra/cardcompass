@@ -12,7 +12,11 @@ abstract interface class EvalDataSource {
     String? status,
     EvalFeature? feature,
   });
-  Future<EvalRunDetail> detail(String id);
+  Future<EvalRunDetail> detail(
+    String id, {
+    int resultPage = 1,
+    int resultLimit = 25,
+  });
   Future<EvalRunReceipt> start(EvalStartRequest request);
   Future<EvalRunReceipt> cancel(String id, String observed);
   Future<EvalRunReceipt> resumeFailed(String id, String observed);
@@ -47,6 +51,10 @@ class _EvalRunsPanelState extends State<EvalRunsPanel> {
   String? _notice;
   int _generation = 0;
   int _page = 1;
+  int _resultPage = 1;
+  int _maximumCases = 10;
+  int _latencyCeilingMs = 5000;
+  String? _candidateKey;
   String? _statusFilter;
   @override
   void initState() {
@@ -85,7 +93,9 @@ class _EvalRunsPanelState extends State<EvalRunsPanel> {
       var id = _selectedId;
       if (id != null && !page.items.any((r) => r.id == id)) id = null;
       id ??= page.items.firstOrNull?.id;
-      final detail = id == null ? null : await widget.source.detail(id);
+      final detail = id == null
+          ? null
+          : await widget.source.detail(id, resultPage: _resultPage);
       if (!mounted || generation != _generation) return;
       setState(() {
         _configs = values[0] as EvalConfigCatalog;
@@ -110,11 +120,12 @@ class _EvalRunsPanelState extends State<EvalRunsPanel> {
   Future<void> _select(EvalRun run) async {
     setState(() {
       _selectedId = run.id;
+      _resultPage = 1;
       _compactDetail = true;
       _acting = true;
     });
     try {
-      final d = await widget.source.detail(run.id);
+      final d = await widget.source.detail(run.id, resultPage: 1);
       if (mounted) setState(() => _detail = d);
     } catch (e) {
       await _effects(e);
@@ -127,11 +138,16 @@ class _EvalRunsPanelState extends State<EvalRunsPanel> {
   Future<void> _start() async {
     final catalog = _configs;
     if (catalog == null || catalog.candidates.isEmpty) return;
-    final candidate = catalog.candidates.first;
-    const max = 10, latency = 5000;
+    final candidate = catalog.candidates
+        .where((value) => value.key == _candidateKey)
+        .firstOrNull;
+    if (candidate == null) return;
+    final max = _maximumCases, latency = _latencyCeilingMs;
     final cost =
         (candidate.estimatedMaximumCostUsd +
-            (candidate.feature == EvalFeature.recommendation ? .01 : 0.0)) *
+            (candidate.feature == EvalFeature.recommendation
+                ? catalog.judge.estimatedMaximumCostUsd
+                : 0.0)) *
         max;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -270,7 +286,10 @@ class _EvalRunsPanelState extends State<EvalRunsPanel> {
                   icon: const Icon(Icons.refresh),
                 ),
                 FilledButton.icon(
-                  onPressed: _acting || (_configs?.datasetVersion ?? 0) < 1
+                  onPressed:
+                      _acting ||
+                          (_configs?.datasetVersion ?? 0) < 1 ||
+                          _candidateKey == null
                       ? null
                       : _start,
                   icon: const Icon(Icons.play_arrow),
@@ -290,6 +309,8 @@ class _EvalRunsPanelState extends State<EvalRunsPanel> {
                   'Refresh failed. Showing the last loaded evaluation state.',
                 ),
               ),
+            const SizedBox(height: BrandSpacing.md),
+            _startControls(),
             const SizedBox(height: BrandSpacing.md),
             if (wide)
               Expanded(
@@ -313,6 +334,87 @@ class _EvalRunsPanelState extends State<EvalRunsPanel> {
           ],
         );
       },
+    );
+  }
+
+  Widget _startControls() {
+    final catalog = _configs;
+    final candidates = catalog?.candidates ?? const <EvalConfig>[];
+    final selected = candidates
+        .where((c) => c.key == _candidateKey)
+        .firstOrNull;
+    final perCase = selected == null
+        ? 0.0
+        : selected.estimatedMaximumCostUsd +
+              (selected.feature == EvalFeature.recommendation
+                  ? (catalog?.judge.estimatedMaximumCostUsd ?? 0)
+                  : 0);
+    final cost = perCase * _maximumCases;
+    return BrandSurface(
+      child: Wrap(
+        spacing: BrandSpacing.md,
+        runSpacing: BrandSpacing.sm,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          SizedBox(
+            width: 260,
+            child: DropdownButtonFormField<String>(
+              key: const Key('eval-config-select'),
+              initialValue: _candidateKey,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'Candidate / family',
+              ),
+              items: [
+                for (final c in candidates)
+                  DropdownMenuItem(
+                    value: c.key,
+                    child: Text(_featureLabel(c.feature)),
+                  ),
+              ],
+              onChanged: _acting
+                  ? null
+                  : (value) => setState(() => _candidateKey = value),
+            ),
+          ),
+          DropdownButton<int>(
+            key: const Key('eval-max-cases'),
+            value: _maximumCases,
+            items: const [10, 25, 50, 100]
+                .map((v) => DropdownMenuItem(value: v, child: Text('$v cases')))
+                .toList(),
+            onChanged: _acting
+                ? null
+                : (v) => setState(() => _maximumCases = v!),
+          ),
+          DropdownButton<int>(
+            key: const Key('eval-latency-ceiling'),
+            value: _latencyCeilingMs,
+            items: const [5000, 10000, 30000]
+                .map(
+                  (v) =>
+                      DropdownMenuItem(value: v, child: Text('$v ms ceiling')),
+                )
+                .toList(),
+            onChanged: _acting
+                ? null
+                : (v) => setState(() => _latencyCeilingMs = v!),
+          ),
+          if (selected == null)
+            const Text('Select an available candidate to preflight the run.')
+          else
+            SizedBox(
+              width: 420,
+              child: Text(
+                '${_featureLabel(selected.feature)} · ${selected.taskScope}\n'
+                'Candidate ${selected.key} · ${selected.provider}/${selected.model} · ${selected.promptVersion}\n'
+                'Baseline ${catalog!.baseline.key} · Judge ${catalog.judge.key}\n'
+                '${selected.scopeNote ?? ''}${selected.scopeNote == null ? '' : ' · '}'
+                'Preflight: $_maximumCases cases · \$${cost.toStringAsFixed(6)} max · $_latencyCeilingMs ms/case',
+              ),
+            ),
+        ],
+      ),
     );
   }
 
@@ -491,10 +593,69 @@ class _EvalRunsPanelState extends State<EvalRunsPanel> {
                         : 'Candidate failed',
                   ),
                 ),
+            if (d.resultTotal > d.resultLimit) ...[
+              const Divider(),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  IconButton(
+                    key: const Key('eval-results-prev'),
+                    tooltip: 'Previous case results',
+                    constraints: const BoxConstraints(
+                      minWidth: 44,
+                      minHeight: 44,
+                    ),
+                    onPressed: d.resultPage <= 1 || _acting
+                        ? null
+                        : () => _loadResultPage(d.resultPage - 1),
+                    icon: const Icon(Icons.chevron_left),
+                  ),
+                  Expanded(
+                    child: Text(
+                      'Results ${(d.resultPage - 1) * d.resultLimit + 1}–${(d.resultPage * d.resultLimit).clamp(0, d.resultTotal)} of ${d.resultTotal}',
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                  IconButton(
+                    key: const Key('eval-results-next'),
+                    tooltip: 'Next case results',
+                    constraints: const BoxConstraints(
+                      minWidth: 44,
+                      minHeight: 44,
+                    ),
+                    onPressed:
+                        d.resultPage * d.resultLimit >= d.resultTotal || _acting
+                        ? null
+                        : () => _loadResultPage(d.resultPage + 1),
+                    icon: const Icon(Icons.chevron_right),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _loadResultPage(int page) async {
+    final id = _selectedId;
+    if (id == null) return;
+    setState(() => _acting = true);
+    try {
+      final detail = await widget.source.detail(id, resultPage: page);
+      if (!mounted || _selectedId != id) return;
+      setState(() {
+        _detail = detail;
+        _resultPage = page;
+        _error = null;
+      });
+    } catch (e) {
+      await _effects(e);
+      if (mounted) setState(() => _error = e);
+    } finally {
+      if (mounted) setState(() => _acting = false);
+    }
   }
 }
 

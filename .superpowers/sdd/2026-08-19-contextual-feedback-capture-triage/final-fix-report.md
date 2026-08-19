@@ -23,3 +23,8 @@ All six final-review findings were addressed in one coherent fix pass.
 - Added full paginated Feedback discovery with retained content on refresh failure and >100-record coverage.
 - Added complete multi-revision eval-case parsing/rendering with explicit current-revision marking.
 - Moved retry identity into a replayable state-owned mutation; repository recreation, parent rebuild, response loss, and server no-reschedule replay are covered.
+# Eval whole-plan integration follow-up
+
+Card Data contextual feedback now carries an explicit server-allowlisted identity or benefit-extraction mode. The owned-card resolver derives the captured output and selects only mode-applicable official evidence, with deterministic deduplication and a 20-source ceiling. Missing evidence remains review-only. The immutable safe fixture retains the mode through human review and dataset admission, while replay intent rejects a request ID reused with another mode.
+
+Fresh focused evidence includes both real captured modes through the production executor, unavailable-evidence handling, candidate-input exclusion, the frozen Edge suite, and disposable Feedback PostgreSQL. No provider, deployment, or remote mutation was invoked.

@@ -14,6 +14,19 @@ Deno.test("strict validation enforces action, compatibility, UUID and bounded te
     }).action,
     "feedback-submit",
   );
+  const card = parseFeedbackBody({
+    action: "feedback-submit",
+    feature_key: "card_data",
+    output_ref_type: "user_card",
+    output_ref_id: "10000000-0000-4000-8000-000000000001",
+    evaluation_mode: "benefit_extraction",
+    feedback_text: "The captured benefit is incomplete",
+    request_id: "20000000-0000-4000-8000-000000000001",
+  });
+  assertEquals(
+    card.action === "feedback-submit" && card.evaluation_mode,
+    "benefit_extraction",
+  );
   for (
     const body of [
       { action: "constructor" },
@@ -29,6 +42,7 @@ Deno.test("strict validation enforces action, compatibility, UUID and bounded te
         action: "feedback-submit",
         feature_key: "card_data",
         output_ref_type: "user_card",
+        evaluation_mode: "catalog_identity_validation",
         output_ref_id: "10000000-0000-4000-8000-000000000001",
         feedback_text: "short",
         request_id: "20000000-0000-4000-8000-000000000001",
@@ -37,10 +51,20 @@ Deno.test("strict validation enforces action, compatibility, UUID and bounded te
         action: "feedback-submit",
         feature_key: "card_data",
         output_ref_type: "user_card",
+        evaluation_mode: "catalog_identity_validation",
         output_ref_id: "10000000-0000-4000-8000-000000000001",
         feedback_text: "long enough text",
         request_id: "20000000-0000-4000-8000-000000000001",
         extra: true,
+      },
+      {
+        action: "feedback-submit",
+        feature_key: "card_data",
+        output_ref_type: "user_card",
+        output_ref_id: "10000000-0000-4000-8000-000000000001",
+        evaluation_mode: "ranking",
+        feedback_text: "long enough text",
+        request_id: "20000000-0000-4000-8000-000000000001",
       },
     ]
   ) {
@@ -109,6 +133,7 @@ Deno.test("endpoint authenticates and checks active profile before service work"
         action: "feedback-submit",
         feature_key: "card_data",
         output_ref_type: "user_card",
+        evaluation_mode: "catalog_identity_validation",
         output_ref_id: "10000000-0000-4000-8000-000000000001",
         feedback_text: "This is the wrong card",
         request_id: "20000000-0000-4000-8000-000000000001",
@@ -198,6 +223,7 @@ Deno.test("accepted replay returns its stable receipt without resolving or resch
         action: "feedback-submit",
         feature_key: "card_data",
         output_ref_type: "user_card",
+        evaluation_mode: "catalog_identity_validation",
         output_ref_id: "10000000-0000-4000-8000-000000000001",
         feedback_text: "This is the wrong card identity",
         request_id: "20000000-0000-4000-8000-000000000001",

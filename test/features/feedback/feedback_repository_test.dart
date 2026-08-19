@@ -69,6 +69,7 @@ void main() {
     await repository.submit(edited);
 
     expect(api.requests[0]['request_id'], firstId);
+    expect(api.requests[0]['evaluation_mode'], 'catalog_identity_validation');
     expect(api.requests[1]['request_id'], firstId);
     expect(api.requests[2]['request_id'], secondId);
   });

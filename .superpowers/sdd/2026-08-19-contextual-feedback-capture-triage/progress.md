@@ -164,6 +164,14 @@ Ruling: Page Feedback through deterministic server pages and retain the last suc
 
 Ruling: Make `FeedbackTriageRetry` the owner of retry request identity and keep it in the detail-state transaction until authoritative success. Cost if wrong: navigating away intentionally abandons the local retry affordance, while server-side receipt replay still prevents duplicate execution if the same mutation is retried by retained state.
 
+## Eval whole-plan integration correction
+
+- Card feedback explicitly distinguishes catalog identity validation from benefit extraction in the contextual sheet and request contract. The server derives both captured answers and mode-applicable official evidence from the owned `user_card`; it never trusts client answer values.
+- Mode is persisted in the immutable safe input fixture. Receipt lookup compares it as part of retry intent, so reusing a request ID with a different mode fails as a collision. Approved revisions continue to copy the immutable fixture rather than mutating it.
+- Resolver/endpoint/executor tests cover both real captured modes, deterministic source ordering/deduplication, the 20-source ceiling, review-only unavailable evidence, and candidate-input exclusion. Disposable Feedback PostgreSQL passes 2/2.
+
+Ruling: Include Card Data evaluation mode in immutable replay intent and derive all answer/evidence fields server-side. Cost if wrong: old clients must update to send one allowlisted field for card feedback, preventing transport retries from changing the meaning of accepted evidence.
+
 ## Final adjudication
 
 - The single final-fix owner resolved all whole-plan findings in `939ea8c`; the scoped re-review's two valid durability residuals were resolved by the same owner in `7527ee1`.

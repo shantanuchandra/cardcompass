@@ -66,6 +66,7 @@ final class EvalTestSource implements EvalDataSource {
   int resumes = 0;
   String? lastStatus;
   Object? nextError;
+  final detailRequests = <(String, int)>[];
   @override
   Future<EvalConfigCatalog> configs() async => EvalConfigCatalog(
     datasetVersion: 12,
@@ -91,7 +92,31 @@ final class EvalTestSource implements EvalDataSource {
       estimatedMaximumCostUsd: .01,
       scopeNote: null,
     ),
-    candidates: [config()],
+    candidates: [
+      const EvalConfig(
+        key: 'gemini-statement',
+        role: EvalConfigRole.candidate,
+        feature: EvalFeature.statementProcessing,
+        provider: 'gemini',
+        model: 'flash',
+        promptVersion: 's1',
+        taskScope: 'statement_classification',
+        estimatedMaximumCostUsd: .01,
+        scopeNote: null,
+      ),
+      const EvalConfig(
+        key: 'gemini-card',
+        role: EvalConfigRole.candidate,
+        feature: EvalFeature.cardData,
+        provider: 'gemini',
+        model: 'flash',
+        promptVersion: 'c1',
+        taskScope: 'catalog_identity_and_benefit_extraction',
+        estimatedMaximumCostUsd: .02,
+        scopeNote: null,
+      ),
+      config(),
+    ],
   );
   @override
   Future<EvalRunsPage> runs({
@@ -110,7 +135,25 @@ final class EvalTestSource implements EvalDataSource {
   }
 
   @override
-  Future<EvalRunDetail> detail(String id) async => runDetail();
+  Future<EvalRunDetail> detail(
+    String id, {
+    int resultPage = 1,
+    int resultLimit = 25,
+  }) async {
+    detailRequests.add((id, resultPage));
+    final base = runDetail();
+    return EvalRunDetail(
+      run: base.run,
+      metrics: base.metrics,
+      decision: base.decision,
+      blockers: base.blockers,
+      results: base.results,
+      resultPage: resultPage,
+      resultLimit: resultLimit,
+      resultTotal: 126,
+    );
+  }
+
   @override
   Future<EvalRunReceipt> start(EvalStartRequest request) async {
     starts.add(request);
@@ -183,17 +226,82 @@ void main() {
   ) async {
     final source = EvalTestSource();
     await pump(tester, source);
+    expect(find.text('Start evaluation'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.widgetWithText(FilledButton, 'Start evaluation'),
+          )
+          .onPressed,
+      isNull,
+    );
+    await tester.tap(find.byKey(const Key('eval-config-select')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Recommendation').last);
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('fixed_selection_explanation_and_arithmetic'),
+      findsOneWidget,
+    );
+    expect(find.text('Does not evaluate ranking.'), findsWidgets);
     await tester.tap(find.text('Start evaluation'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('10 cases'), findsOneWidget);
-    expect(find.textContaining(r'$0.400000'), findsOneWidget);
-    expect(find.textContaining('5000 ms'), findsOneWidget);
+    expect(find.textContaining('10 cases'), findsWidgets);
+    expect(find.textContaining(r'$0.400000'), findsWidgets);
+    expect(find.textContaining('5000 ms'), findsWidgets);
     await tester.tap(
       find.widgetWithText(FilledButton, 'Start evaluation').last,
     );
     await tester.pumpAndSettle();
     expect(source.starts, hasLength(1));
+    expect(source.starts.single.candidate.key, config().key);
     expect(source.runsCalls, greaterThan(1));
+  });
+  testWidgets(
+    'explicit selector can start every family with its exact config',
+    (tester) async {
+      for (final label in [
+        'Statement processing',
+        'Card data',
+        'Recommendation',
+      ]) {
+        final source = EvalTestSource();
+        await pump(tester, source, size: const Size(390, 844));
+        await tester.tap(find.byKey(const Key('eval-config-select')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(label).last);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Start evaluation'));
+        await tester.pumpAndSettle();
+        await tester.tap(
+          find.widgetWithText(FilledButton, 'Start evaluation').last,
+        );
+        await tester.pumpAndSettle();
+        expect(
+          source.starts.single.candidate.feature,
+          [
+            EvalFeature.statementProcessing,
+            EvalFeature.cardData,
+            EvalFeature.recommendation,
+          ][[
+            'Statement processing',
+            'Card data',
+            'Recommendation',
+          ].indexOf(label)],
+        );
+      }
+    },
+  );
+  testWidgets('case result pagination retains run and resets on selection', (
+    tester,
+  ) async {
+    final source = EvalTestSource();
+    await pump(tester, source);
+    expect(find.text('Results 1–25 of 126'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('eval-results-next')));
+    await tester.pumpAndSettle();
+    expect(source.detailRequests.last, (runId, 2));
+    expect(find.text('Results 26–50 of 126'), findsOneWidget);
   });
   testWidgets(
     'stale refresh retains loaded run and auth effects are forwarded',

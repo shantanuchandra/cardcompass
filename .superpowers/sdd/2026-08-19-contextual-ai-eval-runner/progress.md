@@ -262,3 +262,16 @@ Ruling: Share an exact validator for the runner's existing safe receipt vocabula
 Ruling: Treat normal baseline-only misses as measurable improvement while retaining review for invalid baseline schema or rubric. Cost if wrong: a valid candidate can be supported against weaker production behavior, but any uncertainty in evidence validity still fails closed.
 
 Ruling: Restrict terminal kickoff receipts to statuses emitted by `finish_ai_eval_run`; reject hypothetical failed/cancelled HTTP 200 shapes. Cost if wrong: adding a future terminal producer status requires an explicit parser and contract-test update.
+
+## Whole-plan final-review corrections
+
+- Card Data feedback now requires an explicit allowlisted evaluation mode. The capture resolver selects only official evidence applicable to identity or benefit extraction, deterministically orders and deduplicates it, caps the combined fixture at 20 sources, and emits a review-only fixture when the selected evidence is unavailable. Captured identity and benefit outputs both normalize through the production executor without exposing expected/rubric/operator fields to candidates.
+- Admin2 starts no evaluation until the operator explicitly selects one of the available statement, card-data, or recommendation candidates. The preflight displays exact family, task scope, candidate/baseline/judge keys, provider/model/prompt, case count, cost ceiling, latency ceiling, and the fixed-selection not-ranking warning.
+- Per-case result evidence now has accessible Previous/Next pagination backed by the existing typed page/limit/total contract. It remains bound to the exact selected run, resets on run selection, and retains the last-good detail when a refresh or page load fails.
+- Verification passed 265 frozen Edge tests (one opt-in smoke ignored), 712 Flutter tests (25 explicit deployed-stack skips), all 55 sequential Node migration tests after the replay-contract correction, and live disposable Feedback PostgreSQL 2/2. Repository analysis has only the 12 documented pre-existing informational diagnostics. No deployment, push, provider call, or spend occurred.
+
+Ruling: Require the end user to select the Card Data evaluation mode at capture time and freeze that mode into the immutable fixture. Cost if wrong: one extra choice is shown on card feedback, but identity evidence can never silently score benefit extraction or vice versa.
+
+Ruling: Start evaluations only from an explicitly selected server-advertised candidate and show the full reviewed preflight contract before confirmation. Cost if wrong: the operator performs one selection per run, preventing an accidental first-config or wrong-family run.
+
+Ruling: Page case results independently from run pages while retaining last-good detail on failure. Cost if wrong: one additional detail request is made per 25 results, but evidence beyond the first page remains inspectable without unbounded responses.

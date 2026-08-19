@@ -28,6 +28,7 @@ export async function resolveFeedbackContext(
   feature: string,
   refType: string,
   refId: string,
+  evaluationMode?: string,
 ): Promise<SafeContext> {
   if (refType === "transaction") {
     const row = await one(
@@ -88,6 +89,13 @@ export async function resolveFeedbackContext(
     };
   }
   if (refType === "user_card") {
+    const mode = evaluationMode ?? "catalog_identity_validation";
+    if (
+      ![
+        "catalog_identity_validation",
+        "benefit_extraction",
+      ].includes(String(mode))
+    ) throw new Error("invalid_request");
     const row = await one(
       db,
       "user_cards",
@@ -108,15 +116,18 @@ export async function resolveFeedbackContext(
       )
       .eq("card_id", row.catalog_card_id);
     if (benefitsError) throw new Error("request_failed");
-    const benefits = (mappings ?? []).slice(0, 50)
+    const benefits = (mappings ?? [])
       .map((entry: Record<string, unknown>) => entry.benefit)
-      .filter((entry: unknown) => entry && typeof entry === "object");
+      .filter((entry: unknown) => entry && typeof entry === "object")
+      .sort((a: any, b: any) =>
+        String(a.benefit_id).localeCompare(String(b.benefit_id))
+      ).slice(0, 50);
     const { data: provenance, error: provenanceError } = await db
       .from("card_catalog_provenance")
       .select("id,source_url,source_type,extracted_fields,source_evidence")
       .eq("card_id", row.catalog_card_id);
     if (provenanceError) throw new Error("request_failed");
-    const officialSources: Record<string, unknown>[] = (provenance ?? [])
+    const identitySources: Record<string, unknown>[] = (provenance ?? [])
       .filter((source: Record<string, unknown>) =>
         typeof source.source_url === "string" &&
         source.source_url.startsWith("https://") &&
@@ -125,7 +136,7 @@ export async function resolveFeedbackContext(
         ) && source.extracted_fields &&
         typeof source.extracted_fields === "object"
       )
-      .slice(0, 20).map((source: Record<string, unknown>) => {
+      .map((source: Record<string, unknown>) => {
         const extracted = source.extracted_fields as Record<string, unknown>;
         return {
           id: source.id,
@@ -155,12 +166,13 @@ export async function resolveFeedbackContext(
           },
         };
       });
+    const benefitSources: Record<string, unknown>[] = [];
     for (const benefit of benefits as Record<string, unknown>[]) {
       if (
         typeof benefit.source_url === "string" &&
         benefit.source_url.startsWith("https://")
       ) {
-        officialSources.push({
+        benefitSources.push({
           id: benefit.benefit_id,
           url: benefit.source_url,
           snippet: boundedText(benefit.description, 2000),
@@ -172,13 +184,24 @@ export async function resolveFeedbackContext(
         });
       }
     }
+    const selected = mode === "benefit_extraction"
+      ? benefitSources
+      : identitySources;
+    const seen = new Set<string>();
+    const officialSources = selected.filter((source) => {
+      const key = `${String(source.id)}|${String(source.url)}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).sort((a, b) => `${a.id}|${a.url}`.localeCompare(`${b.id}|${b.url}`))
+      .slice(0, 20);
     const runnable = officialSources.length > 0;
     return {
       safeInputContext: {
         kind: runnable ? "card_data" : "card_requires_review",
         ...(runnable
           ? {
-            evaluation_mode: "catalog_identity_validation",
+            evaluation_mode: mode,
             identifiers: {
               last_four_digits: boundedText(row.last_four_digits, 4),
             },

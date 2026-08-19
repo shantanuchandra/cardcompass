@@ -228,6 +228,40 @@ class _ContextualFeedbackSheetState extends State<ContextualFeedbackSheet> {
                     ),
                   ),
                   const SizedBox(height: BrandSpacing.lg),
+                  if (_effectiveTarget
+                      case final UserCardFeedbackTarget cardTarget) ...[
+                    DropdownButtonFormField<CardDataFeedbackMode>(
+                      key: const Key('feedback-card-mode'),
+                      initialValue: cardTarget.mode,
+                      decoration: const InputDecoration(
+                        labelText: 'What needs evaluation?',
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: CardDataFeedbackMode.catalogIdentityValidation,
+                          child: Text('Card identity'),
+                        ),
+                        DropdownMenuItem(
+                          value: CardDataFeedbackMode.benefitExtraction,
+                          child: Text('Benefit extraction'),
+                        ),
+                      ],
+                      onChanged: _state == _SendState.sending
+                          ? null
+                          : (mode) {
+                              if (mode == null) return;
+                              setState(() {
+                                _effectiveTarget = UserCardFeedbackTarget(
+                                  cardTarget.outputRefId,
+                                  mode: mode,
+                                );
+                                _failedSubmission = null;
+                                _state = _SendState.editing;
+                              });
+                            },
+                    ),
+                    const SizedBox(height: BrandSpacing.md),
+                  ],
                   if (_state == _SendState.sent)
                     Semantics(
                       liveRegion: true,
