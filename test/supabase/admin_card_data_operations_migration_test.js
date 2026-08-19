@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawn, spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
@@ -29,7 +30,9 @@ test('card data actions are allowlisted, atomic, idempotent and service-only', a
   assert.match(body, /_operation not in \([\s\S]*?'approve'[\s\S]*?'unquarantine'[\s\S]*?\)/);
   assert.match(body, /pg_advisory_xact_lock/);
   assert.match(body, /from public\.admin_audit_log/);
-  assert.match(body, /request_fingerprint/);
+  assert.match(body, /normalized_request/);
+  assert.match(body, /prior_details -> 'request' is distinct from normalized_request/);
+  assert.doesNotMatch(body, /md5|digest/);
   assert.match(body, /raise exception 'request_id_collision'/);
   assert.match(body, /insert into public\.admin_audit_log/);
   assert.match(body, /for update/);
@@ -60,4 +63,274 @@ test('benefit approvals bind the locked job to its staging row', async () => {
   assert.match(body, /staging\.card_id is distinct from job\.card_id/);
   assert.match(body, /public\.approve_card_benefit_enrichment/);
   assert.match(body, /update public\.card_catalog_enrichment_jobs[\s\S]*?status = 'completed'/);
+});
+
+const runPostgresIntegration = process.env.RUN_ADMIN_CARD_DATA_PG_INTEGRATION === 'true';
+
+function psql(databaseUrl, sql) {
+  const result = spawnSync(
+    'psql',
+    ['-X', '-A', '-t', '--set', 'ON_ERROR_STOP=1', '--dbname', databaseUrl, '--file', '-'],
+    { input: sql, encoding: 'utf8' },
+  );
+  if (result.status !== 0) {
+    throw new Error(`PostgreSQL integration command failed:\n${result.stderr}`);
+  }
+  return result.stdout.trim();
+}
+
+function psqlAsync(databaseUrl, sql) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      'psql',
+      ['-X', '-A', '-t', '--set', 'ON_ERROR_STOP=1', '--dbname', databaseUrl, '--file', '-'],
+      { stdio: ['pipe', 'pipe', 'pipe'] },
+    );
+    let stderr = '';
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`PostgreSQL integration command failed:\n${stderr}`));
+    });
+    child.stdin.end(sql);
+  });
+}
+
+function assertLocalDatabaseUrl(databaseUrl) {
+  if (databaseUrl.startsWith('postgresql:///') || databaseUrl.startsWith('postgres:///')) return;
+  const parsed = new URL(databaseUrl);
+  assert.ok(
+    ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname),
+    'integration tests refuse non-loopback PostgreSQL servers',
+  );
+}
+
+test('RPC compiles and preserves transactional mutation invariants in PostgreSQL', {
+  skip: runPostgresIntegration ? false : 'set RUN_ADMIN_CARD_DATA_PG_INTEGRATION=true for isolated local PostgreSQL coverage',
+}, async () => {
+  const adminUrl = process.env.ADMIN_CARD_DATA_TEST_ADMIN_URL ?? 'postgresql:///postgres';
+  assertLocalDatabaseUrl(adminUrl);
+
+  const databaseName = `admin_card_data_test_${process.pid}_${Date.now()}`;
+  const databaseUrl = `postgresql:///${databaseName}`;
+  const requiredRoles = ['anon', 'authenticated', 'service_role'];
+  const createdRoles = [];
+
+  try {
+    for (const role of requiredRoles) {
+      const exists = psql(
+        adminUrl,
+        `select exists (select 1 from pg_roles where rolname = '${role}');`,
+      );
+      if (!exists.endsWith('t')) {
+        psql(adminUrl, `create role ${role} nologin;`);
+        createdRoles.push(role);
+      }
+    }
+    psql(adminUrl, `create database "${databaseName}";`);
+
+    const migration = await readFile(migrationUrl, 'utf8');
+    const setup = `
+      create schema auth;
+      create table auth.users (id uuid primary key);
+      create table public.admin_audit_log (
+        id uuid primary key default gen_random_uuid(),
+        actor_id uuid not null references auth.users(id),
+        action text not null,
+        target_type text not null,
+        target_id text,
+        reason text,
+        request_id uuid not null,
+        outcome text not null,
+        details jsonb not null default '{}'::jsonb,
+        created_at timestamptz not null default now(),
+        unique (actor_id, request_id)
+      );
+      create table public.card_catalog_review_queue (
+        id uuid primary key,
+        status text not null,
+        updated_at timestamptz not null
+      );
+      create table public.card_catalog_enrichment_jobs (
+        id uuid primary key,
+        card_id uuid not null,
+        parser_version text not null,
+        status text not null,
+        staging_id uuid,
+        failure_category text,
+        next_retry_at timestamptz,
+        lease_token uuid,
+        lease_expires_at timestamptz,
+        result_summary jsonb not null default '{}'::jsonb,
+        updated_at timestamptz not null
+      );
+      create table public.card_benefits_staging (
+        id uuid primary key,
+        card_id uuid not null,
+        status text not null
+      );
+      create function public.review_card_catalog_discovery(
+        _review_item_id uuid, _actor_id uuid, _action text,
+        _proposed_fields jsonb, _merge_card_id uuid, _reason text
+      ) returns table (card_id uuid, job_id uuid, resulting_status text)
+      language plpgsql as $$
+      begin
+        update public.card_catalog_review_queue
+        set status = case when _action = 'reject' then 'rejected' else 'approved' end,
+            updated_at = now()
+        where id = _review_item_id;
+        return query select null::uuid, _review_item_id,
+          case when _action = 'reject' then 'rejected' else 'approved' end;
+      end;
+      $$;
+      create function public.approve_card_benefit_enrichment(
+        _staging_id uuid, _reviewed_by uuid, _decisions jsonb
+      ) returns table (staging_id uuid, resulting_status text)
+      language plpgsql as $$
+      begin
+        update public.card_benefits_staging set status = 'approved' where id = _staging_id;
+        return query select _staging_id, 'approved'::text;
+      end;
+      $$;
+      ${migration}
+    `;
+    psql(databaseUrl, setup);
+
+    const assertions = `
+      begin;
+      insert into auth.users(id) values ('10000000-0000-4000-8000-000000000001');
+      insert into public.card_catalog_review_queue(id, status, updated_at) values
+        ('20000000-0000-4000-8000-000000000001', 'pending', '2026-08-19T09:00:00Z'),
+        ('20000000-0000-4000-8000-000000000002', 'pending', '2026-08-19T09:00:00Z'),
+        ('20000000-0000-4000-8000-000000000003', 'pending', '2026-08-19T09:00:00Z');
+      insert into public.card_benefits_staging(id, card_id, status) values
+        ('30000000-0000-4000-8000-000000000001', '40000000-0000-4000-8000-000000000002', 'pending');
+      insert into public.card_catalog_enrichment_jobs(
+        id, card_id, parser_version, status, staging_id, updated_at
+      ) values (
+        '50000000-0000-4000-8000-000000000001',
+        '40000000-0000-4000-8000-000000000001',
+        'benefits-v1', 'staged',
+        '30000000-0000-4000-8000-000000000001',
+        '2026-08-19T09:00:00Z'
+      );
+
+      do $$
+      declare first_result jsonb; replay_result jsonb;
+      begin
+        first_result := public.admin_card_data_action(
+          '10000000-0000-4000-8000-000000000001',
+          '60000000-0000-4000-8000-000000000001',
+          'identity', 'reject',
+          '20000000-0000-4000-8000-000000000001',
+          null, '{}'::jsonb, 'not a product', '2026-08-19T09:00:00Z'
+        );
+        replay_result := public.admin_card_data_action(
+          '10000000-0000-4000-8000-000000000001',
+          '60000000-0000-4000-8000-000000000001',
+          'identity', 'reject',
+          '20000000-0000-4000-8000-000000000001',
+          null, '{}'::jsonb, 'not a product', '2026-08-19T09:00:00Z'
+        );
+        if first_result is distinct from replay_result then
+          raise exception 'exact replay result changed';
+        end if;
+        if (select count(*) from public.admin_audit_log
+            where request_id = '60000000-0000-4000-8000-000000000001') <> 1 then
+          raise exception 'exact replay duplicated audit';
+        end if;
+
+        begin
+          perform public.admin_card_data_action(
+            '10000000-0000-4000-8000-000000000001',
+            '60000000-0000-4000-8000-000000000001',
+            'identity', 'reject',
+            '20000000-0000-4000-8000-000000000001',
+            null, '{}'::jsonb, 'changed reason', '2026-08-19T09:00:00Z'
+          );
+          raise exception 'changed request was accepted';
+        exception when others then
+          if sqlerrm <> 'request_id_collision' then raise; end if;
+        end;
+
+        begin
+          perform public.admin_card_data_action(
+            '10000000-0000-4000-8000-000000000001', gen_random_uuid(),
+            'identity', 'approve',
+            '20000000-0000-4000-8000-000000000002',
+            null, '{}'::jsonb, null, '2026-08-19T08:59:00Z'
+          );
+          raise exception 'stale state was accepted';
+        exception when others then
+          if sqlerrm <> 'state_conflict' then raise; end if;
+        end;
+
+        begin
+          perform public.admin_card_data_action(
+            '10000000-0000-4000-8000-000000000001', gen_random_uuid(),
+            'benefit', 'approve',
+            '50000000-0000-4000-8000-000000000001',
+            '30000000-0000-4000-8000-000000000001',
+            '{"decisions":[{"action":"approve"}]}'::jsonb,
+            null, '2026-08-19T09:00:00Z'
+          );
+          raise exception 'cross-card staging was accepted';
+        exception when others then
+          if sqlerrm <> 'state_conflict' then raise; end if;
+        end;
+
+        begin
+          perform public.admin_card_data_action(
+            '10000000-0000-4000-8000-000000000099', gen_random_uuid(),
+            'identity', 'approve',
+            '20000000-0000-4000-8000-000000000003',
+            null, '{}'::jsonb, null, '2026-08-19T09:00:00Z'
+          );
+          raise exception 'audit foreign-key failure did not occur';
+        exception when foreign_key_violation then null;
+        end;
+        if (select status from public.card_catalog_review_queue
+            where id = '20000000-0000-4000-8000-000000000003') <> 'pending' then
+          raise exception 'mutation survived audit failure';
+        end if;
+      end;
+      $$;
+      rollback;
+    `;
+    psql(databaseUrl, assertions);
+
+    psql(databaseUrl, `
+      insert into auth.users(id) values ('10000000-0000-4000-8000-000000000010');
+      insert into public.card_catalog_review_queue(id, status, updated_at) values
+        ('20000000-0000-4000-8000-000000000010', 'pending', '2026-08-19T09:00:00Z');
+    `);
+    const concurrentCall = `
+      select public.admin_card_data_action(
+        '10000000-0000-4000-8000-000000000010',
+        '60000000-0000-4000-8000-000000000010',
+        'identity', 'reject',
+        '20000000-0000-4000-8000-000000000010',
+        null, '{}'::jsonb, 'concurrent replay', '2026-08-19T09:00:00Z'
+      );
+    `;
+    await Promise.all([
+      psqlAsync(databaseUrl, concurrentCall),
+      psqlAsync(databaseUrl, concurrentCall),
+    ]);
+    const concurrentAuditCount = psql(databaseUrl, `
+      select count(*) from public.admin_audit_log
+      where request_id = '60000000-0000-4000-8000-000000000010';
+    `);
+    assert.ok(concurrentAuditCount.endsWith('1'), 'concurrent replay must write one audit row');
+  } finally {
+    try {
+      psql(adminUrl, `drop database if exists "${databaseName}" with (force);`);
+    } finally {
+      for (const role of createdRoles.reverse()) {
+        psql(adminUrl, `drop role if exists ${role};`);
+      }
+    }
+  }
 });

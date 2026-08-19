@@ -18,8 +18,7 @@ declare
   prior_target_type text;
   prior_target_id text;
   prior_details jsonb;
-  request_fingerprint text;
-  prior_fingerprint text;
+  normalized_request jsonb;
   result jsonb;
   review public.card_catalog_review_queue%rowtype;
   job public.card_catalog_enrichment_jobs%rowtype;
@@ -57,7 +56,7 @@ begin
     raise exception 'invalid_request';
   end if;
 
-  request_fingerprint := pg_catalog.md5(pg_catalog.jsonb_build_object(
+  normalized_request := pg_catalog.jsonb_build_object(
     'lane', _lane,
     'operation', _operation,
     'target_id', _target_id,
@@ -65,7 +64,7 @@ begin
     'payload', coalesce(_payload, '{}'::jsonb),
     'reason', nullif(pg_catalog.btrim(_reason), ''),
     'observed_updated_at', _observed_updated_at
-  )::text);
+  );
 
   -- Serialize a request key before looking up its receipt. Without this lock,
   -- two first-time callers could both mutate before the unique audit insert.
@@ -79,11 +78,10 @@ begin
   from public.admin_audit_log as audit
   where audit.actor_id = _actor_id and audit.request_id = _request_id;
   if found then
-    prior_fingerprint := prior_details ->> 'request_fingerprint';
     if prior_action is distinct from 'card_data.' || _lane || '.' || _operation
        or prior_target_type is distinct from _lane || '_review'
        or prior_target_id is distinct from _target_id::text
-       or prior_fingerprint is distinct from request_fingerprint then
+       or prior_details -> 'request' is distinct from normalized_request then
       raise exception 'request_id_collision';
     end if;
     return coalesce(prior_details -> 'result', '{}'::jsonb);
@@ -204,7 +202,7 @@ begin
     _lane || '_review', _target_id::text,
     nullif(pg_catalog.btrim(_reason), ''), _request_id, 'succeeded',
     pg_catalog.jsonb_build_object(
-      'request_fingerprint', request_fingerprint,
+      'request', normalized_request,
       'result', result
     )
   );
