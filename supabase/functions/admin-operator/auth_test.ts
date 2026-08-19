@@ -76,7 +76,7 @@ Deno.test("admin auth rejects an invalid bearer token", async () => {
   );
 });
 
-Deno.test("admin auth rejects returned expired-token errors", async () => {
+Deno.test("admin auth rejects returned session-expired errors", async () => {
   await assertRejects(
     () =>
       requireAdmin(authorizedRequest(), {
@@ -84,7 +84,33 @@ Deno.test("admin auth rejects returned expired-token errors", async () => {
           getUser: () =>
             Promise.resolve({
               data: { user: null },
-              error: { code: "jwt_expired", status: 401, message: "expired" },
+              error: {
+                code: "session_expired",
+                status: 401,
+                message: "expired",
+              },
+            }),
+        },
+      } as never, profileDatabase(null)),
+    AdminHttpError,
+    "authentication_required",
+  );
+});
+
+Deno.test("admin auth rejects the SDK missing-session error shape", async () => {
+  await assertRejects(
+    () =>
+      requireAdmin(authorizedRequest(), {
+        auth: {
+          getUser: () =>
+            Promise.resolve({
+              data: { user: null },
+              error: {
+                name: "AuthSessionMissingError",
+                status: 400,
+                code: undefined,
+                message: "must not be returned",
+              },
             }),
         },
       } as never, profileDatabase(null)),

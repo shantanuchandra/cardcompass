@@ -1,17 +1,45 @@
 export type AdminActor = Readonly<{ id: string }>;
 
+export type AdminAuthClient = Readonly<{
+  auth: Readonly<{
+    getUser: (token: string) => Promise<
+      Readonly<{
+        data: Readonly<{ user: AdminActor | null }>;
+        error: unknown;
+      }>
+    >;
+  }>;
+}>;
+
 export type AdminDatabaseError = Readonly<{ message?: string }>;
 
+export type AdminDatabaseResult<T = unknown> = Readonly<{
+  data: T;
+  error: AdminDatabaseError | null;
+}>;
+
+export type AdminDatabaseFilter = Readonly<{
+  eq: (column: string, value: unknown) => AdminDatabaseFilter;
+  order: (
+    column: string,
+    options?: Readonly<{ ascending?: boolean; nullsFirst?: boolean }>,
+  ) => AdminDatabaseFilter;
+  range: (
+    from: number,
+    to: number,
+  ) => PromiseLike<AdminDatabaseResult<unknown[]>>;
+}>;
+
+export type AdminDatabaseTable = Readonly<{
+  select: (columns: string) => AdminDatabaseFilter;
+}>;
+
 export type AdminDatabaseClient = Readonly<{
+  from: (table: string) => AdminDatabaseTable;
   rpc: (
     name: string,
     args?: Record<string, unknown>,
-  ) => PromiseLike<
-    Readonly<{
-      data: unknown;
-      error: AdminDatabaseError | null;
-    }>
-  >;
+  ) => PromiseLike<AdminDatabaseResult>;
 }>;
 
 export type AdminActionContext = Readonly<{

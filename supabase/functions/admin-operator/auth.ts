@@ -1,17 +1,8 @@
-import { type AdminActor, AdminHttpError } from "./types.ts";
-
-type AuthenticatedUser = Readonly<{ id: string }>;
-
-type AuthClient = Readonly<{
-  auth: Readonly<{
-    getUser: (token: string) => Promise<
-      Readonly<{
-        data: Readonly<{ user: AuthenticatedUser | null }>;
-        error: unknown;
-      }>
-    >;
-  }>;
-}>;
+import {
+  type AdminActor,
+  type AdminAuthClient,
+  AdminHttpError,
+} from "./types.ts";
 
 type UserProfile = Readonly<{
   id: string;
@@ -36,7 +27,7 @@ type ServiceDatabaseClient = Readonly<{
 
 const CREDENTIAL_ERROR_CODES = new Set([
   "bad_jwt",
-  "jwt_expired",
+  "session_expired",
   "session_not_found",
   "refresh_token_not_found",
   "refresh_token_already_used",
@@ -47,6 +38,9 @@ function isCredentialError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
 
   const value = error as { code?: unknown; status?: unknown };
+  if ((error as { name?: unknown }).name === "AuthSessionMissingError") {
+    return true;
+  }
   if (
     typeof value.code === "string" && CREDENTIAL_ERROR_CODES.has(value.code)
   ) {
@@ -57,7 +51,7 @@ function isCredentialError(error: unknown): boolean {
 
 export async function requireAdmin(
   request: Request,
-  authDb: AuthClient,
+  authDb: AdminAuthClient,
   serviceDb: ServiceDatabaseClient,
 ): Promise<AdminActor> {
   const authorization = request.headers.get("Authorization");
@@ -66,7 +60,7 @@ export async function requireAdmin(
   }
 
   const token = authorization.slice("Bearer ".length);
-  let authData: Readonly<{ user: AuthenticatedUser | null }>;
+  let authData: Readonly<{ user: AdminActor | null }>;
   let authError: unknown;
   try {
     ({ data: authData, error: authError } = await authDb.auth.getUser(token));

@@ -5,6 +5,8 @@ import { actionHandlers } from "./router.ts";
 import {
   type AdminActionContext,
   type AdminActor,
+  type AdminAuthClient,
+  type AdminDatabaseClient,
   AdminHttpError,
 } from "./types.ts";
 
@@ -20,7 +22,7 @@ class InvalidRequestError extends Error {
 type AdminOperatorDependencies = Readonly<{
   authorize: (request: Request) => Promise<AdminActor>;
   db: AdminActionContext["db"];
-  authDb: AdminActionContext["db"];
+  authDb: AdminAuthClient;
 }>;
 
 function invalidRequest(status = 400): never {
@@ -63,10 +65,10 @@ export async function handleAdminOperator(
 
   try {
     const body = parseRequestBody(await request.text());
-    const db = provided?.db ?? createClient(
+    const db = provided?.db ?? (createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-    );
+    ) as unknown as AdminDatabaseClient);
     const actor = provided?.authorize
       ? await provided.authorize(request)
       : await requireAdmin(
@@ -82,7 +84,7 @@ export async function handleAdminOperator(
               },
             },
           },
-        )) as never,
+        )) as AdminAuthClient,
         db as never,
       );
     if (!Object.hasOwn(actionHandlers, body.action)) invalidRequest();
