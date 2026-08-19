@@ -89,6 +89,23 @@ async function handler(): Promise<AdminHandler> {
   return module.handleAdminCatalogEntry;
 }
 
+Deno.test("reviewed page-move conflicts remain explicitly retryable", async () => {
+  const module = await import("./index.ts");
+  const busy = module.safeError({
+    code: "40001",
+    message: "reviewed_enrichment_source_busy",
+  });
+  assert(
+    busy.status === 409 && busy.error === "publication_busy",
+    "serialization conflict was hidden as a non-retryable request failure",
+  );
+  const identity = module.safeError({ message: "conflicting_url_identity" });
+  assert(
+    identity.status === 409 && identity.error === "conflicting_url_identity",
+    "reviewed identity conflict lost its stable outcome",
+  );
+});
+
 function request(body: Record<string, unknown>, token = "valid-token") {
   return new Request("https://example.test/admin-catalog-entry", {
     method: "POST",
@@ -285,67 +302,15 @@ Deno.test("protected admin handler authenticates with a request-scoped client", 
   }
 });
 
-Deno.test("admin cleanup removes only pending calculator issuer-crawl jobs", async () => {
+Deno.test("admin cleanup terminalizes calculator reviews without deleting history", async () => {
   const handle = await handler();
   const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
   Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
-  const deletedJobIds: string[] = [];
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const serviceDb = {
-    from(table: string) {
-      if (table === "card_catalog_review_queue") {
-        const result = {
-          data: [
-            {
-              discovery_job_id: "job-calculator",
-              proposed_fields: {
-                official_url:
-                  "https://www.axis.bank.in/calculators/emi-calculator",
-              },
-              source_evidence: {},
-            },
-            {
-              discovery_job_id: "job-card",
-              proposed_fields: {
-                official_url: "https://www.axis.bank.in/cards/neo-credit-card",
-              },
-              source_evidence: {},
-            },
-          ],
-          error: null,
-        };
-        const query = {
-          select() {
-            return query;
-          },
-          eq() {
-            return query;
-          },
-          limit() {
-            return Promise.resolve(result);
-          },
-        };
-        return query;
-      }
-      assert(table === "card_discovery_jobs", "unexpected cleanup table");
-      const query = {
-        delete() {
-          return query;
-        },
-        eq() {
-          return query;
-        },
-        in(_column: string, ids: string[]) {
-          deletedJobIds.push(...ids);
-          return Promise.resolve({
-            data: ids.map((id) => ({ id })),
-            error: null,
-          });
-        },
-        select() {
-          return query;
-        },
-      };
-      return query;
+    rpc(name: string, args: Record<string, unknown>) {
+      calls.push({ name, args });
+      return Promise.resolve({ data: 1, error: null });
     },
   };
   try {
@@ -360,10 +325,15 @@ Deno.test("admin cleanup removes only pending calculator issuer-crawl jobs", asy
     );
     const body = await response.json();
     assert(response.status === 200, "calculator cleanup was rejected");
-    assert(body.removed === 1, "cleanup returned the wrong removal count");
     assert(
-      deletedJobIds.length === 1 && deletedJobIds[0] === "job-calculator",
-      "cleanup deleted a non-calculator job",
+      body.transitioned === 1,
+      "cleanup returned the wrong transition count",
+    );
+    assert(
+      calls.length === 1 &&
+        calls[0].name === "terminalize_calculator_review_rows" &&
+        calls[0].args._actor_id === "admin-1",
+      "cleanup bypassed the retained-history transition boundary",
     );
   } finally {
     if (originalAllowlist === undefined) {

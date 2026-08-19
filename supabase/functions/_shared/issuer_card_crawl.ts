@@ -35,6 +35,11 @@ export type PageClassification = {
   sanitizedEvidence: string[];
   submittedResourceIdentityHash?: string;
   finalResourceIdentityHash?: string;
+  submittedUrl?: string;
+  finalUrl?: string;
+  contentHash?: string;
+  retrievedAt?: string;
+  sourceStatus?: number;
 };
 
 export type IssuerCrawlResult = {
@@ -96,6 +101,11 @@ export type ClassifyIssuerPageInput = {
   text?: string;
   submittedResourceIdentityHash?: string;
   finalResourceIdentityHash?: string;
+  submittedUrl?: string;
+  finalUrl?: string;
+  contentHash?: string;
+  retrievedAt?: string;
+  sourceStatus?: number;
 };
 
 type SitemapDocument = {
@@ -359,6 +369,11 @@ function sanitizeClassification(page: PageClassification): PageClassification {
   const {
     submittedResourceIdentityHash,
     finalResourceIdentityHash,
+    submittedUrl,
+    finalUrl,
+    contentHash,
+    retrievedAt,
+    sourceStatus,
     ...classification
   } = page;
   const validHash = (value: string | undefined): value is string =>
@@ -388,7 +403,46 @@ function sanitizeClassification(page: PageClassification): PageClassification {
     ...(validHash(finalResourceIdentityHash)
       ? { finalResourceIdentityHash: finalResourceIdentityHash.toLowerCase() }
       : {}),
+    ...(safeApprovedResourceUrl(submittedUrl)
+      ? { submittedUrl: safeApprovedResourceUrl(submittedUrl)! }
+      : {}),
+    ...(safeApprovedResourceUrl(finalUrl)
+      ? { finalUrl: safeApprovedResourceUrl(finalUrl)! }
+      : {}),
+    ...(validHash(contentHash)
+      ? { contentHash: contentHash.toLowerCase() }
+      : {}),
+    ...(typeof retrievedAt === "string" &&
+        /^\d{4}-\d{2}-\d{2}T/.test(retrievedAt)
+      ? { retrievedAt: retrievedAt.slice(0, 40) }
+      : {}),
+    ...(Number.isInteger(sourceStatus) && sourceStatus! >= 100 &&
+        sourceStatus! <= 599
+      ? { sourceStatus }
+      : {}),
   };
+}
+
+function safeApprovedResourceUrl(value: unknown): string | null {
+  if (typeof value !== "string" || value.length > 2_048) return null;
+  try {
+    const exact = value.trim().split("#", 1)[0];
+    const url = new URL(exact);
+    if (
+      url.protocol !== "https:" || !url.hostname || url.username || url.password
+    ) {
+      return null;
+    }
+    const nonTracking = [...url.searchParams.keys()].filter((key) =>
+      !/^utm_/i.test(key) && !["gclid", "fbclid"].includes(key.toLowerCase())
+    );
+    const approved = approvedStoredQueryParameters(exact);
+    if (nonTracking.length > 0 && approved.length === 0) return null;
+    if (nonTracking.length !== [...url.searchParams.keys()].length) return null;
+    return exact;
+  } catch {
+    return null;
+  }
 }
 
 async function sha256(value: string): Promise<string> {
@@ -414,22 +468,28 @@ async function findCatalogCardByUrlHash(
   supabase: UntypedSupabaseClient,
   urlHash: string,
 ): Promise<string | null> {
-  const { data: urlKey, error: urlKeyError } = await supabase
+  const { data: urlKeyData, error: urlKeyError } = await supabase
     .from("card_catalog_url_keys")
     .select("card_id")
-    .eq("url_hash", urlHash)
-    .maybeSingle();
+    .eq("url_hash", urlHash);
   if (urlKeyError) throw urlKeyError;
 
-  const { data: provenance, error: provenanceError } = await supabase
+  const { data: provenanceData, error: provenanceError } = await supabase
     .from("card_catalog_provenance")
     .select("card_id")
-    .or(`submitted_url_hash.eq.${urlHash},final_url_hash.eq.${urlHash}`)
-    .maybeSingle();
+    .or(`submitted_url_hash.eq.${urlHash},final_url_hash.eq.${urlHash}`);
   if (provenanceError) throw provenanceError;
+  const asRows = (value: unknown): Array<{ card_id?: string }> =>
+    Array.isArray(value)
+      ? value as Array<{ card_id?: string }>
+      : value && typeof value === "object"
+      ? [value as { card_id?: string }]
+      : [];
   const cardIds = [
     ...new Set(
-      [urlKey?.card_id, provenance?.card_id].filter(
+      [...asRows(urlKeyData), ...asRows(provenanceData)].map((row) =>
+        row.card_id
+      ).filter(
         (value): value is string => typeof value === "string" && Boolean(value),
       ),
     ),
@@ -544,19 +604,39 @@ export async function persistCrawlerCandidate(
     issuer,
     normalizedNames,
   );
+  const proposedNetwork = (canonical.network ?? candidate.network)?.trim()
+    .toLowerCase() ?? null;
+  const networkCompatibleCandidates = candidates.filter((row) => {
+    const storedNetwork = typeof row.network === "string"
+      ? row.network.trim().toLowerCase()
+      : "";
+    return !proposedNetwork || !storedNetwork ||
+      storedNetwork === proposedNetwork;
+  });
   if (
-    knownCardId && candidates.length === 1 &&
-    String(candidates[0].id) === knownCardId
+    candidates.length === 1 && knownCardId &&
+    networkCompatibleCandidates.length === 1 &&
+    String(networkCompatibleCandidates[0].id) === knownCardId
   ) {
     return { outcome: "existing", catalogCardId: knownCardId };
   }
-  if (candidates.length === 1) {
-    return { outcome: "existing", catalogCardId: String(candidates[0].id) };
+  if (
+    candidates.length === 1 && networkCompatibleCandidates.length === 1 &&
+    !knownCardId
+  ) {
+    return {
+      outcome: "existing",
+      catalogCardId: String(networkCompatibleCandidates[0].id),
+    };
   }
   const warnings = uniqueStrings([
     ...candidate.warnings,
     "crawler_discovered_without_statement_signal",
     ...(candidates.length > 1 ? ["ambiguous_catalog_identity"] : []),
+    ...(proposedNetwork && candidates.length > 0 &&
+        networkCompatibleCandidates.length === 0
+      ? ["conflicting_network_identity"]
+      : []),
   ]);
   const safeEvidence = uniqueStrings(candidate.sanitizedEvidence, 300).slice(
     0,
@@ -604,6 +684,17 @@ export async function persistCrawlerCandidate(
           .toLowerCase(),
       }
       : {}),
+    ...(candidate.submittedUrl
+      ? { submitted_url: candidate.submittedUrl }
+      : {}),
+    ...(candidate.finalUrl ? { final_url: candidate.finalUrl } : {}),
+    ...(validOpaqueHash(candidate.contentHash)
+      ? { content_hash: candidate.contentHash.toLowerCase() }
+      : {}),
+    ...(candidate.retrievedAt ? { retrieved_at: candidate.retrievedAt } : {}),
+    ...(Number.isInteger(candidate.sourceStatus)
+      ? { source_status: candidate.sourceStatus }
+      : {}),
     product_signals: aliases,
     crawler_evidence: safeEvidence,
     warnings,
@@ -623,6 +714,17 @@ export async function persistCrawlerCandidate(
           final_resource_identity_hash: candidate.finalResourceIdentityHash
             .toLowerCase(),
         }
+        : {}),
+      ...(candidate.submittedUrl
+        ? { submitted_url: candidate.submittedUrl }
+        : {}),
+      ...(candidate.finalUrl ? { final_url: candidate.finalUrl } : {}),
+      ...(validOpaqueHash(candidate.contentHash)
+        ? { content_hash: candidate.contentHash.toLowerCase() }
+        : {}),
+      ...(candidate.retrievedAt ? { retrieved_at: candidate.retrievedAt } : {}),
+      ...(Number.isInteger(candidate.sourceStatus)
+        ? { source_status: candidate.sourceStatus }
         : {}),
       excerpts: safeEvidence,
     },
@@ -747,6 +849,11 @@ export function classifyIssuerPage(
     ...(input.finalResourceIdentityHash
       ? { finalResourceIdentityHash: input.finalResourceIdentityHash }
       : {}),
+    ...(input.submittedUrl ? { submittedUrl: input.submittedUrl } : {}),
+    ...(input.finalUrl ? { finalUrl: input.finalUrl } : {}),
+    ...(input.contentHash ? { contentHash: input.contentHash } : {}),
+    ...(input.retrievedAt ? { retrievedAt: input.retrievedAt } : {}),
+    ...(input.sourceStatus ? { sourceStatus: input.sourceStatus } : {}),
   };
 
   if (
@@ -1053,6 +1160,11 @@ export async function discoverIssuerCardCandidates(
         html: response.text,
         submittedResourceIdentityHash: response.sourceIdentityHash,
         finalResourceIdentityHash: response.finalResourceIdentityHash,
+        submittedUrl: response.submittedResourceUrl ?? response.submittedUrl,
+        finalUrl: response.finalResourceUrl ?? response.finalUrl,
+        contentHash: response.contentHash,
+        retrievedAt: response.retrievedAt,
+        sourceStatus: response.status,
       });
       (page.kind === "card_product" || page.kind === "supporting_document"
         ? candidates

@@ -25,9 +25,9 @@ import {
   requireOfficialFetchBody,
 } from "../_shared/official_issuer_fetch.ts";
 import {
-  buildJobKey,
-  enqueueBenefitEnrichmentJob,
-} from "../benefit-enrichment-batch/batch_policy.ts";
+  canonicalPublicationResource,
+  publicationFieldsFromFetch,
+} from "../_shared/catalog_identity_publication.ts";
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 type UntypedSupabaseClient = any;
@@ -165,10 +165,17 @@ async function findCatalogCardsByUrlHash(
 async function loadCatalogUrlIdentityCandidates(
   db: UntypedSupabaseClient,
   cardIds: string[],
-): Promise<Array<{ cardId: string; cardName: string; aliases: string[] }>> {
+): Promise<
+  Array<{
+    cardId: string;
+    cardName: string;
+    network: string | null;
+    aliases: string[];
+  }>
+> {
   if (cardIds.length === 0) return [];
   const { data: cards, error: cardError } = await db.from("card_catalog")
-    .select("id, card_name")
+    .select("id, card_name, network")
     .in("id", cardIds);
   if (cardError) throw cardError;
   const { data: aliases, error: aliasError } = await db.from(
@@ -177,10 +184,15 @@ async function loadCatalogUrlIdentityCandidates(
     .select("card_id, alias")
     .in("card_id", cardIds);
   if (aliasError) throw aliasError;
-  return ((cards ?? []) as Array<{ id: string; card_name: string }>).map(
+  return ((cards ?? []) as Array<{
+    id: string;
+    card_name: string;
+    network: string | null;
+  }>).map(
     (card) => ({
       cardId: card.id,
       cardName: card.card_name,
+      network: card.network,
       aliases: ((aliases ?? []) as Array<{ card_id: string; alias: string }>)
         .filter((alias) => alias.card_id === card.id)
         .map((alias) => alias.alias),
@@ -252,6 +264,14 @@ async function processSubmittedUrl(
   const finalUrl = page.canonicalUrl;
   const legacyFinalHash = await sha256(finalUrl);
   const finalHash = page.finalResourceIdentityHash ?? legacyFinalHash;
+  const publicationEvidence = {
+    official_url: page.finalResourceUrl ?? page.finalUrl,
+    ...publicationFieldsFromFetch({
+      ...page,
+      sourceIdentityHash: submittedHash,
+      finalResourceIdentityHash: finalHash,
+    }),
+  };
   const exactKnownIdentity = await selectBoundCatalogResourceIdentity({
     submittedResourceIdentityHash: page.sourceIdentityHash,
     finalResourceIdentityHash: page.finalResourceIdentityHash,
@@ -299,11 +319,10 @@ async function processSubmittedUrl(
     await putInReview(
       db,
       job,
-      { ...canonical, official_url: finalUrl },
+      { ...canonical, ...publicationEvidence },
       {
         evidence,
-        official_url: finalUrl,
-        content_hash: page.contentHash,
+        ...publicationEvidence,
         source_type: "official_pdf",
       },
       ["official_pdf_requires_review"],
@@ -342,11 +361,10 @@ async function processSubmittedUrl(
     await putInReview(
       db,
       job,
-      { ...officialIdentity, official_url: finalUrl },
+      { ...officialIdentity, ...publicationEvidence },
       {
         evidence,
-        official_url: finalUrl,
-        content_hash: page.contentHash,
+        ...publicationEvidence,
         excerpt: sanitizeEvidence(pageText),
       },
       gate.reasons,
@@ -356,82 +374,31 @@ async function processSubmittedUrl(
       .single()).data;
   }
 
-  const resolveOneResource = async (resourceHash: string) => {
-    const { data, error } = await db.rpc("resolve_card_catalog_identity", {
-      _issuer: job.issuer,
-      _card_name: officialIdentity.cardName,
-      _network: canonical.network ?? evidence.network ?? null,
-      _source_url: finalUrl,
-      _submitted_url_hash: resourceHash,
-      _final_url_hash: resourceHash,
-    });
-    if (error || !data) throw new Error("identity_conflict");
-    return String(data);
-  };
-  const submittedCardId = await resolveOneResource(submittedHash);
-  const finalCardId = finalHash === submittedHash
-    ? submittedCardId
-    : await resolveOneResource(finalHash);
-  if (submittedCardId !== finalCardId) {
-    throw new Error("identity_conflict");
-  }
-  const cardId = submittedCardId;
-
-  for (
-    const alias of [...canonical.aliases, ...(evidence.product_signals ?? [])]
-  ) {
-    const normalizedAlias = normalizedProduct(alias, job.issuer);
-    if (normalizedAlias.length < 2) continue;
-    const { error } = await db.from("card_catalog_aliases").upsert({
-      card_id: cardId,
-      discovery_job_id: job.id,
-      alias,
-      normalized_alias: normalizedAlias,
-      evidence_type: "issuer_page",
-      source_url: finalUrl,
-    }, { onConflict: "card_id,normalized_alias" });
-    if (error) throw error;
-  }
-  const { error: provenanceError } = await db.from("card_catalog_provenance")
-    .upsert({
-      card_id: cardId,
-      source_url: finalUrl,
-      canonical_submitted_url: page.submittedUrl,
-      canonical_final_url: finalUrl,
-      submitted_url_hash: submittedHash,
-      final_url_hash: finalHash,
+  await putInReview(
+    db,
+    job,
+    {
+      ...officialIdentity,
+      network: officialIdentity.network ?? canonical.network ??
+        evidence.network ?? null,
+      aliases: [...canonical.aliases, ...(evidence.product_signals ?? [])],
+      ...publicationEvidence,
       source_type: "official_html",
-      content_hash: page.contentHash,
-      extracted_fields: canonical,
-      source_evidence: { excerpt: sanitizeEvidence(pageText) },
-      validation_version: "card-identity-v2",
-      confidence: evidence.confidence ?? 0,
-      approval_method: "automatic",
-      retrieved_at: new Date().toISOString(),
-    }, { onConflict: "card_id,source_url,content_hash" });
-  if (provenanceError) throw provenanceError;
-
-  const enqueuedCount = await enqueueBenefitEnrichmentJob(db, {
-    cardId,
-    issuer: job.issuer,
-    canonicalUrl: finalUrl,
-    finalUrlHash: finalHash,
-    contentHash: page.contentHash,
-    parserVersion: "benefits-v5",
-  });
-  if (enqueuedCount === 0) {
-    const expectedJobKey = buildJobKey(cardId, finalHash, "benefits-v5");
-    const { data: existingJob, error: existingJobError } = await db.from(
-      "card_catalog_enrichment_jobs",
-    ).select("id").eq("job_key", expectedJobKey).eq("card_id", cardId).eq(
-      "parser_version",
-      "benefits-v5",
-    ).maybeSingle();
-    if (existingJobError || !existingJob) {
-      throw existingJobError ?? new Error("benefit_enqueue_incomplete");
-    }
-  }
-  return markResolved(db, job.id, cardId);
+      source_observation: {
+        status: page.status,
+        kind: "submitted_statement_url",
+      },
+    },
+    {
+      evidence,
+      ...publicationEvidence,
+      excerpt: sanitizeEvidence(pageText),
+    },
+    ["authenticated_source_requires_admin_review"],
+    evidence.confidence ?? 0,
+  );
+  return (await db.from("card_discovery_jobs").select("*").eq("id", job.id)
+    .single()).data;
 }
 
 function htmlText(html: string): string {
@@ -502,6 +469,10 @@ async function putInReview(
   existingCandidates: unknown[] = [],
   preserveTerminal = false,
 ) {
+  const reviewIssuer = typeof job.issuer === "string" ? job.issuer : "";
+  if (!reviewIssuer) throw new Error("issuer_mismatch");
+  const rawProposedFields = proposedFields;
+  const rawSourceEvidence = sourceEvidence;
   proposedFields = sanitizeDiscoveryEvidence(proposedFields) as Record<
     string,
     unknown
@@ -510,6 +481,38 @@ async function putInReview(
     string,
     unknown
   >;
+  const restoreResourceIdentity = async (
+    raw: Record<string, unknown>,
+    sanitized: Record<string, unknown>,
+  ) => {
+    for (const prefix of ["submitted", "final"] as const) {
+      const rawUrl = raw[`${prefix}_url`];
+      if (typeof rawUrl !== "string") continue;
+      const resource = await canonicalPublicationResource(reviewIssuer, rawUrl);
+      const rawHash = raw[`${prefix}_url_hash`] ??
+        raw[`${prefix}_resource_identity_hash`];
+      if (
+        typeof rawHash !== "string" ||
+        rawHash.toLowerCase() !== resource.urlHash
+      ) throw new Error("identity_conflict");
+      sanitized[`${prefix}_url`] = resource.canonicalUrl;
+      sanitized[`${prefix}_url_hash`] = resource.urlHash;
+    }
+    if (
+      typeof raw.content_hash === "string" &&
+      /^[0-9a-f]{64}$/i.test(raw.content_hash)
+    ) sanitized.content_hash = raw.content_hash.toLowerCase();
+    if (
+      typeof raw.retrieved_at === "string" &&
+      /^\d{4}-\d{2}-\d{2}T/.test(raw.retrieved_at)
+    ) sanitized.retrieved_at = raw.retrieved_at.slice(0, 40);
+    if (
+      Number.isInteger(raw.source_status) && Number(raw.source_status) >= 100 &&
+      Number(raw.source_status) <= 599
+    ) sanitized.source_status = raw.source_status;
+  };
+  await restoreResourceIdentity(rawProposedFields, proposedFields);
+  await restoreResourceIdentity(rawSourceEvidence, sourceEvidence);
   existingCandidates = sanitizeDiscoveryEvidence(
     existingCandidates,
   ) as unknown[];
@@ -678,6 +681,14 @@ async function processDiscoveryJob(
       await sha256(page.submittedUrl);
     const finalHash = page.finalResourceIdentityHash ??
       await sha256(page.canonicalUrl);
+    const publicationEvidence = {
+      official_url: page.finalResourceUrl ?? page.finalUrl,
+      ...publicationFieldsFromFetch({
+        ...page,
+        sourceIdentityHash: submittedHash,
+        finalResourceIdentityHash: finalHash,
+      }),
+    };
     if (page.contentType === "application/pdf") {
       await putInReview(
         db,
@@ -685,8 +696,7 @@ async function processDiscoveryJob(
         canonical,
         {
           evidence,
-          official_url: page.finalUrl,
-          content_hash: page.contentHash,
+          ...publicationEvidence,
           source_type: "official_pdf",
         },
         ["official_pdf_requires_review"],
@@ -704,11 +714,10 @@ async function processDiscoveryJob(
       await putInReview(
         db,
         job,
-        { ...canonical, official_url: page.finalUrl },
+        { ...canonical, ...publicationEvidence },
         {
           evidence,
-          official_url: page.finalUrl,
-          content_hash: page.contentHash,
+          ...publicationEvidence,
         },
         ["official_product_not_found"],
         evidence.confidence ?? 0,
@@ -754,11 +763,10 @@ async function processDiscoveryJob(
       await putInReview(
         db,
         job,
-        { ...officialIdentity, official_url: page.finalUrl },
+        { ...officialIdentity, ...publicationEvidence },
         {
           evidence,
-          official_url: page.finalUrl,
-          content_hash: page.contentHash,
+          ...publicationEvidence,
           excerpt: sanitizeEvidence(pageText),
         },
         gate.reasons,
@@ -768,58 +776,34 @@ async function processDiscoveryJob(
       return;
     }
 
-    let cardId = existing[0]?.id as string | undefined;
-    if (!cardId) {
-      const { data: card, error: insertError } = await db.from("card_catalog")
-        .insert({
-          bank: officialIdentity.issuer,
-          card_name: officialIdentity.cardName,
-          network: officialIdentity.network ?? canonical.network ??
-            evidence.network ?? null,
-          card_type: "credit",
-          card_url: page.finalUrl,
-        }).select("id").single();
-      if (insertError) throw insertError;
-      cardId = card.id;
-    }
-    for (
-      const alias of [
-        ...officialIdentity.aliases,
-        ...canonical.aliases,
-        ...(evidence.product_signals ?? []),
-      ]
-    ) {
-      await db.from("card_catalog_aliases").upsert({
-        card_id: cardId,
-        alias,
-        normalized_alias: normalizedProduct(alias, job.issuer),
-        evidence_type: "issuer_page",
-        source_url: page.finalUrl,
-      }, { onConflict: "card_id,normalized_alias" });
-    }
-    await db.from("card_catalog_provenance").upsert({
-      card_id: cardId,
-      source_url: page.finalUrl,
-      canonical_submitted_url: page.submittedUrl,
-      canonical_final_url: page.canonicalUrl,
-      submitted_url_hash: submittedHash,
-      final_url_hash: finalHash,
-      source_type: "official_html",
-      content_hash: page.contentHash,
-      extracted_fields: officialIdentity,
-      source_evidence: { excerpt: sanitizeEvidence(pageText) },
-      validation_version: "card-identity-v1",
-      confidence: evidence.confidence ?? 0,
-      approval_method: "automatic",
-      retrieved_at: new Date().toISOString(),
-    }, { onConflict: "card_id,source_url,content_hash" });
-    await db.from("card_discovery_jobs").update({
-      status: "resolved",
-      resolved_card_id: cardId,
-      failure_category: null,
-      next_retry_at: null,
-      updated_at: new Date().toISOString(),
-    }).eq("id", jobId);
+    await putInReview(
+      db,
+      job,
+      {
+        ...officialIdentity,
+        network: officialIdentity.network ?? canonical.network ??
+          evidence.network ?? null,
+        aliases: [
+          ...officialIdentity.aliases,
+          ...canonical.aliases,
+          ...(evidence.product_signals ?? []),
+        ],
+        ...publicationEvidence,
+        source_type: "official_html",
+        source_observation: {
+          status: page.status,
+          kind: "statement_discovery",
+        },
+      },
+      {
+        evidence,
+        ...publicationEvidence,
+        excerpt: sanitizeEvidence(pageText),
+      },
+      ["authenticated_source_requires_admin_review"],
+      evidence.confidence ?? 0,
+      existing,
+    );
   } catch (error) {
     const attempt = Number(job.attempt_count ?? 0) + 1;
     const failure = error instanceof Error

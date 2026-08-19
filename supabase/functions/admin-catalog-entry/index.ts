@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.95.0";
 import { isAdminEmail } from "../_shared/card_discovery.ts";
+import { publishReviewedCardIdentity } from "../_shared/catalog_identity_publication.ts";
 import {
   BenefitAdminError,
   handleBenefitAdminAction,
@@ -19,9 +20,32 @@ function json(body: unknown, status = 200): Response {
   return Response.json(body, { status, headers: corsHeaders });
 }
 
-function safeError(error: unknown): { error: string; status: number } {
+export function safeError(error: unknown): { error: string; status: number } {
   if (error instanceof BenefitAdminError) {
     return { error: error.code, status: error.status };
+  }
+  const candidate = error && typeof error === "object"
+    ? error as { code?: unknown; message?: unknown }
+    : {};
+  const message = typeof candidate.message === "string"
+    ? candidate.message
+    : "";
+  if (
+    candidate.code === "40001" || message.includes(
+      "reviewed_enrichment_source_busy",
+    )
+  ) return { error: "publication_busy", status: 409 };
+  for (
+    const code of [
+      "conflicting_url_identity",
+      "url_identity_incompatible",
+      "ambiguous_catalog_identity",
+      "edit_target_conflict",
+      "stale_catalog_review",
+      "stale_catalog_publication",
+    ]
+  ) {
+    if (message.includes(code)) return { error: code, status: 409 };
   }
   return { error: "Request failed", status: 400 };
 }
@@ -40,32 +64,19 @@ export function createAdminAuthClient(
   });
 }
 
-export async function purgeCalculatorReviewRows(
+export async function terminalizeCalculatorReviewRows(
   db: UntypedSupabaseClient,
+  actorId: string,
 ): Promise<number> {
-  const { data, error } = await db.from("card_catalog_review_queue")
-    .select("discovery_job_id,proposed_fields,source_evidence")
-    .eq("status", "pending")
-    .limit(1000);
+  const { data, error } = await db.rpc("terminalize_calculator_review_rows", {
+    _actor_id: actorId,
+    _limit: 1000,
+  });
   if (error) throw error;
-  const jobIds = (data ?? [])
-    .filter((row: Record<string, any>) => {
-      const url = row.proposed_fields?.official_url ??
-        row.source_evidence?.official_url ?? "";
-      return typeof url === "string" &&
-        url.toLowerCase().includes("calculator");
-    })
-    .map((row: Record<string, any>) => row.discovery_job_id)
-    .filter((id: unknown): id is string =>
-      typeof id === "string" && id.length > 0
-    );
-  if (jobIds.length === 0) return 0;
-  const { error: deleteError } = await db.from("card_discovery_jobs")
-    .delete()
-    .eq("discovery_source", "issuer_crawl")
-    .in("id", jobIds);
-  if (deleteError) throw deleteError;
-  return jobIds.length;
+  if (!Number.isInteger(data) || Number(data) < 0) {
+    throw new Error("invalid_terminal_review_count");
+  }
+  return Number(data);
 }
 
 export async function handleAdminCatalogEntry(
@@ -124,7 +135,9 @@ export async function handleAdminCatalogEntry(
     if (action === "access") return json({ is_admin: true });
 
     if (action === "purge-calculator-reviews") {
-      return json({ removed: await purgeCalculatorReviewRows(db) });
+      return json({
+        transitioned: await terminalizeCalculatorReviewRows(db, user.id),
+      });
     }
 
     if (isBenefitAdminAction(action)) {
@@ -132,7 +145,9 @@ export async function handleAdminCatalogEntry(
     }
 
     if (action === "list") {
-      if (body.status === "pending") await purgeCalculatorReviewRows(db);
+      if (body.status === "pending") {
+        await terminalizeCalculatorReviewRows(db, user.id);
+      }
       let query = db.from("card_catalog_review_queue").select(`
         id, proposed_fields, source_evidence, existing_candidates,
         validation_warnings, confidence, status, review_reason, created_at,
@@ -151,7 +166,15 @@ export async function handleAdminCatalogEntry(
     }
 
     if (
-      !["approve", "edit_approve", "merge", "retry", "reject"].includes(action)
+      ![
+        "approve",
+        "edit_approve",
+        "merge",
+        "retry",
+        "reject",
+        "mark_discontinued",
+        "reactivate",
+      ].includes(action)
     ) {
       return json({ error: "Unsupported action" }, 400);
     }
@@ -161,18 +184,40 @@ export async function handleAdminCatalogEntry(
     ) {
       return json({ error: "review_item_id is required" }, 400);
     }
-    const { data, error } = await db.rpc("review_card_catalog_discovery", {
-      _review_item_id: body.review_item_id,
-      _actor_id: user.id,
-      _action: action,
-      _proposed_fields: body.proposed_fields ?? null,
-      _merge_card_id: body.merge_card_id ?? null,
-      _reason: body.reason ?? null,
+    const { data: review, error: reviewError } = await db
+      .from("card_catalog_review_queue")
+      .select("discovery_job_id,proposed_fields,source_evidence")
+      .eq("id", body.review_item_id)
+      .single();
+    if (reviewError || !review) {
+      throw reviewError ?? new Error("review_not_found");
+    }
+    const reviewedFields = {
+      ...(review.proposed_fields && typeof review.proposed_fields === "object"
+        ? review.proposed_fields
+        : {}),
+      ...(body.proposed_fields && typeof body.proposed_fields === "object" &&
+          !Array.isArray(body.proposed_fields)
+        ? body.proposed_fields
+        : {}),
+    } as Record<string, unknown>;
+    if (
+      !reviewedFields.source_observation && review.source_evidence &&
+      typeof review.source_evidence === "object"
+    ) reviewedFields.source_observation = review.source_evidence;
+    const data = await publishReviewedCardIdentity(db, {
+      discoveryJobId: review.discovery_job_id,
+      reviewItemId: body.review_item_id,
+      actorId: user.id,
+      action,
+      reviewedFields,
+      mergeCardId: body.merge_card_id ?? null,
+      reason: body.reason ?? null,
+      parserVersion: "benefits-v6",
     });
-    if (error) throw error;
     return json({
       success: true,
-      result: Array.isArray(data) ? data[0] : data,
+      result: data,
     });
   } catch (error) {
     const result = safeError(error);

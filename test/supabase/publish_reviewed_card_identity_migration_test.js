@@ -1,0 +1,295 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { readdir, readFile } from "node:fs/promises";
+
+async function migrationSql() {
+  const directory = new URL("../../supabase/migrations/", import.meta.url);
+  const files = (await readdir(directory)).filter((name) =>
+    name.endsWith("_publish_reviewed_card_identity.sql")
+  );
+  assert.equal(files.length, 1, "expected exactly one Task 7 migration");
+  return await readFile(new URL(files[0], directory), "utf8");
+}
+
+function functionBody(sql, name, signaturePattern = "") {
+  const match = sql.match(
+    new RegExp(
+      `CREATE OR REPLACE FUNCTION public\\.${name}\\(${signaturePattern}[\\s\\S]*?\\n\\$\\$;`,
+      "i",
+    ),
+  );
+  assert.ok(match, `${name} definition missing`);
+  return match[0];
+}
+
+test("publication migration exposes exact invoker-only interfaces", async () => {
+  const sql = await migrationSql();
+  const resolver = functionBody(sql, "resolve_card_catalog_identity");
+  const publish = functionBody(sql, "publish_card_catalog_identity");
+  const wrapper = functionBody(sql, "review_card_catalog_discovery");
+  for (const body of [resolver, publish, wrapper]) {
+    assert.match(body, /SECURITY INVOKER/i);
+    assert.match(body, /SET search_path = public, extensions, pg_temp/i);
+  }
+  assert.match(
+    sql,
+    /publish_card_catalog_identity\(uuid, uuid, uuid, text, jsonb, uuid, text, text\)/i,
+  );
+  assert.match(
+    sql,
+    /review_card_catalog_discovery\(uuid, uuid, text, jsonb, uuid, text\)/i,
+  );
+  for (const role of ["PUBLIC", "anon", "authenticated"]) {
+    assert.match(
+      sql,
+      new RegExp(
+        `REVOKE ALL ON FUNCTION public\\.publish_card_catalog_identity\\([\\s\\S]*?FROM [^;]*${role}`,
+        "i",
+      ),
+    );
+  }
+  assert.match(
+    sql,
+    /GRANT EXECUTE ON FUNCTION public\.publish_card_catalog_identity\([\s\S]*?TO service_role/i,
+  );
+});
+
+test("resolver independently reconciles submitted and final hash bindings before mutation", async () => {
+  const resolver = functionBody(
+    await migrationSql(),
+    "resolve_card_catalog_identity",
+  );
+  assert.match(resolver, /submitted_bound_card[\s\S]*final_bound_card/i);
+  assert.match(
+    resolver,
+    /submitted_bound_card IS NOT NULL[\s\S]*final_bound_card IS NOT NULL[\s\S]*submitted_bound_card <> final_bound_card[\s\S]*conflicting_url_identity/i,
+  );
+  assert.match(resolver, /url_identity_incompatible/i);
+  assert.match(resolver, /normalized_network/i);
+  assert.match(resolver, /card_catalog_source_matches_issuer/i);
+  assert.doesNotMatch(resolver, /ORDER BY[^;]*created_at[\s\S]{0,80}LIMIT 1/i);
+});
+
+test("publication persists the full reviewed artifact set and validates one v6 enqueue", async () => {
+  const sql = await migrationSql();
+  const publish = functionBody(sql, "publish_card_catalog_identity");
+  const adoption = functionBody(sql, "adopt_reviewed_card_enrichment_source");
+  for (
+    const artifact of [
+      "card_catalog_aliases",
+      "card_catalog_url_keys",
+      "card_catalog_provenance",
+      "card_catalog_review_audit",
+    ]
+  ) {
+    assert.match(publish, new RegExp(artifact, "i"));
+  }
+  assert.match(publish, /adopt_reviewed_card_enrichment_source/i);
+  assert.match(adoption, /enqueue_card_benefit_enrichment_jobs/i);
+  assert.match(publish, /content_hash/i);
+  assert.match(publish, /retrieved_at/i);
+  assert.match(publish, /before_fields/i);
+  assert.match(publish, /after_fields/i);
+  assert.match(
+    publish,
+    /enqueued_count[\s\S]*existing_v6_job_count[\s\S]*unexpected_enrichment_enqueue/i,
+  );
+  assert.doesNotMatch(
+    publish,
+    /card_catalog_aliases\s*\([^)]*discovery_job_id/i,
+  );
+});
+
+test("reviewed page moves preserve one recurring job and its historical observation state", async () => {
+  const sql = await migrationSql();
+  const adoption = functionBody(sql, "adopt_reviewed_card_enrichment_source");
+  assert.match(
+    adoption,
+    /status NOT IN \([\s\S]*'completed'[\s\S]*'staged'[\s\S]*'quarantined'[\s\S]*'review_required'[\s\S]*'failed'[\s\S]*\)/i,
+  );
+  assert.match(adoption, /status = 'failed'[\s\S]*next_retry_at IS NOT NULL/i);
+  assert.match(
+    adoption,
+    /reviewed_enrichment_source_busy[\s\S]*ERRCODE = '40001'/i,
+  );
+  assert.match(
+    adoption,
+    /SET canonical_url = _canonical_url[\s\S]*final_url_hash = lower\(_final_url_hash\)[\s\S]*job_key = requested_job_key/i,
+  );
+  assert.doesNotMatch(adoption, /SET[\s\S]{0,400}result_summary\s*=/i);
+  assert.doesNotMatch(adoption, /SET[\s\S]{0,400}next_run_at\s*=/i);
+  assert.match(
+    adoption,
+    /existing_job\.job_key = requested_job_key[\s\S]*existing_job\.canonical_url = _canonical_url[\s\S]*existing_job\.content_hash = lower\(_content_hash\)[\s\S]*RETURN NEXT/i,
+  );
+  const publish = functionBody(sql, "publish_card_catalog_identity");
+  assert.match(publish, /INSERT INTO public\.card_catalog_provenance/i);
+  assert.doesNotMatch(
+    publish,
+    /card_catalog_provenance[\s\S]{0,1500}ON CONFLICT[\s\S]{0,200}DO UPDATE/i,
+    "historical source observations must never be rewritten",
+  );
+  assert.doesNotMatch(
+    publish,
+    /DELETE FROM public\.card_catalog_(?:provenance|url_keys)/i,
+  );
+  const trigger = sql.match(
+    /CREATE TRIGGER schedule_terminal_card_enrichment_observation[\s\S]*?EXECUTE FUNCTION public\.schedule_terminal_card_enrichment_observation\(\);/i,
+  )?.[0];
+  assert.ok(trigger, "Task 6 terminal scheduler trigger was not retained");
+  assert.doesNotMatch(
+    trigger,
+    /canonical_url/i,
+    "page move resets its recurrence clock",
+  );
+});
+
+test("publication and enqueue share deterministic lock order", async () => {
+  const sql = await migrationSql();
+  const publish = functionBody(sql, "publish_card_catalog_identity");
+  const benefitLock = publish.indexOf("card_benefit_enrichment_identity:");
+  const cardLock = publish.indexOf("FOR UPDATE", benefitLock);
+  const reviewLock = publish.indexOf("card_catalog_review_queue", cardLock);
+  const enqueue = publish.indexOf(
+    "adopt_reviewed_card_enrichment_source",
+    reviewLock,
+  );
+  assert.ok(benefitLock > 0, "benefit identity lock missing");
+  assert.ok(cardLock > benefitLock, "card locked before benefit identity");
+  assert.ok(reviewLock > cardLock, "review locked before card");
+  assert.ok(enqueue > reviewLock, "enqueue called outside shared lock order");
+  assert.match(sql, /card_catalog_publication:/i);
+  assert.match(sql, /publication_lock_order_assertions/i);
+});
+
+test("reviewed fields and lifecycle actions fail closed", async () => {
+  const publish = functionBody(
+    await migrationSql(),
+    "publish_card_catalog_identity",
+  );
+  assert.match(
+    publish,
+    /_action = 'edit_approve'[\s\S]*card_name[\s\S]*network[\s\S]*annual_fee[\s\S]*joining_fee[\s\S]*apr/i,
+  );
+  assert.match(publish, /mark_discontinued[\s\S]*reactivate/i);
+  assert.match(publish, /source_observation/i);
+  assert.match(publish, /reason_required/i);
+  assert.match(publish, /actor_required/i);
+  assert.match(
+    publish,
+    /_action = 'edit_approve'[\s\S]*edit_target_card_id[\s\S]*resolve_card_catalog_identity[\s\S]*edit_target_conflict/i,
+  );
+  assert.doesNotMatch(
+    publish,
+    /http_(?:404|410)[\s\S]{0,120}is_discontinued\s*=/i,
+  );
+});
+
+test("SQL resource identity matches bounded TypeScript functional-query policy", async () => {
+  const sql = await migrationSql();
+  const canonical = functionBody(sql, "canonical_card_resource_url");
+  const issuerMatch = functionBody(sql, "card_catalog_source_matches_issuer");
+  assert.match(canonical, /query_count > 8/i);
+  assert.match(canonical, /length\(query_key\) > 64/i);
+  assert.match(canonical, /length\(query_value\) > 512/i);
+  assert.match(canonical, /query_key ~ '\^utm_'/i);
+  assert.match(canonical, /'document'[\s\S]*'variant'/i);
+  assert.match(issuerMatch, /axis\.bank\.in/i);
+  assert.match(issuerMatch, /americanexpress\.com/i);
+  assert.match(issuerMatch, /hostname LIKE '%\.' \|\| approved\.domain/i);
+});
+
+test("compatibility wrapper delegates without duplicating publication artifacts", async () => {
+  const wrapper = functionBody(
+    await migrationSql(),
+    "review_card_catalog_discovery",
+  );
+  assert.match(wrapper, /RETURN QUERY[\s\S]*publish_card_catalog_identity/i);
+  assert.doesNotMatch(wrapper, /INSERT INTO public\.card_catalog/i);
+  assert.doesNotMatch(wrapper, /INSERT INTO public\.card_catalog_aliases/i);
+});
+
+test("legacy manual catalog approval is routed through reviewed publication", async () => {
+  const approval = functionBody(
+    await migrationSql(),
+    "approve_catalog_entry_request",
+  );
+  assert.match(approval, /publish_card_catalog_identity/i);
+  assert.doesNotMatch(approval, /INSERT INTO public\.card_catalog\s*\(/i);
+});
+
+test("migration retains review history and eliminates delete cleanup contracts", async () => {
+  const sql = await migrationSql();
+  assert.match(sql, /calculator_review_terminal/i);
+  assert.doesNotMatch(
+    sql,
+    /DELETE FROM public\.card_(?:discovery_jobs|catalog_review_queue|catalog_review_audit)/i,
+  );
+  assert.doesNotMatch(sql, /ON DELETE CASCADE/i);
+  assert.match(
+    sql,
+    /card_discovery_jobs_user_id_fkey[\s\S]*ON DELETE SET NULL/i,
+  );
+  assert.match(
+    sql,
+    /card_catalog_review_queue_discovery_job_id_fkey[\s\S]*ON DELETE RESTRICT/i,
+  );
+  assert.match(
+    sql,
+    /card_catalog_review_audit_review_item_id_fkey[\s\S]*ON DELETE RESTRICT/i,
+  );
+  assert.match(sql, /mark_discontinued/i);
+  assert.match(sql, /reactivate/i);
+});
+
+test("migration self-assertions guard signatures, grants, locks, and rollback lane", async () => {
+  const sql = await migrationSql();
+  assert.match(sql, /publish_reviewed_card_identity_assertions/i);
+  assert.match(sql, /benefits-v6/i);
+  assert.match(sql, /benefits-v5/i);
+  assert.match(sql, /COMMIT;/i);
+});
+
+test("production entry paths cannot bypass reviewed publication", async () => {
+  const paths = {
+    discovery: new URL(
+      "../../supabase/functions/card-discovery/index.ts",
+      import.meta.url,
+    ),
+    admin: new URL(
+      "../../supabase/functions/admin-catalog-entry/index.ts",
+      import.meta.url,
+    ),
+    enrichment: new URL(
+      "../../supabase/functions/catalog-enrichment/index.ts",
+      import.meta.url,
+    ),
+    crawler: new URL(
+      "../../supabase/functions/_shared/issuer_card_crawl.ts",
+      import.meta.url,
+    ),
+  };
+  const sources = Object.fromEntries(
+    await Promise.all(
+      Object.entries(paths).map(async (
+        [name, path],
+      ) => [name, await readFile(path, "utf8")]),
+    ),
+  );
+  for (const [name, source] of Object.entries(sources)) {
+    assert.doesNotMatch(
+      source,
+      /from\(["']card_catalog["']\)[\s\S]{0,100}\.(?:insert|upsert|update)\(/,
+      `${name} directly mutates the canonical catalog`,
+    );
+    assert.doesNotMatch(
+      source,
+      /card_catalog_aliases[\s\S]{0,180}discovery_job_id/,
+      `${name} writes the nonexistent alias discovery column`,
+    );
+  }
+  assert.match(sources.admin, /publishReviewedCardIdentity\(db,/);
+  assert.match(sources.discovery, /authenticated_source_requires_admin_review/);
+  assert.match(sources.enrichment, /catalog_review_context_required/);
+  assert.doesNotMatch(sources.crawler, /resolve_card_catalog_identity/);
+});

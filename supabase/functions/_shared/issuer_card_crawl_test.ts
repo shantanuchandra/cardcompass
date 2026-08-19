@@ -13,6 +13,8 @@ function resource(url: string, text: string, contentType = "text/html") {
     submittedUrl: url,
     finalUrl: url,
     canonicalUrl: url,
+    submittedResourceUrl: url,
+    finalResourceUrl: url,
     contentType,
     bytes: new TextEncoder().encode(text),
     text,
@@ -87,5 +89,75 @@ Deno.test("issuer classifications retain only validated opaque resource identiti
     invalid.submittedResourceIdentityHash === undefined &&
       invalid.finalResourceIdentityHash === undefined,
     "invalid opaque identities entered sanitized classification",
+  );
+});
+
+Deno.test("classification retains approved functional source URL identity artifacts", () => {
+  const exact =
+    "https://www.axis.bank.in/cards/neo?variant=gold&variant=platinum&lang=en";
+  const page = classifyIssuerPage({
+    issuer: "Axis Bank",
+    url: exact,
+    canonicalUrl: exact,
+    html: "<title>Neo Credit Card | Axis Bank</title>",
+    submittedUrl: exact,
+    finalUrl: exact,
+    submittedResourceIdentityHash: "a".repeat(64),
+    finalResourceIdentityHash: "b".repeat(64),
+    contentHash: "c".repeat(64),
+    retrievedAt: "2026-08-19T12:00:00.000Z",
+    sourceStatus: 200,
+  });
+
+  assert(
+    page.submittedUrl === exact,
+    "submitted functional query was stripped",
+  );
+  assert(page.finalUrl === exact, "final functional query was stripped");
+  assert(page.contentHash === "c".repeat(64), "content hash was dropped");
+  assert(
+    page.retrievedAt === "2026-08-19T12:00:00.000Z",
+    "retrieved time was dropped",
+  );
+  assert(page.sourceStatus === 200, "source status was dropped");
+});
+
+Deno.test("issuer traversal carries exact functional fetch resources into publication evidence", async () => {
+  const sitemap = "https://www.axis.bank.in/sitemap.xml";
+  const exact =
+    "https://www.axis.bank.in/cards/credit-card/privilege-credit-card?variant=gold&variant=platinum&lang=en";
+  const display =
+    "https://www.axis.bank.in/cards/credit-card/privilege-credit-card";
+  const result = await discoverIssuerCardCandidates({
+    issuer: "Axis Bank",
+    sitemapUrls: [sitemap],
+    delay: () => {},
+    fetchOfficialIssuerResource: async (input) => {
+      if (input.url === sitemap) {
+        return resource(
+          sitemap,
+          `<urlset><url><loc>${
+            exact.replaceAll("&", "&amp;")
+          }</loc></url></urlset>`,
+          "application/xml",
+        );
+      }
+      return {
+        ...resource(
+          display,
+          "<title>Privilege Credit Card | Axis Bank</title>",
+        ),
+        submittedResourceUrl: exact,
+        finalResourceUrl: exact,
+        sourceIdentityHash: "d".repeat(64),
+        finalResourceIdentityHash: "e".repeat(64),
+      };
+    },
+  });
+  assert(result.candidates.length === 1, "query-selected product was lost");
+  assert(
+    result.candidates[0].submittedUrl === exact &&
+      result.candidates[0].finalUrl === exact,
+    "exact functional resources were replaced by display URLs",
   );
 });

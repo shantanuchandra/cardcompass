@@ -12,6 +12,7 @@ import {
   requireOfficialFetchBody,
 } from "../_shared/official_issuer_fetch.ts";
 import { safeHttpsDisplayUrl } from "../_shared/benefit_source_privacy.ts";
+import { publicationFieldsFromFetch } from "../_shared/catalog_identity_publication.ts";
 
 type UntypedSupabaseClient = any;
 const CATALOG_FETCH_DEADLINE_MS = 25_000;
@@ -24,29 +25,73 @@ async function queueConflictReview(
   db: UntypedSupabaseClient,
   job: Record<string, any>,
   conflicts: unknown[],
+  proposedFields: Record<string, unknown>,
+  sourceObservation: Record<string, unknown>,
 ) {
-  if (!job.discovery_job_id) return;
-  const { data: review, error } = await db.from("card_catalog_review_queue")
-    .upsert({
-      discovery_job_id: job.discovery_job_id,
-      proposed_fields: { card_id: job.card_id },
-      source_evidence: {
-        official_url: safeHttpsDisplayUrl(job.canonical_url) ??
-          "invalid-source",
-        content_hash: job.content_hash,
-        field_conflicts: conflicts,
-      },
-      existing_candidates: [{ card_id: job.card_id }],
-      validation_warnings: ["catalog_field_conflict"],
-      confidence: 0.9,
-      status: "pending",
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "discovery_job_id" }).select("id").single();
-  if (error) throw error;
+  if (!job.discovery_job_id) throw new Error("catalog_review_context_required");
+  const { data: existingReview, error: existingReviewError } = await db
+    .from("card_catalog_review_queue")
+    .select("id,status")
+    .eq("discovery_job_id", job.discovery_job_id)
+    .maybeSingle();
+  if (existingReviewError) throw existingReviewError;
+  if (
+    existingReview &&
+    ["approved", "merged", "rejected"].includes(existingReview.status)
+  ) return existingReview.id;
+  const reviewPayload = {
+    discovery_job_id: job.discovery_job_id,
+    proposed_fields: {
+      card_id: job.card_id,
+      issuer: job.issuer,
+      ...proposedFields,
+      ...sourceObservation,
+    },
+    source_evidence: {
+      official_url: safeHttpsDisplayUrl(job.canonical_url) ??
+        "invalid-source",
+      content_hash: sourceObservation.content_hash ?? job.content_hash,
+      ...sourceObservation,
+      field_conflicts: conflicts,
+    },
+    existing_candidates: [{ card_id: job.card_id }],
+    validation_warnings: ["catalog_field_conflict"],
+    confidence: 0.9,
+    status: "pending",
+    updated_at: new Date().toISOString(),
+  };
+  let review = existingReview;
+  if (existingReview) {
+    const { data, error } = await db.from("card_catalog_review_queue")
+      .update(reviewPayload)
+      .eq("id", existingReview.id)
+      .eq("status", "pending")
+      .select("id,status")
+      .maybeSingle();
+    if (error) throw error;
+    review = data;
+  } else {
+    const { data, error } = await db.from("card_catalog_review_queue")
+      .insert(reviewPayload).select("id,status").maybeSingle();
+    if (error && error.code !== "23505") throw error;
+    review = data;
+  }
+  if (!review) {
+    const { data, error } = await db.from("card_catalog_review_queue")
+      .select("id,status")
+      .eq("discovery_job_id", job.discovery_job_id)
+      .single();
+    if (error || !data) throw error ?? new Error("catalog_review_race");
+    review = data;
+  }
+  if (["approved", "merged", "rejected"].includes(review.status)) {
+    return review.id;
+  }
   await db.from("card_discovery_jobs").update({
     review_item_id: review.id,
     updated_at: new Date().toISOString(),
   }).eq("id", job.discovery_job_id);
+  return review.id;
 }
 
 async function finalizeOwnedCatalogJob(
@@ -116,7 +161,7 @@ export async function processCatalogEnrichmentJob(
     );
     const { data: catalog, error: catalogError } = await db.from("card_catalog")
       .select(
-        "id, bank, card_name, network, card_type, joining_fee, annual_fee, apr",
+        "id, bank, card_name, network, card_type, joining_fee, annual_fee, apr, is_discontinued",
       )
       .eq("id", claimed.card_id).single();
     if (catalogError) throw catalogError;
@@ -126,15 +171,12 @@ export async function processCatalogEnrichmentJob(
       String(catalog.card_name ?? ""),
     );
     const normalized = normalizeOfficialCatalogPage(page.text, page.finalUrl);
+    const publicationEvidence = {
+      official_url: page.finalResourceUrl ?? page.finalUrl,
+      ...publicationFieldsFromFetch(page),
+    };
 
     const compared = diffCatalogFields(catalog, normalized.patch);
-    if (Object.keys(compared.backfill).length > 0) {
-      const { error } = await db.from("card_catalog").update({
-        ...compared.backfill,
-        updated_at: new Date().toISOString(),
-      }).eq("id", claimed.card_id);
-      if (error) throw error;
-    }
 
     if (normalized.benefits.length > 0) {
       const { error } = await db.from("card_benefits_staging").insert({
@@ -157,16 +199,61 @@ export async function processCatalogEnrichmentJob(
       if (error) throw error;
     }
 
-    if (compared.conflicts.length > 0) {
-      await queueConflictReview(db, claimed, compared.conflicts);
+    const proposedCatalogFields = Object.fromEntries(
+      Object.entries(normalized.patch).map(([field, proposal]) => [
+        field,
+        proposal.value,
+      ]),
+    );
+    const lifecycleSuggestion = catalog.is_discontinued === true
+      ? "reactivate"
+      : /\b(?:product|card)\s+(?:has\s+been\s+)?(?:discontinued|withdrawn)\b|\bno\s+longer\s+(?:available|issued)\b/i
+          .test(page.text)
+      ? "mark_discontinued"
+      : null;
+    const reviewChanges = [
+      ...compared.conflicts,
+      ...Object.entries(compared.backfill).map(([field, proposed]) => ({
+        field,
+        existing: null,
+        proposed,
+        kind: "reviewed_backfill",
+      })),
+      ...(lifecycleSuggestion
+        ? [{
+          field: "is_discontinued",
+          existing: catalog.is_discontinued === true,
+          proposed: lifecycleSuggestion === "mark_discontinued",
+          kind: "lifecycle_observation",
+        }]
+        : []),
+    ];
+    if (reviewChanges.length > 0) {
+      await queueConflictReview(
+        db,
+        claimed,
+        reviewChanges,
+        {
+          ...proposedCatalogFields,
+          ...(lifecycleSuggestion
+            ? { suggested_action: lifecycleSuggestion }
+            : {}),
+        },
+        {
+          ...publicationEvidence,
+          source_type: "official_html",
+          source_observation: {
+            status: page.status,
+            kind: "catalog_enrichment",
+          },
+        },
+      );
     }
-    const status = compared.conflicts.length > 0
-      ? "review_required"
-      : "completed";
+    const status = reviewChanges.length > 0 ? "review_required" : "completed";
     await finalizeOwnedCatalogJob(db, claimed.id, {
       status,
       normalized_fields: normalized.patch,
-      validation_warnings: compared.conflicts.map((item) => ({
+      validation_warnings: reviewChanges.map((item) => ({
         code: "catalog_field_conflict",
         field: item.field,
       })),
@@ -181,6 +268,40 @@ export async function processCatalogEnrichmentJob(
     const message = error instanceof Error
       ? error.message.slice(0, 120)
       : "enrichment_failed";
+    if (
+      ["http_404", "http_410", "identity_review", "redirect_rejected"]
+        .includes(message) && claimed.discovery_job_id
+    ) {
+      const strongGoneObservation = message === "http_410";
+      await queueConflictReview(
+        db,
+        claimed,
+        [{
+          field: "is_discontinued",
+          existing: false,
+          proposed: true,
+          kind: strongGoneObservation
+            ? "http_lifecycle_observation"
+            : "weak_source_absence_observation",
+        }],
+        strongGoneObservation ? { suggested_action: "mark_discontinued" } : {},
+        {
+          official_url: claimed.canonical_url,
+          ...(message === "http_404"
+            ? { source_status: 404 }
+            : message === "http_410"
+            ? { source_status: 410 }
+            : {}),
+          source_type: "official_html",
+          source_observation: {
+            failure: message,
+            kind: strongGoneObservation
+              ? "strong_gone_observation"
+              : "weak_source_absence_observation",
+          },
+        },
+      );
+    }
     await finalizeOwnedCatalogJob(db, claimed.id, {
       status: terminal ? "review_required" : "failed",
       failure_category: message,

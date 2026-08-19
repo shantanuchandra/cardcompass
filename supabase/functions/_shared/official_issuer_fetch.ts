@@ -40,9 +40,13 @@ export type OfficialFetchInput = {
 
 export type OfficialFetchResult = {
   status: number;
+  /** Privacy-bounded display URLs; approved functional queries are omitted. */
   submittedUrl: string;
   finalUrl: string;
   canonicalUrl: string;
+  /** Exact approved request identities used for hashing and publication. */
+  submittedResourceUrl?: string;
+  finalResourceUrl?: string;
   contentType?: string;
   bytes?: Uint8Array;
   text?: string;
@@ -1148,6 +1152,8 @@ export async function fetchOfficialIssuerResource(
           submittedUrl: displayUrl(submittedRequestUrl),
           finalUrl: displayUrl(url),
           canonicalUrl: displayUrl(url),
+          submittedResourceUrl: submittedRequestUrl,
+          finalResourceUrl: url,
           retrievedAt,
           contentHash: input.previous?.contentHash,
           etag: boundedHeader(response.headers.get("etag")) ??
@@ -1227,6 +1233,8 @@ export async function fetchOfficialIssuerResource(
         submittedUrl: displayUrl(submittedRequestUrl),
         finalUrl: displayUrl(url),
         canonicalUrl: displayUrl(url),
+        submittedResourceUrl: submittedRequestUrl,
+        finalResourceUrl: url,
         contentType,
         bytes,
         text: contentType === "application/pdf"
@@ -1334,7 +1342,8 @@ export async function fetchOfficialIssuerObservation(
           Boolean(result.contentHash) &&
           result.finalResourceIdentityHash ===
             input.previous?.finalResourceIdentityHash &&
-          result.finalUrl === input.previous?.finalResourceUrl &&
+          (result.finalResourceUrl ?? result.finalUrl) ===
+            input.previous?.finalResourceUrl &&
           !forceUnconditional;
         if (reusable304) {
           return { disposition: "not_modified", result, attempts };

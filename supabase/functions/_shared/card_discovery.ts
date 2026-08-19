@@ -20,6 +20,7 @@ export type CatalogUrlIdentityCandidate = {
   cardId: string;
   cardName: string;
   aliases: string[];
+  network?: string | null;
 };
 
 export type AutomaticGateInput = {
@@ -452,6 +453,10 @@ const bodyIdentityPrefixTokens = new Set([
   "about",
   "each",
   "for",
+  "fees",
+  "charges",
+  "conditions",
+  "benefits",
   "of",
   "or",
   "the",
@@ -468,7 +473,8 @@ function targetBodyIdentityLabels(
     content.slice(0, 120_000)
       .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
       .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
-      .replace(/<nav\b[\s\S]*?<\/nav>/gi, " "),
+      .replace(/<nav\b[\s\S]*?<\/nav>/gi, " ")
+      .replace(/<(?:title|h[1-2])\b[\s\S]*?<\/(?:title|h[1-2])>/gi, " "),
   );
   const labels: string[] = [];
   for (
@@ -607,11 +613,19 @@ export function selectCatalogUrlIdentityMatch(
   for (const candidate of candidates) {
     const expectedProducts = [candidate.cardName, ...candidate.aliases]
       .filter((value, index, all) => value && all.indexOf(value) === index);
-    if (
-      expectedProducts.some((expected) =>
-        exactOfficialPageIdentity(content, issuer, expected) !== null
-      )
-    ) matchingIds.add(candidate.cardId);
+    const identities = expectedProducts
+      .map((expected) => exactOfficialPageIdentity(content, issuer, expected))
+      .filter((identity): identity is CanonicalCardIdentity =>
+        identity !== null
+      );
+    const storedNetwork = candidate.network?.trim().toLowerCase() ?? null;
+    const networkCompatible = identities.some((identity) =>
+      !storedNetwork || !identity.network ||
+      identity.network.trim().toLowerCase() === storedNetwork
+    );
+    if (identities.length > 0 && networkCompatible) {
+      matchingIds.add(candidate.cardId);
+    }
   }
   return matchingIds.size === 1 ? [...matchingIds][0] : null;
 }
