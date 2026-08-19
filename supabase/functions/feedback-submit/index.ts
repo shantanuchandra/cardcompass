@@ -9,6 +9,10 @@ import {
   type SafeContext,
 } from "./context.ts";
 import { parseFeedbackBody } from "./validation.ts";
+import {
+  createGeminiTriageModel,
+  triageFeedback,
+} from "../_shared/feedback_triage.ts";
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 const cors = {
@@ -50,6 +54,28 @@ async function defaultDependencies(request: Request): Promise<Dependencies> {
     url,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
   );
+  const rpc = async (name: string, args: Record<string, unknown>) => {
+    const { data, error } = await serviceDb.rpc(name, args);
+    if (error) {
+      throw new Error(
+        error.message?.includes("request_id_collision")
+          ? "request_id_collision"
+          : error.message?.includes("state_conflict")
+          ? "state_conflict"
+          : "request_failed",
+      );
+    }
+    return data;
+  };
+  const apiKeys: string[] = [];
+  const firstKey = Deno.env.get("GEMINI_API_KEY");
+  if (firstKey) apiKeys.push(firstKey);
+  for (let index = 2;; index++) {
+    const key = Deno.env.get(`GEMINI_API_KEY_${index}`);
+    if (!key) break;
+    apiKeys.push(key);
+  }
+  const model = createGeminiTriageModel({ apiKeys, fetch });
   return {
     authenticate: async () => {
       const header = request.headers.get("Authorization");
@@ -71,18 +97,8 @@ async function defaultDependencies(request: Request): Promise<Dependencies> {
       resolveFeedbackContext(serviceDb, id, feature, type, ref),
     resolveCatalog: (cards, benefits) =>
       resolveRecommendationCatalog(serviceDb, cards, benefits),
-    rpc: async (name, args) => {
-      const { data, error } = await serviceDb.rpc(name, args);
-      if (error) {
-        throw new Error(
-          error.message?.includes("request_id_collision")
-            ? "request_id_collision"
-            : "request_failed",
-        );
-      }
-      return data;
-    },
-    triage: async () => {},
+    rpc,
+    triage: (id) => triageFeedback(id, { rpc, model }),
     waitUntil: (promise) => EdgeRuntime.waitUntil(promise),
   };
 }

@@ -17,7 +17,7 @@ Ruling: Carry the Cutover final-fix adjudication into the Tasks 1–3 code-beari
 ## Tasks
 
 - Tasks 1–3: complete — private storage/RPCs and authenticated endpoint
-- Task 4: pending — asynchronous tool-free LLM triage
+- Task 4: complete — asynchronous tool-free LLM triage
 - Task 5: pending — reusable Flutter feedback surface
 - Task 6: pending — attach three product families
 - Task 7: pending — Admin2 review and Inbox integration
@@ -43,3 +43,12 @@ Ruling: Represent a review action named `dismiss` as the persisted terminal stat
 Ruling: Make the triage claim token part of the Task 4 persistence interface: `claim_ai_feedback_triage(id)` returns `claim_token`, and `complete_ai_feedback_triage(id, claim_token, succeeded, result, failure_category)` rejects stale workers. Cost if wrong: every triage caller must carry one additional UUID, but delayed workers cannot overwrite a newer claim.
 
 Ruling: Store recommendation authoritative facts separately from the client-reported output and combine them only in the immutable eval input fixture. Cost if wrong: fixture consumers must read two named branches instead of one flattened object, preserving trust provenance.
+
+## Task 4 evidence
+
+- RED: shared triage/transport tests first failed because the modules and injectable proxy handler did not exist; the all-keys-429 regression test then caught an initial extraction that stopped before model fallback.
+- GREEN: the shared transport preserves proxy key/model fallback, per-attempt 25-second timeout, upstream status/body, and safe internal failures. The public proxy retains its authentication, active-profile, quota, 100,000-character serialized-payload boundary, allowlist, CORS, and safe server errors.
+- Triage uses the existing supported server-pinned `gemini-3.6-flash`, a fixed injection-resistant system instruction, no tool channel, a closed bounded schema, and rotated claim tokens. Feedback submission schedules the real worker with `waitUntil` and still returns `202` independently of triage success.
+- Focused tests pass 18/18 across transport, parser/worker, proxy compatibility, context resolution, and endpoint async behavior. The complete Edge Function suite passes 174/174; both changed function entry points pass `deno check`.
+
+Ruling: Cap each proposed triage object at 8 KiB and the complete triage JSON at 15,000 UTF-8 bytes so validated output remains below the database's 16 KiB jsonb text constraint after jsonb normalization. Cost if wrong: unusually large advisory proposals are rejected for manual triage instead of consuming the database's full theoretical boundary.
