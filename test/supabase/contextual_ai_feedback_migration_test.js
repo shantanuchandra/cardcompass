@@ -32,6 +32,10 @@ test('feedback storage and RPCs are private, bounded, idempotent, and audited', 
   assert.match(sql, /insert into public\.admin_audit_log/);
   assert.match(sql, /observed_updated_at/);
   assert.match(sql, /for update skip locked/);
+  assert.match(sql, /triage_claim_token uuid/);
+  assert.match(sql, /_claim_token uuid/);
+  assert.match(sql, /create trigger protect_ai_eval_case_immutability/);
+  assert.match(sql, /authoritative_context jsonb/);
   assert.doesNotMatch(sql, /grant .*ai_(output_traces|feedback|eval_cases).*authenticated/);
 });
 
@@ -53,17 +57,29 @@ test('feedback RPCs compile and preserve replay, claims, human revisions, versio
     psql(disposable, `create extension if not exists pgcrypto; create schema auth; create table auth.users(id uuid primary key); ${foundation} ${migration}`);
     psql(disposable, `
       insert into auth.users(id) values ('10000000-0000-4000-8000-000000000001'),('10000000-0000-4000-8000-000000000002');
-      do $$ declare first jsonb; replay jsonb; claimed jsonb; reviewed jsonb; approved jsonb; revised jsonb; observed timestamptz; begin
-        first := public.submit_ai_feedback('10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001','card_data','user_card','30000000-0000-4000-8000-000000000001','This is the wrong matched card','{}','{}','{}');
-        replay := public.submit_ai_feedback('10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001','card_data','user_card','30000000-0000-4000-8000-000000000001','This is the wrong matched card','{}','{}','{}');
+      do $$ declare trace jsonb; trace_replay jsonb; first jsonb; replay jsonb; claimed jsonb; stale_token uuid; reviewed jsonb; approved jsonb; revised jsonb; observed timestamptz; begin
+        trace := public.create_ai_output_trace('10000000-0000-4000-8000-000000000001','21000000-0000-4000-8000-000000000001','recommendation','{"spend":500}','{"winner":"card-a","provenance":"client_reported"}','{"cards":[{"id":"card-a","active":true}],"benefits":[{"id":"benefit-a","active":true}]}','{"engine_version":"engine-v1","model":"model-v1","prompt_version":"prompt-v1"}');
+        trace_replay := public.create_ai_output_trace('10000000-0000-4000-8000-000000000001','21000000-0000-4000-8000-000000000001','recommendation','{"spend":500}','{"winner":"card-a","provenance":"client_reported"}','{"cards":[{"id":"card-a","active":true}],"benefits":[{"id":"benefit-a","active":true}]}','{"engine_version":"engine-v1","model":"model-v1","prompt_version":"prompt-v1"}');
+        if trace is distinct from trace_replay then raise exception 'trace replay failed'; end if;
+        begin perform public.create_ai_output_trace('10000000-0000-4000-8000-000000000001','21000000-0000-4000-8000-000000000001','recommendation','{"spend":500}','{"winner":"card-a","provenance":"client_reported"}','{"cards":[{"id":"card-a","active":true}],"benefits":[{"id":"benefit-a","active":true}]}','{"engine_version":"changed","model":"model-v1","prompt_version":"prompt-v1"}'); raise exception 'trace collision accepted'; exception when others then if sqlerrm<>'request_id_collision' then raise; end if; end;
+        first := public.submit_ai_feedback('10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001','recommendation','recommendation_trace',trace->>'id','This recommendation ignored my card','{"spend":500}','{"winner":"card-a","provenance":"client_reported"}',jsonb_build_object('trace_id',trace->>'id','engine_version','engine-v1','model','model-v1','prompt_version','prompt-v1','authoritative_context',jsonb_build_object('cards',jsonb_build_array(jsonb_build_object('id','card-a','active',true)),'benefits',jsonb_build_array(jsonb_build_object('id','benefit-a','active',true)))));
+        replay := public.submit_ai_feedback('10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001','recommendation','recommendation_trace',trace->>'id','This recommendation ignored my card','{"spend":500}','{"winner":"card-a","provenance":"client_reported"}',jsonb_build_object('trace_id',trace->>'id','engine_version','engine-v1','model','model-v1','prompt_version','prompt-v1','authoritative_context',jsonb_build_object('cards',jsonb_build_array(jsonb_build_object('id','card-a','active',true)),'benefits',jsonb_build_array(jsonb_build_object('id','benefit-a','active',true)))));
         if first is distinct from replay or (select count(*) from public.ai_feedback)<>1 then raise exception 'replay failed'; end if;
-        begin perform public.submit_ai_feedback('10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001','card_data','user_card','30000000-0000-4000-8000-000000000001','Changed collision content','{}','{}','{}'); raise exception 'collision accepted'; exception when others then if sqlerrm<>'request_id_collision' then raise; end if; end;
-        claimed := public.claim_ai_feedback_triage((first->>'id')::uuid); if claimed->>'feedback_text'<>'This is the wrong matched card' then raise exception 'claim fixture'; end if;
+        begin perform public.submit_ai_feedback('10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001','recommendation','recommendation_trace',trace->>'id','Changed collision content','{}','{}','{}'); raise exception 'collision accepted'; exception when others then if sqlerrm<>'request_id_collision' then raise; end if; end;
+        claimed := public.claim_ai_feedback_triage((first->>'id')::uuid); if claimed->>'feedback_text'<>'This recommendation ignored my card' or claimed->>'claim_token' is null or claimed->'authoritative_context'->'cards'->0->>'id'<>'card-a' then raise exception 'claim fixture'; end if;
         if public.claim_ai_feedback_triage((first->>'id')::uuid) is not null then raise exception 'double claim'; end if;
-        perform public.complete_ai_feedback_triage((first->>'id')::uuid,false,'{}','model_unavailable');
-        if public.claim_ai_feedback_triage((first->>'id')::uuid) is null then raise exception 'failed retry not claimable'; end if;
-        perform public.complete_ai_feedback_triage((first->>'id')::uuid,true,'{"classification":"model_error"}',null);
+        stale_token := (claimed->>'claim_token')::uuid;
+        update public.ai_feedback set triage_claimed_at=now()-interval '6 minutes' where id=(first->>'id')::uuid;
+        claimed := public.claim_ai_feedback_triage((first->>'id')::uuid);
+        if (claimed->>'claim_token')::uuid=stale_token then raise exception 'lease token not rotated'; end if;
+        begin perform public.complete_ai_feedback_triage((first->>'id')::uuid,stale_token,true,'{"classification":"stale"}',null); raise exception 'expired claim accepted'; exception when others then if sqlerrm<>'state_conflict' then raise; end if; end;
+        perform public.complete_ai_feedback_triage((first->>'id')::uuid,(claimed->>'claim_token')::uuid,false,'{}','model_unavailable');
+        claimed := public.claim_ai_feedback_triage((first->>'id')::uuid);
+        if claimed is null then raise exception 'failed retry not claimable'; end if;
+        begin perform public.complete_ai_feedback_triage((first->>'id')::uuid,'aaaaaaaa-0000-4000-8000-000000000001',true,'{"classification":"stale"}',null); raise exception 'stale claim accepted'; exception when others then if sqlerrm<>'state_conflict' then raise; end if; end;
+        perform public.complete_ai_feedback_triage((first->>'id')::uuid,(claimed->>'claim_token')::uuid,true,'{"classification":"model_error"}',null);
         reviewed := public.admin_review_ai_feedback('10000000-0000-4000-8000-000000000002','20000000-0000-4000-8000-000000000002',(first->>'id')::uuid,'create_eval_draft','{"operator_feedback":"Use the current card identity","expected_output":{"card":"correct"},"scoring_rubric":{"exact":true},"severe_failure_conditions":{"wrong_card":true}}','approved fixture');
+        if (select input_fixture->'authoritative_context'->'cards'->0->>'id' from public.ai_eval_cases where id=(reviewed->>'case_id')::uuid)<>'card-a' or (select source_engine_version from public.ai_eval_cases where id=(reviewed->>'case_id')::uuid)<>'engine-v1' then raise exception 'authoritative fixture not copied'; end if;
         begin perform public.admin_review_ai_feedback('10000000-0000-4000-8000-000000000002','20000000-0000-4000-8000-000000000002',(first->>'id')::uuid,'dismiss','{}','changed request'); raise exception 'admin collision accepted'; exception when others then if sqlerrm<>'request_id_collision' then raise; end if; end;
         select updated_at into observed from public.ai_eval_cases where id=(reviewed->>'case_id')::uuid;
         approved := public.admin_ai_eval_case_action('10000000-0000-4000-8000-000000000002','20000000-0000-4000-8000-000000000003',(reviewed->>'case_id')::uuid,'approve','{}','human approval',observed);
@@ -79,6 +95,8 @@ test('feedback RPCs compile and preserve replay, claims, human revisions, versio
     psql(disposable, `update public.ai_feedback set review_status='pending', reviewed_by=null, reviewed_at=null where id='${feedbackId}'; create function public.reject_feedback_audit() returns trigger language plpgsql as $$ begin if new.request_id='20000000-0000-4000-8000-000000000005' then raise exception 'forced_audit_failure'; end if; return new; end $$; create trigger reject_feedback_audit before insert on public.admin_audit_log for each row execute function public.reject_feedback_audit();`);
     assert.throws(() => psql(disposable, `select public.admin_review_ai_feedback('10000000-0000-4000-8000-000000000002','20000000-0000-4000-8000-000000000005','${feedbackId}','dismiss','{}','not actionable');`), /forced_audit_failure/);
     assert.equal(psql(disposable, `select review_status from public.ai_feedback where id='${feedbackId}';`), 'pending');
+    const approvedCaseId = psql(disposable, `select id from public.ai_eval_cases where status='approved' limit 1;`);
+    assert.throws(() => psql(disposable, `update public.ai_eval_cases set expected_output='{"tampered":true}' where id='${approvedCaseId}';`), /immutable_eval_case/);
     await Promise.all([
       psqlAsync(disposable, `select public.submit_ai_feedback('10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000006','card_data','user_card','30000000-0000-4000-8000-000000000001','Concurrent feedback request','{}','{}','{}');`),
       psqlAsync(disposable, `select public.submit_ai_feedback('10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000006','card_data','user_card','30000000-0000-4000-8000-000000000001','Concurrent feedback request','{}','{}','{}');`),

@@ -144,7 +144,10 @@ export async function handleFeedbackRequest(
       _feedback_text: body.feedback_text.trim(),
       _safe_input: context.safeInputContext,
       _output: context.outputSnapshot,
-      _metadata: context.metadata,
+      _metadata: {
+        ...context.metadata,
+        authoritative_context: context.authoritativeContext,
+      },
     });
     deps.waitUntil(
       (deps.triage ?? (async () => {}))(result.id).catch(() => undefined),

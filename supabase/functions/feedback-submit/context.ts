@@ -2,6 +2,7 @@ export type SafeContext = Readonly<
   {
     safeInputContext: Record<string, unknown>;
     outputSnapshot: Record<string, unknown>;
+    authoritativeContext: Record<string, unknown>;
     metadata: Record<string, unknown>;
   }
 >;
@@ -39,6 +40,7 @@ export async function resolveFeedbackContext(
     return {
       safeInputContext: { transaction_id: row.id },
       outputSnapshot: row,
+      authoritativeContext: {},
       metadata: { parser_version: "persisted_transaction_v1" },
     };
   }
@@ -53,6 +55,7 @@ export async function resolveFeedbackContext(
     return {
       safeInputContext: { statement_id: row.id },
       outputSnapshot: row,
+      authoritativeContext: {},
       metadata: { parser_version: "persisted_statement_v1" },
     };
   }
@@ -73,6 +76,7 @@ export async function resolveFeedbackContext(
     return {
       safeInputContext: { user_card_id: row.id },
       outputSnapshot: { user_card: row, catalog_card: catalog },
+      authoritativeContext: { catalog_card: catalog },
       metadata: { parser_version: "persisted_card_match_v1" },
     };
   }
@@ -80,7 +84,7 @@ export async function resolveFeedbackContext(
     const trace = await one(
       db,
       "ai_output_traces",
-      "id,user_id,feature_key,safe_input_context,output_snapshot,engine_version,model,prompt_version,expires_at",
+      "id,user_id,feature_key,safe_input_context,output_snapshot,authoritative_context,engine_version,model,prompt_version,expires_at",
       refId,
       userId,
     );
@@ -91,6 +95,7 @@ export async function resolveFeedbackContext(
     return {
       safeInputContext: trace.safe_input_context,
       outputSnapshot: trace.output_snapshot,
+      authoritativeContext: trace.authoritative_context,
       metadata: {
         trace_id: trace.id,
         engine_version: trace.engine_version,

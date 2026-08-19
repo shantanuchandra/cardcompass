@@ -94,6 +94,7 @@ Deno.test("endpoint authenticates and checks active profile before service work"
 
 Deno.test("accepted feedback returns before injected background triage", async () => {
   let background: Promise<unknown> | undefined;
+  let submitted: Record<string, unknown> | undefined;
   const response = await handleFeedbackRequest(
     new Request("http://local", {
       method: "POST",
@@ -115,12 +116,16 @@ Deno.test("accepted feedback returns before injected background triage", async (
       resolveContext: async () => ({
         safeInputContext: {},
         outputSnapshot: {},
+        authoritativeContext: {},
         metadata: {},
       }),
-      rpc: async () => ({
-        id: "40000000-0000-4000-8000-000000000001",
-        triage_status: "awaiting_triage",
-      }),
+      rpc: async (_name, args) => {
+        submitted = args;
+        return {
+          id: "40000000-0000-4000-8000-000000000001",
+          triage_status: "awaiting_triage",
+        };
+      },
       triage: async () => await new Promise<void>(() => {}),
       waitUntil: (promise: Promise<unknown>) => {
         background = promise;
@@ -133,4 +138,5 @@ Deno.test("accepted feedback returns before injected background triage", async (
     triage_status: "awaiting_triage",
   });
   assertEquals(background instanceof Promise, true);
+  assertEquals(submitted?._metadata, { authoritative_context: {} });
 });

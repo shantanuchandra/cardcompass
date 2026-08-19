@@ -1,0 +1,147 @@
+import { assertEquals, assertRejects } from "jsr:@std/assert";
+import {
+  resolveFeedbackContext,
+  resolveRecommendationCatalog,
+} from "./context.ts";
+
+function fakeDb(rows: Record<string, Record<string, unknown>[]>) {
+  const selects: string[] = [];
+  return {
+    selects,
+    from(table: string) {
+      let filtered = [...(rows[table] ?? [])];
+      const query: any = {
+        select(columns: string) {
+          selects.push(`${table}:${columns}`);
+          return query;
+        },
+        eq(column: string, value: unknown) {
+          filtered = filtered.filter((row) => row[column] === value);
+          return query;
+        },
+        in(column: string, values: unknown[]) {
+          filtered = filtered.filter((row) => values.includes(row[column]));
+          return query;
+        },
+        async maybeSingle() {
+          return { data: filtered[0] ?? null, error: null };
+        },
+        then(resolve: (value: unknown) => unknown) {
+          return Promise.resolve({ data: filtered, error: null }).then(resolve);
+        },
+      };
+      return query;
+    },
+  };
+}
+
+Deno.test("resolver rejects every foreign persisted output and selects no raw/source fields", async () => {
+  const cases = [
+    [
+      "transactions",
+      "statement_processing",
+      "transaction",
+      "id,user_card_id,amount,currency,merchant_name,category,transaction_type,transaction_date,statement_id",
+    ],
+    [
+      "statements",
+      "statement_processing",
+      "statement",
+      "id,user_card_id,statement_date,due_date,total_amount,minimum_payment,closing_balance,fees_charged,processed,transaction_count",
+    ],
+    [
+      "user_cards",
+      "card_data",
+      "user_card",
+      "id,catalog_card_id,last_four_digits,is_active,created_at,updated_at",
+    ],
+  ] as const;
+  for (const [table, feature, refType, columns] of cases) {
+    const db = fakeDb({
+      [table]: [{
+        id: "target",
+        user_id: "other",
+        catalog_card_id: "catalog",
+        metadata: { raw: "secret" },
+        description: "raw statement line",
+        file_path: "/secret.pdf",
+        card_number: "4111",
+      }],
+    });
+    await assertRejects(
+      () => resolveFeedbackContext(db, "owner", feature, refType, "target"),
+      Error,
+      "not_found",
+    );
+    assertEquals(db.selects, [`${table}:${columns}`]);
+  }
+});
+
+Deno.test("trace fixture copies authoritative facts and rejects foreign or expired traces", async () => {
+  const future = new Date(Date.now() + 60_000).toISOString();
+  const base = {
+    id: "trace",
+    user_id: "owner",
+    feature_key: "recommendation",
+    safe_input_context: { spend: 500 },
+    output_snapshot: { provenance: "client_reported" },
+    authoritative_context: {
+      cards: [{ id: "card" }],
+      benefits: [{ benefit_id: "benefit" }],
+    },
+    engine_version: "engine-v1",
+    model: "m",
+    prompt_version: "p",
+    expires_at: future,
+  };
+  const resolved = await resolveFeedbackContext(
+    fakeDb({ ai_output_traces: [base] }),
+    "owner",
+    "recommendation",
+    "recommendation_trace",
+    "trace",
+  );
+  assertEquals(resolved.authoritativeContext, base.authoritative_context);
+  assertEquals(resolved.metadata.engine_version, "engine-v1");
+  await assertRejects(
+    () =>
+      resolveFeedbackContext(
+        fakeDb({ ai_output_traces: [base] }),
+        "other",
+        "recommendation",
+        "recommendation_trace",
+        "trace",
+      ),
+    Error,
+    "not_found",
+  );
+  await assertRejects(
+    () =>
+      resolveFeedbackContext(
+        fakeDb({
+          ai_output_traces: [{
+            ...base,
+            expires_at: new Date(0).toISOString(),
+          }],
+        }),
+        "owner",
+        "recommendation",
+        "recommendation_trace",
+        "trace",
+      ),
+    Error,
+    "not_found",
+  );
+});
+
+Deno.test("recommendation catalog requires every card and benefit to remain active", async () => {
+  const db = fakeDb({
+    card_catalog: [{ id: "card", is_discontinued: false }],
+    benefits: [{ benefit_id: "benefit", is_active: false }],
+  });
+  await assertRejects(
+    () => resolveRecommendationCatalog(db, ["card"], ["benefit"]),
+    Error,
+    "not_found",
+  );
+});
