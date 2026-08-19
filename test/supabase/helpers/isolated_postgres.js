@@ -55,16 +55,23 @@ export function psqlAsync(connection, sql) {
   });
 }
 
-export function ensureRoles(adminConnection, roles) {
+export function ensureRoles(adminConnection, roles, runPsql = psql) {
   const created = [];
-  for (const role of roles) {
-    assert.match(role, /^[a-z_]+$/);
-    if (!psql(adminConnection, `select exists (select 1 from pg_roles where rolname = '${role}');`).endsWith('t')) {
-      psql(adminConnection, `create role ${role} nologin;`);
-      created.push(role);
+  try {
+    for (const role of roles) {
+      assert.match(role, /^[a-z_]+$/);
+      if (!runPsql(adminConnection, `select exists (select 1 from pg_roles where rolname = '${role}');`).endsWith('t')) {
+        runPsql(adminConnection, `create role ${role} nologin;`);
+        created.push(role);
+      }
     }
+    return created;
+  } catch (error) {
+    for (const role of [...created].reverse()) {
+      runPsql(adminConnection, `drop role if exists ${role};`);
+    }
+    throw error;
   }
-  return created;
 }
 
 export function dropDisposableDatabase(adminConnection, databaseName, createdRoles = []) {

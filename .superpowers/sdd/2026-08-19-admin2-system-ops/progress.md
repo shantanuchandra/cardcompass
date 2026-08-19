@@ -43,3 +43,10 @@ Ruling: Keep pilot and manual modes outside the runtime-control query entirely, 
 - Live local socket execution passed 4/4 and removed the disposable database and temporary roles. The live compile check exposed and fixed required parentheses around the replay action's PL/pgSQL `CASE` expression.
 
 Ruling: Share the hardened PostgreSQL connection/process primitives while keeping each migration's schema fixtures and behavioral assertions local to its contract test. Cost if wrong: future harness hardening must preserve the shared helper API or update both integration suites together.
+
+## Tasks 1–2 re-review fix
+
+- The live collision case now preserves the same pause action and target while changing only the reason, proving rejection occurs at direct canonical-request comparison rather than the earlier action discriminator.
+- Partial shared-role setup is exception-safe inside `ensureRoles`: roles are recorded immediately after creation and removed in reverse order before the original setup error is rethrown. A simulated failure after the first creation proves zero retained ownership and the exact cleanup command.
+
+Ruling: Make shared role provisioning own cleanup until it successfully transfers the complete created-role list to its caller. Cost if wrong: a cleanup failure can mask the original provisioning error, but cannot silently return incomplete role ownership to the caller.

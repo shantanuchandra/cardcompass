@@ -76,6 +76,36 @@ test('shared PostgreSQL harness neutralizes inherited libpq selectors and argv s
   assert.equal(socket.env.PGPORT, '5432');
 });
 
+test('shared PostgreSQL harness cleans partial role ownership before rethrowing', () => {
+  const commands = [];
+  const existing = new Set();
+  const runPsql = (_connection, sql) => {
+    commands.push(sql);
+    if (sql.startsWith('select exists')) return 'f';
+    if (sql === 'create role anon nologin;') {
+      existing.add('anon');
+      return '';
+    }
+    if (sql === 'create role authenticated nologin;') {
+      throw new Error('simulated role creation failure');
+    }
+    if (sql === 'drop role if exists anon;') {
+      existing.delete('anon');
+      return '';
+    }
+    throw new Error(`unexpected command: ${sql}`);
+  };
+  assert.throws(
+    () => ensureRoles({}, ['anon', 'authenticated', 'service_role'], runPsql),
+    /simulated role creation failure/,
+  );
+  assert.deepEqual([...existing], []);
+  assert.deepEqual(commands.slice(-2), [
+    'create role authenticated nologin;',
+    'drop role if exists anon;',
+  ]);
+});
+
 const runPostgresIntegration = process.env.RUN_ADMIN_RUNTIME_CONTROL_PG_INTEGRATION === 'true';
 
 test('runtime control RPC preserves replay, concurrency, rollback, and grants in PostgreSQL', {
@@ -113,7 +143,7 @@ test('runtime control RPC preserves replay, concurrency, rollback, and grants in
         begin
           perform public.admin_set_runtime_control(
             '10000000-0000-4000-8000-000000000001', '20000000-0000-4000-8000-000000000001',
-            'benefit_enrichment_scheduled', false, 'changed request', observed);
+            'benefit_enrichment_scheduled', true, 'changed reason', observed);
           raise exception 'collision accepted';
         exception when others then if sqlerrm <> 'request_id_collision' then raise; end if; end;
         begin

@@ -18,3 +18,8 @@
 - Extracted reusable credential-safe PostgreSQL process primitives and added an opt-in disposable-database behavior suite for the runtime RPC.
 - Live local socket execution passed exact replay, collision, stale/missing version, monotonic timestamp, concurrent one-receipt serialization, browser denial, and audit-failure rollback checks. It also caught and fixed a PL/pgSQL `CASE` parsing defect before deployment.
 - Service-role reads rely on Supabase's `service_role` bypass-RLS role, while browser roles have neither grants nor policies.
+
+## Re-review fix
+
+- Canonical collision behavior is now exercised with an unchanged pause action and changed reason, ensuring the direct request JSONB comparison is the rejecting guard.
+- Shared role setup now cleans every role it successfully created if a later role creation fails; a deterministic unit regression verifies reverse cleanup and zero retained ownership.
