@@ -20,6 +20,12 @@ const DELETION_STATUSES = new Set([
   "completed",
   "cancelled",
 ]);
+const AUTH_BAN_STATUSES = new Set([
+  "pending",
+  "processing",
+  "completed",
+  "failed",
+]);
 
 function invalid(): never {
   throw new AdminHttpError("invalid_request", 400);
@@ -220,6 +226,11 @@ export async function handleCustomerDetail(
       "status,updated_at,id",
     ).eq("user_id", targetId).range(0, 0),
   );
+  const authBanRows = rows(
+    (context.db as any).from("admin_auth_ban_requests").select(
+      "id,status,safe_failure_category,updated_at",
+    ).eq("user_id", targetId).range(0, 0),
+  );
   const authResult = context.authAdmin.getUserById(targetId);
   const [
     profiles,
@@ -233,6 +244,7 @@ export async function handleCustomerDetail(
     latestStatement,
     latestEmail,
     auth,
+    authBans,
   ] = await Promise.all([
     profileRows,
     operationRows,
@@ -245,6 +257,7 @@ export async function handleCustomerDetail(
     latest(context, "statements", "created_at", targetId),
     latest(context, "emails", "received_date", targetId),
     authResult,
+    authBanRows,
   ]);
   if (profiles.length !== 1) throw new AdminHttpError("not_found", 404);
   if (auth.error || !record(auth.data)?.user) {
@@ -259,6 +272,7 @@ export async function handleCustomerDetail(
   );
   const operation = operations.length ? record(operations[0]) : null;
   const deletion = deletions.length ? record(deletions[0]) : null;
+  const authBan = authBans.length ? record(authBans[0]) : null;
   const operationStatus = typeof operation?.status === "string" &&
       ["queued", "claimed", "completed", "failed"].includes(operation.status)
     ? operation.status
@@ -272,6 +286,13 @@ export async function handleCustomerDetail(
     ? deletion.status
     : null;
   const profile = safeProfile(profiles[0]);
+  const authBanStatus = typeof authBan?.status === "string" &&
+      AUTH_BAN_STATUSES.has(authBan.status)
+    ? authBan.status
+    : null;
+  if (authBan && authBanStatus === null) {
+    throw new AdminHttpError("request_failed", 500);
+  }
   return {
     customer: {
       ...profile,
@@ -290,8 +311,63 @@ export async function handleCustomerDetail(
       latest_email_at: latestEmail,
       deletion_status: deletionStatus,
       deletion_updated_at: deletion ? safeTimestamp(deletion.updated_at) : null,
+      auth_ban_status: authBanStatus,
+      auth_ban_updated_at: authBan ? safeTimestamp(authBan.updated_at) : null,
     },
   };
+}
+
+async function attemptAuthBan(
+  context: AdminActionContext,
+  targetId: string,
+) {
+  const { data: claimed, error: claimError } = await context.db.rpc(
+    "claim_admin_auth_ban",
+    { _target_user_id: targetId },
+  );
+  if (claimError) throw mapDatabaseError(claimError);
+  const claim = record(claimed);
+  if (
+    !claim || claim.user_id !== targetId || typeof claim.id !== "string" ||
+    !UUID.test(claim.id) ||
+    (claim.status !== "processing" && claim.status !== "completed") ||
+    typeof claim.claimed !== "boolean"
+  ) {
+    throw new AdminHttpError("request_failed", 500);
+  }
+  if (claim.status === "completed") {
+    return { user_id: targetId, is_active: false, auth_banned: true };
+  }
+  if (!claim.claimed) throw new AdminHttpError("auth_ban_pending", 502);
+  let succeeded = false;
+  if (context.authAdmin) {
+    try {
+      const response = await context.authAdmin.updateUserById(targetId, {
+        ban_duration: "876000h",
+      });
+      succeeded = !response.error;
+    } catch {
+      succeeded = false;
+    }
+  }
+  const { data: completed, error: completeError } = await context.db.rpc(
+    "complete_admin_auth_ban",
+    {
+      _ban_id: claim.id,
+      _succeeded: succeeded,
+      _safe_failure_category: succeeded ? null : "auth_provider_unavailable",
+    },
+  );
+  if (completeError) throw mapDatabaseError(completeError);
+  const receipt = record(completed);
+  if (
+    receipt?.user_id !== targetId ||
+    receipt?.auth_ban_status !== (succeeded ? "completed" : "failed")
+  ) {
+    throw new AdminHttpError("request_failed", 500);
+  }
+  if (!succeeded) throw new AdminHttpError("auth_ban_pending", 502);
+  return { user_id: targetId, is_active: false, auth_banned: true };
 }
 
 async function customerMutation(
@@ -364,19 +440,23 @@ export async function handleCustomerDisable(
   );
   if (
     result.targetId !== targetId || result.receipt?.user_id !== targetId ||
-    result.receipt?.is_active !== false
+    result.receipt?.is_active !== false ||
+    result.receipt?.containment !== "database_contained" ||
+    !["pending", "processing", "failed", "completed"].includes(
+      String(result.receipt?.auth_ban_status),
+    )
   ) throw new AdminHttpError("request_failed", 500);
-  if (!context.authAdmin) throw new AdminHttpError("auth_ban_pending", 502);
-  let authResult;
-  try {
-    authResult = await context.authAdmin.updateUserById(targetId, {
-      ban_duration: "876000h",
-    });
-  } catch {
-    throw new AdminHttpError("auth_ban_pending", 502);
-  }
-  if (authResult.error) throw new AdminHttpError("auth_ban_pending", 502);
-  return { result: { user_id: targetId, is_active: false, auth_banned: true } };
+  return { result: await attemptAuthBan(context, targetId) };
+}
+
+export async function handleCustomerAuthBanRetry(
+  body: JsonRecord,
+  context: AdminActionContext,
+) {
+  onlyKeys(body, new Set(["action", "target_id", "request_id"]));
+  uuid(body.request_id);
+  const targetId = uuid(body.target_id);
+  return { result: await attemptAuthBan(context, targetId) };
 }
 
 export async function handleCustomerDeletionStatus(
@@ -427,5 +507,6 @@ export const customerActionHandlers: Readonly<
   "customer-detail": handleCustomerDetail,
   "customer-retry": handleCustomerRetry,
   "customer-disable": handleCustomerDisable,
+  "customer-auth-ban-retry": handleCustomerAuthBanRetry,
   "customer-deletion-status": handleCustomerDeletionStatus,
 }));

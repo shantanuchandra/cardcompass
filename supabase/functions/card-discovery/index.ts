@@ -17,6 +17,10 @@ import {
 } from "../_shared/card_discovery.ts";
 import { fetchOfficialIssuerResource } from "../_shared/official_issuer_fetch.ts";
 import { enqueueBenefitEnrichmentJob } from "../benefit-enrichment-batch/batch_policy.ts";
+import {
+  ActiveProfileError,
+  requireActiveProfile,
+} from "../_shared/active_profile.ts";
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 type UntypedSupabaseClient = any;
@@ -723,6 +727,14 @@ serve(async (request) => {
   );
   if (authError || !user) {
     return json({ error: "Authentication required" }, 401);
+  }
+  try {
+    await requireActiveProfile(db, user.id);
+  } catch (error) {
+    if (error instanceof ActiveProfileError) {
+      return json({ error: error.code }, error.status);
+    }
+    return json({ error: "profile_unavailable" }, 503);
   }
 
   try {

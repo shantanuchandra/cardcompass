@@ -22,7 +22,6 @@ class _CustomersSectionState extends State<CustomersSection> {
   final _search = TextEditingController();
   List<CustomerSummary>? _results;
   CustomerDetail? _detail;
-  DisableCustomer? _pendingAuthBan;
   String? _selectedId, _message;
   Object? _error;
   bool _loading = false, _submitting = false, _compactDetail = false;
@@ -81,9 +80,6 @@ class _CustomersSectionState extends State<CustomersSection> {
       _compactDetail = compact;
       _error = null;
       _detail = null;
-      if (explicitSelection && _pendingAuthBan?.targetId != customer.id) {
-        _pendingAuthBan = null;
-      }
     });
     try {
       final detail = await widget.repository.detail(customer.id);
@@ -195,7 +191,6 @@ class _CustomersSectionState extends State<CustomersSection> {
       if (!mounted) return;
       setState(() {
         _message = success;
-        if (mutation is DisableCustomer) _pendingAuthBan = null;
       });
       final current = _results
           ?.where((e) => e.id == mutation.targetId)
@@ -214,7 +209,6 @@ class _CustomersSectionState extends State<CustomersSection> {
     } on CustomerAuthBanPending catch (error) {
       if (!mounted) return;
       setState(() {
-        _pendingAuthBan = error.operation;
         _message = 'Database access is blocked, but the Auth ban needs retry.';
       });
       final current = _results
@@ -308,41 +302,6 @@ class _CustomersSectionState extends State<CustomersSection> {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: BrandSpacing.lg),
               child: Semantics(liveRegion: true, child: Text(message)),
-            ),
-          if (_pendingAuthBan case final pending?
-              when _detail?.summary.id != pending.targetId)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(
-                BrandSpacing.lg,
-                BrandSpacing.sm,
-                BrandSpacing.lg,
-                0,
-              ),
-              child: Material(
-                color: Theme.of(context).colorScheme.errorContainer,
-                borderRadius: BorderRadius.circular(12),
-                child: Padding(
-                  padding: const EdgeInsets.all(BrandSpacing.md),
-                  child: Wrap(
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    spacing: BrandSpacing.md,
-                    runSpacing: BrandSpacing.sm,
-                    children: [
-                      Text(
-                        'Auth ban still needs retry for ${pending.targetId}. Database access is already blocked.',
-                      ),
-                      FilledButton.icon(
-                        key: const Key('customer-auth-ban-retry'),
-                        onPressed: _submitting
-                            ? null
-                            : () => _mutate(pending, 'Auth ban confirmed.'),
-                        icon: const Icon(Icons.lock_reset),
-                        label: const Text('Retry Auth ban'),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
             ),
           if (_error != null && _results == null)
             const Padding(
@@ -441,6 +400,7 @@ class _CustomersSectionState extends State<CustomersSection> {
           '${item.processedEmailCount} processed of ${item.emailCount}',
         ),
         _row('Deletion request', item.deletionStatus?.label ?? 'None'),
+        _row('Auth ban', item.authBanStatus?.name ?? 'None'),
         const SizedBox(height: 20),
         Wrap(
           spacing: 12,
@@ -466,11 +426,21 @@ class _CustomersSectionState extends State<CustomersSection> {
               icon: const Icon(Icons.assignment_outlined),
               label: const Text('Update deletion status'),
             ),
-            if (_pendingAuthBan case final pending?)
+            if (item.authBanStatus == AuthBanStatus.pending ||
+                item.authBanStatus == AuthBanStatus.processing ||
+                item.authBanStatus == AuthBanStatus.failed)
               FilledButton.icon(
                 key: const Key('customer-auth-ban-retry'),
-                onPressed: !_submitting && pending.targetId == item.summary.id
-                    ? () => _mutate(pending, 'Auth ban confirmed.')
+                onPressed: !_submitting
+                    ? () => _mutate(
+                        RetryCustomerAuthBan(
+                          requestId: widget.repository.newRequestId(),
+                          targetId: item.summary.id,
+                          observedUpdatedAt: item.authBanUpdatedAt!
+                              .toIso8601String(),
+                        ),
+                        'Auth ban confirmed.',
+                      )
                     : null,
                 icon: const Icon(Icons.lock_reset),
                 label: const Text('Retry Auth ban'),

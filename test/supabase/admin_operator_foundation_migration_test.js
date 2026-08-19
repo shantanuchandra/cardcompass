@@ -15,7 +15,7 @@ test('admin audit storage is append-only and browser-inaccessible', async () => 
   assert.match(sql, /revoke all on public\.admin_audit_log from public, anon, authenticated/);
   assert.match(sql, /revoke all on public\.admin_audit_log from service_role/);
   assert.match(sql, /grant select, insert on public\.admin_audit_log to service_role/);
-  assert.match(sql, /outcome text not null check \(outcome in \('succeeded', 'failed'\)\)/);
+  assert.match(sql, /outcome text not null check \(outcome in \('succeeded', 'failed', 'database_contained'\)\)/);
   assert.match(sql, /create or replace function public\.record_admin_read/);
   assert.match(sql, /security definer/);
   assert.match(sql, /set search_path = ''/);

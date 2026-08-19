@@ -81,6 +81,9 @@ final class CustomerRepository implements CustomerDataSource {
       'observed_updated_at': mutation.observedUpdatedAt,
     };
     switch (mutation) {
+      case RetryCustomerAuthBan():
+        action = 'customer-auth-ban-retry';
+        body.remove('observed_updated_at');
       case QueueGmailRetry():
         action = 'customer-retry';
       case ConfirmedCustomerMutation(:final reason, :final confirmationUserId):
@@ -104,7 +107,8 @@ final class CustomerRepository implements CustomerDataSource {
     try {
       response = await _invoke(action, mutation.requestId, body);
     } on AdminRequestFailed catch (error) {
-      if (error.message == 'auth_ban_pending' && mutation is DisableCustomer) {
+      if (error.message == 'auth_ban_pending' &&
+          (mutation is DisableCustomer || mutation is RetryCustomerAuthBan)) {
         throw CustomerAuthBanPending(mutation);
       }
       rethrow;
@@ -120,6 +124,7 @@ final class CustomerRepository implements CustomerDataSource {
           mutation.targetId,
           status,
         ),
+        RetryCustomerAuthBan() => _disableReceipt(result, mutation.targetId),
       };
     } on FormatException {
       throw const AdminRequestFailed('request_failed');
@@ -146,7 +151,7 @@ final class CustomerRepository implements CustomerDataSource {
 
 final class CustomerAuthBanPending implements Exception {
   const CustomerAuthBanPending(this.operation);
-  final DisableCustomer operation;
+  final CustomerOperation operation;
 }
 
 GmailRetryReceipt _retryReceipt(Map<String, dynamic> json) {

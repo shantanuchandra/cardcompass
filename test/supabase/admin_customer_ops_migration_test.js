@@ -138,6 +138,10 @@ test('inactive profile immediately blocks an unchanged authenticated database se
       import.meta.url,
     ), 'utf8');
     const customer = await readFile(migrationUrl, 'utf8');
+    const hardening = await readFile(new URL(
+      '../../supabase/migrations/20260819132439_harden_inactive_customer_boundaries.sql',
+      import.meta.url,
+    ), 'utf8');
     psql(disposableConnection, `
       create schema auth;
       create table auth.users (id uuid primary key);
@@ -157,6 +161,17 @@ test('inactive profile immediately blocks an unchanged authenticated database se
       create table public.statement_milestone_cache (id uuid primary key default gen_random_uuid(), user_id uuid not null);
       create table public.emails (id uuid primary key default gen_random_uuid(), user_id uuid not null);
       create table public.benefit_platform_confirmations (id uuid primary key default gen_random_uuid(), user_id uuid not null);
+      create table public.gemini_proxy_usage (id bigint generated always as identity, user_id uuid not null);
+      create schema private;
+      create function public.get_user_transactions(uuid, integer default 50)
+        returns integer language sql security definer as $$ select count(*)::integer from public.transactions where user_id = $1 $$;
+      create function public.reconcile_imported_statement_payment(uuid, uuid, uuid, numeric)
+        returns integer language sql security definer as $$ update public.statements set user_id = $2 where id = $1 returning 1 $$;
+      create function public.apply_statement_payment(uuid, uuid, uuid, numeric, boolean default false)
+        returns integer language sql security definer as $$ update public.statements set user_id = $2 where id = $1 returning 1 $$;
+      create function private.reset_my_cardcompass_data() returns void language sql security definer as $$ select $$;
+      create function public.reset_my_cardcompass_data() returns void language sql security invoker set search_path = ''
+        as $$ select private.reset_my_cardcompass_data() $$;
       alter table public.users enable row level security;
       alter table public.user_cards enable row level security;
       alter table public.transactions enable row level security;
@@ -167,6 +182,7 @@ test('inactive profile immediately blocks an unchanged authenticated database se
       grant select, insert, update, delete on all tables in schema public to authenticated;
       ${foundation}
       ${customer}
+      ${hardening}
     `);
     const userId = '10000000-0000-4000-8000-000000000001';
     const newUserId = '10000000-0000-4000-8000-000000000002';
@@ -204,6 +220,9 @@ test('inactive profile immediately blocks an unchanged authenticated database se
         begin insert into public.user_cards(user_id) values ('${userId}');
           raise exception 'inactive insert accepted';
         exception when insufficient_privilege or check_violation then null; end;
+        begin perform public.reset_my_cardcompass_data();
+          raise exception 'inactive reset accepted';
+        exception when insufficient_privilege then null; end;
       end $$;
       reset role;
     `);
@@ -350,6 +369,17 @@ test('inactive profile immediately blocks an unchanged authenticated database se
       );
     `);
     assert.ok(psql(disposableConnection, `select not is_active from public.users where id='${userId}';`).endsWith('t'));
+    assert.ok(psql(disposableConnection, `
+      select status = 'pending' and originating_actor_id = '${actorId}'
+      from public.admin_auth_ban_requests where user_id = '${userId}';
+    `).endsWith('t'));
+    assert.throws(() => psql(disposableConnection, `
+      update public.users set is_active=true, updated_at=clock_timestamp() where id='${userId}';
+      select public.admin_customer_action(
+        '${actorId}', gen_random_uuid(), 'set_deletion_status', '${userId}',
+        '{"status":"requested"}'::jsonb, 'verified request', '${currentObserved}'::timestamptz
+      );
+    `), /state_conflict/);
     assert.ok(observed.length > 0);
   } finally {
     dropDisposableDatabase(adminConnection, databaseName, createdRoles);

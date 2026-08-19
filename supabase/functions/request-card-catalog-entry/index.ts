@@ -1,5 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  ActiveProfileError,
+  requireActiveProfile,
+} from "../_shared/active_profile.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -38,6 +42,20 @@ serve(async (request) => {
     if (authError || !user) {
       return Response.json({ error: "Authentication required" }, {
         status: 401,
+        headers: corsHeaders,
+      });
+    }
+    try {
+      await requireActiveProfile(supabase, user.id);
+    } catch (error) {
+      if (error instanceof ActiveProfileError) {
+        return Response.json({ error: error.code }, {
+          status: error.status,
+          headers: corsHeaders,
+        });
+      }
+      return Response.json({ error: "profile_unavailable" }, {
+        status: 503,
         headers: corsHeaders,
       });
     }
@@ -82,9 +100,8 @@ serve(async (request) => {
     return Response.json({ success: true, status: "pending" }, {
       headers: corsHeaders,
     });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Request failed";
-    return Response.json({ error: message }, {
+  } catch {
+    return Response.json({ error: "request_failed" }, {
       status: 500,
       headers: corsHeaders,
     });

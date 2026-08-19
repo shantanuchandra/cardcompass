@@ -43,6 +43,8 @@ void main() {
     'latest_email_at': updated,
     'deletion_status': 'verified',
     'deletion_updated_at': updated,
+    'auth_ban_status': null,
+    'auth_ban_updated_at': null,
   };
 
   test('strictly decodes deeply immutable summaries and detail', () async {
@@ -323,6 +325,33 @@ void main() {
     expect(api.bodies[1], api.bodies[0]);
     expect(api.bodies.first.containsKey('raw_error'), isFalse);
   });
+
+  test(
+    'Auth-ban retry sends a new dedicated request without disable widget memory',
+    () async {
+      final api = _Api([
+        const AdminOperatorResponse(200, {
+          'result': {'user_id': user, 'is_active': false, 'auth_banned': true},
+        }),
+      ]);
+      final repository = CustomerRepository(
+        AdminOperatorRepository(api),
+        requestIds: () => request,
+      );
+      await repository.mutate(
+        const RetryCustomerAuthBan(
+          requestId: request,
+          targetId: user,
+          observedUpdatedAt: updated,
+        ),
+      );
+      expect(api.bodies.single, {
+        'action': 'customer-auth-ban-retry',
+        'target_id': user,
+        'request_id': request,
+      });
+    },
+  );
 
   test('Gmail retry eligibility is failed plus a safe failure only', () {
     CustomerDetail build(

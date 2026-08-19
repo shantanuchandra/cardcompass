@@ -6,7 +6,7 @@ create table public.admin_audit_log (
   target_id text,
   reason text check (reason is null or length(reason) between 1 and 1000),
   request_id uuid not null,
-  outcome text not null check (outcome in ('succeeded', 'failed')),
+  outcome text not null check (outcome in ('succeeded', 'failed', 'database_contained')),
   details jsonb not null default '{}'::jsonb check (jsonb_typeof(details) = 'object'),
   created_at timestamptz not null default now(),
   unique (actor_id, request_id)

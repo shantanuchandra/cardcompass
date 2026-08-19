@@ -79,17 +79,39 @@ final class _Source implements CustomerDataSource {
           latestEmailAt: customerDetail.latestEmailAt,
           deletionStatus: customerDetail.deletionStatus,
           deletionUpdatedAt: customerDetail.deletionUpdatedAt,
+          authBanStatus: AuthBanStatus.failed,
+          authBanUpdatedAt: DateTime.utc(2026),
         );
         throw CustomerAuthBanPending(mutation);
       }
       throw e;
+    }
+    if (mutation is RetryCustomerAuthBan) {
+      currentDetail = CustomerDetail(
+        summary: currentDetail.summary,
+        gmailConnected: currentDetail.gmailConnected,
+        gmailStatus: currentDetail.gmailStatus,
+        gmailFailure: currentDetail.gmailFailure,
+        gmailUpdatedAt: currentDetail.gmailUpdatedAt,
+        ownedCardCount: currentDetail.ownedCardCount,
+        statementCount: currentDetail.statementCount,
+        processedStatementCount: currentDetail.processedStatementCount,
+        emailCount: currentDetail.emailCount,
+        processedEmailCount: currentDetail.processedEmailCount,
+        latestStatementAt: currentDetail.latestStatementAt,
+        latestEmailAt: currentDetail.latestEmailAt,
+        deletionStatus: currentDetail.deletionStatus,
+        deletionUpdatedAt: currentDetail.deletionUpdatedAt,
+        authBanStatus: AuthBanStatus.completed,
+        authBanUpdatedAt: DateTime.utc(2026),
+      );
     }
     return mutation is QueueGmailRetry
         ? const GmailRetryReceipt(
             requestId: '00000000-0000-4000-8000-000000000003',
             status: CustomerOperationStatus.queued,
           )
-        : mutation is DisableCustomer
+        : mutation is DisableCustomer || mutation is RetryCustomerAuthBan
         ? const DisableCustomerReceipt(userId: user, authBanned: true)
         : CustomerDeletionReceipt(
             userId: user,
@@ -248,8 +270,9 @@ void main() {
     await tester.tap(find.byKey(const Key('customer-auth-ban-retry')));
     await tester.pumpAndSettle();
     expect(source.mutations, hasLength(2));
-    expect(source.mutations[1], same(source.mutations[0]));
-    expect(source.mutations[1].requestId, source.mutations[0].requestId);
+    expect(source.mutations[0], isA<DisableCustomer>());
+    expect(source.mutations[1], isA<RetryCustomerAuthBan>());
+    expect(source.mutations[1], isNot(same(source.mutations[0])));
     expect(find.byKey(const Key('customer-auth-ban-retry')), findsNothing);
   });
 

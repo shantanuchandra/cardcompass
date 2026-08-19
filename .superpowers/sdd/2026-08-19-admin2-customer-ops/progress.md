@@ -2,7 +2,7 @@
 
 - Plan: `docs/superpowers/plans/2026-08-19-admin2-customer-ops.md`
 - Base: `c226598`
-- Status: active
+- Status: implementation complete; Task 6 verified, pending independent review
 
 ## Preflight
 
@@ -19,7 +19,21 @@ Ruling: Carry the System plan's final adjudication ledger update into the Tasks 
 - Tasks 1–3: implementation complete, pending review — RLS containment, operation records, active profile gate, queued Gmail recovery
 - Task 4: implementation complete, pending review — sanitized customer gateway
 - Task 5: complete — typed, responsive Customers workspace
-- Task 6: pending — end-to-end verification
+- Task 6: complete — end-to-end verification
+
+## Task 6 evidence
+
+- Customer-scoped Dart formatting is stable (`25 files`, `0 changed`) and Admin Operator Deno formatting is stable (`18 files` checked). The plan's broader `test/features` formatter identifies seven pre-existing Movie Deals test files that are not currently formatted; those incidental rewrites were reverted.
+- Exact `flutter analyze` reports 12 pre-existing `info` diagnostics outside Customer Ops and exits nonzero. `flutter analyze --no-fatal-infos` exits 0 with the same 12 infos, and scoped Customer Ops/Auth/Dashboard analysis reports `No issues found`.
+- Full Flutter passes `653` tests with `25` explicitly skipped local-Supabase integrations. Full static Node migration coverage passes `43/46` with the three opt-in disposable PostgreSQL tests skipped. The complete Deno Edge Function suite passes `146/146`.
+- All credential-safe disposable PostgreSQL suites pass individually against the loopback server: Card Data `5/5`, Runtime Controls `5/5`, and Customer Ops `5/5`. Running all three opt-ins concurrently exposes a test-harness teardown collision on shared cluster roles; product assertions still pass and sequential execution leaves no disposable databases behind.
+- Customer containment was exercised at the PostgreSQL/RLS/RPC layer: an authenticated-role session keyed by the same `request.jwt.claim.sub` reads its owned row, browser mutation of `is_active` is denied, unchanged-session reads/inserts are denied after deactivation, the audited idempotent Customer RPC disables the profile, and the audit receipt exists. Gateway unit coverage separately proves customer detail returns only bounded metadata and no customer content.
+- A local Supabase Auth/API stack was not available (`supabase status` unavailable and Docker daemon not running), so actual access-token issuance, Edge Function HTTP invocation, and a fresh-sign-in rejection after the Auth ban were not exercised. No hosted/remote service was contacted or mutated.
+- `git diff --check` passes, generated root `node_modules/` from Deno dependency discovery was removed exactly, and the worktree is clean before this documentation-only verification record.
+
+Ruling: Treat the disposable PostgreSQL harness as proof of immediate database containment for an unchanged authenticated identity, but not as proof of Supabase Auth token revocation or fresh-sign-in banning. Cost if wrong: release confidence in the Auth-ban side effect remains dependent on the mocked Admin API contract until a disposable local Supabase Auth stack is available.
+
+Ruling: Run the three opt-in disposable PostgreSQL suites sequentially because they share cluster-global Supabase role names and concurrent cleanup races across otherwise isolated databases. Cost if wrong: CI gains a few seconds of serial verification time, while the product paths and each isolated database test remain unchanged.
 
 ## Tasks 1–3 evidence
 
@@ -147,3 +161,21 @@ Ruling: Permit queued Gmail recovery only when the latest operation is failed an
 - Regression coverage proves the same operation object and request ID survive same-target search/refresh and clear only after canonical replay success; focused Customer passes 18/18, full Admin2 passes 144/144, and scoped analysis is clean.
 
 Ruling: Preserve a pending Auth-ban operation across automatic refresh/search/detail state changes and surface it independently when its target is absent; clear it only after confirmed replay success or an explicit operator selection of another customer. Cost if wrong: the operator may see a persistent recovery banner during unrelated automatic results, but the exact incomplete side effect cannot be silently orphaned or replayed against the wrong target.
+
+## Final security-review superseding fixes
+
+- Every authenticated function grant is now enumerated by a failing inventory contract. User-owned transaction/payment paths run as `SECURITY INVOKER`; the private reset definer checks the active caller before deletion; the queued-operation definers retain their explicit active check. Disposable PostgreSQL proves inactive unchanged identities cannot read, insert, or invoke the deletion reset.
+- `card-discovery`, `request-card-catalog-entry`, and `gemini-proxy` share one service-role active-profile gate after capturing the verified Auth user ID and before privileged work. The gate distinguishes active, inactive, missing, and unavailable without leaking dependency errors; the inventory contract makes new user-token/service-role gateways opt in explicitly.
+- Account disablement now creates a durable `admin_auth_ban_requests` outbox record in the same database transaction. The service-only claim/complete RPCs lease attempts, reconstruct retries by target, remain idempotent under a lost response or concurrent operator, and append completion/failure audit events. Customer detail returns only safe ban state/timestamps and the UI reconstructs a dedicated retry after reload instead of retaining the original disable request in widget memory.
+- The Flutter access gate uses a typed database classifier (`active|inactive|missing`) and rechecks the captured Auth identity before any sign-out, so a late inactive read cannot sign out a replacement session.
+- Creating the first deletion-progress row now locks the profile and requires its observed `users.updated_at`; subsequent transitions remain fenced by the deletion row's `updated_at`. The disposable PostgreSQL suite proves a stale first create is rejected.
+
+Ruling: Supersede the boolean-only profile-reader boundary with the typed `current_user_access_profile_state()` classifier and a second captured-identity check immediately before sign-out. Cost if wrong: one narrow definer reveals only the caller's own profile-state category, while missing profiles and transient failures remain blocked without destroying a newer session.
+
+Ruling: Supersede widget-owned Auth-ban replay with a database outbox and a dedicated target-only retry action; a two-minute processing lease permits safe recovery after an ambiguous gateway loss. Cost if wrong: an ambiguous attempt can remain visibly `processing` for up to two minutes before reclaim, but navigation, reload, and concurrent admins cannot orphan or duplicate the authoritative side effect.
+
+Ruling: Classify account disablement audit outcome as `database_contained` until the separate Auth-ban completion event is appended. Cost if wrong: audit consumers must accept one additional explicit outcome, but the trail no longer overstates a partially completed containment workflow as fully succeeded.
+
+Ruling: Run authenticated user-data RPCs as `SECURITY INVOKER` wherever active-owner RLS supplies the required privilege, retaining a definer only for the narrow reset operation with an explicit active check. Cost if wrong: a future policy regression would fail closed or surface in the grant/integration contracts instead of silently bypassing RLS.
+
+Ruling: Fence an initial deletion-status create with the observed profile `updated_at`, and fence later transitions with the existing deletion row `updated_at`. Cost if wrong: an operator must refresh after any concurrent profile or deletion change, avoiding the first-row stale-create gap.

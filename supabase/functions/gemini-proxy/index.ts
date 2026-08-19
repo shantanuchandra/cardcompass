@@ -6,6 +6,10 @@ import {
   preparePayloadForModel,
   shouldTryAnotherModel,
 } from "./model_policy.ts";
+import {
+  ActiveProfileError,
+  requireActiveProfile,
+} from "../_shared/active_profile.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -46,6 +50,20 @@ serve(async (request) => {
     if (authError || !user) {
       return Response.json({ error: "Authentication required" }, {
         status: 401,
+        headers: corsHeaders,
+      });
+    }
+    try {
+      await requireActiveProfile(supabase, user.id);
+    } catch (error) {
+      if (error instanceof ActiveProfileError) {
+        return Response.json({ error: error.code }, {
+          status: error.status,
+          headers: corsHeaders,
+        });
+      }
+      return Response.json({ error: "profile_unavailable" }, {
+        status: 503,
         headers: corsHeaders,
       });
     }
@@ -121,12 +139,9 @@ serve(async (request) => {
       status: upstream!.status,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
-  } catch (error) {
-    const message = error instanceof Error
-      ? error.message
-      : "Proxy request failed";
+  } catch {
     return Response.json(
-      { error: message },
+      { error: "request_failed" },
       { status: 500, headers: corsHeaders },
     );
   }

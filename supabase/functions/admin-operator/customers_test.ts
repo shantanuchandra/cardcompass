@@ -1,6 +1,7 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import {
   customerActionHandlers,
+  handleCustomerAuthBanRetry,
   handleCustomerDetail,
   handleCustomerDisable,
   handleCustomerSearch,
@@ -146,6 +147,12 @@ Deno.test("customer detail audits before every data source and presents only bou
           status: "verified",
           updated_at: UPDATED,
         }],
+        admin_auth_ban_requests: [{
+          id: REQUEST,
+          status: "failed",
+          safe_failure_category: "auth_provider_unavailable",
+          updated_at: UPDATED,
+        }],
       };
       const result =
         table === "user_cards" || table === "statements" || table === "emails"
@@ -200,6 +207,8 @@ Deno.test("customer detail audits before every data source and presents only bou
       latest_email_at: null,
       deletion_status: "verified",
       deletion_updated_at: UPDATED,
+      auth_ban_status: "failed",
+      auth_ban_updated_at: UPDATED,
     },
   });
   const serialized = JSON.stringify(output);
@@ -243,9 +252,31 @@ Deno.test("disable applies audited database containment before Auth ban and vali
   const db = {
     rpc: (name: string, args: any) => {
       events.push(`db:${name}`);
-      assertEquals(args._action, "disable_account");
+      if (name === "admin_customer_action") {
+        assertEquals(args._action, "disable_account");
+        return Promise.resolve({
+          data: {
+            user_id: USER,
+            is_active: false,
+            containment: "database_contained",
+            auth_ban_status: "pending",
+          },
+          error: null,
+        });
+      }
+      if (name === "claim_admin_auth_ban") {
+        return Promise.resolve({
+          data: {
+            id: REQUEST,
+            user_id: USER,
+            status: "processing",
+            claimed: true,
+          },
+          error: null,
+        });
+      }
       return Promise.resolve({
-        data: { user_id: USER, is_active: false },
+        data: { user_id: USER, auth_ban_status: "completed" },
         error: null,
       });
     },
@@ -265,7 +296,12 @@ Deno.test("disable applies audited database containment before Auth ban and vali
     observed_updated_at: UPDATED,
     reason: "suspected compromise",
   }, context(db, authAdmin));
-  assertEquals(events, ["db:admin_customer_action", "auth:ban"]);
+  assertEquals(events, [
+    "db:admin_customer_action",
+    "db:claim_admin_auth_ban",
+    "auth:ban",
+    "db:complete_admin_auth_ban",
+  ]);
   assertEquals(output, {
     result: { user_id: USER, is_active: false, auth_banned: true },
   });
@@ -283,10 +319,32 @@ Deno.test("disable preserves containment receipt and returns auth_ban_pending on
     reason: "abuse containment",
   };
   const ctx = context({
-    rpc: () => {
+    rpc: (name: string) => {
       databaseCalls++;
+      if (name === "admin_customer_action") {
+        return Promise.resolve({
+          data: {
+            user_id: USER,
+            is_active: false,
+            containment: "database_contained",
+            auth_ban_status: "pending",
+          },
+          error: null,
+        });
+      }
+      if (name === "claim_admin_auth_ban") {
+        return Promise.resolve({
+          data: {
+            id: REQUEST,
+            user_id: USER,
+            status: "processing",
+            claimed: true,
+          },
+          error: null,
+        });
+      }
       return Promise.resolve({
-        data: { user_id: USER, is_active: false },
+        data: { user_id: USER, auth_ban_status: "failed" },
         error: null,
       });
     },
@@ -306,13 +364,49 @@ Deno.test("disable preserves containment receipt and returns auth_ban_pending on
     );
     assertEquals(error.code, "auth_ban_pending");
   }
-  assertEquals([databaseCalls, banCalls], [2, 2]);
+  assertEquals([databaseCalls, banCalls], [6, 2]);
+});
+
+Deno.test("dedicated Auth-ban retry reconstructs work from the authoritative target record", async () => {
+  const calls: string[] = [];
+  const output = await handleCustomerAuthBanRetry(
+    {
+      action: "customer-auth-ban-retry",
+      target_id: USER,
+      request_id: REQUEST,
+    },
+    context({
+      rpc: (name: string) => {
+        calls.push(name);
+        if (name === "claim_admin_auth_ban") {
+          return Promise.resolve({
+            data: {
+              id: REQUEST,
+              user_id: USER,
+              status: "processing",
+              claimed: true,
+            },
+            error: null,
+          });
+        }
+        return Promise.resolve({
+          data: { user_id: USER, auth_ban_status: "completed" },
+          error: null,
+        });
+      },
+    }, { updateUserById: () => Promise.resolve({ error: null }) }),
+  );
+  assertEquals(calls, ["claim_admin_auth_ban", "complete_admin_auth_ban"]);
+  assertEquals(output, {
+    result: { user_id: USER, is_active: false, auth_banned: true },
+  });
 });
 
 Deno.test("customer action registry is frozen, null-prototype, and complete", () => {
   assertEquals(Object.getPrototypeOf(customerActionHandlers), null);
   assertEquals(Object.isFrozen(customerActionHandlers), true);
   assertEquals(Object.keys(customerActionHandlers).sort(), [
+    "customer-auth-ban-retry",
     "customer-deletion-status",
     "customer-detail",
     "customer-disable",

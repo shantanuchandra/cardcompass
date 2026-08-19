@@ -101,14 +101,36 @@ create table public.account_deletion_requests (
   updated_at timestamptz not null default now()
 );
 
+create table public.admin_auth_ban_requests (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null unique references auth.users(id) on delete restrict,
+  originating_actor_id uuid not null references auth.users(id) on delete restrict,
+  originating_request_id uuid not null,
+  status text not null default 'pending'
+    check (status in ('pending', 'processing', 'completed', 'failed')),
+  attempt_count integer not null default 0 check (attempt_count >= 0),
+  safe_failure_category text check (
+    safe_failure_category is null or safe_failure_category = 'auth_provider_unavailable'
+  ),
+  claimed_at timestamptz,
+  completed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (originating_actor_id, originating_request_id)
+);
+
 alter table public.admin_customer_operation_requests enable row level security;
 alter table public.account_deletion_requests enable row level security;
+alter table public.admin_auth_ban_requests enable row level security;
 revoke all on public.admin_customer_operation_requests from public, anon, authenticated;
 revoke all on public.account_deletion_requests from public, anon, authenticated;
 revoke all on public.admin_customer_operation_requests from service_role;
 revoke all on public.account_deletion_requests from service_role;
+revoke all on public.admin_auth_ban_requests from public, anon, authenticated;
+revoke all on public.admin_auth_ban_requests from service_role;
 grant select on public.admin_customer_operation_requests to service_role;
 grant select on public.account_deletion_requests to service_role;
+grant select on public.admin_auth_ban_requests to service_role;
 
 create or replace function public.claim_my_admin_operation_request(
   _operation_type text
@@ -341,6 +363,23 @@ begin
     else
       result := pg_catalog.jsonb_build_object('user_id', _target_user_id, 'is_active', false);
     end if;
+    insert into public.admin_auth_ban_requests (
+      user_id, originating_actor_id, originating_request_id, status
+    ) values (_target_user_id, _actor_id, _request_id, 'pending')
+    on conflict (user_id) do update set
+      status = case when admin_auth_ban_requests.status in ('completed', 'processing')
+        then admin_auth_ban_requests.status else 'pending' end,
+      originating_actor_id = case when admin_auth_ban_requests.status in ('completed', 'processing')
+        then admin_auth_ban_requests.originating_actor_id else excluded.originating_actor_id end,
+      originating_request_id = case when admin_auth_ban_requests.status in ('completed', 'processing')
+        then admin_auth_ban_requests.originating_request_id else excluded.originating_request_id end,
+      safe_failure_category = case when admin_auth_ban_requests.status in ('completed', 'processing')
+        then admin_auth_ban_requests.safe_failure_category else null end,
+      updated_at = now();
+    result := result || pg_catalog.jsonb_build_object(
+      'containment', 'database_contained',
+      'auth_ban_status', (select status from public.admin_auth_ban_requests where user_id = _target_user_id)
+    );
   else
     select request.* into deletion
     from public.account_deletion_requests as request
@@ -348,6 +387,10 @@ begin
     for update;
     if found and (_observed_updated_at is null
        or deletion.updated_at is distinct from _observed_updated_at) then
+      raise exception 'state_conflict';
+    end if;
+    if not found and (_observed_updated_at is null
+       or profile.updated_at is distinct from _observed_updated_at) then
       raise exception 'state_conflict';
     end if;
     insert into public.account_deletion_requests (
@@ -367,10 +410,70 @@ begin
     request_id, outcome, details
   ) values (
     _actor_id, 'customer.' || _action, 'user', _target_user_id::text,
-    normalized_reason, _request_id, 'succeeded',
+    normalized_reason, _request_id,
+    case when _action = 'disable_account' then 'database_contained' else 'succeeded' end,
     pg_catalog.jsonb_build_object('request', normalized_request, 'result', result)
   );
   return result;
+end;
+$$;
+
+create or replace function public.claim_admin_auth_ban(_target_user_id uuid)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare request public.admin_auth_ban_requests%rowtype;
+begin
+  select candidate.* into request from public.admin_auth_ban_requests candidate
+  where candidate.user_id = _target_user_id and (
+    candidate.status in ('pending', 'failed') or
+    (candidate.status = 'processing' and candidate.claimed_at < now() - interval '2 minutes')
+  ) for update;
+  if not found then
+    select candidate.* into request from public.admin_auth_ban_requests candidate
+      where candidate.user_id = _target_user_id;
+    if found and request.status = 'completed' then
+      return pg_catalog.jsonb_build_object('id', request.id, 'user_id', request.user_id, 'status', request.status, 'claimed', false);
+    elsif found and request.status = 'processing' then
+      return pg_catalog.jsonb_build_object('id', request.id, 'user_id', request.user_id, 'status', request.status, 'claimed', false);
+    end if;
+    raise exception 'state_conflict';
+  end if;
+  update public.admin_auth_ban_requests set status = 'processing',
+    attempt_count = attempt_count + 1, claimed_at = now(), updated_at = now()
+  where id = request.id returning * into request;
+  return pg_catalog.jsonb_build_object('id', request.id, 'user_id', request.user_id, 'status', request.status, 'claimed', true);
+end;
+$$;
+
+create or replace function public.complete_admin_auth_ban(
+  _ban_id uuid, _succeeded boolean, _safe_failure_category text default null
+) returns jsonb language plpgsql security definer set search_path = '' as $$
+declare request public.admin_auth_ban_requests%rowtype;
+begin
+  if _succeeded is null or (_succeeded and _safe_failure_category is not null)
+     or (not _succeeded and _safe_failure_category <> 'auth_provider_unavailable') then
+    raise exception 'invalid_request';
+  end if;
+  update public.admin_auth_ban_requests set
+    status = case when _succeeded then 'completed' else 'failed' end,
+    safe_failure_category = _safe_failure_category,
+    completed_at = case when _succeeded then now() else null end,
+    updated_at = now()
+  where id = _ban_id and status = 'processing' returning * into request;
+  if not found then raise exception 'state_conflict'; end if;
+  insert into public.admin_audit_log (
+    actor_id, action, target_type, target_id, request_id, outcome, details
+  ) values (
+    request.originating_actor_id,
+    case when _succeeded then 'customer.auth_ban_completed' else 'customer.auth_ban_failed' end,
+    'user', request.user_id::text, gen_random_uuid(),
+    case when _succeeded then 'succeeded' else 'failed' end,
+    pg_catalog.jsonb_build_object(
+      'originating_request_id', request.originating_request_id,
+      'safe_failure_category', request.safe_failure_category,
+      'result', pg_catalog.jsonb_build_object('user_id', request.user_id, 'auth_ban_status', request.status)
+    )
+  );
+  return pg_catalog.jsonb_build_object('user_id', request.user_id, 'auth_ban_status', request.status);
 end;
 $$;
 
@@ -389,3 +492,7 @@ grant execute on function public.renew_my_admin_operation_request(uuid, uuid) to
 grant execute on function public.admin_customer_action(
   uuid, uuid, text, uuid, jsonb, text, timestamptz
 ) to service_role;
+revoke all on function public.claim_admin_auth_ban(uuid) from public, anon, authenticated;
+revoke all on function public.complete_admin_auth_ban(uuid, boolean, text) from public, anon, authenticated;
+grant execute on function public.claim_admin_auth_ban(uuid) to service_role;
+grant execute on function public.complete_admin_auth_ban(uuid, boolean, text) to service_role;

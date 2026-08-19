@@ -64,6 +64,22 @@ enum DeletionStatus {
   };
 }
 
+enum AuthBanStatus {
+  pending,
+  processing,
+  completed,
+  failed;
+
+  static AuthBanStatus? parseNullable(Object? value) => switch (value) {
+    null => null,
+    'pending' => pending,
+    'processing' => processing,
+    'completed' => completed,
+    'failed' => failed,
+    _ => throw const FormatException('Invalid Auth ban status'),
+  };
+}
+
 final class CustomerSummary {
   const CustomerSummary({
     required this.id,
@@ -120,6 +136,8 @@ final class CustomerDetail {
     required this.latestEmailAt,
     required this.deletionStatus,
     required this.deletionUpdatedAt,
+    this.authBanStatus,
+    this.authBanUpdatedAt,
   });
   final CustomerSummary summary;
   final bool gmailConnected;
@@ -134,6 +152,8 @@ final class CustomerDetail {
   final DateTime? latestStatementAt, latestEmailAt;
   final DeletionStatus? deletionStatus;
   final DateTime? deletionUpdatedAt;
+  final AuthBanStatus? authBanStatus;
+  final DateTime? authBanUpdatedAt;
   factory CustomerDetail.fromJson(Map<String, dynamic> json) {
     _exact(json, const {
       'id',
@@ -154,6 +174,8 @@ final class CustomerDetail {
       'latest_email_at',
       'deletion_status',
       'deletion_updated_at',
+      'auth_ban_status',
+      'auth_ban_updated_at',
     });
     if (json['gmail_connected'] is! bool) {
       throw const FormatException('Invalid customer detail');
@@ -202,6 +224,8 @@ final class CustomerDetail {
       latestEmailAt: _nullableDate(json['latest_email_at']),
       deletionStatus: DeletionStatus.parseNullable(json['deletion_status']),
       deletionUpdatedAt: _nullableDate(json['deletion_updated_at']),
+      authBanStatus: AuthBanStatus.parseNullable(json['auth_ban_status']),
+      authBanUpdatedAt: _nullableDate(json['auth_ban_updated_at']),
     );
   }
   bool get retryEligible =>
@@ -209,6 +233,14 @@ final class CustomerDetail {
       gmailConnected &&
       gmailStatus == CustomerOperationStatus.failed &&
       gmailFailure != null;
+}
+
+final class RetryCustomerAuthBan extends CustomerOperation {
+  const RetryCustomerAuthBan({
+    required super.requestId,
+    required super.targetId,
+    required super.observedUpdatedAt,
+  });
 }
 
 sealed class CustomerOperation {

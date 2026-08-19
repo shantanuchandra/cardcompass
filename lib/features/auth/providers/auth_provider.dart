@@ -11,8 +11,18 @@ class InactiveAccountException implements Exception {
   String toString() => 'This account is inactive.';
 }
 
+class MissingAccessProfileException implements Exception {
+  const MissingAccessProfileException();
+}
+
+class AuthIdentityChangedException implements Exception {
+  const AuthIdentityChangedException();
+}
+
+enum UserAccessProfileState { active, inactive, missing }
+
 abstract interface class UserAccessProfileReader {
-  Future<bool> isActive(String userId);
+  Future<UserAccessProfileState> read(String userId);
 }
 
 abstract interface class AuthSessionAccess {
@@ -25,12 +35,17 @@ class _SupabaseUserAccessProfileReader implements UserAccessProfileReader {
   final SupabaseClient _client;
 
   @override
-  Future<bool> isActive(String userId) async {
-    final value = await _client.rpc('current_user_is_active');
-    if (value is! bool) {
-      throw StateError('The current account profile is unavailable.');
+  Future<UserAccessProfileState> read(String userId) async {
+    if (_client.auth.currentUser?.id != userId) {
+      throw const AuthIdentityChangedException();
     }
-    return value;
+    final response = await _client.rpc('current_user_access_profile_state');
+    return switch (response) {
+      'active' => UserAccessProfileState.active,
+      'inactive' => UserAccessProfileState.inactive,
+      'missing' => UserAccessProfileState.missing,
+      _ => throw StateError('The current account profile is unavailable.'),
+    };
   }
 }
 
@@ -84,10 +99,19 @@ class AuthNotifier extends AsyncNotifier<AuthStatus> {
     final session = ref.watch(authSessionAccessProvider);
     final userId = session.currentUserId;
     if (userId == null) return AuthStatus.unauthenticated;
-    final isActive = await ref
+    final profile = await ref
         .read(userAccessProfileReaderProvider)
-        .isActive(userId);
-    if (!isActive) {
+        .read(userId);
+    if (session.currentUserId != userId) {
+      throw const AuthIdentityChangedException();
+    }
+    if (profile == UserAccessProfileState.missing) {
+      throw const MissingAccessProfileException();
+    }
+    if (profile == UserAccessProfileState.inactive) {
+      if (session.currentUserId != userId) {
+        throw const AuthIdentityChangedException();
+      }
       await session.signOut();
       throw const InactiveAccountException();
     }
