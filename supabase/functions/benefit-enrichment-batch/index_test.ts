@@ -18,6 +18,7 @@ import {
   shouldStageMaterialProposal,
   stagingContentHashForObservation,
 } from "./index.ts";
+import * as batchModule from "./index.ts";
 import {
   diffBenefits,
   extractGroundedBenefits,
@@ -170,6 +171,37 @@ Deno.test("approved v6 identifiers and canonical exclusion terms survive compari
       (proposal?.exclusions.additional as Record<string, string[]>).source_terms
           .join(",") === "fuel,wallet reloads",
     "canonical exclusion source terms were lost",
+  );
+});
+
+Deno.test("approved-row reconstruction redacts legacy URL secrets before staging diffs", () => {
+  const secretUrl =
+    "https://user:secret@issuer.example/private?token=private#fragment";
+  const proposal = currentBenefitProposal({
+    dedupe_key: `card-benefit-v2:card-1:${"a".repeat(64)}`,
+    title: `Dining cashback ${secretUrl}`,
+    description: `Get 10% cashback. Details: ${secretUrl}`,
+    benefit_category: "cashback",
+    benefit_type: "cashback",
+    value_config: {
+      rate: 10,
+      offer_subject: "cashback:cashback:dining",
+      restrictions: [`See ${secretUrl}`],
+      exclusions: {
+        additional: { source_terms: [`Not valid at ${secretUrl}`] },
+      },
+    },
+    partners: [`Partner ${secretUrl}`],
+    source_url: secretUrl,
+  });
+  assert(proposal != null, "approved row did not reconstruct");
+  const serialized = JSON.stringify(proposal);
+  for (const secret of ["user:", "secret", "token=", "#fragment"]) {
+    assert(!serialized.includes(secret), `approved row leaked ${secret}`);
+  }
+  assert(
+    serialized.includes("https://issuer.example/private"),
+    "safe host/path provenance was discarded",
   );
 });
 
@@ -1398,6 +1430,67 @@ Deno.test("v6 ignores a caller digest when deriving conflict source identity", a
     "caller digest survived internal source derivation",
   );
   assert(!JSON.stringify(proposals).includes("partner="), "query persisted");
+});
+
+Deno.test("embedded URL secrets are redacted before v6 identity and evidence", async () => {
+  const project = async (token: string) =>
+    await extractGroundedBenefitsV6(
+      [{
+        sourceUrl: `https://issuer.example/card?session=${token}`,
+        finalUrl: `https://issuer.example/landing?redirect=${token}`,
+        text: `
+          <p>Get 50% off movie tickets on
+            <a href="https://user:${token}@bookmyshow.com/offers?token=${token}#private">BookMyShow</a>,
+            capped at Rs. 600 per transaction.</p>
+          <p>Details: https://user:${token}@issuer.example/private?token=${token}#fragment</p>
+        `,
+        contentHash: "a".repeat(64),
+      }],
+      "benefits-v6",
+      "card-1",
+    );
+  const first = await project("alpha-secret");
+  const replay = await project("rotated-secret");
+
+  assert(first.length === 1 && replay.length === 1, "offer was not parsed");
+  const serialized = JSON.stringify(first);
+  for (const secret of ["alpha-secret", "user:", "token=", "#private"]) {
+    assert(!serialized.includes(secret), `proposal leaked ${secret}`);
+  }
+  assert(
+    first[0].sourceUrl === "https://issuer.example/landing",
+    "final provenance was not safely redacted",
+  );
+  assert(
+    first[0].benefitId === replay[0].benefitId &&
+      first[0].conditionHash === replay[0].conditionHash,
+    "rotating URL tokens changed canonical benefit identity",
+  );
+});
+
+Deno.test("staging source metadata contains only a validated display URL", async () => {
+  const boundary = (batchModule as Record<string, unknown>)
+    .stagingSourceMetadata;
+  assert(typeof boundary === "function", "staging source boundary is absent");
+  const metadata = await (boundary as (url: string) => Promise<{
+    sourceUrl: string;
+    sourceUrlHash: string;
+  }>)(
+    "https://user:secret@issuer.example/card?session=private#fragment",
+  );
+  assert(
+    metadata.sourceUrl === "https://issuer.example/card",
+    "staging source URL retained private components",
+  );
+  assert(
+    /^[0-9a-f]{64}$/.test(metadata.sourceUrlHash),
+    "staging source hash is not bounded",
+  );
+  assert(
+    !JSON.stringify(metadata).includes("secret") &&
+      !JSON.stringify(metadata).includes("private"),
+    "staging metadata leaked URL secrets",
+  );
 });
 
 Deno.test("v6 separates domestic and international lounge offer subjects", async () => {

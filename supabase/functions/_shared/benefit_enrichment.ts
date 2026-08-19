@@ -6,6 +6,11 @@ import {
   canonicalValueConfig,
   cardScopedBenefitKey,
 } from "./benefit_contract.ts";
+import {
+  redactSensitiveUrlsInText,
+  redactSensitiveUrlsInValue,
+  safeHttpsDisplayUrl,
+} from "./benefit_source_privacy.ts";
 
 export type BenefitDocument = {
   /** Full canonical URL requested by trusted fetch code; never persisted. */
@@ -86,21 +91,7 @@ export type BenefitDiff = {
 };
 
 function safeSourceUrl(value: unknown): string {
-  if (!value) return "";
-  try {
-    const url = new URL(String(value ?? ""));
-    if (
-      url.protocol !== "https:" || !url.hostname || url.username ||
-      url.password || url.hash
-    ) return "invalid-source";
-    url.username = "";
-    url.password = "";
-    url.search = "";
-    url.hash = "";
-    return url.toString().replace(/\/$/, "").slice(0, 2048);
-  } catch {
-    return "invalid-source";
-  }
+  return safeHttpsDisplayUrl(value) ?? "invalid-source";
 }
 
 function canonicalRequestedSourceUrl(value: unknown): string | null {
@@ -134,10 +125,11 @@ export function currentBenefitProposal(
   if (!benefit || typeof benefit !== "object" || !benefit.dedupe_key) {
     return null;
   }
-  const config =
+  const rawConfig =
     benefit.value_config && typeof benefit.value_config === "object"
       ? benefit.value_config
       : {};
+  const config = redactSensitiveUrlsInValue(rawConfig) as Record<string, any>;
   const canonicalV6 = String(benefit.dedupe_key).startsWith(
     "card-benefit-v2:",
   );
@@ -158,11 +150,17 @@ export function currentBenefitProposal(
   const proposal = {
     ...(canonicalV6 ? { benefitId: String(benefit.dedupe_key) } : {}),
     dedupeKey: String(benefit.dedupe_key),
-    title: String(benefit.title ?? "Existing benefit"),
-    description: String(benefit.description ?? "").slice(0, 500),
-    category: String(benefit.benefit_category ?? "other"),
+    title: redactSensitiveUrlsInText(
+      String(benefit.title ?? "Existing benefit"),
+    ),
+    description: redactSensitiveUrlsInText(
+      String(benefit.description ?? ""),
+    ).slice(0, 500),
+    category: redactSensitiveUrlsInText(
+      String(benefit.benefit_category ?? "other"),
+    ),
     ...(benefit.benefit_type
-      ? { valueType: String(benefit.benefit_type) }
+      ? { valueType: redactSensitiveUrlsInText(String(benefit.benefit_type)) }
       : {}),
     ...(Number.isFinite(Number(config.value))
       ? { value: Number(config.value) }
@@ -178,7 +176,11 @@ export function currentBenefitProposal(
     ...(config.period ? { period: String(config.period) } : {}),
     valueConfig: config,
     ...(Array.isArray(benefit.partners) && benefit.partners.length > 0
-      ? { partners: benefit.partners.map(String) }
+      ? {
+        partners: benefit.partners.map((partner: unknown) =>
+          redactSensitiveUrlsInText(String(partner))
+        ),
+      }
       : {}),
     restrictions: Array.isArray(config.restrictions)
       ? config.restrictions.map(String).slice(0, 32)
@@ -197,7 +199,9 @@ export function currentBenefitProposal(
       ? { effectiveTo: String(benefit.valid_until) }
       : {}),
     sourceUrl: safeSourceUrl(benefit.source_url),
-    sourceExcerpt: String(benefit.description ?? "").slice(0, 500),
+    sourceExcerpt: redactSensitiveUrlsInText(
+      String(benefit.description ?? ""),
+    ).slice(0, 500),
     contentHash: "current-approved-benefit",
     parserVersion: "current-approved-benefit",
     confidence: {},
@@ -263,7 +267,7 @@ function stableHash(value: string): string {
 }
 
 function sanitize(value: string): string {
-  return value
+  return redactSensitiveUrlsInText(value)
     .replace(/(?<!\d)(?:\d[\s-]*){6,}(?!\d)/g, "[redacted]")
     .replace(/\s+/g, " ")
     .trim()
@@ -271,7 +275,7 @@ function sanitize(value: string): string {
 }
 
 function readableText(value: string): string {
-  return value
+  return redactSensitiveUrlsInText(value)
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
     .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
     .replace(

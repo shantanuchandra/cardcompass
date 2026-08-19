@@ -94,6 +94,70 @@ Deno.test("supporting crawl follows relevant official links to depth two and ret
   );
 });
 
+Deno.test("primary logical identity uses submitted URL across redirects", async () => {
+  const submitted =
+    "https://www.axis.bank.in/cards/credit-card/privilege?variant=alpha";
+  const final =
+    "https://www.axis.bank.in/cards/credit-card/privilege/landing?session=secret";
+  const primary = {
+    ...resource(final, "<p>Get 10% cashback on dining.</p>"),
+    submittedUrl: submitted,
+    finalUrl: final,
+    canonicalUrl: final,
+  };
+  const { documents, attempts } = await collectSupportingBenefitDocuments({
+    issuer: "Axis Bank",
+    primary,
+    identityLabels: ["Privilege"],
+    maximumLinks: 0,
+  });
+
+  assert(
+    documents[0].sourceUrl === submitted,
+    "primary redirect target replaced submitted logical identity",
+  );
+  assert(
+    documents[0].finalUrl === final,
+    "primary redirect provenance was not retained",
+  );
+  assert(
+    attempts[0].requestedUrl === submitted && attempts[0].finalUrl === final,
+    "primary attempt did not split requested and final URLs",
+  );
+});
+
+Deno.test("supporting redirect identity follows requested candidate", async () => {
+  const product = "https://www.axis.bank.in/cards/credit-card/privilege";
+  const alpha = `${product}/offers?partner=alpha`;
+  const beta = `${product}/offers?partner=beta`;
+  const final = `${product}/offers/current?session=private`;
+  const { documents, attempts } = await collectSupportingBenefitDocuments({
+    issuer: "Axis Bank",
+    identityLabels: ["Privilege"],
+    primary: resource(
+      product,
+      `<a href="${alpha}">Benefits</a><a href="${beta}">Benefits</a>`,
+    ),
+    fetchOfficialIssuerResource: async (input) => ({
+      ...resource(final, "Get 10% cashback on dining."),
+      submittedUrl: input.url,
+      finalUrl: final,
+      canonicalUrl: final,
+    }),
+  });
+  const supporting = documents.slice(1);
+  assert(supporting.length === 2, "query-distinct redirect sources collapsed");
+  assert(
+    new Set(supporting.map((document) => document.sourceUrl)).size === 2,
+    "supporting logical identities followed one redirect target",
+  );
+  assert(
+    new Set(attempts.slice(1).map((attempt) => attempt.requestedUrl)).size ===
+      2,
+    "supporting attempts lost requested identity",
+  );
+});
+
 Deno.test("supporting crawl fetches at most eight relevant links", async () => {
   const product = "https://www.axis.bank.in/cards/credit-card/privilege";
   const links = Array.from(

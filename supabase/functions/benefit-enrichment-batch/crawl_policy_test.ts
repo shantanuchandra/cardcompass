@@ -459,6 +459,68 @@ Deno.test("trusted requested URL groups redirects without persisting queries", (
   );
 });
 
+Deno.test("malformed runtime attempts fail closed without leaking input", () => {
+  const assessRuntime = assessCrawlCompleteness as (
+    attempts: unknown,
+    assessmentTime: string,
+  ) => ReturnType<typeof assessCrawlCompleteness>;
+  const malformedInputs: unknown[] = [
+    null,
+    undefined,
+    "https://user:secret@issuer.example/?token=private",
+    5,
+    { requestedUrl: PRIMARY, role: "primary" },
+  ];
+  for (const malformed of malformedInputs) {
+    const result = assessRuntime([attempt(), malformed], OBSERVED_AT);
+    assert(!result.complete, "malformed attempt allowed completeness");
+    assert(result.reason === "invalid_attempt", "wrong malformed reason");
+    assert(result.attempts.length <= 9, "malformed evidence exceeded bound");
+    const serialized = JSON.stringify(result.attempts);
+    assert(serialized.includes("invalid_attempt"), "missing invalid marker");
+    assert(!serialized.includes("secret"), "malformed input leaked a secret");
+    assert(!serialized.includes("private"), "malformed query leaked");
+  }
+
+  for (const malformedRoot of [null, undefined, "corrupt", 5, {}]) {
+    const result = assessRuntime(malformedRoot, OBSERVED_AT);
+    assert(!result.complete, "malformed attempt root allowed completeness");
+    assert(result.reason === "invalid_attempt", "root failure was ambiguous");
+    assert(result.attempts.length === 1, "root marker was not bounded");
+  }
+});
+
+Deno.test("runtime attempt bounding cannot omit a decisive required source", () => {
+  const optional = Array.from({ length: 8 }, (_, index) =>
+    attempt({
+      requestedUrl: `${PRIMARY}/benefits-${index}`,
+      role: "supporting",
+      attemptedAt: `2026-08-19T00:0${index + 1}:00.000Z`,
+    }));
+  const result = assessCrawlCompleteness([
+    attempt(),
+    ...optional,
+    attempt({
+      requestedUrl: `${PRIMARY}/terms`,
+      role: "required_supporting",
+      status: "failed",
+      contentHash: undefined,
+      errorCode: "http_404",
+      attemptedAt: "2026-08-19T00:09:00.000Z",
+    }),
+  ], "2026-08-19T00:10:00.000Z");
+
+  assert(!result.complete, "bounded assessment omitted required failure");
+  assert(
+    result.attempts.length <= 9,
+    "assessment evidence exceeded hard bound",
+  );
+  assert(
+    result.attempts.some((item) => item.role === "required_supporting"),
+    "decisive required evidence was dropped",
+  );
+});
+
 Deno.test("far-future terminal evidence is conservatively incomplete", () => {
   const result = assessCrawlCompleteness([
     attempt({

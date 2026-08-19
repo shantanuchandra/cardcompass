@@ -1,3 +1,5 @@
+import { safeHttpsDisplayUrl } from "../_shared/benefit_source_privacy.ts";
+
 export type SourceRole = "primary" | "required_supporting" | "supporting";
 export type SourceAttemptStatus = "success" | "not_modified" | "failed";
 
@@ -47,6 +49,7 @@ const SAFE_ERROR_CODES = new Set([
   "decisive_attempt_overflow",
   "invalid_attempt_history",
   "invalid_source_url",
+  "invalid_attempt",
   "http_403",
   "http_404",
   "http_410",
@@ -72,20 +75,7 @@ export function sanitizedSourceErrorCode(error: unknown): string {
 }
 
 export function boundedSourceUrl(value: string): string {
-  try {
-    const url = new URL(value);
-    if (
-      url.protocol !== "https:" || !url.hostname || url.username ||
-      url.password || url.hash
-    ) return "invalid-source";
-    url.username = "";
-    url.password = "";
-    url.search = "";
-    url.hash = "";
-    return url.toString().replace(/\/$/, "").slice(0, 2048);
-  } catch {
-    return "invalid-source";
-  }
+  return safeHttpsDisplayUrl(value) ?? "invalid-source";
 }
 
 function bounded(
@@ -225,8 +215,9 @@ function sha256(value: string): string {
 }
 
 export function sanitizedSourceAttempt(
-  attempt: SourceAttemptInput,
+  attempt: unknown,
 ): SourceAttempt {
+  if (!validSourceAttemptInput(attempt)) return invalidAttemptMarker("");
   const errorCode = attempt.errorCode && SAFE_ERROR_CODES.has(attempt.errorCode)
     ? attempt.errorCode
     : attempt.status === "failed"
@@ -267,6 +258,41 @@ export function sanitizedSourceAttempt(
       ? { parserCacheReusable: true }
       : {}),
     logicalSourceKey: sourceIdentityDigest(requestedUrl),
+  };
+}
+
+function validSourceAttemptInput(value: unknown): value is SourceAttemptInput {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const attempt = value as Record<string, unknown>;
+  return typeof attempt.requestedUrl === "string" &&
+    ["primary", "required_supporting", "supporting"].includes(
+      String(attempt.role),
+    ) && ["success", "not_modified", "failed"].includes(
+      String(attempt.status),
+    ) && typeof attempt.attemptedAt === "string" &&
+    (attempt.finalUrl === undefined || typeof attempt.finalUrl === "string") &&
+    (attempt.httpStatus === undefined ||
+      typeof attempt.httpStatus === "number") &&
+    (attempt.contentHash === undefined ||
+      typeof attempt.contentHash === "string") &&
+    (attempt.etag === undefined || typeof attempt.etag === "string") &&
+    (attempt.lastModified === undefined ||
+      typeof attempt.lastModified === "string") &&
+    (attempt.errorCode === undefined ||
+      typeof attempt.errorCode === "string") &&
+    (attempt.parserCacheReusable === undefined ||
+      typeof attempt.parserCacheReusable === "boolean");
+}
+
+function invalidAttemptMarker(attemptedAt: string): SourceAttempt {
+  return {
+    url: "invalid-source",
+    role: "required_supporting",
+    status: "failed",
+    errorCode: "invalid_attempt",
+    attemptedAt: bounded(attemptedAt, 64) ?? "",
   };
 }
 
@@ -335,10 +361,37 @@ function successful(attempt: SourceAttempt): boolean {
 }
 
 export function assessCrawlCompleteness(
-  attempts: SourceAttemptInput[],
+  attempts: unknown,
   assessmentTime: string,
 ): CrawlAssessment {
-  const persisted = attempts.map(sanitizedSourceAttempt);
+  if (!Array.isArray(attempts)) {
+    return {
+      complete: false,
+      reason: "invalid_attempt",
+      attempts: [invalidAttemptMarker(assessmentTime)],
+    };
+  }
+  const malformed = attempts.some((attempt) =>
+    !validSourceAttemptInput(attempt)
+  );
+  const persisted = attempts.slice(0, malformed ? 8 : undefined).map(
+    sanitizedSourceAttempt,
+  );
+  if (malformed) {
+    return {
+      complete: false,
+      reason: "invalid_attempt",
+      attempts: [
+        ...persisted.filter((attempt) =>
+          attempt.errorCode !== "invalid_attempt"
+        ),
+        invalidAttemptMarker(assessmentTime),
+      ].slice(0, 9),
+    };
+  }
+  if (persisted.length > 9) {
+    return compactSourceAttempts(persisted, assessmentTime, 9);
+  }
   return assessPreparedAttempts(persisted, assessmentTime);
 }
 

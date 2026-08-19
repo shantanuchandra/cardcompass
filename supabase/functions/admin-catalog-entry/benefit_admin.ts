@@ -2,6 +2,10 @@ import {
   canonicalConditionObject,
   canonicalExclusions,
 } from "../_shared/benefit_contract.ts";
+import {
+  redactSensitiveUrlsInText,
+  safeHttpsDisplayUrl,
+} from "../_shared/benefit_source_privacy.ts";
 
 export type UntypedSupabaseClient = any;
 
@@ -139,27 +143,17 @@ function requiredReason(value: unknown): string {
   if (typeof value !== "string" || value.trim().length < 3) {
     throw new BenefitAdminError("rejection_reason_is_required");
   }
-  return value.trim().slice(0, 500);
+  return redactSensitiveUrlsInText(value.trim()).slice(0, 500);
 }
 
 function text(value: unknown, maximum = 8_000): string | null {
-  return typeof value === "string" ? value.slice(0, maximum) : null;
+  return typeof value === "string"
+    ? redactSensitiveUrlsInText(value).slice(0, maximum)
+    : null;
 }
 
 function safeUrl(value: unknown): string | null {
-  const candidate = text(value);
-  if (!candidate) return null;
-  try {
-    const url = new URL(candidate);
-    if (url.protocol !== "https:") return null;
-    url.username = "";
-    url.password = "";
-    url.search = "";
-    url.hash = "";
-    return url.toString().replace(/\/$/, "").slice(0, 2048);
-  } catch {
-    return null;
-  }
+  return safeHttpsDisplayUrl(value);
 }
 
 function number(value: unknown): number | null {
@@ -629,27 +623,41 @@ function canonicalApprovalIdentity(value: unknown): string {
 }
 
 export function validateV6ApprovalDecisions(
-  decisions: JsonRecord[],
+  decisions: unknown,
   stagedExtraction: unknown,
 ): JsonRecord[] {
   const extraction = asRecord(stagedExtraction);
   if (
     !extraction || extraction.parser_version !== "benefits-v6" ||
-    extraction.request_type !== "official_benefit_enrichment"
+    extraction.request_type !== "official_benefit_enrichment" ||
+    !Array.isArray(extraction.proposals) || !Array.isArray(decisions) ||
+    decisions.length === 0 || decisions.some((decision) => !asRecord(decision))
   ) throw new BenefitAdminError("invalid_benefit_job_staging", 409);
-  const staged = objectList(extraction.proposals).map((proposal) =>
+  if (extraction.proposals.some((proposal) => !asRecord(proposal))) {
+    throw new BenefitAdminError("invalid_staged_benefit_identity", 409);
+  }
+  const staged = (extraction.proposals as JsonRecord[]).map((proposal) =>
     benefitForOutput(proposal, true) as JsonRecord
   );
   const stagedByKey = new Map<string, JsonRecord>();
+  const stagedDedupeKeys = new Set<string>();
   for (const proposal of staged) {
-    const key = text(proposal.benefitId ?? proposal.dedupeKey, 200);
-    if (!key || stagedByKey.has(key)) {
+    const benefitId = text(proposal.benefitId, 200);
+    const dedupeKey = text(proposal.dedupeKey, 200);
+    if (
+      !benefitId || !dedupeKey || benefitId !== dedupeKey ||
+      !benefitId.startsWith("card-benefit-v2:") ||
+      !digest(proposal.conditionHash) ||
+      !text(proposal.offerSubject, 256) || !digest(proposal.sourceIdentity) ||
+      stagedByKey.has(benefitId) || stagedDedupeKeys.has(dedupeKey)
+    ) {
       throw new BenefitAdminError("invalid_staged_benefit_identity", 409);
     }
-    stagedByKey.set(key, proposal);
+    stagedByKey.set(benefitId, proposal);
+    stagedDedupeKeys.add(dedupeKey);
   }
   const selected = new Set<string>();
-  return decisions.map((decision) => {
+  return (decisions as JsonRecord[]).map((decision) => {
     const action = String(decision.action ?? "").toLowerCase();
     const base: JsonRecord = {
       action,

@@ -11,6 +11,7 @@ import {
 } from "../_shared/benefit_enrichment.ts";
 export { currentBenefitProposal } from "../_shared/benefit_enrichment.ts";
 import { cardScopedBenefitKey } from "../_shared/benefit_contract.ts";
+import { safeHttpsDisplayUrl } from "../_shared/benefit_source_privacy.ts";
 import {
   allowedOfficialUrl,
   canonicalOfficialUrl,
@@ -233,6 +234,18 @@ async function sha256Text(value: string): Promise<string> {
   return Array.from(new Uint8Array(digest))
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
+}
+
+export async function stagingSourceMetadata(sourceUrl: string): Promise<{
+  sourceUrl: string;
+  sourceUrlHash: string;
+}> {
+  const displayUrl = safeHttpsDisplayUrl(sourceUrl);
+  if (!displayUrl) throw new Error("invalid_source_url");
+  return {
+    sourceUrl: displayUrl,
+    sourceUrlHash: await sha256Text(displayUrl),
+  };
 }
 
 export async function computeSourceManifestHash(
@@ -1051,13 +1064,14 @@ async function processJob(
     let reusedStaging = false;
     let rawOnlyDueAt: string | null = null;
     if (materialProposal) {
+      const stagingSource = await stagingSourceMetadata(page.canonicalUrl);
       const { data: stagedRows, error: stageError } = await db.rpc(
         "stage_card_benefit_enrichment",
         {
           _job_id: job.id,
           _lease_token: job.lease_token,
-          _source_url: page.canonicalUrl,
-          _source_url_hash: await sha256Text(page.canonicalUrl),
+          _source_url: stagingSource.sourceUrl,
+          _source_url_hash: stagingSource.sourceUrlHash,
           _parser_version: job.parser_version,
           _content_hash: stagingContentHash,
           _extracted_data: safeExtraction,

@@ -1,4 +1,5 @@
 import { type BenefitDocument } from "../_shared/benefit_enrichment.ts";
+import { redactSensitiveUrlsInText } from "../_shared/benefit_source_privacy.ts";
 import { canonicalOfficialUrl } from "../_shared/card_discovery.ts";
 import {
   fetchOfficialIssuerResource as fetchOfficialIssuerResourceDefault,
@@ -154,12 +155,12 @@ function linkedUrls(
 
 async function benefitDocument(
   resource: OfficialFetchResult,
-  requestedUrl = resource.canonicalUrl,
+  requestedUrl = resource.submittedUrl,
 ): Promise<BenefitDocument> {
   return {
     sourceUrl: requestedUrl,
     finalUrl: resource.canonicalUrl,
-    text: await officialResourceText(resource),
+    text: redactSensitiveUrlsInText(await officialResourceText(resource)),
     contentHash: resource.contentHash,
   };
 }
@@ -175,11 +176,11 @@ export async function collectSupportingBenefitDocuments(
   );
   const primaryDocument = await benefitDocument(
     input.primary,
-    input.primary.canonicalUrl,
+    input.primary.submittedUrl,
   );
   const documents = primaryDocument.text.trim() ? [primaryDocument] : [];
   const attempts: SourceAttemptInput[] = [{
-    requestedUrl: input.primary.canonicalUrl,
+    requestedUrl: input.primary.submittedUrl,
     finalUrl: input.primary.canonicalUrl,
     role: "primary",
     status: primaryDocument.text.trim() ? "success" : "failed",
@@ -225,7 +226,10 @@ export async function collectSupportingBenefitDocuments(
       attemptedAt,
     });
   };
-  const seen = new Set([input.primary.canonicalUrl]);
+  const seen = new Set([
+    input.primary.submittedUrl,
+    input.primary.canonicalUrl,
+  ]);
   const exactUrls = exactSupportingUrls(input.issuer, input.identityLabels);
   const exactSet = new Set(
     exactUrls.map((url) => canonicalOfficialUrl(input.issuer, url)),

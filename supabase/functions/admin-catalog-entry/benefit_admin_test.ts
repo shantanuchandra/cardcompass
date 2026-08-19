@@ -707,7 +707,14 @@ Deno.test("v6 approval is bound to exact server-staged canonical proposals", asy
     "benefits-v6",
     "card-1",
   );
-  const call = async (decisions: Record<string, unknown>[]) => {
+  const call = async (
+    decisions: unknown,
+    stagedExtraction: unknown = {
+      request_type: "official_benefit_enrichment",
+      parser_version: "benefits-v6",
+      proposals: [proposal],
+    },
+  ) => {
     let rpcCalls = 0;
     let submitted: Record<string, any>[] = [];
     const db = {
@@ -744,11 +751,7 @@ Deno.test("v6 approval is bound to exact server-staged canonical proposals", asy
                   status: "pending",
                   request_type: "official_benefit_enrichment",
                   parser_version: "benefits-v6",
-                  extracted_data: {
-                    request_type: "official_benefit_enrichment",
-                    parser_version: "benefits-v6",
-                    proposals: [proposal],
-                  },
+                  extracted_data: stagedExtraction,
                 },
                 error: null,
               };
@@ -767,7 +770,8 @@ Deno.test("v6 approval is bound to exact server-staged canonical proposals", asy
     let error: unknown;
     try {
       await handleBenefitAdminAction(db, {
-        action: decisions[0]?.action === "edit"
+        action: Array.isArray(decisions) &&
+            (decisions[0] as Record<string, unknown> | null)?.action === "edit"
           ? "benefit-edit-approve"
           : "benefit-approve",
         job_id: "job-1",
@@ -837,6 +841,79 @@ Deno.test("v6 approval is bound to exact server-staged canonical proposals", asy
     const result = await call(fixture.decisions);
     assert(result.error instanceof Error, `${fixture.label} was accepted`);
     assert(result.rpcCalls === 0, `${fixture.label} reached approval RPC`);
+  }
+
+  const malformedStaging = [
+    {
+      label: "null staged proposal",
+      extraction: {
+        request_type: "official_benefit_enrichment",
+        parser_version: "benefits-v6",
+        proposals: [null, proposal],
+      },
+    },
+    {
+      label: "scalar staged proposal",
+      extraction: {
+        request_type: "official_benefit_enrichment",
+        parser_version: "benefits-v6",
+        proposals: [proposal, "corrupt"],
+      },
+    },
+    {
+      label: "numeric staged proposal",
+      extraction: {
+        request_type: "official_benefit_enrichment",
+        parser_version: "benefits-v6",
+        proposals: [proposal, 5],
+      },
+    },
+    {
+      label: "duplicate staged proposal",
+      extraction: {
+        request_type: "official_benefit_enrichment",
+        parser_version: "benefits-v6",
+        proposals: [proposal, proposal],
+      },
+    },
+    {
+      label: "malformed proposal root",
+      extraction: {
+        request_type: "official_benefit_enrichment",
+        parser_version: "benefits-v6",
+        proposals: { valid: proposal },
+      },
+    },
+    { label: "malformed extraction root", extraction: "corrupt" },
+  ];
+  for (const fixture of malformedStaging) {
+    const result = await call([exact], fixture.extraction);
+    assert(result.error instanceof Error, `${fixture.label} was filtered`);
+    assert(result.rpcCalls === 0, `${fixture.label} reached approval RPC`);
+  }
+
+  const inconsistentStagedIdentity = {
+    ...proposal,
+    dedupeKey: `card-benefit-v2:card-1:${"b".repeat(64)}`,
+  };
+  const inconsistent = await call(
+    [{ action: "approve", benefit: inconsistentStagedIdentity }],
+    {
+      request_type: "official_benefit_enrichment",
+      parser_version: "benefits-v6",
+      proposals: [inconsistentStagedIdentity],
+    },
+  );
+  assert(
+    inconsistent.error instanceof Error,
+    "inconsistent staged benefit/dedupe identity was accepted",
+  );
+  assert(inconsistent.rpcCalls === 0, "inconsistent staging reached RPC");
+
+  for (const decisions of [[null], ["corrupt"], [5]]) {
+    const result = await call(decisions);
+    assert(result.error instanceof Error, "malformed decision was accepted");
+    assert(result.rpcCalls === 0, "malformed decision reached approval RPC");
   }
 
   const valid = await call([exact]);
