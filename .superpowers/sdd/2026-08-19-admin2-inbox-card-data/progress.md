@@ -129,3 +129,11 @@ Ruling: Resolve deep links with the pair `(lane, target_id)` using a server-side
 Ruling: Treat the shared legacy benefit presenter's documented scalar/list/value-config schema as the canonical editable surface, preserving all untouched sanitized fields and writing only allowlisted typed controls back into `edited_benefit`. Cost if wrong: adding a future safe benefit field requires one presenter allowlist and field-spec update before operators can edit it, rather than automatically exposing arbitrary parser output.
 
 Ruling: Use the locked SQL status predicates as the UI action matrix even when multiple recoveries are valid (for example, quarantined benefits expose both retry and unquarantine). Cost if wrong: operators see an extra explicitly confirmed recovery choice that the database already accepts, but no invalid transition is offered.
+
+## Task 5 identity retry correction
+
+- Verified the effective contract at the Admin2 RPC boundary: although the legacy resolver contains an unconditional retry branch, `admin_card_data_action` locks the row and rejects every identity operation unless the review status is `pending` before calling that resolver.
+- Identity retry is therefore visible for `pending` only and hidden for `approved`, `merged`, and `rejected`; the widget regression now asserts the full status matrix.
+- RED: the matrix failed because an approved identity still exposed Retry. GREEN: the focused matrix passed after removing the terminal-state fallback.
+
+Ruling: Gate identity actions on the Task 1 wrapper rather than the less restrictive legacy resolver in isolation, because Admin2 mutations can only reach the resolver through that wrapper. Cost if wrong: a future intentional terminal-state retry requires a coordinated SQL transition change and UI matrix update rather than appearing automatically.

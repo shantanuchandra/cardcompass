@@ -986,8 +986,6 @@ class _ReviewDetailState extends State<_ReviewDetail> {
       add('Merge', CardReviewOperation.merge);
       add('Reject', CardReviewOperation.reject);
       add('Retry', CardReviewOperation.retry);
-    } else if (item.lane == CardReviewLane.identity) {
-      add('Retry', CardReviewOperation.retry);
     } else if (item.lane == CardReviewLane.benefit) {
       if ({'staged', 'review_required'}.contains(item.status) &&
           item.stagingId != null &&

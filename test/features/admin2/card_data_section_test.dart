@@ -149,15 +149,30 @@ void main() {
     expect(find.text('Compass Rewards'), findsNothing);
   });
 
-  testWidgets('resolved identity exposes only supported retry', (tester) async {
-    final completed = _item(status: 'approved');
-    final source = _FakeSource([
-      _page(items: [completed]),
-    ]);
-    await _pump(tester, source);
-    await tester.pumpAndSettle();
-    expect(find.text('Retry'), findsOneWidget);
-    expect(find.text('Approve'), findsNothing);
+  testWidgets('identity actions follow the pending-only SQL status gate', (
+    tester,
+  ) async {
+    for (final status in ['pending', 'approved', 'merged', 'rejected']) {
+      final source = _FakeSource([
+        _page(items: [_item(status: status)]),
+      ]);
+      await _pump(tester, source);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Retry'),
+        status == 'pending' ? findsOneWidget : findsNothing,
+        reason: 'identity retry matrix mismatch for status=$status',
+      );
+      expect(
+        find.text('Approve'),
+        status == 'pending' ? findsOneWidget : findsNothing,
+        reason: 'identity decision matrix mismatch for status=$status',
+      );
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+    }
   });
 
   testWidgets('failed and quarantined benefits expose only recovery actions', (
