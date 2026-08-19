@@ -59,6 +59,98 @@ Deno.test("a primary 304 is complete only with reusable same-parser cache eviden
   assert(withCache.complete, "explicit reusable 304 cache was rejected");
 });
 
+Deno.test("latest successful retry completes one logical primary source", () => {
+  const result = assessCrawlCompleteness([
+    attempt({
+      status: "failed",
+      httpStatus: 404,
+      contentHash: undefined,
+      errorCode: "http_404",
+      attemptedAt: "2026-08-19T00:00:00.000Z",
+    }),
+    attempt({ attemptedAt: "2026-08-19T00:01:00.000Z" }),
+  ]);
+  assert(result.complete, "404 followed by 200 stayed incomplete");
+  assert(result.attempts.length === 2, "retry evidence was discarded");
+});
+
+Deno.test("latest failed retry keeps one logical primary source incomplete", () => {
+  const result = assessCrawlCompleteness([
+    attempt({ attemptedAt: "2026-08-19T00:00:00.000Z" }),
+    attempt({
+      status: "failed",
+      contentHash: undefined,
+      errorCode: "timeout",
+      attemptedAt: "2026-08-19T00:01:00.000Z",
+    }),
+  ]);
+  assert(!result.complete, "200 followed by failure became complete");
+});
+
+Deno.test("unusable 304 followed by unconditional 200 becomes complete", () => {
+  const result = assessCrawlCompleteness([
+    attempt({
+      status: "not_modified",
+      httpStatus: 304,
+      contentHash: undefined,
+      parserCacheReusable: false,
+      attemptedAt: "2026-08-19T00:00:00.000Z",
+    }),
+    attempt({ attemptedAt: "2026-08-19T00:01:00.000Z" }),
+  ]);
+  assert(result.complete, "unconditional retry did not recover unusable 304");
+});
+
+Deno.test("required retries resolve by logical URL and latest result", () => {
+  const required = `${PRIMARY}/terms`;
+  const result = assessCrawlCompleteness([
+    attempt(),
+    attempt({
+      url: required,
+      role: "required_supporting",
+      status: "failed",
+      contentHash: undefined,
+      errorCode: "http_404",
+      attemptedAt: "2026-08-19T00:01:00.000Z",
+    }),
+    attempt({
+      url: `${required}?retry=1`,
+      logicalSourceKey: required,
+      role: "required_supporting",
+      attemptedAt: "2026-08-19T00:02:00.000Z",
+    }),
+  ]);
+  assert(result.complete, "required source retry stayed incomplete");
+});
+
+Deno.test("duplicate or malformed retry timestamps remain incomplete", () => {
+  for (const attemptedAt of [OBSERVED_AT, "not-a-date"]) {
+    const result = assessCrawlCompleteness([
+      attempt(),
+      attempt({ attemptedAt, status: "failed", contentHash: undefined }),
+    ]);
+    assert(
+      !result.complete,
+      `unsafe retry timestamp was accepted: ${attemptedAt}`,
+    );
+  }
+});
+
+Deno.test("explicitly distinct logical primary sources remain incomplete", () => {
+  const result = assessCrawlCompleteness([
+    attempt({ logicalSourceKey: "submitted" }),
+    attempt({
+      url: `${PRIMARY}/other`,
+      logicalSourceKey: "other",
+      attemptedAt: "2026-08-19T00:01:00.000Z",
+    }),
+  ]);
+  assert(
+    !result.complete,
+    "distinct primary sources bypassed multiplicity guard",
+  );
+});
+
 Deno.test("a missing or corrupt required PDF makes the crawl incomplete", () => {
   for (
     const [httpStatus, errorCode] of [[404, "http_404"], [
@@ -139,6 +231,7 @@ Deno.test("attempt evidence strips credentials and bounds unsanitized failure da
     status: "failed",
     contentHash: undefined,
     errorCode: "Authorization: Bearer secret-cookie-value",
+    logicalSourceKey: "Authorization: Bearer secret-cookie-value",
   })]);
   const persisted = result.attempts[0];
 

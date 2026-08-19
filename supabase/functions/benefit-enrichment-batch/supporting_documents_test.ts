@@ -76,7 +76,7 @@ Deno.test("supporting crawl follows relevant official links to depth two and ret
   });
 
   assert(
-    requested.join(",") === [benefits, terms, pdf, rewards].join(","),
+    requested.join(",") === [terms, benefits, pdf, rewards].join(","),
     "crawl exceeded relevant depth-two links",
   );
   assert(documents.length === 5, "primary/supporting evidence was lost");
@@ -115,6 +115,118 @@ Deno.test("supporting crawl fetches at most eight relevant links", async () => {
   assert(fetches === 8, "supporting fetch budget exceeded eight");
   assert(documents.length === 9, "bounded supporting documents were omitted");
   assert(attempts.length === 9, "bounded successful attempts were omitted");
+});
+
+Deno.test("required terms HTML outranks an optional PDF when one fetch remains", async () => {
+  const product = "https://www.axis.bank.in/cards/credit-card/privilege";
+  const optionalPdf = `${product}/benefits.pdf`;
+  const requiredHtml = `${product}/terms-and-conditions`;
+  const requested: string[] = [];
+  const { attempts } = await collectSupportingBenefitDocuments({
+    issuer: "Axis Bank",
+    identityLabels: ["Privilege"],
+    primary: resource(
+      product,
+      `<a href="${optionalPdf}">Benefits</a><a href="${requiredHtml}">Terms</a>`,
+    ),
+    maximumLinks: 1,
+    fetchOfficialIssuerResource: async (input) => {
+      requested.push(input.url);
+      return resource(input.url, "Official terms");
+    },
+  });
+
+  assert(
+    requested.join(",") === requiredHtml,
+    "required HTML was not prioritized",
+  );
+  assert(
+    attempts.some((item) =>
+      item.url === requiredHtml && item.role === "required_supporting"
+    ),
+    "terms HTML was not classified required",
+  );
+  assert(
+    !attempts.some((item) =>
+      item.url === optionalPdf && item.role === "required_supporting"
+    ),
+    "benefits PDF was incorrectly required",
+  );
+});
+
+Deno.test("budget exhaustion records every discovered required source", async () => {
+  const product = "https://www.axis.bank.in/cards/credit-card/privilege";
+  const required = [`${product}/mitc`, `${product}/fees-and-charges`];
+  const { attempts } = await collectSupportingBenefitDocuments({
+    issuer: "Axis Bank",
+    identityLabels: ["Privilege"],
+    primary: resource(
+      product,
+      required.map((url) => `<a href="${url}">Required</a>`).join(""),
+    ),
+    maximumLinks: 0,
+  });
+
+  for (const url of required) {
+    assert(
+      attempts.some((item) =>
+        item.url === url && item.role === "required_supporting" &&
+        item.errorCode === "fetch_budget_exhausted"
+      ),
+      `budget omission was not retained for ${url}`,
+    );
+  }
+});
+
+Deno.test("a depth-discovered required source is retained after budget exhaustion", async () => {
+  const product = "https://www.axis.bank.in/cards/credit-card/privilege";
+  const benefits = `${product}/benefits`;
+  const required = `${product}/terms`;
+  const { attempts } = await collectSupportingBenefitDocuments({
+    issuer: "Axis Bank",
+    identityLabels: ["Privilege"],
+    primary: resource(product, `<a href="${benefits}">Benefits</a>`),
+    maximumLinks: 1,
+    fetchOfficialIssuerResource: async () =>
+      resource(benefits, `<a href="${required}">Terms</a>`),
+  });
+
+  assert(
+    attempts.some((item) =>
+      item.url === required && item.role === "required_supporting" &&
+      item.errorCode === "fetch_budget_exhausted"
+    ),
+    "depth-discovered required source disappeared at the budget boundary",
+  );
+});
+
+Deno.test("depth-discovered required evidence displaces optional queue overflow", async () => {
+  const product = "https://www.axis.bank.in/cards/credit-card/privilege";
+  const optional = Array.from(
+    { length: 8 },
+    (_, index) => `${product}/benefits-${index}`,
+  );
+  const required = `${product}/fees-and-charges`;
+  const { attempts } = await collectSupportingBenefitDocuments({
+    issuer: "Axis Bank",
+    identityLabels: ["Privilege"],
+    primary: resource(
+      product,
+      optional.map((url) => `<a href="${url}">Benefit</a>`).join(""),
+    ),
+    maximumLinks: 1,
+    fetchOfficialIssuerResource: async () =>
+      resource(optional[0], `<a href="${required}">Fees</a>`),
+  });
+
+  assert(
+    attempts.some((item) =>
+      item.url === required && item.role === "required_supporting" &&
+      item.errorCode === "fetch_budget_exhausted"
+    ),
+    "required depth evidence was crowded out by optional links",
+  );
+  assert(attempts.length <= 9, "bounded source evidence overflowed");
 });
 
 Deno.test("supporting crawl records required work blocked by the invocation deadline", async () => {

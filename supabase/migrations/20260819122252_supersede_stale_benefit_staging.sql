@@ -22,10 +22,9 @@ DECLARE
   job public.card_catalog_enrichment_jobs%ROWTYPE;
   resolved_staging_id uuid;
   reused_staging boolean := false;
+  newest_pending_id uuid;
+  newest_pending_validated_at timestamptz;
 BEGIN
-  IF coalesce(auth.role(), '') <> 'service_role' THEN
-    RAISE EXCEPTION 'service_role_required';
-  END IF;
   IF _job_id IS NULL OR _lease_token IS NULL OR _source_url !~ '^https://'
      OR _source_url_hash !~ '^[0-9a-f]{64}$'
      OR encode(extensions.digest(convert_to(trim(_source_url), 'UTF8'), 'sha256'), 'hex')
@@ -36,9 +35,8 @@ BEGIN
      OR _extracted_data->>'request_type' <> 'official_benefit_enrichment'
      OR _extracted_data->>'parser_version' <> _parser_version
      OR _extracted_data->>'content_hash' <> _content_hash
-     OR _source_evidence IS NULL
-     OR jsonb_typeof(_source_evidence) <> 'array'
-     OR NOT (jsonb_array_length(_source_evidence) > 0) THEN
+     OR _validated_at IS NULL
+     OR NOT public.is_valid_official_source_evidence(_source_evidence) THEN
     RAISE EXCEPTION 'invalid_benefit_staging';
   END IF;
 
@@ -56,6 +54,53 @@ BEGIN
     RAISE EXCEPTION 'parser_version_mismatch';
   END IF;
 
+  IF _parser_version = 'benefits-v6' THEN
+    -- Serialize observations for one card even when separate queue jobs race.
+    PERFORM pg_advisory_xact_lock(hashtextextended(
+      'stage_card_benefit_enrichment:' || job.card_id::text,
+      0
+    ));
+
+    -- Acquire row locks in UUID order so concurrent reviewers/stagers cannot
+    -- invert their lock order.
+    PERFORM locked.id
+    FROM (
+      SELECT staging.id
+      FROM public.card_benefits_staging AS staging
+      WHERE staging.card_id = job.card_id
+        AND staging.parser_version = _parser_version
+        AND staging.request_type = 'official_benefit_enrichment'
+        AND staging.status = 'pending'
+      ORDER BY staging.id
+      FOR UPDATE
+    ) AS locked;
+
+    SELECT staging.id, staging.validated_at
+    INTO newest_pending_id, newest_pending_validated_at
+    FROM public.card_benefits_staging AS staging
+    WHERE staging.card_id = job.card_id
+      AND staging.parser_version = _parser_version
+      AND staging.request_type = 'official_benefit_enrichment'
+      AND staging.status = 'pending'
+    ORDER BY staging.validated_at DESC NULLS FIRST, staging.id DESC
+    LIMIT 1;
+
+    -- Unknown legacy time or an equal/newer pending observation wins. The
+    -- incoming job still records its crawl summary through finalization but
+    -- cannot create a competing pending review row.
+    IF newest_pending_id IS NOT NULL AND (
+      newest_pending_validated_at IS NULL
+      OR _validated_at <= newest_pending_validated_at
+    ) THEN
+      UPDATE public.card_catalog_enrichment_jobs
+      SET staging_id = newest_pending_id,
+          updated_at = now()
+      WHERE id = _job_id;
+      RETURN QUERY SELECT newest_pending_id, true;
+      RETURN;
+    END IF;
+  END IF;
+
   SELECT staging.id INTO resolved_staging_id
   FROM public.card_benefits_staging AS staging
   WHERE staging.card_id = job.card_id
@@ -64,9 +109,11 @@ BEGIN
     AND staging.content_hash = _content_hash
     AND staging.request_type = 'official_benefit_enrichment'
     AND staging.status IN ('pending', 'approved')
-    AND staging.source_evidence IS NOT NULL
-    AND jsonb_typeof(staging.source_evidence) = 'array'
-    AND jsonb_array_length(staging.source_evidence) > 0
+    AND public.is_valid_official_source_evidence(staging.source_evidence)
+  ORDER BY CASE WHEN staging.status = 'pending' THEN 0 ELSE 1 END,
+           staging.validated_at DESC NULLS LAST,
+           staging.id DESC
+  LIMIT 1
   FOR UPDATE;
   reused_staging := FOUND;
   IF NOT reused_staging THEN
@@ -74,17 +121,6 @@ BEGIN
   END IF;
 
   IF _parser_version = 'benefits-v6' THEN
-    -- Lock every older pending observation before changing its review state.
-    -- This remains in the same transaction as the replacement insert/link.
-    PERFORM 1
-    FROM public.card_benefits_staging AS staging
-    WHERE staging.card_id = job.card_id
-      AND staging.parser_version = _parser_version
-      AND staging.request_type = 'official_benefit_enrichment'
-      AND staging.status = 'pending'
-      AND staging.id <> resolved_staging_id
-    FOR UPDATE;
-
     UPDATE public.card_benefits_staging AS staging
     SET benefit_decisions = (
           CASE
@@ -112,6 +148,8 @@ BEGIN
       AND staging.parser_version = _parser_version
       AND staging.request_type = 'official_benefit_enrichment'
       AND staging.status = 'pending'
+      AND staging.validated_at IS NOT NULL
+      AND staging.validated_at < _validated_at
       AND staging.id <> resolved_staging_id;
   END IF;
 
@@ -135,7 +173,7 @@ BEGIN
     _content_hash, _extracted_data, 'pending', _parser_version,
     _calculated_confidence, coalesce(_validation_reasons, '[]'::jsonb),
     coalesce(_validation_warnings, '[]'::jsonb), _source_evidence,
-    coalesce(_validated_at, now())
+    _validated_at
   ) ON CONFLICT (card_id, source_url_hash, parser_version, content_hash)
       WHERE request_type = 'official_benefit_enrichment'
       DO NOTHING;
@@ -158,6 +196,82 @@ REVOKE ALL ON FUNCTION public.stage_card_benefit_enrichment(
 ) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.stage_card_benefit_enrichment(
   uuid, uuid, text, text, text, text, jsonb, numeric, jsonb, jsonb, jsonb, timestamptz
+) TO service_role;
+
+CREATE OR REPLACE FUNCTION public.finalize_card_catalog_enrichment_job(
+  _job_id uuid,
+  _lease_token uuid,
+  _status text,
+  _staging_id uuid,
+  _content_hash text,
+  _normalized_fields jsonb,
+  _result_summary jsonb,
+  _failure_category text,
+  _next_retry_at timestamptz
+) RETURNS uuid
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  affected_rows integer;
+BEGIN
+  IF _job_id IS NULL OR _lease_token IS NULL
+     OR _status NOT IN ('staged', 'completed', 'quarantined', 'failed', 'review_required')
+     OR jsonb_typeof(coalesce(_normalized_fields, '{}'::jsonb)) <> 'object'
+     OR jsonb_typeof(coalesce(_result_summary, '{}'::jsonb)) <> 'object'
+     OR (_status = 'staged' AND _staging_id IS NULL)
+     OR (_status = 'completed' AND _staging_id IS NOT NULL)
+     OR (_status = 'failed' AND _next_retry_at IS NULL)
+     OR (_status <> 'failed' AND _next_retry_at IS NOT NULL) THEN
+    RAISE EXCEPTION 'invalid_enrichment_finalization';
+  END IF;
+
+  IF _status = 'staged' AND NOT EXISTS (
+    SELECT 1
+    FROM public.card_catalog_enrichment_jobs AS job
+    JOIN public.card_benefits_staging AS staging
+      ON staging.id = _staging_id
+     AND staging.card_id = job.card_id
+     AND staging.request_type = 'official_benefit_enrichment'
+     AND staging.status IN ('pending', 'approved')
+     AND public.is_valid_official_source_evidence(staging.source_evidence)
+    WHERE job.id = _job_id
+      AND job.status = 'processing'
+      AND job.lease_token = _lease_token
+      AND job.lease_expires_at > now()
+  ) THEN
+    RAISE EXCEPTION 'invalid_enrichment_staging_ownership';
+  END IF;
+
+  UPDATE public.card_catalog_enrichment_jobs
+  SET status = _status,
+      lease_expires_at = NULL,
+      lease_token = NULL,
+      staging_id = _staging_id,
+      content_hash = _content_hash,
+      normalized_fields = coalesce(_normalized_fields, '{}'::jsonb),
+      result_summary = coalesce(_result_summary, '{}'::jsonb),
+      failure_category = _failure_category,
+      next_retry_at = _next_retry_at,
+      updated_at = now()
+  WHERE id = _job_id
+    AND status = 'processing'
+    AND lease_token = _lease_token
+    AND lease_expires_at > now();
+  GET DIAGNOSTICS affected_rows = ROW_COUNT;
+  IF affected_rows <> 1 THEN
+    RAISE EXCEPTION 'stale_enrichment_lease';
+  END IF;
+  RETURN _job_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.finalize_card_catalog_enrichment_job(
+  uuid, uuid, text, uuid, text, jsonb, jsonb, text, timestamptz
+) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.finalize_card_catalog_enrichment_job(
+  uuid, uuid, text, uuid, text, jsonb, jsonb, text, timestamptz
 ) TO service_role;
 
 COMMIT;

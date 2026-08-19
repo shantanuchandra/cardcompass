@@ -193,15 +193,28 @@ test('expired worker leases back off and reach review instead of blocking foreve
 test('new v6 staging atomically rejects and audits older pending observations without deleting history', async () => {
   const sql = await readFile(supersedeStaleMigration, 'utf8');
   const stage = functionBody(sql, 'stage_card_benefit_enrichment');
+  const finalize = functionBody(sql, 'finalize_card_catalog_enrichment_job');
 
   assert.match(stage, /stage_card_benefit_enrichment\s*\(\s*_job_id uuid,\s*_lease_token uuid,\s*_source_url text,\s*_source_url_hash text,\s*_parser_version text,\s*_content_hash text,\s*_extracted_data jsonb,\s*_calculated_confidence numeric,\s*_validation_reasons jsonb,\s*_validation_warnings jsonb,\s*_source_evidence jsonb,\s*_validated_at timestamptz\s*\)/i);
   assert.match(stage, /SECURITY INVOKER/i);
-  assert.match(stage, /auth\.role\(\)[\s\S]*service_role_required/i);
+  assert.doesNotMatch(stage, /auth\.role\(\)|service_role_required/i);
+  assert.match(stage, /public\.is_valid_official_source_evidence\(_source_evidence\)/i);
   assert.match(stage, /candidate\.id\s*=\s*_job_id[\s\S]*candidate\.status\s*=\s*'processing'[\s\S]*candidate\.lease_token\s*=\s*_lease_token[\s\S]*FOR UPDATE/i);
+  assert.match(stage, /pg_advisory_xact_lock\s*\([\s\S]*hashtextextended\s*\([\s\S]*job\.card_id::text/i);
+  assert.match(stage, /SELECT staging\.id[\s\S]*ORDER BY staging\.id[\s\S]*FOR UPDATE/i);
+  assert.match(stage, /_validated_at IS NULL[\s\S]*invalid_benefit_staging/i);
+  assert.match(stage, /staging\.validated_at IS NOT NULL[\s\S]*staging\.validated_at\s*<\s*_validated_at/i);
+  assert.match(stage, /newest_pending_validated_at IS NULL\s+OR _validated_at\s*<=\s*newest_pending_validated_at/i);
+  assert.ok(
+    stage.indexOf('newest_pending_validated_at IS NULL') <
+      stage.indexOf('INSERT INTO public.card_benefits_staging'),
+    'a stale incoming observation must link existing pending review before insertion',
+  );
   assert.match(stage, /_parser_version\s*=\s*'benefits-v6'[\s\S]*status\s*=\s*'pending'[\s\S]*FOR UPDATE/i);
-  const supersessionBlock = stage.match(
-    /IF _parser_version = 'benefits-v6' THEN([\s\S]*?)END IF;/i,
-  )?.[1] ?? '';
+  const supersessionBlock = stage.slice(
+    stage.indexOf('UPDATE public.card_benefits_staging AS staging'),
+    stage.indexOf('IF reused_staging THEN'),
+  );
   assert.doesNotMatch(
     supersessionBlock,
     /source_url_hash\s*=\s*_source_url_hash/i,
@@ -226,4 +239,7 @@ test('new v6 staging atomically rejects and audits older pending observations wi
   );
   assert.match(sql, /REVOKE ALL ON FUNCTION public\.stage_card_benefit_enrichment\(\s*uuid, uuid, text, text, text, text, jsonb, numeric, jsonb, jsonb, jsonb, timestamptz\s*\)\s+FROM PUBLIC, anon, authenticated/i);
   assert.match(sql, /GRANT EXECUTE ON FUNCTION public\.stage_card_benefit_enrichment\(\s*uuid, uuid, text, text, text, text, jsonb, numeric, jsonb, jsonb, jsonb, timestamptz\s*\)\s+TO service_role/i);
+  assert.match(finalize, /_status NOT IN \('staged', 'completed', 'quarantined', 'failed', 'review_required'\)/i);
+  assert.match(finalize, /_status = 'completed' AND _staging_id IS NOT NULL/i);
+  assert.match(sql, /GRANT EXECUTE ON FUNCTION public\.finalize_card_catalog_enrichment_job\([^)]+\)\s+TO service_role/i);
 });

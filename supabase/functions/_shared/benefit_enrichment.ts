@@ -14,6 +14,7 @@ export type BenefitDocument = {
 
 export type BenefitProposal = {
   benefitId?: string;
+  offerSubject?: string;
   dedupeKey: string;
   title: string;
   description: string;
@@ -45,6 +46,7 @@ export type BenefitProposalV6 =
   & Omit<BenefitProposal, "dedupeKey" | "valueConfig" | "exclusions">
   & {
     benefitId: string;
+    offerSubject: string;
     dedupeKey: string;
     conditionHash: string;
     valueConfig: Record<string, unknown>;
@@ -650,9 +652,17 @@ function conditionKey(benefit: ParsedFields | BenefitProposalV6): string {
 function semanticKey(
   benefit: Pick<
     BenefitComparisonProposal,
-    "category" | "valueType" | "partners" | "restrictions" | "exclusions"
+    | "category"
+    | "valueType"
+    | "partners"
+    | "restrictions"
+    | "exclusions"
+    | "offerSubject"
   >,
 ): string {
+  if (benefit.offerSubject) {
+    return `offer-subject:${benefit.offerSubject}`;
+  }
   return JSON.stringify({
     category: normalize(benefit.category),
     valueType: benefit.valueType === undefined
@@ -667,16 +677,46 @@ function semanticKey(
 function conflictSubjectKey(
   benefit: Pick<
     BenefitComparisonProposal,
-    "category" | "valueType" | "partners"
+    "category" | "valueType" | "offerSubject"
   >,
 ): string {
-  return JSON.stringify({
+  return benefit.offerSubject ?? JSON.stringify({
     category: normalize(benefit.category),
     valueType: benefit.valueType === undefined
       ? undefined
       : normalize(benefit.valueType),
-    partners: benefit.partners?.map(normalize).sort(),
   });
+}
+
+export function offerSubjectForProposal(benefit: BenefitProposal): string {
+  const text = normalize(benefit.sourceExcerpt);
+  const qualifier = benefit.valueType === "lounge_access"
+    ? (/\bdomestic\b/.test(text)
+      ? "domestic"
+      : /\binternational\b/.test(text)
+      ? "international"
+      : "general")
+    : benefit.category === "cashback" || benefit.category === "rewards"
+    ? [
+      "dining",
+      "fuel",
+      "grocery",
+      "groceries",
+      "travel",
+      "movies",
+      "movie",
+      "online",
+      "international",
+      "utility",
+    ].map((term) => ({ term, index: text.search(new RegExp(`\\b${term}\\b`)) }))
+      .filter((candidate) => candidate.index >= 0)
+      .sort((left, right) => left.index - right.index)[0]?.term ?? "general"
+    : benefit.category === "entertainment"
+    ? "movie_tickets"
+    : "general";
+  return `${normalize(benefit.category)}:${
+    normalize(benefit.valueType ?? "benefit")
+  }:${qualifier}`;
 }
 
 function isCanonicalV6Proposal(
@@ -803,6 +843,7 @@ export async function extractGroundedBenefitsV6(
       .test(benefit.sourceExcerpt)
   );
   return await Promise.all(canonical.map(async (benefit) => {
+    const subject = offerSubjectForProposal(benefit);
     const input: CanonicalBenefitInput = {
       title: benefit.title,
       description: benefit.description,
@@ -826,6 +867,7 @@ export async function extractGroundedBenefitsV6(
     const dedupeKey = await cardScopedBenefitKey(cardId, input);
     return {
       ...benefit,
+      offerSubject: subject,
       benefitId: dedupeKey,
       dedupeKey,
       conditionHash,

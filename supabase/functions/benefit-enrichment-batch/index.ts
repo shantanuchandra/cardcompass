@@ -8,6 +8,7 @@ import {
   diffBenefits,
   extractGroundedBenefits,
   extractGroundedBenefitsV6,
+  offerSubjectForProposal,
 } from "../_shared/benefit_enrichment.ts";
 import { cardScopedBenefitKey } from "../_shared/benefit_contract.ts";
 import {
@@ -47,6 +48,7 @@ import {
   retirementEligibility,
   sanitizedSourceErrorCode,
   type SourceAttempt,
+  utcInstant,
 } from "./crawl_policy.ts";
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
@@ -66,7 +68,12 @@ type EnrichmentJob = {
   result_summary?: Record<string, unknown> | null;
 };
 
-type JobOutcome = "staged" | "quarantined" | "failed" | "review_required";
+type JobOutcome =
+  | "staged"
+  | "completed"
+  | "quarantined"
+  | "failed"
+  | "review_required";
 
 type ProcessResult = {
   outcome: JobOutcome;
@@ -175,7 +182,7 @@ export function currentBenefitProposal(
       Array.isArray(benefit.exclusions.additional.source_terms)
     ? benefit.exclusions.additional.source_terms.map(String)
     : [];
-  return {
+  const proposal: BenefitProposal = {
     ...(String(benefit.dedupe_key).startsWith("card-benefit-v2:")
       ? { benefitId: String(benefit.dedupe_key) }
       : {}),
@@ -224,6 +231,10 @@ export function currentBenefitProposal(
     evidence: {},
     warnings: [],
   };
+  if (proposal.benefitId) {
+    proposal.offerSubject = offerSubjectForProposal(proposal);
+  }
+  return proposal;
 }
 
 async function readCurrentBenefits(
@@ -414,7 +425,25 @@ function observationObjects(summary: unknown): Array<Record<string, unknown>> {
         Boolean(item) && typeof item === "object" && !Array.isArray(item)
       )
       : []),
-  ].slice(-24);
+  ];
+}
+
+export function newestValidCrawlObservations(
+  summaries: unknown[],
+): Array<Record<string, unknown>> {
+  const byTimestamp = new Map<string, Record<string, unknown>>();
+  for (const observation of summaries.flatMap(observationObjects)) {
+    const observedAt = typeof observation.observed_at === "string"
+      ? observation.observed_at
+      : "";
+    if (utcInstant(observedAt) === null || byTimestamp.has(observedAt)) {
+      continue;
+    }
+    byTimestamp.set(observedAt, observation);
+  }
+  return [...byTimestamp.entries()].sort((left, right) =>
+    Number(utcInstant(right[0])) - Number(utcInstant(left[0]))
+  ).slice(0, 24).map(([, observation]) => observation);
 }
 
 export async function readCompleteAbsenceHistory(
@@ -461,31 +490,31 @@ export async function readCompleteAbsenceHistory(
     }
   }
   const history: Record<string, string[]> = {};
-  for (const row of data ?? []) {
-    if (
+  const eligibleSummaries = (data ?? []).filter((
+    row: Record<string, unknown>,
+  ) =>
+    !(
       typeof row.staging_id === "string" &&
       !corroboratedStagingIds.has(row.staging_id)
-    ) continue;
-    for (const observation of observationObjects(row.result_summary)) {
-      if (observation.crawl_complete !== true) continue;
-      const observedAt = typeof observation.observed_at === "string"
-        ? observation.observed_at
-        : "";
-      for (
-        const identifier of [
-          ...(Array.isArray(observation.absent_benefit_ids)
-            ? observation.absent_benefit_ids
-            : []),
-          ...(Array.isArray(observation.absent_legacy_benefit_ids)
-            ? observation.absent_legacy_benefit_ids
-            : []),
-        ].map(String)
-      ) {
-        if (!requested.has(identifier)) continue;
-        history[identifier] = [
-          ...new Set([...(history[identifier] ?? []), observedAt]),
-        ].sort();
-      }
+    )
+  ).map((row: Record<string, unknown>) => row.result_summary);
+  for (const observation of newestValidCrawlObservations(eligibleSummaries)) {
+    if (observation.crawl_complete !== true) continue;
+    const observedAt = String(observation.observed_at);
+    for (
+      const identifier of [
+        ...(Array.isArray(observation.absent_benefit_ids)
+          ? observation.absent_benefit_ids
+          : []),
+        ...(Array.isArray(observation.absent_legacy_benefit_ids)
+          ? observation.absent_legacy_benefit_ids
+          : []),
+      ].map(String)
+    ) {
+      if (!requested.has(identifier)) continue;
+      history[identifier] = [
+        ...new Set([...(history[identifier] ?? []), observedAt]),
+      ].sort();
     }
   }
   return history;
@@ -498,6 +527,43 @@ export function shouldStageMaterialProposal(
 ): boolean {
   return !previousStagingId || !previousCanonicalHash ||
     previousCanonicalHash !== canonicalHash;
+}
+
+export function crawlProposalDisposition(input: {
+  crawlComplete: boolean;
+  currentCount: number;
+  proposedCount: number;
+}): "material" | "removal_review" | "no_change" | "incomplete" {
+  if (!input.crawlComplete && input.proposedCount === 0) return "incomplete";
+  if (input.proposedCount > 0) return "material";
+  return input.currentCount > 0 ? "removal_review" : "no_change";
+}
+
+export function observationValidatedAt(
+  retrievedAt: string,
+  _completionTime?: string,
+): string {
+  if (utcInstant(retrievedAt) === null) {
+    throw new Error("invalid_observation_timestamp");
+  }
+  return retrievedAt;
+}
+
+export async function stagingContentHashForObservation(input: {
+  disposition: "material" | "removal_review" | "no_change" | "incomplete";
+  sourceManifestHash: string;
+  observedAt: string;
+  removals: Array<{ benefitId: string; retirementEligible: boolean }>;
+}): Promise<string> {
+  if (input.disposition !== "removal_review") return input.sourceManifestHash;
+  const removals = [...input.removals].sort((left, right) =>
+    left.benefitId.localeCompare(right.benefitId)
+  );
+  return await sha256Text(JSON.stringify({
+    source_manifest_hash: input.sourceManifestHash,
+    observed_at: observationValidatedAt(input.observedAt),
+    removals,
+  }));
 }
 
 export function rawOnlyNextRunAt(observedAt: string): string {
@@ -868,9 +934,6 @@ async function processJob(
     const collected = await collectSupportingBenefitDocuments({
       issuer: job.issuer,
       primary: page,
-      // One card runs per invocation; keep its supporting crawl deliberately
-      // small even though the collector enforces an audited ceiling of eight.
-      maximumLinks: 1,
       requestDeadlineAt: invocationStartedAt + INVOCATION_DEADLINE_MS,
       identityLabels: [
         String(card.card_name ?? ""),
@@ -887,7 +950,7 @@ async function processJob(
         "benefits-v6"
       ? await extractGroundedBenefitsV6(documents, "benefits-v6", job.card_id)
       : extractGroundedBenefits(documents, job.parser_version);
-    if (proposed.length === 0) {
+    if (proposed.length === 0 && !crawl.complete) {
       const incomplete = await incompleteObservationState({
         job,
         current,
@@ -931,6 +994,11 @@ async function processJob(
       ...rawComparison,
       possibleRemovals: removalPolicy.possibleRemovals,
     };
+    const proposalDisposition = crawlProposalDisposition({
+      crawlComplete: crawl.complete,
+      currentCount: current.length,
+      proposedCount: proposed.length,
+    });
     const observation = buildCrawlObservation({
       observedAt: page.retrievedAt,
       crawlComplete: crawl.complete,
@@ -941,6 +1009,15 @@ async function processJob(
       absentLegacyBenefitIds: removalPolicy.absentLegacyBenefitIds,
       attempts: crawl.attempts,
     });
+    const stagingContentHash = await stagingContentHashForObservation({
+      disposition: proposalDisposition,
+      sourceManifestHash,
+      observedAt: page.retrievedAt,
+      removals: compared.possibleRemovals.map((removal) => ({
+        benefitId: removal.benefit.benefitId ?? removal.benefit.dedupeKey,
+        retirementEligible: removal.retirementEligible,
+      })),
+    });
     const confidenceValues = proposed.flatMap((benefit) =>
       Object.values(benefit.confidence)
     );
@@ -950,7 +1027,7 @@ async function processJob(
     const safeExtraction = {
       request_type: "official_benefit_enrichment",
       parser_version: job.parser_version,
-      content_hash: sourceManifestHash,
+      content_hash: stagingContentHash,
       source_manifest_hash: sourceManifestHash,
       canonical_benefit_hash: canonicalBenefitHash,
       retrieved_at: page.retrievedAt,
@@ -962,27 +1039,37 @@ async function processJob(
       proposals: proposed,
       diff: compared,
     };
-    const sourceEvidence = proposed.map((benefit) => ({
-      dedupe_key: benefit.dedupeKey,
-      source_url: benefit.sourceUrl,
-      source_excerpt: benefit.sourceExcerpt.slice(0, 500),
-      content_hash: benefit.contentHash.slice(0, 128),
-      evidence: Object.fromEntries(
-        Object.entries(benefit.evidence).slice(0, 32).map((
-          [field, excerpt],
-        ) => [field.slice(0, 64), String(excerpt).slice(0, 500)]),
-      ),
-    }));
+    const sourceEvidence = proposed.length > 0
+      ? proposed.map((benefit) => ({
+        dedupe_key: benefit.dedupeKey,
+        source_url: benefit.sourceUrl,
+        source_excerpt: benefit.sourceExcerpt.slice(0, 500),
+        content_hash: benefit.contentHash.slice(0, 128),
+        evidence: Object.fromEntries(
+          Object.entries(benefit.evidence).slice(0, 32).map((
+            [field, excerpt],
+          ) => [field.slice(0, 64), String(excerpt).slice(0, 500)]),
+        ),
+      }))
+      : [{
+        evidence_type: "crawl_observation",
+        source_url: boundedSourceUrl(page.canonicalUrl),
+        content_hash: sourceManifestHash,
+        crawl_complete: true,
+        absent_benefit_ids: observation.absent_benefit_ids,
+        absent_legacy_benefit_ids: observation.absent_legacy_benefit_ids,
+      }];
     const previousObservation = observationObjects(job.result_summary).at(-1);
     const previousCanonicalHash = typeof previousObservation
         ?.canonical_benefit_hash === "string"
       ? previousObservation.canonical_benefit_hash
       : null;
-    const materialProposal = shouldStageMaterialProposal(
-      previousCanonicalHash,
-      canonicalBenefitHash,
-      job.staging_id,
-    );
+    const materialProposal = proposalDisposition === "removal_review" ||
+      (proposalDisposition === "material" && shouldStageMaterialProposal(
+        previousCanonicalHash,
+        canonicalBenefitHash,
+        job.staging_id,
+      ));
     let reusedStaging = false;
     let rawOnlyDueAt: string | null = null;
     if (materialProposal) {
@@ -994,14 +1081,14 @@ async function processJob(
           _source_url: page.canonicalUrl,
           _source_url_hash: await sha256Text(page.canonicalUrl),
           _parser_version: job.parser_version,
-          _content_hash: sourceManifestHash,
+          _content_hash: stagingContentHash,
           _extracted_data: safeExtraction,
           _calculated_confidence: calculatedConfidence,
           _validation_reasons: [{ code: "official_issuer_source" }],
           _validation_warnings: proposed.flatMap((benefit) => benefit.warnings)
             .map((code) => ({ code: String(code).slice(0, 64) })),
           _source_evidence: sourceEvidence,
-          _validated_at: new Date().toISOString(),
+          _validated_at: observationValidatedAt(page.retrievedAt),
         },
       );
       const staged = Array.isArray(stagedRows) ? stagedRows[0] : stagedRows;
@@ -1011,8 +1098,10 @@ async function processJob(
       stagingId = String(staged.staging_id);
       reusedStaging = staged.reused === true;
     } else {
-      stagingId = String(job.staging_id);
-      reusedStaging = true;
+      stagingId = proposalDisposition === "no_change"
+        ? null
+        : String(job.staging_id);
+      reusedStaging = proposalDisposition !== "no_change";
       rawOnlyDueAt = rawOnlyNextRunAt(page.retrievedAt);
       const { error: dueDateError } = await db
         .from("card_catalog_enrichment_jobs")
@@ -1022,7 +1111,7 @@ async function processJob(
         .eq("lease_token", job.lease_token);
       if (dueDateError) throw dueDateError;
     }
-    outcome = "staged";
+    outcome = proposalDisposition === "no_change" ? "completed" : "staged";
     normalizedFields = {
       proposed_count: proposed.length,
       source_document_count: documents.length,
@@ -1045,6 +1134,8 @@ async function processJob(
       conflicts: compared.conflicts.length,
       reused_staging: reusedStaging,
       material_proposal: materialProposal,
+      proposal_disposition: proposalDisposition,
+      successful_no_change: proposalDisposition === "no_change",
       ...(rawOnlyDueAt ? { next_run_at: rawOnlyDueAt } : {}),
       source_manifest_hash: sourceManifestHash,
       canonical_benefit_hash: canonicalBenefitHash,
@@ -1101,12 +1192,14 @@ async function processJob(
 async function runIssuerDiscovery(
   db: UntypedSupabaseClient,
   job: Pick<EnrichmentJob, "issuer" | "canonical_url">,
+  deadlineAt: number,
 ): Promise<void> {
   const fallback = issuerDiscoveryFallbackUrls(job.canonical_url);
   const result = await discoverIssuerCardCandidates({
     issuer: job.issuer,
     sitemapUrls: fallback.sitemapUrls,
     indexUrls: fallback.indexUrls,
+    deadlineAt,
   });
   for (const candidate of result.candidates) {
     if (candidate.kind === "card_product") {
@@ -1246,7 +1339,11 @@ export async function handleBenefitEnrichmentBatch(
       const discoverySeed = await loadDiscoverySeed(db);
       if (discoverySeed) {
         EdgeRuntime.waitUntil(
-          runIssuerDiscovery(db, discoverySeed).catch((error) => {
+          runIssuerDiscovery(
+            db,
+            discoverySeed,
+            invocationStartedAt + INVOCATION_DEADLINE_MS,
+          ).catch((error) => {
             console.error(JSON.stringify({
               event: "issuer_discovery_background_failed",
               run_id: runId,
@@ -1262,6 +1359,8 @@ export async function handleBenefitEnrichmentBatch(
       queued: Number(queued ?? 0),
       claimed: jobs.length,
       staged: results.filter((result) => result.outcome === "staged").length,
+      completed: results.filter((result) => result.outcome === "completed")
+        .length,
       quarantined: results.filter((result) =>
         result.outcome === "quarantined"
       ).length,

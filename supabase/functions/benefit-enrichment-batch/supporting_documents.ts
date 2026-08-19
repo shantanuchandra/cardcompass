@@ -20,6 +20,8 @@ const unsafePath =
   /(?:^|[/?=&_.-])(?:login|apply|application|track|support|help)(?:$|[/?=&_.-])/i;
 const anchorPattern =
   /<a\b[^>]*\bhref\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))[^>]*>/gi;
+const requiredSourcePattern =
+  /(?:^|[/?=&_.-])(?:terms?|conditions?|mitc|fees?|charges?)(?:$|[/?=&_.-])/i;
 
 const exactSupportingSources: Record<string, Record<string, string[]>> = {
   "SBI Card": {
@@ -77,6 +79,15 @@ function exactSupportingUrls(issuer: string, labels: string[]): string[] {
     ).filter(Boolean),
   );
   return [...exactLabels].flatMap((label) => sources[label] ?? []);
+}
+
+function sourceRole(
+  url: string,
+  curated: boolean,
+): "required_supporting" | "supporting" {
+  return curated || requiredSourcePattern.test(url)
+    ? "required_supporting"
+    : "supporting";
 }
 
 function linkedUrls(
@@ -147,8 +158,11 @@ export async function collectSupportingBenefitDocuments(
   }];
   const seen = new Set([input.primary.canonicalUrl]);
   const exactUrls = exactSupportingUrls(input.issuer, input.identityLabels);
-  const queue = [
-    ...exactUrls,
+  const exactSet = new Set(
+    exactUrls.map((url) => canonicalOfficialUrl(input.issuer, url)),
+  );
+  const initialUrls = [
+    ...exactSet,
     ...linkedUrls(
       input.issuer,
       input.primary.canonicalUrl,
@@ -156,36 +170,51 @@ export async function collectSupportingBenefitDocuments(
       input.identityLabels,
       input.primary.canonicalUrl,
     ),
-  ].map((url, index) => ({
+  ];
+  const queue = [...new Set(initialUrls)].slice(0, MAX_SUPPORTING_LINKS).map((
+    url,
+  ) => ({
     url: canonicalOfficialUrl(input.issuer, url),
     depth: 1,
-    role: index < exactUrls.length
-      ? "required_supporting" as const
-      : (/\.pdf(?:$|[?#])/i.test(url)
-        ? "required_supporting" as const
-        : "supporting" as const),
-  }));
+    role: sourceRole(
+      url,
+      exactSet.has(canonicalOfficialUrl(input.issuer, url)),
+    ),
+  })).sort((left, right) =>
+    Number(right.role === "required_supporting") -
+    Number(left.role === "required_supporting")
+  );
   let fetched = 0;
-  for (
-    let position = 0;
-    position < queue.length && fetched < budget;
-    position++
-  ) {
+  for (let position = 0; position < queue.length; position++) {
     const current = queue[position];
     if (seen.has(current.url)) continue;
     seen.add(current.url);
+    if (fetched >= budget) {
+      if (current.role === "required_supporting") {
+        attempts.push({
+          url: current.url,
+          role: current.role,
+          status: "failed",
+          errorCode: "fetch_budget_exhausted",
+          attemptedAt: new Date().toISOString(),
+        });
+      }
+      continue;
+    }
     fetched += 1;
     if (
       input.requestDeadlineAt !== undefined &&
       Date.now() >= input.requestDeadlineAt
     ) {
-      attempts.push({
-        url: current.url,
-        role: current.role,
-        status: "failed",
-        errorCode: "deadline_exceeded",
-        attemptedAt: new Date().toISOString(),
-      });
+      if (current.role === "required_supporting") {
+        attempts.push({
+          url: current.url,
+          role: current.role,
+          status: "failed",
+          errorCode: "deadline_exceeded",
+          attemptedAt: new Date().toISOString(),
+        });
+      }
       continue;
     }
     let resource: OfficialFetchResult;
@@ -243,13 +272,26 @@ export async function collectSupportingBenefitDocuments(
         )
       ) {
         if (!seen.has(url)) {
-          queue.push({
+          const discovered = {
             url,
             depth: current.depth + 1,
-            role: /\.pdf(?:$|[?#])/i.test(url)
-              ? "required_supporting" as const
-              : "supporting" as const,
-          });
+            role: sourceRole(url, false),
+          };
+          if (
+            queue.length >= MAX_SUPPORTING_LINKS &&
+            discovered.role === "required_supporting"
+          ) {
+            const replaceable = queue.findLastIndex((item, index) =>
+              index > position && item.role === "supporting"
+            );
+            if (replaceable >= 0) queue.splice(replaceable, 1);
+          }
+          if (queue.length >= MAX_SUPPORTING_LINKS) continue;
+          if (discovered.role === "required_supporting") {
+            queue.splice(position + 1, 0, discovered);
+          } else {
+            queue.push(discovered);
+          }
         }
       }
     }

@@ -53,6 +53,8 @@ export type DiscoverIssuerCardCandidatesInput = {
   fetchOfficialIssuerResource?: OfficialFetcher;
   delay?: (milliseconds: number) => Promise<void> | void;
   delayMs?: number;
+  deadlineAt?: number;
+  now?: () => number;
 };
 
 export function issuerDiscoveryFallbackUrls(originUrl: string): {
@@ -685,6 +687,12 @@ export async function discoverIssuerCardCandidates(
     contentPurpose: OfficialFetchInput["contentPurpose"],
   ) => {
     if (hasRequested) await delay(input.delayMs ?? DEFAULT_CRAWL_DELAY_MS);
+    if (
+      input.deadlineAt !== undefined &&
+      (input.now ?? Date.now)() >= input.deadlineAt
+    ) {
+      throw new Error("deadline_exceeded");
+    }
     hasRequested = true;
     return await fetchResource({ issuer: input.issuer, url, contentPurpose });
   };

@@ -12,6 +12,7 @@ export type SourceAttempt = {
   errorCode?: string;
   attemptedAt: string;
   parserCacheReusable?: boolean;
+  logicalSourceKey?: string;
 };
 
 export type CrawlAssessment = {
@@ -24,6 +25,7 @@ const SAFE_ERROR_CODES = new Set([
   "corrupt_pdf",
   "deadline_exceeded",
   "empty_document",
+  "fetch_budget_exhausted",
   "http_403",
   "http_404",
   "http_410",
@@ -69,6 +71,26 @@ function bounded(
   return normalized ? normalized.slice(0, maximum) : undefined;
 }
 
+function sanitizedLogicalSourceKey(
+  value: string | undefined,
+): string | undefined {
+  if (!value?.trim()) return undefined;
+  if (/^https?:\/\//i.test(value)) return boundedSourceUrl(value);
+  const normalized = value.toLowerCase().replace(/[^a-z0-9:_./-]+/g, "-")
+    .replace(/^-+|-+$/g, "").slice(0, 256);
+  return ["primary", "submitted", "final", "unconditional", "other"].includes(
+      normalized,
+    ) || /^[0-9a-f]{64}$/.test(normalized)
+    ? normalized
+    : `logical:${
+      [...normalized].reduce(
+        (hash, character) =>
+          Math.imul(hash ^ character.charCodeAt(0), 0x01000193) >>> 0,
+        0x811c9dc5,
+      ).toString(16).padStart(8, "0")
+    }`;
+}
+
 function sanitizedAttempt(attempt: SourceAttempt): SourceAttempt {
   const errorCode = attempt.errorCode && SAFE_ERROR_CODES.has(attempt.errorCode)
     ? attempt.errorCode
@@ -96,6 +118,11 @@ function sanitizedAttempt(attempt: SourceAttempt): SourceAttempt {
     ...(attempt.parserCacheReusable === true
       ? { parserCacheReusable: true }
       : {}),
+    ...(sanitizedLogicalSourceKey(attempt.logicalSourceKey)
+      ? {
+        logicalSourceKey: sanitizedLogicalSourceKey(attempt.logicalSourceKey),
+      }
+      : {}),
   };
 }
 
@@ -114,25 +141,60 @@ export function assessCrawlCompleteness(
   attempts: SourceAttempt[],
 ): CrawlAssessment {
   const persisted = attempts.map(sanitizedAttempt);
-  const primary = persisted.filter((attempt) => attempt.role === "primary");
-  if (primary.length !== 1) {
+  const grouped = new Map<
+    string,
+    Array<{ attempt: SourceAttempt; index: number }>
+  >();
+  for (const [index, attempt] of persisted.entries()) {
+    const logicalKey = attempt.logicalSourceKey ??
+      (attempt.role === "primary" ? "primary" : attempt.url);
+    const key = `${attempt.role}:${logicalKey}`;
+    grouped.set(key, [...(grouped.get(key) ?? []), { attempt, index }]);
+  }
+  const primaryGroups = [...grouped.entries()].filter(([key]) =>
+    key.startsWith("primary:")
+  );
+  if (primaryGroups.length !== 1) {
     return {
       complete: false,
-      reason: primary.length === 0 ? "missing_primary" : "multiple_primary",
+      reason: primaryGroups.length === 0
+        ? "missing_primary"
+        : "multiple_primary",
       attempts: persisted,
     };
   }
-  if (!successful(primary[0])) {
+  const terminal = (
+    entries: Array<{ attempt: SourceAttempt; index: number }>,
+  ): SourceAttempt | null => {
+    const dated = entries.map((entry) => ({
+      ...entry,
+      timestamp: utcInstant(entry.attempt.attemptedAt),
+    }));
+    if (dated.some((entry) => entry.timestamp === null)) return null;
+    if (new Set(dated.map((entry) => entry.timestamp)).size !== dated.length) {
+      return null;
+    }
+    return dated.sort((left, right) =>
+      Number(left.timestamp) - Number(right.timestamp) ||
+      left.index - right.index
+    ).at(-1)?.attempt ?? null;
+  };
+  const primary = terminal(primaryGroups[0][1]);
+  if (!primary || !successful(primary)) {
     return {
       complete: false,
       reason: "primary_incomplete",
       attempts: persisted,
     };
   }
+  const requiredGroups = [...grouped.entries()].filter(([key]) =>
+    key.startsWith("required_supporting:")
+  );
   if (
-    persisted.some((attempt) =>
-      attempt.role === "required_supporting" && !successful(attempt)
-    )
+    requiredGroups.some(([, entries]) => {
+      const latest = terminal(entries);
+      return !latest || !successful(latest);
+    })
   ) {
     return {
       complete: false,
@@ -143,7 +205,7 @@ export function assessCrawlCompleteness(
   return { complete: true, reason: "complete", attempts: persisted };
 }
 
-function utcInstant(value: string): number | null {
+export function utcInstant(value: string): number | null {
   const match = value.match(
     /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?Z$/,
   );

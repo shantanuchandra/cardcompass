@@ -3,16 +3,20 @@ import {
   buildCrawlObservation,
   claimLimitForInvocation,
   computeSourceManifestHash,
+  crawlProposalDisposition,
   currentBenefitProposal,
   initializePilotJobs,
   loadCatalogIdentity,
   networkWorkMayStart,
+  newestValidCrawlObservations,
+  observationValidatedAt,
   rawOnlyNextRunAt,
   readCompleteAbsenceHistory,
   readPilotStatus,
   requireExactCatalogIdentity,
   seedScheduledQueueIfAllowed,
   shouldStageMaterialProposal,
+  stagingContentHashForObservation,
 } from "./index.ts";
 import {
   diffBenefits,
@@ -926,6 +930,37 @@ Deno.test("same-card v6 observation history is bounded and ignores other identif
   );
 });
 
+Deno.test("history is globally deduplicated and limited to the newest 24 valid observations", () => {
+  const base = Date.parse("2026-01-01T00:00:00.000Z");
+  const summaries = Array.from({ length: 24 }, (_, row) => ({
+    observations: Array.from({ length: 24 }, (_, item) => ({
+      observed_at: new Date(base + (row * 24 + item) * 3_600_000).toISOString(),
+      crawl_complete: true,
+      absent_benefit_ids: [`benefit-${row}-${item}`],
+    })),
+  }));
+  summaries[0].observations.push({
+    observed_at: "not-a-date",
+    crawl_complete: true,
+    absent_benefit_ids: ["invalid"],
+  });
+  summaries[23].observations.push({
+    ...summaries[23].observations[23],
+  });
+
+  const observations = newestValidCrawlObservations(summaries);
+  assert(observations.length === 24, "history exceeded the global bound");
+  assert(
+    observations[0].observed_at ===
+      new Date(base + 575 * 3_600_000).toISOString(),
+    "history was not sorted newest first",
+  );
+  assert(
+    !JSON.stringify(observations).includes("invalid"),
+    "invalid history timestamp survived",
+  );
+});
+
 Deno.test("crawl observation retains bounded attempts and both hashes without raw bodies", () => {
   const observation = buildCrawlObservation({
     observedAt: "2026-08-19T00:00:00.000Z",
@@ -1039,6 +1074,60 @@ Deno.test("a raw-only source change does not create a material proposal", () => 
   );
 });
 
+Deno.test("source-complete zero extraction distinguishes removal review from no change", () => {
+  assert(
+    crawlProposalDisposition({
+      crawlComplete: true,
+      currentCount: 2,
+      proposedCount: 0,
+    }) === "removal_review",
+    "complete absence did not produce removal review",
+  );
+  assert(
+    crawlProposalDisposition({
+      crawlComplete: true,
+      currentCount: 0,
+      proposedCount: 0,
+    }) === "no_change",
+    "empty catalog did not produce successful no-change",
+  );
+  assert(
+    crawlProposalDisposition({
+      crawlComplete: false,
+      currentCount: 2,
+      proposedCount: 0,
+    }) === "incomplete",
+    "incomplete absence became a removal review",
+  );
+});
+
+Deno.test("later complete absence gets a distinct removal-review staging identity", async () => {
+  const first = await stagingContentHashForObservation({
+    disposition: "removal_review",
+    sourceManifestHash: "a".repeat(64),
+    observedAt: "2026-08-12T00:00:00.000Z",
+    removals: [{ benefitId: "benefit-1", retirementEligible: false }],
+  });
+  const second = await stagingContentHashForObservation({
+    disposition: "removal_review",
+    sourceManifestHash: "a".repeat(64),
+    observedAt: "2026-08-19T00:00:00.000Z",
+    removals: [{ benefitId: "benefit-1", retirementEligible: true }],
+  });
+
+  assert(first !== second, "retirement policy reused stale staging evidence");
+});
+
+Deno.test("staging validation time is the issuer retrieval observation time", () => {
+  assert(
+    observationValidatedAt(
+      "2026-08-19T00:00:00.000Z",
+      "2026-08-19T00:05:00.000Z",
+    ) === "2026-08-19T00:00:00.000Z",
+    "completion time replaced the observation time",
+  );
+});
+
 Deno.test("v5 keeps divergent source terms as separate legacy additions", () => {
   const shared = {
     title: "Dining cashback",
@@ -1079,6 +1168,94 @@ Deno.test("v5 keeps divergent source terms as separate legacy additions", () => 
 
   assert(diff.additions.length === 2, "v5 additions changed semantics");
   assert(diff.conflicts.length === 0, "v5 gained a v6 conflict rule");
+});
+
+Deno.test("v6 keeps independent dining and fuel cashback offers separate", async () => {
+  const proposals = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback on dining spends.",
+      contentHash: "a".repeat(64),
+    }, {
+      sourceUrl: "https://issuer.example/benefits",
+      text: "Get 5% cashback on fuel spends.",
+      contentHash: "b".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const diff = diffBenefits([], proposals);
+
+  assert(diff.additions.length === 2, "independent offers were collapsed");
+  assert(diff.conflicts.length === 0, "independent offers conflicted");
+});
+
+Deno.test("v6 treats partner changes within the same movie BOGO as a conflict", async () => {
+  const proposals = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text:
+        "Buy 1 movie ticket and get the second ticket free on BookMyShow, capped at Rs. 500 once per month.",
+      contentHash: "a".repeat(64),
+    }, {
+      sourceUrl: "https://issuer.example/terms",
+      text:
+        "Buy 1 movie ticket and get the second ticket free on District, capped at Rs. 500 once per month.",
+      contentHash: "b".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const diff = diffBenefits([], proposals);
+
+  assert(diff.additions.length === 0, "partner conflict became additions");
+  assert(diff.conflicts.length === 1, "partner conflict was not reviewed");
+});
+
+Deno.test("v6 separates domestic and international lounge offer subjects", async () => {
+  const proposals = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 2 lounge visits per quarter at domestic airports.",
+      contentHash: "a".repeat(64),
+    }, {
+      sourceUrl: "https://issuer.example/benefits",
+      text: "Get 4 lounge visits per quarter at international airports.",
+      contentHash: "b".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const diff = diffBenefits([], proposals);
+
+  assert(diff.additions.length === 2, "lounge families were collapsed");
+  assert(diff.conflicts.length === 0, "distinct lounge families conflicted");
+});
+
+Deno.test("v6 reviews changed terms within one domestic lounge subject", async () => {
+  const proposals = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 2 lounge visits per quarter at domestic airports.",
+      contentHash: "a".repeat(64),
+    }, {
+      sourceUrl: "https://issuer.example/terms",
+      text: "Get 4 lounge visits per quarter at domestic airports.",
+      contentHash: "b".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const diff = diffBenefits([], proposals);
+
+  assert(
+    diff.additions.length === 0,
+    "domestic lounge conflict became additions",
+  );
+  assert(
+    diff.conflicts.length === 1,
+    "domestic lounge terms were auto-selected",
+  );
 });
 
 for (
