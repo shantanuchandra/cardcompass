@@ -39,6 +39,52 @@ BEGIN
 END;
 $$;
 
+-- A deliberately conservative number domain shared with the Edge validator.
+-- It avoids JSON exponent spelling and unsafe coefficient differences between
+-- JavaScript JSON.stringify and PostgreSQL jsonb text.
+CREATE OR REPLACE FUNCTION public.canonical_json_numbers_are_safe(_value jsonb)
+RETURNS boolean
+LANGUAGE plpgsql
+IMMUTABLE
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  item jsonb;
+  rendered text;
+  numeric_value numeric;
+  coefficient numeric;
+BEGIN
+  CASE jsonb_typeof(_value)
+    WHEN 'number' THEN
+      rendered := _value::text;
+      BEGIN
+        numeric_value := rendered::numeric;
+        coefficient := replace(rendered, '.', '')::numeric;
+      EXCEPTION WHEN numeric_value_out_of_range OR invalid_text_representation THEN
+        RETURN false;
+      END;
+      RETURN numeric_value = 0 OR (
+        abs(numeric_value) >= 0.000001
+        AND abs(numeric_value) < 1000000000000000000000
+        AND rendered ~ '^-?[0-9]+(?:\.[0-9]{1,6})?$'
+        AND abs(coefficient) <= 9007199254740991
+      );
+    WHEN 'array' THEN
+      FOR item IN SELECT value FROM jsonb_array_elements(_value) LOOP
+        IF NOT public.canonical_json_numbers_are_safe(item) THEN RETURN false; END IF;
+      END LOOP;
+    WHEN 'object' THEN
+      FOR item IN SELECT value FROM jsonb_each(_value) LOOP
+        IF NOT public.canonical_json_numbers_are_safe(item) THEN RETURN false; END IF;
+      END LOOP;
+    ELSE
+      NULL;
+  END CASE;
+  RETURN true;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION public.canonical_benefit_condition_hash(
   _condition jsonb
 ) RETURNS text
@@ -94,6 +140,10 @@ DECLARE
   valid_from_value date;
   valid_until_value date;
   array_key text;
+  identity_migration jsonb;
+  legacy_condition jsonb;
+  legacy_condition_hash text;
+  legacy_dedupe_key text;
 BEGIN
   IF _envelope IS NULL OR jsonb_typeof(_envelope) <> 'object'
      OR _envelope->>'version' <> 'benefit-publication-v2'
@@ -102,6 +152,14 @@ BEGIN
      OR _envelope->'staged_proposal_binding' IS DISTINCT FROM _staged_proposal THEN
     RAISE EXCEPTION 'invalid_canonical_envelope';
   END IF;
+  IF EXISTS (
+    SELECT 1 FROM jsonb_object_keys(_envelope) AS key(value)
+    WHERE key.value NOT IN (
+      'version', 'staged_proposal_binding', 'staged_proposal_hash',
+      'condition', 'condition_hash', 'dedupe_key', 'benefit',
+      'identity_migration'
+    )
+  ) THEN RAISE EXCEPTION 'unknown_canonical_envelope_key'; END IF;
   condition_value := _envelope->'condition';
   benefit_value := _envelope->'benefit';
   IF jsonb_typeof(condition_value) <> 'object'
@@ -111,6 +169,70 @@ BEGIN
      OR jsonb_typeof(benefit_value->'value_config') <> 'object'
      OR jsonb_typeof(benefit_value->'exclusions') <> 'object' THEN
     RAISE EXCEPTION 'invalid_canonical_envelope_shape';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM jsonb_object_keys(condition_value) AS key(value)
+    WHERE key.value NOT IN (
+      'benefit_type', 'category', 'exclusions', 'partners', 'regions',
+      'restrictions', 'semantic_key', 'valid_from', 'valid_until', 'value_config'
+    )
+  ) THEN RAISE EXCEPTION 'unknown_canonical_condition_key'; END IF;
+  IF EXISTS (
+    SELECT 1 FROM jsonb_object_keys(benefit_value) AS key(value)
+    WHERE key.value NOT IN (
+      'title', 'description', 'benefit_category', 'benefit_type',
+      'value_config', 'partners', 'exclusions', 'regions', 'valid_from',
+      'valid_until'
+    )
+  ) THEN RAISE EXCEPTION 'unknown_canonical_benefit_key'; END IF;
+  IF EXISTS (
+    SELECT 1 FROM jsonb_object_keys(condition_value->'value_config') AS key(value)
+    WHERE key.value NOT IN (
+      'category', 'discount_type', 'discount_percent', 'discount_amount',
+      'max_discount_per_transaction', 'max_usage_per_month',
+      'max_usage_per_period', 'usage_period', 'monthly_cap', 'annual_cap',
+      'unit', 'milestone_type', 'threshold_amount', 'reward_value',
+      'multiplier', 'base_rate', 'currency_unit', 'platform', 'value', 'rate',
+      'cap', 'threshold', 'frequency', 'period', 'offer_subject',
+      'restrictions', 'exclusions'
+    )
+  ) THEN RAISE EXCEPTION 'unknown_canonical_value_config_key'; END IF;
+  IF EXISTS (
+    SELECT 1 FROM jsonb_object_keys(benefit_value->'value_config') AS key(value)
+    WHERE key.value NOT IN (
+      'category', 'discount_type', 'discount_percent', 'discount_amount',
+      'max_discount_per_transaction', 'max_usage_per_month',
+      'max_usage_per_period', 'usage_period', 'monthly_cap', 'annual_cap',
+      'unit', 'milestone_type', 'threshold_amount', 'reward_value',
+      'multiplier', 'base_rate', 'currency_unit', 'platform', 'value', 'rate',
+      'cap', 'threshold', 'frequency', 'period', 'offer_subject',
+      'restrictions', 'exclusions'
+    )
+  ) THEN RAISE EXCEPTION 'unknown_canonical_value_config_key'; END IF;
+  IF EXISTS (
+    SELECT 1 FROM jsonb_each(condition_value->'value_config') AS item(key, value)
+    WHERE jsonb_typeof(item.value) NOT IN ('string', 'number', 'boolean', 'null')
+  ) OR EXISTS (
+    SELECT 1 FROM jsonb_each(benefit_value->'value_config') AS item(key, value)
+    WHERE item.key NOT IN ('restrictions', 'exclusions')
+      AND jsonb_typeof(item.value) NOT IN ('string', 'number', 'boolean', 'null')
+  ) THEN RAISE EXCEPTION 'invalid_canonical_value_config'; END IF;
+  IF EXISTS (
+    SELECT 1 FROM jsonb_object_keys(condition_value->'exclusions') AS key(value)
+    WHERE key.value NOT IN (
+      'additional', 'categories', 'days', 'mcc_codes', 'merchants',
+      'transaction_types'
+    )
+  ) OR EXISTS (
+    SELECT 1 FROM jsonb_object_keys(condition_value->'exclusions'->'additional') AS key(value)
+    WHERE key.value <> 'source_terms'
+  ) THEN RAISE EXCEPTION 'unknown_canonical_exclusion_key'; END IF;
+  -- Numeric parity domain: non-zero abs >= 0.000001, abs <
+  -- 1000000000000000000000 (1e21), coefficient <= 9007199254740991.
+  IF NOT public.canonical_json_numbers_are_safe(_staged_proposal)
+     OR NOT public.canonical_json_numbers_are_safe(condition_value)
+     OR NOT public.canonical_json_numbers_are_safe(benefit_value) THEN
+    RAISE EXCEPTION 'unsafe_canonical_number';
   END IF;
   FOREACH array_key IN ARRAY ARRAY['partners', 'regions', 'restrictions']
   LOOP
@@ -171,6 +293,41 @@ BEGIN
      OR lower(coalesce(_envelope->>'condition_hash', '')) <> expected_condition_hash
      OR coalesce(_envelope->>'dedupe_key', '') <> expected_key THEN
     RAISE EXCEPTION 'canonical_envelope_identity_mismatch';
+  END IF;
+
+  identity_migration := _envelope->'identity_migration';
+  IF identity_migration IS NOT NULL THEN
+    IF jsonb_typeof(identity_migration) <> 'object' OR EXISTS (
+      SELECT 1 FROM jsonb_object_keys(identity_migration) AS key(value)
+      WHERE key.value NOT IN (
+        'kind', 'from_category', 'to_category', 'legacy_condition_hash',
+        'legacy_dedupe_key'
+      )
+    ) THEN RAISE EXCEPTION 'invalid_identity_migration'; END IF;
+    legacy_condition := jsonb_set(condition_value, '{category}', '"rewards"'::jsonb);
+    legacy_condition_hash := public.canonical_benefit_condition_hash(legacy_condition);
+    legacy_dedupe_key := 'card-benefit-v2:' || lower(_card_id::text) || ':' ||
+      legacy_condition_hash;
+    IF identity_migration->>'kind' <> 'category_alias_identity_migration'
+       OR identity_migration->>'from_category' <> 'rewards'
+       OR identity_migration->>'to_category' <> 'points'
+       OR identity_migration->>'legacy_condition_hash' <> legacy_condition_hash
+       OR identity_migration->>'legacy_dedupe_key' <> legacy_dedupe_key
+       OR lower(coalesce(_staged_proposal->>'category', '')) <> 'rewards'
+       OR _staged_proposal->>'benefitId' <> legacy_dedupe_key
+       OR _staged_proposal->>'dedupeKey' <> legacy_dedupe_key
+       OR lower(coalesce(_staged_proposal->>'conditionHash', '')) <> legacy_condition_hash
+       OR condition_value->>'category' <> 'points' THEN
+      RAISE EXCEPTION 'invalid_identity_migration';
+    END IF;
+  ELSIF lower(coalesce(_staged_proposal->>'category', '')) = 'rewards'
+     AND (
+       _staged_proposal->>'benefitId' IS DISTINCT FROM expected_key
+       OR _staged_proposal->>'dedupeKey' IS DISTINCT FROM expected_key
+       OR lower(coalesce(_staged_proposal->>'conditionHash', ''))
+          IS DISTINCT FROM expected_condition_hash
+     ) THEN
+    RAISE EXCEPTION 'category_alias_identity_migration_required';
   END IF;
 
   SELECT category.category_code INTO category_code
@@ -385,14 +542,22 @@ DECLARE
   review_payload_hash text;
   audit_decisions jsonb := '[]'::jsonb;
   audit_decision jsonb;
+  audit_source_evidence jsonb;
+  evidence_attached boolean := false;
+  review_identity_payload jsonb;
 BEGIN
   IF _staging_id IS NULL OR _reviewed_by IS NULL OR _decisions IS NULL
-     OR jsonb_typeof(_decisions) <> 'array' OR jsonb_array_length(_decisions) = 0 THEN
+     OR jsonb_typeof(_decisions) <> 'array' OR jsonb_array_length(_decisions) = 0
+     OR jsonb_array_length(_decisions) > 64
+     OR octet_length(public.canonical_json_text(_decisions)) > 262144 THEN
     RAISE EXCEPTION 'invalid_benefit_approval';
   END IF;
+  SELECT jsonb_agg(item.value - 'benefit' - 'edited_benefit' ORDER BY item.ordinality)
+  INTO review_identity_payload
+  FROM jsonb_array_elements(_decisions) WITH ORDINALITY AS item(value, ordinality);
   review_payload_hash := encode(
     extensions.digest(
-      convert_to(public.canonical_json_text(_decisions), 'UTF8'), 'sha256'
+      convert_to(public.canonical_json_text(review_identity_payload), 'UTF8'), 'sha256'
     ),
     'hex'
   );
@@ -423,6 +588,9 @@ BEGIN
   IF staging_row.card_id IS NULL
      OR staging_row.parser_version NOT IN ('benefits-v5', 'benefits-v6')
      OR NOT public.is_valid_official_source_evidence(staging_row.source_evidence)
+     OR jsonb_typeof(staging_row.source_evidence) <> 'array'
+     OR jsonb_array_length(staging_row.source_evidence) > 32
+     OR octet_length(public.canonical_json_text(staging_row.source_evidence)) > 32768
      OR jsonb_typeof(staging_row.extracted_data) <> 'object'
      OR staging_row.extracted_data->>'request_type' <> 'official_benefit_enrichment'
      OR staging_row.extracted_data->>'parser_version' <> staging_row.parser_version
@@ -438,6 +606,18 @@ BEGIN
   FOR decision IN SELECT item.value FROM jsonb_array_elements(_decisions) AS item(value)
   LOOP
     IF jsonb_typeof(decision) <> 'object' THEN RAISE EXCEPTION 'invalid_benefit_decision'; END IF;
+    IF EXISTS (
+      SELECT 1 FROM jsonb_object_keys(decision) AS key(value)
+      WHERE key.value NOT IN (
+        'action', 'reason', 'change_type', 'display_priority', 'is_primary',
+        'proposal_index', 'benefit_id', 'current_benefit_id',
+        'existing_benefit_id', 'benefit', 'edited_benefit',
+        'canonical_envelope'
+      )
+    ) OR length(coalesce(decision->>'reason', '')) > 500
+      OR octet_length(public.canonical_json_text(decision)) > 131072 THEN
+      RAISE EXCEPTION 'invalid_benefit_decision_shape';
+    END IF;
     decision_action := lower(trim(coalesce(decision->>'action', '')));
     IF decision_action NOT IN ('approve', 'edit', 'reject', 'keep_existing', 'retire') THEN
       RAISE EXCEPTION 'invalid_benefit_decision';
@@ -452,6 +632,13 @@ BEGIN
       canonical_envelope := public.validate_benefit_publication_envelope(
         decision->'canonical_envelope', staging_row.card_id, staged_proposal
       );
+      IF canonical_envelope ? 'identity_migration' THEN
+        IF decision->>'change_type' <> 'category_alias_identity_migration' THEN
+          RAISE EXCEPTION 'identity_migration_must_be_explicit';
+        END IF;
+      ELSIF decision->>'change_type' = 'category_alias_identity_migration' THEN
+        RAISE EXCEPTION 'invalid_identity_migration';
+      END IF;
       decision_identity := 'proposal:' || decision_proposal_index::text;
     ELSIF decision_action IN ('retire', 'keep_existing') THEN
       BEGIN
@@ -622,7 +809,7 @@ BEGIN
         staging_row.extracted_data, existing_benefit_id
       );
       UPDATE public.card_benefit_mapping
-      SET retired_at = statement_timestamp()
+      SET retired_at = coalesce(retired_at, statement_timestamp())
       WHERE card_id = staging_row.card_id
         AND benefit_id = existing_benefit_id;
       GET DIAGNOSTICS affected_rows = ROW_COUNT;
@@ -650,9 +837,15 @@ BEGIN
       'reviewed_by', _reviewed_by,
       'reviewed_at', statement_timestamp(),
       'review_payload_hash', review_payload_hash,
-      'parser_version', staging_row.parser_version,
-      'source_evidence', staging_row.source_evidence
+      'parser_version', staging_row.parser_version
     ));
+    IF NOT evidence_attached THEN
+      audit_source_evidence := staging_row.source_evidence;
+      audit_decision := audit_decision || jsonb_build_object(
+        'source_evidence', audit_source_evidence
+      );
+      evidence_attached := true;
+    END IF;
     audit_decisions := audit_decisions || jsonb_build_array(audit_decision);
   END LOOP;
 
@@ -770,7 +963,7 @@ DO $publication_envelope_v2_assertions$
 DECLARE
   card_a uuid := 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'::uuid;
   card_b uuid := 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'::uuid;
-  staged_proposal jsonb := '{"category":"rewards","title":"Five reward points"}'::jsonb;
+  staged_proposal jsonb := '{"category":"points","title":"Five reward points"}'::jsonb;
   condition_value jsonb := '{
     "benefit_type":"reward_points",
     "category":"points",
@@ -791,6 +984,14 @@ DECLARE
   card_a_key text;
   card_b_key text;
   cross_card_rejected boolean := false;
+  unknown_key_assertion boolean := false;
+  unsafe_numeric_assertion boolean := false;
+  identity_migration_assertion boolean := false;
+  legacy_condition jsonb;
+  legacy_condition_hash text;
+  legacy_dedupe_key text;
+  legacy_staged_proposal jsonb;
+  legacy_envelope jsonb;
 BEGIN
   staged_hash := encode(
     extensions.digest(
@@ -830,6 +1031,53 @@ BEGIN
   );
   BEGIN
     PERFORM public.validate_benefit_publication_envelope(
+      envelope_value || '{"nonce":"hash-only"}'::jsonb,
+      card_a, staged_proposal
+    );
+  EXCEPTION WHEN raise_exception THEN
+    unknown_key_assertion := true;
+  END;
+  BEGIN
+    PERFORM public.validate_benefit_publication_envelope(
+      jsonb_set(envelope_value, '{condition,value_config,rate}', '0.0000001'::jsonb),
+      card_a, staged_proposal
+    );
+  EXCEPTION WHEN raise_exception THEN
+    unsafe_numeric_assertion := true;
+  END;
+  legacy_condition := jsonb_set(condition_value, '{category}', '"rewards"'::jsonb);
+  legacy_condition_hash := public.canonical_benefit_condition_hash(legacy_condition);
+  legacy_dedupe_key := 'card-benefit-v2:' || lower(card_a::text) || ':' ||
+    legacy_condition_hash;
+  legacy_staged_proposal := staged_proposal || jsonb_build_object(
+    'category', 'rewards',
+    'benefitId', legacy_dedupe_key,
+    'dedupeKey', legacy_dedupe_key,
+    'conditionHash', legacy_condition_hash
+  );
+  legacy_envelope := jsonb_set(
+    jsonb_set(
+      envelope_value,
+      '{staged_proposal_binding}', legacy_staged_proposal
+    ),
+    '{staged_proposal_hash}',
+    to_jsonb(encode(extensions.digest(
+      convert_to(public.canonical_json_text(legacy_staged_proposal), 'UTF8'),
+      'sha256'
+    ), 'hex'))
+  ) || jsonb_build_object('identity_migration', jsonb_build_object(
+    'kind', 'category_alias_identity_migration',
+    'from_category', 'rewards',
+    'to_category', 'points',
+    'legacy_condition_hash', legacy_condition_hash,
+    'legacy_dedupe_key', legacy_dedupe_key
+  ));
+  PERFORM public.validate_benefit_publication_envelope(
+    legacy_envelope, card_a, legacy_staged_proposal
+  );
+  identity_migration_assertion := true;
+  BEGIN
+    PERFORM public.validate_benefit_publication_envelope(
       envelope_value, card_b, staged_proposal
     );
   EXCEPTION WHEN raise_exception THEN
@@ -839,13 +1087,17 @@ BEGIN
      OR validated_value->>'condition_hash' <> condition_hash
      OR validated_value->>'database_category_code' <> 'POINTS'
      OR card_a_key = card_b_key
-     OR NOT cross_card_rejected THEN
+     OR NOT cross_card_rejected
+     OR NOT unknown_key_assertion
+     OR NOT unsafe_numeric_assertion
+     OR NOT identity_migration_assertion THEN
     RAISE EXCEPTION 'canonical envelope assertion failed';
   END IF;
 END;
 $publication_envelope_v2_assertions$;
 
 REVOKE ALL ON FUNCTION public.canonical_json_text(jsonb) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.canonical_json_numbers_are_safe(jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.canonical_benefit_condition_hash(jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.card_scoped_benefit_key(uuid, jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.validate_benefit_publication_envelope(jsonb, uuid, jsonb) FROM PUBLIC, anon, authenticated;
@@ -853,6 +1105,7 @@ REVOKE ALL ON FUNCTION public.validate_locked_retirement_evidence(jsonb, uuid) F
 REVOKE ALL ON FUNCTION public.approve_card_benefit_enrichment(uuid, uuid, jsonb) FROM PUBLIC, anon, authenticated;
 
 GRANT EXECUTE ON FUNCTION public.canonical_json_text(jsonb) TO service_role;
+GRANT EXECUTE ON FUNCTION public.canonical_json_numbers_are_safe(jsonb) TO service_role;
 GRANT EXECUTE ON FUNCTION public.canonical_benefit_condition_hash(jsonb) TO service_role;
 GRANT EXECUTE ON FUNCTION public.card_scoped_benefit_key(uuid, jsonb) TO service_role;
 GRANT EXECUTE ON FUNCTION public.validate_benefit_publication_envelope(jsonb, uuid, jsonb) TO service_role;
@@ -871,6 +1124,7 @@ DECLARE
 BEGIN
   FOREACH protected_oid IN ARRAY ARRAY[
     'public.canonical_json_text(jsonb)'::regprocedure,
+    'public.canonical_json_numbers_are_safe(jsonb)'::regprocedure,
     'public.canonical_benefit_condition_hash(jsonb)'::regprocedure,
     'public.card_scoped_benefit_key(uuid,jsonb)'::regprocedure,
     'public.validate_benefit_publication_envelope(jsonb,uuid,jsonb)'::regprocedure,

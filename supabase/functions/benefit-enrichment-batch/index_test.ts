@@ -12,6 +12,7 @@ import {
   observationValidatedAt,
   rawOnlyNextRunAt,
   readCompleteAbsenceHistory,
+  readCurrentBenefits,
   readPilotStatus,
   requireExactCatalogIdentity,
   seedScheduledQueueIfAllowed,
@@ -236,6 +237,104 @@ Deno.test("an identical approved v6 exclusion object remains unchanged", async (
   const diff = diffBenefits([current], [proposed]);
   assert(diff.unchanged.length === 1, "identical v6 exclusions looked changed");
   assert(diff.conflicts.length === 0, "identical v6 exclusions conflicted");
+});
+
+Deno.test("DB category codes replay through the shared canonical category contract", async () => {
+  const fixtures = [
+    "Get 10% cashback on dining spends.",
+    "Earn 5 reward points for every ₹150 spent on eligible purchases.",
+    "Get 2 lounge visits per quarter at domestic airports.",
+  ];
+  for (const [index, text] of fixtures.entries()) {
+    const [proposed] = await extractGroundedBenefitsV6(
+      [{
+        sourceUrl: "https://issuer.example/card",
+        text,
+        contentHash: String(index + 1).repeat(64),
+      }],
+      "benefits-v6",
+      "card-1",
+    );
+    const current = currentBenefitProposal({
+      benefit_id: `${index + 1}`.repeat(8) + "-1111-4111-8111-111111111111",
+      dedupe_key: proposed.dedupeKey,
+      title: proposed.title,
+      description: proposed.description,
+      benefit_category: proposed.category.toUpperCase(),
+      benefit_type: proposed.valueType,
+      value_config: proposed.valueConfig,
+      partners: proposed.partners,
+      exclusions: proposed.exclusions,
+      valid_from: proposed.effectiveFrom,
+      valid_until: proposed.effectiveTo,
+    });
+    assert(current != null, "DB-shaped benefit did not reconstruct");
+    const diff = diffBenefits([current], [proposed]);
+    assert(
+      diff.unchanged.length === 1 && diff.conflicts.length === 0,
+      `${proposed.category.toUpperCase()} DB category did not replay unchanged`,
+    );
+  }
+});
+
+Deno.test("scheduled enrichment reads only lifecycle-active benefits and retains the live UUID", async () => {
+  const [old] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 5% cashback on dining spends.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const oldLiveId = "11111111-1111-4111-8111-111111111111";
+  let selectedTable = "";
+  const db = {
+    from(table: string) {
+      selectedTable = table;
+      return {
+        select() {
+          return this;
+        },
+        eq() {
+          return Promise.resolve({
+            data: [{
+              benefit_id: oldLiveId,
+              dedupe_key: old.dedupeKey,
+              title: old.title,
+              description: old.description,
+              benefit_category: "CASHBACK",
+              benefit_type: old.valueType,
+              value_config: old.valueConfig,
+              partners: old.partners,
+              exclusions: old.exclusions,
+            }],
+            error: null,
+          });
+        },
+      };
+    },
+  };
+  const current = await readCurrentBenefits(db, "card-1");
+  assert(
+    selectedTable === "active_card_benefits",
+    "scheduled enrichment bypassed the lifecycle-aware active view",
+  );
+  assert(
+    current.length === 1 && current[0].liveBenefitId === oldLiveId,
+    "active view reconstruction lost the live benefit UUID",
+  );
+  const futureReplacement = {
+    ...old,
+    rate: 10,
+    valueConfig: { ...old.valueConfig, rate: 10 },
+    effectiveFrom: "2026-09-01",
+  };
+  const diff = diffBenefits(current, [futureReplacement]);
+  assert(
+    diff.possibleRemovals.length === 0,
+    "old scheduled mapping became a possible removal before its boundary",
+  );
 });
 
 for (

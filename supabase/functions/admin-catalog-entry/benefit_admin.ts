@@ -90,8 +90,6 @@ const benefitFields = [
 const editableBenefitFields = [
   "title",
   "description",
-  "category",
-  "valueType",
   "value",
   "rate",
   "cap",
@@ -146,6 +144,231 @@ const v6ValueConfigFields = [
   "period",
   "offer_subject",
 ] as const;
+
+const canonicalEnvelopeRootKeys = new Set([
+  "version",
+  "staged_proposal_binding",
+  "staged_proposal_hash",
+  "condition",
+  "condition_hash",
+  "dedupe_key",
+  "benefit",
+  "identity_migration",
+]);
+const canonicalConditionKeys = new Set([
+  "benefit_type",
+  "category",
+  "exclusions",
+  "partners",
+  "regions",
+  "restrictions",
+  "semantic_key",
+  "valid_from",
+  "valid_until",
+  "value_config",
+]);
+const canonicalBenefitKeys = new Set([
+  "title",
+  "description",
+  "benefit_category",
+  "benefit_type",
+  "value_config",
+  "partners",
+  "exclusions",
+  "regions",
+  "valid_from",
+  "valid_until",
+]);
+const canonicalValueConfigKeys = new Set([
+  ...valueConfigFields,
+  ...v6ValueConfigFields,
+  "restrictions",
+  "exclusions",
+]);
+const canonicalExclusionKeys = new Set([
+  "additional",
+  "categories",
+  "days",
+  "mcc_codes",
+  "merchants",
+  "transaction_types",
+]);
+const identityMigrationKeys = new Set([
+  "kind",
+  "from_category",
+  "to_category",
+  "legacy_condition_hash",
+  "legacy_dedupe_key",
+]);
+
+function exactKeys(value: JsonRecord, allowed: Set<string>, code: string) {
+  if (Object.keys(value).some((key) => !allowed.has(key))) {
+    throw new BenefitAdminError(code, 409);
+  }
+}
+
+/**
+ * JSON numbers admitted into the cross-runtime hash domain. Exponents, unsafe
+ * integer coefficients, sub-micro non-zero values, and >=1e21 values are
+ * excluded so JavaScript serialization and PostgreSQL jsonb text are provably
+ * identical. Values are never rounded or stringified on just one side.
+ */
+function canonicalNumberIsSafe(value: number): boolean {
+  if (!Number.isFinite(value)) return false;
+  if (value === 0) return true;
+  const absolute = Math.abs(value);
+  if (absolute < 0.000001 || absolute >= 1e21) return false;
+  const rendered = String(value);
+  if (/[eE]/.test(rendered) || !/^-?\d+(?:\.\d{1,6})?$/.test(rendered)) {
+    return false;
+  }
+  return Number.isSafeInteger(Number(rendered.replace(".", "")));
+}
+
+function validateCanonicalNumbers(value: unknown): void {
+  if (typeof value === "number") {
+    if (!canonicalNumberIsSafe(value)) {
+      throw new BenefitAdminError("unsafe_canonical_number", 409);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach(validateCanonicalNumbers);
+  } else if (asRecord(value)) {
+    Object.values(value as JsonRecord).forEach(validateCanonicalNumbers);
+  }
+}
+
+function validateStringList(value: unknown, maximum: number, field: string) {
+  if (
+    !Array.isArray(value) || value.length > maximum ||
+    value.some((item) => typeof item !== "string" || item.length > 2_000)
+  ) throw new BenefitAdminError(`invalid_${field}`, 409);
+}
+
+function validateCanonicalExclusions(value: unknown): void {
+  const exclusions = asRecord(value);
+  if (!exclusions) {
+    throw new BenefitAdminError("invalid_canonical_exclusions", 409);
+  }
+  exactKeys(
+    exclusions,
+    canonicalExclusionKeys,
+    "unknown_canonical_exclusion_key",
+  );
+  for (const key of canonicalExclusionKeys) {
+    if (key === "additional") continue;
+    validateStringList(exclusions[key], 64, `canonical_exclusions_${key}`);
+  }
+  const additional = asRecord(exclusions.additional);
+  if (!additional) {
+    throw new BenefitAdminError("invalid_canonical_exclusions", 409);
+  }
+  exactKeys(
+    additional,
+    new Set(["source_terms"]),
+    "unknown_canonical_exclusion_key",
+  );
+  validateStringList(additional.source_terms, 64, "canonical_exclusion_terms");
+}
+
+function validateCanonicalCondition(
+  value: unknown,
+): asserts value is JsonRecord {
+  const condition = asRecord(value);
+  if (!condition) {
+    throw new BenefitAdminError("invalid_canonical_condition", 409);
+  }
+  exactKeys(
+    condition,
+    canonicalConditionKeys,
+    "unknown_canonical_condition_key",
+  );
+  const config = asRecord(condition.value_config);
+  if (!config) {
+    throw new BenefitAdminError("invalid_canonical_value_config", 409);
+  }
+  exactKeys(
+    config,
+    canonicalValueConfigKeys,
+    "unknown_canonical_value_config_key",
+  );
+  if (
+    Object.values(config).some((item) =>
+      item !== null && typeof item === "object"
+    )
+  ) throw new BenefitAdminError("invalid_canonical_value_config", 409);
+  validateCanonicalExclusions(condition.exclusions);
+  for (const field of ["partners", "regions", "restrictions"] as const) {
+    validateStringList(condition[field], 64, `canonical_${field}`);
+  }
+  validateCanonicalNumbers(condition);
+}
+
+export function validateCanonicalPublicationEnvelope(value: unknown): void {
+  const envelope = asRecord(value);
+  if (!envelope) throw new BenefitAdminError("invalid_canonical_envelope", 409);
+  exactKeys(
+    envelope,
+    canonicalEnvelopeRootKeys,
+    "unknown_canonical_envelope_key",
+  );
+  if (
+    envelope.version !== "benefit-publication-v2" ||
+    !digest(envelope.staged_proposal_hash) ||
+    !digest(envelope.condition_hash) ||
+    typeof envelope.dedupe_key !== "string" ||
+    envelope.dedupe_key.length > 200 ||
+    stableCanonicalJson(envelope).length > 262_144
+  ) throw new BenefitAdminError("invalid_canonical_envelope", 409);
+  validateCanonicalNumbers(envelope.staged_proposal_binding);
+  validateCanonicalCondition(envelope.condition);
+  const benefit = asRecord(envelope.benefit);
+  if (!benefit) throw new BenefitAdminError("invalid_canonical_benefit", 409);
+  exactKeys(benefit, canonicalBenefitKeys, "unknown_canonical_benefit_key");
+  const benefitConfig = asRecord(benefit.value_config);
+  if (!benefitConfig) {
+    throw new BenefitAdminError("invalid_canonical_value_config", 409);
+  }
+  exactKeys(
+    benefitConfig,
+    canonicalValueConfigKeys,
+    "unknown_canonical_value_config_key",
+  );
+  validateStringList(
+    benefitConfig.restrictions,
+    64,
+    "canonical_value_config_restrictions",
+  );
+  validateCanonicalExclusions(benefitConfig.exclusions);
+  if (
+    Object.entries(benefitConfig).some(([key, item]) =>
+      !["restrictions", "exclusions"].includes(key) && item !== null &&
+      typeof item === "object"
+    )
+  ) throw new BenefitAdminError("invalid_canonical_value_config", 409);
+  validateCanonicalExclusions(benefit.exclusions);
+  validateCanonicalNumbers(benefit);
+  if (envelope.identity_migration !== undefined) {
+    const migration = asRecord(envelope.identity_migration);
+    if (!migration) {
+      throw new BenefitAdminError("invalid_identity_migration", 409);
+    }
+    exactKeys(
+      migration,
+      identityMigrationKeys,
+      "unknown_identity_migration_key",
+    );
+    if (
+      migration.kind !== "category_alias_identity_migration" ||
+      migration.from_category !== "rewards" ||
+      migration.to_category !== "points" ||
+      !digest(migration.legacy_condition_hash) ||
+      typeof migration.legacy_dedupe_key !== "string" ||
+      migration.legacy_dedupe_key.length > 200
+    ) throw new BenefitAdminError("invalid_identity_migration", 409);
+  }
+}
 
 function asRecord(value: unknown): JsonRecord | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -619,6 +842,9 @@ async function allowedDecisions(
   if (!Array.isArray(value) || value.length === 0) {
     throw new BenefitAdminError("benefit_decisions_are_required");
   }
+  if (value.length > 64) {
+    throw new BenefitAdminError("benefit_decisions_limit", 409);
+  }
   const decisions = value.map(asRecord);
   if (decisions.some((decision) => decision === null)) {
     throw new BenefitAdminError("invalid_benefit_decision");
@@ -656,6 +882,9 @@ async function validateV5ApprovalDecisions(
   stagedExtraction: unknown,
   cardId: string,
 ): Promise<JsonRecord[]> {
+  if (decisions.length > 64) {
+    throw new BenefitAdminError("benefit_decisions_limit", 409);
+  }
   const extraction = asRecord(stagedExtraction);
   if (
     !extraction || extraction.request_type !== "official_benefit_enrichment" ||
@@ -687,6 +916,10 @@ async function validateV5ApprovalDecisions(
   const seen = new Set<string>();
   return await Promise.all(decisions.map(async (decision) => {
     const action = String(decision.action ?? "").toLowerCase();
+    if (
+      "canonical_envelope" in decision || "proposal_index" in decision ||
+      "existing_benefit_id" in decision
+    ) throw new BenefitAdminError("client_publication_authority_rejected", 409);
     if (
       !["approve", "edit", "reject", "keep_existing", "retire"].includes(
         action,
@@ -762,6 +995,10 @@ async function validateV5ApprovalDecisions(
     const server = benefitForOutput(staged.proposal, false) as JsonRecord;
     let effective = server;
     if (action === "edit") {
+      if (
+        ("category" in submitted && submitted.category !== server.category) ||
+        ("valueType" in submitted && submitted.valueType !== server.valueType)
+      ) throw new BenefitAdminError("immutable_benefit_taxonomy", 409);
       effective = { ...server };
       for (const field of editableBenefitFields) {
         if (!(field in submitted)) continue;
@@ -941,7 +1178,7 @@ export async function buildCanonicalPublicationEnvelope(
   });
   const exclusions = canonicalExclusions(input.exclusions);
   const restrictions = condition.restrictions as string[];
-  return {
+  const envelope = {
     version: "benefit-publication-v2",
     staged_proposal_binding: staged,
     staged_proposal_hash: await sha256Canonical(staged),
@@ -966,6 +1203,8 @@ export async function buildCanonicalPublicationEnvelope(
       valid_until: validUntil,
     },
   };
+  validateCanonicalPublicationEnvelope(envelope);
+  return envelope;
 }
 
 export function validateRetirementDecisionEvidence(
@@ -1042,6 +1281,9 @@ export async function validateV6ApprovalDecisions(
   stagedExtraction: unknown,
   cardId: string,
 ): Promise<JsonRecord[]> {
+  if (Array.isArray(decisions) && decisions.length > 64) {
+    throw new BenefitAdminError("benefit_decisions_limit", 409);
+  }
   const extraction = asRecord(stagedExtraction);
   if (
     !extraction || extraction.parser_version !== "benefits-v6" ||
@@ -1065,16 +1307,41 @@ export async function validateV6ApprovalDecisions(
     const input = canonicalApprovalInput(proposal);
     const canonicalHash = await canonicalBenefitHash([input]);
     const canonicalKey = await cardScopedBenefitKey(cardId, input);
+    const rawCategory = text(proposal.category, 200)?.normalize("NFKC")
+      .toLowerCase().trim();
+    const legacyCondition = {
+      ...canonicalConditionObject(input),
+      category: "rewards",
+    };
+    const legacyHash = await sha256Canonical([legacyCondition]);
+    const legacyKey = `card-benefit-v2:${cardId.toLowerCase()}:${legacyHash}`;
+    const exactCurrentIdentity = benefitId === canonicalKey &&
+      digest(proposal.conditionHash) === canonicalHash;
+    const exactLegacyRewardIdentity = rawCategory === "rewards" &&
+      benefitId === legacyKey && digest(proposal.conditionHash) === legacyHash;
     if (
       !benefitId || !dedupeKey || benefitId !== dedupeKey ||
-      benefitId !== canonicalKey ||
-      digest(proposal.conditionHash) !== canonicalHash ||
+      (!exactCurrentIdentity && !exactLegacyRewardIdentity) ||
       !text(proposal.offerSubject, 256) || !digest(proposal.sourceIdentity) ||
       stagedByKey.has(benefitId) || stagedDedupeKeys.has(dedupeKey)
     ) {
       throw new BenefitAdminError("invalid_staged_benefit_identity", 409);
     }
-    stagedByKey.set(benefitId, { ...proposal, proposalIndex: index });
+    stagedByKey.set(benefitId, {
+      ...proposal,
+      proposalIndex: index,
+      ...(exactLegacyRewardIdentity
+        ? {
+          identityMigration: {
+            kind: "category_alias_identity_migration",
+            from_category: "rewards",
+            to_category: "points",
+            legacy_condition_hash: legacyHash,
+            legacy_dedupe_key: legacyKey,
+          },
+        }
+        : {}),
+    });
     stagedDedupeKeys.add(dedupeKey);
   }
   const selected = new Set<string>();
@@ -1095,6 +1362,10 @@ export async function validateV6ApprovalDecisions(
   ];
   return await Promise.all((decisions as JsonRecord[]).map(async (decision) => {
     const action = String(decision.action ?? "").toLowerCase();
+    if (
+      "canonical_envelope" in decision || "proposal_index" in decision ||
+      "existing_benefit_id" in decision
+    ) throw new BenefitAdminError("client_publication_authority_rejected", 409);
     if (
       !["approve", "edit", "reject", "keep_existing", "retire"].includes(
         action,
@@ -1205,6 +1476,7 @@ export async function validateV6ApprovalDecisions(
       asRecord(modification?.current)?.liveBenefitId,
       100,
     );
+    const identityMigration = asRecord(server.identityMigration);
     if (action === "approve") {
       if (
         canonicalApprovalIdentity(submitted) !==
@@ -1212,19 +1484,31 @@ export async function validateV6ApprovalDecisions(
       ) {
         throw new BenefitAdminError("benefit_decision_identity_mismatch", 409);
       }
+      const canonicalEnvelope = await buildCanonicalPublicationEnvelope(
+        cardId,
+        rawStaged[proposalIndex!],
+      ) as JsonRecord;
+      if (identityMigration) {
+        canonicalEnvelope.identity_migration = identityMigration;
+        validateCanonicalPublicationEnvelope(canonicalEnvelope);
+      }
       return {
         ...base,
+        ...(identityMigration
+          ? { change_type: "category_alias_identity_migration" }
+          : {}),
         proposal_index: proposalIndex,
         ...(existingBenefitId
           ? { existing_benefit_id: existingBenefitId }
           : {}),
         benefit: server,
-        canonical_envelope: await buildCanonicalPublicationEnvelope(
-          cardId,
-          rawStaged[proposalIndex!],
-        ),
+        canonical_envelope: canonicalEnvelope,
       };
     }
+    if (
+      ("category" in submitted && submitted.category !== server.category) ||
+      ("valueType" in submitted && submitted.valueType !== server.valueType)
+    ) throw new BenefitAdminError("immutable_benefit_taxonomy", 409);
     const edited: JsonRecord = { ...server };
     for (const field of editableBenefitFields) {
       if (!(field in submitted)) continue;
@@ -1257,11 +1541,18 @@ export async function validateV6ApprovalDecisions(
       rawStaged[proposalIndex!],
       edited,
     );
+    if (identityMigration) {
+      (editedEnvelope as JsonRecord).identity_migration = identityMigration;
+      validateCanonicalPublicationEnvelope(editedEnvelope);
+    }
     if (originalEnvelope.condition_hash === editedEnvelope.condition_hash) {
       throw new BenefitAdminError("non_material_edit", 409);
     }
     return {
       ...base,
+      ...(identityMigration
+        ? { change_type: "category_alias_identity_migration" }
+        : {}),
       proposal_index: proposalIndex,
       ...(existingBenefitId ? { existing_benefit_id: existingBenefitId } : {}),
       edited_benefit: edited,

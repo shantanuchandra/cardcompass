@@ -150,6 +150,9 @@ export function currentBenefitProposal(
       String,
     )
     : [];
+  const presentedCategory = redactSensitiveUrlsInText(
+    String(benefit.benefit_category ?? "other"),
+  );
   const proposal = {
     ...(benefit.benefit_id
       ? { liveBenefitId: String(benefit.benefit_id) }
@@ -162,9 +165,12 @@ export function currentBenefitProposal(
     description: redactSensitiveUrlsInText(
       String(benefit.description ?? ""),
     ).slice(0, 500),
-    category: redactSensitiveUrlsInText(
-      String(benefit.benefit_category ?? "other"),
-    ),
+    // V6 condition identity uses the shared semantic category contract. Database
+    // enums/codes are commonly upper-case; normalizing them here keeps replay
+    // byte-stable without changing the legacy V5 comparison contract.
+    category: canonicalV6
+      ? canonicalBenefitCategory(presentedCategory) ?? presentedCategory
+      : presentedCategory,
     ...(benefit.benefit_type
       ? { valueType: redactSensitiveUrlsInText(String(benefit.benefit_type)) }
       : {}),

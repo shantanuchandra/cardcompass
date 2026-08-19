@@ -7,19 +7,53 @@ const secretBearingReference =
 const bareUserInfo =
   /\b[^\s:@/]+:[^\s@/]+@((?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?(?:\/[^\s?#]*)?)(?:[?#][^\s]*)?/gi;
 
+const MAX_PRESENTATION_INPUT = 16_384;
+const MAX_STRUCTURAL_DECODE_PASSES = 4;
+
 function decodeStructuralEncoding(value: string): string {
-  return value.replace(structuralEncoding, (match) => {
-    const normalized = match.toLowerCase().replace(/;$/, "");
-    if (["%3a", "&#x3a", "&#58", "&colon"].includes(normalized)) return ":";
-    if (["%2f", "&#x2f", "&#47", "&sol"].includes(normalized)) return "/";
-    if (["%3f", "&#x3f", "&#63", "&quest"].includes(normalized)) return "?";
-    if (["%23", "&#x23", "&#35", "&num"].includes(normalized)) return "#";
-    return "@";
-  }).replace(/&amp;/gi, "&");
+  let decoded = value.slice(0, MAX_PRESENTATION_INPUT);
+  for (let pass = 0; pass < MAX_STRUCTURAL_DECODE_PASSES; pass += 1) {
+    const next = decoded
+      // Decode a percent-encoded entity only as a unit. This detects mixed
+      // encodings without turning ordinary prose such as "100%25" into "%".
+      .replace(
+        /%26%23(x?(?:3a|2f|3f|23|40|58|47|63|35|64))%3b/gi,
+        "&#$1;",
+      )
+      // Peel percent layers only when they lead to a structural delimiter.
+      .replace(/%25(?=(?:25){0,2}(?:3a|2f|3f|23|40))/gi, "%")
+      // Likewise, unwrap ampersands only when the result remains a structural
+      // named/numeric entity; unrelated HTML prose remains untouched.
+      .replace(
+        /&amp;(?=(?:amp;){0,2}(?:#(?:x(?:3a|2f|3f|23|40)|(?:58|47|63|35|64));?|(?:colon|sol|quest|num|commat);))/gi,
+        "&",
+      )
+      .replace(structuralEncoding, (match) => {
+        const normalized = match.toLowerCase().replace(/;$/, "");
+        if (["%3a", "&#x3a", "&#58", "&colon"].includes(normalized)) {
+          return ":";
+        }
+        if (["%2f", "&#x2f", "&#47", "&sol"].includes(normalized)) {
+          return "/";
+        }
+        if (["%3f", "&#x3f", "&#63", "&quest"].includes(normalized)) {
+          return "?";
+        }
+        if (["%23", "&#x23", "&#35", "&num"].includes(normalized)) {
+          return "#";
+        }
+        return "@";
+      });
+    if (next === decoded) break;
+    decoded = next.slice(0, MAX_PRESENTATION_INPUT);
+  }
+  return decoded;
 }
 
 export function safeHttpsDisplayUrl(value: unknown): string | null {
-  if (typeof value !== "string" || value.length > 16_384) return null;
+  if (typeof value !== "string" || value.length > MAX_PRESENTATION_INPUT) {
+    return null;
+  }
   try {
     const url = new URL(value.trim());
     if (url.protocol !== "https:" || !url.hostname) return null;

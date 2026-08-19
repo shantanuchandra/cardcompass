@@ -167,12 +167,15 @@ export async function readPilotStatus(
   return evaluatePilotGate((data ?? []).map(pilotJob));
 }
 
-async function readCurrentBenefits(
+export async function readCurrentBenefits(
   db: UntypedSupabaseClient,
   cardId: string,
 ): Promise<BenefitComparisonProposal[]> {
-  const { data, error } = await db.from("card_benefit_mapping")
-    .select("benefit:benefits(*)")
+  // The Task 2 view is the one authoritative UTC lifecycle projection. In
+  // particular, it excludes future replacements while retaining an old mapping
+  // whose retirement boundary has not arrived yet.
+  const { data, error } = await db.from("active_card_benefits")
+    .select("*")
     .eq("card_id", cardId);
   if (error) throw error;
   return (data ?? []).map(currentBenefitProposal)

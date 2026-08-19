@@ -62,6 +62,7 @@ test('publication inserts immutable canonical rows and scopes every lifecycle mu
     assert.match(statement, /benefit_id\s*=\s*(?:staged_)?existing_benefit_id/i);
   }
   assert.match(approval, /canonical_benefit->>'valid_from'[\s\S]*AT TIME ZONE 'UTC'[\s\S]*retired_at/i);
+  assert.match(approval, /SET retired_at\s*=\s*coalesce\(retired_at, statement_timestamp\(\)\)/i);
 });
 
 test('retirement, audit append, replay, and linked-job completion fail closed', async () => {
@@ -72,6 +73,10 @@ test('retirement, audit append, replay, and linked-job completion fail closed', 
   assert.match(retirement, /retirementEligible[\s\S]*retirementReason[\s\S]*retirement_not_eligible/i);
   assert.match(approval, /benefit_decisions\s*=\s*CASE[\s\S]*\|\|\s*audit_decisions/i);
   assert.match(approval, /source_evidence/i);
+  assert.match(approval, /jsonb_array_length\(staging_row\.source_evidence\)\s*>\s*32[\s\S]*octet_length[\s\S]*32768/i);
+  assert.match(approval, /audit_source_evidence[\s\S]*evidence_attached[\s\S]*source_evidence/i);
+  assert.match(approval, /jsonb_array_length\(_decisions\)\s*>\s*64[\s\S]*octet_length[\s\S]*262144/i);
+  assert.match(approval, /length\(coalesce\(decision->>'reason'[\s\S]*>\s*500/i);
   assert.match(approval, /review_payload_hash[\s\S]*already_reviewed/i);
   assert.match(approval, /UPDATE public\.card_catalog_enrichment_jobs[\s\S]*status\s*=\s*'completed'[\s\S]*next_run_at\s*=\s*statement_timestamp\(\)\s*\+\s*interval '30 days'/i);
   assert.match(approval, /staging_id\s*=\s*staging_row\.id/i);
@@ -88,6 +93,12 @@ test('canonical helpers validate commercial shapes, dates, arrays, and stable SH
   assert.match(envelope, /description[\s\S]*8_000|description[\s\S]*8000/i);
   assert.match(envelope, /offer_subject[\s\S]*semantic_key/i);
   assert.match(envelope, /value_config[\s\S]*restrictions[\s\S]*exclusions/i);
+  assert.match(envelope, /jsonb_object_keys\(_envelope\)[\s\S]*unknown_canonical_envelope_key/i);
+  assert.match(envelope, /jsonb_object_keys\(condition_value\)[\s\S]*unknown_canonical_condition_key/i);
+  assert.match(envelope, /jsonb_object_keys\(condition_value->'value_config'\)[\s\S]*unknown_canonical_value_config_key/i);
+  assert.match(envelope, /0\.000001|1e-6/i);
+  assert.match(envelope, /1000000000000000000000|1e21/i);
+  assert.match(envelope, /9007199254740991/i);
   assert.match(key, /card-benefit-v2:/i);
   assert.match(key, /canonical_benefit_condition_hash/i);
   assert.match(functionBody(sql, 'canonical_benefit_condition_hash'), /extensions\.digest[\s\S]*sha256/i);
@@ -125,6 +136,8 @@ test('locked retirement proof and all-action duplicate identities are enforced b
   assert.match(sql, /explicit_past_end_date_assertion/i);
   assert.match(sql, /eligibility_reason_mismatch/i);
   assert.match(sql, /publication_envelope_v2_assertions[\s\S]*card_a_key[\s\S]*card_b_key[\s\S]*canonical envelope assertion failed/i);
+  assert.match(sql, /unknown_key_assertion[\s\S]*unsafe_numeric_assertion/i);
+  assert.match(sql, /category_alias_identity_migration[\s\S]*legacy_condition_hash[\s\S]*legacy_dedupe_key/i);
 });
 
 test('linked completion is card/parser/status scoped and asserts a first-review target', async () => {

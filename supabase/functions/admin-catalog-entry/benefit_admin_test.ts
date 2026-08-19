@@ -3,6 +3,7 @@ import {
   handleBenefitAdminAction,
   presentBenefitJob,
   sanitizeAdminDto,
+  validateCanonicalPublicationEnvelope,
   validateRetirementDecisionEvidence,
   validateV6ApprovalDecisions,
 } from "./benefit_admin.ts";
@@ -11,6 +12,10 @@ import {
   diffBenefits,
   extractGroundedBenefitsV6,
 } from "../_shared/benefit_enrichment.ts";
+import {
+  canonicalConditionObject,
+  stableCanonicalJson,
+} from "../_shared/benefit_contract.ts";
 
 type AdminHandler = (
   request: Request,
@@ -20,6 +25,55 @@ type AdminHandler = (
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
+}
+
+async function sha256(value: unknown): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(stableCanonicalJson(value)),
+  );
+  return [...new Uint8Array(digest)].map((byte) =>
+    byte.toString(16).padStart(2, "0")
+  ).join("");
+}
+
+async function legacyRewardAliasProposal(
+  proposal: Record<string, any>,
+  cardId: string,
+) {
+  const config = { ...proposal.valueConfig };
+  delete config.offer_subject;
+  delete config.restrictions;
+  delete config.exclusions;
+  const condition = canonicalConditionObject({
+    title: proposal.title,
+    category: "points",
+    benefitType: proposal.valueType,
+    semanticKey: proposal.offerSubject,
+    value: proposal.value,
+    rate: proposal.rate,
+    cap: proposal.cap,
+    threshold: proposal.threshold,
+    frequency: proposal.frequency,
+    period: proposal.period,
+    valueConfig: config,
+    exclusions: proposal.exclusions,
+    restrictions: proposal.restrictions,
+    partners: proposal.partners,
+    regions: proposal.regions,
+    validFrom: proposal.effectiveFrom,
+    validUntil: proposal.effectiveTo,
+  });
+  condition.category = "rewards";
+  const conditionHash = await sha256([condition]);
+  const dedupeKey = `card-benefit-v2:${cardId.toLowerCase()}:${conditionHash}`;
+  return {
+    ...proposal,
+    category: "rewards",
+    conditionHash,
+    benefitId: dedupeKey,
+    dedupeKey,
+  };
 }
 
 async function handler(): Promise<AdminHandler> {
@@ -862,6 +916,14 @@ Deno.test("v6 approval is bound to exact server-staged canonical proposals", asy
       }],
     },
     {
+      label: "client canonical envelope injection",
+      decisions: [{
+        action: "approve",
+        benefit: proposal,
+        canonical_envelope: { nonce: "client-authority" },
+      }],
+    },
+    {
       label: "unknown proposal",
       decisions: [{
         action: "approve",
@@ -1059,6 +1121,124 @@ Deno.test("reward proposals publish with the shared points category and replay k
   );
 });
 
+Deno.test("canonical publication envelopes reject unknown keys and unsafe numeric domains", async () => {
+  const staged = {
+    title: "Dining cashback",
+    category: "cashback",
+    valueType: "cashback",
+    offerSubject: "cashback:cashback:dining",
+    rate: 10,
+    restrictions: ["dining spends"],
+    exclusions: [],
+    partners: [],
+    regions: ["IN"],
+  };
+  const accepted = await buildCanonicalPublicationEnvelope(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    staged,
+    { ...staged, rate: 0.000001, cap: Number.MAX_SAFE_INTEGER },
+  );
+  validateCanonicalPublicationEnvelope(accepted);
+
+  const invalid: Array<
+    { label: string; mutate: (value: Record<string, any>) => void }
+  > = [
+    { label: "root nonce", mutate: (value) => value.nonce = "hash-only" },
+    {
+      label: "condition nonce",
+      mutate: (value) => value.condition.nonce = "hash-only",
+    },
+    {
+      label: "nested config nonce",
+      mutate: (value) => value.condition.value_config.nonce = "hash-only",
+    },
+    {
+      label: "tiny number",
+      mutate: (value) => value.condition.value_config.rate = 1e-7,
+    },
+    {
+      label: "huge number",
+      mutate: (value) => value.condition.value_config.rate = 1e21,
+    },
+    {
+      label: "nested exclusion number",
+      mutate: (value) =>
+        value.condition.exclusions.additional.source_terms = [1e-7],
+    },
+  ];
+  for (const fixture of invalid) {
+    const envelope = structuredClone(accepted) as Record<string, any>;
+    fixture.mutate(envelope);
+    let error: unknown;
+    try {
+      validateCanonicalPublicationEnvelope(envelope);
+    } catch (caught) {
+      error = caught;
+    }
+    assert(error instanceof Error, `${fixture.label} envelope was accepted`);
+  }
+});
+
+Deno.test("pending pre-alias rewards v6 proposals migrate only from the exact legacy identity", async () => {
+  const cardId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const [current] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Earn 5 reward points for every ₹150 spent on eligible purchases.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    cardId,
+  );
+  const legacy = await legacyRewardAliasProposal(current, cardId);
+  const extraction = {
+    request_type: "official_benefit_enrichment",
+    parser_version: "benefits-v6",
+    proposals: [legacy],
+  };
+  const decisions = [{ action: "approve", benefit: legacy }];
+  const first = await validateV6ApprovalDecisions(
+    decisions,
+    extraction,
+    cardId,
+  );
+  const replay = await validateV6ApprovalDecisions(
+    decisions,
+    extraction,
+    cardId,
+  );
+  const envelope = first[0].canonical_envelope as Record<string, any>;
+  assert(
+    first[0].change_type === "category_alias_identity_migration" &&
+      envelope.condition.category === "points" &&
+      envelope.dedupe_key === current.dedupeKey &&
+      envelope.identity_migration?.legacy_dedupe_key === legacy.dedupeKey,
+    "exact pre-alias reward was not audited into the points identity",
+  );
+  assert(
+    stableCanonicalJson(first) === stableCanonicalJson(replay),
+    "legacy reward compatibility was not replay deterministic",
+  );
+
+  let tampered: unknown;
+  try {
+    await validateV6ApprovalDecisions(
+      decisions,
+      {
+        ...extraction,
+        proposals: [{ ...legacy, conditionHash: "f".repeat(64) }],
+      },
+      cardId,
+    );
+  } catch (caught) {
+    tampered = caught;
+  }
+  assert(
+    tampered instanceof Error,
+    "tampered pre-alias reward identity was accepted",
+  );
+});
+
 Deno.test("v6 edits reject display-only changes and preserve explicit date clears", async () => {
   const cardId = "card-1";
   const [extracted] = await extractGroundedBenefitsV6(
@@ -1107,6 +1287,29 @@ Deno.test("v6 edits reject display-only changes and preserve explicit date clear
       error instanceof Error &&
         (error as { code?: string }).code === "non_material_edit",
       "display-only edit was accepted",
+    );
+  }
+
+  for (
+    const taxonomyEdit of [
+      { ...proposal, category: "points", rate: 12 },
+      { ...proposal, valueType: "reward_points", rate: 12 },
+    ]
+  ) {
+    let error: unknown;
+    try {
+      await validateV6ApprovalDecisions(
+        [{ action: "edit", edited_benefit: taxonomyEdit }],
+        extraction,
+        cardId,
+      );
+    } catch (caught) {
+      error = caught;
+    }
+    assert(
+      error instanceof Error &&
+        (error as { code?: string }).code === "immutable_benefit_taxonomy",
+      "contradictory taxonomy edit was accepted",
     );
   }
 
@@ -1237,6 +1440,31 @@ Deno.test("v6 decisions reject duplicate proposal and live identities across eve
   }
 });
 
+Deno.test("v6 decision validation bounds one review payload before identity work", async () => {
+  let error: unknown;
+  try {
+    await validateV6ApprovalDecisions(
+      Array.from({ length: 65 }, (_, index) => ({
+        action: "reject",
+        reason: `reason-${index}`,
+      })),
+      {
+        request_type: "official_benefit_enrichment",
+        parser_version: "benefits-v6",
+        proposals: [],
+      },
+      "card-1",
+    );
+  } catch (caught) {
+    error = caught;
+  }
+  assert(
+    error instanceof Error &&
+      (error as { code?: string }).code === "benefit_decisions_limit",
+    "oversized review decisions were not rejected at the boundary",
+  );
+});
+
 Deno.test("v6 admin identity terms remain explicitly bounded", () => {
   const terms = Array.from({ length: 40 }, (_, index) => `term-${index}`);
   const structured = {
@@ -1311,7 +1539,12 @@ Deno.test("admin DTO privacy covers encoded, relative, protocol-relative, and ba
     "user:pass@issuer.example?token=secret#fragment",
     "/terms?session=secret#fragment",
     "https%3A%2F%2Fuser%3Apass%40issuer.example%2Fterms%3Ftoken%3Dsecret%23fragment",
+    "https%253A%252F%252Fuser%253Apass%2540issuer.example%252Fterms%253Ftoken%253Dsecret%2523fragment",
+    "https%25253A%25252F%25252Fuser%25253Apass%252540issuer.example%25252Fterms%25253Ftoken%25253Dsecret%252523fragment",
     "https://issuer.example/terms&#63;token=secret&#35;fragment",
+    "https&amp;#58;//user&amp;#58;pass&amp;#64;issuer.example/terms&amp;#63;token=secret&amp;#35;fragment",
+    "https%3A%2F%2Fuser%26%2358%3Bpass%26%2364%3Bissuer.example%2Fterms%26%2363%3Btoken=secret%26%2335%3Bfragment",
+    "Save 20% today and keep literal 100%25 notation",
   ];
   const sanitized = sanitizeAdminDto({
     partners: ["BookMyShow", ...fixtures],
@@ -1339,6 +1572,11 @@ Deno.test("admin DTO privacy covers encoded, relative, protocol-relative, and ba
   assert(
     serialized.includes("BookMyShow"),
     "ordinary partner label was redacted",
+  );
+  assert(
+    serialized.includes("Save 20% today") &&
+      serialized.includes("100%25 notation"),
+    "ordinary percent text was corrupted",
   );
 });
 

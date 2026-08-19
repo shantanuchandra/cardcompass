@@ -98,3 +98,41 @@ The review contracts were first exercised against `096ae7afa8bb00b7dcecaae74670b
 Migration remains `supabase/migrations/20260819163046_review_card_benefit_enrichment_v2.sql`; review-fix SHA-256 before commit: `b5fe0abab22fb67f773ede3ecd8c3999bd8b797b80411342c80c271bf75eb780`.
 
 Live applied: **no**. No Docker, local PostgreSQL/Supabase, external network, production data, linked command, migration apply/push/dry-run, reset, or repair was used. Transactional live fixtures (real PostgreSQL execution, concurrent reviewers, Card B byte-for-byte checks, future-boundary visibility, job fan-out, and ordered Task 2/3/4 apply/lint/integration) remain an explicit unresolved live gate; static/pure tests are not represented as covering them.
+
+## Review fix round 2/5 — 2026-08-19
+
+### Red proof
+
+The new review contracts were first exercised on `55559bfb45fcb61e65215a39a569ba911a8a5344`:
+
+- `benefit-enrichment-batch/index_test.ts` failed type checking because the lifecycle reader was private and still queried unfiltered `card_benefit_mapping`; the new DB-category replay also exposed raw upper-case category reconstruction.
+- `benefit_admin_test.ts` failed type checking because the closed canonical-envelope validator did not exist. The added cases cover double/triple/mixed structural encodings, numeric boundaries, immutable taxonomy edits, oversized decisions, and exact pre-alias rewards identity migration.
+- `review_card_benefit_enrichment_v2_migration_test.js` reported **4 passed / 4 failed** before implementation. The missing contracts were monotonic retirement, bounded/once-only evidence and decisions, exact envelope key closure/numeric parity, and migration-time legacy rewards assertions.
+
+### Fixes
+
+- Canonicalized DB-shaped V6 category codes through the same shared category alias contract used by extraction and publication. `POINTS` and `CASHBACK` approved rows now reconstruct to their exact condition identities while V5 behavior remains unchanged.
+- Replaced the raw mapping read with the Task 2 `active_card_benefits` UTC lifecycle view and retained its flat live benefit UUID. Future replacements remain hidden, and an old mapping scheduled to retire at the replacement boundary remains current until then.
+- Made explicit retirement monotonic with `coalesce(retired_at, statement_timestamp())`, so a later retire review cannot move an already scheduled future boundary earlier.
+- Added bounded four-pass structural decoding with a 16 KiB input cap. Double/triple percent encoding, nested entities, and mixed entity/percent credentials, query strings, and fragments redact recursively in DTO values and object keys while ordinary percent prose is unchanged.
+- Closed the server-created canonical publication envelope with exact root/condition/benefit/value-config/exclusion/migration key allowlists, primitive shape checks, a 64-decision/256 KiB review limit, 500-character reasons, bounded evidence, and one evidence copy per audit append. Review replay hashes exclude non-authoritative presentation copies and unknown decision fields fail closed.
+- Defined a conservative cross-runtime numeric domain in Edge and SQL: zero is allowed; non-zero absolute values must be at least `0.000001`, below `1e21`, use at most six decimal places without exponent notation, and have a coefficient no greater than `Number.MAX_SAFE_INTEGER`. The rule covers locked staging, conditions, nested configuration/exclusions, and persisted benefit terms; values are rejected rather than rounded.
+- Removed category and value type from editable fields. Changed taxonomy attempts fail with `immutable_benefit_taxonomy`; material commercial edits still create immutable versions and may carry display changes.
+- Added an audited compatibility path for already-pending pre-alias V6 `rewards` proposals. Edge and SQL independently require the exact old rewards condition hash/card-scoped key, convert only that identity to canonical `points`, publish the new key, and append `category_alias_identity_migration`. Tampered old identity fails, and replay is deterministic.
+- Extended migration self-assertions for unknown keys, unsafe numeric values, exact legacy alias migration, locked-card hash/key recomputation, and service-role-only helper grants. No business table or column was added.
+
+### Green verification
+
+- `node --test test/supabase/review_card_benefit_enrichment_v2_migration_test.js` — 8 passed, 0 failed.
+- `deno test --node-modules-dir=auto --allow-env --allow-net=0.0.0.0:8000 --frozen supabase/functions/admin-catalog-entry/benefit_admin_test.ts` — 29 passed, 0 failed.
+- `deno test --node-modules-dir=auto --allow-env --frozen supabase/functions/benefit-enrichment-batch/index_test.ts` — 58 passed, 0 failed.
+- `deno test --node-modules-dir=auto --allow-env --frozen supabase/functions/_shared/benefit_contract_test.ts` — 7 passed, 0 failed.
+- `node --test test/supabase/benefit_enrichment_rules.test.mjs test/supabase/automated_benefit_enrichment_migration_test.js` — 29 passed, 0 failed.
+- Total named behavioral/static tests: **131 passed, 0 failed**.
+- `deno check --node-modules-dir=auto` on all six changed TypeScript/test files — passed.
+- `deno fmt --check` on all six changed TypeScript/test files — passed.
+- `git diff --check` — passed.
+
+Migration remains `supabase/migrations/20260819163046_review_card_benefit_enrichment_v2.sql`; fix-round-2 SHA-256 before commit: `5bc1106051c0c515194cb61b3cd06cabedd4dd71733056cb781c3f9cc445e4ad`.
+
+Live applied: **no**. No Docker, local PostgreSQL/Supabase, external network, production data, linked Supabase command, migration apply/push/dry-run, reset, or repair was used. Real PostgreSQL parse/apply and transactional fixtures for concurrency, Card B byte-for-byte immutability, UTC future-boundary visibility, job fan-out, replay, and the ordered Task 2/3/4 integration remain the explicit unresolved live gate; static and pure tests do not claim to cover that gate.
