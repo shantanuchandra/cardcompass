@@ -76,6 +76,8 @@ The service-role key stays inside the Edge Function. Browser roles have no direc
 
 The applied migration defines the authorization flag as `boolean NOT NULL DEFAULT false`. Authenticated clients retain ordinary profile insert and update privileges for allowlisted columns but cannot insert or update `is_admin`.
 
+`public.users.is_active` is also required by the admin authorization check. Before Customer Ops can expose account disablement, Phase 4 must make `is_active` server-governed by removing it from authenticated insert and update grants. The Flutter client may read the field but may not reactivate an account. The disable operation must set the field and revoke active sessions through a tested server-owned path.
+
 #### `public.admin_audit_log`
 
 Add an append-only, service-role-only table with:
@@ -174,6 +176,8 @@ The console never exposes secrets, raw fetched content, authorization headers, p
 
 ## Rollout
 
+Each phase receives its own implementation plan, acceptance checks, and review boundary. Phase 1 is required before any operational section ships. After that foundation, Phases 2, 3, and 4 may be delivered in the stated order or reordered without weakening their individual exit criteria; Phase 5 begins only after all supported workflows reach parity.
+
 ### Phase 1: Foundation
 
 Build the `/app/admin2` shell, database-backed authorization, modular Edge Function, audit table, typed repository boundary, and route tests. Exit when non-admin access is blocked and every test mutation is audited.
@@ -188,7 +192,7 @@ Add pipeline status, job detail, retry, quarantine, and only the runtime control
 
 ### Phase 4: Customer Ops
 
-Add user search, metadata timeline, safe retry, account disablement, and deletion-request status. Exit when common support issues can be diagnosed without exposing prohibited customer content.
+First make `public.users.is_active` server-governed and verify that disabled users cannot restore access. Then add user search, metadata timeline, safe retry, account disablement, and deletion-request status. Exit when common support issues can be diagnosed without exposing prohibited customer content and a disabled account cannot reactivate itself.
 
 ### Phase 5: Cutover
 
@@ -211,6 +215,7 @@ Expose the admin entry point to database-authorized users, run production smoke 
 
 - Admin flag defaults false and cannot be assigned by authenticated clients.
 - Founder backfill is correct.
+- Before Customer Ops ships, authenticated clients cannot write `is_active`, while the server-owned disable path can update it and revoke sessions.
 - Audit and runtime-control tables deny browser access.
 - Mutating functions require the service role, validate state, apply once, and write audit rows atomically.
 - Repeated request IDs do not duplicate state changes.
