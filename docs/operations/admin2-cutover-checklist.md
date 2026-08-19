@@ -70,7 +70,7 @@ For each row, record the deployed app ID, function versions, tester, time, and P
 
 | # | Smoke test and exact expected result | Status | Local evidence |
 |---:|---|---:|---|
-| 1 | Sign in as the founder operator, open `/app/admin2`, and invoke `access`. Expect the four-section workspace and HTTP 200 with `allowed: true`. | Not Run — no deployed/local Auth stack | Shared database-auth and access UI tests pass. |
+| 1 | Sign in as the founder operator, open `/app/admin2`, and invoke `access`. Expect the four-section workspace and HTTP 200 with `is_admin: true`. | Not Run — no deployed/local Auth stack | Shared database-auth and access UI tests pass. |
 | 2 | Sign in as the active non-admin and call `admin-operator` directly. Expect HTTP 403 with the stable forbidden response; no privileged query or mutation runs and the Admin entry stays hidden. | Not Run — no deployed/local Auth stack | Authorization and conditional-entry tests pass. |
 | 3 | While the founder session remains signed in, set that profile's `is_admin` false through an approved database operator path, then make the next privileged request with the unchanged token. Expect HTTP 403 immediately. Restore the flag through the same approved path and verify a fresh request succeeds. | Not Run — production DB mutation requires authorization | Fresh-per-request database authorization tests pass. |
 | 4 | Execute the 13 Card Data parity actions below one at a time. For each mutation, expect one stable receipt, disabled controls while pending, and a server-confirmed list refresh only after success. Confirm no bulk-approval control exists. | Not Run — needs deployed data fixtures | Exact executable parity suite passes. |
@@ -105,7 +105,7 @@ All mapped checks remain Not Run until every listed component is deployed from t
 | Identity | `editApprove` | Edit bank/card/network fields, approve the same observed version, then refresh. |
 | Identity | `merge` | Supply one explicit destination card UUID; merge only that review item, then refresh. |
 | Identity | `reject` | Supply a non-empty operator reason; reject only that item, then refresh. |
-| Identity | `retry` | Retry one eligible failed item; do not attach a staging ID; then refresh. |
+| Identity | `retry` | Retry one pending identity review whose discovery job is failed and eligible for retry; do not attach a staging ID; then refresh. |
 | Benefit | `list` | Load staged/failed/review-required/quarantined items with bounded safe evidence. |
 | Benefit | `approve` | Submit explicit approve decisions tied to the locked staging row, then refresh. |
 | Benefit | `editApprove` | Submit complete edited-benefit decisions tied to the staging row, then refresh. |

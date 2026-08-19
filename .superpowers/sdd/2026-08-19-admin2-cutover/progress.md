@@ -80,3 +80,10 @@ Ruling: Use user ID only to partition two independent auto-disposed caches—one
 Ruling: Treat the successful placeholder-configured web release compile as build-target verification, not a deployable artifact; require a fresh build with the deployment environment's real public Dart defines after authorization. Cost if wrong: release packaging must be repeated, but no placeholder-configured artifact can be deployed accidentally.
 
 Ruling: Deploy and roll back all six changed Edge Functions as a version-recorded coordinated set, with worker/profile gateways before Admin exposure. Cost if wrong: partial rollout can make pause state cosmetic, preserve inactive-user privileged access, or split authorization semantics between Admin endpoints.
+
+## Final-review corrections
+
+- Founder access smoke now asserts the actual `is_admin: true` response contract.
+- Identity retry now specifies a pending review with a failed, retry-eligible discovery job rather than describing the review itself as failed.
+- The legacy-route regression now drives the real `GoRouter`, asserts the exact final URI and selected Card Data content, and settles without a redirect loop. Direct `/app/admin2` still proves Action Inbox is the rendered default.
+- Focused router and Admin2 screen tests pass 22/22; the complete router plus Admin2 suite passes 155/155; scoped analysis and diff checks are clean.
