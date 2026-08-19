@@ -87,3 +87,8 @@ Ruling: Deploy and roll back all six changed Edge Functions as a version-recorde
 - Identity retry now specifies a pending review with a failed, retry-eligible discovery job rather than describing the review itself as failed.
 - The legacy-route regression now drives the real `GoRouter`, asserts the exact final URI and selected Card Data content, and settles without a redirect loop. Direct `/app/admin2` still proves Action Inbox is the rendered default.
 - Focused router and Admin2 screen tests pass 22/22; the complete router plus Admin2 suite passes 155/155; scoped analysis and diff checks are clean.
+
+## Final adjudication
+
+- The single final-fix owner resolved all whole-cutover findings in `729d811`; the scoped re-review approved the corrected runbook fields and real-router navigation coverage with no residual.
+- The cutover is an approved release candidate at the deployment boundary. All production/Auth smoke items remain mandatory Not Run gates, and no push, deployment, production migration, or remote mutation has occurred.
