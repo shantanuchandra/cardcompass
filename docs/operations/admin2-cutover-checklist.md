@@ -20,16 +20,18 @@ This is the operator runbook and evidence record for `/app/admin2`. It deliberat
 | Formatting | Candidate pass; baseline drift recorded | Candidate-scoped Dart and TypeScript files pass formatter check with no changes. The prescribed repository-wide Deno check identifies one unrelated pre-existing file, `_shared/card_catalog_enrichment.ts`; it was not changed. |
 | Admin2 scoped analysis | Pass | `flutter analyze --no-fatal-infos lib/features/admin2 lib/core/router/app_router.dart lib/features/settings test/features/admin2 test/core/router/app_router_test.dart test/features/settings` reported no issues. |
 | Full Flutter analysis | Pass with baseline notices | `flutter analyze` found 12 info-level diagnostics in pre-existing non-Admin2 files and no errors or warnings. The command exits 1 because infos are fatal by default. |
-| Full Flutter tests | Pass | 709 passed; 25 explicitly skipped because the deployed/local Supabase stack and service-role test defines were unavailable. |
+| Full Flutter tests | Pass | 717 passed; 25 explicitly skipped because the deployed/local Supabase stack and service-role test defines were unavailable. |
 | Node migration/contract tests | Pass | 55 passed; 0 skipped; every opt-in disposable PostgreSQL suite ran sequentially against loopback PostgreSQL. |
 | Deno Edge Function tests | Pass | 262 passed; 0 failed; 1 opt-in lifecycle smoke ignored in the network-capable full run and then passed separately with only loopback PostgreSQL plus injected no-network adapters. |
 | Contextual eval lifecycle smoke | Pass | A loopback disposable PostgreSQL database plus the real `ai-eval-runner` handler processed statement, card-data, and fixed-selection recommendation runs with injected no-network model/judge adapters. A seven-case run used the production dispatcher request and `waitUntil` path after five exactly once. Complete run aggregates plus stored result token, cost, latency, attempt, clean-improvement, and severe-regression evidence were checked exactly. |
+| Eval dataset authority | Pass | A disposable loopback PostgreSQL run proved explicit fresh version 0, approve/revise/approve/retire advancement, retired-lineage exclusion, exact current-version start fencing, and one durable run under concurrent replay. |
 | Live provider pilot | Not Run | No explicit authorization for provider spend was supplied. No provider endpoint was contacted. |
 | Opt-in Card Data PostgreSQL | Pass | 5 passed; isolated local PostgreSQL; no skips. |
 | Opt-in runtime-control PostgreSQL | Pass | 5 passed; isolated local PostgreSQL; no skips. |
 | Opt-in customer containment PostgreSQL | Pass | 5 passed; isolated local PostgreSQL; no skips, including unchanged-token RLS denial. |
 | Runtime authorization reference scan | Pass | No `ADMIN_EMAIL`, `ADMIN_ALLOWLIST`, or founder-email reference exists in `lib` or `supabase/functions`. Founder references remain only in historical docs and seed/data migrations. |
 | Web release compilation | Pass, non-deployable fixture build | `flutter build web --release --base-href /app/` completed with non-secret placeholder public configuration. The ephemeral 43 MB `build/web` output was removed after verification. A deployable artifact must be rebuilt with the deployment environment's real public defines. |
+| Direct web paths | Pass | A real HTTP server test serves `/app/admin2`, nested Admin2 paths, queries, and hash compatibility from the Flutter index; redirects `/app` canonically and the legacy catalog URL exactly; and keeps missing assets, API-like paths, and encoded traversal out of SPA fallback. |
 | Repository hygiene | Pass | Generated `node_modules` and placeholder build output removed; `git diff --check` passes before commit. |
 
 The live Supabase stack was unavailable because the local Docker daemon was not running. Therefore every production/Auth smoke item below is explicitly **Not Run** rather than inferred from unit or isolated-PostgreSQL evidence.
@@ -38,7 +40,7 @@ The live Supabase stack was unavailable because the local Docker daemon was not 
 
 - [ ] Record the production app deployment identifier that currently serves `/app/`; this is the rollback target.
 - [ ] Confirm a current database backup or point-in-time recovery window without copying data into this record.
-- [ ] Apply additive migrations in this exact order: `20260819090000_admin_operator_foundation.sql`, `20260819090100_admin_card_data_operations.sql`, `20260819090200_admin_runtime_controls.sql`, `20260819090300_admin_customer_ops.sql`, `20260819090400_contextual_ai_feedback.sql`, `20260819090500_contextual_ai_eval_runs.sql`, `20260819132439_harden_inactive_customer_boundaries.sql`.
+- [ ] Apply additive migrations in this exact order: `20260819090000_admin_operator_foundation.sql`, `20260819090100_admin_card_data_operations.sql`, `20260819090200_admin_runtime_controls.sql`, `20260819090300_admin_customer_ops.sql`, `20260819090400_contextual_ai_feedback.sql`, `20260819090500_contextual_ai_eval_runs.sql`, `20260819090600_ai_eval_dataset_authority.sql`, `20260819132439_harden_inactive_customer_boundaries.sql`.
 - [ ] Record both the current and immediately previous deployment version for every Edge Function in the coordinated deployment table below.
 - [ ] Deploy all eight changed Edge Functions from the same candidate commit in the listed order. Shared modules are not independently deployable; confirm each importing function bundles the candidate versions.
 - [ ] Build the web app with the deployment environment's real public Dart defines and deploy it only after all eight Edge Functions are healthy.
@@ -85,7 +87,7 @@ For each row, record the deployed app ID, function versions, tester, time, and P
 | 8 | Pause `benefit_enrichment_scheduled` with the current observed version and a reason. Invoke a scheduled run and expect a stable paused response before inventory/job access. Resume with the new observed version; expect scheduling to proceed. | Not Run — needs deployed scheduler | Runtime-control and batch policy tests pass. |
 | 9 | Replay the same request ID and payload for one Card Data mutation and one runtime-control mutation. Expect the original receipt and no duplicate audit or state transition. Then reuse the ID with a different payload and expect rejection. | Not Run — needs deployed persistence | Isolated PostgreSQL idempotency suites pass. |
 | 10 | Submit malformed, unauthorized, stale-version, and forced dependency-failure requests to both Admin endpoints. Expect only documented status/code vocabulary; verify logs and client responses do not contain SQL, stack traces, tokens, emails, statement data, or provider output. | Not Run — needs deployed endpoints/logs | Gateway and legacy error-sanitization tests pass. |
-| 11 | Visit `/app/admin/catalog-review` directly. Expect an exact redirect to `/app/admin2?section=card-data`; malformed or non-allowlisted Admin2 section values must open Action Inbox. | Not Run — needs deployed router | Router tests pass. |
+| 11 | Visit `/app/admin2` and `/app/admin/catalog-review` directly without a hash. Expect Admin2 to render and the legacy URL to redirect exactly to `/app/admin2?section=card-data`; malformed or non-allowlisted Admin2 section values must open Action Inbox. | Not Run — needs deployed router | Flutter router and real HTTP server direct-path tests pass. |
 | 12 | Call the still-deployed `admin-catalog-entry` endpoint as an active database admin whose email is not allowlisted; expect authorization success. Call as a verified founder-email identity with `is_admin = false`; expect denial. | Not Run — needs deployed legacy endpoint | Shared legacy authorization suite passes. |
 | 13 | In one browser/provider lifetime, switch admin A → signed out → non-admin B, then B → admin A. Expect the entry and workspace to disappear on sign-out/non-admin frames, no response reused across identities, and fresh access checks on each direct mount. | Not Run — needs deployed Auth/browser stack | Account-partition regression tests pass. |
 | 14 | Submit bounded contextual feedback for each feature family, triage it into an approved versioned case, and verify the stored fixture excludes raw statement lines/history, email, bearer/provider tokens, prompts, rubrics, expected output, and captured answer from candidate input. | Not Run — needs deployed Auth/data fixtures | Feedback capture/triage and leakage contract suites pass. |
@@ -125,12 +127,12 @@ All mapped checks remain Not Run until every listed component is deployed from t
 
 ## Rollback
 
-Rollback is application-only because all seven candidate migrations are additive and may already contain audit, request, containment, feedback, dataset, eval-result, or retry records.
+Rollback is application-only because all eight candidate migrations are additive and may already contain audit, request, containment, feedback, dataset, eval-result, or retry records.
 
 1. Stop operator activity and record the failing deployment/function identifiers without copying request data.
 2. Restore the previous web application deployment recorded in the pre-deployment gate.
 3. Restore the recorded matching previous versions of all eight functions as one rollback set: `benefit-enrichment-batch`, `card-discovery`, `gemini-proxy`, `request-card-catalog-entry`, `admin-catalog-entry`, `feedback-submit`, `ai-eval-runner`, and `admin-operator`. Never mix candidate shared-module bundles with unmatched previous function versions.
-4. Keep `20260819090000` through `20260819090500` and `20260819132439` applied. Do **not** drop or reverse their tables, columns, functions, policies, audit rows, request receipts, runtime controls, containment state, feedback/case history, eval evidence, or retry state.
+4. Keep `20260819090000` through `20260819090600` and `20260819132439` applied. Do **not** drop or reverse their tables, columns, functions, policies, audit rows, request receipts, runtime controls, containment state, feedback/case history, eval evidence, or retry state.
 5. Keep the legacy endpoint available. If safe operation cannot be confirmed, pause operator mutations at the application/function layer; do not delete evidence.
 6. Re-run scheduler pause behavior, non-admin denial, founder authorization, unchanged-token containment across all three user service-role gateways, sanitized responses, and legacy-endpoint checks against the restored deployment.
 7. Record rollback result, remaining risk, and owner. Escalate any database remediation as a new reviewed forward migration.
@@ -140,7 +142,7 @@ Rollback is application-only because all seven candidate migrations are additive
 | Component | Candidate |
 |---|---|
 | Code tested | `codex/admin2-operator-console` Task 8 candidate; record immutable commit after verification |
-| Migration order | `20260819090000` → `20260819090100` → `20260819090200` → `20260819090300` → `20260819090400` → `20260819090500` → `20260819132439` |
+| Migration order | `20260819090000` → `20260819090100` → `20260819090200` → `20260819090300` → `20260819090400` → `20260819090500` → `20260819090600` → `20260819132439` |
 | Edge deployment required | In order: `benefit-enrichment-batch`; `card-discovery`; `gemini-proxy`; `request-card-catalog-entry`; `admin-catalog-entry`; `feedback-submit`; `ai-eval-runner`; `admin-operator` |
 | Shared bundle changes | `_shared/active_profile.ts`, `_shared/admin_access.ts`, `_shared/card_discovery.ts`, `_shared/feedback_triage.ts`, `_shared/gemini_generate.ts`, and `_shared/ai_eval_runner_receipt.ts` are bundled by their importing functions; changed batch policy is bundled by batch/discovery and referenced by Admin2 failure vocabulary |
 | Flutter target | Web release at base href `/app/` |

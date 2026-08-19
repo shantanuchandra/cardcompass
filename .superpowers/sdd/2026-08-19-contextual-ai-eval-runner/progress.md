@@ -291,3 +291,14 @@ Ruling: Resolve Start eligibility and dispatch from the same current catalog can
 - Controlled out-of-order tests prove rapid A-to-B selection retains B after late A, an in-flight refresh cannot overwrite an explicit B selection, and stale completion cannot clear or strand the current request's busy state. Full Admin2 passes 178/178 and scoped analysis is clean.
 
 Ruling: Let only the newest generation and matching run ID commit evaluation detail or request state. Cost if wrong: superseded responses are discarded even if they succeeded, requiring the already-active newer request to remain authoritative.
+
+## Final whole-branch P1 corrections
+
+- Eval configuration now reads a service-only, transactionally maintained lifecycle cursor rather than inferring a version from remaining approved rows. Fresh datasets advertise version 0; every committed approval or retirement advances the cursor. Run creation locks that authority, accepts only the exact current nonzero version, preserves idempotent historical replay, and freezes the selected current-version manifest.
+- Disposable PostgreSQL evidence passes the full approve v1, revise/approve v2, second-lineage approval, retirement v4 lifecycle. The v4 manifest excludes the retired lineage, stale v3 and fictional v5 starts conflict, and concurrent exact replay creates one run.
+- Flutter web selects path URL strategy at bootstrap. The HTTP boundary serves safe extensionless `/app/*` navigation from the built index, redirects `/app` and the legacy catalog path canonically, and never turns missing assets, API-like paths, or encoded traversal into successful SPA responses.
+- Focused Deno gateway, Flutter router, real HTTP fixture-server, migration source, and disposable PostgreSQL tests pass. No deployment, push, provider request, production migration, or spend occurred.
+
+Ruling: Make the committed approval/retirement cursor the only advertised and startable dataset version while allowing exact durable request replay. Cost if wrong: operators cannot intentionally launch a new historical snapshot, but stale UI and fictional versions cannot create misleading runs and existing run manifests remain immutable.
+
+Ruling: Use browser path URLs and enforce `/app/*` navigation fallback at the HTTP boundary. Cost if wrong: the server owns a small allowlisted SPA fallback contract, but direct Admin2 and legacy bookmarks work while missing assets, APIs, and traversal still fail closed.

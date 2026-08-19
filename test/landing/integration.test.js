@@ -91,7 +91,7 @@ test('local server serves landing, app, and generated environment roots without 
   for (const loginPath of ['/login', '/login/']) {
     const response = await fetch(`http://127.0.0.1:${port}${loginPath}`, { redirect: 'manual' });
     assert.equal(response.status, 302);
-    assert.equal(response.headers.get('location'), '/app/#/login');
+    assert.equal(response.headers.get('location'), '/app/login');
   }
 
 });
@@ -138,12 +138,14 @@ test('Azure Static Web Apps config protects public pages without rewriting app a
 
   assert.equal(config.globalHeaders['X-Content-Type-Options'], 'nosniff');
   assert.match(config.globalHeaders['Referrer-Policy'], /strict-origin/);
-  assert.ok(config.routes.some((route) => route.route === '/app/*' && !route.rewrite && !route.redirect));
+  assert.ok(config.routes.some((route) => route.route === '/app/*' && !route.redirect));
+  assert.ok(config.routes.some((route) => route.route === '/app/admin2*' && route.rewrite === '/app/index.html'));
+  assert.ok(config.routes.some((route) => route.route === '/app/admin/catalog-review' && route.redirect === '/app/admin2?section=card-data'));
   assert.ok(!config.navigationFallback || config.navigationFallback.exclude.includes('/app/*'));
   assert.equal(config.responseOverrides['404'].rewrite, '/404.html');
   assert.ok(config.routes.some((route) => (
     route.route === '/login'
-    && route.redirect === '/app/#/login'
+    && route.redirect === '/app/login'
     && route.statusCode === 302
   )));
 });

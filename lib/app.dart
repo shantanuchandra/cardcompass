@@ -37,7 +37,9 @@ class CardCompassApp extends ConsumerWidget {
               child: content,
             );
           }
-          if (path != '/' && path != '/login') return content;
+          if (path != '/' && path != '/login' && path != appLoginPath) {
+            return content;
+          }
 
           return Theme(data: AppTheme.marketing, child: content);
         },

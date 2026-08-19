@@ -10,7 +10,9 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT      = Number(process.argv[2]) || 8080;
 const landingRoot = path.join(__dirname, 'landing');
-const appRoot = path.join(__dirname, 'build', 'web');
+const appRoot = process.env.CARDCOMPASS_APP_ROOT
+  ? path.resolve(process.env.CARDCOMPASS_APP_ROOT)
+  : path.join(__dirname, 'build', 'web');
 
 const SENSITIVE_BASENAMES = new Set([
   'dart_defines.json',
@@ -67,6 +69,10 @@ const MIME = {
 
 // ── Server ───────────────────────────────────────────────────────────────────
 const server = http.createServer((req, res) => {
+  const rawPath = (req.url || '/').split('?', 1)[0];
+  if (/%(?:2e|2f|5c)/i.test(rawPath)) {
+    res.writeHead(403); res.end('Forbidden'); return;
+  }
   let url;
   try {
     url = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
@@ -92,7 +98,18 @@ const server = http.createServer((req, res) => {
   }
 
   if (url === '/login' || url === '/login/') {
-    res.writeHead(302, { Location: '/app/#/login', 'Cache-Control': 'no-store' });
+    res.writeHead(302, { Location: '/app/login', 'Cache-Control': 'no-store' });
+    res.end();
+    return;
+  }
+
+  if (url === '/app') {
+    res.writeHead(308, { Location: '/app/', 'Cache-Control': 'no-store' });
+    res.end();
+    return;
+  }
+  if (url === '/app/admin/catalog-review' || url === '/app/admin/catalog-review/') {
+    res.writeHead(308, { Location: '/app/admin2?section=card-data', 'Cache-Control': 'no-store' });
     res.end();
     return;
   }
@@ -130,7 +147,16 @@ export const SUPABASE_ANON = ${JSON.stringify(env.SUPABASE_ANON_KEY || '')};
   }
 
   if (!isWithinRoot(filePath) || !fs.existsSync(filePath)) {
-    res.writeHead(404); res.end('Not found'); return;
+    const isAppNavigation = publicRoot === appRoot
+      && !url.startsWith('/app/api/')
+      && path.extname(publicPath) === '';
+    if (!isAppNavigation) {
+      res.writeHead(404); res.end('Not found'); return;
+    }
+    filePath = path.join(resolvedRoot, 'index.html');
+    if (!fs.existsSync(filePath)) {
+      res.writeHead(404); res.end('Not found'); return;
+    }
   }
 
   const realRoot = fs.realpathSync(resolvedRoot);

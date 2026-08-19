@@ -2,8 +2,21 @@
   "routes": [
     {
       "route": "/login",
-      "redirect": "/app/#/login",
+      "redirect": "/app/login",
       "statusCode": 302
+    },
+    {
+      "route": "/app/admin/catalog-review",
+      "redirect": "/app/admin2?section=card-data",
+      "statusCode": 308
+    },
+    {
+      "route": "/app/login",
+      "rewrite": "/app/index.html"
+    },
+    {
+      "route": "/app/admin2*",
+      "rewrite": "/app/index.html"
     },
     {
       "route": "/app/*",

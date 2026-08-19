@@ -140,17 +140,11 @@ export async function handleEvalConfigList(
   context: AdminActionContext,
 ) {
   only(body, new Set(["action"]));
-  const result = await (context.db as any).from("ai_eval_cases").select(
-    "approved_in_dataset_version",
-  ).eq("status", "approved").order("approved_in_dataset_version", {
-    ascending: false,
-  }).range(0, 0);
-  if (result.error || !Array.isArray(result.data)) {
+  const result = await context.db.rpc("current_ai_eval_dataset_version");
+  if (result.error) {
     throw new AdminHttpError("request_failed", 500);
   }
-  const version = result.data.length === 0
-    ? 0
-    : safeInt(record(result.data[0])?.approved_in_dataset_version);
+  const version = safeInt(record(result.data)?.dataset_version);
   return {
     dataset_version: version,
     baseline: configDto("captured-production-v1", "baseline"),

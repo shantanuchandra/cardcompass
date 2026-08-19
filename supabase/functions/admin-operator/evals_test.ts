@@ -59,7 +59,7 @@ Deno.test("eval config list exposes only frozen safe metadata and current datase
   const output = await handleEvalConfigList(
     { action: "eval-config-list" },
     context({
-      rows: { ai_eval_cases: [{ approved_in_dataset_version: 12 }] },
+      rpc: { current_ai_eval_dataset_version: { dataset_version: 12 } },
     }),
   );
   assertEquals(output.dataset_version, 12);
@@ -70,6 +70,28 @@ Deno.test("eval config list exposes only frozen safe metadata and current datase
   );
   assertEquals(output.configs[2].scope_note, "Does not evaluate ranking.");
   assertEquals(Object.hasOwn(output.configs[0], "prompt"), false);
+});
+
+Deno.test("eval config list uses lifecycle authority even when no cases remain approved", async () => {
+  const calls: string[] = [];
+  const output = await handleEvalConfigList(
+    { action: "eval-config-list" },
+    context({
+      calls,
+      rpc: { current_ai_eval_dataset_version: { dataset_version: 19 } },
+    }),
+  );
+  assertEquals(output.dataset_version, 19);
+  assertEquals(
+    calls.some((call) => call.startsWith("from:ai_eval_cases")),
+    false,
+  );
+  assertEquals(
+    calls.some((call) =>
+      call.startsWith("rpc:current_ai_eval_dataset_version")
+    ),
+    true,
+  );
 });
 
 Deno.test("eval start validates bounds, exact receipt, and schedules only after durable create", async () => {

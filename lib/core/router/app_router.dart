@@ -30,6 +30,7 @@ const _kTabPaths = [
 ];
 
 const legacyCatalogReviewDestination = '/app/admin2?section=card-data';
+const appLoginPath = '/app/login';
 
 int _tabIndexFor(String loc) {
   if (loc.startsWith('/app/cards')) return 1;
@@ -83,11 +84,13 @@ final routerProvider = Provider<GoRouter>((ref) {
       final isAuthed = authState.valueOrNull == AuthStatus.authenticated;
       final loc = state.matchedLocation;
       if (Uri.base.fragment.contains('access_token')) return null;
-      if (!isAuthed && loc.startsWith('/app')) return '/login';
+      if (!isAuthed && loc.startsWith('/app') && loc != appLoginPath) {
+        return appLoginPath;
+      }
       if (isAuthed && loc.startsWith('/app')) {
         _tabIndexNotifier.value = _tabIndexFor(loc);
       }
-      if (isAuthed && (loc == '/login' || loc == '/')) {
+      if (isAuthed && (loc == appLoginPath || loc == '/login' || loc == '/')) {
         // Restore tab from URL on initial load
         final fragment = Uri.base.fragment;
         _tabIndexNotifier.value = _tabIndexFor(
@@ -95,12 +98,13 @@ final routerProvider = Provider<GoRouter>((ref) {
         );
         return '/app';
       }
-      if (loc == '/' && !isAuthed) return '/login';
+      if (loc == '/' && !isAuthed) return appLoginPath;
       return null;
     },
     routes: [
       GoRoute(path: '/', builder: (_, s) => const SplashScreen()),
       GoRoute(path: '/login', builder: (_, s) => const LoginScreen()),
+      GoRoute(path: appLoginPath, builder: (_, s) => const LoginScreen()),
       GoRoute(path: '/app', pageBuilder: (_, s) => _appShellPage()),
       GoRoute(
         path: '/app/cards',

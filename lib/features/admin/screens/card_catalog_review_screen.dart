@@ -62,7 +62,7 @@ class _CardCatalogReviewScreenState extends State<CardCatalogReviewScreen> {
     clearSession: () =>
         Supabase.instance.client.auth.signOut(scope: SignOutScope.local),
     showLogin: () {
-      if (mounted) context.go('/login');
+      if (mounted) context.go('/app/login');
     },
   );
 

@@ -406,7 +406,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(auth.signOutCalls, 1);
-    expect(router.routeInformationProvider.value.uri.path, '/login');
+    expect(router.routeInformationProvider.value.uri.path, appLoginPath);
   });
 
   testWidgets('403 returns to ordinary app without signing out', (

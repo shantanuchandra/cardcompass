@@ -4,6 +4,7 @@ import test from 'node:test';
 import { derivePgConnection, dropDisposableDatabase, ensureRoles, psql, psqlAsync } from './helpers/isolated_postgres.js';
 
 const migrationUrl = new URL('../../supabase/migrations/20260819090500_contextual_ai_eval_runs.sql', import.meta.url);
+const lifecycleAuthorityUrl = new URL('../../supabase/migrations/20260819090600_ai_eval_dataset_authority.sql', import.meta.url);
 const feedbackUrl = new URL('../../supabase/migrations/20260819090400_contextual_ai_feedback.sql', import.meta.url);
 const foundationUrl = new URL('../../supabase/migrations/20260819090000_admin_operator_foundation.sql', import.meta.url);
 
@@ -35,6 +36,57 @@ test('eval run schema exposes bounded service-only lifecycle contracts', async (
     assert.match(sql, new RegExp(`grant execute on function public\\.${rpc}[^;]+ to service_role`));
   }
   assert.match(sql, /create trigger protect_completed_ai_eval/);
+});
+
+test('dataset authority is service-only and run creation rejects non-current versions', async () => {
+  const sql = (await readFile(lifecycleAuthorityUrl, 'utf8')).toLowerCase();
+  assert.match(sql, /function public\.current_ai_eval_dataset_version\(\)/);
+  assert.match(sql, /grant execute on function public\.current_ai_eval_dataset_version\(\) to service_role/);
+  assert.match(sql, /revoke all on function public\.current_ai_eval_dataset_version\(\) from public, anon, authenticated/);
+  assert.match(sql, /for update/);
+  assert.match(sql, /raise exception 'state_conflict'/);
+});
+
+test('current dataset tracks approve and retire lifecycle and fences run creation in PostgreSQL', { skip: !process.env.CONTEXTUAL_EVAL_TEST_ADMIN_URL }, async () => {
+  const adminUrl = process.env.CONTEXTUAL_EVAL_TEST_ADMIN_URL;
+  const databaseName = `cardcompass_eval_authority_${process.pid}_${Date.now()}`;
+  const admin = derivePgConnection(adminUrl, decodeURIComponent(new URL(adminUrl).pathname.slice(1)) || 'postgres', process.env);
+  const disposable = derivePgConnection(adminUrl, databaseName, process.env);
+  const createdRoles = ensureRoles(admin, ['anon', 'authenticated', 'service_role']);
+  try {
+    psql(admin, `create database "${databaseName}";`);
+    const [foundation, feedback, migration, authority] = await Promise.all([readFile(foundationUrl, 'utf8'), readFile(feedbackUrl, 'utf8'), readFile(migrationUrl, 'utf8'), readFile(lifecycleAuthorityUrl, 'utf8')]);
+    psql(disposable, `create extension if not exists pgcrypto; create schema auth; create table auth.users(id uuid primary key); ${foundation} ${feedback} ${migration} ${authority}`);
+    psql(disposable, `
+      insert into auth.users values ('10000000-0000-4000-8000-000000000001');
+      insert into public.ai_feedback(id,user_id,feature_key,output_ref_type,output_ref_id,feedback_text,request_id) values
+      ('31000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001','card_data','user_card','one','Useful feedback','41000000-0000-4000-8000-000000000001'),
+      ('31000000-0000-4000-8000-000000000002','10000000-0000-4000-8000-000000000001','card_data','user_card','two','Useful feedback','41000000-0000-4000-8000-000000000002');
+      insert into public.ai_eval_cases(id,source_feedback_id,feature_key,revision,input_fixture,captured_output,expected_output,operator_feedback,scoring_rubric,severe_failure_conditions,status,created_by) values
+      ('51000000-0000-4000-8000-000000000001','31000000-0000-4000-8000-000000000001','card_data',1,'{}','{}','{}','expected','{}','{}','draft','10000000-0000-4000-8000-000000000001'),
+      ('51000000-0000-4000-8000-000000000002','31000000-0000-4000-8000-000000000002','card_data',1,'{}','{}','{}','expected','{}','{}','draft','10000000-0000-4000-8000-000000000001');
+    `);
+    assert.equal(JSON.parse(psql(disposable, `select public.current_ai_eval_dataset_version();`)).dataset_version, 0);
+    const observed1 = psql(disposable, `select updated_at from public.ai_eval_cases where id='51000000-0000-4000-8000-000000000001';`);
+    const approved1 = JSON.parse(psql(disposable, `select public.admin_ai_eval_case_action('10000000-0000-4000-8000-000000000001',gen_random_uuid(),'51000000-0000-4000-8000-000000000001','approve','{}','approved','${observed1}');`));
+    assert.equal(approved1.dataset_version, 1);
+    const observedApproved = psql(disposable, `select updated_at from public.ai_eval_cases where id='51000000-0000-4000-8000-000000000001';`);
+    const revised = JSON.parse(psql(disposable, `select public.admin_ai_eval_case_action('10000000-0000-4000-8000-000000000001',gen_random_uuid(),'51000000-0000-4000-8000-000000000001','revise','{"expected_output":{},"operator_feedback":"revised expected","scoring_rubric":{},"severe_failure_conditions":{}}','revised','${observedApproved}');`));
+    const revisedObserved = psql(disposable, `select updated_at from public.ai_eval_cases where id='${revised.case_id}';`);
+    assert.equal(JSON.parse(psql(disposable, `select public.admin_ai_eval_case_action('10000000-0000-4000-8000-000000000001',gen_random_uuid(),'${revised.case_id}','approve','{}','approved','${revisedObserved}');`)).dataset_version, 2);
+    const observed2 = psql(disposable, `select updated_at from public.ai_eval_cases where id='51000000-0000-4000-8000-000000000002';`);
+    assert.equal(JSON.parse(psql(disposable, `select public.admin_ai_eval_case_action('10000000-0000-4000-8000-000000000001',gen_random_uuid(),'51000000-0000-4000-8000-000000000002','approve','{}','approved','${observed2}');`)).dataset_version, 3);
+    const retireObserved = psql(disposable, `select updated_at from public.ai_eval_cases where id='${revised.case_id}';`);
+    assert.equal(JSON.parse(psql(disposable, `select public.admin_ai_eval_case_action('10000000-0000-4000-8000-000000000001',gen_random_uuid(),'${revised.case_id}','retire','{}','retired','${retireObserved}');`)).dataset_version, 4);
+    assert.equal(JSON.parse(psql(disposable, `select public.current_ai_eval_dataset_version();`)).dataset_version, 4);
+    const create = `select public.admin_create_ai_eval_run('10000000-0000-4000-8000-000000000001','61000000-0000-4000-8000-000000000001',4,'captured-production-v1','gemini-3.6-flash-card-data-v1','gemini-3.6-flash-blind-judge-v1',100,2,25000);`;
+    await Promise.all([psqlAsync(disposable, create), psqlAsync(disposable, create)]);
+    assert.equal(psql(disposable, `select count(*) from public.ai_eval_runs where request_id='61000000-0000-4000-8000-000000000001';`), '1');
+    assert.equal(psql(disposable, `select count(*) from jsonb_array_elements((select case_manifest from public.ai_eval_runs where request_id='61000000-0000-4000-8000-000000000001')) m where m->>'case_id'='${revised.case_id}';`), '0');
+    assert.throws(() => psql(disposable, create.replace(`'61000000-0000-4000-8000-000000000001',4`, `gen_random_uuid(),3`)), /state_conflict/);
+    assert.throws(() => psql(disposable, create.replace(`'61000000-0000-4000-8000-000000000001',4`, `gen_random_uuid(),5`)), /state_conflict/);
+    assert.throws(() => psql(disposable, `set role authenticated; select public.current_ai_eval_dataset_version();`), /permission denied/);
+  } finally { dropDisposableDatabase(admin, databaseName, createdRoles); }
 });
 
 test('eval lifecycle is idempotent, fenced, bounded, resumable and immutable in PostgreSQL', { skip: !process.env.CONTEXTUAL_EVAL_TEST_ADMIN_URL }, async () => {
