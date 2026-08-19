@@ -547,6 +547,22 @@ const MAX_QUERY_PARAMETERS = 8;
 const MAX_QUERY_KEY_LENGTH = 64;
 const MAX_QUERY_VALUE_LENGTH = 512;
 
+function isTrackingQueryKey(key: string): boolean {
+  return /^utm_/i.test(key) || ["gclid", "fbclid"].includes(
+    key.toLowerCase(),
+  );
+}
+
+function removeTrackingQuery(url: URL): void {
+  if (!url.search) return;
+  const rawParts = url.search.slice(1).split("&");
+  const entries = [...url.searchParams.entries()];
+  const retained = rawParts.filter((_, index) =>
+    !isTrackingQueryKey(entries[index]?.[0] ?? "")
+  );
+  url.search = retained.length > 0 ? `?${retained.join("&")}` : "";
+}
+
 function boundedQueryEntries(url: URL): Array<[string, string]> {
   const entries = [...url.searchParams.entries()];
   if (
@@ -563,6 +579,8 @@ export function approvedStoredQueryParameters(value: string): string[] {
   try {
     if (value.trim().length > MAX_REQUEST_URL_LENGTH) return [];
     const url = new URL(value);
+    boundedQueryEntries(url);
+    removeTrackingQuery(url);
     const entries = boundedQueryEntries(url);
     const keys = [...new Set(entries.map(([key]) => key))];
     return keys.every((key) =>
@@ -576,7 +594,7 @@ export function approvedStoredQueryParameters(value: string): string[] {
   }
 }
 
-function approvedRequestUrl(
+export function canonicalOfficialRequestUrl(
   issuer: string,
   url: string,
   allowedQueryParameters: string[] = [],
@@ -587,6 +605,8 @@ function approvedRequestUrl(
       throw fetchError("unapproved_query");
     }
     const submitted = new URL(exact);
+    boundedQueryEntries(submitted);
+    removeTrackingQuery(submitted);
     const entries = boundedQueryEntries(submitted);
     const allowed = new Set(
       allowedQueryParameters.map((key) => key.trim().toLowerCase()).filter(
@@ -622,7 +642,7 @@ function canonicalRedirectUrl(
   allowedQueryParameters: string[] = [],
 ): string {
   try {
-    return approvedRequestUrl(issuer, url, allowedQueryParameters);
+    return canonicalOfficialRequestUrl(issuer, url, allowedQueryParameters);
   } catch {
     throw fetchError("redirect_rejected");
   }
@@ -925,7 +945,7 @@ export async function fetchOfficialIssuerResource(
 ): Promise<OfficialFetchResult> {
   ensureBeforeDeadline(input);
   const exactSubmittedUrl = input.url.trim();
-  const submittedRequestUrl = approvedRequestUrl(
+  const submittedRequestUrl = canonicalOfficialRequestUrl(
     input.issuer,
     exactSubmittedUrl,
     input.allowedQueryParameters,

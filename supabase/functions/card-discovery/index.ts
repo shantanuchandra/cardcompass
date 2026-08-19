@@ -3,7 +3,6 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.110.2";
 import {
   allowedOfficialUrl,
   canonicalCardIdentity,
-  canonicalOfficialUrl,
   evaluateAutomaticCatalogGate,
   exactOfficialPageIdentity,
   normalizedProduct,
@@ -14,6 +13,7 @@ import {
   reviewRequiredJobPatch,
   sanitizeDiscoveryEvidence,
   sanitizeEvidence,
+  selectCatalogUrlIdentityMatch,
   selectSubmittedUrlIdentity,
 } from "../_shared/card_discovery.ts";
 import {
@@ -135,30 +135,58 @@ async function sha256Bytes(value: Uint8Array): Promise<string> {
     .join("");
 }
 
-async function findCatalogCardByUrlHashes(
+async function findCatalogCardsByUrlHashes(
   db: UntypedSupabaseClient,
   hashes: string[],
-): Promise<string | null> {
+): Promise<string[]> {
   const unique = [...new Set(hashes.filter(Boolean))];
-  if (unique.length === 0) return null;
-  const { data: key, error: keyError } = await db.from("card_catalog_url_keys")
+  if (unique.length === 0) return [];
+  const { data: keys, error: keyError } = await db.from("card_catalog_url_keys")
     .select("card_id")
-    .in("url_hash", unique)
-    .limit(1)
-    .maybeSingle();
+    .in("url_hash", unique);
   if (keyError) throw keyError;
-  if (key?.card_id) return key.card_id;
   const filter = unique.flatMap((hash) => [
     `submitted_url_hash.eq.${hash}`,
     `final_url_hash.eq.${hash}`,
   ]).join(",");
   const { data, error } = await db.from("card_catalog_provenance")
     .select("card_id")
-    .or(filter)
-    .limit(1)
-    .maybeSingle();
+    .or(filter);
   if (error) throw error;
-  return data?.card_id ?? null;
+  return [
+    ...new Set(
+      [
+        ...((keys ?? []) as Array<{ card_id?: string }>),
+        ...((data ?? []) as Array<{ card_id?: string }>),
+      ].map((row) => row.card_id).filter((id): id is string => Boolean(id)),
+    ),
+  ];
+}
+
+async function loadCatalogUrlIdentityCandidates(
+  db: UntypedSupabaseClient,
+  cardIds: string[],
+): Promise<Array<{ cardId: string; cardName: string; aliases: string[] }>> {
+  if (cardIds.length === 0) return [];
+  const { data: cards, error: cardError } = await db.from("card_catalog")
+    .select("id, card_name")
+    .in("id", cardIds);
+  if (cardError) throw cardError;
+  const { data: aliases, error: aliasError } = await db.from(
+    "card_catalog_aliases",
+  )
+    .select("card_id, alias")
+    .in("card_id", cardIds);
+  if (aliasError) throw aliasError;
+  return ((cards ?? []) as Array<{ id: string; card_name: string }>).map(
+    (card) => ({
+      cardId: card.id,
+      cardName: card.card_name,
+      aliases: ((aliases ?? []) as Array<{ card_id: string; alias: string }>)
+        .filter((alias) => alias.card_id === card.id)
+        .map((alias) => alias.alias),
+    }),
+  );
 }
 
 async function upsertDiscoveryJob(
@@ -210,15 +238,6 @@ async function processSubmittedUrl(
 ) {
   const robotsCache = createOfficialRobotsCache();
   const evidence = job.evidence as SafeEvidence;
-  const submittedUrl = canonicalOfficialUrl(job.issuer, rawUrl);
-  const canonicalSubmittedHash = await sha256(submittedUrl);
-  const exactSubmittedHash = await sha256(rawUrl.trim());
-  const knownSubmitted = await findCatalogCardByUrlHashes(
-    db,
-    [exactSubmittedHash, canonicalSubmittedHash],
-  );
-  if (knownSubmitted) return markResolved(db, job.id, knownSubmitted);
-
   const page = requireOfficialFetchBody(
     await fetchOfficialIssuerResource({
       issuer: job.issuer,
@@ -229,14 +248,41 @@ async function processSubmittedUrl(
       robotsCache,
     }),
   );
-  const submittedHash = page.sourceIdentityHash ?? exactSubmittedHash;
+  const legacySubmittedHash = await sha256(page.submittedUrl);
+  const submittedHash = page.sourceIdentityHash ?? legacySubmittedHash;
   const finalUrl = page.canonicalUrl;
-  const finalHash = await sha256(finalUrl);
-  const knownFinal = await findCatalogCardByUrlHashes(
+  const legacyFinalHash = await sha256(finalUrl);
+  const finalHash = page.finalResourceIdentityHash ?? legacyFinalHash;
+  const opaqueHashes = [
+    page.sourceIdentityHash,
+    page.finalResourceIdentityHash,
+  ].filter((hash): hash is string => Boolean(hash));
+  const opaqueCardIds = await findCatalogCardsByUrlHashes(db, opaqueHashes);
+  if (opaqueCardIds.length > 0) {
+    const exactKnownIdentity = selectCatalogUrlIdentityMatch(
+      page.text,
+      job.issuer,
+      await loadCatalogUrlIdentityCandidates(db, opaqueCardIds),
+    );
+    if (!exactKnownIdentity) throw new Error("identity_conflict");
+    return markResolved(db, job.id, exactKnownIdentity);
+  }
+  const legacyCardIds = await findCatalogCardsByUrlHashes(
     db,
-    [submittedHash, finalHash],
+    [legacySubmittedHash, legacyFinalHash].filter((hash) =>
+      !opaqueHashes.includes(hash)
+    ),
   );
-  if (knownFinal) return markResolved(db, job.id, knownFinal);
+  if (legacyCardIds.length > 0) {
+    const compatibleLegacyIdentity = selectCatalogUrlIdentityMatch(
+      page.text,
+      job.issuer,
+      await loadCatalogUrlIdentityCandidates(db, legacyCardIds),
+    );
+    if (compatibleLegacyIdentity) {
+      return markResolved(db, job.id, compatibleLegacyIdentity);
+    }
+  }
 
   if (page.contentType === "application/pdf") {
     const product = evidence.product_signals?.find((value) =>
@@ -407,7 +453,12 @@ async function discoverOfficialUrl(
         urls.push(
           ...Array.from(
             response.text.matchAll(/<loc>\s*([^<]+)\s*<\/loc>/gi),
-            (m) => m[1],
+            (m) =>
+              m[1]
+                .replace(/&amp;/gi, "&")
+                .replace(/&#38;/gi, "&")
+                .replace(/&quot;|&#34;/gi, '"')
+                .trim(),
           ),
         );
       } catch {
@@ -601,6 +652,10 @@ async function processDiscoveryJob(
         robotsCache,
       }),
     );
+    const submittedHash = page.sourceIdentityHash ??
+      await sha256(page.submittedUrl);
+    const finalHash = page.finalResourceIdentityHash ??
+      await sha256(page.canonicalUrl);
     if (page.contentType === "application/pdf") {
       await putInReview(
         db,
@@ -711,6 +766,10 @@ async function processDiscoveryJob(
     await db.from("card_catalog_provenance").upsert({
       card_id: cardId,
       source_url: page.finalUrl,
+      canonical_submitted_url: page.submittedUrl,
+      canonical_final_url: page.canonicalUrl,
+      submitted_url_hash: submittedHash,
+      final_url_hash: finalHash,
       source_type: "official_html",
       content_hash: page.contentHash,
       extracted_fields: officialIdentity,

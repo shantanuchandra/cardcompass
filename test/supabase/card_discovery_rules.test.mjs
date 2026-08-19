@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {readFile} from 'node:fs/promises';
+import * as cardDiscovery from '../../supabase/functions/_shared/card_discovery.ts';
 
 import {
   allowedOfficialUrl,
@@ -163,10 +164,9 @@ test('requires the official page title to match the exact statement variant', ()
 });
 
 test('reconciles all strong product identities before accepting an exact card', () => {
-  for (const html of [
-    '<title>Privilege Credit Card | Axis Bank</title><h1>Regalia Credit Card</h1>',
-    '<title>Privilege Credit Card | Axis Bank</title><p>Read about the Regalia Gold Credit Card.</p>',
-  ]) {
+  const headingConflict =
+    '<title>Privilege Credit Card | Axis Bank</title><h1>Regalia Credit Card</h1>';
+  for (const html of [headingConflict]) {
     assert.equal(
       exactOfficialPageIdentity(html, 'Axis Bank', 'Privilege'),
       null,
@@ -174,19 +174,119 @@ test('reconciles all strong product identities before accepting an exact card', 
     );
     assert.equal(officialCardIdentityFromHtml(html, 'Axis Bank'), null, html);
   }
-
+  const bodyConflict =
+    '<title>Privilege Credit Card | Axis Bank</title><p>Regalia Gold Credit Card product terms and features.</p>';
   assert.equal(
-    exactOfficialPageIdentity(
+    exactOfficialPageIdentity(bodyConflict, 'Axis Bank', 'Privilege'),
+    null,
+  );
+  assert.equal(
+    officialCardIdentityFromHtml(bodyConflict, 'Axis Bank')?.cardName,
+    'Privilege',
+    'untargeted discovery should not mine general body card phrases',
+  );
+
+  const networkAlias = exactOfficialPageIdentity(
       '<title>Privilege Credit Card | Axis Bank</title><h1>Privilege Visa Infinite Credit Card</h1><p>Offer at the Regalia Gold hotel partner.</p>',
       'Axis Bank',
       'Privilege',
-    )?.cardName,
-    'Privilege',
-  );
+    );
+  assert.equal(networkAlias?.cardName, 'Privilege');
+  assert.equal(networkAlias?.network, 'Visa');
   assert.equal(
     exactOfficialPageIdentity('<title>Gold Credit Card | HDFC Bank</title>', 'HDFC Bank', 'Gold'),
     null,
     'a short colliding alias alone proved card identity',
+  );
+});
+
+test('treats conflicting payment-network product variants as different identities', () => {
+  assert.equal(
+    exactOfficialPageIdentity(
+      '<title>Privilege Visa Infinite Credit Card | Axis Bank</title><h1>Privilege Mastercard World Credit Card</h1>',
+      'Axis Bank',
+      'Privilege Visa Infinite',
+    ),
+    null,
+  );
+  assert.equal(
+    exactOfficialPageIdentity(
+      '<title>Privilege Visa Infinite Credit Card | Axis Bank</title><h1>Axis Privilege Visa Infinite Card</h1>',
+      'Axis Bank',
+      'Privilege Visa Infinite',
+    )?.network,
+    'Visa',
+  );
+  assert.equal(
+    evaluateAutomaticCatalogGate({
+      issuer: 'Axis Bank',
+      officialUrl: 'https://www.axis.bank.in/cards/privilege',
+      officialProduct: 'Privilege',
+      statementProducts: ['Privilege Visa Infinite Credit Card'],
+      confidence: 0.99,
+      catalogCandidateCount: 0,
+      conflicts: [],
+    }).autoAdd,
+    true,
+    'an agreeing explicit network alias was treated as another product',
+  );
+});
+
+test('uses target-aware body evidence without treating relationship card prose as product identity', () => {
+  const terms = `
+    <p>Privilege Credit Card terms apply to the Primary Card and each
+    Supplementary Card. Partner card offers may vary.</p>
+  `;
+  assert.equal(
+    exactOfficialPageIdentity(terms, 'Axis Bank', 'Privilege')?.cardName,
+    'Privilege',
+  );
+  assert.equal(
+    officialCardIdentityFromHtml(terms, 'Axis Bank'),
+    null,
+    'untargeted discovery inferred a product from ordinary body prose',
+  );
+  assert.equal(
+    exactOfficialPageIdentity(
+      '<p>Regalia Gold Credit Card product terms and features.</p>',
+      'Axis Bank',
+      'Privilege',
+    ),
+    null,
+  );
+});
+
+test('selects URL-hash catalog candidates only after exact fetched body identity validation', () => {
+  const selectMatch = cardDiscovery.selectCatalogUrlIdentityMatch;
+  assert.equal(typeof selectMatch, 'function');
+  const candidates = [
+    {cardId: 'gold', cardName: 'Regalia Gold', aliases: []},
+    {cardId: 'platinum', cardName: 'Regalia Platinum', aliases: []},
+  ];
+  assert.equal(
+    selectMatch(
+      '<h1>Regalia Gold Credit Card</h1>',
+      'HDFC Bank',
+      candidates,
+    ),
+    'gold',
+  );
+  assert.equal(
+    selectMatch(
+      '<h1>Regalia Platinum Credit Card</h1>',
+      'HDFC Bank',
+      candidates,
+    ),
+    'platinum',
+  );
+  assert.equal(
+    selectMatch(
+      '<h1>Infinia Credit Card</h1>',
+      'HDFC Bank',
+      candidates,
+    ),
+    null,
+    'a URL hash alone resolved a card whose fetched identity disagreed',
   );
 });
 

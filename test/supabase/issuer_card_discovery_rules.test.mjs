@@ -174,14 +174,46 @@ function createDb(
   return db;
 }
 
-test("returns the catalog card on a canonical URL-hash match without queueing crawler work", async () => {
-  const db = createDb({ urlCardId: "card-url" });
+test("returns a URL-hash catalog card only when the fetched candidate identity agrees", async () => {
+  const db = createDb({
+    urlCardId: "card-url",
+    catalogRows: [{
+      id: "card-url",
+      bank: "Axis Bank",
+      card_name: "Neo",
+      network: "Visa",
+    }],
+  });
 
   const result = await persistCrawlerCandidate(db, "Axis Bank", candidate());
 
   assert.deepEqual(result, { outcome: "existing", catalogCardId: "card-url" });
   assert.equal(db.state.jobs.length, 0);
   assert.equal(db.state.reviews.length, 0);
+});
+
+test("does not resolve a crawler candidate from a mismatched URL hash alone", async () => {
+  const db = createDb({
+    urlCardId: "card-wrong",
+    catalogRows: [
+      {
+        id: "card-wrong",
+        bank: "Axis Bank",
+        card_name: "Regalia Gold",
+        network: "Visa",
+      },
+      {
+        id: "card-neo",
+        bank: "Axis Bank",
+        card_name: "Neo",
+        network: "Visa",
+      },
+    ],
+  });
+
+  const result = await persistCrawlerCandidate(db, "Axis Bank", candidate());
+
+  assert.deepEqual(result, { outcome: "existing", catalogCardId: "card-neo" });
 });
 
 test("returns one canonical issuer/name catalog candidate without queueing crawler work", async () => {

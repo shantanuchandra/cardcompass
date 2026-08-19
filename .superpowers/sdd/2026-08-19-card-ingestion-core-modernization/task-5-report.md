@@ -434,3 +434,85 @@ Supabase command, production data, external network request, migration command,
 or live write was used. The ordered Task 2–5 database/application verification
 and explicitly authorized live issuer behavior remain the unresolved integration
 gate.
+
+## Review fix round 4/5 — 2026-08-20
+
+### Red proof
+
+Nine exact failure assertions were reproduced against `5398b01` before their
+corresponding production changes:
+
+- Card identity rules reported **25 passed / 2 failed**: conflicting Visa
+  Infinite/Mastercard World headings were accepted, while ordinary Primary,
+  Supplementary, and partner-card terms prevented a valid target match.
+- Supporting collection reported **25 passed / 1 failed** and issuer crawl
+  reported **27 passed / 1 failed** because both paths sorted duplicate query
+  values and keys before the fetch boundary.
+- Focused follow-up reds proved that URL-hash catalog candidates could resolve
+  without fetched-body agreement, a crawler URL hash could select the wrong
+  catalog card, unknown query resources discovered through an index vanished
+  instead of being quarantined, a valid explicit network alias failed the
+  automatic gate, and the reconciled result discarded its stronger network
+  signal.
+
+### Fixes
+
+- A shared request canonicalization path now normalizes only the HTTPS
+  origin/path, drops tracking parameters, validates the bounded explicit safe
+  functional-key policy, and retains original approved query ordering,
+  duplicates, and encoded value bytes. Supporting queues and issuer sitemap or
+  index discovery use that request identity before deduplication; identical
+  requests collapse, distinct encoded/query-order resources do not. Unknown or
+  sensitive resources are quarantined without fetching a rewritten URL.
+- Query-bearing submitted and final resources remain transient and are bound by
+  the fetcher's opaque SHA-256 identities. Discovery lookup and new provenance
+  use `sourceIdentityHash` and `finalResourceIdentityHash`, while display,
+  staging, catalog, and provenance URLs stay queryless. Legacy queryless hashes
+  are compatibility candidates only: fetched content must prove the catalog
+  card, and a mismatched legacy key cannot block a new exact query resource.
+- Neither submitted URL resolution nor issuer-crawler persistence trusts a URL
+  hash alone. Hash matches load the catalog name and aliases, reconcile them
+  against the fetched body, and resolve only one exact identity; mismatches and
+  ambiguity fail closed. Gold and Platinum query variants therefore retain
+  separate opaque resource identities and are selected by their bodies.
+- Shared identity reconciliation now treats explicit Visa, Mastercard, RuPay,
+  and Amex families and tiers as strong variant signals. Conflicting strong
+  networks are ambiguous, compatible generic/specific signals agree, and the
+  strongest unambiguous signal is retained. The automatic catalog gate treats
+  an explicit network spelling as an alias of the same product without
+  collapsing different product names.
+- Untargeted discovery no longer promotes arbitrary body phrases ending in
+  `Card` into products. Target validation uses bounded exact expected phrases
+  plus conservative named-card conflict evidence, ignores relationship labels
+  such as Primary/Supplementary/add-on/companion/partner, accepts opaque-text
+  target labels, and still rejects a genuinely different named product.
+
+No fetch, query, redirect, identity, or hash outcome changes acquisition
+discontinuation, benefit state, or mappings.
+
+### Green verification
+
+- Official-fetch rules — **47 passed, 0 failed**.
+- Benefit batch, supporting-document, and crawl-policy rules — **132 passed, 0
+  failed**.
+- Card discovery, issuer discovery/crawl, catalog, and benefit rules — **98
+  passed, 0 failed**.
+- Direct issuer-crawl/catalog Deno callers — **4 passed, 0 failed**.
+- Admin privacy/integration regression gate — **40 passed, 0 failed**, with only
+  its unchanged loopback-listener permission.
+- Total unique behavioral/static tests: **321 passed, 0 failed**.
+- Whole official-fetch production-caller `deno check` — passed.
+- All affected TypeScript source/test checks and `deno fmt --check` — passed.
+- `git diff --check` — passed.
+
+### Scope and remaining gate
+
+This round changes only Task 5 shared fetch/request and identity policy,
+supporting collection, issuer crawl, card-discovery production persistence, and
+their focused tests. No schema or migration changed.
+
+Live applied: **no**. No Docker, local database/PostgreSQL, local or linked
+Supabase command, production data, external network request, migration command,
+or live write was used. The ordered Task 2–5 database/application verification
+and explicitly authorized live issuer behavior remain the unresolved integration
+gate.

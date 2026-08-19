@@ -7,6 +7,7 @@ import {
 } from "./card_discovery.ts";
 import {
   approvedStoredQueryParameters,
+  canonicalOfficialRequestUrl,
   createOfficialRobotsCache,
   fetchOfficialIssuerResource as fetchOfficialIssuerResourceDefault,
   type OfficialFetchInput,
@@ -198,6 +199,18 @@ function evidenceFromHtml(html: string): string[] {
 function canonicalForIssuer(issuer: string, url: string): string | null {
   try {
     return canonicalOfficialUrl(issuer, url);
+  } catch {
+    return null;
+  }
+}
+
+function requestForIssuer(issuer: string, url: string): string | null {
+  try {
+    return canonicalOfficialRequestUrl(
+      issuer,
+      url,
+      approvedStoredQueryParameters(url),
+    );
   } catch {
     return null;
   }
@@ -464,8 +477,6 @@ export async function persistCrawlerCandidate(
   const canonicalUrl = canonicalOfficialUrl(issuer, candidate.canonicalUrl);
   const urlHash = await sha256(canonicalUrl);
   const knownCardId = await findCatalogCardByUrlHash(supabase, urlHash);
-  if (knownCardId) return { outcome: "existing", catalogCardId: knownCardId };
-
   const canonical = canonicalCardIdentity(issuer, candidate.proposedName);
   if (normalizedProduct(canonical.cardName, issuer).length < 2) {
     throw new Error("invalid_crawler_candidate");
@@ -481,6 +492,12 @@ export async function persistCrawlerCandidate(
     issuer,
     normalizedNames,
   );
+  if (
+    knownCardId && candidates.length === 1 &&
+    String(candidates[0].id) === knownCardId
+  ) {
+    return { outcome: "existing", catalogCardId: knownCardId };
+  }
   if (candidates.length === 1) {
     return { outcome: "existing", catalogCardId: String(candidates[0].id) };
   }
@@ -729,6 +746,7 @@ export async function discoverIssuerCardCandidates(
   const seenSitemaps = new Set<string>();
   const candidateUrls: string[] = [];
   const seenCandidates = new Set<string>();
+  const rejectedCandidateUrls: string[] = [];
   const delay = input.delay ??
     ((milliseconds: number) =>
       new Promise<void>((resolve) => {
@@ -774,7 +792,7 @@ export async function discoverIssuerCardCandidates(
 
   for (const rawUrl of sitemapStarts) {
     if (seenSitemaps.size >= MAX_SITEMAP_URLS) break;
-    const url = canonicalForIssuer(input.issuer, rawUrl);
+    const url = requestForIssuer(input.issuer, rawUrl);
     const hostname = url ? hostnameOf(url) : null;
     if (!url || !hostname) continue;
     if (!anchorHost) anchorHost = hostname;
@@ -801,8 +819,19 @@ export async function discoverIssuerCardCandidates(
     }
     const document = parseSitemap(response.text ?? "");
     for (const rawLocation of document.locations) {
-      const location = canonicalForIssuer(input.issuer, rawLocation);
-      if (!location || !anchorHost || !isAnchoredToHost(location, anchorHost)) {
+      const location = requestForIssuer(input.issuer, rawLocation);
+      if (!location) {
+        const display = canonicalForIssuer(input.issuer, rawLocation);
+        if (
+          display && anchorHost && isAnchoredToHost(display, anchorHost) &&
+          !document.isIndex && !seenCandidates.has(display)
+        ) {
+          seenCandidates.add(display);
+          rejectedCandidateUrls.push(display);
+        }
+        continue;
+      }
+      if (!anchorHost || !isAnchoredToHost(location, anchorHost)) {
         continue;
       }
 
@@ -828,7 +857,7 @@ export async function discoverIssuerCardCandidates(
 
   if (candidateUrls.length === 0) {
     for (const rawIndexUrl of (input.indexUrls ?? []).slice(0, 8)) {
-      const indexUrl = canonicalForIssuer(input.issuer, rawIndexUrl);
+      const indexUrl = requestForIssuer(input.issuer, rawIndexUrl);
       const hostname = indexUrl ? hostnameOf(indexUrl) : null;
       if (!indexUrl || !hostname) continue;
       if (!anchorHost) anchorHost = hostname;
@@ -853,9 +882,20 @@ export async function discoverIssuerCardCandidates(
         } catch {
           continue;
         }
-        const location = canonicalForIssuer(input.issuer, linked);
+        const location = requestForIssuer(input.issuer, linked);
+        if (!location) {
+          const display = canonicalForIssuer(input.issuer, linked);
+          if (
+            display && isAnchoredToHost(display, anchorHost) &&
+            !seenCandidates.has(display) && candidateUrlScore(display) > 0
+          ) {
+            seenCandidates.add(display);
+            rejectedCandidateUrls.push(display);
+          }
+          continue;
+        }
         if (
-          !location || !isAnchoredToHost(location, anchorHost) ||
+          !isAnchoredToHost(location, anchorHost) ||
           seenCandidates.has(location) || candidateUrlScore(location) <= 0
         ) continue;
         seenCandidates.add(location);
@@ -867,7 +907,9 @@ export async function discoverIssuerCardCandidates(
   }
 
   const candidates: PageClassification[] = [];
-  const quarantined: PageClassification[] = [];
+  const quarantined: PageClassification[] = rejectedCandidateUrls.map((url) =>
+    emptyClassification(url, "unapproved_query")
+  );
   const rankedCandidates = candidateUrls
     .map((url, index) => {
       const classification = classifyIssuerPage({ issuer: input.issuer, url });
@@ -931,7 +973,7 @@ export async function discoverIssuerCardCandidates(
   return {
     candidates,
     quarantined,
-    consideredCount: candidateUrls.length,
+    consideredCount: candidateUrls.length + rejectedCandidateUrls.length,
     fetchedCount,
   };
 }

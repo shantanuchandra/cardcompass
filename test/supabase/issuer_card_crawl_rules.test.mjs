@@ -452,6 +452,52 @@ test('issuer crawl approves linked functional query names and enforces delay dea
   assert.equal(queryInputs[0].robotsCache, queryInputs[1].robotsCache);
 });
 
+test('issuer crawl preserves approved sitemap query bytes through the request boundary', async () => {
+  const exact = 'https://www.axis.bank.in/cards/credit-card/privilege/terms?variant=z&variant=a&document=mitc%2F2026';
+  const requested = [];
+  await discoverIssuerCardCandidates({
+    issuer,
+    sitemapUrl: rootSitemap,
+    delay: async () => {},
+    fetchOfficialIssuerResource: async (input) => {
+      requested.push(input.url);
+      return input.url === rootSitemap
+        ? resource(input.url, sitemap([exact]), 'application/xml')
+        : resource(input.url, '<h1>Privilege Credit Card Terms</h1>');
+    },
+  });
+
+  assert.deepEqual(requested, [rootSitemap, exact]);
+});
+
+test('issuer index discovery quarantines unknown query resources without fetching a different URL', async () => {
+  const index = 'https://www.axis.bank.in/credit-cards';
+  const unsafe =
+    'https://www.axis.bank.in/cards/credit-card/privilege?session=private';
+  const requested = [];
+  const result = await discoverIssuerCardCandidates({
+    issuer,
+    sitemapUrl: rootSitemap,
+    indexUrls: [index],
+    delay: async () => {},
+    fetchOfficialIssuerResource: async (input) => {
+      requested.push(input.url);
+      if (input.url === rootSitemap) throw new Error('missing sitemap');
+      if (input.url === index) {
+        return resource(input.url, `<a href="${unsafe}">Privilege card</a>`);
+      }
+      assert.fail(`unsafe query resource was fetched: ${input.url}`);
+    },
+  });
+
+  assert.deepEqual(requested, [rootSitemap, index]);
+  assert.equal(result.consideredCount, 1);
+  assert.equal(
+    result.quarantined.some((item) => item.warnings.includes('unapproved_query')),
+    true,
+  );
+});
+
 test('requires product-specific identity context before classifying generic listings or sitewide documents positively', () => {
   const genericListing = classifyIssuerPage({
     issuer,

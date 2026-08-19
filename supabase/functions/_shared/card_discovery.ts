@@ -16,6 +16,12 @@ export type OfficialCardIdentityAssessment = {
   candidateKeys: string[];
 };
 
+export type CatalogUrlIdentityCandidate = {
+  cardId: string;
+  cardName: string;
+  aliases: string[];
+};
+
 export type AutomaticGateInput = {
   issuer: string;
   officialUrl: string;
@@ -287,6 +293,48 @@ function identityKey(value: string, issuer: string): string {
   );
 }
 
+function networkVariantKey(value: string): string | null {
+  const normalized = words(value).join(" ");
+  if (/\b(?:american express|amex)\b/.test(normalized)) return "amex";
+  if (/\bvisa infinite\b/.test(normalized)) return "visa:infinite";
+  if (/\bvisa signature\b/.test(normalized)) return "visa:signature";
+  if (/\bvisa platinum\b/.test(normalized)) return "visa:platinum";
+  if (/\bvisa\b/.test(normalized)) return "visa";
+  if (/\bmaster\s*card world elite\b/.test(normalized)) {
+    return "mastercard:world-elite";
+  }
+  if (/\bmaster\s*card world\b/.test(normalized)) return "mastercard:world";
+  if (/\bmaster\s*card platinum\b/.test(normalized)) {
+    return "mastercard:platinum";
+  }
+  if (/\bmaster\s*card\b/.test(normalized)) return "mastercard";
+  if (/\brupay platinum\b/.test(normalized)) return "rupay:platinum";
+  if (/\brupay\b/.test(normalized)) return "rupay";
+  return null;
+}
+
+function networkVariantsConflict(values: Array<string | null>): boolean {
+  const signals = [
+    ...new Set(values.filter((value): value is string => Boolean(value))),
+  ];
+  const families = new Set(signals.map((value) => value.split(":")[0]));
+  if (families.size > 1) return true;
+  const tiered = new Set(signals.filter((value) => value.includes(":")));
+  return tiered.size > 1;
+}
+
+function networkVariantMatches(
+  actual: string | null,
+  expected: string | null,
+): boolean {
+  if (!expected || !actual) return true;
+  if (actual === expected) return true;
+  const [actualFamily] = actual.split(":");
+  const [expectedFamily] = expected.split(":");
+  return actualFamily === expectedFamily &&
+    (!actual.includes(":") || !expected.includes(":"));
+}
+
 function strongExpectedIdentity(value: string, issuer: string): boolean {
   const key = identityKey(value, issuer);
   return key.length >= 4 && !weakIdentityAliases.has(key);
@@ -378,25 +426,44 @@ function strongIdentityLabels(content: string, issuer: string): string[] {
     )
   ) add(match[1] ?? "");
 
-  const body = decodeHtmlText(
+  return labels.slice(0, 32);
+}
+
+const relationshipCardLabels = new Set([
+  "primary",
+  "supplementary",
+  "additional",
+  "addon",
+  "companion",
+  "partner",
+]);
+
+function targetBodyIdentityLabels(
+  content: string,
+  issuer: string,
+): string[] {
+  const visible = decodeHtmlText(
     content.slice(0, 120_000)
       .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
       .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
-      .replace(/<title\b[\s\S]*?<\/title>/gi, " ")
-      .replace(/<h[1-2]\b[\s\S]*?<\/h[1-2]>/gi, " ")
-      .replace(/<nav\b[\s\S]*?<\/nav>/gi, " ")
-      .replace(/<a\b[\s\S]*?<\/a>/gi, " ")
-      .replace(
-        /<[^>]+class=["'][^"']*\btitle\b[^"']*["'][^>]*>[\s\S]*?<\/[^>]+>/gi,
-        " ",
-      ),
+      .replace(/<nav\b[\s\S]*?<\/nav>/gi, " "),
   );
+  const labels: string[] = [];
   for (
-    const match of body.matchAll(
-      /\b(?:[A-Z][A-Za-z0-9&'-]*\s+){0,5}(?:Credit\s+)?Card\b/g,
+    const match of visible.matchAll(
+      /\b([A-Z][A-Za-z0-9&'-]*(?:\s+[A-Z][A-Za-z0-9&'-]*){0,4})\s+(?:[Cc]redit\s+)?[Cc]ard\b/g,
     )
-  ) add(match[0] ?? "");
-  return labels.slice(0, 32);
+  ) {
+    const label = `${match[1]} Card`;
+    const key = identityKey(label, issuer);
+    if (
+      !key || relationshipCardLabels.has(key) ||
+      !strongExpectedIdentity(label, issuer)
+    ) continue;
+    labels.push(label);
+    if (labels.length === 16) break;
+  }
+  return labels;
 }
 
 export function assessOfficialCardIdentity(
@@ -404,34 +471,70 @@ export function assessOfficialCardIdentity(
   issuer: string,
   expectedProducts: string[] = [],
 ): OfficialCardIdentityAssessment {
-  const candidates = strongIdentityLabels(content, issuer).map((label) => {
+  const labels = strongIdentityLabels(content, issuer);
+  if (expectedProducts.length > 0) {
+    labels.push(...targetBodyIdentityLabels(content, issuer));
+  }
+  const candidates = labels.map((label) => {
     const identity = identityFromLabel(label, issuer)!;
-    return { identity, key: identityKey(identity.cardName, issuer) };
+    return {
+      identity,
+      key: identityKey(identity.cardName, issuer),
+      networkKey: networkVariantKey(label),
+    };
   });
   for (const expected of expectedProducts) {
     if (!containsExpectedIdentityPhrase(content, expected, issuer)) continue;
-    const identity = canonicalCardIdentity(issuer, expected);
-    candidates.push({ identity, key: identityKey(identity.cardName, issuer) });
+    const label = `${expected} Credit Card`;
+    const identity = identityFromLabel(label, issuer) ??
+      canonicalCardIdentity(issuer, expected);
+    candidates.push({
+      identity,
+      key: identityKey(identity.cardName, issuer),
+      networkKey: networkVariantKey(label),
+    });
   }
-  const candidateKeys = [
-    ...new Set(candidates.map((candidate) => candidate.key)),
-  ]
+  const productKeys = [...new Set(candidates.map((candidate) => candidate.key))]
     .sort();
+  const candidateKeys = [
+    ...new Set(
+      candidates.map((candidate) =>
+        `${candidate.key}${
+          candidate.networkKey ? `@${candidate.networkKey}` : ""
+        }`
+      ),
+    ),
+  ].sort();
   if (candidateKeys.length === 0) {
     return { status: "unproven", identity: null, candidateKeys };
   }
-  if (candidateKeys.length > 1) {
+  if (
+    productKeys.length > 1 ||
+    networkVariantsConflict(candidates.map((candidate) => candidate.networkKey))
+  ) {
     return { status: "ambiguous", identity: null, candidateKeys };
   }
-  const identity = candidates[0].identity;
+  const identity =
+    candidates.find((candidate) => candidate.networkKey?.includes(":"))
+      ?.identity ??
+      candidates.find((candidate) => candidate.networkKey)?.identity ??
+      candidates[0].identity;
   if (expectedProducts.length === 0) {
     return { status: "match", identity, candidateKeys };
   }
-  const expectedKeys = new Set(
-    expectedProducts.filter((label) => strongExpectedIdentity(label, issuer))
-      .map((label) => identityKey(label, issuer)),
+  const expected = expectedProducts
+    .filter((label) => strongExpectedIdentity(label, issuer))
+    .map((label) => ({
+      key: identityKey(label, issuer),
+      networkKey: networkVariantKey(label),
+    }));
+  const matchesExpected = expected.some((target) =>
+    target.key === productKeys[0] &&
+    candidates.every((candidate) =>
+      networkVariantMatches(candidate.networkKey, target.networkKey)
+    )
   );
-  return expectedKeys.has(candidateKeys[0])
+  return matchesExpected
     ? { status: "match", identity, candidateKeys }
     : { status: "mismatch", identity: null, candidateKeys };
 }
@@ -454,6 +557,24 @@ export function exactOfficialPageIdentity(
     [expectedProduct],
   );
   return assessment.status === "match" ? assessment.identity : null;
+}
+
+export function selectCatalogUrlIdentityMatch(
+  content: string,
+  issuer: string,
+  candidates: CatalogUrlIdentityCandidate[],
+): string | null {
+  const matchingIds = new Set<string>();
+  for (const candidate of candidates) {
+    const expectedProducts = [candidate.cardName, ...candidate.aliases]
+      .filter((value, index, all) => value && all.indexOf(value) === index);
+    if (
+      expectedProducts.some((expected) =>
+        exactOfficialPageIdentity(content, issuer, expected) !== null
+      )
+    ) matchingIds.add(candidate.cardId);
+  }
+  return matchingIds.size === 1 ? [...matchingIds][0] : null;
 }
 
 export function selectSubmittedUrlIdentity(input: {
@@ -533,12 +654,12 @@ export function evaluateAutomaticCatalogGate(
   }
   if (input.confidence < 0.9) reasons.push("low_confidence");
 
-  const official = normalizedProduct(input.officialProduct, input.issuer);
+  const official = identityKey(input.officialProduct, input.issuer);
   if (input.statementProducts.length === 0) {
     reasons.push("missing_statement_signal");
   } else if (
     !input.statementProducts.some((value) => {
-      const statement = normalizedProduct(value, input.issuer);
+      const statement = identityKey(value, input.issuer);
       return statement.length >= 4 && official === statement;
     })
   ) {

@@ -1,11 +1,9 @@
 import { type BenefitDocument } from "../_shared/benefit_enrichment.ts";
 import { redactSensitiveUrlsInText } from "../_shared/benefit_source_privacy.ts";
-import {
-  assessOfficialCardIdentity,
-  canonicalOfficialUrl,
-} from "../_shared/card_discovery.ts";
+import { assessOfficialCardIdentity } from "../_shared/card_discovery.ts";
 import {
   approvedStoredQueryParameters,
+  canonicalOfficialRequestUrl,
   createOfficialRobotsCache,
   fetchOfficialIssuerObservation,
   fetchOfficialIssuerResource as fetchOfficialIssuerResourceDefault,
@@ -127,7 +125,11 @@ function linkedUrls(
     try {
       const raw = new URL(match[1] ?? match[2] ?? match[3] ?? "", baseUrl)
         .toString();
-      const url = canonicalOfficialUrl(issuer, raw);
+      const url = canonicalOfficialRequestUrl(
+        issuer,
+        raw,
+        approvedStoredQueryParameters(raw),
+      );
       const anchorText = (match[4] ?? "").replace(/<[^>]*>/g, " ")
         .replace(/&(?:amp|nbsp);/gi, " ").replace(/\s+/g, " ").trim()
         .slice(0, 256);
@@ -248,7 +250,13 @@ export async function collectSupportingBenefitDocuments(
   ]);
   const exactUrls = exactSupportingUrls(input.issuer, input.identityLabels);
   const exactSet = new Set(
-    exactUrls.map((url) => canonicalOfficialUrl(input.issuer, url)),
+    exactUrls.map((url) =>
+      canonicalOfficialRequestUrl(
+        input.issuer,
+        url,
+        approvedStoredQueryParameters(url),
+      )
+    ),
   );
   const initialCandidates = [
     ...[...exactSet].map((url) => ({
@@ -268,7 +276,11 @@ export async function collectSupportingBenefitDocuments(
     all.findIndex((item) => item.url === candidate.url) === index
   ).map((candidate) => ({
     ...candidate,
-    url: canonicalOfficialUrl(input.issuer, candidate.url),
+    url: canonicalOfficialRequestUrl(
+      input.issuer,
+      candidate.url,
+      approvedStoredQueryParameters(candidate.url),
+    ),
     depth: 1,
     role: sourceRole(candidate, exactSet.has(candidate.url)),
   })).sort((left, right) =>

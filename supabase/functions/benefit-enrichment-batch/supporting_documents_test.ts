@@ -628,6 +628,39 @@ Deno.test("collector keeps transient requested URLs and v6 persists only identit
   );
 });
 
+Deno.test("supporting queue preserves approved query bytes through the fetch boundary", async () => {
+  const product = "https://www.axis.bank.in/cards/credit-card/privilege";
+  const exact = `${product}/terms?variant=z&variant=a&document=mitc%2F2026`;
+  const reordered = `${product}/terms?document=mitc%2F2026&variant=z&variant=a`;
+  const requested: string[] = [];
+  const collected = await collectSupportingBenefitDocuments({
+    issuer: "Axis Bank",
+    identityLabels: ["Privilege"],
+    primary: resource(
+      product,
+      `<h1>Privilege Credit Card</h1><a href="${exact}">Terms</a><a href="${exact}">Duplicate Terms</a><a href="${reordered}">Terms variant</a>`,
+    ),
+    fetchOfficialIssuerResource: async (input) => {
+      requested.push(input.url);
+      return resource(input.url, "Privilege Credit Card terms and conditions");
+    },
+  });
+
+  assert(
+    requested.length === 2 && requested.includes(exact) &&
+      requested.includes(reordered),
+    `query bytes/order changed or exact duplicate was not deduped: ${
+      JSON.stringify(requested)
+    }`,
+  );
+  assert(
+    collected.documents.slice(1).map((document) => document.sourceUrl)
+      .every((url) => url === exact || url === reordered) &&
+      collected.documents.length === 3,
+    "transient source identity did not preserve distinct query resources",
+  );
+});
+
 Deno.test("required terms HTML outranks an optional PDF when one fetch remains", async () => {
   const product = "https://www.axis.bank.in/cards/credit-card/privilege";
   const optionalPdf = `${product}/benefits.pdf`;
