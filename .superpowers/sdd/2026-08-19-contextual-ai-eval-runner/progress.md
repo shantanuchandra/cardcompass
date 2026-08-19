@@ -143,3 +143,12 @@ Ruling: Retain the generated root-lock `jsr:@std/assert@*` resolution because ex
 Ruling: Set the current `user_card` feedback fixture to `catalog_identity_validation`; support `benefit_extraction` only when the fixture explicitly selects it. Cost if wrong: existing ambiguous card cases remain insufficient until revised, and future benefit-specific capture must set its contextual mode rather than inferring it from expected output.
 
 Ruling: Normalize captured card answer values into the selected evaluator schema, then use source evidence only for citations and validation. Cost if wrong: a persisted answer that lacks matching official provenance becomes `insufficient_fixture` instead of a schema-invalid baseline or a source-rewritten answer.
+
+### Task 5 citation-consensus correction
+
+- Every citation emitted by captured identity or benefit normalization now independently supports the complete normalized answer. Identity sources must agree on catalog reference, issuer, name, network, and fees. Benefit sources must agree on captured card linkage and the full normalized benefit set.
+- Any applicable source that conflicts with the captured answer or another applicable source causes `insufficient_fixture`, including a valid benefit source accompanied by benefit evidence for another card.
+- Sources discriminated for the other evaluation mode are ignored and never emitted. Existing identity and benefit normalization tests prove their unrelated counterpart source is absent from citations.
+- The same per-citation agreement checks strengthen candidate output validation, so an output cannot cite a conflicting applicable source merely because another source supports it.
+
+Ruling: Require unanimous support from every official source applicable to the explicitly selected card evaluation mode; ignore only sources with a different mode discriminant. Cost if wrong: partial/conflicting provenance reduces runnable coverage, but no citation can imply support it does not provide.

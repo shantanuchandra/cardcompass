@@ -376,6 +376,116 @@ Deno.test("ambiguous or incomplete captured card baselines fail as insufficient 
   }
 });
 
+Deno.test("captured identity baseline rejects a second conflicting applicable source", async () => {
+  const item = fixture("card_data");
+  const safe = item.inputFixture.safe_input_context as Record<string, unknown>;
+  const official = safe.official_sources as Record<string, unknown>[];
+  const conflicting: EvalCaseFixture = {
+    ...item,
+    inputFixture: {
+      ...item.inputFixture,
+      safe_input_context: {
+        ...safe,
+        official_sources: [...official, {
+          id: "source-conflict",
+          url: "https://bank.example/conflict",
+          snippet: "Conflicting identity",
+          facts: {
+            evaluation_mode: "catalog_identity_validation",
+            provenance_claims: {
+              issuer: "HDFC",
+              card_name: "Legacy Regalia",
+              network: "Visa",
+              aliases: [],
+            },
+            catalog_reference: {
+              id: "card-legacy",
+              name: "Legacy Regalia",
+              bank: "HDFC",
+              network: "Visa",
+              annual_fee: 2500,
+              joining_fee: 2500,
+            },
+          },
+        }],
+      },
+    },
+  };
+  const result = await executeEvalCase(conflicting, "captured-production-v1", {
+    generate: () => {
+      throw new Error("must_not_call");
+    },
+  });
+  assertEquals(result.executionStatus, "failed");
+  assertEquals(result.safeFailureCategory, "insufficient_fixture");
+});
+
+Deno.test("captured benefit baseline rejects an applicable source linked to another card", async () => {
+  const item = fixture("card_data");
+  const safe = item.inputFixture.safe_input_context as Record<string, unknown>;
+  const official = safe.official_sources as Record<string, unknown>[];
+  const benefit = [{
+    id: "benefit-1",
+    dedupe_key: "benefit-1",
+    title: "Lounge",
+    type: "access",
+    category: "travel",
+    value_config: { limit: 4 },
+    limit: 4,
+    period: null,
+    eligibility: "see official terms",
+  }];
+  const supporting = official.map((source) =>
+    source.id === "source-benefit-1"
+      ? {
+        ...source,
+        facts: {
+          evaluation_mode: "benefit_extraction",
+          catalog_reference_id: "card-1",
+          benefits: benefit,
+        },
+      }
+      : source
+  );
+  const conflicting: EvalCaseFixture = {
+    ...item,
+    inputFixture: {
+      ...item.inputFixture,
+      safe_input_context: {
+        ...safe,
+        evaluation_mode: "benefit_extraction",
+        official_sources: [...supporting, {
+          id: "source-wrong-card",
+          url: "https://bank.example/other-card-benefit",
+          snippet: "Terms for another card",
+          facts: {
+            evaluation_mode: "benefit_extraction",
+            catalog_reference_id: "card-2",
+            benefits: benefit,
+          },
+        }],
+      },
+    },
+    capturedOutput: {
+      ...item.capturedOutput,
+      benefits: [{
+        benefit_id: "benefit-1",
+        title: "Lounge",
+        benefit_type: "access",
+        benefit_category: "travel",
+        value_config: { limit: 4 },
+      }],
+    },
+  };
+  const result = await executeEvalCase(conflicting, "captured-production-v1", {
+    generate: () => {
+      throw new Error("must_not_call");
+    },
+  });
+  assertEquals(result.executionStatus, "failed");
+  assertEquals(result.safeFailureCategory, "insufficient_fixture");
+});
+
 Deno.test("candidate receives only deeply sanitized fixture inside a fixed, delimited prompt", async () => {
   const item = fixture("card_data");
   const seen: unknown[] = [];

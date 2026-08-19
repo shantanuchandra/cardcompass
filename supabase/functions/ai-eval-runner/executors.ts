@@ -374,7 +374,13 @@ function validateCardData(
       output.card.joining_fee === reference.joining_fee &&
       claims.card_name === reference.name && claims.issuer === reference.bank &&
       finiteMoney(output.card.annual_fee) &&
-      finiteMoney(output.card.joining_fee);
+      finiteMoney(output.card.joining_fee) &&
+      [...sourceIds].every((sourceId) =>
+        identitySourceSupports(
+          byId.get(sourceId),
+          output.card as Record<string, unknown>,
+        )
+      );
   }
   if (
     output.mode !== "benefits" ||
@@ -405,6 +411,12 @@ function validateCardData(
       "period",
       "eligibility",
     ]) && sourceBenefits.some((source) => deepStructuralEqual(source, benefit))
+  ) && [...sourceIds].every((sourceId) =>
+    benefitSourceSupports(
+      byId.get(sourceId),
+      output.card_id,
+      output.benefits as unknown[],
+    )
   );
 }
 
@@ -426,26 +438,31 @@ function normalizeCapturedCard(
     const grounding = sources.filter((source) =>
       isRecord(source.facts) &&
       source.facts.evaluation_mode === "catalog_identity_validation"
-    ).map((source) => ({
-      id: source.id,
-      field_paths: ["facts.catalog_reference"],
-    }));
-    if (grounding.length === 0) return null;
+    );
+    const answer = {
+      id: card.id,
+      name: card.card_name,
+      bank: card.bank,
+      network: card.network,
+      annual_fee: card.annual_fee,
+      joining_fee: card.joining_fee,
+    };
+    if (
+      grounding.length === 0 ||
+      !grounding.every((source) => identitySourceSupports(source, answer))
+    ) return null;
     return {
       mode: "identity",
-      card: {
-        id: card.id,
-        name: card.card_name,
-        bank: card.bank,
-        network: card.network,
-        annual_fee: card.annual_fee,
-        joining_fee: card.joining_fee,
-      },
-      sources: grounding,
+      card: answer,
+      sources: grounding.map((source) => ({
+        id: source.id,
+        field_paths: ["facts.catalog_reference"],
+      })),
     };
   }
   if (safe.evaluation_mode !== "benefit_extraction") return null;
-  if (!Array.isArray(captured.benefits) || !isRecord(captured.catalog_card)) {
+  const capturedCatalog = captured.catalog_card;
+  if (!Array.isArray(captured.benefits) || !isRecord(capturedCatalog)) {
     return null;
   }
   const benefits = captured.benefits.map(normalizeCapturedBenefit);
@@ -455,14 +472,59 @@ function normalizeCapturedCard(
   const grounding = sources.filter((source) =>
     isRecord(source.facts) &&
     source.facts.evaluation_mode === "benefit_extraction"
-  ).map((source) => ({ id: source.id, field_paths: ["facts.benefits"] }));
-  if (grounding.length === 0) return null;
+  );
+  if (
+    grounding.length === 0 ||
+    !grounding.every((source) =>
+      benefitSourceSupports(
+        source,
+        capturedCatalog.id,
+        benefits as Record<string, unknown>[],
+      )
+    )
+  ) return null;
   return {
     mode: "benefits",
-    card_id: captured.catalog_card.id,
+    card_id: capturedCatalog.id,
     benefits,
-    sources: grounding,
+    sources: grounding.map((source) => ({
+      id: source.id,
+      field_paths: ["facts.benefits"],
+    })),
   };
+}
+
+function identitySourceSupports(
+  source: unknown,
+  card: Record<string, unknown>,
+): boolean {
+  if (!isRecord(source) || !isRecord(source.facts)) return false;
+  const facts = source.facts;
+  if (
+    facts.evaluation_mode !== "catalog_identity_validation" ||
+    !isRecord(facts.provenance_claims) ||
+    !isRecord(facts.catalog_reference)
+  ) return false;
+  const claims = facts.provenance_claims;
+  const reference = facts.catalog_reference;
+  return card.id === reference.id && card.name === reference.name &&
+    card.bank === reference.bank &&
+    card.network === (claims.network ?? reference.network) &&
+    card.annual_fee === reference.annual_fee &&
+    card.joining_fee === reference.joining_fee &&
+    claims.card_name === card.name && claims.issuer === card.bank;
+}
+
+function benefitSourceSupports(
+  source: unknown,
+  cardId: unknown,
+  benefits: readonly unknown[],
+): boolean {
+  if (!isRecord(source) || !isRecord(source.facts)) return false;
+  const facts = source.facts;
+  return facts.evaluation_mode === "benefit_extraction" &&
+    facts.catalog_reference_id === cardId && Array.isArray(facts.benefits) &&
+    deepStructuralEqual(facts.benefits, benefits);
 }
 
 function normalizeCapturedBenefit(

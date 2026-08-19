@@ -38,3 +38,9 @@ Captured-card baseline correction:
 - Captured production card DTOs normalize into the same discriminated, grounded identity/benefit output contract used by candidates. Answer values come from captured catalog/benefit rows; official sources attach citations and validate provenance without rewriting those values.
 - Ambiguous historical modes, missing required fields, absent citations, or source mismatches return `insufficient_fixture` before scoring.
 - Focused Eval and Feedback coverage passes 42 tests, including real identity/benefit normalization and scorer regression behavior.
+
+Citation-consensus correction:
+
+- Every emitted identity or benefit citation now individually validates the complete captured answer for its selected mode.
+- Conflicting applicable identity evidence, benefit evidence linked to another card, or disagreement with captured values fails closed as `insufficient_fixture` even when another valid source exists.
+- Sources for the other explicit evaluation mode remain unrelated, are ignored safely, and are never emitted.
