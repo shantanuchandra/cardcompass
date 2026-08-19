@@ -262,6 +262,100 @@ void main() {
     expect(item.priorDecisionSummaries.single, contains('unsupported'));
   });
 
+  test(
+    'production BOGO, cashback, points, and milestone proposals round-trip without loss',
+    () async {
+      const proposals = [
+        {
+          'dedupe_key': 'bogo',
+          'title': 'Buy 1 get 1',
+          'benefit_category': 'entertainment',
+          'benefit_type': 'bogo',
+          'value_config': {
+            'category': 'movie_tickets',
+            'discount_type': 'bogo',
+            'max_discount_per_transaction': 500,
+            'max_usage_per_period': 2,
+            'usage_period': 'quarter',
+          },
+          'partners': ['BookMyShow'],
+          'exclusions': ['convenience fees'],
+        },
+        {
+          'dedupe_key': 'points',
+          'title': '5 reward points',
+          'benefit_category': 'rewards',
+          'benefit_type': 'reward_points',
+          'value_config': {
+            'value': 5,
+            'threshold': 100,
+            'restrictions': ['dining'],
+          },
+          'exclusions': ['fuel', 'emi transactions'],
+        },
+        {
+          'dedupe_key': 'cashback',
+          'title': '5% cashback',
+          'benefit_category': 'cashback',
+          'benefit_type': 'cashback',
+          'value_config': {
+            'rate': 5,
+            'cap': 750,
+            'period': 'month',
+            'restrictions': ['online groceries'],
+          },
+          'exclusions': ['wallet reloads'],
+        },
+        {
+          'dedupe_key': 'milestone',
+          'title': 'Movie milestone',
+          'benefit_category': 'entertainment',
+          'benefit_type': 'milestone',
+          'value_config': {
+            'category': 'movie_tickets',
+            'milestone_type': 'monthly',
+            'threshold_amount': 50000,
+            'reward_value': 400,
+          },
+          'exclusions': <String>[],
+        },
+      ];
+      final item = CardReviewItem.fromJson(CardReviewLane.benefit, {
+        'id': identityId,
+        'status': 'staged',
+        'updated_at': observed,
+        'staging_id': stagingId,
+        'staging': {
+          'source_evidence': [],
+          'extracted_data': {
+            'diff': {'additions': proposals},
+          },
+        },
+      });
+      final decisions = item.benefitProposals
+          .map((proposal) => proposal.decision('approve'))
+          .toList();
+      expect(decisions.map((value) => value['proposed']), proposals);
+      final api = RecordingAdminOperatorApi(
+        const AdminOperatorResponse(200, {'result': {}}),
+      );
+      await CardDataRepository(
+        AdminOperatorRepository(api),
+        requestIds: () => '11111111-1111-4111-8111-111111111111',
+      ).act(
+        CardReviewAction(
+          lane: CardReviewLane.benefit,
+          operation: CardReviewOperation.approve,
+          targetId: identityId,
+          observedUpdatedAt: observed,
+          stagingId: stagingId,
+          payload: {'decisions': decisions},
+        ),
+      );
+      expect(api.bodies.single['decisions'], decisions);
+    },
+  );
+
   final validActions =
       <({String name, CardReviewAction action, Map<String, dynamic> extras})>[
         (

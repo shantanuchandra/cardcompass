@@ -1,4 +1,5 @@
 import { assertEquals, assertRejects } from "@std/assert";
+import { extractGroundedBenefits } from "../_shared/benefit_enrichment.ts";
 import {
   cardDataActionHandlers,
   handleCardReviewAction,
@@ -13,6 +14,7 @@ const REQUEST_ID = "44444444-4444-4444-8444-444444444444";
 const UPDATED_AT = "2026-08-19T09:00:00Z";
 
 type QueryCall = { method: string; args: unknown[] };
+type JsonRecord = Record<string, unknown>;
 
 function createReadQueryForRows(
   rows: unknown[],
@@ -616,6 +618,99 @@ Deno.test("benefit aliases are canonicalized before audited RPC metadata", async
       },
     }],
   });
+});
+
+Deno.test("production extracted benefit semantics survive Admin2 presentation and audited action", async () => {
+  const proposals = extractGroundedBenefits([{
+    sourceUrl: "https://issuer.example/card",
+    text: [
+      "Buy one get one free movie ticket on BookMyShow, capped at Rs. 500, twice per quarter, excluding convenience fees.",
+      "5% cashback on online groceries, capped at Rs. 750 per month, excluding wallet reloads.",
+      "Earn 5 reward points for every Rs. 100 spent on dining, excluding fuel and EMI transactions.",
+      "Get 2 PVR INOX movie tickets on every spend of Rs. 50000. Tickets worth Rs. 400 each in every monthly billing cycle.",
+    ].join("\n"),
+  }], "benefits-v5");
+  assertEquals(proposals.length, 4);
+  const fake = fakeContext({
+    rows: [{
+      id: IDENTITY_ID,
+      card_id: MERGE_ID,
+      canonical_url: "https://issuer.example/card",
+      parser_version: "benefits-v5",
+      run_mode: "manual",
+      status: "staged",
+      staging_id: STAGING_ID,
+      updated_at: UPDATED_AT,
+      card_catalog: { id: MERGE_ID, bank: "Issuer", card_name: "Premier" },
+      card_benefits_staging: {
+        id: STAGING_ID,
+        status: "pending",
+        source_evidence: [],
+        extracted_data: { proposals, diff: { additions: proposals } },
+      },
+    }],
+  });
+  const page = await handleCardReviewList({ lane: "benefit" }, fake.context);
+  const presented = page.items[0].staging.extracted_data.diff.additions;
+  const bogo = presented.find((item: JsonRecord) =>
+    item.benefit_type === "bogo"
+  );
+  const points = presented.find((item: JsonRecord) =>
+    item.benefit_type === "reward_points"
+  );
+  const cashback = presented.find((item: JsonRecord) =>
+    item.benefit_type === "cashback"
+  );
+  const milestone = presented.find((item: JsonRecord) =>
+    item.benefit_type === "milestone"
+  );
+  assertEquals(bogo.value_config, {
+    category: "movie_tickets",
+    discount_type: "bogo",
+    max_discount_per_transaction: 500,
+    max_usage_per_period: 2,
+    usage_period: "quarter",
+  });
+  assertEquals(points.value_config, {
+    value: 5,
+    threshold: 100,
+    restrictions: ["dining"],
+  });
+  assertEquals(points.exclusions, ["fuel", "emi transactions"]);
+  assertEquals(cashback.value_config, {
+    rate: 5,
+    cap: 750,
+    period: "month",
+    restrictions: ["online groceries"],
+  });
+  assertEquals(cashback.exclusions, ["wallet reloads"]);
+  assertEquals(milestone.value_config, {
+    category: "movie_tickets",
+    milestone_type: "monthly",
+    threshold_amount: 50000,
+    reward_value: 400,
+  });
+
+  const action = fakeContext();
+  await handleCardReviewAction({
+    lane: "benefit",
+    operation: "approve",
+    ...validCommon,
+    staging_id: STAGING_ID,
+    decisions: presented.map((proposed: JsonRecord) => ({
+      action: "approve",
+      dedupe_key: proposed.dedupe_key,
+      proposed,
+    })),
+  }, action.context);
+  assertEquals(
+    (action.rpcCalls[0].args._payload as JsonRecord).decisions,
+    presented.map((proposed: JsonRecord) => ({
+      action: "approve",
+      dedupe_key: proposed.dedupe_key,
+      proposed,
+    })),
+  );
 });
 
 Deno.test("mutation maps database failures to stable codes without leaking details", async () => {

@@ -197,29 +197,30 @@ const benefitKeys = new Set([
   "effectiveTo",
 ]);
 const valueConfigKeys = new Set([
-  "unit",
-  "currency_unit",
+  "category",
+  "discount_type",
   "discount_percent",
   "discount_amount",
+  "max_discount_per_transaction",
+  "max_usage_per_month",
+  "max_usage_per_period",
+  "usage_period",
   "monthly_cap",
   "annual_cap",
+  "unit",
+  "milestone_type",
   "threshold_amount",
   "reward_value",
   "multiplier",
   "base_rate",
+  "currency_unit",
+  "platform",
   "value",
   "rate",
   "cap",
-  "limit",
+  "threshold",
   "frequency",
-]);
-const exclusionKeys = new Set([
-  "conditions",
-  "notes",
-  "merchant_categories",
-  "transactions",
-  "products",
-  "locations",
+  "period",
   "restrictions",
 ]);
 
@@ -259,20 +260,15 @@ function canonicalBenefit(value: unknown): JsonRecord {
       output.value_config = Object.fromEntries(
         Object.entries(config).map((
           [childKey, child],
-        ) => [childKey, scalar(child, childKey)]),
+        ) => [
+          childKey,
+          childKey === "restrictions"
+            ? scalarList(child, childKey)
+            : scalar(child, childKey),
+        ]),
       );
     } else if (key === "exclusions") {
-      const exclusions = exactObject(item, exclusionKeys);
-      output.exclusions = Object.fromEntries(
-        Object.entries(exclusions).map(
-          ([childKey, child]) => [
-            childKey,
-            Array.isArray(child)
-              ? scalarList(child, childKey)
-              : scalar(child, childKey),
-          ],
-        ),
-      );
+      output.exclusions = scalarList(item, key);
     } else if (["partners", "regions"].includes(key)) {
       output[key] = scalarList(item, key);
     } else {
@@ -407,12 +403,24 @@ function presentBenefit(value: unknown): JsonRecord {
     }
   }
   const legacyConfig: JsonRecord = {};
-  for (const key of ["value", "rate", "cap", "limit", "frequency"] as const) {
+  for (
+    const key of [
+      "value",
+      "rate",
+      "cap",
+      "threshold",
+      "frequency",
+      "period",
+    ] as const
+  ) {
     if (key in row) {
       try {
         legacyConfig[key] = scalar(row[key], key);
       } catch { /* omit */ }
     }
+  }
+  if (Array.isArray(row.restrictions)) {
+    legacyConfig.restrictions = scalarList(row.restrictions, "restrictions");
   }
   if (
     Object.keys(legacyConfig).length > 0 && output.value_config === undefined

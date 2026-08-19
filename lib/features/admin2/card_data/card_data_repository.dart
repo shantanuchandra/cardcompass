@@ -143,29 +143,30 @@ const _benefitFields = {
   'effectiveTo',
 };
 const _valueConfigFields = {
+  'category',
+  'discount_type',
   'unit',
   'currency_unit',
   'discount_percent',
   'discount_amount',
+  'max_discount_per_transaction',
+  'max_usage_per_month',
+  'max_usage_per_period',
+  'usage_period',
   'monthly_cap',
   'annual_cap',
+  'milestone_type',
   'threshold_amount',
   'reward_value',
   'multiplier',
   'base_rate',
+  'platform',
   'value',
   'rate',
   'cap',
-  'limit',
+  'threshold',
   'frequency',
-};
-const _exclusionFields = {
-  'conditions',
-  'notes',
-  'merchant_categories',
-  'transactions',
-  'products',
-  'locations',
+  'period',
   'restrictions',
 };
 
@@ -308,22 +309,21 @@ bool _validBenefit(Object? value) {
             (child) => !_valueConfigFields.contains(child),
           ) ||
           !(entry.value as Map).entries.every(
-            (child) => _validScalar(child.value, child.key as String),
+            (child) => child.key == 'restrictions'
+                ? child.value is List &&
+                      (child.value as List).length <= 50 &&
+                      (child.value as List).every(
+                        (item) => _validScalar(item, 'restrictions'),
+                      )
+                : _validScalar(child.value, child.key as String),
           )) {
         return false;
       }
     } else if (key == 'exclusions') {
-      if (entry.value is! Map ||
-          (entry.value as Map).keys.any(
-            (child) => !_exclusionFields.contains(child),
-          ) ||
-          !(entry.value as Map).entries.every(
-            (child) => child.value is List
-                ? (child.value as List).length <= 50 &&
-                      (child.value as List).every(
-                        (item) => _validScalar(item, child.key as String),
-                      )
-                : _validScalar(child.value, child.key as String),
+      if (entry.value is! List ||
+          (entry.value as List).length > 50 ||
+          !(entry.value as List).every(
+            (item) => _validScalar(item, 'exclusions'),
           )) {
         return false;
       }

@@ -179,3 +179,15 @@ Ruling: Count the complete JSON gateway request, including action discriminator 
 Ruling: Supersede statement-derived identity labels and short record-reference fallbacks with the generic “Review card identity” title; use only authoritative catalog bank/card labels for benefits and generic action text otherwise. Cost if wrong: identity items require opening Card Data for exact product context, trading one click for eliminating untrusted spoken/display labels and record fragments.
 
 Ruling: Render decision/recovery context only from bounded, allowlisted DTO fields and field-evidence excerpts, never raw provider or page content. Cost if wrong: an unfamiliar failure needs specialist logs for detail rather than exposing arbitrary upstream text in the operator console.
+
+## Final-review residual correction
+
+- Re-derived the canonical benefit schema from `_shared/benefit_enrichment.ts`, `currentBenefitProposal`, every production proposal generator, and `approve_card_benefit_enrichment` rather than synthetic fixtures.
+- Preserved all production value-config variants, including category, discount type/amount/percent, transaction and usage caps, usage period, milestone type, thresholds, reward values, platform, restrictions, and the flat-value compatibility keys used by approved benefits.
+- Production `exclusions` remain a string array; restrictions remain a string array inside `value_config`. Unknown keys and invalid nested types are still rejected.
+- Untouched canonical proposal fields are retained during edits and typed controls cover the production vocabulary, so editing one field cannot discard a sibling commercial term.
+- An actual `extractGroundedBenefits` regression carries BOGO, reward-points, and milestone proposals through Admin2 presentation and the audited Edge action. Dart regressions cover parse/no-edit/action round-trip plus an edit that retains untouched production fields.
+
+Ruling: Supersede the narrower final-review value-config schema with the exact production union derived from `BenefitProposal`, its generators, `currentBenefitProposal`, and the locked approval RPC; preserve production exclusions as string arrays and restrictions as a value-config string array. Cost if wrong: a newly introduced generator key is rejected until the production schema and both Admin2 validators are updated together.
+
+Ruling: Begin edited benefits from the already sanitized canonical proposal and overwrite only typed controls, retaining every untouched allowlisted production field. Cost if wrong: a future field that is safe to persist but not editable remains read-only and round-trips unchanged instead of being silently dropped.

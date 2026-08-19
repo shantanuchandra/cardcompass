@@ -645,7 +645,7 @@ class _ReviewDetailState extends State<_ReviewDetail> {
       }).toList();
 
   Map<String, dynamic> _editedBenefit(BenefitReviewProposal proposal) {
-    final edited = <String, dynamic>{'dedupe_key': proposal.key};
+    final edited = <String, dynamic>{...proposal.proposed};
     final controllers = _benefitControllers[proposal.key]!;
     for (final spec in _benefitFieldSpecs) {
       final text = controllers[spec.key]!.text.trim();
@@ -663,7 +663,6 @@ class _ReviewDetailState extends State<_ReviewDetail> {
               .where((value) => value.isNotEmpty)
               .take(50)
               .toList(),
-        _BenefitFieldKind.jsonObject => _validJsonObject(text, spec.label),
         _BenefitFieldKind.text => text,
       };
       _writePath(edited, spec.key, value);
@@ -905,9 +904,7 @@ class _ReviewDetailState extends State<_ReviewDetail> {
                                 : TextInputType.text,
                             inputFormatters: [
                               LengthLimitingTextInputFormatter(
-                                spec.kind == _BenefitFieldKind.list ||
-                                        spec.kind ==
-                                            _BenefitFieldKind.jsonObject
+                                spec.kind == _BenefitFieldKind.list
                                     ? 4000
                                     : 2000,
                               ),
@@ -917,7 +914,6 @@ class _ReviewDetailState extends State<_ReviewDetail> {
                               helperText: switch (spec.kind) {
                                 _BenefitFieldKind.list =>
                                   'Comma-separated values',
-                                _BenefitFieldKind.jsonObject => 'JSON object',
                                 _ => null,
                               },
                             ),
@@ -1209,7 +1205,7 @@ const _months = [
   'Dec',
 ];
 
-enum _BenefitFieldKind { text, number, date, list, jsonObject }
+enum _BenefitFieldKind { text, number, date, list }
 
 final class _BenefitFieldSpec {
   const _BenefitFieldSpec(
@@ -1229,17 +1225,32 @@ const _benefitFieldSpecs = <_BenefitFieldSpec>[
   _BenefitFieldSpec('benefit_type', 'Benefit type'),
   _BenefitFieldSpec('partners', 'Partners', _BenefitFieldKind.list),
   _BenefitFieldSpec('regions', 'Regions', _BenefitFieldKind.list),
-  _BenefitFieldSpec('exclusions', 'Exclusions', _BenefitFieldKind.jsonObject),
+  _BenefitFieldSpec('exclusions', 'Exclusions', _BenefitFieldKind.list),
   _BenefitFieldSpec('source_url', 'Source URL'),
   _BenefitFieldSpec('valid_from', 'Valid from', _BenefitFieldKind.date),
   _BenefitFieldSpec('valid_until', 'Valid until', _BenefitFieldKind.date),
   _BenefitFieldSpec('value_config.unit', 'Value unit'),
   _BenefitFieldSpec('value_config.currency_unit', 'Value currency'),
+  _BenefitFieldSpec('value_config.category', 'Value category'),
+  _BenefitFieldSpec('value_config.discount_type', 'Discount type'),
   _BenefitFieldSpec('value_config.value', 'Value', _BenefitFieldKind.number),
   _BenefitFieldSpec('value_config.rate', 'Rate', _BenefitFieldKind.number),
   _BenefitFieldSpec('value_config.cap', 'Cap', _BenefitFieldKind.number),
-  _BenefitFieldSpec('value_config.limit', 'Limit', _BenefitFieldKind.number),
+  _BenefitFieldSpec(
+    'value_config.threshold',
+    'Threshold',
+    _BenefitFieldKind.number,
+  ),
   _BenefitFieldSpec('value_config.frequency', 'Frequency'),
+  _BenefitFieldSpec('value_config.period', 'Period'),
+  _BenefitFieldSpec(
+    'value_config.restrictions',
+    'Restrictions',
+    _BenefitFieldKind.list,
+  ),
+  _BenefitFieldSpec('value_config.usage_period', 'Usage period'),
+  _BenefitFieldSpec('value_config.milestone_type', 'Milestone type'),
+  _BenefitFieldSpec('value_config.platform', 'Platform'),
   _BenefitFieldSpec(
     'value_config.discount_percent',
     'Discount percent',
@@ -1248,6 +1259,21 @@ const _benefitFieldSpecs = <_BenefitFieldSpec>[
   _BenefitFieldSpec(
     'value_config.discount_amount',
     'Discount amount',
+    _BenefitFieldKind.number,
+  ),
+  _BenefitFieldSpec(
+    'value_config.max_discount_per_transaction',
+    'Max discount per transaction',
+    _BenefitFieldKind.number,
+  ),
+  _BenefitFieldSpec(
+    'value_config.max_usage_per_month',
+    'Max usage per month',
+    _BenefitFieldKind.number,
+  ),
+  _BenefitFieldSpec(
+    'value_config.max_usage_per_period',
+    'Max usage per period',
     _BenefitFieldKind.number,
   ),
   _BenefitFieldSpec(
@@ -1320,16 +1346,6 @@ String _validDate(String value, String label) {
     throw FormatException('$label must be a valid date.');
   }
   return value;
-}
-
-Map<String, dynamic> _validJsonObject(String value, String label) {
-  try {
-    final decoded = jsonDecode(value);
-    if (decoded is! Map) throw const FormatException();
-    return decoded.cast<String, dynamic>();
-  } on FormatException {
-    throw FormatException('$label must be a JSON object.');
-  }
 }
 
 extension<T> on Iterable<T> {

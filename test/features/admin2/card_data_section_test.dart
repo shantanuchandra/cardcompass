@@ -308,6 +308,15 @@ void main() {
             'dedupe_key': 'lounge',
             'title': 'Lounge access',
             'benefit_category': 'travel',
+            'benefit_type': 'bogo',
+            'value_config': {
+              'category': 'movie_tickets',
+              'discount_type': 'bogo',
+              'max_discount_per_transaction': 500,
+              'max_usage_per_period': 2,
+              'usage_period': 'quarter',
+            },
+            'exclusions': ['convenience fees'],
           },
         ),
         BenefitReviewProposal(
@@ -355,7 +364,7 @@ void main() {
     await edit('value_config.monthly_cap', '8');
     await edit('partners', 'Lounge A, Lounge B');
     await edit('regions', 'IN, SG');
-    await edit('exclusions', '{"notes":"Primary cardholders"}');
+    await edit('exclusions', 'Fuel, EMI transactions');
     await edit('source_url', 'https://issuer.example/benefits');
     await edit('valid_from', '2026-09-01');
     tester.testTextInput.hide();
@@ -381,6 +390,11 @@ void main() {
     final edited = (decisions.first as Map)['edited_benefit'] as Map;
     expect(edited['title'], 'Airport lounge access');
     expect(edited['value_config'], {
+      'category': 'movie_tickets',
+      'discount_type': 'bogo',
+      'max_discount_per_transaction': 500,
+      'max_usage_per_period': 2,
+      'usage_period': 'quarter',
       'rate': 2.5,
       'currency_unit': 'INR',
       'unit': 'visits',
@@ -388,7 +402,7 @@ void main() {
     });
     expect(edited['partners'], ['Lounge A', 'Lounge B']);
     expect(edited['regions'], ['IN', 'SG']);
-    expect(edited['exclusions'], {'notes': 'Primary cardholders'});
+    expect(edited['exclusions'], ['Fuel', 'EMI transactions']);
     expect(edited['source_url'], 'https://issuer.example/benefits');
     expect(edited['valid_from'], '2026-09-01');
     expect(edited['benefit_category'], 'travel');
