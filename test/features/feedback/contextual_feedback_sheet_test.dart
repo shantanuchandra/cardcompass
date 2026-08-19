@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cardcompass/core/theme/app_theme.dart';
 import 'package:cardcompass/features/feedback/contextual_feedback_button.dart';
 import 'package:cardcompass/features/feedback/contextual_feedback_sheet.dart';
@@ -121,6 +123,61 @@ void main() {
     ]);
   });
 
+  testWidgets('success stays bound to the frozen in-flight submission', (
+    tester,
+  ) async {
+    final repository = _ControlledRepository();
+    await _pumpSheet(tester, repository);
+    const original = 'This category should be groceries.';
+    await tester.enterText(find.byType(TextField), original);
+    await _tapAction(tester, 'Send feedback');
+    await tester.pump();
+
+    expect(tester.widget<TextField>(find.byType(TextField)).enabled, isFalse);
+    await tester.enterText(find.byType(TextField), 'A different statement.');
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    expect(find.byType(ContextualFeedbackSheet), findsOneWidget);
+    expect(find.text(original), findsOneWidget);
+
+    repository.completeSuccess();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Feedback sent'), findsOneWidget);
+    expect(repository.submissions.single.text, original);
+    expect(repository.submissions.single.requestId, _firstRequestId);
+  });
+
+  testWidgets('failure retries the exact frozen text and request id', (
+    tester,
+  ) async {
+    final repository = _ControlledRepository();
+    await _pumpSheet(tester, repository);
+    const original = 'This category should be groceries.';
+    await tester.enterText(find.byType(TextField), original);
+    await _tapAction(tester, 'Send feedback');
+    await tester.pump();
+
+    await tester.enterText(find.byType(TextField), 'A different statement.');
+    repository.completeFailure();
+    await tester.pumpAndSettle();
+    expect(find.text(original), findsOneWidget);
+
+    await _tapAction(tester, 'Try again');
+    await tester.pump();
+    repository.completeSuccess();
+    await tester.pumpAndSettle();
+
+    expect(repository.submissions.map((value) => value.text), [
+      original,
+      original,
+    ]);
+    expect(repository.submissions.map((value) => value.requestId), [
+      _firstRequestId,
+      _firstRequestId,
+    ]);
+  });
+
   testWidgets('escape closes the sheet and mobile width does not overflow', (
     tester,
   ) async {
@@ -209,4 +266,31 @@ class _UnusedApi implements FeedbackApi {
   @override
   Future<FeedbackApiResponse> invoke(Map<String, Object?> body) =>
       throw UnimplementedError();
+}
+
+const _firstRequestId = '10000000-0000-4000-8000-000000000001';
+
+class _ControlledRepository extends FeedbackRepository {
+  _ControlledRepository()
+    : super(_UnusedApi(), requestIds: [_firstRequestId].iterator);
+
+  final List<FeedbackSubmission> submissions = [];
+  Completer<FeedbackSubmitResult>? _pending;
+
+  @override
+  Future<FeedbackSubmitResult> submit(FeedbackSubmission submission) {
+    submissions.add(submission);
+    _pending = Completer<FeedbackSubmitResult>();
+    return _pending!.future;
+  }
+
+  void completeSuccess() => _pending!.complete(
+    const FeedbackSubmitResult(
+      '30000000-0000-4000-8000-000000000001',
+      'awaiting_triage',
+    ),
+  );
+
+  void completeFailure() =>
+      _pending!.completeError(const FeedbackFailed('request_failed'));
 }

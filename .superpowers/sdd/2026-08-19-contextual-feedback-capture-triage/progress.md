@@ -70,3 +70,11 @@ Ruling: Limit triage completion recovery to two total attempts and then rely on 
 Ruling: Provide feedback transport through an explicit `FeedbackRepositoryScope` so product attachment points own their Supabase boundary and widget tests remain backend-free. Cost if wrong: each supported screen must install one small scope instead of reading a global client singleton.
 
 Ruling: Enforce a 32 KiB UTF-8 limit over the complete client request even though the Edge transport also carries independent nested-object bounds. Cost if wrong: a trace near the server's per-object maximum may be rejected client-side once envelope overhead is included, favoring a predictable transport ceiling.
+
+### Task 5 review corrections
+
+- Submission now freezes the visible text and request ID for the full in-flight interval. The field and dismissal paths are disabled while sending; success and failure apply only to that frozen snapshot, and failure restores the exact text for an idempotent retry.
+- Successful feedback and trace responses now require UUID-shaped `feedback_id` and `trace_id` values before constructing typed results; malformed identifiers map to the stable `request_failed` category.
+- Controlled-completion widget tests exercise attempted edits and Escape during flight, success association, and failure retry identity. Focused coverage now passes 14/14.
+
+Ruling: Treat an in-flight feedback submission as an immutable UI transaction: freeze text/request identity and block editing or dismissal until the endpoint settles. Cost if wrong: users cannot abandon a slow request mid-flight, but the displayed outcome can never describe a different payload than the one actually sent.

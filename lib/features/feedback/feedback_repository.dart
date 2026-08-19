@@ -83,6 +83,7 @@ class FeedbackRepository {
     if (response.status != 202) throw FeedbackFailed(_safeCode(data));
     if (data.keys.length != 2 ||
         data['feedback_id'] is! String ||
+        !_uuid.hasMatch(data['feedback_id']! as String) ||
         data['triage_status'] != 'awaiting_triage') {
       throw const FeedbackFailed('request_failed');
     }
@@ -113,6 +114,7 @@ class FeedbackRepository {
     if (response.status != 201) throw FeedbackFailed(_safeCode(data));
     if (data.keys.length != 2 ||
         data['trace_id'] is! String ||
+        !_uuid.hasMatch(data['trace_id']! as String) ||
         data['expires_at'] is! String ||
         DateTime.tryParse(data['expires_at']! as String) == null) {
       throw const FeedbackFailed('request_failed');

@@ -178,6 +178,51 @@ void main() {
       expect(api.requests, isEmpty);
     },
   );
+
+  test('rejects malformed success identifiers as a safe failure', () async {
+    for (final fixture in [
+      const FeedbackApiResponse(202, {
+        'feedback_id': 'not-a-uuid',
+        'triage_status': 'awaiting_triage',
+      }),
+      const FeedbackApiResponse(201, {
+        'trace_id': 'not-a-uuid',
+        'expires_at': '2026-08-20T00:00:00Z',
+      }),
+    ]) {
+      final repository = FeedbackRepository(
+        _RecordingApi([fixture]),
+        requestIds: _ids([firstId]),
+      );
+      final operation = fixture.status == 202
+          ? repository.submit(
+              repository.newSubmission(
+                const TransactionFeedbackTarget(outputId),
+                'This category should be groceries.',
+              ),
+            )
+          : repository.createRecommendationTarget(
+              const RecommendationTraceInput(
+                safeInputContext: {},
+                outputSnapshot: {},
+                cardIds: [],
+                benefitIds: [],
+                engineVersion: 'movie-deals-v2',
+              ),
+            );
+
+      await expectLater(
+        operation,
+        throwsA(
+          isA<FeedbackFailed>().having(
+            (error) => error.code,
+            'code',
+            'request_failed',
+          ),
+        ),
+      );
+    }
+  });
 }
 
 Iterator<String> _ids(List<String> values) => values.iterator;
