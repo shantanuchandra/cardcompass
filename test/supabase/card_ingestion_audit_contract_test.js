@@ -43,21 +43,14 @@ test('card ingestion audit is read-only and retains every release-ticket check',
     assert.match(sql, new RegExp(`'${checkName}'[\\s\\S]{0,80}AS\\s+check_name`, 'i'));
   }
 
-  for (const relation of [
-    'card_catalog',
-    'benefits',
-    'card_benefit_mapping',
-    'card_benefits_staging',
-    'card_catalog_enrichment_jobs',
-    'card_catalog_provenance',
-    'card_catalog_url_keys',
-    'user_cards',
-  ]) {
-    assert.match(sql, new RegExp(`\\b${relation}\\b`, 'i'));
-  }
-
   assert.match(sql, /jsonb_typeof\s*\(\s*benefit\.exclusions\s*\)/i);
   assert.match(sql, /pg_class/i);
+  assert.match(sql, /pg_namespace/i);
+  assert.match(sql, /relkind\s+IN\s*\(\s*'r'\s*,\s*'p'\s*\)/i);
+  assert.doesNotMatch(sql, /WITH\s+audited_relations\s+AS/i,
+    'access metadata must derive current public tables instead of a partial allowlist');
+  assert.doesNotMatch(sql, /relname\s+IN\s*\(/i,
+    'catalog-derived access metadata must not exclude identity, discovery, or review tables');
   assert.match(sql, /pg_policies/i);
   assert.match(sql, /information_schema\.role_table_grants/i);
   assert.match(sql, /information_schema\.routine_privileges/i);

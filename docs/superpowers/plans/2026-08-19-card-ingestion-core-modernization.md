@@ -207,7 +207,7 @@ deno install --entrypoint \
   supabase/functions/catalog-enrichment/index.ts \
   supabase/functions/request-card-catalog-entry/index.ts \
   --node-modules-dir=auto --lock=deno.lock
-deno test --node-modules-dir=auto --allow-env --frozen \
+deno test --node-modules-dir=auto --allow-env --allow-net=0.0.0.0:8000 --frozen \
   supabase/functions/admin-catalog-entry/benefit_admin_test.ts \
   supabase/functions/benefit-enrichment-batch/index_test.ts
 ```
@@ -611,7 +611,7 @@ Allow only explicit parser versions `benefits-v5` and `benefits-v6` during the r
 
 ```bash
 node --test test/supabase/review_card_benefit_enrichment_v2_migration_test.js
-deno test --node-modules-dir=auto --allow-env --frozen supabase/functions/admin-catalog-entry/benefit_admin_test.ts
+deno test --node-modules-dir=auto --allow-env --allow-net=0.0.0.0:8000 --frozen supabase/functions/admin-catalog-entry/benefit_admin_test.ts
 supabase db reset
 ```
 
@@ -1046,7 +1046,7 @@ Track counts/rates for fetched, `304`, blocked, missing, incomplete, staged addi
 - [ ] **Step 5: Run pilot unit tests**
 
 ```bash
-deno test --node-modules-dir=auto --allow-env --frozen supabase/functions/benefit-enrichment-batch/index_test.ts supabase/functions/admin-catalog-entry/benefit_admin_test.ts
+deno test --node-modules-dir=auto --allow-env --allow-net=0.0.0.0:8000 --frozen supabase/functions/benefit-enrichment-batch/index_test.ts supabase/functions/admin-catalog-entry/benefit_admin_test.ts
 ```
 
 Expected: PASS; removing any computed evidence or substituting a constant makes the test fail.
@@ -1096,7 +1096,7 @@ Pin only dependencies touched by this rollout to an exact compatible version alr
 
 ```bash
 node --test test/supabase/*.test.js test/supabase/*.test.mjs test/gtm/*.test.js
-deno test --node-modules-dir=auto --allow-env --frozen supabase/functions/_shared/*_test.ts supabase/functions/benefit-enrichment-batch/*_test.ts supabase/functions/admin-catalog-entry/*_test.ts supabase/functions/catalog-enrichment/*_test.ts
+deno test --node-modules-dir=auto --allow-env --allow-net=0.0.0.0:8000 --frozen supabase/functions/_shared/*_test.ts supabase/functions/benefit-enrichment-batch/*_test.ts supabase/functions/admin-catalog-entry/*_test.ts supabase/functions/catalog-enrichment/*_test.ts
 flutter test test/features/admin/benefit_enrichment_review_test.dart
 flutter analyze
 git diff --check

@@ -1,15 +1,13 @@
 -- Read-only card-ingestion release baseline. Each row is ticket-safe metadata.
-WITH audited_relations AS (
-  SELECT unnest(ARRAY[
-    'card_catalog',
-    'benefits',
-    'card_benefit_mapping',
-    'card_benefits_staging',
-    'card_catalog_enrichment_jobs',
-    'card_catalog_provenance',
-    'card_catalog_url_keys',
-    'user_cards'
-  ]) AS relation_name
+WITH public_relations AS (
+  SELECT class.oid AS relation_id,
+         class.relname AS relation_name,
+         class.relrowsecurity AS rls_enabled,
+         class.relforcerowsecurity AS rls_forced
+  FROM pg_class AS class
+  JOIN pg_namespace AS namespace ON namespace.oid = class.relnamespace
+  WHERE namespace.nspname = 'public'
+    AND class.relkind IN ('r', 'p')
 ), catalog_state AS (
   SELECT catalog.is_discontinued, count(*)::bigint AS row_count
   FROM public.card_catalog AS catalog
@@ -89,24 +87,22 @@ WITH audited_relations AS (
   WHERE card.is_active IS TRUE
     AND catalog.is_discontinued IS TRUE
 ), rls_state AS (
-  SELECT relation.relation_name, class.relrowsecurity AS enabled,
-         class.relforcerowsecurity AS forced
-  FROM audited_relations AS relation
-  JOIN pg_namespace AS namespace ON namespace.nspname = 'public'
-  JOIN pg_class AS class
-    ON class.relnamespace = namespace.oid
-   AND class.relname = relation.relation_name
+  SELECT relation.relation_name, relation.rls_enabled AS enabled,
+         relation.rls_forced AS forced
+  FROM public_relations AS relation
 ), policy_state AS (
-  SELECT policy.tablename, policy.policyname, policy.cmd,
+  SELECT relation.relation_name, policy.policyname, policy.cmd,
          policy.roles::text AS roles
-  FROM pg_policies AS policy
-  JOIN audited_relations AS relation ON relation.relation_name = policy.tablename
-  WHERE policy.schemaname = 'public'
+  FROM public_relations AS relation
+  LEFT JOIN pg_policies AS policy
+    ON policy.schemaname = 'public'
+   AND policy.tablename = relation.relation_name
 ), grants_by_relation AS (
-  SELECT grant_row.table_name, grant_row.grantee, grant_row.privilege_type
-  FROM information_schema.role_table_grants AS grant_row
-  JOIN audited_relations AS relation ON relation.relation_name = grant_row.table_name
-  WHERE grant_row.table_schema = 'public'
+  SELECT relation.relation_name, grant_row.grantee, grant_row.privilege_type
+  FROM public_relations AS relation
+  LEFT JOIN information_schema.role_table_grants AS grant_row
+    ON grant_row.table_schema = 'public'
+   AND grant_row.table_name = relation.relation_name
 ), grants_by_function AS (
   SELECT privilege.routine_name, privilege.grantee, privilege.privilege_type
   FROM information_schema.routine_privileges AS privilege
@@ -213,17 +209,17 @@ SELECT
 UNION ALL
 SELECT
   'table_policies'::text AS check_name,
-  (SELECT count(*) FROM policy_state)::bigint AS finding_count,
+  (SELECT count(*) FROM policy_state WHERE policyname IS NOT NULL)::bigint AS finding_count,
   '[]'::jsonb AS catalog_ids,
-  coalesce((SELECT jsonb_agg(jsonb_build_object('relation', tablename, 'policy', policyname,
-    'command', cmd, 'roles', roles) ORDER BY tablename, policyname) FROM policy_state), '[]'::jsonb) AS details
+  coalesce((SELECT jsonb_agg(jsonb_build_object('relation', relation_name, 'policy', policyname,
+    'command', cmd, 'roles', roles) ORDER BY relation_name, policyname) FROM policy_state), '[]'::jsonb) AS details
 UNION ALL
 SELECT
   'relation_grants'::text AS check_name,
-  (SELECT count(*) FROM grants_by_relation)::bigint AS finding_count,
+  (SELECT count(*) FROM grants_by_relation WHERE privilege_type IS NOT NULL)::bigint AS finding_count,
   '[]'::jsonb AS catalog_ids,
-  coalesce((SELECT jsonb_agg(jsonb_build_object('relation', table_name, 'grantee', grantee,
-    'privilege', privilege_type) ORDER BY table_name, grantee, privilege_type)
+  coalesce((SELECT jsonb_agg(jsonb_build_object('relation', relation_name, 'grantee', grantee,
+    'privilege', privilege_type) ORDER BY relation_name, grantee, privilege_type)
     FROM grants_by_relation), '[]'::jsonb) AS details
 UNION ALL
 SELECT

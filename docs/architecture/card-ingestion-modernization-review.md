@@ -48,11 +48,11 @@ The local Supabase database was not running during this review, so the effective
 
 | Audit area | Verified finding count | Baseline status |
 |---|---:|---|
-| Catalog/discontinuation, benefit JSON shapes, mappings, staging, jobs, identity, URL provenance, and active discontinued-card assignments | Not executed | Not zero: local Docker was unavailable, so no database cardinality has been recorded. |
-| RLS state, policies, relation grants, and function grants | Not executed | Not zero: this metadata requires the same local migrated database. |
+| Catalog/discontinuation, benefit JSON shapes, mappings, staging, jobs, identity, URL provenance, and active discontinued-card assignments | Not executed | Not zero: the authorized linked read-only query against `cardcompass` (`prbcoxqobhjnnfnxevxf`) initialized its login role but did not return an audit result. |
+| RLS state, policies, relation grants, and function grants | Not executed | Not zero: this metadata is included in the same linked read-only query, which did not return a result. |
 | Static audit contract | 0 contract failures | Executed: the Node contract test confirms every required stable check label and rejects mutating SQL. |
 
-When Docker is available, run `supabase db reset`, then `supabase db query --local --file scripts/audit-card-ingestion.sql`, and attach the output to the release ticket before treating any unexecuted check as a zero finding.
+The linked project was verified as `cardcompass` / `prbcoxqobhjnnfnxevxf` (`ACTIVE_HEALTHY`) and linked locally for the audit. Retry only `supabase db query --linked --file scripts/audit-card-ingestion.sql` and `supabase migration list --linked` when the linked query path returns results; attach that output to the release ticket before treating any unexecuted check as a zero finding.
 
 ### Catalog and identity
 
