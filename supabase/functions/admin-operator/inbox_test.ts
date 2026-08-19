@@ -11,7 +11,11 @@ import { actionHandlers } from "./router.ts";
 
 const NOW = Date.parse("2026-08-19T12:00:00Z");
 
-function item(id: string, severity: InboxItem["severity"], age: number): InboxItem {
+function item(
+  id: string,
+  severity: InboxItem["severity"],
+  age: number,
+): InboxItem {
   return {
     id,
     type: "card_identity_review",
@@ -29,20 +33,31 @@ type QueryCall = { table: string; method: string; args: unknown[] };
 function queryResult(
   table: string,
   rows: unknown[],
-  error: { message: string } | null | ((statuses: unknown[] | null) => { message: string } | null),
+  error:
+    | { message: string }
+    | null
+    | ((statuses: unknown[] | null) => { message: string } | null),
   calls: QueryCall[],
 ) {
   let statuses: unknown[] | null = null;
   const query = {
-    select: (...args: unknown[]) => (calls.push({ table, method: "select", args }), query),
-    eq: (...args: unknown[]) => (calls.push({ table, method: "eq", args }), query),
-    neq: (...args: unknown[]) => (calls.push({ table, method: "neq", args }), query),
+    select: (
+      ...args: unknown[]
+    ) => (calls.push({ table, method: "select", args }), query),
+    eq: (
+      ...args: unknown[]
+    ) => (calls.push({ table, method: "eq", args }), query),
+    neq: (
+      ...args: unknown[]
+    ) => (calls.push({ table, method: "neq", args }), query),
     in: (...args: unknown[]) => {
       calls.push({ table, method: "in", args });
       if (args[0] === "status" && Array.isArray(args[1])) statuses = args[1];
       return query;
     },
-    order: (...args: unknown[]) => (calls.push({ table, method: "order", args }), query),
+    order: (
+      ...args: unknown[]
+    ) => (calls.push({ table, method: "order", args }), query),
     range: (...args: unknown[]) => {
       calls.push({ table, method: "range", args });
       const filtered = statuses === null ? rows : rows.filter((value) => {
@@ -126,27 +141,34 @@ Deno.test("inbox ranks severity, then oldest age, then stable id without mutatin
 });
 
 Deno.test("identity adapter returns exact safe pending-review DTOs and safe ages", async () => {
-  const output = await loadIdentityInbox(context({
-    identity: [{
-      id: "identity-1",
-      status: "pending",
-      created_at: "2026-08-19T11:59:00Z",
-      card_discovery_jobs: { issuer: " Issuer\u0000 Bank ", proposed_product: " Premier   Card " },
-      source_evidence: { raw_body: "secret" },
-      proposed_fields: { card_name: "must not leak" },
-    }, {
-      id: "identity-2",
-      status: "pending",
-      created_at: "malformed",
-      provider_response: "secret",
-    }],
-  }), 100, NOW);
+  const output = await loadIdentityInbox(
+    context({
+      identity: [{
+        id: "identity-1",
+        status: "pending",
+        created_at: "2026-08-19T11:59:00Z",
+        card_discovery_jobs: {
+          issuer: " Issuer\u0000 Bank ",
+          proposed_product: " Premier   Card ",
+        },
+        source_evidence: { raw_body: "secret" },
+        proposed_fields: { card_name: "must not leak" },
+      }, {
+        id: "identity-2",
+        status: "pending",
+        created_at: "malformed",
+        provider_response: "secret",
+      }],
+    }),
+    100,
+    NOW,
+  );
 
   assertEquals(output, [{
     id: "card-identity:identity-1",
     type: "card_identity_review",
     severity: "normal",
-    title: "Review identity: Issuer Bank — Premier Card",
+    title: "Review card identity",
     explanation: "A pending card identity proposal needs review.",
     source_status: "pending",
     age_seconds: 60,
@@ -159,7 +181,7 @@ Deno.test("identity adapter returns exact safe pending-review DTOs and safe ages
     id: "card-identity:identity-2",
     type: "card_identity_review",
     severity: "normal",
-    title: "Review card identity • identity",
+    title: "Review card identity",
     explanation: "A pending card identity proposal needs review.",
     source_status: "pending",
     age_seconds: 0,
@@ -172,33 +194,82 @@ Deno.test("identity adapter returns exact safe pending-review DTOs and safe ages
 });
 
 Deno.test("benefit adapter maps actionable statuses to exact safe DTOs", async () => {
-  const output = await loadBenefitInbox(context({ benefit: [
-    { id: "review", status: "review_required", created_at: "2026-08-19T11:58:00Z", card_catalog: { bank: "Issuer", card_name: "Premier" }, raw_body: "secret" },
-    { id: "failed", status: "failed", created_at: "2026-08-19T11:57:00Z", card_catalog: { bank: "Issuer", card_name: "Travel" } },
-    { id: "quarantined", status: "quarantined", created_at: "2026-08-19T11:56:00Z", card_catalog: { bank: "", card_name: "\u0001" } },
-    { id: "staged", status: "staged", created_at: "2026-08-19T11:55:00Z", card_catalog: { bank: "Issuer", card_name: "Cashback" } },
-  ] }), 100, NOW);
+  const output = await loadBenefitInbox(
+    context({
+      benefit: [
+        {
+          id: "review",
+          status: "review_required",
+          created_at: "2026-08-19T11:58:00Z",
+          card_catalog: { bank: "Issuer", card_name: "Premier" },
+          raw_body: "secret",
+        },
+        {
+          id: "failed",
+          status: "failed",
+          created_at: "2026-08-19T11:57:00Z",
+          card_catalog: { bank: "Issuer", card_name: "Travel" },
+        },
+        {
+          id: "quarantined",
+          status: "quarantined",
+          created_at: "2026-08-19T11:56:00Z",
+          card_catalog: { bank: "", card_name: "\u0001" },
+        },
+        {
+          id: "staged",
+          status: "staged",
+          created_at: "2026-08-19T11:55:00Z",
+          card_catalog: { bank: "Issuer", card_name: "Cashback" },
+        },
+      ],
+    }),
+    100,
+    NOW,
+  );
 
-  assertEquals(output.map(({ id, source_status, severity, title, explanation }) => ({
-    id, source_status, severity, title, explanation,
-  })), [{
-    id: "benefit-enrichment:review", source_status: "review_required", severity: "high",
-    title: "Review benefits: Issuer — Premier", explanation: "A benefit proposal needs operator review.",
-  }, {
-    id: "benefit-enrichment:failed", source_status: "failed", severity: "high",
-    title: "Recover benefits: Issuer — Travel", explanation: "Benefit enrichment failed and needs recovery.",
-  }, {
-    id: "benefit-enrichment:quarantined", source_status: "quarantined", severity: "high",
-    title: "Review quarantined benefits • quaranti", explanation: "A quarantined benefit job needs operator review.",
-  }, {
-    id: "benefit-enrichment:staged", source_status: "staged", severity: "normal",
-    title: "Review benefits: Issuer — Cashback", explanation: "A staged benefit proposal is ready for review.",
-  }]);
-  assertEquals(output.every((entry) =>
-    entry.destination.section === "cardData" &&
-    entry.destination.lane === "benefit" &&
-    Object.keys(entry).length === 8
-  ), true);
+  assertEquals(
+    output.map(({ id, source_status, severity, title, explanation }) => ({
+      id,
+      source_status,
+      severity,
+      title,
+      explanation,
+    })),
+    [{
+      id: "benefit-enrichment:review",
+      source_status: "review_required",
+      severity: "high",
+      title: "Review benefits: Issuer — Premier",
+      explanation: "A benefit proposal needs operator review.",
+    }, {
+      id: "benefit-enrichment:failed",
+      source_status: "failed",
+      severity: "high",
+      title: "Recover benefits: Issuer — Travel",
+      explanation: "Benefit enrichment failed and needs recovery.",
+    }, {
+      id: "benefit-enrichment:quarantined",
+      source_status: "quarantined",
+      severity: "high",
+      title: "Review quarantined benefits",
+      explanation: "A quarantined benefit job needs operator review.",
+    }, {
+      id: "benefit-enrichment:staged",
+      source_status: "staged",
+      severity: "normal",
+      title: "Review benefits: Issuer — Cashback",
+      explanation: "A staged benefit proposal is ready for review.",
+    }],
+  );
+  assertEquals(
+    output.every((entry) =>
+      entry.destination.section === "cardData" &&
+      entry.destination.lane === "benefit" &&
+      Object.keys(entry).length === 8
+    ),
+    true,
+  );
 });
 
 Deno.test("benefit failures cannot be starved by more than 100 staged rows", async () => {
@@ -208,10 +279,17 @@ Deno.test("benefit failures cannot be starved by more than 100 staged rows", asy
       status: "staged",
       created_at: "2026-08-18T00:00:00Z",
     })),
-    { id: "failed-newer", status: "failed", created_at: "2026-08-19T11:59:59Z" },
+    {
+      id: "failed-newer",
+      status: "failed",
+      created_at: "2026-08-19T11:59:59Z",
+    },
   ];
 
-  const output = await handleInboxList({ action: "inbox-list" }, context({ benefit }));
+  const output = await handleInboxList(
+    { action: "inbox-list" },
+    context({ benefit }),
+  );
 
   assertEquals(output.items.length, 100);
   assertEquals(output.items[0].id, "benefit-enrichment:failed-newer");
@@ -222,7 +300,9 @@ Deno.test("source queries use deterministic created-at then id ordering before b
   const calls: QueryCall[] = [];
   await handleInboxList({ action: "inbox-list" }, context({ calls }));
 
-  for (const table of ["card_catalog_review_queue", "card_catalog_enrichment_jobs"]) {
+  for (
+    const table of ["card_catalog_review_queue", "card_catalog_enrichment_jobs"]
+  ) {
     const tableCalls = calls.filter((call) => call.table === table);
     const ranges = tableCalls.filter((call) => call.method === "range");
     assertEquals(ranges.length, table === "card_catalog_review_queue" ? 1 : 2);
@@ -253,7 +333,10 @@ Deno.test("inbox caps the merged ranked result at 100 items", async () => {
     status: "failed",
     created_at: "2026-08-19T11:59:00Z",
   }));
-  const output = await handleInboxList({ action: "inbox-list" }, context({ identity, benefit }));
+  const output = await handleInboxList(
+    { action: "inbox-list" },
+    context({ identity, benefit }),
+  );
 
   assertEquals(output.items.length, 100);
   assertEquals(output.items.every((entry) => entry.severity === "high"), true);
@@ -261,24 +344,33 @@ Deno.test("inbox caps the merged ranked result at 100 items", async () => {
 });
 
 Deno.test("inbox isolates each failed source and reports stable public names", async () => {
-  const identityFailure = await handleInboxList({ action: "inbox-list" }, context({
-    identityError: { message: "password=secret" },
-    benefit: [{ id: "benefit", status: "staged", created_at: "bad" }],
-  }));
+  const identityFailure = await handleInboxList(
+    { action: "inbox-list" },
+    context({
+      identityError: { message: "password=secret" },
+      benefit: [{ id: "benefit", status: "staged", created_at: "bad" }],
+    }),
+  );
   assertEquals(identityFailure.items.length, 1);
   assertEquals(identityFailure.partial_failures, ["card_identity"]);
 
-  const benefitFailure = await handleInboxList({ action: "inbox-list" }, context({
-    identity: [{ id: "identity", status: "pending", created_at: "bad" }],
-    benefitError: { message: "raw query detail" },
-  }));
+  const benefitFailure = await handleInboxList(
+    { action: "inbox-list" },
+    context({
+      identity: [{ id: "identity", status: "pending", created_at: "bad" }],
+      benefitError: { message: "raw query detail" },
+    }),
+  );
   assertEquals(benefitFailure.items.length, 1);
   assertEquals(benefitFailure.partial_failures, ["benefit_enrichment"]);
 
-  const both = await handleInboxList({ action: "inbox-list" }, context({
-    identityError: { message: "identity secret" },
-    benefitError: { message: "benefit secret" },
-  }));
+  const both = await handleInboxList(
+    { action: "inbox-list" },
+    context({
+      identityError: { message: "identity secret" },
+      benefitError: { message: "benefit secret" },
+    }),
+  );
   assertEquals(both.items, []);
   assertEquals(both.partial_failures, ["card_identity", "benefit_enrichment"]);
   assertEquals(JSON.stringify(both).includes("secret"), false);

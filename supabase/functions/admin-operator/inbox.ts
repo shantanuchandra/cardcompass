@@ -22,39 +22,45 @@ export type InboxItem = Readonly<{
 type JsonRecord = Record<string, unknown>;
 
 const MAX_SOURCE_ITEMS = 100;
-const HIGH_BENEFIT_STATUSES = ["review_required", "failed", "quarantined"] as const;
+const HIGH_BENEFIT_STATUSES = [
+  "review_required",
+  "failed",
+  "quarantined",
+] as const;
 const ROUTINE_BENEFIT_STATUSES = ["staged"] as const;
 const severityOrder: Readonly<Record<Severity, number>> = Object.freeze({
   critical: 0,
   high: 1,
   normal: 2,
 });
-const benefitPresentation = Object.freeze({
-  review_required: {
-    severity: "high",
-    title: "Review benefit enrichment",
-    explanation: "A benefit proposal needs operator review.",
-  },
-  failed: {
-    severity: "high",
-    title: "Recover failed benefit enrichment",
-    explanation: "Benefit enrichment failed and needs recovery.",
-  },
-  quarantined: {
-    severity: "high",
-    title: "Review quarantined benefit enrichment",
-    explanation: "A quarantined benefit job needs operator review.",
-  },
-  staged: {
-    severity: "normal",
-    title: "Review staged benefits",
-    explanation: "A staged benefit proposal is ready for review.",
-  },
-} satisfies Record<string, {
-  severity: Severity;
-  title: string;
-  explanation: string;
-}>);
+const benefitPresentation = Object.freeze(
+  {
+    review_required: {
+      severity: "high",
+      title: "Review benefit enrichment",
+      explanation: "A benefit proposal needs operator review.",
+    },
+    failed: {
+      severity: "high",
+      title: "Recover failed benefit enrichment",
+      explanation: "Benefit enrichment failed and needs recovery.",
+    },
+    quarantined: {
+      severity: "high",
+      title: "Review quarantined benefit enrichment",
+      explanation: "A quarantined benefit job needs operator review.",
+    },
+    staged: {
+      severity: "normal",
+      title: "Review staged benefits",
+      explanation: "A staged benefit proposal is ready for review.",
+    },
+  } satisfies Record<string, {
+    severity: Severity;
+    title: string;
+    explanation: string;
+  }>,
+);
 
 function record(value: unknown): JsonRecord | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -76,11 +82,6 @@ function safeLabelPart(value: unknown): string | null {
     .trim();
   if (normalized.length < 2) return null;
   return [...normalized].slice(0, 80).join("");
-}
-
-function shortReference(id: string): string {
-  const safe = id.replace(/[^a-z0-9-]/gi, "").slice(0, 8);
-  return safe || "unknown";
 }
 
 function safeDisplayLabel(
@@ -126,12 +127,7 @@ export async function loadIdentityInbox(
 ): Promise<InboxItem[]> {
   const limit = boundedLimit(requestedLimit);
   const query = (context.db as any).from("card_catalog_review_queue")
-    .select(`
-      id, status, created_at,
-      card_discovery_jobs!card_catalog_review_queue_discovery_job_id_fkey!inner(
-        issuer, proposed_product
-      )
-    `)
+    .select("id, status, created_at")
     .eq("status", "pending")
     .order("created_at", { ascending: true })
     .order("id", { ascending: true })
@@ -143,15 +139,11 @@ export async function loadIdentityInbox(
     const row = record(value);
     const targetId = safeId(row?.id);
     if (!row || targetId === null || row.status !== "pending") return [];
-    const discovery = record(row.card_discovery_jobs);
-    const label = safeDisplayLabel(discovery?.issuer, discovery?.proposed_product);
     return [{
       id: `card-identity:${targetId}`,
       type: "card_identity_review" as const,
       severity: "normal" as const,
-      title: label === null
-        ? `Review card identity • ${shortReference(targetId)}`
-        : `Review identity: ${label}`,
+      title: "Review card identity",
       explanation: "A pending card identity proposal needs review.",
       source_status: "pending",
       age_seconds: safeAge(row.created_at, nowMs),
@@ -200,9 +192,7 @@ async function loadBenefitInboxTier(
       id: `benefit-enrichment:${targetId}`,
       type: "benefit_enrichment_review" as const,
       severity: presentation.severity,
-      title: label === null
-        ? `${action} • ${shortReference(targetId)}`
-        : `${action}: ${label}`,
+      title: label === null ? action : `${action}: ${label}`,
       explanation: presentation.explanation,
       source_status: status,
       age_seconds: safeAge(row.created_at, nowMs),
@@ -265,11 +255,15 @@ export async function handleInboxList(
   );
   return {
     items: rankInboxItems(items).slice(0, MAX_SOURCE_ITEMS),
-    partial_failures: [...new Set(results.flatMap((result, index) =>
-      result.status === "rejected"
-        ? [index === 0 ? "card_identity" : "benefit_enrichment"]
-        : []
-    ))],
+    partial_failures: [
+      ...new Set(
+        results.flatMap((result, index) =>
+          result.status === "rejected"
+            ? [index === 0 ? "card_identity" : "benefit_enrichment"]
+            : []
+        ),
+      ),
+    ],
     refreshed_at: new Date(nowMs).toISOString(),
   };
 }

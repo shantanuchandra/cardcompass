@@ -33,12 +33,14 @@ final class CardEvidence {
     this.sourceUrl,
     this.excerpt,
     this.retrievedAt,
+    this.fieldEvidence = const {},
   });
 
   final String? officialUrl;
   final String? sourceUrl;
   final String? excerpt;
   final DateTime? retrievedAt;
+  final Map<String, dynamic> fieldEvidence;
 
   factory CardEvidence.fromJson(Map<String, dynamic> json) {
     return CardEvidence(
@@ -46,6 +48,9 @@ final class CardEvidence {
       sourceUrl: _optionalString(json['source_url']),
       excerpt: _optionalString(json['source_excerpt'] ?? json['excerpt']),
       retrievedAt: _optionalDate(json['retrieved_at']),
+      fieldEvidence: json['field_evidence'] == null
+          ? const {}
+          : _map(json['field_evidence']),
     );
   }
 }
@@ -133,18 +138,25 @@ final class CardReviewItem {
     List<CardIdentityCandidate> identityCandidates = const [],
     List<BenefitReviewProposal> benefitProposals = const [],
     List<String> benefitConflictCodes = const [],
+    List<String> validationReasonCodes = const [],
+    List<String> priorDecisionSummaries = const [],
     this.confidence,
     this.stagingId,
     this.parserVersion,
     this.bank,
     this.cardName,
     this.retrievedAt,
+    this.attemptCount,
+    this.failureCategory,
+    this.nextRetryAt,
   }) : evidence = List.unmodifiable(evidence),
        warningCodes = List.unmodifiable(warningCodes),
        proposedFields = _deepFreezeMap(proposedFields),
        identityCandidates = List.unmodifiable(identityCandidates),
        benefitProposals = List.unmodifiable(benefitProposals),
-       benefitConflictCodes = List.unmodifiable(benefitConflictCodes);
+       benefitConflictCodes = List.unmodifiable(benefitConflictCodes),
+       validationReasonCodes = List.unmodifiable(validationReasonCodes),
+       priorDecisionSummaries = List.unmodifiable(priorDecisionSummaries);
 
   final String id;
   final CardReviewLane lane;
@@ -156,12 +168,17 @@ final class CardReviewItem {
   final List<CardIdentityCandidate> identityCandidates;
   final List<BenefitReviewProposal> benefitProposals;
   final List<String> benefitConflictCodes;
+  final List<String> validationReasonCodes;
+  final List<String> priorDecisionSummaries;
   final double? confidence;
   final String? stagingId;
   final String? parserVersion;
   final String? bank;
   final String? cardName;
   final DateTime? retrievedAt;
+  final int? attemptCount;
+  final String? failureCategory;
+  final DateTime? nextRetryAt;
 
   factory CardReviewItem.fromJson(
     CardReviewLane lane,
@@ -188,7 +205,14 @@ final class CardReviewItem {
         evidence.add(CardEvidence(sourceUrl: sourceUrl));
       }
     }
-    final warnings = json['validation_warnings'];
+    final benefitStaging = lane == CardReviewLane.benefit
+        ? _nullableMap(json['staging'])
+        : null;
+    final warnings = lane == CardReviewLane.benefit
+        ? (benefitStaging == null
+              ? null
+              : benefitStaging['validation_warnings'])
+        : json['validation_warnings'];
     final warningCodes = warnings == null
         ? <String>[]
         : _list(
@@ -204,9 +228,7 @@ final class CardReviewItem {
               .map((value) => CardIdentityCandidate.fromJson(_map(value)))
               .toList()
         : <CardIdentityCandidate>[];
-    final staging = lane == CardReviewLane.benefit
-        ? _nullableMap(json['staging'])
-        : null;
+    final staging = benefitStaging;
     final extracted = _nullableMap(staging?['extracted_data']);
     final diff = _nullableMap(extracted?['diff']);
     final benefitProposals = diff == null
@@ -224,7 +246,24 @@ final class CardReviewItem {
               .map((value) => _optionalString(value['code']))
               .whereType<String>()
               .toList();
-    final confidence = json['confidence'];
+    final reasons = staging?['validation_reasons'];
+    final validationReasonCodes = reasons == null
+        ? <String>[]
+        : _list(
+            reasons,
+          ).map(_map).map((item) => _requiredString(item['code'])).toList();
+    final priorDecisions = staging?['benefit_decisions'];
+    final priorDecisionSummaries = priorDecisions == null
+        ? <String>[]
+        : _list(priorDecisions).map(_map).map((item) {
+            final action = _requiredString(item['action']);
+            final key = _optionalString(item['dedupe_key']);
+            final reason = _optionalString(item['reason']);
+            return [action, ?key, ?reason].join(' · ');
+          }).toList();
+    final confidence = lane == CardReviewLane.benefit
+        ? (staging == null ? null : staging['calculated_confidence'])
+        : json['confidence'];
     if (confidence != null && confidence is! num) {
       throw const FormatException('Invalid confidence');
     }
@@ -241,12 +280,19 @@ final class CardReviewItem {
       identityCandidates: identityCandidates,
       benefitProposals: benefitProposals,
       benefitConflictCodes: benefitConflictCodes,
+      validationReasonCodes: validationReasonCodes,
+      priorDecisionSummaries: priorDecisionSummaries,
       confidence: (confidence as num?)?.toDouble(),
       stagingId: _optionalString(json['staging_id']),
       parserVersion: _optionalString(json['parser_version']),
       bank: _optionalString(card?['bank']),
       cardName: _optionalString(card?['card_name']),
       retrievedAt: _optionalDate(extracted?['retrieved_at']),
+      attemptCount: json['attempt_count'] is int
+          ? json['attempt_count'] as int
+          : null,
+      failureCategory: _optionalString(json['failure_category']),
+      nextRetryAt: _optionalDate(json['next_retry_at']),
     );
   }
 }

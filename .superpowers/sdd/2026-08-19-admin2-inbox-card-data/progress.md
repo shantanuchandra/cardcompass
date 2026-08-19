@@ -160,3 +160,22 @@ Ruling: Keep the last successful inbox snapshot visible during refresh and parti
 Ruling: Enter compact detail mode only after an exact deep-linked target is successfully resolved, preserving ordinary queue-first entry and missing-target behavior. Cost if wrong: a deep-linked item adds one state transition after its server response before detail is rendered.
 
 Ruling: Translate only the two allowlisted inbox work types and typed destinations into human-readable labels, falling back to generic operator-safe wording for future values without deriving labels from IDs. Cost if wrong: a new server work type remains generically labeled until the client allowlist is updated.
+
+## Final-review fix pass
+
+- Replaced recursive regex filtering with exact decision, benefit, value-config, exclusions, list, scalar, and URL schemas at the Edge and Flutter boundaries. Edge aliases are canonicalized before the audited RPC, and regression cases reject `customer_email`, `ssn`, and unknown nested fields.
+- Added the Admin2-only benefit presenter and restored the legacy presenter exactly. The Admin2 DTO/UI now surface calculated confidence, validation reasons/warnings, bounded field evidence, prior decisions, attempt count, failure category, and next retry time.
+- Limited benefit edit controls to fields persisted by `approve_card_benefit_enrichment`: title, description, category/type, value config, partners, exclusions, regions, source URL, and validity dates. Representative UI coverage proves the locked RPC-compatible shape.
+- Enforced the inclusive 32,768-byte limit over the entire encoded gateway request in Flutter and Edge, including multibyte boundary regressions.
+- Added `id` as the second ordering key for both Card Data lanes. Identity inbox titles are generic and no longer query or interpolate statement-derived product labels; benefit labels use the authoritative catalog relation and generic fallback without short IDs.
+- Verification: focused Edge 21/21; focused Flutter 68/68; Admin2 plus legacy Flutter 104/104; Admin2 plus legacy Deno 65/65; migration contracts 14 passed and 1 opt-in PostgreSQL test skipped; targeted analysis clean after lint fixes.
+
+Ruling: Supersede the earlier recursive sensitive-key filter with exact recursive schemas and canonicalize aliases at the Edge boundary before invoking the audited RPC. Cost if wrong: new legitimate benefit or exclusion fields are rejected until deliberately added to both server and client allowlists.
+
+Ruling: Supersede the earlier shared-legacy-presenter editable surface with an Admin2-only canonical projection matching the columns persisted by `approve_card_benefit_enrichment`; leave the legacy response byte-shape semantics unchanged. Cost if wrong: an existing legacy-only parser field is visible as evidence but cannot be edited in Admin2 until mapped into the persisted schema.
+
+Ruling: Count the complete JSON gateway request, including action discriminator and envelope, against the inclusive 32,768-byte limit in both Dart and Edge. Cost if wrong: a future transport wrapper that adds fields must update the shared boundary fixtures or valid requests near the ceiling will be rejected earlier.
+
+Ruling: Supersede statement-derived identity labels and short record-reference fallbacks with the generic “Review card identity” title; use only authoritative catalog bank/card labels for benefits and generic action text otherwise. Cost if wrong: identity items require opening Card Data for exact product context, trading one click for eliminating untrusted spoken/display labels and record fragments.
+
+Ruling: Render decision/recovery context only from bounded, allowlisted DTO fields and field-evidence excerpts, never raw provider or page content. Cost if wrong: an unfamiliar failure needs specialist logs for detail rather than exposing arbitrary upstream text in the operator console.

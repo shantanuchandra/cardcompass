@@ -1,4 +1,3 @@
-import { presentBenefitJob } from "../admin-catalog-entry/benefit_admin.ts";
 import { type AdminActionHandler } from "./access.ts";
 import {
   type AdminActionContext,
@@ -11,7 +10,7 @@ type Lane = "identity" | "benefit";
 
 const MAX_PAGE = 10_000;
 const MAX_LIMIT = 50;
-const MAX_PAYLOAD_BYTES = 32_768;
+const MAX_REQUEST_BYTES = 32_768;
 const MAX_LIST_ITEMS = 50;
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -176,36 +175,119 @@ function safeProposedFields(value: unknown, strict = false): JsonRecord {
   return output;
 }
 
-function validateDecisionValue(value: unknown, key = "", depth = 0): void {
-  if (depth > 6) invalidRequest();
-  if (value === null || typeof value === "boolean") return;
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) invalidRequest();
-    return;
-  }
-  if (typeof value === "string") {
-    if (value.length > 2_000) invalidRequest();
-    if (key.toLowerCase().includes("url") && safeUrl(value) === null) {
-      invalidRequest();
+const benefitKeys = new Set([
+  "dedupe_key",
+  "dedupeKey",
+  "title",
+  "description",
+  "benefit_category",
+  "category",
+  "benefit_type",
+  "valueType",
+  "value_config",
+  "valueConfig",
+  "partners",
+  "exclusions",
+  "regions",
+  "source_url",
+  "sourceUrl",
+  "valid_from",
+  "effectiveFrom",
+  "valid_until",
+  "effectiveTo",
+]);
+const valueConfigKeys = new Set([
+  "unit",
+  "currency_unit",
+  "discount_percent",
+  "discount_amount",
+  "monthly_cap",
+  "annual_cap",
+  "threshold_amount",
+  "reward_value",
+  "multiplier",
+  "base_rate",
+  "value",
+  "rate",
+  "cap",
+  "limit",
+  "frequency",
+]);
+const exclusionKeys = new Set([
+  "conditions",
+  "notes",
+  "merchant_categories",
+  "transactions",
+  "products",
+  "locations",
+  "restrictions",
+]);
+
+function scalar(value: unknown, key: string): unknown {
+  if (value === null || typeof value === "boolean") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.length <= 2_000) {
+    if (key.toLowerCase().includes("url")) {
+      const url = safeUrl(value);
+      if (url === null) invalidRequest();
+      return url;
     }
-    return;
+    return value;
   }
-  if (Array.isArray(value)) {
-    if (value.length > MAX_LIST_ITEMS) invalidRequest();
-    for (const item of value) validateDecisionValue(item, key, depth + 1);
-    return;
-  }
+  invalidRequest();
+}
+
+function scalarList(value: unknown, key: string): unknown[] {
+  if (!Array.isArray(value) || value.length > MAX_LIST_ITEMS) invalidRequest();
+  return value.map((item) => scalar(item, key));
+}
+
+function exactObject(value: unknown, allowed: ReadonlySet<string>): JsonRecord {
   const row = asRecord(value);
-  if (!row) invalidRequest();
-  for (const [childKey, child] of Object.entries(row)) {
-    if (
-      /raw|body|statement|secret|token|password|authorization|provider_response|headers/i
-        .test(childKey)
-    ) {
-      invalidRequest();
-    }
-    validateDecisionValue(child, childKey, depth + 1);
+  if (!row || Object.keys(row).some((key) => !allowed.has(key))) {
+    invalidRequest();
   }
+  return row;
+}
+
+function canonicalBenefit(value: unknown): JsonRecord {
+  const row = exactObject(value, benefitKeys);
+  const output: JsonRecord = {};
+  for (const [key, item] of Object.entries(row)) {
+    if (key === "value_config" || key === "valueConfig") {
+      const config = exactObject(item, valueConfigKeys);
+      output.value_config = Object.fromEntries(
+        Object.entries(config).map((
+          [childKey, child],
+        ) => [childKey, scalar(child, childKey)]),
+      );
+    } else if (key === "exclusions") {
+      const exclusions = exactObject(item, exclusionKeys);
+      output.exclusions = Object.fromEntries(
+        Object.entries(exclusions).map(
+          ([childKey, child]) => [
+            childKey,
+            Array.isArray(child)
+              ? scalarList(child, childKey)
+              : scalar(child, childKey),
+          ],
+        ),
+      );
+    } else if (["partners", "regions"].includes(key)) {
+      output[key] = scalarList(item, key);
+    } else {
+      const canonicalKey: Record<string, string> = {
+        dedupeKey: "dedupe_key",
+        category: "benefit_category",
+        valueType: "benefit_type",
+        sourceUrl: "source_url",
+        effectiveFrom: "valid_from",
+        effectiveTo: "valid_until",
+      };
+      output[canonicalKey[key] ?? key] = scalar(item, key);
+    }
+  }
+  return output;
 }
 
 function safeEvidence(value: unknown): JsonRecord {
@@ -220,6 +302,16 @@ function safeEvidence(value: unknown): JsonRecord {
   }
   const retrievedAt = safeText(row.retrieved_at, 100);
   if (retrievedAt !== null) output.retrieved_at = retrievedAt;
+  const fieldEvidence = asRecord(row.evidence);
+  if (fieldEvidence) {
+    output.field_evidence = Object.fromEntries(
+      Object.entries(fieldEvidence).flatMap(([key, item]) => {
+        if (!benefitKeys.has(key) && !valueConfigKeys.has(key)) return [];
+        const excerpt = safeText(item, 500);
+        return excerpt === null ? [] : [[key, excerpt]];
+      }),
+    );
+  }
   return output;
 }
 
@@ -303,6 +395,128 @@ function boundBenefitProjection(value: unknown): any {
   return output;
 }
 
+function presentBenefit(value: unknown): JsonRecord {
+  const row = asRecord(value) ?? {};
+  const output: JsonRecord = {};
+  for (const key of benefitKeys) {
+    if (!(key in row)) continue;
+    try {
+      Object.assign(output, canonicalBenefit({ [key]: row[key] }));
+    } catch {
+      // Stored legacy fields that do not satisfy the operator contract are omitted.
+    }
+  }
+  const legacyConfig: JsonRecord = {};
+  for (const key of ["value", "rate", "cap", "limit", "frequency"] as const) {
+    if (key in row) {
+      try {
+        legacyConfig[key] = scalar(row[key], key);
+      } catch { /* omit */ }
+    }
+  }
+  if (
+    Object.keys(legacyConfig).length > 0 && output.value_config === undefined
+  ) {
+    output.value_config = legacyConfig;
+  }
+  return output;
+}
+
+function presentBenefitDiff(value: unknown): JsonRecord {
+  const row = asRecord(value) ?? {};
+  const simple = (key: string, wrapper?: string) =>
+    (Array.isArray(row[key]) ? row[key] : []).slice(0, MAX_LIST_ITEMS).map((
+      item,
+    ) =>
+      wrapper
+        ? { [wrapper]: presentBenefit(asRecord(item)?.[wrapper]) }
+        : presentBenefit(item)
+    );
+  return {
+    additions: simple("additions"),
+    modifications: (Array.isArray(row.modifications) ? row.modifications : [])
+      .slice(0, MAX_LIST_ITEMS).map((item) => ({
+        current: presentBenefit(asRecord(item)?.current),
+        proposed: presentBenefit(asRecord(item)?.proposed),
+      })),
+    possibleRemovals: simple("possibleRemovals", "benefit"),
+    unchanged: (Array.isArray(row.unchanged) ? row.unchanged : [])
+      .slice(0, MAX_LIST_ITEMS).map((item) => ({
+        current: presentBenefit(asRecord(item)?.current),
+        proposed: presentBenefit(asRecord(item)?.proposed),
+      })),
+    conflicts: (Array.isArray(row.conflicts) ? row.conflicts : [])
+      .slice(0, MAX_LIST_ITEMS).map((item) => ({
+        code: safeText(asRecord(item)?.code, 100),
+      })),
+  };
+}
+
+function validationCodes(value: unknown): JsonRecord[] {
+  return (Array.isArray(value) ? value : []).slice(0, MAX_LIST_ITEMS)
+    .map((item) => ({ code: safeText(asRecord(item)?.code, 100) }));
+}
+
+function presentAdminBenefitJob(value: unknown): JsonRecord {
+  const row = asRecord(value) ?? {};
+  const card = asRecord(row.card_catalog) ?? {};
+  const stagingValue = Array.isArray(row.card_benefits_staging)
+    ? row.card_benefits_staging[0]
+    : row.card_benefits_staging;
+  const staging = asRecord(stagingValue);
+  const extracted = asRecord(staging?.extracted_data) ?? {};
+  return boundBenefitProjection({
+    id: safeText(row.id, 100),
+    card_id: safeText(row.card_id, 100),
+    issuer: safeText(row.issuer, 200),
+    canonical_url: safeUrl(row.canonical_url),
+    parser_version: safeText(row.parser_version, 100),
+    status: safeText(row.status, 50),
+    run_mode: safeText(row.run_mode, 50),
+    attempt_count: safeNumber(row.attempt_count),
+    staging_id: safeText(row.staging_id, 100),
+    failure_category: safeText(row.failure_category, 100),
+    next_retry_at: safeText(row.next_retry_at, 100),
+    result_summary: {},
+    created_at: safeText(row.created_at, 100),
+    updated_at: safeText(row.updated_at, 100),
+    card: {
+      id: safeText(card.id, 100),
+      bank: safeText(card.bank, 200),
+      card_name: safeText(card.card_name, 300),
+    },
+    staging: staging === null ? null : {
+      id: safeText(staging.id, 100),
+      source_url: safeUrl(staging.source_url),
+      status: safeText(staging.status, 50),
+      calculated_confidence: safeNumber(staging.calculated_confidence),
+      validation_reasons: validationCodes(staging.validation_reasons),
+      validation_warnings: validationCodes(staging.validation_warnings),
+      source_evidence:
+        (Array.isArray(staging.source_evidence) ? staging.source_evidence : [])
+          .slice(0, MAX_LIST_ITEMS).map(safeEvidence),
+      extracted_data: {
+        retrieved_at: safeText(extracted.retrieved_at, 100),
+        proposals:
+          (Array.isArray(extracted.proposals) ? extracted.proposals : [])
+            .slice(0, MAX_LIST_ITEMS).map(presentBenefit),
+        diff: presentBenefitDiff(extracted.diff),
+      },
+      benefit_decisions: (Array.isArray(staging.benefit_decisions)
+        ? staging.benefit_decisions
+        : [])
+        .slice(0, MAX_LIST_ITEMS).map((decision) => {
+          const item = asRecord(decision) ?? {};
+          return {
+            action: safeText(item.action, 40),
+            reason: safeText(item.reason, 500),
+            dedupe_key: safeText(item.dedupe_key ?? item.dedupeKey, 200),
+          };
+        }),
+    },
+  });
+}
+
 function mapDatabaseError(error: AdminDatabaseError): AdminHttpError {
   const message = error.message ?? "";
   if (message.includes("request_id_collision")) {
@@ -324,7 +538,7 @@ function mapDatabaseError(error: AdminDatabaseError): AdminHttpError {
 export async function handleCardReviewList(
   body: JsonRecord,
   context: AdminActionContext,
-) {
+): Promise<any> {
   onlyKeys(body, listKeys);
   const lane = requiredLane(body.lane);
   const status = statusFilter(body.status);
@@ -347,7 +561,9 @@ export async function handleCardReviewList(
         id, issuer, proposed_product, evidence, status, attempt_count,
         failure_category, resolved_card_id, created_at, updated_at
       )
-    `).order("created_at", { ascending: true });
+    `).order("created_at", { ascending: true }).order("id", {
+      ascending: true,
+    });
   } else {
     query = (context.db as any).from("card_catalog_enrichment_jobs").select(`
       id, card_id, issuer, canonical_url, parser_version, status, run_mode,
@@ -362,7 +578,9 @@ export async function handleCardReviewList(
       )
     `).neq("parser_version", "catalog-v1")
       .in("run_mode", ["pilot", "scheduled", "manual"])
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false }).order("id", {
+        ascending: true,
+      });
   }
   if (status !== null) query = query.eq("status", status);
   if (targetId !== null) query = query.eq("id", targetId);
@@ -377,7 +595,7 @@ export async function handleCardReviewList(
     items: rows.slice(0, limit).map((row) =>
       lane === "identity"
         ? presentIdentityRow(row)
-        : boundBenefitProjection(presentBenefitJob(row))
+        : presentAdminBenefitJob(row)
     ),
     page,
     limit,
@@ -416,8 +634,31 @@ function decisionPayload(
       "editedBenefit",
     ]);
     if (Object.keys(row).some((key) => !allowed.has(key))) invalidRequest();
-    validateDecisionValue(row);
-    return reason === null ? { ...row, action } : { ...row, action, reason };
+    const result: JsonRecord = { action };
+    for (
+      const key of [
+        "change_type",
+        "dedupe_key",
+        "display_priority",
+        "is_primary",
+      ] as const
+    ) {
+      const aliases: Record<string, string> = {
+        change_type: "changeType",
+        dedupe_key: "dedupeKey",
+      };
+      const itemValue = row[key] ?? row[aliases[key]];
+      if (itemValue !== undefined) result[key] = scalar(itemValue, key);
+    }
+    for (const key of ["benefit", "proposed", "edited_benefit"] as const) {
+      const alias = key === "edited_benefit" ? row.editedBenefit : undefined;
+      const itemValue = row[key] ?? alias;
+      if (itemValue !== undefined) result[key] = canonicalBenefit(itemValue);
+    }
+    const itemReason = reason ??
+      (typeof row.reason === "string" ? row.reason.trim() : null);
+    if (itemReason) result.reason = scalar(itemReason, "reason");
+    return result;
   });
 }
 
@@ -440,17 +681,6 @@ function safeActionPayload(
   operation: string,
   reason: string | null,
 ) {
-  const submittedPayload = {
-    proposed_fields: body.proposed_fields,
-    merge_card_id: body.merge_card_id,
-    decisions: body.decisions,
-  };
-  if (
-    new TextEncoder().encode(JSON.stringify(submittedPayload)).byteLength >
-      MAX_PAYLOAD_BYTES
-  ) {
-    invalidRequest();
-  }
   let payload: JsonRecord = {};
   let stagingId: string | null = null;
   if (lane === "identity") {
@@ -489,12 +719,6 @@ function safeActionPayload(
       invalidRequest();
     }
   }
-  if (
-    new TextEncoder().encode(JSON.stringify(payload)).byteLength >
-      MAX_PAYLOAD_BYTES
-  ) {
-    invalidRequest();
-  }
   return { payload, stagingId };
 }
 
@@ -503,6 +727,13 @@ export async function handleCardReviewAction(
   context: AdminActionContext,
 ) {
   onlyKeys(body, commonActionKeys);
+  if (
+    new TextEncoder().encode(
+      JSON.stringify({ action: "card-review-action", ...body }),
+    ).byteLength > MAX_REQUEST_BYTES
+  ) {
+    invalidRequest();
+  }
   const lane = requiredLane(body.lane);
   const operation = typeof body.operation === "string" ? body.operation : "";
   const operations = lane === "identity"

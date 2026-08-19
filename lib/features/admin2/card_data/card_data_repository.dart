@@ -70,7 +70,7 @@ final class CardDataRepository {
     _validateAction(action);
     final requestId = _requestIds();
     if (!_uuid.hasMatch(requestId)) _invalidAction();
-    final json = await _operator.invoke('card-review-action', {
+    final body = <String, dynamic>{
       'lane': action.lane.wireValue,
       'operation': action.operation.wireValue,
       'target_id': action.targetId,
@@ -79,7 +79,9 @@ final class CardDataRepository {
       if (action.stagingId != null) 'staging_id': action.stagingId,
       if (action.reason != null) 'reason': action.reason,
       ...action.payload,
-    });
+    };
+    _validateRequestBytes({'action': 'card-review-action', ...body});
+    final json = await _operator.invoke('card-review-action', body);
     try {
       return strictJsonMap(json['result']);
     } on FormatException {
@@ -119,10 +121,53 @@ final _uuid = RegExp(
   r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
   caseSensitive: false,
 );
-final _sensitiveKey = RegExp(
-  r'raw|body|statement|secret|token|password|authorization|provider_response|headers',
-  caseSensitive: false,
-);
+const _benefitFields = {
+  'dedupe_key',
+  'dedupeKey',
+  'title',
+  'description',
+  'benefit_category',
+  'category',
+  'benefit_type',
+  'valueType',
+  'value_config',
+  'valueConfig',
+  'partners',
+  'exclusions',
+  'regions',
+  'source_url',
+  'sourceUrl',
+  'valid_from',
+  'effectiveFrom',
+  'valid_until',
+  'effectiveTo',
+};
+const _valueConfigFields = {
+  'unit',
+  'currency_unit',
+  'discount_percent',
+  'discount_amount',
+  'monthly_cap',
+  'annual_cap',
+  'threshold_amount',
+  'reward_value',
+  'multiplier',
+  'base_rate',
+  'value',
+  'rate',
+  'cap',
+  'limit',
+  'frequency',
+};
+const _exclusionFields = {
+  'conditions',
+  'notes',
+  'merchant_categories',
+  'transactions',
+  'products',
+  'locations',
+  'restrictions',
+};
 
 Never _invalidAction() => throw const AdminRequestFailed('invalid_request');
 
@@ -178,7 +223,6 @@ void _validateAction(CardReviewAction action) {
       case CardReviewOperation.unquarantine:
         _invalidAction();
     }
-    _validatePayloadBytes(action.payload);
     return;
   }
 
@@ -211,7 +255,7 @@ void _validateAction(CardReviewAction action) {
         if (decision is! Map ||
             decision.keys.any((key) => !_decisionFields.contains(key)) ||
             !accepted.contains(decision['action']) ||
-            !_validDecisionValue(decision)) {
+            !_validDecision(decision.cast<Object?, Object?>())) {
           _invalidAction();
         }
       }
@@ -224,8 +268,6 @@ void _validateAction(CardReviewAction action) {
     case CardReviewOperation.merge:
       _invalidAction();
   }
-  _validatePayloadBytes(action.payload);
-  _validatePayloadBytes(_safePayloadFor(action, reason));
 }
 
 bool _hasOnly(Map<String, dynamic> payload, Set<String> keys) =>
@@ -247,48 +289,85 @@ bool _safeHttpsUrl(String value) {
       value.length <= 2048;
 }
 
-bool _validDecisionValue(Object? value, [String key = '', int depth = 0]) {
-  if (depth > 6 || _sensitiveKey.hasMatch(key)) return false;
+bool _validScalar(Object? value, String key) {
   if (value == null || value is bool) return true;
   if (value is num) return value.isFinite;
-  if (value is String) {
-    if (value.length > 2000) return false;
-    return key.toLowerCase().contains('url') ? _safeHttpsUrl(value) : true;
-  }
-  if (value is List) {
-    return value.length <= 50 &&
-        value.every((item) => _validDecisionValue(item, key, depth + 1));
-  }
-  if (value is Map) {
-    return value.entries.every(
-      (entry) =>
-          entry.key is String &&
-          _validDecisionValue(entry.value, entry.key as String, depth + 1),
-    );
-  }
-  return false;
+  if (value is! String || value.length > 2000) return false;
+  return key.toLowerCase().contains('url') ? _safeHttpsUrl(value) : true;
 }
 
-void _validatePayloadBytes(Map<String, dynamic> payload) {
-  if (utf8.encode(jsonEncode(payload)).length > 32768) _invalidAction();
+bool _validBenefit(Object? value) {
+  if (value is! Map || value.keys.any((key) => !_benefitFields.contains(key))) {
+    return false;
+  }
+  for (final entry in value.entries) {
+    final key = entry.key as String;
+    if (key == 'value_config' || key == 'valueConfig') {
+      if (entry.value is! Map ||
+          (entry.value as Map).keys.any(
+            (child) => !_valueConfigFields.contains(child),
+          ) ||
+          !(entry.value as Map).entries.every(
+            (child) => _validScalar(child.value, child.key as String),
+          )) {
+        return false;
+      }
+    } else if (key == 'exclusions') {
+      if (entry.value is! Map ||
+          (entry.value as Map).keys.any(
+            (child) => !_exclusionFields.contains(child),
+          ) ||
+          !(entry.value as Map).entries.every(
+            (child) => child.value is List
+                ? (child.value as List).length <= 50 &&
+                      (child.value as List).every(
+                        (item) => _validScalar(item, child.key as String),
+                      )
+                : _validScalar(child.value, child.key as String),
+          )) {
+        return false;
+      }
+    } else if (key == 'partners' || key == 'regions') {
+      if (entry.value is! List ||
+          (entry.value as List).length > 50 ||
+          !(entry.value as List).every((item) => _validScalar(item, key))) {
+        return false;
+      }
+    } else if (!_validScalar(entry.value, key)) {
+      return false;
+    }
+  }
+  return true;
 }
 
-Map<String, dynamic> _safePayloadFor(
-  CardReviewAction action,
-  String? normalizedReason,
-) {
-  if (action.operation != CardReviewOperation.reject) return action.payload;
-  final decisions = action.payload['decisions'] as List;
-  return {
-    'decisions': decisions
-        .cast<Map>()
-        .map(
-          (decision) => <String, dynamic>{
-            ...decision.cast<String, dynamic>(),
-            'action': 'reject',
-            'reason': normalizedReason,
-          },
-        )
-        .toList(growable: false),
-  };
+bool _validDecision(Map<Object?, Object?> decision) {
+  for (final key in [
+    'benefit',
+    'proposed',
+    'edited_benefit',
+    'editedBenefit',
+  ]) {
+    if (decision.containsKey(key) && !_validBenefit(decision[key])) {
+      return false;
+    }
+  }
+  for (final entry in decision.entries) {
+    if ([
+      'benefit',
+      'proposed',
+      'edited_benefit',
+      'editedBenefit',
+    ].contains(entry.key)) {
+      continue;
+    }
+    if (entry.key is! String ||
+        !_validScalar(entry.value, entry.key as String)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void _validateRequestBytes(Map<String, dynamic> request) {
+  if (utf8.encode(jsonEncode(request)).length > 32768) _invalidAction();
 }

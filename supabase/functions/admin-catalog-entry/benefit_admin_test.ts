@@ -30,6 +30,40 @@ function request(body: Record<string, unknown>, token = "valid-token") {
   });
 }
 
+Deno.test("legacy benefit projection retains its exact field contract", () => {
+  const output = presentBenefitJob({
+    id: "job",
+    status: "review_required",
+    card_benefits_staging: {
+      id: "staging",
+      extracted_data: {
+        proposals: [{
+          dedupeKey: "dining",
+          title: "Dining",
+          category: "dining",
+          valueType: "cashback",
+          rate: 5,
+          currency: "INR",
+          benefit_category: "must-not-expand-legacy",
+        }],
+      },
+    },
+  });
+  const proposal = output.staging?.extracted_data.proposals[0] as
+    | Record<string, unknown>
+    | undefined;
+  assert(proposal?.title === "Dining", "legacy title changed");
+  assert(proposal?.rate === 5, "legacy rate changed");
+  assert(
+    proposal !== undefined && !("currency" in proposal),
+    "legacy response was expanded",
+  );
+  assert(
+    !("benefit_category" in proposal),
+    "admin-only field leaked into legacy response",
+  );
+});
+
 function authenticatedDb(
   user: Record<string, unknown> | null,
   authError: unknown = null,
@@ -1335,3 +1369,4 @@ Deno.test("manual quarantine loses an optimistic race instead of overwriting new
     } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
   }
 });
+import { presentBenefitJob } from "./benefit_admin.ts";

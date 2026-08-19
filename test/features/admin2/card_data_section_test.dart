@@ -305,20 +305,23 @@ void main() {
           kind: BenefitProposalKind.addition,
           current: const {},
           proposed: const {
-            'dedupeKey': 'lounge',
+            'dedupe_key': 'lounge',
             'title': 'Lounge access',
-            'category': 'travel',
+            'benefit_category': 'travel',
           },
         ),
         BenefitReviewProposal(
           key: 'dining',
           kind: BenefitProposalKind.modification,
-          current: const {'dedupeKey': 'dining', 'rate': 5},
+          current: const {
+            'dedupe_key': 'dining',
+            'value_config': {'rate': 5},
+          },
           proposed: const {
-            'dedupeKey': 'dining',
+            'dedupe_key': 'dining',
             'title': 'Dining rewards',
-            'category': 'dining',
-            'rate': 10,
+            'benefit_category': 'dining',
+            'value_config': {'rate': 10},
           },
         ),
       ],
@@ -333,28 +336,37 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Edit proposal').last);
     await tester.pumpAndSettle();
-    Future<void> edit(String key, String value) =>
-        tester.enterText(find.byKey(Key('benefit-edit-lounge-$key')), value);
+    final detailScrollable = find
+        .descendant(
+          of: find.byType(ListView).last,
+          matching: find.byType(Scrollable),
+        )
+        .first;
+    Future<void> edit(String key, String value) async {
+      final field = find.byKey(Key('benefit-edit-lounge-$key'));
+      await tester.scrollUntilVisible(field, 250, scrollable: detailScrollable);
+      await tester.enterText(field, value);
+    }
+
     await edit('title', 'Airport lounge access');
-    await edit('rate', '2.5');
-    await edit('currency', 'INR');
-    await edit('unit', 'visits');
-    await edit('cap', '8');
-    await edit('frequency', 'annual');
-    await edit('eligibility', 'Primary cardholders');
+    await edit('value_config.rate', '2.5');
+    await edit('value_config.currency_unit', 'INR');
+    await edit('value_config.unit', 'visits');
+    await edit('value_config.monthly_cap', '8');
     await edit('partners', 'Lounge A, Lounge B');
-    await edit('redemptionRules', 'Show the eligible card');
-    await edit('effectiveFrom', '2026-09-01');
+    await edit('regions', 'IN, SG');
+    await edit('exclusions', '{"notes":"Primary cardholders"}');
+    await edit('source_url', 'https://issuer.example/benefits');
+    await edit('valid_from', '2026-09-01');
+    tester.testTextInput.hide();
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.text('Submit benefit decisions'),
-      1000,
-      scrollable: find
-          .descendant(
-            of: find.byType(ListView).last,
-            matching: find.byType(Scrollable),
-          )
-          .first,
+      500,
+      scrollable: detailScrollable,
     );
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Submit benefit decisions'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Confirm edits'));
@@ -368,16 +380,37 @@ void main() {
     );
     final edited = (decisions.first as Map)['edited_benefit'] as Map;
     expect(edited['title'], 'Airport lounge access');
-    expect(edited['rate'], 2.5);
-    expect(edited['currency'], 'INR');
-    expect(edited['unit'], 'visits');
-    expect(edited['cap'], 8);
-    expect(edited['frequency'], 'annual');
-    expect(edited['eligibility'], 'Primary cardholders');
+    expect(edited['value_config'], {
+      'rate': 2.5,
+      'currency_unit': 'INR',
+      'unit': 'visits',
+      'monthly_cap': 8,
+    });
     expect(edited['partners'], ['Lounge A', 'Lounge B']);
-    expect(edited['redemptionRules'], 'Show the eligible card');
-    expect(edited['effectiveFrom'], '2026-09-01');
-    expect(edited['category'], 'travel');
+    expect(edited['regions'], ['IN', 'SG']);
+    expect(edited['exclusions'], {'notes': 'Primary cardholders'});
+    expect(edited['source_url'], 'https://issuer.example/benefits');
+    expect(edited['valid_from'], '2026-09-01');
+    expect(edited['benefit_category'], 'travel');
+    expect(
+      edited.keys,
+      everyElement(
+        isIn({
+          'dedupe_key',
+          'title',
+          'description',
+          'benefit_category',
+          'benefit_type',
+          'value_config',
+          'partners',
+          'regions',
+          'exclusions',
+          'source_url',
+          'valid_from',
+          'valid_until',
+        }),
+      ),
+    );
   });
 
   testWidgets('safe evidence URL is actionable and shows retrieval freshness', (

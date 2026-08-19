@@ -224,6 +224,44 @@ void main() {
     expect(page.items.single.evidence.single.excerpt, 'Dining credit');
   });
 
+  test('benefit DTO surfaces validation evidence and recovery context', () {
+    final item = CardReviewItem.fromJson(CardReviewLane.benefit, {
+      'id': identityId,
+      'status': 'failed',
+      'updated_at': observed,
+      'attempt_count': 3,
+      'failure_category': 'source_timeout',
+      'next_retry_at': '2026-08-19T10:00:00Z',
+      'staging': {
+        'calculated_confidence': 0.73,
+        'validation_reasons': [
+          {'code': 'missing_identity'},
+        ],
+        'validation_warnings': [
+          {'code': 'stale_source'},
+        ],
+        'source_evidence': [
+          {
+            'source_excerpt': 'Official terms',
+            'field_evidence': {'title': 'Issuer terms title'},
+          },
+        ],
+        'benefit_decisions': [
+          {'action': 'reject', 'dedupe_key': 'dining', 'reason': 'unsupported'},
+        ],
+      },
+    });
+    expect(item.confidence, 0.73);
+    expect(item.validationReasonCodes, ['missing_identity']);
+    expect(item.warningCodes, ['stale_source']);
+    expect(item.evidence.single.excerpt, 'Official terms');
+    expect(item.evidence.single.fieldEvidence['title'], 'Issuer terms title');
+    expect(item.attemptCount, 3);
+    expect(item.failureCategory, 'source_timeout');
+    expect(item.nextRetryAt, DateTime.parse('2026-08-19T10:00:00Z'));
+    expect(item.priorDecisionSummaries.single, contains('unsupported'));
+  });
+
   final validActions =
       <({String name, CardReviewAction action, Map<String, dynamic> extras})>[
         (
@@ -595,32 +633,52 @@ void main() {
     );
   });
 
-  for (final bytes in [32767, 32768]) {
-    test('accepts a safe payload of exactly $bytes UTF-8 bytes', () async {
-      final payload = benefitPayloadWithUtf8Bytes(bytes);
-      final api = RecordingAdminOperatorApi(
-        const AdminOperatorResponse(200, {'result': {}}),
-      );
-      await CardDataRepository(
-        AdminOperatorRepository(api),
-        requestIds: () => '11111111-1111-4111-8111-111111111111',
-      ).act(
-        CardReviewAction(
-          lane: CardReviewLane.benefit,
-          operation: CardReviewOperation.approve,
-          targetId: identityId,
-          observedUpdatedAt: observed,
-          stagingId: stagingId,
-          payload: payload,
-        ),
-      );
-      expect(utf8.encode(jsonEncode(payload)).length, bytes);
-      expect(api.bodies, hasLength(1));
-    });
+  Map<String, dynamic> wholeRequest(Map<String, dynamic> payload) => {
+    'action': 'card-review-action',
+    'lane': 'benefit',
+    'operation': 'approve',
+    'target_id': identityId,
+    'request_id': '11111111-1111-4111-8111-111111111111',
+    'observed_updated_at': observed,
+    'staging_id': stagingId,
+    ...payload,
+  };
+
+  Map<String, dynamic> payloadForWholeRequestBytes(int bytes) {
+    final seed = benefitPayloadWithUtf8Bytes(2000);
+    final overhead = utf8.encode(jsonEncode(wholeRequest(seed))).length - 2000;
+    return benefitPayloadWithUtf8Bytes(bytes - overhead);
   }
 
-  test('rejects 32769 UTF-8 bytes when code-unit length is unchanged', () {
-    final payload = benefitPayloadWithUtf8Bytes(32768);
+  for (final bytes in [32767, 32768]) {
+    test(
+      'accepts a whole gateway request of exactly $bytes UTF-8 bytes',
+      () async {
+        final payload = payloadForWholeRequestBytes(bytes);
+        final api = RecordingAdminOperatorApi(
+          const AdminOperatorResponse(200, {'result': {}}),
+        );
+        await CardDataRepository(
+          AdminOperatorRepository(api),
+          requestIds: () => '11111111-1111-4111-8111-111111111111',
+        ).act(
+          CardReviewAction(
+            lane: CardReviewLane.benefit,
+            operation: CardReviewOperation.approve,
+            targetId: identityId,
+            observedUpdatedAt: observed,
+            stagingId: stagingId,
+            payload: payload,
+          ),
+        );
+        expect(utf8.encode(jsonEncode(wholeRequest(payload))).length, bytes);
+        expect(api.bodies, hasLength(1));
+      },
+    );
+  }
+
+  test('rejects a 32769-byte whole request with multibyte content', () {
+    final payload = payloadForWholeRequestBytes(32768);
     final decisions = payload['decisions'] as List<dynamic>;
     final populated = decisions.cast<Map<String, dynamic>>().firstWhere(
       (decision) =>
@@ -631,7 +689,7 @@ void main() {
     final benefit = populated['benefit'] as Map<String, dynamic>;
     final ascii = benefit['description'] as String;
     benefit['description'] = '${ascii.substring(0, ascii.length - 1)}é';
-    expect(utf8.encode(jsonEncode(payload)).length, 32769);
+    expect(utf8.encode(jsonEncode(wholeRequest(payload))).length, 32769);
     final action = CardReviewAction(
       lane: CardReviewLane.benefit,
       operation: CardReviewOperation.approve,

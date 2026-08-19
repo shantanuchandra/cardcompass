@@ -134,6 +134,13 @@ Deno.test("identity list uses a bounded queue query and excludes raw evidence", 
   assertEquals(output.limit, 50);
   assertEquals(output.has_more, false);
   assertEquals(output.items.length, 2);
+  assertEquals(fake.calls.filter((call) => call.method === "order"), [{
+    method: "order",
+    args: ["created_at", { ascending: true }],
+  }, {
+    method: "order",
+    args: ["id", { ascending: true }],
+  }]);
   assertEquals(output.items[0].source_evidence, {
     official_url: "https://issuer.example/card",
     source_excerpt: "x".repeat(500),
@@ -217,6 +224,7 @@ Deno.test("benefit list reuses the locked presenter and bounds unsafe URLs and a
             ? "https://issuer.example/benefits"
             : "data:text/plain,secret",
           source_excerpt: "e".repeat(700),
+          evidence: { title: "Official title", customer_email: "excluded" },
           raw_body: "excluded",
         })),
         extracted_data: {
@@ -257,34 +265,16 @@ Deno.test("benefit list reuses the locked presenter and bounds unsafe URLs and a
     output.items[0].staging.source_evidence[0].source_excerpt,
     "e".repeat(500),
   );
+  assertEquals(output.items[0].staging.source_evidence[0].field_evidence, {
+    title: "Official title",
+  });
   assertEquals(output.items[0].result_summary.provider_response, undefined);
   const proposal = output.items[0].staging.extracted_data.proposals[0];
-  assertEquals({
-    title: proposal.title,
-    rate: proposal.rate,
-    currency: proposal.currency,
-    unit: proposal.unit,
-    cap: proposal.cap,
-    frequency: proposal.frequency,
-    eligibility: proposal.eligibility,
-    partner: proposal.partner,
-    redemptionRules: proposal.redemptionRules,
-    notes: proposal.notes,
-    effectiveFrom: proposal.effectiveFrom,
-    unsafe_payload: proposal.unsafe_payload,
-  }, {
+  assertEquals(proposal, {
+    dedupe_key: "lounge",
     title: "Airport lounge",
-    rate: 2.5,
-    currency: "INR",
-    unit: "visits",
-    cap: 8,
-    frequency: "annual",
-    eligibility: "Primary cardholders",
-    partner: "Lounge A",
-    redemptionRules: "Show the card",
-    notes: "Domestic terminals",
-    effectiveFrom: "2026-09-01",
-    unsafe_payload: undefined,
+    valid_from: "2026-09-01",
+    value_config: { rate: 2.5, cap: 8, frequency: "annual" },
   });
   assertEquals(
     fake.calls.some((call) =>
@@ -327,6 +317,37 @@ const validCommon = {
   request_id: REQUEST_ID,
   observed_updated_at: UPDATED_AT,
 };
+
+function bodyAtRequestBytes(targetBytes: number) {
+  const body: Record<string, unknown> = {
+    lane: "benefit",
+    operation: "approve",
+    ...validCommon,
+    staging_id: STAGING_ID,
+    decisions: Array.from({ length: 20 }, () => ({
+      action: "approve",
+      benefit: { description: "" },
+    })),
+  };
+  const encoded = () =>
+    new TextEncoder().encode(
+      JSON.stringify({ action: "card-review-action", ...body }),
+    ).byteLength;
+  let remaining = targetBytes - encoded();
+  for (
+    const decision of body.decisions as Array<
+      { benefit: { description: string } }
+    >
+  ) {
+    const length = Math.min(2_000, remaining);
+    decision.benefit.description = "a".repeat(Math.max(0, length));
+    remaining -= Math.max(0, length);
+  }
+  if (remaining !== 0 || encoded() !== targetBytes) {
+    throw new Error("fixture_size");
+  }
+  return body;
+}
 
 Deno.test("identity mutations enforce exact operation payloads", async () => {
   const valid = [
@@ -438,6 +459,25 @@ Deno.test("benefit decisions enforce operation-specific actions and reject reaso
       staging_id: STAGING_ID,
       decisions: [{
         action: "approve",
+        benefit: { title: "Dining", customer_email: "victim@example.com" },
+      }],
+    },
+    {
+      operation: "edit_approve",
+      staging_id: STAGING_ID,
+      decisions: [{
+        action: "edit",
+        edited_benefit: {
+          title: "Dining",
+          value_config: { rate: 5, ssn: "secret" },
+        },
+      }],
+    },
+    {
+      operation: "approve",
+      staging_id: STAGING_ID,
+      decisions: [{
+        action: "approve",
         benefit: { title: "Dining", source_url: "javascript:alert(1)" },
       }],
     },
@@ -494,6 +534,22 @@ Deno.test("mutation validates UUIDs, timestamps, keys, and 32 KiB UTF-8 payloads
   }
 });
 
+Deno.test("mutation enforces the 32 KiB whole gateway request boundary", async () => {
+  await handleCardReviewAction(
+    bodyAtRequestBytes(32_768),
+    fakeContext().context,
+  );
+  const above = bodyAtRequestBytes(32_768);
+  const first =
+    (above.decisions as Array<{ benefit: { description: string } }>)[0];
+  first.benefit.description = `é${first.benefit.description.slice(1)}`;
+  await assertRejects(
+    () => handleCardReviewAction(above, fakeContext().context),
+    AdminHttpError,
+    "invalid_request",
+  );
+});
+
 Deno.test("mutation calls only the audited RPC with a sanitized payload", async () => {
   const fake = fakeContext({ rpcData: { resulting_status: "merged" } });
   const result = await handleCardReviewAction({
@@ -518,6 +574,48 @@ Deno.test("mutation calls only the audited RPC with a sanitized payload", async 
       _observed_updated_at: UPDATED_AT,
     },
   }]);
+});
+
+Deno.test("benefit aliases are canonicalized before audited RPC metadata", async () => {
+  const fake = fakeContext();
+  await handleCardReviewAction({
+    lane: "benefit",
+    operation: "edit_approve",
+    ...validCommon,
+    staging_id: STAGING_ID,
+    decisions: [{
+      action: "edit",
+      changeType: "modification",
+      dedupeKey: "dining",
+      editedBenefit: {
+        dedupeKey: "dining",
+        title: "Dining credit",
+        category: "dining",
+        valueType: "cashback",
+        valueConfig: { rate: 5 },
+        sourceUrl: "https://issuer.example/dining",
+        effectiveFrom: "2026-08-01",
+        effectiveTo: "2027-08-01",
+      },
+    }],
+  }, fake.context);
+  assertEquals(fake.rpcCalls[0].args._payload, {
+    decisions: [{
+      action: "edit",
+      change_type: "modification",
+      dedupe_key: "dining",
+      edited_benefit: {
+        dedupe_key: "dining",
+        title: "Dining credit",
+        benefit_category: "dining",
+        benefit_type: "cashback",
+        value_config: { rate: 5 },
+        source_url: "https://issuer.example/dining",
+        valid_from: "2026-08-01",
+        valid_until: "2027-08-01",
+      },
+    }],
+  });
 });
 
 Deno.test("mutation maps database failures to stable codes without leaking details", async () => {
