@@ -121,8 +121,152 @@ void main() {
     expect(page.items.single.evidence.single.excerpt, 'Dining credit');
   });
 
-  for (final operation in CardReviewOperation.values) {
-    test('${operation.name} serializes its exact operation', () async {
+  final validActions =
+      <({String name, CardReviewAction action, Map<String, dynamic> extras})>[
+        (
+          name: 'identity approve',
+          action: CardReviewAction(
+            lane: CardReviewLane.identity,
+            operation: CardReviewOperation.approve,
+            targetId: identityId,
+            observedUpdatedAt: observed,
+          ),
+          extras: const {},
+        ),
+        (
+          name: 'identity edit approve',
+          action: CardReviewAction(
+            lane: CardReviewLane.identity,
+            operation: CardReviewOperation.editApprove,
+            targetId: identityId,
+            observedUpdatedAt: observed,
+            payload: const {
+              'proposed_fields': {'card_name': 'Corrected'},
+            },
+          ),
+          extras: const {
+            'proposed_fields': {'card_name': 'Corrected'},
+          },
+        ),
+        (
+          name: 'identity merge',
+          action: CardReviewAction(
+            lane: CardReviewLane.identity,
+            operation: CardReviewOperation.merge,
+            targetId: identityId,
+            observedUpdatedAt: observed,
+            payload: const {
+              'merge_card_id': '44444444-4444-4444-8444-444444444444',
+            },
+          ),
+          extras: const {
+            'merge_card_id': '44444444-4444-4444-8444-444444444444',
+          },
+        ),
+        (
+          name: 'identity reject',
+          action: CardReviewAction(
+            lane: CardReviewLane.identity,
+            operation: CardReviewOperation.reject,
+            targetId: identityId,
+            observedUpdatedAt: observed,
+            reason: 'not a product',
+          ),
+          extras: const {'reason': 'not a product'},
+        ),
+        (
+          name: 'identity retry',
+          action: CardReviewAction(
+            lane: CardReviewLane.identity,
+            operation: CardReviewOperation.retry,
+            targetId: identityId,
+            observedUpdatedAt: observed,
+          ),
+          extras: const {},
+        ),
+        for (final configuration in [
+          (operation: CardReviewOperation.approve, decision: 'approve'),
+          (operation: CardReviewOperation.editApprove, decision: 'edit'),
+        ])
+          (
+            name: 'benefit ${configuration.operation.name}',
+            action: CardReviewAction(
+              lane: CardReviewLane.benefit,
+              operation: configuration.operation,
+              targetId: identityId,
+              observedUpdatedAt: observed,
+              stagingId: stagingId,
+              payload: {
+                'decisions': [
+                  {'action': configuration.decision},
+                ],
+              },
+            ),
+            extras: {
+              'staging_id': stagingId,
+              'decisions': [
+                {'action': configuration.decision},
+              ],
+            },
+          ),
+        (
+          name: 'benefit reject',
+          action: CardReviewAction(
+            lane: CardReviewLane.benefit,
+            operation: CardReviewOperation.reject,
+            targetId: identityId,
+            observedUpdatedAt: observed,
+            stagingId: stagingId,
+            reason: 'unsupported',
+            payload: const {
+              'decisions': [
+                {'action': 'reject'},
+              ],
+            },
+          ),
+          extras: const {
+            'staging_id': stagingId,
+            'reason': 'unsupported',
+            'decisions': [
+              {'action': 'reject'},
+            ],
+          },
+        ),
+        (
+          name: 'benefit retry',
+          action: CardReviewAction(
+            lane: CardReviewLane.benefit,
+            operation: CardReviewOperation.retry,
+            targetId: identityId,
+            observedUpdatedAt: observed,
+          ),
+          extras: const {},
+        ),
+        (
+          name: 'benefit quarantine',
+          action: CardReviewAction(
+            lane: CardReviewLane.benefit,
+            operation: CardReviewOperation.quarantine,
+            targetId: identityId,
+            observedUpdatedAt: observed,
+            reason: 'bad extraction',
+          ),
+          extras: const {'reason': 'bad extraction'},
+        ),
+        (
+          name: 'benefit unquarantine',
+          action: CardReviewAction(
+            lane: CardReviewLane.benefit,
+            operation: CardReviewOperation.unquarantine,
+            targetId: identityId,
+            observedUpdatedAt: observed,
+          ),
+          extras: const {},
+        ),
+      ];
+
+  for (final request in validActions) {
+    test('${request.name} serializes an exact body', () async {
       final api = RecordingAdminOperatorApi(
         const AdminOperatorResponse(200, {'result': {}}),
       );
@@ -130,102 +274,222 @@ void main() {
         AdminOperatorRepository(api),
         requestIds: () => '11111111-1111-4111-8111-111111111111',
       );
-      await repository.act(
-        CardReviewAction(
-          lane:
-              operation == CardReviewOperation.quarantine ||
-                  operation == CardReviewOperation.unquarantine
-              ? CardReviewLane.benefit
-              : CardReviewLane.identity,
-          operation: operation,
-          targetId: identityId,
-          observedUpdatedAt: observed,
-          stagingId:
-              operation == CardReviewOperation.approve ||
-                  operation == CardReviewOperation.editApprove ||
-                  operation == CardReviewOperation.reject
-              ? stagingId
-              : null,
-          reason:
-              operation == CardReviewOperation.reject ||
-                  operation == CardReviewOperation.quarantine
-              ? 'operator reason'
-              : null,
-          payload: operation == CardReviewOperation.editApprove
-              ? const {
-                  'proposed_fields': {'card_name': 'Corrected'},
-                }
-              : operation == CardReviewOperation.merge
-              ? const {'merge_card_id': '44444444-4444-4444-8444-444444444444'}
-              : const {},
-        ),
-      );
+      await repository.act(request.action);
 
-      expect(api.bodies.single['operation'], operation.wireValue);
-      expect(
-        api.bodies.single['request_id'],
-        '11111111-1111-4111-8111-111111111111',
-      );
-      expect(api.bodies.single['observed_updated_at'], observed);
+      expect(api.bodies.single, {
+        'action': 'card-review-action',
+        'lane': request.action.lane.wireValue,
+        'operation': request.action.operation.wireValue,
+        'target_id': identityId,
+        'request_id': '11111111-1111-4111-8111-111111111111',
+        'observed_updated_at': observed,
+        ...request.extras,
+      });
     });
   }
 
-  test('benefit retry includes request id and observed state', () async {
-    final api = RecordingAdminOperatorApi(
-      const AdminOperatorResponse(200, {'result': {}}),
-    );
-    final repository = CardDataRepository(
-      AdminOperatorRepository(api),
-      requestIds: () => '11111111-1111-4111-8111-111111111111',
-    );
+  final invalidActions = [
+    CardReviewAction(
+      lane: CardReviewLane.identity,
+      operation: CardReviewOperation.quarantine,
+      targetId: identityId,
+      observedUpdatedAt: observed,
+      reason: 'why',
+    ),
+    CardReviewAction(
+      lane: CardReviewLane.benefit,
+      operation: CardReviewOperation.merge,
+      targetId: identityId,
+      observedUpdatedAt: observed,
+      payload: const {'merge_card_id': identityId},
+    ),
+    CardReviewAction(
+      lane: CardReviewLane.identity,
+      operation: CardReviewOperation.editApprove,
+      targetId: identityId,
+      observedUpdatedAt: observed,
+    ),
+    CardReviewAction(
+      lane: CardReviewLane.identity,
+      operation: CardReviewOperation.merge,
+      targetId: identityId,
+      observedUpdatedAt: observed,
+    ),
+    CardReviewAction(
+      lane: CardReviewLane.identity,
+      operation: CardReviewOperation.reject,
+      targetId: identityId,
+      observedUpdatedAt: observed,
+    ),
+    CardReviewAction(
+      lane: CardReviewLane.benefit,
+      operation: CardReviewOperation.approve,
+      targetId: identityId,
+      observedUpdatedAt: observed,
+      stagingId: stagingId,
+    ),
+    CardReviewAction(
+      lane: CardReviewLane.benefit,
+      operation: CardReviewOperation.reject,
+      targetId: identityId,
+      observedUpdatedAt: observed,
+      stagingId: stagingId,
+      reason: 'why',
+      payload: const {'decisions': []},
+    ),
+    CardReviewAction(
+      lane: CardReviewLane.benefit,
+      operation: CardReviewOperation.quarantine,
+      targetId: identityId,
+      observedUpdatedAt: observed,
+    ),
+    CardReviewAction(
+      lane: CardReviewLane.benefit,
+      operation: CardReviewOperation.retry,
+      targetId: identityId,
+      observedUpdatedAt: observed,
+      payload: const {
+        'decisions': [
+          {'action': 'approve'},
+        ],
+      },
+    ),
+    CardReviewAction(
+      lane: CardReviewLane.benefit,
+      operation: CardReviewOperation.approve,
+      targetId: identityId,
+      observedUpdatedAt: observed,
+      stagingId: stagingId,
+      payload: const {
+        'decisions': [
+          {'action': 'approve', 'raw_provider_response': 'forbidden'},
+        ],
+      },
+    ),
+    CardReviewAction(
+      lane: CardReviewLane.benefit,
+      operation: CardReviewOperation.approve,
+      targetId: identityId,
+      observedUpdatedAt: observed,
+      stagingId: stagingId,
+      payload: const {
+        'decisions': [
+          {
+            'action': 'approve',
+            'benefit': {'raw_body': 'forbidden'},
+          },
+        ],
+      },
+    ),
+  ];
 
-    await repository.act(
-      CardReviewAction(
-        lane: CardReviewLane.benefit,
-        operation: CardReviewOperation.retry,
-        targetId: identityId,
-        observedUpdatedAt: observed,
+  for (var index = 0; index < invalidActions.length; index++) {
+    test(
+      'invalid lane action combination $index is rejected locally',
+      () async {
+        final api = RecordingAdminOperatorApi(
+          const AdminOperatorResponse(200, {'result': {}}),
+        );
+        final repository = CardDataRepository(AdminOperatorRepository(api));
+        expect(
+          repository.act(invalidActions[index]),
+          throwsA(
+            isA<AdminRequestFailed>().having(
+              (error) => error.message,
+              'message',
+              'invalid_request',
+            ),
+          ),
+        );
+        expect(api.bodies, isEmpty);
+      },
+    );
+  }
+
+  test('actions deeply copy and freeze nested JSON payloads', () {
+    final nested = <String, dynamic>{
+      'proposed_fields': <String, dynamic>{
+        'aliases': <dynamic>['Original'],
+      },
+    };
+    final action = CardReviewAction(
+      lane: CardReviewLane.identity,
+      operation: CardReviewOperation.editApprove,
+      targetId: identityId,
+      observedUpdatedAt: observed,
+      payload: nested,
+    );
+    (nested['proposed_fields'] as Map<String, dynamic>)['aliases'] = [
+      'Changed',
+    ];
+    expect(
+      ((action.payload['proposed_fields'] as Map)['aliases'] as List).single,
+      'Original',
+    );
+    expect(
+      () => (action.payload['proposed_fields'] as Map)['name'] = 'x',
+      throwsUnsupportedError,
+    );
+    expect(
+      () => ((action.payload['proposed_fields'] as Map)['aliases'] as List).add(
+        'x',
       ),
+      throwsUnsupportedError,
     );
-
-    expect(api.bodies.single, {
-      'action': 'card-review-action',
-      'lane': 'benefit',
-      'operation': 'retry',
-      'target_id': identityId,
-      'request_id': '11111111-1111-4111-8111-111111111111',
-      'observed_updated_at': observed,
-    });
   });
 
-  test('benefit approval serializes staging and decisions', () async {
+  test('parsed DTO maps deeply copy and freeze decoder data', () async {
+    final proposed = <String, dynamic>{
+      'metadata': <String, dynamic>{
+        'aliases': <dynamic>['Original'],
+      },
+    };
     final api = RecordingAdminOperatorApi(
-      const AdminOperatorResponse(200, {'result': {}}),
+      AdminOperatorResponse(200, {
+        'lane': 'identity',
+        'items': [
+          {
+            'id': identityId,
+            'status': 'pending',
+            'updated_at': observed,
+            'proposed_fields': proposed,
+            'source_evidence': <String, dynamic>{},
+          },
+        ],
+        'page': 1,
+        'limit': 25,
+        'has_more': false,
+      }),
     );
-    final repository = CardDataRepository(
+    final item = (await CardDataRepository(
       AdminOperatorRepository(api),
-      requestIds: () => '11111111-1111-4111-8111-111111111111',
+    ).list(CardReviewLane.identity)).items.single;
+    (proposed['metadata'] as Map<String, dynamic>)['aliases'] = ['Changed'];
+    expect(
+      ((item.proposedFields['metadata'] as Map)['aliases'] as List).single,
+      'Original',
     );
+    expect(
+      () => ((item.proposedFields['metadata'] as Map)['aliases'] as List).add(
+        'x',
+      ),
+      throwsUnsupportedError,
+    );
+  });
 
-    await repository.act(
-      CardReviewAction(
-        lane: CardReviewLane.benefit,
-        operation: CardReviewOperation.approve,
+  test('actions reject non-JSON nested values safely', () {
+    expect(
+      () => CardReviewAction(
+        lane: CardReviewLane.identity,
+        operation: CardReviewOperation.editApprove,
         targetId: identityId,
         observedUpdatedAt: observed,
-        stagingId: stagingId,
         payload: {
-          'decisions': [
-            {'action': 'approve', 'dedupe_key': 'dining-credit'},
-          ],
+          'proposed_fields': {'bad': DateTime.now()},
         },
       ),
+      throwsFormatException,
     );
-
-    expect(api.bodies.single['staging_id'], stagingId);
-    expect(api.bodies.single['decisions'], [
-      {'action': 'approve', 'dedupe_key': 'dining-credit'},
-    ]);
   });
 
   test('malformed card response becomes a safe request failure', () async {

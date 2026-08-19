@@ -74,6 +74,10 @@ class AdminOperatorRepository {
   }
 
   Never _throwInvocationError(Object error) {
+    if (error is AdminAuthenticationRequired) throw error;
+    if (error is AdminAccessDenied) throw error;
+    if (error is AdminStateConflict) throw error;
+    if (error is AdminRequestFailed) throw error;
     if (error is FunctionException) {
       if (error.status == 401) throw AdminAuthenticationRequired();
       if (error.status == 403) throw AdminAccessDenied();
@@ -86,6 +90,6 @@ class AdminOperatorRepository {
     if (error is FormatException) {
       throw const AdminRequestFailed('request_failed');
     }
-    throw error;
+    throw const AdminRequestFailed('request_failed');
   }
 }

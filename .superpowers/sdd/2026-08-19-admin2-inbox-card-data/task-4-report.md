@@ -19,3 +19,10 @@
 
 - Card Data list freshness is measured at client receipt because its current server DTO does not contain `refreshed_at`; Inbox uses its authoritative server timestamp.
 - Action payloads intentionally remain shaped like the gateway's top-level mutation contract; reserved transport keys cannot be supplied through the payload map.
+
+## Review fixes
+
+- Enforced the complete identity/benefit action matrix locally, including exact top-level fields, UUID/timestamp shape, staging and decision requirements, operation-specific decision actions, required reasons, and nested field allowlists.
+- Replaced shallow wrappers with recursive JSON copying and freezing for action payloads and parsed DTO maps/lists; unsupported runtime objects and non-finite numbers fail safely.
+- Normalized unexpected SDK, socket, timeout, decoding, and runtime invocation failures to `AdminRequestFailed('request_failed')` while preserving recognized typed exceptions.
+- Review RED produced 13 focused failures across the three findings. Review GREEN passed the full Admin2 suite 63/63; targeted analysis reported no issues.

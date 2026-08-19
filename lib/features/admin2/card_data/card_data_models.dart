@@ -66,7 +66,7 @@ final class CardReviewItem {
     this.cardName,
   }) : evidence = List.unmodifiable(evidence),
        warningCodes = List.unmodifiable(warningCodes),
-       proposedFields = UnmodifiableMapView(Map.of(proposedFields));
+       proposedFields = _deepFreezeMap(proposedFields);
 
   final String id;
   final CardReviewLane lane;
@@ -163,7 +163,7 @@ final class CardReviewAction {
     this.stagingId,
     this.reason,
     Map<String, dynamic> payload = const {},
-  }) : payload = UnmodifiableMapView(Map.of(payload));
+  }) : payload = _deepFreezeMap(payload);
 
   final CardReviewLane lane;
   final CardReviewOperation operation;
@@ -181,11 +181,7 @@ DateTime strictJsonDate(Object? value) => _requiredDate(value);
 
 Map<String, dynamic> _map(Object? value) {
   if (value is! Map) throw const FormatException('Expected object');
-  try {
-    return Map<String, dynamic>.from(value);
-  } on TypeError {
-    throw const FormatException('Expected string keys');
-  }
+  return _deepFreezeMap(value);
 }
 
 Map<String, dynamic>? _nullableMap(Object? value) =>
@@ -193,7 +189,30 @@ Map<String, dynamic>? _nullableMap(Object? value) =>
 
 List<dynamic> _list(Object? value) {
   if (value is! List) throw const FormatException('Expected list');
-  return List<dynamic>.from(value);
+  return List<dynamic>.unmodifiable(value.map(_deepFreezeJson));
+}
+
+Map<String, dynamic> _deepFreezeMap(Map<dynamic, dynamic> value) {
+  final copied = <String, dynamic>{};
+  for (final entry in value.entries) {
+    final key = entry.key;
+    if (key is! String) throw const FormatException('Expected string keys');
+    copied[key] = _deepFreezeJson(entry.value);
+  }
+  return UnmodifiableMapView(copied);
+}
+
+Object? _deepFreezeJson(Object? value) {
+  if (value == null || value is String || value is bool) return value;
+  if (value is num) {
+    if (!value.isFinite) throw const FormatException('Expected finite number');
+    return value;
+  }
+  if (value is List) {
+    return List<dynamic>.unmodifiable(value.map(_deepFreezeJson));
+  }
+  if (value is Map) return _deepFreezeMap(value);
+  throw const FormatException('Expected JSON value');
 }
 
 String _requiredString(Object? value) {

@@ -77,3 +77,10 @@ Ruling: Spend at most three bounded inbox reads (identity, high-priority benefit
 Ruling: Attach a client-observed UTC refresh timestamp to Card Data pages because the gateway page response has no server `refreshed_at`, while retaining the server timestamp for Inbox snapshots. Cost if wrong: Card Data's visible freshness reflects response receipt time rather than database snapshot time.
 
 Ruling: Preserve allowlisted server validation codes inside `AdminRequestFailed`, but promote authentication, authorization, and state-conflict responses to dedicated exception types for shared UI handling. Cost if wrong: future UI code may need one additional typed exception when another stable code gains bespoke recovery behavior.
+
+- Task 4 review RED: 13 focused failures proved invalid cross-lane actions were reaching the gateway, nested payload/DTO aliases remained mutable, non-JSON values were accepted, and unexpected invocation failures leaked their original exception.
+- Task 4 review GREEN: exact bodies pass for all 11 valid lane-operation combinations; 11 invalid contract combinations are rejected before invocation; nested action/DTO JSON is recursively copied and frozen; unknown transport/runtime failures become `request_failed`. The full Admin2 suite passed 63/63 and targeted analysis reported no issues.
+
+Ruling: Mirror the gateway's lane-operation and nested field allowlists at the Flutter repository boundary so invalid operator intents never consume a request ID or reach the network. Cost if wrong: gateway contract changes must update the typed client validation and server validator together.
+
+Ruling: Recursively copy and freeze JSON-like action and DTO collections, rejecting non-JSON values at construction/parsing time. Cost if wrong: very large nested payloads incur an additional linear copy, bounded in practice by the gateway's 32-KiB mutation limit and list limits.

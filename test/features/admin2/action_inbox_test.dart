@@ -111,4 +111,19 @@ void main() {
       throwsA(isA<AdminStateConflict>()),
     );
   });
+
+  test('unknown invocation failure is sanitized without raw detail', () async {
+    final api = _Api(
+      const AdminOperatorResponse(500, {}),
+      error: StateError('socket leaked-internal-host.example'),
+    );
+
+    try {
+      await InboxRepository(AdminOperatorRepository(api)).load();
+      fail('expected a safe failure');
+    } on AdminRequestFailed catch (error) {
+      expect(error.message, 'request_failed');
+      expect(error.toString(), isNot(contains('leaked-internal-host')));
+    }
+  });
 }
