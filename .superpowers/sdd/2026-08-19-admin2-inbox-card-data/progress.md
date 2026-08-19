@@ -19,7 +19,7 @@ Ruling: Include the foundation's final adjudication ledger update in Task 1's co
 - Task 1: implementation complete, pending review — atomic audited card-data mutation RPC
 - Task 2: implementation complete, pending review — sanitized Card Data gateway actions
 - Task 3: implementation complete, pending review — derived ranked Action Inbox
-- Task 4: pending — typed Flutter repositories
+- Task 4: implementation complete, pending review — typed Flutter repositories
 - Task 5: pending — Card Data review workspace
 - Task 6: pending — Action Inbox and deep-linking
 
@@ -65,3 +65,15 @@ Ruling: Treat malformed, future, or missing source timestamps as age zero while 
 Ruling: Revise the earlier generic-title decision after review: expose only control-character-stripped, whitespace-normalized, length-bounded issuer plus product labels from the explicit discovery/catalog relations, falling back to an eight-character safe record reference. Cost if wrong: an upstream issuer or product label could still be misleading, though no raw evidence, provider, or customer-content columns are selected or interpolated.
 
 Ruling: Spend at most three bounded inbox reads (identity, high-priority benefits, routine benefits) and preserve fulfilled tiers independently; any failed benefit tier emits the single stable `benefit_enrichment` partial-failure name. Cost if wrong: the extra bounded benefit query adds one database round trip per inbox refresh in exchange for preventing priority starvation.
+
+## Task 4 evidence
+
+- RED 1: the focused Flutter repository suite failed to compile because the Card Data and Inbox DTO/repository files did not exist.
+- GREEN 1: 16/16 focused DTO, pagination, evidence, partial-failure, action-serialization, and HTTP error-mapping tests passed.
+- RED 2: the invocation-time `FunctionException` conflict test received `AdminRequestFailed` instead of the typed conflict.
+- GREEN 2: 19/19 focused Card Data and Inbox tests passed after mapping invocation-time 409 responses to `AdminStateConflict`.
+- Regression: focused repository plus foundation repository/screen coverage passed 44/44; targeted analysis reported no issues.
+
+Ruling: Attach a client-observed UTC refresh timestamp to Card Data pages because the gateway page response has no server `refreshed_at`, while retaining the server timestamp for Inbox snapshots. Cost if wrong: Card Data's visible freshness reflects response receipt time rather than database snapshot time.
+
+Ruling: Preserve allowlisted server validation codes inside `AdminRequestFailed`, but promote authentication, authorization, and state-conflict responses to dedicated exception types for shared UI handling. Cost if wrong: future UI code may need one additional typed exception when another stable code gains bespoke recovery behavior.
