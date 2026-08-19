@@ -22,6 +22,9 @@ import '../providers/admin_access_provider.dart';
 import '../system/system_models.dart';
 import '../system/system_repository.dart';
 import '../system/system_section.dart';
+import '../system/eval_models.dart';
+import '../system/eval_repository.dart';
+import '../system/eval_runs_panel.dart';
 import '../widgets/admin_workspace_navigation.dart';
 
 class AdminOperatorScreen extends ConsumerStatefulWidget {
@@ -37,6 +40,7 @@ class AdminOperatorScreen extends ConsumerStatefulWidget {
     this.initialCardTargetId,
     this.initialSectionQuery,
     this.feedbackLoader,
+    this.evalSource,
   });
 
   final Future<void> Function()? onAuthenticationRequired;
@@ -54,6 +58,7 @@ class AdminOperatorScreen extends ConsumerStatefulWidget {
     String? reviewStatus,
   })?
   feedbackLoader;
+  final EvalDataSource? evalSource;
 
   @override
   ConsumerState<AdminOperatorScreen> createState() =>
@@ -325,6 +330,13 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
             () => ref.read(authNotifierProvider.notifier).signOut(),
         onAccessDenied: widget.onAccessDenied ?? () => context.go('/app'),
         initialControlKey: _systemControlKey,
+        evalSource:
+            widget.evalSource ??
+            (widget.systemSource == null
+                ? _RepositoryEvalDataSource(
+                    ref.watch(adminOperatorRepositoryProvider),
+                  )
+                : null),
       ),
     ),
   );
@@ -358,6 +370,37 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
       _section = AdminWorkspaceSection.system;
     });
   }
+}
+
+final class _RepositoryEvalDataSource implements EvalDataSource {
+  _RepositoryEvalDataSource(AdminOperatorRepository operator)
+    : _repository = EvalRepository(operator);
+  final EvalRepository _repository;
+  @override
+  Future<EvalConfigCatalog> configs() => _repository.configs();
+  @override
+  Future<EvalRunsPage> runs({
+    int page = 1,
+    int limit = 20,
+    String? status,
+    EvalFeature? feature,
+  }) => _repository.runs(
+    page: page,
+    limit: limit,
+    status: status,
+    feature: feature,
+  );
+  @override
+  Future<EvalRunDetail> detail(String id) => _repository.detail(id);
+  @override
+  Future<EvalRunReceipt> start(EvalStartRequest request) =>
+      _repository.start(request);
+  @override
+  Future<EvalRunReceipt> cancel(String id, String observed) =>
+      _repository.cancel(id, observed);
+  @override
+  Future<EvalRunReceipt> resumeFailed(String id, String observed) =>
+      _repository.resumeFailed(id, observed);
 }
 
 final class _RepositorySystemDataSource implements SystemDataSource {

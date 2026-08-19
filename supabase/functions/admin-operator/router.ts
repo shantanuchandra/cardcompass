@@ -4,6 +4,7 @@ import { inboxActionHandlers } from "./inbox.ts";
 import { customerActionHandlers } from "./customers.ts";
 import { systemActionHandlers } from "./system.ts";
 import { feedbackActionHandlers } from "./feedback.ts";
+import { evalActionHandlers } from "./evals.ts";
 
 export const actionHandlers = Object.freeze(Object.assign(
   Object.create(null),
@@ -13,4 +14,5 @@ export const actionHandlers = Object.freeze(Object.assign(
   customerActionHandlers,
   systemActionHandlers,
   feedbackActionHandlers,
+  evalActionHandlers,
 ));

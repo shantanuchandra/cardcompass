@@ -19,8 +19,8 @@ Ruling: Carry the Feedback plan's final adjudication into the Tasks 1–3 code-b
 - Tasks 1–3: complete — immutable run storage/lifecycle and metered transport
 - Task 4: complete — code-owned configs and feature-safe executors
 - Task 5: complete — deterministic and blind scoring
-- Task 6: pending — private bounded resumable worker
-- Task 7: pending — Admin2 controls and decision support
+- Task 6: complete — private bounded resumable worker
+- Task 7: complete — Admin2 controls and decision support
 - Task 8: pending — full verification and release boundary
 
 ## Tasks 1–3 evidence
@@ -205,3 +205,18 @@ Ruling: Use a monotonically increasing retry generation to distinguish untouched
 Ruling: Let the fenced database yield receipt be the sole authority for `continuation_required`; never infer remaining work from a five-case batch. Cost if wrong: every processed invocation performs one additional lightweight locked eligibility query before either continuation or finish.
 
 Ruling: Report `continuation_required` rather than asynchronous scheduling success. Cost if wrong: an operator may need to observe/reinvoke a resumable running job after infrastructure failure, but the receipt never overstates delivery.
+
+## Task 7 evidence
+
+- RED: gateway tests failed because no eval actions existed; Flutter repository and panel tests failed because no strict DTOs, controls, or responsive instrument existed. A full Admin Operator run then exposed eager environment access in unrelated routes, which was corrected by constructing the private scheduler only for eval mutations.
+- GREEN: frozen, null-prototype handlers now list code-owned configs, filter and paginate runs, audit before detail reads, return only bounded aggregate/per-case summaries, create version-bound runs through the audited RPC, and schedule the private worker through injected `waitUntil`/`fetch`. Response-loss replay accepts every authoritative durable run status and never reschedules a terminal run.
+- Cancel and `resume_failed` carry exact request IDs and observed timestamps. The database RPC now compares `updated_at` under its row lock, includes the canonical observed timestamp in replay/collision identity, and returns stable conflicts without a preflight race.
+- The System workspace includes a responsive evaluation instrument with server filters/pages, 390px drill-in, exact configuration scope, start cost/case/latency confirmation, refresh-after-mutation, stale retained state, 401/403 effects, and no deploy/publish action.
+- Decision support is fail-closed: support requires an improved candidate pass rate, zero severe regressions, actual cost and p95 latency inside run ceilings, a complete run, and no candidate/judge/manual-review blockers. Recommendation evidence is always labeled `fixed_selection_explanation_and_arithmetic` and “Does not evaluate ranking.”
+- Focused Flutter tests pass 9/9; complete Admin2 tests pass 171/171; Admin Operator Deno tests pass 102/102; the full frozen Edge suite passes 255/255. Scoped analysis, Deno check, formatting, migration source contract, and diff checks pass. The disposable PostgreSQL test remains opt-in in this task environment.
+
+Ruling: Treat a baseline-only deterministic miss as the measured improvement opportunity, not by itself a manual-review blocker, because candidate support also requires candidate pass rate to improve. Cost if wrong: an operator sees support only when the candidate passes those cases and every independent severe, cost, latency, judge, completion, and review gate also passes.
+
+Ruling: Return a durable start receipt for queued, running, or terminal response-loss replay, and schedule only queued/running receipts. Cost if wrong: a replay never turns a completed run into an error or unnecessary worker call, while the authoritative database status remains visible.
+
+Ruling: Enforce eval cancel/resume optimistic concurrency inside the existing unreleased lifecycle RPC rather than with a gateway preflight. Cost if wrong: callers must send the exact observed `updated_at`, but stale actions cannot race past the row lock.

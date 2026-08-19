@@ -26,6 +26,8 @@ test('eval run schema exposes bounded service-only lifecycle contracts', async (
   assert.match(sql, /retry_generation integer not null default 0/);
   assert.match(sql, /attempt_generation integer not null default 0/);
   assert.match(sql, /continuation_required/);
+  assert.match(sql, /admin_ai_eval_run_action\(_actor_id uuid,_request_id uuid,_run_id uuid,_action text,_observed_updated_at timestamptz\)/);
+  assert.match(sql, /run\.updated_at is distinct from _observed_updated_at/);
   for (const rpc of ['admin_create_ai_eval_run', 'admin_ai_eval_run_action', 'claim_ai_eval_run_batch', 'record_ai_eval_result', 'finish_ai_eval_run', 'yield_ai_eval_run']) {
     assert.match(sql, new RegExp(`function public\\.${rpc}`));
     assert.match(sql, new RegExp(`grant execute on function public\\.${rpc}[^;]+ to service_role`));
@@ -121,7 +123,9 @@ test('eval lifecycle is idempotent, fenced, bounded, resumable and immutable in 
     assert.equal(psql(disposable, `select safe_failure_category from public.ai_eval_runs where id='${incomplete.run_id}';`), 'insufficient_fixture');
     assert.equal(JSON.parse(psql(disposable, `select aggregate_metrics from public.ai_eval_runs where id='${incomplete.run_id}';`)).failure_categories.insufficient_fixture, incompleteClaim.cases.length + incompleteTail.cases.length);
     const cancelRequest = '60000000-0000-4000-8000-000000000003';
-    psql(disposable, `select public.admin_ai_eval_run_action('10000000-0000-4000-8000-000000000001','${cancelRequest}','${versionTwo.run_id}','cancel'); select public.admin_ai_eval_run_action('10000000-0000-4000-8000-000000000001','${cancelRequest}','${versionTwo.run_id}','cancel');`);
+    const cancelObserved = psql(disposable, `select updated_at from public.ai_eval_runs where id='${versionTwo.run_id}';`);
+    assert.throws(() => psql(disposable, `select public.admin_ai_eval_run_action('10000000-0000-4000-8000-000000000001',gen_random_uuid(),'${versionTwo.run_id}','cancel','2000-01-01T00:00:00Z');`), /state_conflict/);
+    psql(disposable, `select public.admin_ai_eval_run_action('10000000-0000-4000-8000-000000000001','${cancelRequest}','${versionTwo.run_id}','cancel','${cancelObserved}'); select public.admin_ai_eval_run_action('10000000-0000-4000-8000-000000000001','${cancelRequest}','${versionTwo.run_id}','cancel','${cancelObserved}');`);
     assert.equal(psql(disposable, `select count(*) from public.admin_audit_log where request_id='${cancelRequest}';`), '1');
     assert.equal(psql(disposable, `select count(*) from public.ai_eval_results where run_id='${versionTwo.run_id}' and execution_status='succeeded';`), '1');
     const resumable = JSON.parse(psql(disposable, `select public.admin_create_ai_eval_run('10000000-0000-4000-8000-000000000001','60000000-0000-4000-8000-000000000004',2,'captured-production-v1','gemini-3.6-flash-card-data-v1','gemini-3.6-flash-blind-judge-v1',100,0.03,25000);`));
@@ -133,10 +137,11 @@ test('eval lifecycle is idempotent, fenced, bounded, resumable and immutable in 
     assert.equal(stopped.safe_failure_category, 'cost_ceiling_reached');
     const resumeRequest = '60000000-0000-4000-8000-000000000005';
     psql(disposable, `create function public.reject_eval_audit() returns trigger language plpgsql as $$ begin if new.request_id='${resumeRequest}' then raise exception 'forced_audit_failure'; end if; return new; end $$; create trigger reject_eval_audit before insert on public.admin_audit_log for each row execute function public.reject_eval_audit();`);
-    assert.throws(() => psql(disposable, `select public.admin_ai_eval_run_action('10000000-0000-4000-8000-000000000001','${resumeRequest}','${resumable.run_id}','resume_failed');`), /forced_audit_failure/);
+    const resumeObserved = psql(disposable, `select updated_at from public.ai_eval_runs where id='${resumable.run_id}';`);
+    assert.throws(() => psql(disposable, `select public.admin_ai_eval_run_action('10000000-0000-4000-8000-000000000001','${resumeRequest}','${resumable.run_id}','resume_failed','${resumeObserved}');`), /forced_audit_failure/);
     assert.equal(psql(disposable, `select status from public.ai_eval_runs where id='${resumable.run_id}';`), 'completed_with_failures');
     psql(disposable, `drop trigger reject_eval_audit on public.admin_audit_log; drop function public.reject_eval_audit();`);
-    psql(disposable, `select public.admin_ai_eval_run_action('10000000-0000-4000-8000-000000000001','${resumeRequest}','${resumable.run_id}','resume_failed');`);
+    psql(disposable, `select public.admin_ai_eval_run_action('10000000-0000-4000-8000-000000000001','${resumeRequest}','${resumable.run_id}','resume_failed','${resumeObserved}');`);
     assert.equal(psql(disposable, `select status from public.ai_eval_runs where id='${resumable.run_id}';`), 'queued');
     assert.equal(psql(disposable, `select count(*) from public.ai_eval_results where run_id='${resumable.run_id}' and execution_status='succeeded';`), '1');
 
@@ -148,7 +153,8 @@ test('eval lifecycle is idempotent, fenced, bounded, resumable and immutable in 
     assert.equal(JSON.parse(psql(disposable, `select public.yield_ai_eval_run('${failedOnly.run_id}','${failedOnlyClaim.lease_token}');`)).continuation_required, false);
     psql(disposable, `select public.finish_ai_eval_run('${failedOnly.run_id}','${failedOnlyClaim.lease_token}');`);
     const explicitRetryRequest = '60000000-0000-4000-8000-000000000067';
-    psql(disposable, `select public.admin_ai_eval_run_action('10000000-0000-4000-8000-000000000001','${explicitRetryRequest}','${failedOnly.run_id}','resume_failed');`);
+    const retryObserved = psql(disposable, `select updated_at from public.ai_eval_runs where id='${failedOnly.run_id}';`);
+    psql(disposable, `select public.admin_ai_eval_run_action('10000000-0000-4000-8000-000000000001','${explicitRetryRequest}','${failedOnly.run_id}','resume_failed','${retryObserved}');`);
     const explicitRetry = JSON.parse(psql(disposable, `select public.claim_ai_eval_run_batch('${failedOnly.run_id}',5);`));
     assert.equal(explicitRetry.cases.length, 1);
     assert.equal(explicitRetry.cases[0].case_id, failedOnlyCase.case_id);

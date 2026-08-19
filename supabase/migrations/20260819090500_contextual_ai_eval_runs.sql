@@ -113,22 +113,23 @@ language plpgsql security definer set search_path = '' as $$ declare run public.
   if continuation_required then update public.ai_eval_runs set lease_token=null,lease_expires_at=null,updated_at=now() where id=_run_id; end if;
   return jsonb_build_object('run_id',_run_id,'status','running','continuation_required',continuation_required); end $$;
 
-create or replace function public.admin_ai_eval_run_action(_actor_id uuid,_request_id uuid,_run_id uuid,_action text) returns jsonb
+create or replace function public.admin_ai_eval_run_action(_actor_id uuid,_request_id uuid,_run_id uuid,_action text,_observed_updated_at timestamptz) returns jsonb
 language plpgsql security definer set search_path = '' as $$ declare run public.ai_eval_runs; normalized jsonb; prior jsonb; result jsonb; remaining boolean; begin
-  if _action not in ('cancel','resume_failed') then raise exception 'invalid_request'; end if; normalized=jsonb_build_object('run_id',_run_id,'action',_action); perform pg_advisory_xact_lock(hashtextextended(_actor_id::text||':'||_request_id::text,0)); select details into prior from public.admin_audit_log where actor_id=_actor_id and request_id=_request_id; if found then if prior->'request' is distinct from normalized then raise exception 'request_id_collision'; end if; return prior->'result'; end if;
+  if _action not in ('cancel','resume_failed') or _observed_updated_at is null then raise exception 'invalid_request'; end if; normalized=jsonb_build_object('run_id',_run_id,'action',_action,'observed_updated_at',_observed_updated_at); perform pg_advisory_xact_lock(hashtextextended(_actor_id::text||':'||_request_id::text,0)); select details into prior from public.admin_audit_log where actor_id=_actor_id and request_id=_request_id; if found then if prior->'request' is distinct from normalized then raise exception 'request_id_collision'; end if; return prior->'result'; end if;
   select * into run from public.ai_eval_runs where id=_run_id for update; if not found then raise exception 'not_found'; end if;
+  if run.updated_at is distinct from _observed_updated_at then raise exception 'state_conflict'; end if;
   if _action='cancel' then if run.status not in ('cancelled','completed','completed_with_failures','failed') then update public.ai_eval_runs set status='cancelled',completed_at=now(),lease_token=null,lease_expires_at=null,updated_at=now() where id=_run_id; end if;
   else select exists(select 1 from jsonb_array_elements(run.case_manifest) m where not exists(select 1 from public.ai_eval_results r where r.run_id=run.id and r.case_id=(m->>'case_id')::uuid and r.case_revision=(m->>'revision')::integer and r.execution_status='succeeded')) into remaining; if run.status not in ('failed','completed_with_failures') or not remaining then raise exception 'state_conflict'; end if; update public.ai_eval_runs set status='queued',retry_generation=retry_generation+1,completed_at=null,safe_failure_category=null,lease_token=null,lease_expires_at=null,updated_at=now() where id=_run_id; end if;
   select jsonb_build_object('run_id',id,'status',status) into result from public.ai_eval_runs where id=_run_id; insert into public.admin_audit_log(actor_id,request_id,action,target_type,target_id,outcome,details) values(_actor_id,_request_id,'eval.run.'||_action,'ai_eval_run',_run_id,'succeeded',jsonb_build_object('request',normalized,'result',result)); return result; end $$;
 
 revoke all on function public.admin_create_ai_eval_run(uuid,uuid,bigint,text,text,text,integer,numeric,integer) from public,anon,authenticated;
-revoke all on function public.admin_ai_eval_run_action(uuid,uuid,uuid,text) from public,anon,authenticated;
+revoke all on function public.admin_ai_eval_run_action(uuid,uuid,uuid,text,timestamptz) from public,anon,authenticated;
 revoke all on function public.claim_ai_eval_run_batch(uuid,integer) from public,anon,authenticated;
 revoke all on function public.record_ai_eval_result(uuid,uuid,uuid,integer,jsonb) from public,anon,authenticated;
 revoke all on function public.finish_ai_eval_run(uuid,uuid) from public,anon,authenticated;
 revoke all on function public.yield_ai_eval_run(uuid,uuid) from public,anon,authenticated;
 grant execute on function public.admin_create_ai_eval_run(uuid,uuid,bigint,text,text,text,integer,numeric,integer) to service_role;
-grant execute on function public.admin_ai_eval_run_action(uuid,uuid,uuid,text) to service_role;
+grant execute on function public.admin_ai_eval_run_action(uuid,uuid,uuid,text,timestamptz) to service_role;
 grant execute on function public.claim_ai_eval_run_batch(uuid,integer) to service_role;
 grant execute on function public.record_ai_eval_result(uuid,uuid,uuid,integer,jsonb) to service_role;
 grant execute on function public.finish_ai_eval_run(uuid,uuid) to service_role;

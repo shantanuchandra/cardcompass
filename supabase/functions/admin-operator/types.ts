@@ -60,6 +60,7 @@ export type AdminActionContext = Readonly<{
   requestId: string | null;
   db: AdminDatabaseClient;
   authAdmin?: AuthAdminClient;
+  scheduleEvalRun?: (runId: string) => Promise<void>;
 }>;
 
 export type AdminHttpErrorCode =

@@ -3,6 +3,7 @@ import '../../../core/theme/brand_components.dart';
 import '../../../core/theme/brand_tokens.dart';
 import '../data/admin_operator_repository.dart';
 import 'system_models.dart';
+import 'eval_runs_panel.dart';
 
 abstract interface class SystemDataSource {
   Future<SystemStatusSnapshot> status();
@@ -22,11 +23,13 @@ class SystemSection extends StatefulWidget {
     this.onAuthenticationRequired,
     this.onAccessDenied,
     this.initialControlKey,
+    this.evalSource,
   });
   final SystemDataSource repository;
   final Future<void> Function()? onAuthenticationRequired;
   final VoidCallback? onAccessDenied;
   final String? initialControlKey;
+  final EvalDataSource? evalSource;
   @override
   State<SystemSection> createState() => _SystemSectionState();
 }
@@ -287,6 +290,19 @@ class _SystemSectionState extends State<SystemSection> {
                               ? _detail(compact: true)
                               : _jobList(),
                         ),
+                      if (widget.evalSource != null) ...[
+                        const SizedBox(height: BrandSpacing.xl),
+                        SizedBox(
+                          key: const Key('system-eval-runs'),
+                          height: wide ? 680 : 760,
+                          child: EvalRunsPanel(
+                            source: widget.evalSource!,
+                            onAuthenticationRequired:
+                                widget.onAuthenticationRequired,
+                            onAccessDenied: widget.onAccessDenied,
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
