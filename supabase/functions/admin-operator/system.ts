@@ -40,7 +40,6 @@ const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_LIMIT = 50;
 const MAX_PAGE = 10_000;
-const MAX_SOURCE_ROWS = 1_000;
 const statuses: Readonly<Record<JobFamily, ReadonlySet<string>>> = Object
   .freeze({
     benefit_enrichment: new Set([
@@ -137,52 +136,80 @@ function mapDatabaseError(error: AdminDatabaseError): AdminHttpError {
   return new AdminHttpError("request_failed", 500);
 }
 
-async function boundedRows(
+async function exactStatusCount(
   context: AdminActionContext,
   table: string,
-  columns: string,
-): Promise<unknown[]> {
-  const { data, error } = await (context.db as any).from(table).select(columns)
-    .range(0, MAX_SOURCE_ROWS - 1);
-  if (error) throw error;
-  return Array.isArray(data) ? data : [];
+  status: string,
+): Promise<number> {
+  const { count, error } = await (context.db as any).from(table)
+    .select("id", { count: "exact", head: true }).eq("status", status);
+  if (
+    error || typeof count !== "number" || !Number.isSafeInteger(count) ||
+    count < 0
+  ) {
+    throw new Error("source_unavailable");
+  }
+  return count;
+}
+
+async function lastSuccess(
+  context: AdminActionContext,
+  table: string,
+  status: string,
+): Promise<string | null> {
+  const { data, error } = await (context.db as any).from(table)
+    .select("updated_at").eq("status", status)
+    .order("updated_at", { ascending: false }).order("id", { ascending: false })
+    .range(0, 0);
+  if (error || !Array.isArray(data)) throw new Error("source_unavailable");
+  if (data.length === 0) return null;
+  const value = safeTimestamp(record(data[0])?.updated_at);
+  if (value === null) throw new Error("source_unavailable");
+  return value;
+}
+
+async function loadPipeline(
+  context: AdminActionContext,
+  key: JobFamily,
+): Promise<Omit<PipelineSummary, "status" | "source_error">> {
+  const table = key === "benefit_enrichment"
+    ? "card_catalog_enrichment_jobs"
+    : "card_discovery_jobs";
+  const runningStatus = key === "benefit_enrichment"
+    ? "processing"
+    : "discovering";
+  const successStatus = key === "benefit_enrichment" ? "completed" : "resolved";
+  const [queued, running, failed, quarantined, lastSuccessAt] = await Promise
+    .all([
+      exactStatusCount(context, table, "queued"),
+      exactStatusCount(context, table, runningStatus),
+      exactStatusCount(context, table, "failed"),
+      key === "benefit_enrichment"
+        ? exactStatusCount(context, table, "quarantined")
+        : Promise.resolve(0),
+      lastSuccess(context, table, successStatus),
+    ]);
+  return {
+    key,
+    queued,
+    running,
+    failed,
+    quarantined,
+    last_success_at: lastSuccessAt,
+  };
 }
 
 function summarize(
-  key: JobFamily,
-  rows: unknown[],
+  values: Omit<PipelineSummary, "status" | "source_error">,
   paused: boolean,
 ): PipelineSummary {
-  const values = rows.map(record).filter((row): row is JsonRecord =>
-    row !== null
-  );
-  const count = (...expected: string[]) =>
-    values.filter((row) => expected.includes(row.status as string)).length;
-  const successes = values.map((row) => ({
-    status: row.status,
-    at: safeTimestamp(row.updated_at),
-  }))
-    .filter((row) =>
-      row.at !== null &&
-      (key === "benefit_enrichment"
-        ? row.status === "completed"
-        : row.status === "resolved")
-    )
-    .map((row) => row.at as string).sort().reverse();
-  const failed = count("failed");
-  const quarantined = key === "benefit_enrichment" ? count("quarantined") : 0;
   return {
-    key,
+    ...values,
     status: paused
       ? "paused"
-      : failed + quarantined > 0
+      : values.failed + values.quarantined > 0
       ? "degraded"
       : "healthy",
-    queued: count("queued"),
-    running: count(key === "benefit_enrichment" ? "processing" : "discovering"),
-    failed,
-    quarantined,
-    last_success_at: successes[0] ?? null,
     source_error: null,
   };
 }
@@ -220,32 +247,37 @@ export async function handleSystemStatus(
   onlyKeys(body, new Set(["action"]));
   const [benefitResult, discoveryResult, controlResult] = await Promise
     .allSettled([
-      boundedRows(context, "card_catalog_enrichment_jobs", "status,updated_at"),
-      boundedRows(context, "card_discovery_jobs", "status,updated_at"),
-      boundedRows(
-        context,
-        "admin_runtime_controls",
-        "control_key,is_paused,reason,updated_at",
-      ),
+      loadPipeline(context, "benefit_enrichment"),
+      loadPipeline(context, "card_discovery"),
+      (async () => {
+        const { data, error } = await (context.db as any).from(
+          "admin_runtime_controls",
+        )
+          .select("control_key,is_paused,reason,updated_at")
+          .eq("control_key", "benefit_enrichment_scheduled").range(0, 0);
+        const control = !error && Array.isArray(data) && data.length === 1
+          ? presentControl(data[0])
+          : null;
+        if (control === null) throw new Error("source_unavailable");
+        return control;
+      })(),
     ]);
   const controls = controlResult.status === "fulfilled"
-    ? controlResult.value.map(presentControl).filter((
-      item,
-    ): item is RuntimeControlDto => item !== null)
+    ? [controlResult.value]
     : [];
-  const paused = controls.some((control) =>
-    control.control_key === "benefit_enrichment_scheduled" && control.is_paused
-  );
+  const controlAvailable = controlResult.status === "fulfilled";
+  const paused = controlAvailable && controlResult.value.is_paused;
   return {
     pipelines: [
-      benefitResult.status === "fulfilled"
-        ? summarize("benefit_enrichment", benefitResult.value, paused)
+      benefitResult.status === "fulfilled" && controlAvailable
+        ? summarize(benefitResult.value, paused)
         : unavailable("benefit_enrichment"),
       discoveryResult.status === "fulfilled"
-        ? summarize("card_discovery", discoveryResult.value, false)
+        ? summarize(discoveryResult.value, false)
         : unavailable("card_discovery"),
     ],
     controls,
+    control_source_error: controlAvailable ? null : "source_unavailable",
   };
 }
 
@@ -367,12 +399,13 @@ export async function handleSystemMutation(
     !mutationStatuses[operation].has(body.status)
   ) invalidRequest();
   const mutationReason = reason(body.reason, operation === "quarantine");
+  const targetId = uuid(body.target_id);
   const { data, error } = await context.db.rpc("admin_card_data_action", {
     _actor_id: context.actor.id,
     _request_id: uuid(body.request_id),
     _lane: "benefit",
     _operation: operation,
-    _target_id: uuid(body.target_id),
+    _target_id: targetId,
     _staging_id: null,
     _payload: {},
     _reason: mutationReason,
@@ -380,12 +413,16 @@ export async function handleSystemMutation(
   });
   if (error) throw mapDatabaseError(error);
   const result = record(data);
+  const expectedStatus = operation === "quarantine" ? "quarantined" : "queued";
+  if (
+    result?.job_id !== targetId || result.resulting_status !== expectedStatus
+  ) {
+    throw new AdminHttpError("request_failed", 500);
+  }
   return {
     result: {
-      job_id: typeof result?.job_id === "string" ? result.job_id : null,
-      resulting_status: typeof result?.resulting_status === "string"
-        ? result.resulting_status.slice(0, 50)
-        : null,
+      job_id: targetId,
+      resulting_status: expectedStatus,
     },
   };
 }
@@ -409,17 +446,23 @@ export async function handleSystemControl(
     body.control_key !== "benefit_enrichment_scheduled" ||
     typeof body.is_paused !== "boolean"
   ) invalidRequest();
+  const requestedReason = reason(body.reason);
+  const observedAt = timestamp(body.observed_updated_at);
   const { data, error } = await context.db.rpc("admin_set_runtime_control", {
     _actor_id: context.actor.id,
     _request_id: uuid(body.request_id),
     _control_key: body.control_key,
     _is_paused: body.is_paused,
-    _reason: reason(body.reason),
-    _observed_updated_at: timestamp(body.observed_updated_at),
+    _reason: requestedReason,
+    _observed_updated_at: observedAt,
   });
   if (error) throw mapDatabaseError(error);
   const result = presentControl(data);
-  if (!result) throw new AdminHttpError("request_failed", 500);
+  if (
+    !result || result.control_key !== body.control_key ||
+    result.is_paused !== body.is_paused || result.reason !== requestedReason ||
+    Date.parse(result.updated_at) <= Date.parse(observedAt)
+  ) throw new AdminHttpError("request_failed", 500);
   return { result };
 }
 

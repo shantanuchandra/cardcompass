@@ -64,3 +64,16 @@ Ruling: Treat `card_discovery` as status/history-only in System V1 because `admi
 Ruling: Represent unquarantine as `action: system-quarantine` plus the exact `operation: unquarantine`, keeping the published three-action System mutation surface while mapping to the existing audited RPC operation. Cost if wrong: clients must include one additional discriminator for unquarantine instead of calling a fourth action name.
 
 Ruling: Read at most 1,000 rows per pipeline status source and return `unknown` on source failure; the operator gets bounded latency and partial health rather than an unbounded scan. Cost if wrong: counts on a pipeline with more than 1,000 recent rows are capped and should later move to a dedicated aggregate RPC.
+
+## Task 3 review fix
+
+- Replaced the capped row sample with bounded exact PostgREST count queries for each operational status and one deterministically ordered latest-success row per family. Malformed or failed counts make only that pipeline unavailable.
+- A failed, missing, or malformed named-control read now returns `control_source_error: source_unavailable` and makes benefit enrichment `unknown`, matching the worker's fail-closed behavior.
+- Mutation receipts must match the requested job and exact resulting status. Control receipts must match the key, state, normalized reason, and contain a valid version strictly newer than the observed version.
+- Full admin-operator suite passed 61/61 and the production entry point passed `deno check`.
+
+Ruling: Supersede the 1,000-row sampling decision with exact `head: true, count: exact` queries per relevant status plus a one-row ordered success query. Cost if wrong: System status issues more small database requests per refresh, but counts remain correct at any row volume without transferring job records.
+
+Ruling: Treat named-control unavailability as benefit-pipeline unavailability and expose only the stable `control_source_error` category. Cost if wrong: a transient control read failure hides otherwise valid benefit counts behind `unknown`, deliberately matching scheduled-worker fail-closed semantics.
+
+Ruling: Reject successful RPC responses unless their bounded receipt proves the exact requested target, state, and a newer control version. Cost if wrong: an older RPC implementation returning incomplete receipts will fail safely until its response contract is upgraded.

@@ -12,8 +12,10 @@ type Call = { kind: string; name: string; args: unknown };
 
 function context(options: {
   rows?: Record<string, unknown[]>;
+  counts?: Record<string, unknown>;
   errors?: Record<string, { message: string }>;
   rpcError?: { message: string } | null;
+  rpcData?: Record<string, unknown>;
   calls?: Call[];
 } = {}): AdminActionContext {
   const calls = options.calls ?? [];
@@ -23,38 +25,69 @@ function context(options: {
     db: {
       from(table: string) {
         calls.push({ kind: "from", name: table, args: null });
+        let selectedStatus: unknown = null;
+        let head = false;
         const query: Record<string, (...args: unknown[]) => unknown> = {};
         for (const method of ["select", "eq", "order"]) {
           query[method] = (...args: unknown[]) => {
             calls.push({ kind: method, name: table, args });
+            if (method === "select") {
+              head =
+                (args[1] as Record<string, unknown> | undefined)?.head === true;
+            }
+            if (method === "eq" && args[0] === "status") {
+              selectedStatus = args[1];
+            }
             return query;
           };
         }
         query.range = (...args: unknown[]) => {
           calls.push({ kind: "range", name: table, args });
+          const rows = (options.rows?.[table] ?? []).filter((value) => {
+            const row = value as Record<string, unknown>;
+            return selectedStatus == null || row.status === selectedStatus;
+          }).sort((left, right) =>
+            String((right as Record<string, unknown>).updated_at ?? "")
+              .localeCompare(
+                String((left as Record<string, unknown>).updated_at ?? ""),
+              )
+          );
           return Promise.resolve({
-            data: options.rows?.[table] ?? [],
+            data: rows,
             error: options.errors?.[table] ?? null,
           });
+        };
+        query.then = (resolve: unknown) => {
+          const rows = options.rows?.[table] ?? [];
+          const derived =
+            rows.filter((value) =>
+              (value as Record<string, unknown>).status === selectedStatus
+            ).length;
+          return Promise.resolve({
+            data: head ? null : rows,
+            count: options.counts?.[`${table}:${selectedStatus}`] ?? derived,
+            error: options.errors?.[table] ?? null,
+          }).then(resolve as (value: unknown) => unknown);
         };
         return query as never;
       },
       rpc(name, args) {
         calls.push({ kind: "rpc", name, args });
         return Promise.resolve({
-          data: name === "admin_set_runtime_control"
-            ? {
-              control_key: "benefit_enrichment_scheduled",
-              is_paused: true,
-              reason: "maintenance",
-              updated_at: "2026-08-19T12:01:00Z",
-              secret: "drop",
-            }
-            : {
-              job_id: "00000000-0000-4000-8000-000000000010",
-              resulting_status: "queued",
-              provider: "drop",
-            },
+          data: options.rpcData?.[name] ??
+            (name === "admin_set_runtime_control"
+              ? {
+                control_key: "benefit_enrichment_scheduled",
+                is_paused: true,
+                reason: "maintenance",
+                updated_at: "2026-08-19T12:01:00Z",
+                secret: "drop",
+              }
+              : {
+                job_id: "00000000-0000-4000-8000-000000000010",
+                resulting_status: "quarantined",
+                provider: "drop",
+              }),
           error: options.rpcError ?? null,
         });
       },
@@ -115,7 +148,89 @@ Deno.test("system status isolates a failed source and returns exact bounded DTOs
       reason: "maintenance",
       updated_at: "2026-08-19T12:00:00Z",
     }],
+    control_source_error: null,
   });
+});
+
+Deno.test("system status uses exact counts beyond row limits and exact latest success", async () => {
+  const output = await handleSystemStatus(
+    { action: "system-status" },
+    context({
+      counts: {
+        "card_catalog_enrichment_jobs:queued": 1_501,
+        "card_catalog_enrichment_jobs:processing": 7,
+        "card_catalog_enrichment_jobs:failed": 1,
+        "card_catalog_enrichment_jobs:quarantined": 2,
+        "card_discovery_jobs:queued": 2_501,
+        "card_discovery_jobs:discovering": 3,
+        "card_discovery_jobs:failed": 4,
+      },
+      rows: {
+        card_catalog_enrichment_jobs: [
+          { status: "completed", updated_at: "2026-08-18T00:00:00Z" },
+          { status: "completed", updated_at: "2026-08-19T00:00:00Z" },
+        ],
+        card_discovery_jobs: [{
+          status: "resolved",
+          updated_at: "2026-08-17T00:00:00Z",
+        }],
+        admin_runtime_controls: [{
+          control_key: "benefit_enrichment_scheduled",
+          is_paused: false,
+          reason: "normal run",
+          updated_at: "2026-08-19T12:00:00Z",
+        }],
+      },
+    }),
+  );
+  assertEquals(output.pipelines[0], {
+    key: "benefit_enrichment",
+    status: "degraded",
+    queued: 1501,
+    running: 7,
+    failed: 1,
+    quarantined: 2,
+    last_success_at: "2026-08-19T00:00:00Z",
+    source_error: null,
+  });
+  assertEquals(output.pipelines[1].queued, 2501);
+  assertEquals(output.pipelines[1].last_success_at, "2026-08-17T00:00:00Z");
+});
+
+Deno.test("system status fails closed when exact counts or the named control are unavailable", async () => {
+  const malformedCount = await handleSystemStatus(
+    { action: "system-status" },
+    context({
+      counts: { "card_catalog_enrichment_jobs:failed": "1001" },
+      rows: {
+        admin_runtime_controls: [{
+          control_key: "benefit_enrichment_scheduled",
+          is_paused: false,
+          reason: "normal run",
+          updated_at: "2026-08-19T12:00:00Z",
+        }],
+      },
+    }),
+  );
+  assertEquals(malformedCount.pipelines[0].status, "unknown");
+  assertEquals(malformedCount.pipelines[0].source_error, "source_unavailable");
+
+  for (
+    const controlRows of [[], [{
+      control_key: "benefit_enrichment_scheduled",
+      is_paused: "false",
+      updated_at: "2026-08-19T12:00:00Z",
+    }]]
+  ) {
+    const output = await handleSystemStatus(
+      { action: "system-status" },
+      context({ rows: { admin_runtime_controls: controlRows } }),
+    );
+    assertEquals(output.pipelines[0].status, "unknown");
+    assertEquals(output.pipelines[0].source_error, "source_unavailable");
+    assertEquals(output.controls, []);
+    assertEquals(output.control_source_error, "source_unavailable");
+  }
 });
 
 Deno.test("system jobs validates filters, orders ties and uses lookahead pagination", async () => {
@@ -212,7 +327,7 @@ Deno.test("system mutations enforce supported family/status and exact audited RP
   assertEquals(result, {
     result: {
       job_id: "00000000-0000-4000-8000-000000000010",
-      resulting_status: "queued",
+      resulting_status: "quarantined",
     },
   });
   assertEquals(calls.find((call) => call.kind === "rpc"), {
@@ -244,15 +359,26 @@ Deno.test("system mutations enforce supported family/status and exact audited RP
     "invalid_request",
   );
   const unquarantineCalls: Call[] = [];
-  await handleSystemMutation({
-    action: "system-quarantine",
-    operation: "unquarantine",
-    family: "benefit_enrichment",
-    status: "quarantined",
-    target_id: "00000000-0000-4000-8000-000000000010",
-    request_id: "00000000-0000-4000-8000-000000000021",
-    observed_updated_at: "2026-08-19T12:00:00Z",
-  }, context({ calls: unquarantineCalls }));
+  await handleSystemMutation(
+    {
+      action: "system-quarantine",
+      operation: "unquarantine",
+      family: "benefit_enrichment",
+      status: "quarantined",
+      target_id: "00000000-0000-4000-8000-000000000010",
+      request_id: "00000000-0000-4000-8000-000000000021",
+      observed_updated_at: "2026-08-19T12:00:00Z",
+    },
+    context({
+      calls: unquarantineCalls,
+      rpcData: {
+        admin_card_data_action: {
+          job_id: "00000000-0000-4000-8000-000000000010",
+          resulting_status: "queued",
+        },
+      },
+    }),
+  );
   assertEquals(
     (unquarantineCalls.find((call) => call.kind === "rpc")?.args as Record<
       string,
@@ -260,6 +386,33 @@ Deno.test("system mutations enforce supported family/status and exact audited RP
     >)._operation,
     "unquarantine",
   );
+});
+
+Deno.test("system rejects mismatched or malformed mutation receipts", async () => {
+  const request = {
+    action: "system-retry",
+    family: "benefit_enrichment",
+    status: "failed",
+    target_id: "00000000-0000-4000-8000-000000000010",
+    request_id: "00000000-0000-4000-8000-000000000020",
+    observed_updated_at: "2026-08-19T12:00:00Z",
+  };
+  for (
+    const receipt of [null, {}, {
+      job_id: "00000000-0000-4000-8000-000000000099",
+      resulting_status: "queued",
+    }, { job_id: request.target_id, resulting_status: "completed" }]
+  ) {
+    await assertRejects(
+      () =>
+        handleSystemMutation(
+          request,
+          context({ rpcData: { admin_card_data_action: receipt } }),
+        ),
+      AdminHttpError,
+      "request_failed",
+    );
+  }
 });
 
 Deno.test("system control accepts one key and delegates exact versioned arguments", async () => {
@@ -310,6 +463,61 @@ Deno.test("system maps database errors without leaking details", async () => {
         }, context({ rpcError: { message } })),
       AdminHttpError,
       code,
+    );
+  }
+});
+
+Deno.test("system rejects control receipts that do not match requested key, state, reason and version shape", async () => {
+  const request = {
+    action: "system-control",
+    control_key: "benefit_enrichment_scheduled",
+    is_paused: true,
+    request_id: "00000000-0000-4000-8000-000000000020",
+    observed_updated_at: "2026-08-19T12:00:00Z",
+    reason: "maintenance",
+  };
+  for (
+    const receipt of [
+      {
+        control_key: "other",
+        is_paused: true,
+        reason: "maintenance",
+        updated_at: "2026-08-19T12:01:00Z",
+      },
+      {
+        control_key: request.control_key,
+        is_paused: false,
+        reason: "maintenance",
+        updated_at: "2026-08-19T12:01:00Z",
+      },
+      {
+        control_key: request.control_key,
+        is_paused: true,
+        reason: "other",
+        updated_at: "2026-08-19T12:01:00Z",
+      },
+      {
+        control_key: request.control_key,
+        is_paused: true,
+        reason: "maintenance",
+        updated_at: "invalid",
+      },
+      {
+        control_key: request.control_key,
+        is_paused: true,
+        reason: "maintenance",
+        updated_at: request.observed_updated_at,
+      },
+    ]
+  ) {
+    await assertRejects(
+      () =>
+        handleSystemControl(
+          request,
+          context({ rpcData: { admin_set_runtime_control: receipt } }),
+        ),
+      AdminHttpError,
+      "request_failed",
     );
   }
 });
