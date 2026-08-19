@@ -24,7 +24,9 @@ import {
   persistCrawlerCandidate,
 } from "../_shared/issuer_card_crawl.ts";
 import {
-  fetchOfficialIssuerResource,
+  fetchOfficialIssuerObservation,
+  type OfficialFetchAttempt,
+  type OfficialFetchObservation,
   type OfficialFetchResult,
 } from "../_shared/official_issuer_fetch.ts";
 import {
@@ -96,6 +98,87 @@ export function networkWorkMayStart(
   now = Date.now(),
 ): boolean {
   return now - invocationStartedAt < INVOCATION_DEADLINE_MS;
+}
+
+export function refreshEligibleCard(input: {
+  isDiscontinued: boolean;
+  hasActiveCardholder: boolean;
+}): boolean {
+  return !input.isDiscontinued || input.hasActiveCardholder;
+}
+
+export function sourceObservationSummary(input: {
+  parserVersion: string;
+  requestedUrl?: string;
+  disposition: OfficialFetchObservation["disposition"];
+  reviewReason?: string;
+  crawlComplete: boolean;
+  result?: OfficialFetchResult;
+  attempts: OfficialFetchAttempt[];
+}): Record<string, unknown> {
+  const result = input.result;
+  const terminalAttempt = input.attempts.at(-1);
+  const requestedDisplay = input.requestedUrl
+    ? boundedSourceUrl(input.requestedUrl)
+    : undefined;
+  const bounded = (value: string | undefined, maximum: number) =>
+    value?.trim().slice(0, maximum) || undefined;
+  return {
+    parser_version: input.parserVersion.slice(0, 64),
+    terminal_disposition: input.disposition,
+    ...(input.reviewReason
+      ? { review_reason: input.reviewReason.slice(0, 64) }
+      : {}),
+    crawl_complete: input.crawlComplete,
+    http_status: result?.status ?? terminalAttempt?.status ?? null,
+    ...(requestedDisplay
+      ? {
+        submitted_url: requestedDisplay,
+        final_url: requestedDisplay,
+        canonical_url: requestedDisplay,
+      }
+      : {}),
+    ...(result
+      ? {
+        submitted_url: boundedSourceUrl(result.submittedUrl),
+        final_url: boundedSourceUrl(result.finalUrl),
+        canonical_url: boundedSourceUrl(result.canonicalUrl),
+        retrieved_at: result.retrievedAt,
+        not_modified: result.notModified,
+        ...(bounded(result.etag, 512)
+          ? { etag: bounded(result.etag, 512) }
+          : {}),
+        ...(bounded(result.lastModified, 512)
+          ? { last_modified: bounded(result.lastModified, 512) }
+          : {}),
+        ...(bounded(result.contentHash, 128)
+          ? { content_hash: bounded(result.contentHash, 128) }
+          : {}),
+      }
+      : {}),
+    attempts: input.attempts.slice(-6).map((attempt) => ({
+      ...(attempt.status ? { status: attempt.status } : {}),
+      ...(attempt.code ? { code: attempt.code.slice(0, 64) } : {}),
+      attempted_at: attempt.attemptedAt,
+      ...(attempt.retryAfterMs !== undefined
+        ? {
+          retry_after_ms: Math.min(120_000, Math.max(0, attempt.retryAfterMs)),
+        }
+        : {}),
+    })),
+  };
+}
+
+export function sourceObservationReviewSummary(
+  summary: Record<string, unknown>,
+  reviewReason: string,
+): Record<string, unknown> {
+  return {
+    ...summary,
+    terminal_disposition: "review_required",
+    review_reason: reviewReason.slice(0, 64),
+    crawl_complete: false,
+  };
 }
 
 const PERMANENT_FAILURES = new Set([
@@ -245,9 +328,22 @@ export async function stagingSourceMetadata(sourceUrl: string): Promise<{
 }> {
   const displayUrl = safeHttpsDisplayUrl(sourceUrl);
   if (!displayUrl) throw new Error("invalid_source_url");
+  let identityUrl: URL;
+  try {
+    identityUrl = new URL(sourceUrl);
+    if (identityUrl.protocol !== "https:" || !identityUrl.hostname) {
+      throw new Error("invalid_source_url");
+    }
+  } catch {
+    throw new Error("invalid_source_url");
+  }
+  identityUrl.username = "";
+  identityUrl.password = "";
+  identityUrl.hash = "";
+  identityUrl.searchParams.sort();
   return {
     sourceUrl: displayUrl,
-    sourceUrlHash: await sha256Text(displayUrl),
+    sourceUrlHash: await sha256Text(identityUrl.toString()),
   };
 }
 
@@ -662,17 +758,33 @@ export async function seedScheduledQueueIfAllowed(
   while (true) {
     const { data, error } = await db.from("card_catalog")
       .select("id,bank,card_url,card_type,is_discontinued")
-      .eq("is_discontinued", false)
       .ilike("card_type", "credit")
       .like("card_url", "https://%")
       .order("id", { ascending: true })
       .range(offset, offset + boundedPageSize - 1);
     if (error) throw error;
     const rows = (data ?? []) as Array<Record<string, unknown>>;
+    const discontinuedIds = rows.filter((row) => row.is_discontinued === true)
+      .map((row) => String(row.id));
+    const { data: activeCardRows, error: activeCardError } =
+      discontinuedIds.length === 0
+        ? { data: [], error: null }
+        : await db.from("user_cards").select("catalog_card_id")
+          .in("catalog_card_id", discontinuedIds)
+          .eq("is_active", true);
+    if (activeCardError) throw activeCardError;
+    const activelyHeld = new Set(
+      (activeCardRows ?? []).map((row: Record<string, unknown>) =>
+        String(row.catalog_card_id)
+      ),
+    );
     const queueInputs: BenefitEnrichmentQueueInput[] = [];
     for (const row of rows) {
       if (
-        row.is_discontinued !== false ||
+        !refreshEligibleCard({
+          isDiscontinued: row.is_discontinued === true,
+          hasActiveCardholder: activelyHeld.has(String(row.id)),
+        }) ||
         String(row.card_type ?? "").trim().toLowerCase() !== "credit" ||
         typeof row.bank !== "string" ||
         typeof row.card_url !== "string" ||
@@ -723,6 +835,17 @@ export async function loadCatalogIdentity(
     String(row.bank ?? "").trim().toLowerCase() ===
       String(card.bank).trim().toLowerCase()
   );
+  if (
+    !catalog.some((row: Record<string, unknown>) =>
+      String(row.id) === String(card.id)
+    )
+  ) {
+    catalog.push({
+      id: card.id,
+      card_name: card.card_name,
+      bank: card.bank,
+    });
+  }
   const cardIds = catalog.map((row: Record<string, unknown>) => String(row.id));
   const { data: aliases, error: aliasError } = cardIds.length === 0
     ? { data: [], error: null }
@@ -797,6 +920,72 @@ export function requireExactCatalogIdentity(
   }
 }
 
+function previousFetchValidators(
+  job: EnrichmentJob,
+): {
+  parserVersion: string;
+  etag?: string;
+  lastModified?: string;
+  reusableExtraction: boolean;
+} | undefined {
+  const previousObservation = observationObjects(job.result_summary).at(-1);
+  const source = previousObservation?.source_observation;
+  if (!source || typeof source !== "object" || Array.isArray(source)) {
+    return undefined;
+  }
+  const value = source as Record<string, unknown>;
+  const parserVersion = String(value.parser_version ?? "").slice(0, 64);
+  if (!parserVersion) return undefined;
+  const etag = typeof value.etag === "string"
+    ? value.etag.slice(0, 512)
+    : undefined;
+  const lastModified = typeof value.last_modified === "string"
+    ? value.last_modified.slice(0, 512)
+    : undefined;
+  return {
+    parserVersion,
+    ...(etag ? { etag } : {}),
+    ...(lastModified ? { lastModified } : {}),
+    reusableExtraction: previousObservation?.crawl_complete === true &&
+      typeof previousObservation?.canonical_benefit_hash === "string",
+  };
+}
+
+function sourceAttemptInputs(
+  requestedUrl: string,
+  observation: OfficialFetchObservation,
+): SourceAttemptInput[] {
+  return observation.attempts.map((attempt, index) => {
+    const terminal = index === observation.attempts.length - 1
+      ? observation.result
+      : undefined;
+    return {
+      requestedUrl,
+      ...(terminal ? { finalUrl: terminal.finalUrl } : {}),
+      role: "primary",
+      status: attempt.status === 304
+        ? "not_modified"
+        : attempt.status !== undefined && attempt.status >= 200 &&
+            attempt.status < 300
+        ? "success"
+        : "failed",
+      ...(attempt.status !== undefined ? { httpStatus: attempt.status } : {}),
+      ...(terminal?.contentHash ? { contentHash: terminal.contentHash } : {}),
+      ...(terminal?.etag ? { etag: terminal.etag } : {}),
+      ...(terminal?.lastModified
+        ? { lastModified: terminal.lastModified }
+        : {}),
+      ...(attempt.code ? { errorCode: attempt.code } : {}),
+      attemptedAt: attempt.attemptedAt,
+      ...(attempt.status === 304
+        ? {
+          parserCacheReusable: observation.disposition === "not_modified",
+        }
+        : {}),
+    };
+  });
+}
+
 async function processJob(
   db: UntypedSupabaseClient,
   job: EnrichmentJob,
@@ -824,28 +1013,101 @@ async function processJob(
       job.card_id,
     );
     const current = await readCurrentBenefits(db, job.card_id);
-    let page: OfficialFetchResult;
-    try {
-      if (!networkWorkMayStart(invocationStartedAt)) {
-        throw new Error("deadline_exceeded");
-      }
-      page = await fetchOfficialIssuerResource({
-        issuer: job.issuer,
-        url: job.canonical_url,
-        contentPurpose: "document",
-        maxBytes: 2 * 1024 * 1024,
-      });
-    } catch (error) {
-      const attemptedAt = new Date().toISOString();
-      const errorCode = sanitizedSourceErrorCode(error);
-      const attempts: SourceAttemptInput[] = [{
-        requestedUrl: job.canonical_url,
-        role: "primary",
-        status: "failed",
-        errorCode,
-        attemptedAt,
-      }];
-      const crawl = assessCrawlCompleteness(attempts, attemptedAt);
+    if (!networkWorkMayStart(invocationStartedAt)) {
+      throw new Error("deadline_exceeded");
+    }
+    const fetchObservation = await fetchOfficialIssuerObservation({
+      issuer: job.issuer,
+      url: job.canonical_url,
+      contentPurpose: "document",
+      maxBytes: 2 * 1024 * 1024,
+      parserVersion: job.parser_version,
+      previous: previousFetchValidators(job),
+      maxAttempts: 3,
+      maxBackoffMs: 30_000,
+    });
+    const primaryAttemptInputs = sourceAttemptInputs(
+      job.canonical_url,
+      fetchObservation,
+    );
+    const fetchSummary = sourceObservationSummary({
+      parserVersion: job.parser_version,
+      requestedUrl: job.canonical_url,
+      disposition: fetchObservation.disposition,
+      reviewReason: fetchObservation.reviewReason,
+      crawlComplete: fetchObservation.disposition === "success" ||
+        fetchObservation.disposition === "not_modified",
+      result: fetchObservation.result,
+      attempts: fetchObservation.attempts,
+    });
+    if (fetchObservation.disposition === "not_modified") {
+      const observedAt = fetchObservation.result!.retrievedAt;
+      const crawl = assessCrawlCompleteness(primaryAttemptInputs, observedAt);
+      const previousObservation = observationObjects(job.result_summary).at(-1);
+      const sourceManifestHash = typeof previousObservation
+          ?.source_manifest_hash === "string"
+        ? previousObservation.source_manifest_hash
+        : await computeSourceManifestHash(crawl.attempts);
+      const canonicalBenefitHash = typeof previousObservation
+          ?.canonical_benefit_hash === "string"
+        ? previousObservation.canonical_benefit_hash
+        : await sha256Text("[]");
+      const observation = {
+        ...buildCrawlObservation({
+          observedAt,
+          assessmentTime: observedAt,
+          crawlComplete: true,
+          crawlReason: "not_modified",
+          sourceManifestHash,
+          canonicalBenefitHash,
+          absentBenefitIds: [],
+          absentLegacyBenefitIds: [],
+          attempts: crawl.attempts,
+        }),
+        source_observation: fetchSummary,
+      };
+      const nextRunAt = rawOnlyNextRunAt(observedAt);
+      const { error: dueDateError } = await db
+        .from("card_catalog_enrichment_jobs")
+        .update({ next_run_at: nextRunAt })
+        .eq("id", job.id)
+        .eq("status", "processing")
+        .eq("lease_token", job.lease_token);
+      if (dueDateError) throw dueDateError;
+      outcome = "completed";
+      contentHash = sourceManifestHash;
+      normalizedFields = {
+        source_manifest_hash: sourceManifestHash,
+        canonical_benefit_hash: canonicalBenefitHash,
+        crawl_complete: true,
+      };
+      resultSummary = {
+        run_id: runId,
+        source_documents: 0,
+        proposals: 0,
+        proposal_disposition: "no_change",
+        successful_no_change: true,
+        next_run_at: nextRunAt,
+        source_manifest_hash: sourceManifestHash,
+        canonical_benefit_hash: canonicalBenefitHash,
+        crawl_complete: true,
+        observation,
+        source_observation: fetchSummary,
+        unsafe_mutation_count: 0,
+        raw_body_stored: false,
+        evidence_passed: true,
+        idempotency_passed: true,
+      };
+      return { outcome, retried };
+    }
+    if (
+      fetchObservation.disposition !== "success" ||
+      !fetchObservation.result
+    ) {
+      const attemptedAt = fetchObservation.attempts.at(-1)?.attemptedAt ??
+        new Date().toISOString();
+      const errorCode = fetchObservation.reviewReason ?? "unreachable";
+      const crawl = assessCrawlCompleteness(primaryAttemptInputs, attemptedAt);
       const sourceManifestHash = await computeSourceManifestHash(
         crawl.attempts,
       );
@@ -860,8 +1122,25 @@ async function processJob(
         sourceDocumentCount: 0,
       });
       normalizedFields = incomplete.normalizedFields;
-      resultSummary = incomplete.resultSummary;
-      throw error;
+      resultSummary = {
+        ...incomplete.resultSummary,
+        source_observation: fetchSummary,
+        observation: {
+          ...(incomplete.resultSummary.observation as Record<string, unknown>),
+          source_observation: fetchSummary,
+        },
+      };
+      failureCategory = errorCode;
+      outcome = fetchObservation.disposition === "blocked"
+        ? "quarantined"
+        : fetchObservation.disposition === "review_required"
+        ? "review_required"
+        : "failed";
+      return { outcome, retried: false };
+    }
+    const page = fetchObservation.result;
+    if (page.notModified || !page.text || !page.contentHash) {
+      throw new Error("unusable_not_modified");
     }
     contentHash = page.contentHash;
     observationValidatedAt(page.retrievedAt, new Date().toISOString());
@@ -875,16 +1154,26 @@ async function processJob(
       );
     } catch (error) {
       const errorCode = sanitizedSourceErrorCode(error);
-      const attempts: SourceAttemptInput[] = [{
-        requestedUrl: job.canonical_url,
-        finalUrl: page.canonicalUrl,
-        role: "primary",
-        status: "failed",
-        httpStatus: 200,
-        contentHash: page.contentHash,
+      const reviewedFetchSummary = sourceObservationReviewSummary(
+        fetchSummary,
         errorCode,
-        attemptedAt: page.retrievedAt,
-      }];
+      );
+      const attempts: SourceAttemptInput[] = primaryAttemptInputs.map((
+        attempt,
+        index,
+      ) =>
+        index === primaryAttemptInputs.length - 1
+          ? {
+            ...attempt,
+            finalUrl: page.finalUrl,
+            status: "failed" as const,
+            httpStatus: 200,
+            contentHash: page.contentHash,
+            errorCode,
+            attemptedAt: page.retrievedAt,
+          }
+          : attempt
+      );
       const crawl = assessCrawlCompleteness(
         attempts,
         new Date().toISOString(),
@@ -903,12 +1192,21 @@ async function processJob(
         sourceDocumentCount: 1,
       });
       normalizedFields = incomplete.normalizedFields;
-      resultSummary = incomplete.resultSummary;
+      resultSummary = {
+        ...incomplete.resultSummary,
+        source_observation: reviewedFetchSummary,
+        observation: {
+          ...(incomplete.resultSummary.observation as Record<string, unknown>),
+          source_observation: reviewedFetchSummary,
+        },
+      };
       throw error;
     }
     const collected = await collectSupportingBenefitDocuments({
       issuer: job.issuer,
       primary: page,
+      primaryAttempts: primaryAttemptInputs,
+      parserVersion: job.parser_version,
       requestDeadlineAt: invocationStartedAt + INVOCATION_DEADLINE_MS,
       identityLabels: [
         String(card.card_name ?? ""),
@@ -924,6 +1222,7 @@ async function processJob(
       assessmentTime,
     );
     const crawl = assessCrawlCompleteness(collected.attempts, assessmentTime);
+    fetchSummary.crawl_complete = crawl.complete;
     const sourceManifestHash = await computeSourceManifestHash(crawl.attempts);
     contentHash = sourceManifestHash;
     const proposed: BenefitComparisonProposal[] = job.parser_version ===
@@ -984,17 +1283,20 @@ async function processJob(
       currentCount: current.length,
       proposedCount: proposed.length,
     });
-    const observation = buildCrawlObservation({
-      observedAt: validatedAt,
-      assessmentTime,
-      crawlComplete: crawl.complete,
-      crawlReason: crawl.reason,
-      sourceManifestHash,
-      canonicalBenefitHash,
-      absentBenefitIds: removalPolicy.absentBenefitIds,
-      absentLegacyBenefitIds: removalPolicy.absentLegacyBenefitIds,
-      attempts: crawl.attempts,
-    });
+    const observation = {
+      ...buildCrawlObservation({
+        observedAt: validatedAt,
+        assessmentTime,
+        crawlComplete: crawl.complete,
+        crawlReason: crawl.reason,
+        sourceManifestHash,
+        canonicalBenefitHash,
+        absentBenefitIds: removalPolicy.absentBenefitIds,
+        absentLegacyBenefitIds: removalPolicy.absentLegacyBenefitIds,
+        attempts: crawl.attempts,
+      }),
+      source_observation: fetchSummary,
+    };
     const stagingContentHash = await stagingContentHashForObservation({
       disposition: proposalDisposition,
       sourceManifestHash,
@@ -1068,7 +1370,7 @@ async function processJob(
     let reusedStaging = false;
     let rawOnlyDueAt: string | null = null;
     if (materialProposal) {
-      const stagingSource = await stagingSourceMetadata(page.canonicalUrl);
+      const stagingSource = await stagingSourceMetadata(page.submittedUrl);
       const { data: stagedRows, error: stageError } = await db.rpc(
         "stage_card_benefit_enrichment",
         {
@@ -1137,6 +1439,7 @@ async function processJob(
       canonical_benefit_hash: canonicalBenefitHash,
       crawl_complete: crawl.complete,
       observation,
+      source_observation: fetchSummary,
       unsafe_mutation_count: 0,
       raw_body_stored: false,
       evidence_passed: proposed.every((benefit) =>

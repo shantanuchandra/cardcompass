@@ -10,11 +10,13 @@ const secretBearingReference =
 const structuredUserInfo =
   /([^\s@/?#:<>'"`()\[\]{},;]+)(?::([^\s@/?#<>'"`()\[\]{},;]*))?@(\[[0-9a-f:.]+\]|(?:\d{1,3}\.){3}\d{1,3}|(?:[a-z0-9-]+\.)+[a-z0-9-]+|localhost|[a-z0-9-]+)((?::\d+)?(?:\/[^\s<>"'`()\[\]{},;]*|[?#][^\s<>"'`()\[\]{},;]*)?)/gi;
 
-const MAX_PRESENTATION_INPUT = 16_384;
-const MAX_STRUCTURAL_DECODE_PASSES = 4;
+const MAX_URL_INPUT = 16_384;
+const MAX_REDACTION_INPUT = 2 * 1024 * 1024;
+const MAX_STRUCTURAL_DECODE_PASSES = 8;
+const ENCODED_URL_MARKER = "[redacted-encoded-url]";
 
 function decodeStructuralEncoding(value: string): string {
-  let decoded = value.slice(0, MAX_PRESENTATION_INPUT);
+  let decoded = value.slice(0, MAX_REDACTION_INPUT);
   for (let pass = 0; pass < MAX_STRUCTURAL_DECODE_PASSES; pass += 1) {
     const next = decoded
       // Decode a percent-encoded entity only as a unit. This detects mixed
@@ -50,13 +52,53 @@ function decodeStructuralEncoding(value: string): string {
         return "@";
       });
     if (next === decoded) break;
-    decoded = next.slice(0, MAX_PRESENTATION_INPUT);
+    decoded = next.slice(0, MAX_REDACTION_INPUT);
   }
   return decoded;
 }
 
+function decodeProbe(value: string): { decoded: string; exhausted: boolean } {
+  let decoded = value.slice(0, MAX_REDACTION_INPUT);
+  for (let pass = 0; pass < MAX_STRUCTURAL_DECODE_PASSES; pass += 1) {
+    let next = decodeStructuralEncoding(decoded)
+      .replace(/&amp;/gi, "&")
+      .replace(
+        /&#x([0-9a-f]{2});?/gi,
+        (_match, hex) => String.fromCharCode(Number.parseInt(hex, 16)),
+      )
+      .replace(
+        /&#(\d{2,3});?/g,
+        (_match, decimal) => String.fromCharCode(Number.parseInt(decimal, 10)),
+      );
+    try {
+      next = decodeURIComponent(next);
+    } catch {
+      // Decode valid byte tokens independently so one ordinary '%' cannot hide
+      // a nested URL candidate elsewhere in the same evidence string.
+      next = next.replace(/(?:%[0-9a-f]{2})+/gi, (candidate) => {
+        try {
+          return decodeURIComponent(candidate);
+        } catch {
+          return candidate;
+        }
+      });
+    }
+    next = next.slice(0, MAX_REDACTION_INPUT);
+    if (next === decoded) return { decoded, exhausted: false };
+    decoded = next;
+  }
+  const residualEncoding = /%(?:25|26|3a|2f|3f|23|40|5b|5d|[0-9a-f]{2})/i
+    .test(decoded) || /&(?:amp;|#(?:x[0-9a-f]+|\d+);?)/i.test(decoded);
+  return { decoded, exhausted: residualEncoding };
+}
+
+function looksLikeSecretUrlCandidate(value: string): boolean {
+  return /(?:https?\s*(?::|%|&)|(?:%[0-9a-f]{2}){3,}|\/\/|(?:[a-z0-9-]+\.)+[a-z]{2,}[\/:?#]|(?:userinfo|username|password|pass|token|session|secret|credential)\s*(?:=|%3d))/i
+    .test(value);
+}
+
 export function safeHttpsDisplayUrl(value: unknown): string | null {
-  if (typeof value !== "string" || value.length > MAX_PRESENTATION_INPUT) {
+  if (typeof value !== "string" || value.length > MAX_URL_INPUT) {
     return null;
   }
   try {
@@ -89,7 +131,8 @@ function safeHrefValue(value: string): string {
 
 /** Redacts URL secrets before source text can enter parser or admin payloads. */
 export function redactSensitiveUrlsInText(value: string): string {
-  const decoded = decodeStructuralEncoding(value);
+  const probe = decodeProbe(value);
+  const decoded = probe.decoded;
   const redacted = decoded
     .replace(
       hrefAttribute,
@@ -135,17 +178,34 @@ export function redactSensitiveUrlsInText(value: string): string {
   // Structural decoding is a bounded detection probe. Preserve ordinary
   // percent/entity prose byte-for-byte unless it revealed a URL credential or
   // secret-bearing reference that was actually redacted.
-  return redacted === decoded ? value : redacted;
+  if (redacted !== decoded) return redacted.slice(0, MAX_REDACTION_INPUT);
+  if (
+    probe.exhausted &&
+    (looksLikeSecretUrlCandidate(value) || looksLikeSecretUrlCandidate(decoded))
+  ) return ENCODED_URL_MARKER;
+  return value.length <= MAX_REDACTION_INPUT
+    ? value
+    : "[redacted-oversized-source-text]";
 }
 
-export function redactSensitiveUrlsInValue(value: unknown): unknown {
+export function redactSensitiveUrlsInValue(
+  value: unknown,
+  depth = 0,
+): unknown {
+  if (depth > 12) return "[redacted-depth-limit]";
   if (typeof value === "string") return redactSensitiveUrlsInText(value);
-  if (Array.isArray(value)) return value.map(redactSensitiveUrlsInValue);
+  if (Array.isArray(value)) {
+    return value.slice(0, 1_000).map((item) =>
+      redactSensitiveUrlsInValue(item, depth + 1)
+    );
+  }
   if (value !== null && typeof value === "object") {
     return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([key, item]) => [
-        key,
-        redactSensitiveUrlsInValue(item),
+      Object.entries(value as Record<string, unknown>).slice(0, 1_000).map((
+        [key, item],
+      ) => [
+        redactSensitiveUrlsInText(key).slice(0, 512),
+        redactSensitiveUrlsInValue(item, depth + 1),
       ]),
     );
   }

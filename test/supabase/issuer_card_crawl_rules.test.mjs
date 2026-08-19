@@ -12,6 +12,7 @@ const rootSitemap = 'https://www.axis.bank.in/sitemap.xml';
 
 function resource(url, text, contentType = 'text/html') {
   return {
+    status: 200,
     submittedUrl: url,
     finalUrl: url,
     canonicalUrl: url,
@@ -20,6 +21,7 @@ function resource(url, text, contentType = 'text/html') {
     bytes: new TextEncoder().encode(text),
     contentHash: 'test',
     retrievedAt: '2026-08-17T00:00:00.000Z',
+    notModified: false,
   };
 }
 

@@ -53,6 +53,15 @@ const SAFE_ERROR_CODES = new Set([
   "http_403",
   "http_404",
   "http_410",
+  "http_401",
+  "http_429",
+  "http_5xx",
+  "soft_404",
+  "challenge_page",
+  "empty_shell",
+  "unsupported_charset",
+  "robots_disallowed",
+  "identity_review",
   "identity_mismatch",
   "insufficient_evidence",
   "js_challenge",
@@ -426,6 +435,23 @@ function assessPreparedAttempts(
     return {
       complete: false,
       reason: "primary_incomplete",
+      attempts: persisted,
+    };
+  }
+  const outstandingFallback = [...grouped.entries()]
+    .filter(([key]) => key.startsWith("supporting:"))
+    .map(([, entries]) =>
+      terminalAttempt(entries, assessmentTimestamp)?.attempt ?? null
+    )
+    .find((attempt) =>
+      attempt?.status === "failed" &&
+      ["corrupt_pdf", "empty_shell", "challenge_page", "js_challenge"]
+        .includes(attempt.errorCode ?? "")
+    );
+  if (outstandingFallback) {
+    return {
+      complete: false,
+      reason: outstandingFallback.errorCode ?? "fallback_incomplete",
       attempts: persisted,
     };
   }

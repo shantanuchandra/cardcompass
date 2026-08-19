@@ -724,7 +724,7 @@ export async function discoverIssuerCardCandidates(
     ) {
       continue;
     }
-    const document = parseSitemap(response.text);
+    const document = parseSitemap(response.text ?? "");
     for (const rawLocation of document.locations) {
       const location = canonicalForIssuer(input.issuer, rawLocation);
       if (!location || !anchorHost || !isAnchoredToHost(location, anchorHost)) {
@@ -768,7 +768,7 @@ export async function discoverIssuerCardCandidates(
         !isAnchoredToHost(response.finalUrl, anchorHost) ||
         !isAnchoredToHost(response.canonicalUrl, anchorHost)
       ) continue;
-      for (const match of response.text.matchAll(htmlLinkPattern)) {
+      for (const match of (response.text ?? "").matchAll(htmlLinkPattern)) {
         let linked: string;
         try {
           linked = new URL(

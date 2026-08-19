@@ -208,6 +208,20 @@ Deno.test("an optional supporting failure is retained without making the crawl i
   );
 });
 
+Deno.test("an unreadable selected PDF keeps the crawl incomplete even when its link was optional", () => {
+  const result = assessCrawlCompleteness([
+    attempt(),
+    attempt({
+      requestedUrl: `${PRIMARY}/benefits.pdf`,
+      role: "supporting",
+      status: "failed",
+      errorCode: "corrupt_pdf",
+    }),
+  ], OBSERVED_AT);
+  assert(!result.complete, "outstanding PDF fallback was treated as complete");
+  assert(result.reason === "corrupt_pdf", "PDF fallback reason was lost");
+});
+
 for (
   const fixture of [
     { label: "JS challenge", httpStatus: 403, errorCode: "js_challenge" },

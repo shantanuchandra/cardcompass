@@ -14,9 +14,12 @@ import {
   readCompleteAbsenceHistory,
   readCurrentBenefits,
   readPilotStatus,
+  refreshEligibleCard,
   requireExactCatalogIdentity,
   seedScheduledQueueIfAllowed,
   shouldStageMaterialProposal,
+  sourceObservationReviewSummary,
+  sourceObservationSummary,
   stagingContentHashForObservation,
 } from "./index.ts";
 import * as batchModule from "./index.ts";
@@ -750,7 +753,7 @@ Deno.test("catalog identity keeps payment-network words when sibling variants wo
   );
 });
 
-Deno.test("catalog identity loading includes active same-issuer variants and aliases", async () => {
+Deno.test("catalog identity loading includes an actively held discontinued target with active variants", async () => {
   const catalog = [
     {
       id: "regalia",
@@ -762,7 +765,7 @@ Deno.test("catalog identity loading includes active same-issuer variants and ali
       id: "regalia-gold",
       card_name: "Regalia Gold",
       bank: "HDFC Bank",
-      is_discontinued: false,
+      is_discontinued: true,
     },
     {
       id: "axis",
@@ -849,6 +852,7 @@ type CatalogFixture = {
 function scheduledSeederDb(
   catalog: CatalogFixture[],
   initialJobs: Record<string, unknown>[] = [],
+  activeHeldCardIds: string[] = [],
 ) {
   const jobs = new Map(
     initialJobs.map((job) => [String(job.job_key), { ...job }]),
@@ -862,6 +866,29 @@ function scheduledSeederDb(
       return catalogReads;
     },
     from(table: string) {
+      if (table === "user_cards") {
+        let selectedIds: string[] = [];
+        let activeOnly = false;
+        return {
+          select() {
+            return this;
+          },
+          in(_column: string, values: string[]) {
+            selectedIds = values;
+            return this;
+          },
+          async eq(column: string, value: unknown) {
+            activeOnly = column === "is_active" && value === true;
+            return {
+              data: activeOnly
+                ? activeHeldCardIds.filter((id) => selectedIds.includes(id))
+                  .map((catalog_card_id) => ({ catalog_card_id }))
+                : [],
+              error: null,
+            };
+          },
+        };
+      }
       if (table === "card_catalog") {
         let from = 0;
         let to = catalog.length - 1;
@@ -971,7 +998,7 @@ Deno.test("passed scheduled orchestration seeds an empty queue across bounded ca
   assert(seeded === 3, "not all paged catalog cards were seeded");
   assert(db.catalogReads === 2, "catalog inventory was not read in pages");
   assert(
-    db.catalogFilters.get("eq:is_discontinued") === false &&
+    !db.catalogFilters.has("eq:is_discontinued") &&
       db.catalogFilters.get("ilike:card_type") === "credit" &&
       db.catalogFilters.get("like:card_url") === "https://%",
     "catalog query did not constrain active HTTPS credit-card inventory",
@@ -1006,28 +1033,118 @@ Deno.test("passed scheduled orchestration seeds an empty queue across bounded ca
   );
 });
 
-Deno.test("scheduled seeding skips discontinued, non-credit, and unsafe catalog URLs", async () => {
-  const db = scheduledSeederDb([
-    validCatalogCard,
-    { ...validCatalogCard, id: "discontinued", is_discontinued: true },
-    { ...validCatalogCard, id: "debit", card_type: "debit" },
-    {
-      ...validCatalogCard,
-      id: "http",
-      card_url: "http://www.axis.bank.in/card",
-    },
-    {
-      ...validCatalogCard,
-      id: "off-domain",
-      card_url: "https://evil.example/card",
-    },
-    { ...validCatalogCard, id: "missing-url", card_url: null },
-  ]);
+Deno.test("scheduled seeding keeps only held discontinued, credit, and safe catalog URLs", async () => {
+  const db = scheduledSeederDb(
+    [
+      validCatalogCard,
+      { ...validCatalogCard, id: "discontinued", is_discontinued: true },
+      { ...validCatalogCard, id: "held-discontinued", is_discontinued: true },
+      { ...validCatalogCard, id: "debit", card_type: "debit" },
+      {
+        ...validCatalogCard,
+        id: "http",
+        card_url: "http://www.axis.bank.in/card",
+      },
+      {
+        ...validCatalogCard,
+        id: "off-domain",
+        card_url: "https://evil.example/card",
+      },
+      { ...validCatalogCard, id: "missing-url", card_url: null },
+    ],
+    [],
+    ["held-discontinued"],
+  );
 
   const seeded = await seedScheduledQueueIfAllowed(db, "scheduled", true);
 
-  assert(seeded === 1, "unsafe or inactive inventory was seeded");
-  assert(db.jobs.size === 1, "filtered inventory reached the queue");
+  assert(seeded === 2, "held discontinued card was not refresh eligible");
+  assert(db.jobs.size === 2, "filtered inventory reached the queue");
+});
+
+Deno.test("acquisition discontinuation never suppresses refresh for an actively held card", () => {
+  assert(
+    refreshEligibleCard({
+      isDiscontinued: false,
+      hasActiveCardholder: false,
+    }),
+    "available card was not refresh eligible",
+  );
+  assert(
+    refreshEligibleCard({
+      isDiscontinued: true,
+      hasActiveCardholder: true,
+    }),
+    "actively held discontinued card lost refresh eligibility",
+  );
+  assert(
+    !refreshEligibleCard({
+      isDiscontinued: true,
+      hasActiveCardholder: false,
+    }),
+    "unheld discontinued card entered recurring refresh",
+  );
+});
+
+Deno.test("source observation summary is bounded, sanitized, and contains no body or lifecycle mutation", () => {
+  const summary = sourceObservationSummary({
+    parserVersion: "benefits-v6",
+    disposition: "review_required",
+    reviewReason: "persistent_404",
+    crawlComplete: false,
+    result: {
+      status: 404,
+      submittedUrl:
+        "https://www.axis.bank.in/card?session=private-secret#fragment",
+      finalUrl: "https://www.axis.bank.in/card?session=private-secret",
+      canonicalUrl: "https://www.axis.bank.in/card",
+      retrievedAt: "2026-08-19T00:00:00.000Z",
+      etag: `\"${"a".repeat(700)}\"`,
+      lastModified: "Wed, 19 Aug 2026 00:00:00 GMT",
+      notModified: false,
+    },
+    attempts: [
+      {
+        status: 404,
+        code: "http_404",
+        attemptedAt: "2026-08-19T00:00:00.000Z",
+      },
+    ],
+  });
+  const serialized = JSON.stringify(summary);
+  assert(!serialized.includes("private-secret"), "source secret persisted");
+  assert(!serialized.includes("body"), "raw body field was admitted");
+  assert(
+    !serialized.includes("is_discontinued"),
+    "fetch mutated acquisition state",
+  );
+  assert(
+    typeof summary.etag === "string" && summary.etag.length === 512,
+    "validator was not bounded",
+  );
+  assert(summary.http_status === 404, "terminal status was lost");
+  assert(summary.parser_version === "benefits-v6", "parser version was lost");
+});
+
+Deno.test("identity review preserves the HTTP observation while marking it incomplete", () => {
+  const reviewed = sourceObservationReviewSummary({
+    terminal_disposition: "success",
+    crawl_complete: true,
+    http_status: 200,
+    submitted_url: "https://www.axis.bank.in/card",
+    attempts: [{ status: 200 }],
+  }, "identity_mismatch");
+
+  assert(
+    reviewed.terminal_disposition === "review_required" &&
+      reviewed.review_reason === "identity_mismatch" &&
+      reviewed.crawl_complete === false && reviewed.http_status === 200,
+    "identity review discarded or misrepresented the HTTP observation",
+  );
+  assert(
+    Array.isArray(reviewed.attempts) && reviewed.attempts.length === 1,
+    "identity review discarded the retained attempt evidence",
+  );
 });
 
 Deno.test("scheduled seeding skips pilot conflicts and preserves processing and terminal jobs on repeats", async () => {
@@ -1826,6 +1943,20 @@ Deno.test("staging source metadata contains only a validated display URL", async
     !JSON.stringify(metadata).includes("secret") &&
       !JSON.stringify(metadata).includes("private"),
     "staging metadata leaked URL secrets",
+  );
+  const rotated = await (boundary as (url: string) => Promise<{
+    sourceUrl: string;
+    sourceUrlHash: string;
+  }>)(
+    "https://issuer.example/card?session=another-private-token#ignored",
+  );
+  assert(
+    rotated.sourceUrl === metadata.sourceUrl,
+    "token rotation changed persisted URL display",
+  );
+  assert(
+    rotated.sourceUrlHash !== metadata.sourceUrlHash,
+    "exact transient source identity was not digested before redaction",
   );
 });
 

@@ -6,6 +6,7 @@ function assert(condition: unknown, message: string): asserts condition {
 
 function resource(url: string, text: string, contentType = "text/html") {
   return {
+    status: 200,
     submittedUrl: url,
     finalUrl: url,
     canonicalUrl: url,
@@ -14,6 +15,7 @@ function resource(url: string, text: string, contentType = "text/html") {
     text,
     contentHash: "a".repeat(64),
     retrievedAt: "2026-08-19T00:00:00.000Z",
+    notModified: false,
   };
 }
 

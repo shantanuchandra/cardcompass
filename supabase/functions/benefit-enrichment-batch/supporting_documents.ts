@@ -2,6 +2,7 @@ import { type BenefitDocument } from "../_shared/benefit_enrichment.ts";
 import { redactSensitiveUrlsInText } from "../_shared/benefit_source_privacy.ts";
 import { canonicalOfficialUrl } from "../_shared/card_discovery.ts";
 import {
+  fetchOfficialIssuerObservation,
   fetchOfficialIssuerResource as fetchOfficialIssuerResourceDefault,
   type OfficialFetchInput,
   type OfficialFetchResult,
@@ -41,10 +42,12 @@ type OfficialFetcher = (
 export type SupportingDocumentInput = {
   issuer: string;
   primary: OfficialFetchResult;
+  primaryAttempts?: SourceAttemptInput[];
   identityLabels: string[];
   fetchOfficialIssuerResource?: OfficialFetcher;
   maximumLinks?: number;
   requestDeadlineAt?: number;
+  parserVersion?: string;
 };
 
 export type CollectedSources = {
@@ -179,21 +182,23 @@ export async function collectSupportingBenefitDocuments(
     input.primary.submittedUrl,
   );
   const documents = primaryDocument.text.trim() ? [primaryDocument] : [];
-  const attempts: SourceAttemptInput[] = [{
-    requestedUrl: input.primary.submittedUrl,
-    finalUrl: input.primary.canonicalUrl,
-    role: "primary",
-    status: primaryDocument.text.trim() ? "success" : "failed",
-    httpStatus: 200,
-    ...(primaryDocument.text.trim()
-      ? { contentHash: input.primary.contentHash }
-      : {
-        errorCode: input.primary.contentType === "application/pdf"
-          ? "corrupt_pdf"
-          : "empty_document",
-      }),
-    attemptedAt: input.primary.retrievedAt,
-  }];
+  const attempts: SourceAttemptInput[] = input.primaryAttempts
+    ? [...input.primaryAttempts]
+    : [{
+      requestedUrl: input.primary.submittedUrl,
+      finalUrl: input.primary.canonicalUrl,
+      role: "primary",
+      status: primaryDocument.text.trim() ? "success" : "failed",
+      httpStatus: 200,
+      ...(primaryDocument.text.trim()
+        ? { contentHash: input.primary.contentHash }
+        : {
+          errorCode: input.primary.contentType === "application/pdf"
+            ? "corrupt_pdf"
+            : "empty_document",
+        }),
+      attemptedAt: input.primary.retrievedAt,
+    }];
   const recordRequiredOverflow = async (
     url: string,
     attemptedAt: string,
@@ -243,7 +248,7 @@ export async function collectSupportingBenefitDocuments(
     ...linkedUrls(
       input.issuer,
       input.primary.canonicalUrl,
-      input.primary.text,
+      input.primary.text ?? "",
       input.identityLabels,
       input.primary.canonicalUrl,
     ),
@@ -338,12 +343,52 @@ export async function collectSupportingBenefitDocuments(
     }
     let resource: OfficialFetchResult;
     try {
-      resource = await fetchResource({
-        issuer: input.issuer,
-        url: current.url,
-        contentPurpose: "document",
-        maxBytes: 1024 * 1024,
-      });
+      if (input.fetchOfficialIssuerResource) {
+        resource = await fetchResource({
+          issuer: input.issuer,
+          url: current.url,
+          contentPurpose: "document",
+          maxBytes: 1024 * 1024,
+        });
+      } else {
+        const observation = await fetchOfficialIssuerObservation({
+          issuer: input.issuer,
+          url: current.url,
+          contentPurpose: "document",
+          maxBytes: 1024 * 1024,
+          parserVersion: input.parserVersion ?? "benefits-v6",
+          maxAttempts: 3,
+          maxBackoffMs: 30_000,
+        });
+        for (const attempt of observation.attempts.slice(0, -1)) {
+          attempts.push({
+            requestedUrl: current.url,
+            role: current.role,
+            status: attempt.status === 304 ? "not_modified" : "failed",
+            ...(attempt.status !== undefined
+              ? { httpStatus: attempt.status }
+              : {}),
+            ...(attempt.code ? { errorCode: attempt.code } : {}),
+            attemptedAt: attempt.attemptedAt,
+          });
+        }
+        if (observation.disposition !== "success" || !observation.result) {
+          const terminal = observation.attempts.at(-1);
+          attempts.push({
+            requestedUrl: current.url,
+            role: current.role,
+            status: terminal?.status === 304 ? "not_modified" : "failed",
+            ...(terminal?.status !== undefined
+              ? { httpStatus: terminal.status }
+              : {}),
+            errorCode: terminal?.code ?? observation.reviewReason ??
+              "unreachable",
+            attemptedAt: terminal?.attemptedAt ?? new Date().toISOString(),
+          });
+          continue;
+        }
+        resource = observation.result;
+      }
     } catch (error) {
       attempts.push({
         requestedUrl: current.url,
@@ -387,7 +432,7 @@ export async function collectSupportingBenefitDocuments(
         const candidate of linkedUrls(
           input.issuer,
           resource.canonicalUrl,
-          resource.text,
+          resource.text ?? "",
           input.identityLabels,
           input.primary.canonicalUrl,
         )

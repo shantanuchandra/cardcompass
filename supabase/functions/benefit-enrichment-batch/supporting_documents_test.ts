@@ -12,6 +12,7 @@ function resource(
   contentType = "text/html",
 ) {
   return {
+    status: 200,
     submittedUrl: url,
     finalUrl: url,
     canonicalUrl: url,
@@ -20,6 +21,7 @@ function resource(
     text: contentType === "application/pdf" ? "" : text,
     contentHash: `hash:${url}`,
     retrievedAt: "2026-08-17T00:00:00.000Z",
+    notModified: false,
   };
 }
 
@@ -123,6 +125,46 @@ Deno.test("primary logical identity uses submitted URL across redirects", async 
   assert(
     attempts[0].requestedUrl === submitted && attempts[0].finalUrl === final,
     "primary attempt did not split requested and final URLs",
+  );
+});
+
+Deno.test("source extraction keeps anchor labels but never injects href secrets", async () => {
+  const product = "https://www.axis.bank.in/cards/credit-card/privilege";
+  const secret = "rotating-private-token";
+  const supporting = `${product}/terms?session=${secret}#private`;
+  const primary = resource(
+    product,
+    `<h1>Privilege Credit Card</h1><a href="${supporting}">Most Important Terms and Conditions</a>`,
+  );
+  const collected = await collectSupportingBenefitDocuments({
+    issuer: "Axis Bank",
+    primary,
+    identityLabels: ["Privilege"],
+    fetchOfficialIssuerResource: async (input) =>
+      resource(
+        input.url,
+        `<p>Get 10% cashback on dining.</p><a href="//user:pass@www.axis.bank.in/private?token=${secret}">Private</a>`,
+      ),
+  });
+  const persisted = assessCrawlCompleteness(
+    collected.attempts,
+    "2026-08-17T00:01:00.000Z",
+  ).attempts;
+  const serialized = JSON.stringify({
+    text: collected.documents.map((document) => document.text),
+    persisted,
+  });
+  assert(!serialized.includes(secret), "href query entered source evidence");
+  assert(
+    !serialized.includes("user:pass"),
+    "href credentials entered source evidence",
+  );
+  assert(
+    serialized.includes("Most Important Terms and Conditions") ||
+      collected.attempts.some((attempt) =>
+        attempt.role === "required_supporting"
+      ),
+    "safe anchor classification signal was discarded",
   );
 });
 

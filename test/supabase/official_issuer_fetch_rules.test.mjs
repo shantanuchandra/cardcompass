@@ -2,13 +2,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  OfficialFetchError,
   fetchOfficialIssuerResource,
+  fetchOfficialIssuerObservation,
   officialResourceText,
 } from '../../supabase/functions/_shared/official_issuer_fetch.ts';
 
 const issuer = 'Kotak Bank';
 const officialUrl = 'https://www.kotak.com/rd/white-reserve';
-const publicDns = async () => ['203.0.113.20'];
+const publicDns = async () => ['93.184.216.34'];
 
 function response(body, options = {}) {
   return new Response(body, {
@@ -356,7 +358,7 @@ test('sanitizes transport and HTTP failures into the approved error codes', asyn
     url: officialUrl,
     fetchImpl: async () => response('service failure', {status: 503}),
     resolveHost: publicDns,
-  }, 'unreachable');
+  }, 'http_5xx');
 });
 
 test('returns canonical URLs, text, bytes, timestamp, and a SHA-256 body hash', async () => {
@@ -381,9 +383,9 @@ test('returns canonical URLs, text, bytes, timestamp, and a SHA-256 body hash', 
       contentHash: result.contentHash,
     },
     {
-      submittedUrl: 'https://www.kotak.com/rd/white-reserve?a=1&b=2',
+      submittedUrl: 'https://WWW.KOTAK.COM:443/rd//white-reserve/?b=2&a=1#ignored',
       finalUrl: 'https://www.kotak.com/rd/white-reserve?a=1&b=2',
-      canonicalUrl: 'https://www.kotak.com/rd/white-reserve?a=1&b=2',
+      canonicalUrl: 'https://www.kotak.com/rd/white-reserve',
       contentType: 'text/html',
       bytes: 13,
       text: 'official body',
@@ -391,4 +393,298 @@ test('returns canonical URLs, text, bytes, timestamp, and a SHA-256 body hash', 
     },
   );
   assert.match(result.retrievedAt, /^\d{4}-\d{2}-\d{2}T/);
+});
+
+test('preserves status, bounded validators, and exact transient identity without persistable secrets', async () => {
+  const submitted = `${officialUrl}?session=secret&utm_source=mail#private`;
+  const result = await fetchOfficialIssuerResource({
+    issuer,
+    url: submitted,
+    now: () => Date.parse('2026-08-19T10:00:00.000Z'),
+    fetchImpl: async () => response('official body', {headers: {
+      'content-type': 'text/html; charset=utf-8',
+      etag: `"${'a'.repeat(700)}"`,
+      'last-modified': 'Wed, 19 Aug 2026 09:00:00 GMT',
+    }}),
+    resolveHost: publicDns,
+  });
+  assert.equal(result.status, 200);
+  assert.equal(result.submittedUrl, submitted);
+  assert.equal(result.finalUrl.includes('session=secret'), true);
+  assert.equal(result.canonicalUrl, officialUrl);
+  assert.equal(result.notModified, false);
+  assert.equal(result.etag.length, 512);
+  assert.equal(result.retrievedAt, '2026-08-19T10:00:00.000Z');
+});
+
+test('sends validators only for a compatible parser cache and represents 304 without a body', async () => {
+  for (const [cachedParserVersion, expectedConditional] of [['benefits-v6', true], ['benefits-v5', false]]) {
+    let headers;
+    const result = await fetchOfficialIssuerResource({
+      issuer,
+      url: officialUrl,
+      parserVersion: 'benefits-v6',
+      previous: {
+        parserVersion: cachedParserVersion,
+        etag: '"cache-v1"',
+        lastModified: 'Tue, 18 Aug 2026 00:00:00 GMT',
+        reusableExtraction: true,
+      },
+      fetchImpl: async (_url, init) => {
+        headers = new Headers(init.headers);
+        return response(null, {status: 304, headers: {etag: '"cache-v1"'}});
+      },
+      resolveHost: publicDns,
+    });
+    assert.equal(headers.has('if-none-match'), expectedConditional);
+    assert.equal(headers.has('if-modified-since'), expectedConditional);
+    assert.equal(result.status, 304);
+    assert.equal(result.notModified, true);
+    assert.equal(result.bytes, undefined);
+    assert.equal(result.text, undefined);
+  }
+});
+
+test('unusable 304 forces exactly one unconditional request while reusable 304 completes directly', async () => {
+  const requestHeaders = [];
+  const recovered = await fetchOfficialIssuerObservation({
+    issuer,
+    url: officialUrl,
+    parserVersion: 'benefits-v6',
+    previous: {parserVersion: 'benefits-v6', etag: '"cache-v1"', reusableExtraction: false},
+    fetchImpl: async (_url, init) => {
+      requestHeaders.push(new Headers(init.headers));
+      return requestHeaders.length === 1 ? response(null, {status: 304}) : response('fresh issuer body');
+    },
+    resolveHost: publicDns,
+  });
+  assert.equal(recovered.disposition, 'success');
+  assert.deepEqual(recovered.attempts.map((attempt) => attempt.status), [304, 200]);
+  assert.equal(requestHeaders[0].get('if-none-match'), '"cache-v1"');
+  assert.equal(requestHeaders[1].has('if-none-match'), false);
+
+  let failedCalls = 0;
+  const failed = await fetchOfficialIssuerObservation({
+    issuer,
+    url: officialUrl,
+    parserVersion: 'benefits-v6',
+    previous: {parserVersion: 'benefits-v6', etag: '"cache-v1"', reusableExtraction: false},
+    maxAttempts: 5,
+    delay: async () => {},
+    fetchImpl: async () => ++failedCalls === 1 ? response(null, {status: 304}) : response('failure', {status: 503}),
+    resolveHost: publicDns,
+  });
+  assert.equal(failedCalls, 2);
+  assert.equal(failed.disposition, 'failed');
+
+  let reusableCalls = 0;
+  const reusable = await fetchOfficialIssuerObservation({
+    issuer,
+    url: officialUrl,
+    parserVersion: 'benefits-v6',
+    previous: {parserVersion: 'benefits-v6', etag: '"cache-v1"', reusableExtraction: true},
+    fetchImpl: async () => {
+      reusableCalls += 1;
+      return response(null, {status: 304});
+    },
+    resolveHost: publicDns,
+  });
+  assert.equal(reusableCalls, 1);
+  assert.equal(reusable.disposition, 'not_modified');
+});
+
+test('preserves structured HTTP errors and bounded Retry-After metadata', async () => {
+  for (const [status, code] of [[401, 'http_401'], [403, 'http_403'], [404, 'http_404'], [410, 'http_410'], [429, 'http_429'], [503, 'http_5xx']]) {
+    await assert.rejects(
+      () => fetchOfficialIssuerResource({
+        issuer,
+        url: officialUrl,
+        fetchImpl: async () => response('failure', {status, headers: {'retry-after': '999999999'}}),
+        resolveHost: publicDns,
+      }),
+      (error) => error instanceof OfficialFetchError && error.code === code &&
+        error.httpStatus === status && (status !== 429 || error.retryAfter === '999999999'),
+    );
+  }
+});
+
+test('retry matrix retains every attempt and never turns missing sources into discontinuation', async () => {
+  for (const fixture of [
+    {statuses: [404, 200], disposition: 'success', attempts: 2},
+    {statuses: [404, 404], disposition: 'review_required', reason: 'persistent_404', attempts: 2},
+    {statuses: [410], disposition: 'review_required', reason: 'http_410', attempts: 1},
+    {statuses: [403], disposition: 'blocked', reason: 'http_403', attempts: 1},
+  ]) {
+    let call = 0;
+    const observation = await fetchOfficialIssuerObservation({
+      issuer,
+      url: officialUrl,
+      parserVersion: 'benefits-v6',
+      delay: async () => {},
+      fetchImpl: async () => {
+        const status = fixture.statuses[Math.min(call++, fixture.statuses.length - 1)];
+        return response(status === 200 ? 'issuer card body' : 'failure', {status});
+      },
+      resolveHost: publicDns,
+    });
+    assert.equal(observation.disposition, fixture.disposition);
+    assert.equal(observation.reviewReason, fixture.reason);
+    assert.equal(observation.attempts.length, fixture.attempts);
+    assert.equal('isDiscontinued' in observation, false);
+  }
+});
+
+test('transient soft 404 retries while persistent soft 404 and render shells require review', async () => {
+  const soft404 = '<html><title>Page not found</title><h1>404</h1></html>';
+  for (const fixture of [
+    {bodies: [soft404, '<html><h1>White Reserve Credit Card</h1></html>'], disposition: 'success'},
+    {bodies: [soft404, soft404], disposition: 'review_required', reason: 'persistent_soft_404'},
+  ]) {
+    let calls = 0;
+    const observation = await fetchOfficialIssuerObservation({
+      issuer,
+      url: officialUrl,
+      parserVersion: 'benefits-v6',
+      delay: async () => {},
+      fetchImpl: async () => response(fixture.bodies[calls++]),
+      resolveHost: publicDns,
+    });
+    assert.equal(calls, 2);
+    assert.equal(observation.disposition, fixture.disposition);
+    assert.equal(observation.reviewReason, fixture.reason);
+  }
+  const shell = await fetchOfficialIssuerObservation({
+    issuer,
+    url: officialUrl,
+    parserVersion: 'benefits-v6',
+    fetchImpl: async () => response('<html><div id="root"></div><script src="app.js"></script></html>'),
+    resolveHost: publicDns,
+  });
+  assert.equal(shell.disposition, 'blocked');
+  assert.equal(shell.reviewReason, 'empty_shell');
+});
+
+test('429 honors bounded seconds/date retry and 5xx/network use bounded exponential retry', async () => {
+  const delays = [];
+  let now = Date.parse('2026-08-19T10:00:00.000Z');
+  const statuses = [429, 429, 503, 'network', 200];
+  let call = 0;
+  const observation = await fetchOfficialIssuerObservation({
+    issuer,
+    url: officialUrl,
+    parserVersion: 'benefits-v6',
+    now: () => now,
+    delay: async (milliseconds) => {
+      delays.push(milliseconds);
+      now += milliseconds;
+    },
+    maxAttempts: 5,
+    maxBackoffMs: 30_000,
+    fetchImpl: async () => {
+      const status = statuses[call++];
+      if (status === 'network') throw new Error('socket secret');
+      const headers = status === 429
+        ? {'retry-after': call === 1 ? '5' : new Date(now + 120_000).toUTCString()}
+        : undefined;
+      return response(status === 200 ? 'issuer card body' : 'failure', {status, headers});
+    },
+    resolveHost: publicDns,
+  });
+  assert.equal(observation.disposition, 'success');
+  assert.deepEqual(delays, [5_000, 30_000, 4_000, 8_000]);
+  assert.equal(observation.attempts.length, 5);
+});
+
+test('rejects soft 404, challenge/login, and empty JavaScript shells with distinct safe codes', async () => {
+  const fixtures = [
+    ['<html><title>Page not found</title><h1>404</h1></html>', 'soft_404'],
+    ['<html><title>Sign in</title><form action="/login"><input type="password"></form></html>', 'challenge_page'],
+    ['<html><div id="root"></div><script src="app.js"></script></html>', 'empty_shell'],
+  ];
+  for (const [body, code] of fixtures) {
+    await rejectsWith({issuer, url: officialUrl, fetchImpl: async () => response(body), resolveHost: publicDns}, code);
+  }
+});
+
+test('validates charset, decodes legacy issuer text, and rejects malformed content type', async () => {
+  const decoded = await fetchOfficialIssuerResource({
+    issuer,
+    url: officialUrl,
+    fetchImpl: async () => response(new Uint8Array([0x43, 0x61, 0x66, 0xe9]), {headers: {'content-type': 'text/html; charset=iso-8859-1'}}),
+    resolveHost: publicDns,
+  });
+  assert.equal(decoded.text, 'Café');
+  for (const contentType of ['', 'garbage', 'text/html; charset=made-up']) {
+    await rejectsWith({
+      issuer,
+      url: officialUrl,
+      fetchImpl: async () => response('body', {headers: {'content-type': contentType}}),
+      resolveHost: publicDns,
+    }, contentType.includes('charset') ? 'unsupported_charset' : 'unsupported_content');
+  }
+});
+
+test('enforces robots policy and rechecks DNS before every same-issuer redirect request', async () => {
+  let fetched = 0;
+  await rejectsWith({
+    issuer,
+    url: officialUrl,
+    robotsAllowed: async (url) => !url.includes('/private'),
+    fetchImpl: async () => {
+      fetched += 1;
+      return response('', {status: 302, headers: {location: '/private'}});
+    },
+    resolveHost: publicDns,
+  }, 'robots_disallowed');
+  assert.equal(fetched, 1);
+
+  let resolutions = 0;
+  let requests = 0;
+  await rejectsWith({
+    issuer,
+    url: officialUrl,
+    fetchImpl: async () => {
+      requests += 1;
+      return response('', {status: 302, headers: {location: '/rd/white-reserve/terms'}});
+    },
+    resolveHost: async () => ++resolutions === 1 ? ['93.184.216.34'] : ['100.64.0.1'],
+  }, 'private_address');
+  assert.equal(requests, 1);
+  assert.equal(resolutions, 2);
+});
+
+test('compressed advertised bytes and decompressed streamed bytes are independently bounded', async () => {
+  for (const fixture of [
+    {body: 'small', length: '11'},
+    {body: 'decompressed issuer text', length: '5'},
+  ]) {
+    await rejectsWith({
+      issuer,
+      url: officialUrl,
+      maxBytes: 10,
+      fetchImpl: async () => response(fixture.body, {headers: {
+        'content-type': 'text/html',
+        'content-encoding': 'gzip',
+        'content-length': fixture.length,
+      }}),
+      resolveHost: publicDns,
+    }, 'oversized');
+  }
+});
+
+test('rejects redirect loops and generic/login redirect targets', async () => {
+  await rejectsWith({
+    issuer,
+    url: officialUrl,
+    fetchImpl: async () => response('', {status: 302, headers: {location: officialUrl}}),
+    resolveHost: publicDns,
+  }, 'redirect_rejected');
+  for (const location of ['/login', '/cards/credit-card']) {
+    await rejectsWith({
+      issuer,
+      url: officialUrl,
+      fetchImpl: async () => response('', {status: 302, headers: {location}}),
+      resolveHost: publicDns,
+    }, 'identity_review');
+  }
 });
