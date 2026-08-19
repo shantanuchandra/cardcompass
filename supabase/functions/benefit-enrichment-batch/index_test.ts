@@ -496,6 +496,79 @@ Deno.test("legacy live rows become one explicit card-scoped identity migration",
   );
 });
 
+Deno.test("legacy identity migration uses one canonical condition projection and fails closed on ambiguity", async () => {
+  const [dining] = extractGroundedBenefits([{
+    sourceUrl: "https://issuer.example/card",
+    text:
+      "Get 10% cashback on dining spends, excluding wallet reload transactions.",
+    contentHash: "9".repeat(64),
+  }], "benefits-v5");
+  assert(dining != null, "v5 dining fixture did not extract");
+  const proposed = {
+    ...dining,
+    exclusions: ["wallet reload transactions"],
+    restrictions: ["dining"],
+  };
+  const legacyRow = (id: string, rate = proposed.rate) =>
+    currentBenefitProposal({
+      benefit_id: id,
+      dedupe_key: `legacy:${id}:dining`,
+      title: proposed.title,
+      // Generic legacy display copy must not override structured conditions.
+      description: "Earn 10% cashback",
+      benefit_category: "CASHBACK",
+      benefit_type: proposed.valueType,
+      value_config: {
+        ...proposed.valueConfig,
+        rate,
+        restrictions: ["dining"],
+      },
+      exclusions: {
+        additional: { source_terms: ["wallet reload transactions"] },
+        categories: [],
+        days: [],
+        mcc_codes: [],
+        merchants: [],
+        transaction_types: [],
+      },
+      source_url: proposed.sourceUrl,
+    });
+  const liveId = "99999999-1111-4111-8111-111111111111";
+  const current = legacyRow(liveId);
+  assert(current != null, "structured legacy fixture did not reconstruct");
+  const exact = diffBenefits([current], [proposed]);
+  assert(
+    exact.modifications.length === 1 &&
+      exact.modifications[0].changeType === "identity_migration" &&
+      exact.modifications[0].current.liveBenefitId === liveId &&
+      exact.additions.length === 0 && exact.possibleRemovals.length === 0 &&
+      exact.conflicts.length === 0,
+    "exact canonical conditions did not produce one live-UUID migration",
+  );
+
+  const second = legacyRow("99999999-2222-4222-8222-222222222222");
+  assert(second != null, "ambiguous legacy fixture did not reconstruct");
+  const ambiguous = diffBenefits([current, second], [proposed]);
+  assert(
+    ambiguous.modifications.every((item) =>
+      item.changeType !== "identity_migration"
+    ),
+    "ambiguous same-condition legacy rows were auto-migrated",
+  );
+
+  const changed = legacyRow(
+    "99999999-3333-4333-8333-333333333333",
+    (proposed.rate ?? 10) + 1,
+  );
+  assert(changed != null, "changed legacy fixture did not reconstruct");
+  assert(
+    diffBenefits([changed], [proposed]).modifications.every((item) =>
+      item.changeType !== "identity_migration"
+    ),
+    "real condition change was classified as identity migration",
+  );
+});
+
 for (
   const fixture of [
     {

@@ -176,17 +176,172 @@ BEGIN
     SELECT 1
     FROM jsonb_array_elements(_proposals) AS proposal(value)
     WHERE jsonb_typeof(proposal.value) <> 'object'
+       OR jsonb_typeof(proposal.value->'title') IS DISTINCT FROM 'string'
+       OR jsonb_typeof(proposal.value->'description') IS DISTINCT FROM 'string'
+       OR jsonb_typeof(proposal.value->'category') IS DISTINCT FROM 'string'
+       OR jsonb_typeof(proposal.value->'valueType') IS DISTINCT FROM 'string'
+       OR jsonb_typeof(proposal.value->'dedupeKey') IS DISTINCT FROM 'string'
+       OR jsonb_typeof(proposal.value->'sourceUrl') IS DISTINCT FROM 'string'
+       OR jsonb_typeof(proposal.value->'sourceExcerpt') IS DISTINCT FROM 'string'
+       OR jsonb_typeof(proposal.value->'contentHash') IS DISTINCT FROM 'string'
+       OR jsonb_typeof(proposal.value->'parserVersion') IS DISTINCT FROM 'string'
        OR length(trim(coalesce(proposal.value->>'title', ''))) NOT BETWEEN 2 AND 500
        OR length(trim(coalesce(proposal.value->>'valueType', ''))) NOT BETWEEN 1 AND 200
        OR length(trim(coalesce(proposal.value->>'category', ''))) NOT BETWEEN 1 AND 500
        OR length(trim(coalesce(proposal.value->>'dedupeKey', ''))) NOT BETWEEN 1 AND 500
        OR proposal.value->>'parserVersion' IS DISTINCT FROM _parser_version
+       OR EXISTS (
+         SELECT 1 FROM (VALUES
+           ('liveBenefitId'), ('benefitId'), ('offerSubject'),
+           ('conditionHash'), ('frequency'), ('period'), ('effectiveFrom'),
+           ('effectiveTo'), ('sourceIdentity')
+         ) AS field(name)
+         WHERE proposal.value ? field.name
+           AND jsonb_typeof(proposal.value->field.name) IS DISTINCT FROM 'string'
+       )
+       OR EXISTS (
+         SELECT 1 FROM (VALUES ('value'), ('rate'), ('cap'), ('threshold')) AS field(name)
+         WHERE proposal.value ? field.name
+           AND jsonb_typeof(proposal.value->field.name) IS DISTINCT FROM 'number'
+       )
+       OR EXISTS (
+         SELECT 1 FROM (VALUES
+           ('partners'), ('restrictions'), ('regions'), ('sourceUrls'),
+           ('sourceIdentities'), ('warnings')
+         ) AS field(name)
+         WHERE proposal.value ? field.name AND (
+           jsonb_typeof(proposal.value->field.name) IS DISTINCT FROM 'array'
+           OR jsonb_array_length(CASE
+             WHEN jsonb_typeof(proposal.value->field.name) = 'array'
+             THEN proposal.value->field.name ELSE '[]'::jsonb END
+           ) > MAX_CANONICAL_ARRAY_ITEMS
+           OR EXISTS (
+             SELECT 1 FROM jsonb_array_elements(CASE
+               WHEN jsonb_typeof(proposal.value->field.name) = 'array'
+               THEN proposal.value->field.name ELSE '[]'::jsonb END
+             ) AS entry(value)
+             WHERE jsonb_typeof(entry.value) IS DISTINCT FROM 'string'
+           )
+         )
+       )
+       OR jsonb_typeof(proposal.value->'restrictions') IS DISTINCT FROM 'array'
+       OR jsonb_typeof(proposal.value->'warnings') IS DISTINCT FROM 'array'
+       OR jsonb_typeof(proposal.value->'confidence') IS DISTINCT FROM 'object'
+       OR EXISTS (
+         SELECT 1 FROM jsonb_each(CASE
+           WHEN jsonb_typeof(proposal.value->'confidence') = 'object'
+           THEN proposal.value->'confidence' ELSE '{}'::jsonb END
+         ) AS confidence(key, value)
+         WHERE jsonb_typeof(confidence.value) IS DISTINCT FROM 'number'
+       )
+       OR jsonb_typeof(proposal.value->'evidence') IS DISTINCT FROM 'object'
+       OR EXISTS (
+         SELECT 1 FROM jsonb_each(CASE
+           WHEN jsonb_typeof(proposal.value->'evidence') = 'object'
+           THEN proposal.value->'evidence' ELSE '{}'::jsonb END
+         ) AS evidence(key, value)
+         WHERE jsonb_typeof(evidence.value) IS DISTINCT FROM 'string'
+       )
+       OR (proposal.value ? 'valueConfig'
+         AND jsonb_typeof(proposal.value->'valueConfig') IS DISTINCT FROM 'object')
+       OR EXISTS (
+         SELECT 1 FROM jsonb_object_keys(CASE
+           WHEN jsonb_typeof(proposal.value->'valueConfig') = 'object'
+           THEN proposal.value->'valueConfig' ELSE '{}'::jsonb END
+         ) AS config_key(value)
+         WHERE config_key.value NOT IN (
+           'category', 'discount_type', 'discount_percent', 'discount_amount',
+           'max_discount_per_transaction', 'max_usage_per_month',
+           'max_usage_per_period', 'usage_period', 'monthly_cap', 'annual_cap',
+           'unit', 'milestone_type', 'threshold_amount', 'reward_value',
+           'multiplier', 'base_rate', 'currency_unit', 'platform', 'value',
+           'rate', 'cap', 'threshold', 'frequency', 'period', 'offer_subject',
+           'restrictions', 'exclusions'
+         )
+         OR (_parser_version = 'benefits-v5' AND config_key.value IN (
+           'value', 'rate', 'cap', 'threshold', 'frequency', 'period',
+           'offer_subject'
+         ))
+       )
+       OR (proposal.value->'valueConfig' ? 'restrictions' AND (
+         jsonb_typeof(proposal.value->'valueConfig'->'restrictions') IS DISTINCT FROM 'array'
+         OR proposal.value->'valueConfig'->'restrictions' IS DISTINCT FROM proposal.value->'restrictions'
+       ))
+       OR (proposal.value->'valueConfig' ? 'exclusions' AND (
+         jsonb_typeof(proposal.value->'valueConfig'->'exclusions') IS DISTINCT FROM 'object'
+         OR proposal.value->'valueConfig'->'exclusions' IS DISTINCT FROM proposal.value->'exclusions'
+       ))
+       OR (proposal.value->'valueConfig' ? 'offer_subject'
+         AND proposal.value->'valueConfig'->>'offer_subject'
+           IS DISTINCT FROM proposal.value->>'offerSubject')
+       OR (_parser_version = 'benefits-v5'
+         AND jsonb_typeof(proposal.value->'exclusions') IS DISTINCT FROM 'array')
+       OR (_parser_version = 'benefits-v5' AND EXISTS (
+         SELECT 1 FROM jsonb_array_elements(CASE
+           WHEN jsonb_typeof(proposal.value->'exclusions') = 'array'
+           THEN proposal.value->'exclusions' ELSE '[]'::jsonb END
+         ) AS exclusion(value)
+         WHERE jsonb_typeof(exclusion.value) IS DISTINCT FROM 'string'
+       ))
+       OR (_parser_version = 'benefits-v6' AND (
+         jsonb_typeof(proposal.value->'valueConfig') IS DISTINCT FROM 'object'
+         OR jsonb_typeof(proposal.value->'exclusions') IS DISTINCT FROM 'object'
+         OR jsonb_typeof(proposal.value->'exclusions'->'additional') IS DISTINCT FROM 'object'
+         OR EXISTS (
+           SELECT 1 FROM jsonb_object_keys(CASE
+             WHEN jsonb_typeof(proposal.value->'exclusions') = 'object'
+             THEN proposal.value->'exclusions' ELSE '{}'::jsonb END
+           ) AS exclusion_key(value)
+           WHERE exclusion_key.value NOT IN (
+             'additional', 'categories', 'days', 'mcc_codes', 'merchants',
+             'transaction_types'
+           )
+         )
+         OR EXISTS (
+           SELECT 1 FROM jsonb_object_keys(CASE
+             WHEN jsonb_typeof(proposal.value->'exclusions'->'additional') = 'object'
+             THEN proposal.value->'exclusions'->'additional' ELSE '{}'::jsonb END
+           ) AS additional_key(value)
+           WHERE additional_key.value <> 'source_terms'
+         )
+         OR EXISTS (
+           SELECT 1 FROM (VALUES
+             ('categories'), ('days'), ('mcc_codes'), ('merchants'),
+             ('transaction_types')
+           ) AS exclusion_field(name)
+           WHERE jsonb_typeof(proposal.value->'exclusions'->exclusion_field.name)
+             IS DISTINCT FROM 'array'
+             OR EXISTS (
+               SELECT 1 FROM jsonb_array_elements(CASE
+                 WHEN jsonb_typeof(proposal.value->'exclusions'->exclusion_field.name) = 'array'
+                 THEN proposal.value->'exclusions'->exclusion_field.name ELSE '[]'::jsonb END
+               ) AS exclusion_term(value)
+               WHERE jsonb_typeof(exclusion_term.value) IS DISTINCT FROM 'string'
+             )
+         )
+         OR jsonb_typeof(proposal.value->'exclusions'->'additional'->'source_terms')
+           IS DISTINCT FROM 'array'
+         OR EXISTS (
+           SELECT 1 FROM jsonb_array_elements(CASE
+             WHEN jsonb_typeof(proposal.value->'exclusions'->'additional'->'source_terms') = 'array'
+             THEN proposal.value->'exclusions'->'additional'->'source_terms' ELSE '[]'::jsonb END
+           ) AS source_term(value)
+           WHERE jsonb_typeof(source_term.value) IS DISTINCT FROM 'string'
+         )
+       ))
        OR (_parser_version = 'benefits-v6' AND (
          length(trim(coalesce(proposal.value->>'benefitId', ''))) NOT BETWEEN 1 AND 500
          OR proposal.value->>'benefitId' IS DISTINCT FROM proposal.value->>'dedupeKey'
          OR length(trim(coalesce(proposal.value->>'offerSubject', ''))) NOT BETWEEN 1 AND 500
          OR coalesce(proposal.value->>'conditionHash', '') !~ '^[0-9a-fA-F]{64}$'
          OR coalesce(proposal.value->>'sourceIdentity', '') !~ '^[0-9a-fA-F]{64}$'
+         OR EXISTS (
+           SELECT 1 FROM jsonb_array_elements(CASE
+             WHEN jsonb_typeof(proposal.value->'sourceIdentities') = 'array'
+             THEN proposal.value->'sourceIdentities' ELSE '[]'::jsonb END
+           ) AS identity(value)
+           WHERE identity.value #>> '{}' !~ '^[0-9a-fA-F]{64}$'
+         )
        ))
        OR EXISTS (
          SELECT 1 FROM jsonb_object_keys(
@@ -708,6 +863,8 @@ DECLARE
   decision_identity text;
   decision_proposal_index integer;
   seen_decision_identities text[] := ARRAY[]::text[];
+  seen_publication_keys text[] := ARRAY[]::text[];
+  publication_key text;
   existing_benefit_id uuid;
   staged_existing_benefit_id uuid;
   staged_change_type text;
@@ -812,6 +969,11 @@ BEGIN
       canonical_envelope := public.validate_benefit_publication_envelope(
         decision->'canonical_envelope', staging_row.card_id, staged_proposal
       );
+      publication_key := canonical_envelope->>'dedupe_key';
+      IF publication_key = ANY(seen_publication_keys) THEN
+        RAISE EXCEPTION 'duplicate_target_publication';
+      END IF;
+      seen_publication_keys := array_append(seen_publication_keys, publication_key);
       IF (
         SELECT count(*) FROM jsonb_array_elements(coalesce(
           staging_row.extracted_data->'diff'->'modifications', '[]'::jsonb
@@ -999,7 +1161,10 @@ BEGIN
             AT TIME ZONE 'UTC'
           ELSE statement_timestamp() END;
         UPDATE public.card_benefit_mapping
-        SET retired_at = retirement_at
+        SET retired_at = CASE
+          WHEN retired_at IS NULL THEN retirement_at
+          ELSE least(retired_at, retirement_at)
+        END
         WHERE card_id = staging_row.card_id
           AND benefit_id = staged_existing_benefit_id;
         GET DIAGNOSTICS affected_rows = ROW_COUNT;
@@ -1104,6 +1269,36 @@ BEGIN
 END;
 $$;
 
+DO $retirement_boundary_v2_assertions$
+DECLARE
+  existing_earlier boolean;
+  computed_earlier boolean;
+  null_existing boolean;
+  future_replacement boolean;
+BEGIN
+  existing_earlier := least(
+    '2026-08-20T00:00:00Z'::timestamptz,
+    '2026-08-25T00:00:00Z'::timestamptz
+  ) = '2026-08-20T00:00:00Z'::timestamptz;
+  computed_earlier := least(
+    '2026-08-25T00:00:00Z'::timestamptz,
+    '2026-08-20T00:00:00Z'::timestamptz
+  ) = '2026-08-20T00:00:00Z'::timestamptz;
+  null_existing := CASE
+    WHEN NULL::timestamptz IS NULL THEN '2026-08-25T00:00:00Z'::timestamptz
+    ELSE least(NULL::timestamptz, '2026-08-25T00:00:00Z'::timestamptz)
+  END = '2026-08-25T00:00:00Z'::timestamptz;
+  future_replacement := CASE
+    WHEN NULL::timestamptz IS NULL THEN '2026-09-01T00:00:00Z'::timestamptz
+    ELSE least(NULL::timestamptz, '2026-09-01T00:00:00Z'::timestamptz)
+  END = '2026-09-01T00:00:00Z'::timestamptz;
+  IF NOT existing_earlier OR NOT computed_earlier OR NOT null_existing
+     OR NOT future_replacement THEN
+    RAISE EXCEPTION 'replacement retirement boundary assertion failed';
+  END IF;
+END;
+$retirement_boundary_v2_assertions$;
+
 DO $retirement_v2_assertions$
 DECLARE
   live_id uuid := '11111111-1111-4111-8111-111111111111'::uuid;
@@ -1174,12 +1369,20 @@ DO $locked_proposal_v2_assertions$
 DECLARE
   valid_proposal jsonb := '{
     "title":"Dining cashback","category":"cashback",
-    "valueType":"cashback",
+    "description":"Get 10% cashback on dining spends.",
+    "valueType":"cashback","rate":10,
     "benefitId":"card-benefit-v2:card:one",
     "dedupeKey":"card-benefit-v2:card:one",
     "offerSubject":"cashback:cashback:dining",
     "conditionHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "sourceIdentity":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "sourceUrl":"https://issuer.example/card",
+    "sourceExcerpt":"Get 10% cashback on dining spends.",
+    "contentHash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "restrictions":["dining spends"],"warnings":[],
+    "confidence":{"rate":0.9},"evidence":{"rate":"10% cashback"},
+    "valueConfig":{"rate":10,"offer_subject":"cashback:cashback:dining","restrictions":["dining spends"],"exclusions":{"additional":{"source_terms":[]},"categories":[],"days":[],"mcc_codes":[],"merchants":[],"transaction_types":[]}},
+    "exclusions":{"additional":{"source_terms":[]},"categories":[],"days":[],"mcc_codes":[],"merchants":[],"transaction_types":[]},
     "parserVersion":"benefits-v6"
   }'::jsonb;
   second_proposal jsonb;
@@ -1190,6 +1393,8 @@ DECLARE
   oversized_unselected boolean := false;
   unknown_unselected boolean := false;
   malformed_unselected boolean := false;
+  invalid_typed_proposal jsonb;
+  typed_unselected_count integer := 0;
   duplicate_unselected boolean := false;
   deep_unselected boolean := false;
   wide_unselected boolean := false;
@@ -1220,6 +1425,24 @@ BEGIN
       jsonb_build_array(valid_proposal, '"malformed"'::jsonb), 'benefits-v6'
     );
   EXCEPTION WHEN raise_exception THEN malformed_unselected := true; END;
+  FOR invalid_typed_proposal IN SELECT value FROM jsonb_array_elements(
+    jsonb_build_array(
+      jsonb_set(second_proposal, '{partners}', '[1]'::jsonb),
+      jsonb_set(second_proposal, '{confidence}', '{"rate":"high"}'::jsonb),
+      jsonb_set(second_proposal, '{sourceUrls}', '[42]'::jsonb),
+      jsonb_set(second_proposal, '{description}', '4'::jsonb),
+      jsonb_set(second_proposal, '{valueConfig}', '[]'::jsonb),
+      jsonb_set(second_proposal, '{warnings}', '[false]'::jsonb)
+    )
+  ) LOOP
+    BEGIN
+      PERFORM public.validate_locked_benefit_proposals(
+        jsonb_build_array(valid_proposal, invalid_typed_proposal), 'benefits-v6'
+      );
+    EXCEPTION WHEN raise_exception THEN
+      typed_unselected_count := typed_unselected_count + 1;
+    END;
+  END LOOP;
   BEGIN
     PERFORM public.validate_locked_benefit_proposals(
       jsonb_build_array(valid_proposal, valid_proposal), 'benefits-v6'
@@ -1244,7 +1467,7 @@ BEGIN
   EXCEPTION WHEN raise_exception THEN wide_unselected := true; END;
   IF NOT valid_multi OR NOT oversized_unselected OR NOT unknown_unselected
      OR NOT malformed_unselected
-     OR NOT duplicate_unselected OR NOT deep_unselected
+     OR typed_unselected_count <> 6 OR NOT duplicate_unselected OR NOT deep_unselected
      OR NOT wide_unselected THEN
     RAISE EXCEPTION 'locked proposal assertion failed';
   END IF;

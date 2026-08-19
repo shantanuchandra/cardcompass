@@ -4,8 +4,11 @@ const structuralEncoding =
   /%(?:3a|2f|3f|23|40|5b|5d)|&#(?:x(?:3a|2f|3f|23|40)|(?:58|47|63|35|64));?|&(?:colon|sol|quest|num|commat);/gi;
 const secretBearingReference =
   /(?:https?:\/\/|\/\/|(?:[a-z0-9-]+\.)+[a-z]{2,}(?=[:/]))[^\s<>"']*|\/(?:[^\s<>"']*)?[?#][^\s<>"']*|[?#](?:[^\s<>"']+)/gi;
+// Scan candidates independently of surrounding punctuation. Delimiters are
+// excluded from the match, so braces, brackets, slashes and trailing prose
+// remain intact while password-bearing userinfo can never escape redaction.
 const structuredUserInfo =
-  /(^|[\s("'`])([^\s@/?#:<>'"]+)(?::([^\s@/?#<>'"]*))?@(\[[0-9a-f:.]+\]|(?:\d{1,3}\.){3}\d{1,3}|(?:[a-z0-9-]+\.)+[a-z0-9-]+|localhost|[a-z0-9-]+)((?::\d+)?(?:\/[^\s<>"']*|[?#][^\s<>"']*)?)(?=$|[\s),;'"`])/gi;
+  /([^\s@/?#:<>'"`()\[\]{},;]+)(?::([^\s@/?#<>'"`()\[\]{},;]*))?@(\[[0-9a-f:.]+\]|(?:\d{1,3}\.){3}\d{1,3}|(?:[a-z0-9-]+\.)+[a-z0-9-]+|localhost|[a-z0-9-]+)((?::\d+)?(?:\/[^\s<>"'`()\[\]{},;]*|[?#][^\s<>"'`()\[\]{},;]*)?)/gi;
 
 const MAX_PRESENTATION_INPUT = 16_384;
 const MAX_STRUCTURAL_DECODE_PASSES = 4;
@@ -101,7 +104,6 @@ export function redactSensitiveUrlsInText(value: string): string {
       structuredUserInfo,
       (
         candidate,
-        prefix: string,
         _username: string,
         password: string | undefined,
         safeHost: string,
@@ -112,7 +114,7 @@ export function redactSensitiveUrlsInText(value: string): string {
           safeHost.toLowerCase() === "localhost" || !safeHost.includes(".");
         const urlLike = password !== undefined || structuredTail.length > 0 ||
           hostIsExplicit;
-        return urlLike ? `${prefix}${safeHost}${structuredTail}` : candidate;
+        return urlLike ? `${safeHost}${structuredTail}` : candidate;
       },
     )
     .replace(secretBearingReference, (candidate) => {

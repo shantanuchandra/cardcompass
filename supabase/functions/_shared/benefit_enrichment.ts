@@ -6,6 +6,7 @@ import {
   canonicalExclusions,
   canonicalValueConfig,
   cardScopedBenefitKey,
+  stableCanonicalJson,
 } from "./benefit_contract.ts";
 import {
   redactSensitiveUrlsInText,
@@ -832,6 +833,50 @@ function conditionKey(
   });
 }
 
+/**
+ * Comparison-only projection for live and staged conditions. Publication IDs
+ * keep their generation-specific serializer, while review comparison uses the
+ * shared contract so legacy arrays and structured exclusion JSON mean the same
+ * thing.
+ */
+function canonicalComparisonConditionKey(
+  benefit: BenefitComparisonProposal,
+): string {
+  const projectedValueConfig = Object.fromEntries(
+    Object.entries(benefit.valueConfig ?? {}).filter(([key]) =>
+      ![
+        "value",
+        "rate",
+        "cap",
+        "threshold",
+        "frequency",
+        "period",
+        "offer_subject",
+        "restrictions",
+        "exclusions",
+      ].includes(key)
+    ),
+  );
+  const hasStructuredValue = Object.keys(projectedValueConfig).length > 0;
+  return stableCanonicalJson(canonicalConditionObject({
+    title: benefit.title,
+    category: canonicalBenefitCategory(benefit.category) ?? benefit.category,
+    benefitType: benefit.valueType,
+    value: hasStructuredValue ? undefined : benefit.value,
+    rate: hasStructuredValue ? undefined : benefit.rate,
+    cap: hasStructuredValue ? undefined : benefit.cap,
+    threshold: hasStructuredValue ? undefined : benefit.threshold,
+    frequency: hasStructuredValue ? undefined : benefit.frequency,
+    period: hasStructuredValue ? undefined : benefit.period,
+    valueConfig: hasStructuredValue ? projectedValueConfig : undefined,
+    partners: benefit.partners,
+    restrictions: benefit.restrictions,
+    exclusions: benefit.exclusions,
+    validFrom: benefit.effectiveFrom,
+    validUntil: benefit.effectiveTo,
+  }));
+}
+
 function semanticKey(
   benefit: Pick<
     BenefitComparisonProposal,
@@ -1182,8 +1227,7 @@ export function diffBenefits(
   current: BenefitComparisonProposal[],
   proposed: BenefitComparisonProposal[],
 ): BenefitDiff {
-  const comparisonConditionKey = (benefit: BenefitComparisonProposal) =>
-    conditionKey(benefit, true);
+  const comparisonConditionKey = canonicalComparisonConditionKey;
   const currentByKey = new Map<string, BenefitComparisonProposal[]>();
   const proposedByKey = new Map<string, BenefitComparisonProposal[]>();
   for (const benefit of current) {
@@ -1341,9 +1385,9 @@ export function diffBenefits(
   }
 
   const modifications: BenefitDiff["modifications"] = [];
-  // V5 rollback proposals intentionally retain legacy proposal identifiers and
-  // do not carry offerSubject. Match a legacy current row only when the shared
-  // explicit subject vocabulary and every condition term agree one-to-one.
+  // V5 rollback proposals intentionally retain legacy proposal identifiers.
+  // Identity-only replacement is safe solely for a one-to-one exact canonical
+  // condition. Any same-condition multiplicity remains a review conflict/tail.
   const legacyCurrent = [...currentByKey.values()].flat().filter((benefit) =>
     !benefit.dedupeKey.startsWith("card-benefit-v2:")
   );
@@ -1352,24 +1396,28 @@ export function diffBenefits(
   ) =>
     isCanonicalV6Proposal(benefit) || benefit.parserVersion === "benefits-v5"
   );
-  for (const currentBenefit of legacyCurrent) {
-    const candidates = publishableProposed.filter((proposedBenefit) =>
-      offerSubjectForProposal({
-          category: proposedBenefit.category,
-          valueType: proposedBenefit.valueType,
-          sourceExcerpt: proposedBenefit.sourceExcerpt,
-        }) === currentBenefit.offerSubject &&
-      comparisonConditionKey(proposedBenefit) ===
-        comparisonConditionKey(currentBenefit)
-    );
-    if (candidates.length !== 1) continue;
-    const proposedBenefit = candidates[0];
-    const competingCurrent = legacyCurrent.filter((candidate) =>
-      candidate.offerSubject === currentBenefit.offerSubject &&
-      comparisonConditionKey(candidate) ===
-        comparisonConditionKey(currentBenefit)
-    );
-    if (competingCurrent.length !== 1) continue;
+  const legacyByCondition = new Map<string, BenefitComparisonProposal[]>();
+  const proposedByCondition = new Map<string, BenefitComparisonProposal[]>();
+  for (const benefit of legacyCurrent) {
+    const key = comparisonConditionKey(benefit);
+    legacyByCondition.set(key, [
+      ...(legacyByCondition.get(key) ?? []),
+      benefit,
+    ]);
+  }
+  for (const benefit of publishableProposed) {
+    const key = comparisonConditionKey(benefit);
+    proposedByCondition.set(key, [
+      ...(proposedByCondition.get(key) ?? []),
+      benefit,
+    ]);
+  }
+  for (const key of [...legacyByCondition.keys()].sort()) {
+    const currentMatches = legacyByCondition.get(key) ?? [];
+    const proposedMatches = proposedByCondition.get(key) ?? [];
+    if (currentMatches.length !== 1 || proposedMatches.length !== 1) continue;
+    const currentBenefit = currentMatches[0];
+    const proposedBenefit = proposedMatches[0];
     modifications.push({
       current: currentBenefit,
       proposed: proposedBenefit,

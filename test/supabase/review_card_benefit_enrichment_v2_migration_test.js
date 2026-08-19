@@ -50,8 +50,14 @@ test('locked staging card and exact proposal set govern canonical publication', 
   assert.match(proposals, /canonical_json_shape_is_bounded[\s\S]*MAX_CANONICAL_KEY_CHARS/i);
   assert.match(proposals, /jsonb_object_keys[\s\S]*unknown_staged_proposal_key/i);
   assert.match(proposals, /canonical_json_numbers_are_safe/i);
+  for (const field of ['partners', 'confidence', 'sourceUrls', 'description', 'valueConfig', 'warnings']) {
+    assert.match(proposals, new RegExp(field, 'i'), `${field} type contract is required`);
+  }
+  assert.match(proposals, /jsonb_typeof\(proposal\.value->'description'\)\s+IS DISTINCT FROM 'string'/i);
+  assert.match(proposals, /jsonb_typeof\(proposal\.value->field\.name\)\s+IS DISTINCT FROM 'array'/i);
+  assert.match(proposals, /jsonb_each[\s\S]*confidence[\s\S]*IS DISTINCT FROM 'number'/i);
   assert.match(proposals, /GROUP BY[\s\S]*(?:dedupeKey|dedupe_key)[\s\S]*HAVING count\(\*\)\s*>\s*1/i);
-  assert.match(sql, /locked_proposal_v2_assertions[\s\S]*oversized_unselected[\s\S]*unknown_unselected[\s\S]*duplicate_unselected[\s\S]*deep_unselected[\s\S]*wide_unselected[\s\S]*valid_multi/i);
+  assert.match(sql, /locked_proposal_v2_assertions[\s\S]*oversized_unselected[\s\S]*unknown_unselected[\s\S]*typed_unselected_count[\s\S]*duplicate_unselected[\s\S]*deep_unselected[\s\S]*wide_unselected[\s\S]*valid_multi/i);
 });
 
 test('publication inserts immutable canonical rows and scopes every lifecycle mutation to one mapping', async () => {
@@ -71,8 +77,21 @@ test('publication inserts immutable canonical rows and scopes every lifecycle mu
   }
   assert.match(approval, /canonical_benefit->>'valid_from'[\s\S]*AT TIME ZONE 'UTC'[\s\S]*retired_at/i);
   assert.match(approval, /SET retired_at\s*=\s*coalesce\(retired_at, statement_timestamp\(\)\)/i);
+  assert.match(approval, /SET retired_at\s*=\s*CASE[\s\S]*retired_at IS NULL[\s\S]*least\(retired_at, retirement_at\)/i);
   assert.match(approval, /staged_change_type[\s\S]*identity_migration[\s\S]*existing_mapping_not_found/i);
   assert.match(approval, /audit_decision[\s\S]*identity_migration/i);
+});
+
+test('replacement retirement takes the earliest boundary and duplicate publication keys fail before mutation', async () => {
+  const sql = await migrationSql();
+  const approval = functionBody(sql, 'approve_card_benefit_enrichment');
+  assert.match(approval, /CASE[\s\S]*retired_at IS NULL[\s\S]*least\(retired_at, retirement_at\)/i);
+  assert.match(sql, /retirement_boundary_v2_assertions[\s\S]*existing_earlier[\s\S]*computed_earlier[\s\S]*null_existing[\s\S]*future_replacement/i);
+  assert.match(approval, /canonical_envelope->>'dedupe_key'[\s\S]*seen_publication_keys[\s\S]*duplicate_target_publication/i);
+  assert.ok(
+    approval.indexOf('duplicate_target_publication') < approval.indexOf('INSERT INTO public.benefits'),
+    'duplicate target must fail before the first mutation',
+  );
 });
 
 test('legacy replacement identity is derived from locked diff and never from client change type', async () => {

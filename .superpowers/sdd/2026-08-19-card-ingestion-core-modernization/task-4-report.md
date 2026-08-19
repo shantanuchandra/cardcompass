@@ -208,3 +208,38 @@ The review contracts were first exercised against `7c448949e924612e4f68de1d67fa6
 Migration remains `supabase/migrations/20260819163046_review_card_benefit_enrichment_v2.sql`; fix-round-4 SHA-256 before commit: `4c308c0154ef407d7b3da84d327c094954bcb5af77df16dbfccd96b93d9dcfc4`.
 
 Live applied: **no**. No Docker, local PostgreSQL/Supabase, external network, production data, linked Supabase command, migration apply/push/dry-run, reset, or repair was used. Real PostgreSQL parse/apply plus transactional fixtures for concurrent review, Card B byte-for-byte immutability, UTC replacement boundaries, locked-row replay, linked-job fan-out, and ordered Task 2/3/4 integration remain the explicit unresolved live gate; static/pure tests do not claim database execution.
+
+## Review fix round 5/5 — 2026-08-19
+
+### Red proof
+
+The final review contracts were first exercised against `365375daa46989d179e886e067a3c52cfb47bbc0`:
+
+- `benefit-enrichment-batch/index_test.ts` reported **60 passed / 1 failed**: a generic legacy display description plus a Task 2 structured exclusion object did not match the semantically identical V5 exclusion array as one identity migration.
+- `review_card_benefit_enrichment_v2_migration_test.js` reported **10 passed / 2 failed**: replacement retirement still overwrote its prior boundary and no duplicate target-publication guard existed before the first mutation.
+- A read-only `deno eval` loaded the exact baseline privacy module from `git show 365375d:...`; **4 of 5** punctuation/encoded credential fixtures still contained `alice`, directly confirming the disclosure without modifying the worktree.
+- The first combined Deno invocation omitted the admin handler's localhost-only listener permission, so that file was cancelled before behavioral execution. The exact admin regressions were retained and then run with the documented `--allow-net=0.0.0.0:8000` boundary: punctuation-delimited userinfo, corrupt unselected proposal field types, canonical duplicate targets, and no-RPC failure behavior.
+
+### Fixes
+
+- Added one comparison-only condition projection through the shared canonical benefit contract. Legacy exclusion arrays and Task 2 exclusion objects now compare identically without changing legacy IDs or V5 golden serialization. A legacy-to-v2 replacement becomes `identity_migration` only for one unmatched legacy row and one publishable V5/V6 proposal with the exact same complete canonical condition; same-condition multiplicity and real term changes fail closed into normal review tails/conflicts. The exact live UUID remains the replacement authority.
+- Replaced delimiter-sensitive userinfo handling with a bounded candidate scan. Password-bearing userinfo is removed through square/curly/round delimiters, slash prefixes, trailing punctuation, IP/IPv6/localhost hosts, and iterative encoded forms. Username-only values still require the prior structural URL signals, and ordinary email/percent/math text remains byte-for-byte unchanged.
+- Made the whole locked proposal array contractual before presentation, approval, or RPC: exact root/config/exclusion fields, required nonempty strings, numeric terms, string arrays, confidence/evidence objects, source hashes, parser-specific exclusion/config shapes, and matching V6 nested subject/restriction/exclusion mirrors. A corrupt unselected proposal invalidates the review. Edge canonicalizes every proposal condition and rejects duplicate canonical publication identities; SQL independently checks every raw field type and rejects duplicate recomputed selected target keys before any insert/update/audit.
+- Replacement retirement now uses the earliest boundary: `NULL` accepts the computed boundary and an existing boundary is reduced with `least(existing, computed)`. It cannot be extended by a later review. The mapping predicate remains `card_id + benefit_id`; explicit disappearance retirement keeps its separate absence-proof and monotonic behavior.
+- Preserved the locked-diff/server-derived identity-migration decision, V5 rollback, pre-alias rewards compatibility, active lifecycle view, Card B card-scoped isolation, immutable benefit rows, bounded envelope/numeric contract, linked-job fan-out ownership checks, all-action duplicate guards, and service-role-only invoker grants.
+
+### Green verification
+
+- `node --test test/supabase/review_card_benefit_enrichment_v2_migration_test.js` — 12 passed, 0 failed.
+- `deno test --node-modules-dir=auto --allow-env --allow-net=0.0.0.0:8000 --frozen supabase/functions/admin-catalog-entry/benefit_admin_test.ts` — 40 passed, 0 failed.
+- `deno test --node-modules-dir=auto --allow-env --frozen supabase/functions/benefit-enrichment-batch/index_test.ts` — 61 passed, 0 failed.
+- `deno test --node-modules-dir=auto --allow-env --frozen supabase/functions/_shared/benefit_contract_test.ts` — 7 passed, 0 failed.
+- `node --test test/supabase/benefit_enrichment_rules.test.mjs test/supabase/automated_benefit_enrichment_migration_test.js` — 29 passed, 0 failed, including unchanged V5/V6 goldens.
+- Total named behavioral/static tests: **149 passed, 0 failed**.
+- `deno check --node-modules-dir=auto --frozen` on all five changed TypeScript/test files — passed.
+- `deno fmt --check` on all five changed TypeScript/test files — passed.
+- `git diff --check` — passed.
+
+Migration remains `supabase/migrations/20260819163046_review_card_benefit_enrichment_v2.sql`; final fix-round-5 SHA-256 before commit: `4e126d0d0c221754ed7e03c5d46490cd0c5b76602c20e9d8f4a91072e0f9d2e8`.
+
+Live applied: **no**. No Docker, local PostgreSQL/Supabase, external network, production data, linked Supabase command, migration apply/push/dry-run, reset, or repair was used. Real PostgreSQL parse/apply plus transactional fixtures for concurrent review, Card B byte-for-byte immutability, UTC replacement boundaries, locked-row replay, linked-job fan-out, and ordered Task 2/3/4 integration remain the explicit unresolved live gate; static/pure/apply-time contracts do not claim database execution.

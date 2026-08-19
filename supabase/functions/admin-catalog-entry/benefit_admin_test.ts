@@ -518,12 +518,19 @@ Deno.test("benefit approval accepts only matching pending enrichment staging and
                 proposals: [{
                   dedupeKey: "legacy:dining-credit",
                   title: "Dining credit",
+                  description: "Get 10% cashback on dining spends.",
                   category: "cashback",
                   valueType: "cashback",
                   rate: 10,
                   restrictions: [],
                   exclusions: [],
+                  sourceUrl: "https://issuer.example/card",
+                  sourceExcerpt: "Get 10% cashback on dining spends.",
+                  contentHash: "fixture-content",
                   parserVersion: "benefits-v5",
+                  confidence: { rate: 0.9 },
+                  evidence: { rate: "10% cashback" },
+                  warnings: [],
                 }],
               },
             },
@@ -1486,9 +1493,17 @@ Deno.test("v6 admin identity terms remain explicitly bounded", () => {
           offerSubject: "cashback:cashback:dining",
           sourceIdentity: "b".repeat(64),
           title: "Dining cashback",
+          description: "Get cashback on dining spends.",
           category: "cashback",
           valueType: "cashback",
           parserVersion: "benefits-v6",
+          sourceUrl: "https://issuer.example/card",
+          sourceExcerpt: "Get cashback on dining spends.",
+          contentHash: "c".repeat(64),
+          restrictions: terms,
+          confidence: { category: 0.9 },
+          evidence: { category: "cashback" },
+          warnings: [],
           valueConfig: { restrictions: terms, exclusions: structured },
           exclusions: structured,
         }],
@@ -1671,6 +1686,41 @@ Deno.test("admin privacy strips no-tail credentials but preserves ordinary perce
     !String(sanitizeAdminDto({ value: encodedSecret }).value).includes("token"),
     "encoded URL secret survived structural probing",
   );
+});
+
+Deno.test("admin privacy scans punctuation-delimited userinfo in real keys and values", () => {
+  const credentials = [
+    "[alice:secret@issuer.example]",
+    "{alice:secret@issuer.example}",
+    "/alice:secret@issuer.example,",
+    "(alice:secret@issuer.example).",
+    "alice@issuer.example:8443",
+    "alice:secret@192.0.2.1;",
+    "alice:secret@[2001:db8::1],",
+    "alice@localhost/path",
+    "alice@internal/path",
+    "%255Balice%253Asecret%2540%255B2001%253Adb8%253A%253A1%255D%255D",
+  ];
+  const payload = sanitizeAdminDto(Object.fromEntries(
+    credentials.map((credential) => [credential, credential]),
+  ));
+  const rendered = JSON.stringify(payload).toLowerCase();
+  for (const leaked of ["alice", "secret"]) {
+    assert(!rendered.includes(leaked), `punctuation DTO leaked ${leaked}`);
+  }
+  for (
+    const ordinary of [
+      "alice@issuer.example",
+      "Save 100% of ₹500",
+      "modulo 10%40 remains ordinary text",
+      "25%2F5 is prose",
+    ]
+  ) {
+    assert(
+      sanitizeAdminDto({ value: ordinary }).value === ordinary,
+      `candidate scanner changed ordinary text: ${ordinary}`,
+    );
+  }
 });
 
 Deno.test("admin presentation rejects oversized or cyclic input before traversing a displayed subset", () => {
@@ -1865,6 +1915,12 @@ Deno.test("every locked proposal is bounded and shaped before subset approval", 
         Array.from({ length: 257 }, (_, index) => [`key_${index}`, index]),
       ),
     },
+    { ...proposals[1], partners: [1] },
+    { ...proposals[1], confidence: { extraction: "high" } },
+    { ...proposals[1], sourceUrls: [proposals[1].sourceUrl, 42] },
+    { ...proposals[1], description: 4 },
+    { ...proposals[1], valueConfig: [] },
+    { ...proposals[1], warnings: [false] },
   ];
   for (const item of corrupt) {
     let error: unknown;
@@ -1888,6 +1944,77 @@ Deno.test("every locked proposal is bounded and shaped before subset approval", 
       "corrupt unselected proposal was presented as approvable",
     );
   }
+});
+
+Deno.test("all staged proposals are canonicalized before approval and duplicate targets never reach RPC", async () => {
+  const [proposal] = extractGroundedBenefits([{
+    sourceUrl: "https://issuer.example/card",
+    text: "Get 10% cashback on dining spends.",
+    contentHash: "d".repeat(64),
+  }], "benefits-v5");
+  assert(proposal != null, "v5 duplicate target fixture did not extract");
+  const duplicate = { ...proposal, dedupeKey: `${proposal.dedupeKey}:other` };
+  const extraction = {
+    request_type: "official_benefit_enrichment",
+    parser_version: "benefits-v5",
+    proposals: [proposal, duplicate],
+  };
+  let error: unknown;
+  try {
+    await validateV5ApprovalDecisions(
+      [{ action: "approve", benefit: proposal }],
+      extraction,
+      "card-1",
+    );
+  } catch (caught) {
+    error = caught;
+  }
+  assert(
+    error instanceof Error,
+    "duplicate canonical publication target passed",
+  );
+
+  let rpcCalls = 0;
+  let handlerError: unknown;
+  try {
+    await handleBenefitAdminAction({
+      from() {
+        return {
+          select() {
+            return {
+              eq() {
+                return {
+                  single: async () => ({
+                    data: {
+                      id: "staging-1",
+                      card_id: "card-1",
+                      status: "pending",
+                      parser_version: "benefits-v5",
+                      extracted_data: extraction,
+                    },
+                    error: null,
+                  }),
+                };
+              },
+            };
+          },
+        };
+      },
+      async rpc() {
+        rpcCalls += 1;
+        return { data: [], error: null };
+      },
+    } as never, {
+      action: "benefit-approve",
+      job_id: "job-1",
+      staging_id: "staging-1",
+      decisions: [{ action: "approve", benefit: proposal }],
+    }, { id: "admin-1" });
+  } catch (caught) {
+    handlerError = caught;
+  }
+  assert(handlerError instanceof Error, "duplicate target did not fail closed");
+  assert(rpcCalls === 0, "invalid whole proposal set reached publication RPC");
 });
 
 Deno.test("legacy identity migration is server-derived and client change type is rejected", async () => {

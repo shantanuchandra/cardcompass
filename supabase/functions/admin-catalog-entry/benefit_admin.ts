@@ -321,6 +321,154 @@ function validateBoundedJsonTree(
   }
 }
 
+function owns(value: JsonRecord, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function stagedString(
+  proposal: JsonRecord,
+  key: string,
+  required = false,
+): boolean {
+  if (!owns(proposal, key)) return !required;
+  return typeof proposal[key] === "string" &&
+    (!required || String(proposal[key]).trim().length > 0) &&
+    String(proposal[key]).length <=
+      BENEFIT_PUBLICATION_LIMITS.MAX_STAGED_STRING_CHARS;
+}
+
+function stagedStringArray(proposal: JsonRecord, key: string): boolean {
+  if (!owns(proposal, key)) return true;
+  const value = proposal[key];
+  return Array.isArray(value) &&
+    value.length <= BENEFIT_PUBLICATION_LIMITS.MAX_CANONICAL_ARRAY_ITEMS &&
+    value.every((item) =>
+      typeof item === "string" &&
+      item.length <= BENEFIT_PUBLICATION_LIMITS.MAX_STAGED_STRING_CHARS
+    );
+}
+
+function stagedRecord(proposal: JsonRecord, key: string): JsonRecord | null {
+  if (!owns(proposal, key)) return null;
+  return asRecord(proposal[key]);
+}
+
+function validStagedProposalShape(
+  proposal: JsonRecord,
+  parserVersion: string,
+): boolean {
+  const v6 = parserVersion === "benefits-v6";
+  for (
+    const key of [
+      "dedupeKey",
+      "title",
+      "description",
+      "category",
+      "valueType",
+      "sourceUrl",
+      "sourceExcerpt",
+      "contentHash",
+      "parserVersion",
+    ]
+  ) {
+    if (!stagedString(proposal, key, true)) return false;
+  }
+  for (
+    const key of [
+      "liveBenefitId",
+      "benefitId",
+      "offerSubject",
+      "conditionHash",
+      "frequency",
+      "period",
+      "effectiveFrom",
+      "effectiveTo",
+      "sourceIdentity",
+    ]
+  ) {
+    if (!stagedString(proposal, key)) return false;
+  }
+  for (const key of ["value", "rate", "cap", "threshold"]) {
+    if (owns(proposal, key) && typeof proposal[key] !== "number") return false;
+  }
+  for (
+    const key of [
+      "partners",
+      "restrictions",
+      "regions",
+      "sourceUrls",
+      "sourceIdentities",
+      "warnings",
+    ]
+  ) {
+    if (!stagedStringArray(proposal, key)) return false;
+  }
+  if (!owns(proposal, "restrictions") || !owns(proposal, "warnings")) {
+    return false;
+  }
+  const confidence = stagedRecord(proposal, "confidence");
+  const evidence = stagedRecord(proposal, "evidence");
+  if (
+    !confidence || !evidence ||
+    Object.values(confidence).some((item) => typeof item !== "number") ||
+    Object.values(evidence).some((item) =>
+      typeof item !== "string" ||
+      item.length > BENEFIT_PUBLICATION_LIMITS.MAX_STAGED_STRING_CHARS
+    )
+  ) return false;
+  const config = stagedRecord(proposal, "valueConfig");
+  if (owns(proposal, "valueConfig") && !config) return false;
+  if (
+    config && Object.keys(config).some((key) =>
+      !new Set<string>([
+        ...valueConfigFields,
+        ...(v6 ? v6ValueConfigFields : []),
+        "restrictions",
+        "exclusions",
+      ]).has(key)
+    )
+  ) return false;
+  if (v6) {
+    const exclusions = stagedRecord(proposal, "exclusions");
+    if (!config || !exclusions) return false;
+    exactKeys(exclusions, canonicalExclusionKeys, "invalid_staged_exclusions");
+    const additional = stagedRecord(exclusions, "additional");
+    if (
+      !additional ||
+      Object.keys(additional).some((key) => key !== "source_terms") ||
+      !owns(additional, "source_terms") ||
+      !stagedStringArray(additional, "source_terms") ||
+      [...canonicalExclusionKeys].filter((key) => key !== "additional")
+        .some((key) =>
+          !owns(exclusions, key) || !stagedStringArray(exclusions, key)
+        )
+    ) return false;
+    if (
+      owns(config, "restrictions") &&
+      (!stagedStringArray(config, "restrictions") ||
+        stableCanonicalJson(config.restrictions) !==
+          stableCanonicalJson(proposal.restrictions))
+    ) return false;
+    if (
+      owns(config, "exclusions") &&
+      (!asRecord(config.exclusions) ||
+        stableCanonicalJson(config.exclusions) !==
+          stableCanonicalJson(exclusions))
+    ) return false;
+    if (
+      owns(config, "offer_subject") &&
+      config.offer_subject !== proposal.offerSubject
+    ) return false;
+  } else if (!stagedStringArray(proposal, "exclusions")) {
+    return false;
+  }
+  if (
+    owns(proposal, "sourceIdentities") &&
+    (proposal.sourceIdentities as unknown[]).some((item) => !digest(item))
+  ) return false;
+  return true;
+}
+
 export function validateLockedBenefitProposals(
   value: unknown,
   parserVersion: unknown,
@@ -342,6 +490,9 @@ export function validateLockedBenefitProposals(
       throw new BenefitAdminError("invalid_staged_benefit_identity", 409);
     }
     exactKeys(proposal, stagedProposalKeys, "unknown_staged_proposal_key");
+    if (!validStagedProposalShape(proposal, String(parserVersion))) {
+      throw new BenefitAdminError("invalid_staged_benefit_shape", 409);
+    }
     const title = typeof proposal.title === "string"
       ? proposal.title.trim()
       : "";
@@ -377,6 +528,13 @@ export function validateLockedBenefitProposals(
     ) throw new BenefitAdminError("invalid_staged_benefit_identity", 409);
     identities.add(dedupeKey);
     if (benefitId) canonicalIdentities.add(benefitId);
+    const publicationIdentity = stableCanonicalJson(canonicalConditionObject(
+      canonicalApprovalInput(proposal),
+    ));
+    if (canonicalIdentities.has(`condition:${publicationIdentity}`)) {
+      throw new BenefitAdminError("duplicate_staged_publication_target", 409);
+    }
+    canonicalIdentities.add(`condition:${publicationIdentity}`);
   }
 }
 
