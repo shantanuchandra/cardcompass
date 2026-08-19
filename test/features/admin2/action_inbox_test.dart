@@ -1,8 +1,19 @@
+import 'dart:async';
+
 import 'package:cardcompass/features/admin2/card_data/card_data_models.dart';
+import 'package:cardcompass/features/admin2/card_data/card_data_section.dart';
+import 'package:cardcompass/features/admin2/models/admin_access.dart';
+import 'package:cardcompass/features/admin2/providers/admin_access_provider.dart';
+import 'package:cardcompass/features/admin2/screens/admin_operator_screen.dart';
+import 'package:cardcompass/core/theme/app_theme.dart';
 import 'package:cardcompass/features/admin2/data/admin_operator_api.dart';
 import 'package:cardcompass/features/admin2/data/admin_operator_repository.dart';
 import 'package:cardcompass/features/admin2/inbox/inbox_models.dart';
 import 'package:cardcompass/features/admin2/inbox/inbox_repository.dart';
+import 'package:cardcompass/features/admin2/inbox/action_inbox_section.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -126,4 +137,257 @@ void main() {
       expect(error.toString(), isNot(contains('leaked-internal-host')));
     }
   });
+
+  group('ActionInboxSection', () {
+    testWidgets(
+      'keeps server order inside severity groups and partial results',
+      (tester) async {
+        tester.view.physicalSize = const Size(1000, 1400);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        await _pumpInbox(
+          tester,
+          _snapshot(
+            items: [
+              _item('normal-1', AdminInboxSeverity.normal, 'Normal first'),
+              _item(
+                'critical-1',
+                AdminInboxSeverity.critical,
+                'Critical first',
+              ),
+              _item('high-1', AdminInboxSeverity.high, 'High first'),
+              _item(
+                'critical-2',
+                AdminInboxSeverity.critical,
+                'Critical second',
+              ),
+            ],
+            partialFailures: [InboxSource.benefitEnrichment],
+          ),
+        );
+
+        expect(
+          find.text('Benefit enrichment is temporarily unavailable.'),
+          findsOneWidget,
+        );
+        expect(find.text('Critical first'), findsOneWidget);
+        final labels = tester
+            .widgetList<Text>(find.byType(Text))
+            .map((widget) => widget.data)
+            .whereType<String>()
+            .toList();
+        expect(
+          labels.indexOf('Critical first'),
+          lessThan(labels.indexOf('Critical second')),
+        );
+        expect(
+          labels.indexOf('Critical second'),
+          lessThan(labels.indexOf('High first')),
+        );
+        expect(
+          labels.indexOf('High first'),
+          lessThan(labels.indexOf('Normal first')),
+        );
+      },
+    );
+
+    testWidgets('opens exact destination reliably on repeated selections', (
+      tester,
+    ) async {
+      final opened = <AdminInboxDestination>[];
+      await _pumpInbox(
+        tester,
+        _snapshot(
+          items: [
+            _item('one', AdminInboxSeverity.critical, 'Identity conflict'),
+            _item(
+              'two',
+              AdminInboxSeverity.high,
+              'Benefit recovery',
+              lane: CardReviewLane.benefit,
+            ),
+          ],
+        ),
+        onOpen: opened.add,
+      );
+
+      await tester.tap(find.text('Identity conflict'));
+      await tester.pump();
+      await tester.tap(find.text('Benefit recovery'));
+      await tester.pump();
+      await tester.tap(find.text('Identity conflict'));
+      await tester.pump();
+
+      expect(opened.map((value) => value.targetId), ['one', 'two', 'one']);
+      expect(opened[1].lane, CardReviewLane.benefit);
+    });
+
+    testWidgets('refresh retains items and reports a safe retryable failure', (
+      tester,
+    ) async {
+      final refresh = Completer<InboxSnapshot>();
+      var calls = 0;
+      await _pumpInbox(
+        tester,
+        _snapshot(items: [_item('one', AdminInboxSeverity.high, 'Keep me')]),
+        loader: () {
+          calls++;
+          if (calls == 1) {
+            return Future.value(
+              _snapshot(
+                items: [_item('one', AdminInboxSeverity.high, 'Keep me')],
+              ),
+            );
+          }
+          return refresh.future;
+        },
+      );
+
+      await tester.tap(find.byTooltip('Refresh inbox'));
+      await tester.pump();
+      expect(find.text('Keep me'), findsOneWidget);
+      refresh.completeError(const AdminRequestFailed('request_failed'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Refresh failed. Showing the last loaded inbox.'),
+        findsOneWidget,
+      );
+      expect(find.text('Keep me'), findsOneWidget);
+    });
+
+    testWidgets('fits a 390px viewport with accessible item targets', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(780, 1400);
+      tester.view.devicePixelRatio = 2;
+      addTearDown(tester.view.reset);
+      await _pumpInbox(
+        tester,
+        _snapshot(
+          items: [_item('one', AdminInboxSeverity.high, 'Compact item')],
+        ),
+      );
+
+      expect(tester.takeException(), isNull);
+      expect(
+        tester.getSize(find.byKey(const Key('inbox-item-one'))).height,
+        greaterThanOrEqualTo(44),
+      );
+      final semantics = tester.getSemantics(
+        find.byKey(const Key('inbox-item-one')),
+      );
+      expect(semantics.label, contains('Compact item'));
+      expect(
+        semantics.getSemanticsData().hasAction(SemanticsAction.tap),
+        isTrue,
+      );
+    });
+
+    testWidgets('workspace deep-link loads the exact lane and target', (
+      tester,
+    ) async {
+      final cards = _RecordingCardSource();
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            adminAccessProvider.overrideWith(
+              (_) async => const AdminAccess(isAdmin: true),
+            ),
+          ],
+          child: MaterialApp(
+            theme: AppTheme.work,
+            home: AdminOperatorScreen(
+              inboxLoader: () async => _snapshot(
+                items: [
+                  _item(
+                    'benefit-job-7',
+                    AdminInboxSeverity.high,
+                    'Review benefit recovery',
+                    lane: CardReviewLane.benefit,
+                  ),
+                ],
+              ),
+              cardDataSource: cards,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Review benefit recovery'));
+      await tester.pumpAndSettle();
+
+      expect(cards.queries.last.lane, CardReviewLane.benefit);
+      expect(cards.queries.last.targetId, 'benefit-job-7');
+      expect(find.text('Benefits'), findsOneWidget);
+    });
+  });
 }
+
+final class _RecordingCardSource implements CardDataSource {
+  final queries = <CardReviewQuery>[];
+
+  @override
+  Future<void> act(CardReviewAction action) async {}
+
+  @override
+  Future<CardReviewPage> list(CardReviewQuery query) async {
+    queries.add(query);
+    return CardReviewPage(
+      lane: query.lane,
+      items: const [],
+      page: 1,
+      limit: 25,
+      hasMore: false,
+      refreshedAt: DateTime.utc(2026, 8, 19),
+    );
+  }
+}
+
+Future<void> _pumpInbox(
+  WidgetTester tester,
+  InboxSnapshot initial, {
+  Future<InboxSnapshot> Function()? loader,
+  ValueChanged<AdminInboxDestination>? onOpen,
+}) async {
+  await tester.pumpWidget(
+    MaterialApp(
+      home: Scaffold(
+        body: ActionInboxSection(
+          loadInbox: loader ?? () async => initial,
+          onOpenCardTarget: onOpen ?? (_) {},
+        ),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
+
+InboxSnapshot _snapshot({
+  List<AdminInboxItem> items = const [],
+  List<InboxSource> partialFailures = const [],
+}) => InboxSnapshot(
+  items: items,
+  partialFailures: partialFailures,
+  refreshedAt: DateTime.utc(2026, 8, 19, 9),
+);
+
+AdminInboxItem _item(
+  String id,
+  AdminInboxSeverity severity,
+  String title, {
+  CardReviewLane lane = CardReviewLane.identity,
+}) => AdminInboxItem(
+  id: id,
+  type: 'review',
+  severity: severity,
+  title: title,
+  explanation: 'Safe operator explanation.',
+  sourceStatus: 'review_required',
+  ageSeconds: 7200,
+  destination: AdminInboxDestination(
+    section: 'cardData',
+    lane: lane,
+    targetId: id,
+  ),
+);

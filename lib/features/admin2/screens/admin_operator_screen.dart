@@ -9,6 +9,9 @@ import '../card_data/card_data_models.dart';
 import '../card_data/card_data_repository.dart';
 import '../card_data/card_data_section.dart';
 import '../data/admin_operator_repository.dart';
+import '../inbox/action_inbox_section.dart';
+import '../inbox/inbox_models.dart';
+import '../inbox/inbox_repository.dart';
 import '../providers/admin_access_provider.dart';
 import '../widgets/admin_workspace_navigation.dart';
 
@@ -18,6 +21,7 @@ class AdminOperatorScreen extends ConsumerStatefulWidget {
     this.onAuthenticationRequired,
     this.onAccessDenied,
     this.cardDataSource,
+    this.inboxLoader,
     this.initialCardLane = CardReviewLane.identity,
     this.initialCardTargetId,
   });
@@ -25,6 +29,7 @@ class AdminOperatorScreen extends ConsumerStatefulWidget {
   final Future<void> Function()? onAuthenticationRequired;
   final VoidCallback? onAccessDenied;
   final CardDataSource? cardDataSource;
+  final InboxLoader? inboxLoader;
   final CardReviewLane initialCardLane;
   final String? initialCardTargetId;
 
@@ -35,6 +40,9 @@ class AdminOperatorScreen extends ConsumerStatefulWidget {
 
 class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
   late AdminWorkspaceSection _section;
+  late CardReviewLane _cardLane;
+  String? _cardTargetId;
+  var _cardSelectionRevision = 0;
 
   @override
   void initState() {
@@ -42,6 +50,8 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
     _section = widget.initialCardTargetId == null
         ? AdminWorkspaceSection.inbox
         : AdminWorkspaceSection.cardData;
+    _cardLane = widget.initialCardLane;
+    _cardTargetId = widget.initialCardTargetId;
     ref.listenManual(adminAccessProvider, (_, next) {
       final error = next.error;
       if (error is AdminAuthenticationRequired) {
@@ -100,9 +110,11 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
         return AdminWorkspaceNavigation(
           selected: _section,
           onSelected: (next) => setState(() => _section = next),
-          child: _section == AdminWorkspaceSection.cardData
-              ? _buildCardData()
-              : AdminSectionPlaceholder(title: _section.label),
+          child: switch (_section) {
+            AdminWorkspaceSection.inbox => _buildInbox(),
+            AdminWorkspaceSection.cardData => _buildCardData(),
+            _ => AdminSectionPlaceholder(title: _section.label),
+          },
         );
       },
     );
@@ -111,20 +123,46 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
   Widget _buildCardData() {
     return KeyedSubtree(
       key: const Key('admin-section-content'),
-      child: CardDataSection(
-        repository:
-            widget.cardDataSource ??
-            _RepositoryCardDataSource(
-              ref.watch(adminOperatorRepositoryProvider),
-            ),
-        initialLane: widget.initialCardLane,
-        initialTargetId: widget.initialCardTargetId,
-        onAuthenticationRequired:
-            widget.onAuthenticationRequired ??
-            () => ref.read(authNotifierProvider.notifier).signOut(),
-        onAccessDenied: widget.onAccessDenied ?? () => context.go('/app'),
+      child: KeyedSubtree(
+        key: ValueKey('admin-card-data-$_cardSelectionRevision'),
+        child: CardDataSection(
+          repository:
+              widget.cardDataSource ??
+              _RepositoryCardDataSource(
+                ref.watch(adminOperatorRepositoryProvider),
+              ),
+          initialLane: _cardLane,
+          initialTargetId: _cardTargetId,
+          onAuthenticationRequired:
+              widget.onAuthenticationRequired ??
+              () => ref.read(authNotifierProvider.notifier).signOut(),
+          onAccessDenied: widget.onAccessDenied ?? () => context.go('/app'),
+        ),
       ),
     );
+  }
+
+  Widget _buildInbox() => KeyedSubtree(
+    key: const Key('admin-section-content'),
+    child: ActionInboxSection(
+      loadInbox:
+          widget.inboxLoader ??
+          InboxRepository(ref.watch(adminOperatorRepositoryProvider)).load,
+      onOpenCardTarget: _openCardTarget,
+      onAuthenticationRequired:
+          widget.onAuthenticationRequired ??
+          () => ref.read(authNotifierProvider.notifier).signOut(),
+      onAccessDenied: widget.onAccessDenied ?? () => context.go('/app'),
+    ),
+  );
+
+  void _openCardTarget(AdminInboxDestination destination) {
+    setState(() {
+      _cardLane = destination.lane;
+      _cardTargetId = destination.targetId;
+      _cardSelectionRevision++;
+      _section = AdminWorkspaceSection.cardData;
+    });
   }
 }
 

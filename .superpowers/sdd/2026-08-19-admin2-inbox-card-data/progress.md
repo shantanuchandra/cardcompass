@@ -21,7 +21,7 @@ Ruling: Include the foundation's final adjudication ledger update in Task 1's co
 - Task 3: implementation complete, pending review — derived ranked Action Inbox
 - Task 4: implementation complete, pending review — typed Flutter repositories
 - Task 5: implementation complete, pending review — Card Data review workspace
-- Task 6: pending — Action Inbox and deep-linking
+- Task 6: implementation complete, pending review — Action Inbox and deep-linking
 
 ## Task 1 evidence
 
@@ -137,3 +137,15 @@ Ruling: Use the locked SQL status predicates as the UI action matrix even when m
 - RED: the matrix failed because an approved identity still exposed Retry. GREEN: the focused matrix passed after removing the terminal-state fallback.
 
 Ruling: Gate identity actions on the Task 1 wrapper rather than the less restrictive legacy resolver in isolation, because Admin2 mutations can only reach the resolver through that wrapper. Cost if wrong: a future intentional terminal-state retry requires a coordinated SQL transition change and UI matrix update rather than appearing automatically.
+
+## Task 6 evidence
+
+- RED: the focused Flutter suite failed because `ActionInboxSection` did not exist.
+- GREEN: focused Inbox coverage passed 13/13 after ranked grouping, partial-source banners, retained refresh state, responsive semantics, and exact `(lane, target_id)` workspace navigation were implemented.
+- Regression: Admin2 plus legacy admin passed 101/101; admin-operator plus legacy catalog Deno passed 62/62; the Card Data migration contract passed 4/4 with its opt-in PostgreSQL test skipped; targeted analysis reported no issues.
+
+Ruling: Preserve the server's stable order within fixed critical, high, and normal presentation groups, without applying a second client-side age or ID sort. Cost if wrong: a future gateway severity outside the three-value contract requires a coordinated DTO and presentation update rather than silently entering an arbitrary group.
+
+Ruling: Recreate the Card Data target view for every inbox selection and pass the exact `(lane, target_id)` pair, so repeated and alternating selections cannot retain stale widget state. Cost if wrong: each inbox selection performs a fresh exact-target read instead of reusing an already-mounted Card Data queue.
+
+Ruling: Keep the last successful inbox snapshot visible during refresh and partial-source failure, with live-region warnings and an explicit retry for initial failure. Cost if wrong: an operator can briefly act from visibly timestamped stale context after a refresh failure, but retains useful work instead of seeing an empty surface.

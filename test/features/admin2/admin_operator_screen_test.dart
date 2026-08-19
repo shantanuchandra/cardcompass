@@ -8,6 +8,7 @@ import 'package:cardcompass/features/admin2/card_data/card_data_models.dart';
 import 'package:cardcompass/features/admin2/card_data/card_data_section.dart';
 import 'package:cardcompass/features/admin2/data/admin_operator_repository.dart';
 import 'package:cardcompass/features/admin2/models/admin_access.dart';
+import 'package:cardcompass/features/admin2/inbox/inbox_models.dart';
 import 'package:cardcompass/features/admin2/providers/admin_access_provider.dart';
 import 'package:cardcompass/features/admin2/screens/admin_operator_screen.dart';
 import 'package:cardcompass/features/admin2/widgets/admin_workspace_navigation.dart';
@@ -78,6 +79,11 @@ Future<void> _pumpScreen(
             onAuthenticationRequired: onAuthenticationRequired,
             onAccessDenied: onAccessDenied,
             cardDataSource: _ShellCardSource(),
+            inboxLoader: () async => InboxSnapshot(
+              items: const [],
+              partialFailures: const [],
+              refreshedAt: DateTime.utc(2026, 8, 19),
+            ),
           ),
         ),
       ),

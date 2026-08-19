@@ -682,7 +682,7 @@ git commit -m "feat(admin2): add card data review workspace"
 - Consumes: `InboxRepository`, `AdminInboxItem.destination`, and the workspace selection callback.
 - Produces: default inbox with deterministic priority groups and selected Card Data target navigation.
 
-- [ ] **Step 1: Add failing widget tests for ranking and navigation**
+- [x] **Step 1: Add failing widget tests for ranking and navigation**
 
 ```dart
 testWidgets('inbox keeps successful items when one source fails', (tester) async {
@@ -699,13 +699,13 @@ testWidgets('card item opens its exact Card Data target', (tester) async {
 });
 ```
 
-- [ ] **Step 2: Run inbox tests and verify failure**
+- [x] **Step 2: Run inbox tests and verify failure**
 
 Run: `flutter test test/features/admin2/action_inbox_test.dart`
 
 Expected: FAIL because the section widget is missing.
 
-- [ ] **Step 3: Implement priority presentation and target navigation**
+- [x] **Step 3: Implement priority presentation and target navigation**
 
 ```dart
 class ActionInboxSection extends StatefulWidget {
@@ -724,13 +724,13 @@ class ActionInboxSection extends StatefulWidget {
 
 Render critical, high, then normal groups without re-sorting the server's stable order. An item displays severity, title, safe explanation, source status, and age. Refresh retains current items. Partial-source banners do not replace successful content. The parent screen sets `section = AdminWorkspaceSection.cardData` and passes `target_id` into `CardDataSection`.
 
-- [ ] **Step 4: Run the complete phase suite**
+- [x] **Step 4: Run the complete phase suite**
 
 Run: `dart format lib/features/admin2 test/features/admin2 && flutter test test/features/admin2/ test/features/admin/ && deno test --node-modules-dir=auto --allow-env --allow-read --allow-net supabase/functions/admin-operator supabase/functions/admin-catalog-entry && node --test test/supabase/admin_card_data_operations_migration_test.js`
 
 Expected: PASS; old and new catalog review routes both work.
 
-- [ ] **Step 5: Commit the Action Inbox**
+- [x] **Step 5: Commit the Action Inbox**
 
 ```bash
 git add lib/features/admin2/inbox/action_inbox_section.dart lib/features/admin2/screens/admin_operator_screen.dart test/features/admin2/action_inbox_test.dart docs/superpowers/plans/2026-08-19-admin2-inbox-card-data.md
