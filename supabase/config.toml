@@ -391,6 +391,11 @@ entrypoint = "./functions/benefit-enrichment-batch/index.ts"
 verify_jwt = false
 entrypoint = "./functions/admin-catalog-entry/index.ts"
 
+[functions.admin-operator]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/admin-operator/index.ts"
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
