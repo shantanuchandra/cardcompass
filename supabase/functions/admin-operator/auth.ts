@@ -1,13 +1,15 @@
-import { AdminHttpError, type AdminActor } from "./types.ts";
+import { type AdminActor, AdminHttpError } from "./types.ts";
 
 type AuthenticatedUser = Readonly<{ id: string }>;
 
 type AuthClient = Readonly<{
   auth: Readonly<{
-    getUser: (token: string) => Promise<Readonly<{
-      data: Readonly<{ user: AuthenticatedUser | null }>;
-      error: unknown;
-    }>>;
+    getUser: (token: string) => Promise<
+      Readonly<{
+        data: Readonly<{ user: AuthenticatedUser | null }>;
+        error: unknown;
+      }>
+    >;
   }>;
 }>;
 
@@ -21,14 +23,37 @@ type ServiceDatabaseClient = Readonly<{
   from: (table: "users") => Readonly<{
     select: (columns: "id,is_active,is_admin") => Readonly<{
       eq: (column: "id", value: string) => Readonly<{
-        maybeSingle: () => Promise<Readonly<{
-          data: UserProfile | null;
-          error: unknown;
-        }>>;
+        maybeSingle: () => Promise<
+          Readonly<{
+            data: UserProfile | null;
+            error: unknown;
+          }>
+        >;
       }>;
     }>;
   }>;
 }>;
+
+const CREDENTIAL_ERROR_CODES = new Set([
+  "bad_jwt",
+  "jwt_expired",
+  "session_not_found",
+  "refresh_token_not_found",
+  "refresh_token_already_used",
+  "user_not_found",
+]);
+
+function isCredentialError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+
+  const value = error as { code?: unknown; status?: unknown };
+  if (
+    typeof value.code === "string" && CREDENTIAL_ERROR_CODES.has(value.code)
+  ) {
+    return true;
+  }
+  return value.status === 401 || value.status === 403;
+}
 
 export async function requireAdmin(
   request: Request,
@@ -48,7 +73,12 @@ export async function requireAdmin(
   } catch {
     throw new AdminHttpError("request_failed", 500);
   }
-  if (authError || !authData.user) {
+  if (authError) {
+    throw isCredentialError(authError)
+      ? new AdminHttpError("authentication_required", 401)
+      : new AdminHttpError("request_failed", 500);
+  }
+  if (!authData.user) {
     throw new AdminHttpError("authentication_required", 401);
   }
 

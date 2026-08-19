@@ -21,3 +21,23 @@ test('admin audit storage is append-only and browser-inaccessible', async () => 
   assert.match(sql, /set search_path = ''/);
   assert.match(sql, /revoke all on function public\.record_admin_read/);
 });
+
+test('admin request lookup is hardened for service-only execution', async () => {
+  const sql = (await readFile(migrationUrl, 'utf8')).toLowerCase();
+  const functionStart = sql.indexOf('create or replace function public.find_admin_request');
+  const nextFunction = sql.indexOf('create or replace function public.record_admin_read');
+  const definition = sql.slice(functionStart, nextFunction);
+
+  assert.ok(functionStart >= 0);
+  assert.ok(nextFunction > functionStart);
+  assert.match(definition, /security definer/);
+  assert.match(definition, /set search_path = ''/);
+  assert.match(
+    sql,
+    /revoke all on function public\.find_admin_request\(uuid, uuid\)\s+from public, anon, authenticated/,
+  );
+  assert.match(
+    sql,
+    /grant execute on function public\.find_admin_request\(uuid, uuid\) to service_role/,
+  );
+});
