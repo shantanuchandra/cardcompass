@@ -17,7 +17,7 @@ Ruling: Carry the System plan's final adjudication ledger update into the Tasks 
 ## Tasks
 
 - Tasks 1–3: implementation complete, pending review — RLS containment, operation records, active profile gate, queued Gmail recovery
-- Task 4: pending — sanitized customer gateway
+- Task 4: implementation complete, pending review — sanitized customer gateway
 - Task 5: pending — Customers workspace
 - Task 6: pending — end-to-end verification
 
@@ -82,3 +82,20 @@ Ruling: Do not poll when there is no claimed request, and swallow only the heart
 - All Dashboard tests pass 56/56, removing the prior eight harness-only Supabase initialization failures without catching or suppressing production errors.
 
 Ruling: Put the injection seam at the Dashboard side-effect boundary rather than weakening the provider or catching an uninitialized Supabase assertion. Cost if wrong: one optional constructor dependency exists solely for embedding/tests, while production behavior remains unchanged and directly covered.
+
+## Task 4 evidence
+
+- RED: focused Deno compilation failed because `customers.ts` did not exist.
+- GREEN: focused Customer Ops gateway coverage passed 9/9; the complete `admin-operator` suite passed 81/81.
+- Search accepts only an exact UUID or an escaped, normalized email fragment of at least three characters, caps results at 25, orders by normalized email then ID, and audits only the safe query kind before reading.
+- Detail writes `record_admin_read` before touching any customer or Auth source, then returns only exact bounded counts, safe statuses/categories, safe timestamps, normalized identity fields, and a provider-connection boolean.
+- Disablement invokes the idempotent audited database RPC first and validates its canonical containment receipt before attempting the 100-year Auth ban. Ban failure returns only `auth_ban_pending`; replay revalidates the existing database receipt and retries the ban.
+- Adversarial tests prove strict action keys, wildcard escaping, malformed receipt rejection, frozen prototype-safe registration, and stable non-leaking handler-through-router failures.
+
+Ruling: Audit customer search before querying while recording only `user_id` versus `email_fragment`, never the fragment itself; exact UUID searches may use that UUID as the audit target. Cost if wrong: every operator search consumes one append-only audit row, but sensitive search text does not enter the audit trail.
+
+Ruling: Treat any unavailable or malformed customer-detail source as a closed `request_failed` response rather than returning ambiguous partial metadata, while preserving the stronger audit-before-read invariant. Cost if wrong: one unavailable count or Auth identity lookup temporarily blocks the whole detail panel instead of showing stale or incomplete diagnosis.
+
+Ruling: Derive Gmail connection only from whether Auth Admin returns a Google identity, discard the identity objects immediately, and expose one boolean. Cost if wrong: provider connection diagnosis depends on Auth Admin availability, but no identity metadata or provider credential can cross the gateway.
+
+Ruling: Reinvoke the idempotent database RPC on disable replay to validate the original target, action, request payload, and canonical containment receipt before retrying Auth ban; never trust a client claim that containment already happened. Cost if wrong: a pending Auth ban costs one receipt lookup per retry, while collision or target drift fails safely before Auth mutation.

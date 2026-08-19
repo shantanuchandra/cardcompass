@@ -42,10 +42,24 @@ export type AdminDatabaseClient = Readonly<{
   ) => PromiseLike<AdminDatabaseResult>;
 }>;
 
+export type AuthAdminClient = Readonly<{
+  getUserById: (userId: string) => PromiseLike<
+    Readonly<{
+      data: Readonly<{ user: unknown | null }>;
+      error: unknown | null;
+    }>
+  >;
+  updateUserById: (
+    userId: string,
+    attributes: Readonly<{ ban_duration: string }>,
+  ) => PromiseLike<Readonly<{ data?: unknown; error: unknown | null }>>;
+}>;
+
 export type AdminActionContext = Readonly<{
   actor: AdminActor;
   requestId: string | null;
   db: AdminDatabaseClient;
+  authAdmin?: AuthAdminClient;
 }>;
 
 export type AdminHttpErrorCode =
@@ -55,6 +69,7 @@ export type AdminHttpErrorCode =
   | "not_found"
   | "state_conflict"
   | "reason_required"
+  | "auth_ban_pending"
   | "request_failed";
 
 export class AdminHttpError extends Error {

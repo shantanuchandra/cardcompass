@@ -23,6 +23,7 @@ type AdminOperatorDependencies = Readonly<{
   authorize: (request: Request) => Promise<AdminActor>;
   db: AdminActionContext["db"];
   authDb: AdminAuthClient;
+  authAdmin: AdminActionContext["authAdmin"];
 }>;
 
 function invalidRequest(status = 400): never {
@@ -93,7 +94,12 @@ export async function handleAdminOperator(
     const requestId = typeof body.request_id === "string"
       ? body.request_id
       : null;
-    return jsonResponse(await handler(body, { actor, requestId, db }));
+    const authAdmin = provided?.authAdmin ??
+      (db as unknown as { auth?: { admin?: AdminActionContext["authAdmin"] } })
+        .auth?.admin;
+    return jsonResponse(
+      await handler(body, { actor, requestId, db, authAdmin }),
+    );
   } catch (error) {
     if (error instanceof InvalidRequestError) {
       return jsonResponse({ error: "invalid_request" }, error.status);
