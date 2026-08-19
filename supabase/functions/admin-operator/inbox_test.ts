@@ -40,9 +40,12 @@ function queryResult(
     | ((statuses: unknown[] | null) => { message: string } | null),
   calls: QueryCall[],
   countValue: unknown = 0,
+  countRows?: unknown[],
 ) {
   let statuses: unknown[] | null = null;
   let head = false;
+  const equals = new Map<unknown, unknown>();
+  let orFilter: string | null = null;
   const query = {
     select: (
       ...args: unknown[]
@@ -53,7 +56,11 @@ function queryResult(
     },
     eq: (
       ...args: unknown[]
-    ) => (calls.push({ table, method: "eq", args }), query),
+    ) => {
+      calls.push({ table, method: "eq", args });
+      equals.set(args[0], args[1]);
+      return query;
+    },
     neq: (
       ...args: unknown[]
     ) => (calls.push({ table, method: "neq", args }), query),
@@ -65,6 +72,11 @@ function queryResult(
     order: (
       ...args: unknown[]
     ) => (calls.push({ table, method: "order", args }), query),
+    or: (...args: unknown[]) => {
+      calls.push({ table, method: "or", args });
+      orFilter = typeof args[0] === "string" ? args[0] : null;
+      return query;
+    },
     range: (...args: unknown[]) => {
       calls.push({ table, method: "range", args });
       const filtered = statuses === null ? rows : rows.filter((value) => {
@@ -75,7 +87,25 @@ function queryResult(
       });
       return Promise.resolve({
         data: filtered,
-        count: head ? countValue : null,
+        count: head && countRows !== undefined
+          ? countRows.filter((value) => {
+            const row = value as Record<string, unknown>;
+            if (
+              [...equals].some(([key, expected]) =>
+                row[String(key)] !== expected
+              )
+            ) return false;
+            const cutoff = orFilter?.match(
+              /next_retry_at\.lte\.([^,]+)/,
+            )?.[1];
+            return row.next_retry_at == null ||
+              (cutoff !== undefined &&
+                typeof row.next_retry_at === "string" &&
+                Date.parse(row.next_retry_at) <= Date.parse(cutoff));
+          }).length
+          : head
+          ? countValue
+          : null,
         error: typeof error === "function" ? error(statuses) : error,
       });
     },
@@ -93,6 +123,7 @@ function context(options: {
   calls?: QueryCall[];
   control?: unknown[];
   queuedCount?: unknown;
+  queuedRows?: unknown[];
   systemError?: { message: string } | null;
 } = {}): AdminActionContext {
   const calls = options.calls ?? [];
@@ -132,6 +163,9 @@ function context(options: {
           table === "card_catalog_enrichment_jobs"
             ? options.queuedCount ?? 0
             : 0,
+          table === "card_catalog_enrichment_jobs"
+            ? options.queuedRows
+            : undefined,
         ) as never;
       },
       rpc: () => Promise.resolve({ data: null, error: null }),
@@ -166,6 +200,101 @@ Deno.test("paused benefit pipeline with queued work creates one critical System 
       control_key: "benefit_enrichment_scheduled",
     },
   }]);
+});
+
+Deno.test("System count query mirrors the scheduled worker population", async () => {
+  const calls: QueryCall[] = [];
+  await loadSystemInbox(context({ queuedCount: 1, calls }), NOW);
+  assertEquals(
+    calls.filter((call) => call.table === "card_catalog_enrichment_jobs"),
+    [{
+      table: "card_catalog_enrichment_jobs",
+      method: "from",
+      args: [],
+    }, {
+      table: "card_catalog_enrichment_jobs",
+      method: "select",
+      args: ["id", { count: "exact", head: true }],
+    }, {
+      table: "card_catalog_enrichment_jobs",
+      method: "eq",
+      args: ["run_mode", "scheduled"],
+    }, {
+      table: "card_catalog_enrichment_jobs",
+      method: "eq",
+      args: ["parser_version", "benefits-v5"],
+    }, {
+      table: "card_catalog_enrichment_jobs",
+      method: "eq",
+      args: ["status", "queued"],
+    }, {
+      table: "card_catalog_enrichment_jobs",
+      method: "or",
+      args: [
+        "next_retry_at.is.null,next_retry_at.lte.2026-08-19T12:00:00.000Z",
+      ],
+    }, {
+      table: "card_catalog_enrichment_jobs",
+      method: "range",
+      args: [0, 0],
+    }],
+  );
+});
+
+Deno.test("pilot manual legacy and deferred queued rows neither trigger nor inflate the alert", async () => {
+  const control = [{
+    control_key: "benefit_enrichment_scheduled",
+    is_paused: true,
+    updated_at: "2026-08-19T11:30:00Z",
+  }];
+  const unrelated = [
+    {
+      status: "queued",
+      run_mode: "pilot",
+      parser_version: "benefits-v5",
+      next_retry_at: null,
+    },
+    {
+      status: "queued",
+      run_mode: "manual",
+      parser_version: "benefits-v5",
+      next_retry_at: null,
+    },
+    {
+      status: "queued",
+      run_mode: "scheduled",
+      parser_version: "benefits-v4",
+      next_retry_at: null,
+    },
+    {
+      status: "queued",
+      run_mode: "scheduled",
+      parser_version: "benefits-v5",
+      next_retry_at: "2026-08-20T00:00:00Z",
+    },
+  ];
+  assertEquals(
+    await loadSystemInbox(context({ control, queuedRows: unrelated }), NOW),
+    [],
+  );
+
+  const output = await loadSystemInbox(
+    context({
+      control,
+      queuedRows: [...unrelated, {
+        status: "queued",
+        run_mode: "scheduled",
+        parser_version: "benefits-v5",
+        next_retry_at: "2026-08-19T11:00:00Z",
+      }],
+    }),
+    NOW,
+  );
+  assertEquals(output.length, 1);
+  assertEquals(
+    output[0].explanation,
+    "1 queued benefit enrichment job is waiting while scheduled processing is paused.",
+  );
 });
 
 Deno.test("System inbox omits paused empty and unpaused pipelines", async () => {
@@ -411,7 +540,12 @@ Deno.test("source queries use deterministic created-at then id ordering before b
     finalTierRanges:
     for (const range of ranges) {
       const beforeRange = tableCalls.slice(0, tableCalls.indexOf(range));
-      if (beforeRange.at(-1)?.method === "eq") {
+      const latestSelect = beforeRange.findLast((call) =>
+        call.method === "select"
+      );
+      if (
+        (latestSelect?.args[1] as { head?: unknown } | undefined)?.head === true
+      ) {
         assertEquals(range.args, [0, 0]);
         continue finalTierRanges;
       }

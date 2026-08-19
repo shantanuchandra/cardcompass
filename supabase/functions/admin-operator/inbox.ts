@@ -29,6 +29,7 @@ export type InboxItem = Readonly<{
 type JsonRecord = Record<string, unknown>;
 
 const MAX_SOURCE_ITEMS = 100;
+const SCHEDULED_BENEFIT_PARSER_VERSION = "benefits-v5";
 const HIGH_BENEFIT_STATUSES = [
   "review_required",
   "failed",
@@ -249,7 +250,14 @@ export async function loadSystemInbox(
     .range(0, 0);
   const queuedQuery = (context.db as any).from("card_catalog_enrichment_jobs")
     .select("id", { count: "exact", head: true })
+    .eq("run_mode", "scheduled")
+    .eq("parser_version", SCHEDULED_BENEFIT_PARSER_VERSION)
     .eq("status", "queued")
+    .or(
+      `next_retry_at.is.null,next_retry_at.lte.${
+        new Date(nowMs).toISOString()
+      }`,
+    )
     .range(0, 0);
   const [controlResult, queuedResult] = await Promise.all([
     controlQuery,
@@ -273,13 +281,14 @@ export async function loadSystemInbox(
   const countLabel = `${displayCount.toLocaleString("en-US")}${
     queued > displayCount ? "+" : ""
   }`;
+  const queueNoun = queued === 1 ? "job is" : "jobs are";
   return [{
     id: "system:benefit_enrichment_scheduled:paused",
     type: "paused_pipeline",
     severity: "critical",
     title: "Scheduled benefit enrichment is paused",
     explanation:
-      `${countLabel} queued benefit enrichment jobs are waiting while scheduled processing is paused.`,
+      `${countLabel} queued benefit enrichment ${queueNoun} waiting while scheduled processing is paused.`,
     source_status: "paused",
     age_seconds: safeAge(control.updated_at, nowMs),
     destination: {

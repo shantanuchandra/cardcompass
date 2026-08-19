@@ -115,3 +115,11 @@ Ruling: Reject contradictory control status DTOs at the repository boundary, whi
 Ruling: Model System Inbox work as a named-control destination rather than overloading card lanes or record IDs, and remount the System section for every deep-link selection so repeated compact navigation restores exact focus. Cost if wrong: each Inbox-to-System selection reloads bounded System status/history instead of preserving the prior local System view.
 
 Ruling: Count only jobs in the exact `queued` state for the paused-pipeline alert and cap the human-readable count at `999,999+` while retaining critical priority. Cost if wrong: other recoverable states remain represented by their existing Inbox items, and extremely large queued backlogs lose numeric precision in display only.
+
+## Task 5 review fix
+
+- Scoped the alert count to the scheduler's exact current queued population: `run_mode = scheduled`, `parser_version = benefits-v5`, `status = queued`, and `next_retry_at` absent or due at the same server snapshot time.
+- Added an exact query-operation contract and a mixed-population semantic test proving pilot, manual, legacy-parser, and deferred scheduled rows neither trigger nor inflate the alert.
+- Focused Inbox tests passed 13/13; the full admin-operator gateway passed 66/66; the production gateway entry point passed type checking.
+
+Ruling: Define “queued while scheduled processing is paused” as queued work eligible for the current scheduled worker population, including its run mode, parser generation, and due-time gate. Cost if wrong: deferred retries and non-current parser generations do not appear in this critical count until they become eligible for this scheduler.
