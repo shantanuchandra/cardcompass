@@ -40,6 +40,34 @@ export function createAdminAuthClient(
   });
 }
 
+export async function purgeCalculatorReviewRows(
+  db: UntypedSupabaseClient,
+): Promise<number> {
+  const { data, error } = await db.from("card_catalog_review_queue")
+    .select("discovery_job_id,proposed_fields,source_evidence")
+    .eq("status", "pending")
+    .limit(1000);
+  if (error) throw error;
+  const jobIds = (data ?? [])
+    .filter((row: Record<string, any>) => {
+      const url = row.proposed_fields?.official_url ??
+        row.source_evidence?.official_url ?? "";
+      return typeof url === "string" &&
+        url.toLowerCase().includes("calculator");
+    })
+    .map((row: Record<string, any>) => row.discovery_job_id)
+    .filter((id: unknown): id is string =>
+      typeof id === "string" && id.length > 0
+    );
+  if (jobIds.length === 0) return 0;
+  const { error: deleteError } = await db.from("card_discovery_jobs")
+    .delete()
+    .eq("discovery_source", "issuer_crawl")
+    .in("id", jobIds);
+  if (deleteError) throw deleteError;
+  return jobIds.length;
+}
+
 export async function handleAdminCatalogEntry(
   request: Request,
   providedDb?: UntypedSupabaseClient,
@@ -95,11 +123,16 @@ export async function handleAdminCatalogEntry(
     const action = body.action;
     if (action === "access") return json({ is_admin: true });
 
+    if (action === "purge-calculator-reviews") {
+      return json({ removed: await purgeCalculatorReviewRows(db) });
+    }
+
     if (isBenefitAdminAction(action)) {
       return json(await handleBenefitAdminAction(db, body, { id: user.id }));
     }
 
     if (action === "list") {
+      if (body.status === "pending") await purgeCalculatorReviewRows(db);
       let query = db.from("card_catalog_review_queue").select(`
         id, proposed_fields, source_evidence, existing_candidates,
         validation_warnings, confidence, status, review_reason, created_at,

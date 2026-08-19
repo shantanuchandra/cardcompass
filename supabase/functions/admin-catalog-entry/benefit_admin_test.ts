@@ -215,6 +215,93 @@ Deno.test("protected admin handler authenticates with a request-scoped client", 
   }
 });
 
+Deno.test("admin cleanup removes only pending calculator issuer-crawl jobs", async () => {
+  const handle = await handler();
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
+  const deletedJobIds: string[] = [];
+  const serviceDb = {
+    from(table: string) {
+      if (table === "card_catalog_review_queue") {
+        const result = {
+          data: [
+            {
+              discovery_job_id: "job-calculator",
+              proposed_fields: {
+                official_url:
+                  "https://www.axis.bank.in/calculators/emi-calculator",
+              },
+              source_evidence: {},
+            },
+            {
+              discovery_job_id: "job-card",
+              proposed_fields: {
+                official_url: "https://www.axis.bank.in/cards/neo-credit-card",
+              },
+              source_evidence: {},
+            },
+          ],
+          error: null,
+        };
+        const query = {
+          select() {
+            return query;
+          },
+          eq() {
+            return query;
+          },
+          limit() {
+            return Promise.resolve(result);
+          },
+        };
+        return query;
+      }
+      assert(table === "card_discovery_jobs", "unexpected cleanup table");
+      const query = {
+        delete() {
+          return query;
+        },
+        eq() {
+          return query;
+        },
+        in(_column: string, ids: string[]) {
+          deletedJobIds.push(...ids);
+          return Promise.resolve({
+            data: ids.map((id) => ({ id })),
+            error: null,
+          });
+        },
+        select() {
+          return query;
+        },
+      };
+      return query;
+    },
+  };
+  try {
+    const response = await handle(
+      request({ action: "purge-calculator-reviews" }),
+      serviceDb,
+      authenticatedDb({
+        id: "admin-1",
+        email: "admin@example.com",
+        email_confirmed_at: "2026-08-17T00:00:00.000Z",
+      }),
+    );
+    const body = await response.json();
+    assert(response.status === 200, "calculator cleanup was rejected");
+    assert(body.removed === 1, "cleanup returned the wrong removal count");
+    assert(
+      deletedJobIds.length === 1 && deletedJobIds[0] === "job-calculator",
+      "cleanup deleted a non-calculator job",
+    );
+  } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  }
+});
+
 Deno.test("benefit list returns evidence and confidence without page bodies or secrets", async () => {
   const handle = await handler();
   const row = {
