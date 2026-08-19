@@ -47,6 +47,40 @@ class _AccessApi implements AdminOperatorApi {
   }
 }
 
+class _MutableSession implements AuthSessionAccess {
+  String? userId;
+
+  @override
+  String? get currentUserId => userId;
+
+  @override
+  Future<void> signOut() async => userId = null;
+}
+
+class _SwitchingAuthNotifier extends AuthNotifier {
+  @override
+  Future<AuthStatus> build() async => AuthStatus.authenticated;
+
+  void switchTo(AuthStatus status) {
+    state = AsyncValue.data(status);
+  }
+}
+
+class _IdentityAccessApi implements AdminOperatorApi {
+  _IdentityAccessApi(this.session);
+
+  final _MutableSession session;
+  final calls = <String?>[];
+  final results = <String, bool>{'admin-a': true, 'user-b': false};
+
+  @override
+  Future<AdminOperatorResponse> invoke(Map<String, dynamic> body) async {
+    final identity = session.currentUserId;
+    calls.add(identity);
+    return AdminOperatorResponse(200, {'is_admin': results[identity] ?? false});
+  }
+}
+
 final class _ShellCardSource implements CardDataSource {
   @override
   Future<void> act(CardReviewAction action) async {}
@@ -137,8 +171,11 @@ Future<void> _pumpScreen(
 void main() {
   test('adminAccessProvider delegates access to the repository', () async {
     final api = _AccessApi();
+    final session = _MutableSession()..userId = 'operator-1';
     final container = ProviderContainer(
       overrides: [
+        authSessionAccessProvider.overrideWithValue(session),
+        authNotifierProvider.overrideWith(_SwitchingAuthNotifier.new),
         adminOperatorRepositoryProvider.overrideWithValue(
           AdminOperatorRepository(api),
         ),
@@ -151,6 +188,81 @@ void main() {
     expect(access.isAdmin, isTrue);
     expect(api.calls, 1);
   });
+
+  testWidgets(
+    'account switches partition entry and route access without stale admin UI',
+    (tester) async {
+      final session = _MutableSession()..userId = 'admin-a';
+      final api = _IdentityAccessApi(session);
+      final auth = _SwitchingAuthNotifier();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authSessionAccessProvider.overrideWithValue(session),
+            authNotifierProvider.overrideWith(() => auth),
+            adminOperatorRepositoryProvider.overrideWithValue(
+              AdminOperatorRepository(api),
+            ),
+          ],
+          child: MaterialApp(
+            theme: AppTheme.work,
+            home: Builder(
+              builder: (context) => Column(
+                children: [
+                  Consumer(
+                    builder: (context, ref, _) {
+                      ref.watch(authNotifierProvider);
+                      return Text(
+                        'entry: ${ref.watch(adminEntryVisibilityProvider).valueOrNull}',
+                      );
+                    },
+                  ),
+                  Expanded(
+                    child: AdminOperatorScreen(
+                      onAccessDenied: () {},
+                      cardDataSource: _ShellCardSource(),
+                      systemSource: _ShellSystemSource(),
+                      customerSource: _ShellCustomerSource(),
+                      inboxLoader: () async => InboxSnapshot(
+                        items: const [],
+                        partialFailures: const [],
+                        refreshedAt: DateTime.utc(2026, 8, 19),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('entry: true'), findsOneWidget);
+      expect(find.byType(AdminWorkspaceNavigation), findsOneWidget);
+
+      session.userId = null;
+      auth.switchTo(AuthStatus.unauthenticated);
+      await tester.pump();
+      expect(find.text('entry: false'), findsOneWidget);
+      expect(find.byType(AdminWorkspaceNavigation), findsNothing);
+      expect(api.calls, ['admin-a', 'admin-a']);
+
+      session.userId = 'user-b';
+      auth.switchTo(AuthStatus.authenticated);
+      await tester.pumpAndSettle();
+      expect(find.text('entry: false'), findsOneWidget);
+      expect(find.byType(AdminWorkspaceNavigation), findsNothing);
+      expect(api.calls.where((id) => id == 'user-b').length, 2);
+
+      session.userId = 'admin-a';
+      auth.switchTo(AuthStatus.authenticated);
+      await tester.pumpAndSettle();
+      expect(find.text('entry: true'), findsOneWidget);
+      expect(find.byType(AdminWorkspaceNavigation), findsOneWidget);
+      expect(api.calls.where((id) => id == 'admin-a').length, 4);
+    },
+  );
 
   testWidgets('loading access shows a stable semantic skeleton', (
     tester,

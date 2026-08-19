@@ -24,3 +24,11 @@
 
 - Conditional discovery adds one cached Admin Operator access call for each authenticated provider lifecycle. The destination still authorizes independently, so hiding or showing the link is never an authorization boundary.
 - The legacy route redirect is intentionally exact and does not preserve arbitrary legacy query parameters.
+
+## Account-switch correction
+
+- Reproduced the original scope-wide cache retaining an allowed admin result after sign-out.
+- Partitioned access by current authenticated user ID with auto-disposed families.
+- Kept discoverability and direct-route access in separate caches, ensuring a route mount always performs a current gateway check.
+- Added an A -> sign-out -> B -> A widget regression without restarting `ProviderScope`; it proves the entry disappears, unauthenticated state makes no request, B cannot see A's workspace, and each route check is identity-current.
+- Updated focused verification: 157 tests passed; scoped analysis and diff checks remain clean.

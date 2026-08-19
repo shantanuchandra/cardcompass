@@ -53,3 +53,14 @@ Ruling: Keep each endpoint's established public error vocabulary while sharing o
 - Focused route, Settings, and full Admin2 coverage passes 156/156; scoped analysis reports no issues; `git diff --check` is clean.
 
 Ruling: Resolve conditional discoverability through the cached Admin Operator access request once per provider lifecycle, including for ordinary authenticated shells, and hide the entry for loading, denied, or error states. Cost if wrong: one small gateway access request is added per authenticated app lifecycle; removing it would make the wide entry undiscoverable until Settings or Admin2 had already loaded access.
+
+### Task 3 account-switch correction
+
+- RED: an in-scope widget reproduction kept `entry: true` and the operator workspace after the active session changed from an allowed admin to unauthenticated in the same `ProviderScope`.
+- Root cause: both access providers were cached only by provider scope and observed neither auth state nor session identity.
+- GREEN: visibility and direct-route access now use separate auto-disposed families partitioned by the captured authenticated user ID. The ID partitions cache only; all authorization remains the gateway's fresh database decision.
+- Unauthenticated state hides the entry and renders no workspace without a gateway request. A direct route never reuses the shell visibility response, so it performs a fresh check for the current identity and observes current `is_admin` state.
+- Regression covers admin A -> sign-out -> non-admin B and B -> admin A without recreating `ProviderScope`; each identity gets separate visibility and direct-route calls, and no prior admin workspace survives the sign-out frame.
+- Focused route, Settings, and full Admin2 coverage passes 157/157; scoped analysis reports no issues; `git diff --check` is clean.
+
+Ruling: Use user ID only to partition two independent auto-disposed caches—one for discoverability and one for a direct Admin2 mount—while the gateway remains the sole authorization authority. Cost if wrong: each entry-to-route transition makes a second small access request, but database flag changes are observed on the route check and cross-account results cannot be reused.
