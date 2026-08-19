@@ -84,6 +84,41 @@ Deno.test("supporting redirects remain bound to the expected card identity", asy
   }
 });
 
+Deno.test("supporting identity reconciles conflicting strong labels and ignores ordinary partner prose", async () => {
+  const privilege = "https://www.axis.bank.in/cards/credit-card/privilege";
+  const benefits = `${privilege}/benefits`;
+  for (
+    const [body, expectedComplete] of [
+      [
+        "<title>Privilege Credit Card</title><h1>Regalia Gold Credit Card</h1>",
+        false,
+      ],
+      [
+        "<title>Privilege Credit Card</title><h1>Privilege Visa Infinite Credit Card</h1><p>Offer at the Regalia Gold hotel partner.</p>",
+        true,
+      ],
+    ] as const
+  ) {
+    const collected = await collectSupportingBenefitDocuments({
+      issuer: "Axis Bank",
+      primary: resource(
+        privilege,
+        `<h1>Privilege Credit Card</h1><a href="${benefits}">Benefits</a>`,
+      ),
+      identityLabels: ["Privilege Credit Card"],
+      fetchOfficialIssuerResource: async () => resource(benefits, body),
+    });
+    const assessment = assessCrawlCompleteness(
+      collected.attempts,
+      "2026-08-17T00:01:00.000Z",
+    );
+    assert(
+      assessment.complete === expectedComplete,
+      `reconciled supporting identity was ${assessment.reason}`,
+    );
+  }
+});
+
 Deno.test("supporting documents require body identity even on nested or curated URLs", async () => {
   const privilege = "https://www.axis.bank.in/cards/credit-card/privilege";
   const nestedTerms = `${privilege}/terms`;

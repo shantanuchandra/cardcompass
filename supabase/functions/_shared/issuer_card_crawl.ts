@@ -1,4 +1,5 @@
 import {
+  assessOfficialCardIdentity,
   canonicalCardIdentity,
   canonicalOfficialUrl,
   normalizedProduct,
@@ -6,6 +7,7 @@ import {
 } from "./card_discovery.ts";
 import {
   approvedStoredQueryParameters,
+  createOfficialRobotsCache,
   fetchOfficialIssuerResource as fetchOfficialIssuerResourceDefault,
   type OfficialFetchInput,
   type OfficialFetchResult,
@@ -269,7 +271,9 @@ function responseMatchesRequestedProduct(
 ): boolean {
   const requestedTokens = urlPathTokens(requestedUrl, issuer);
   if (requestedTokens.size === 0) return false;
-  const identity = officialCardIdentityFromHtml(responseText, issuer);
+  const assessment = assessOfficialCardIdentity(responseText, issuer);
+  if (assessment.status === "ambiguous") return false;
+  const identity = assessment.identity;
   const evidenceTokens = identity
     ? meaningfulTokens(
       [identity.cardName, ...identity.aliases].join(" "),
@@ -718,6 +722,7 @@ export async function discoverIssuerCardCandidates(
 ): Promise<IssuerCrawlResult> {
   const fetchResource = input.fetchOfficialIssuerResource ??
     fetchOfficialIssuerResourceDefault;
+  const robotsCache = createOfficialRobotsCache();
   const sitemapStarts = input.sitemapUrls ??
     (input.sitemapUrl ? [input.sitemapUrl] : []);
   const sitemapQueue: Array<{ url: string; depth: number }> = [];
@@ -761,6 +766,7 @@ export async function discoverIssuerCardCandidates(
         deadlineAt: input.deadlineAt,
         now: input.now,
         enforceRobots: input.fetchOfficialIssuerResource === undefined,
+        robotsCache,
         allowedQueryParameters: approvedStoredQueryParameters(url),
       }),
     );

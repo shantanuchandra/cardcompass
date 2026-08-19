@@ -162,6 +162,34 @@ test('requires the official page title to match the exact statement variant', ()
   );
 });
 
+test('reconciles all strong product identities before accepting an exact card', () => {
+  for (const html of [
+    '<title>Privilege Credit Card | Axis Bank</title><h1>Regalia Credit Card</h1>',
+    '<title>Privilege Credit Card | Axis Bank</title><p>Read about the Regalia Gold Credit Card.</p>',
+  ]) {
+    assert.equal(
+      exactOfficialPageIdentity(html, 'Axis Bank', 'Privilege'),
+      null,
+      html,
+    );
+    assert.equal(officialCardIdentityFromHtml(html, 'Axis Bank'), null, html);
+  }
+
+  assert.equal(
+    exactOfficialPageIdentity(
+      '<title>Privilege Credit Card | Axis Bank</title><h1>Privilege Visa Infinite Credit Card</h1><p>Offer at the Regalia Gold hotel partner.</p>',
+      'Axis Bank',
+      'Privilege',
+    )?.cardName,
+    'Privilege',
+  );
+  assert.equal(
+    exactOfficialPageIdentity('<title>Gold Credit Card | HDFC Bank</title>', 'HDFC Bank', 'Gold'),
+    null,
+    'a short colliding alias alone proved card identity',
+  );
+});
+
 test('prefers authoritative document metadata over an earlier navigation title tile', () => {
   const html = `
     <div class="title">E-Debit Card</div>
@@ -209,6 +237,11 @@ test('benefit enrichment keeps initialization and issuer discovery off unsafe pa
   assert.match(source, /stage_card_benefit_enrichment/);
   assert.match(source, /finalize_card_catalog_enrichment_job/);
   assert.match(source, /collectSupportingBenefitDocuments\(/);
+  assert.match(source, /const robotsCache\s*=\s*createOfficialRobotsCache\(\)/);
+  assert.match(
+    source,
+    /fetchOfficialIssuerObservation\(\{[\s\S]*?robotsCache[\s\S]*?collectSupportingBenefitDocuments\(\{[\s\S]*?robotsCache/,
+  );
   assert.match(
     source,
     /contentPurpose:\s*["']document["'][\s\S]*maxBytes:\s*2\s*\*\s*1024\s*\*\s*1024/,
@@ -481,5 +514,8 @@ test('card discovery gives every official fetch an invocation deadline', async (
   assert.ok(calls.length >= 3, 'expected every discovery fetch caller');
   for (const call of calls) {
     assert.match(call[1], /deadlineAt(?:\s*:|\s*,)/);
+    assert.match(call[1], /allowedQueryParameters\s*:/);
+    assert.match(call[1], /robotsCache(?:\s*:|\s*,)/);
   }
+  assert.match(source, /const robotsCache\s*=\s*createOfficialRobotsCache\(\)/);
 });

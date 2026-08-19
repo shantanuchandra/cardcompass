@@ -3,6 +3,7 @@ import {
   compactSourceAttempts,
   retirementEligibility,
   type SourceAttemptInput,
+  sourceIdentityDigest,
 } from "./crawl_policy.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -38,6 +39,52 @@ Deno.test("a successful primary source is a complete crawl", () => {
 
   assert(result.complete, "primary success was not complete");
   assert(result.attempts.length === 1, "primary attempt was not retained");
+});
+
+Deno.test("logical source identity preserves approved duplicate query order", () => {
+  const left = sourceIdentityDigest(
+    `${PRIMARY}?variant=z&document=mitc&variant=a`,
+  );
+  const right = sourceIdentityDigest(
+    `${PRIMARY}?document=mitc&variant=z&variant=a`,
+  );
+  assert(left !== right, "query ordering was erased from source identity");
+});
+
+Deno.test("an attempted optional identity failure blocks completeness until that source is replaced", () => {
+  const optionalUrl = `${PRIMARY}/benefits`;
+  const mismatch = attempt({
+    requestedUrl: optionalUrl,
+    role: "supporting",
+    status: "failed",
+    httpStatus: 200,
+    contentHash: undefined,
+    errorCode: "identity_mismatch",
+    attemptedAt: "2026-08-19T00:00:01.000Z",
+  });
+  const failed = assessCrawlCompleteness(
+    [attempt(), mismatch],
+    "2026-08-19T00:01:00.000Z",
+  );
+  assert(!failed.complete, "optional identity mismatch enabled removals");
+  assert(
+    failed.reason === "identity_mismatch",
+    "optional identity failure did not retain an explicit reason",
+  );
+
+  const recovered = assessCrawlCompleteness([
+    attempt(),
+    mismatch,
+    attempt({
+      requestedUrl: optionalUrl,
+      role: "supporting",
+      attemptedAt: "2026-08-19T00:00:02.000Z",
+    }),
+  ], "2026-08-19T00:01:00.000Z");
+  assert(
+    recovered.complete,
+    "later exact-identity replacement stayed incomplete",
+  );
 });
 
 Deno.test("attempt compaction is idempotent and preserves existing retry history", () => {

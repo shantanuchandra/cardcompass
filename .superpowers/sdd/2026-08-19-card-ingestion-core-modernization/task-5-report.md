@@ -361,3 +361,76 @@ Supabase command, production data, external network request, migration command,
 or live write was used. The ordered Task 2–5 database/application verification
 and explicitly authorized live issuer behavior remain the unresolved integration
 gate.
+
+## Review fix round 3/5 — 2026-08-20
+
+### Red proof
+
+The five third-round findings were reproduced against `941ffaf` before their
+production changes:
+
+- Official-fetch and card-discovery rules reported **69 passed / 3 failed**.
+  The exact reds showed conflicting title/H1 identities being accepted,
+  approved duplicate queries being reordered, and two separate same-crawl
+  fetches requesting robots twice.
+- Crawl-policy and supporting-document rules reported **62 passed / 2 failed**.
+  An attempted optional `identity_mismatch` still allowed complete removal
+  evidence, and a supporting page with conflicting strong card labels completed.
+- A focused logical-source regression then reported **0 passed / 1 failed**,
+  proving that different approved query-key orders collapsed to one digest.
+
+### Fixes
+
+- Optional as well as required fetched identity failures now make the crawl
+  incomplete with an explicit `identity_mismatch` or `identity_ambiguous`
+  reason. A later successful attempt for the same logical source replaces the
+  failure; opaque PDFs without identity remain incomplete.
+- One bounded deterministic identity assessment now collects and reconciles
+  title, H1/H2, social metadata, JSON-LD name, visible text, and extracted PDF
+  candidates. Discovery, issuer crawl, primary enrichment, supporting documents,
+  and catalog verification consume that shared decision. Conflicting strong
+  candidates fail closed; exact strong aliases and network variants agree; weak
+  collision aliases such as `Gold` cannot prove a card by themselves; ordinary
+  partner prose is not promoted to a card identity.
+- Approved functional queries retain original parameter ordering, duplicates,
+  and encoded values for the request and opaque source identity. URLs are capped
+  at 2,048 characters, query parameters at eight, keys at 64 characters, and
+  values at 512 characters. Unknown, sensitive, oversized, and redirect-added
+  keys fail closed, while persisted display URLs remain queryless. Every card
+  discovery fetch path now derives its explicit stored-resource key allowlist.
+- Robots policy is cached through an opaque per-invocation token with a
+  five-minute TTL, 16-entry bound, and scheme/host/port/user-agent key. Primary
+  and supporting batch work, issuer sitemap/candidate discovery, card discovery,
+  and catalog enrichment pass one crawl-scoped cache. Same-host retries and
+  resources reuse one policy; different hosts and invocations remain isolated.
+
+The round does not alter 304 binding, address policy, robots matching, absolute
+deadlines, retry compaction, privacy boundaries, acquisition discontinuation,
+benefits, or mappings.
+
+### Green verification
+
+- Official-fetch rules — **47 passed, 0 failed**.
+- Benefit batch, supporting-document, and crawl-policy rules — **131 passed, 0
+  failed**.
+- Card discovery, issuer discovery/crawl, catalog, and benefit rules — **92
+  passed, 0 failed**.
+- Direct issuer-crawl/catalog Deno callers — **4 passed, 0 failed**.
+- Admin privacy/integration regression gate — **40 passed, 0 failed**, with only
+  its unchanged loopback listener permission.
+- Total unique behavioral/static tests: **314 passed, 0 failed**.
+- Whole official-fetch production-caller `deno check` — passed.
+- All 10 affected TypeScript source/test checks and `deno fmt --check` — passed.
+- `git diff --check` — passed.
+
+### Scope and remaining gate
+
+This round changes only Task 5 shared identity/fetch/crawl policy, benefit batch
+and supporting collection, discovery/catalog production callers, their focused
+tests, and this report. No schema or migration changed.
+
+Live applied: **no**. No Docker, local database/PostgreSQL, local or linked
+Supabase command, production data, external network request, migration command,
+or live write was used. The ordered Task 2–5 database/application verification
+and explicitly authorized live issuer behavior remain the unresolved integration
+gate.

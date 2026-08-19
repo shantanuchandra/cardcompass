@@ -7,6 +7,7 @@ import {
 } from "../_shared/card_catalog_enrichment.ts";
 import {
   approvedStoredQueryParameters,
+  createOfficialRobotsCache,
   fetchOfficialIssuerResource,
   requireOfficialFetchBody,
 } from "../_shared/official_issuer_fetch.ts";
@@ -99,6 +100,7 @@ export async function processCatalogEnrichmentJob(
   if (!claimed) return "already_processing";
 
   try {
+    const robotsCache = createOfficialRobotsCache();
     const page = requireOfficialFetchBody(
       await fetchOfficialIssuerResource({
         issuer: claimed.issuer,
@@ -109,6 +111,7 @@ export async function processCatalogEnrichmentJob(
           claimed.canonical_url,
         ),
         deadlineAt,
+        robotsCache,
       }),
     );
     const { data: catalog, error: catalogError } = await db.from("card_catalog")

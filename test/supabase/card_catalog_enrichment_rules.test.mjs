@@ -113,6 +113,7 @@ test('catalog normalization remains bound to the exact target card after redirec
   for (const html of [
     '<title>Regalia Credit Card | HDFC Bank</title>',
     '<title>Credit Cards | Axis Bank</title>',
+    '<title>Privilege Credit Card | Axis Bank</title><h1>Regalia Gold Credit Card</h1>',
   ]) {
     assert.throws(
       () => requireCatalogPageIdentity(html, 'Axis Bank', 'Privilege'),
@@ -126,4 +127,6 @@ test('catalog enrichment passes an invocation deadline to its official fetch', a
   const call = source.match(/fetchOfficialIssuerResource\(\{([\s\S]*?)\n\s*\}\)/);
   assert.ok(call, 'catalog official fetch caller was not found');
   assert.match(call[1], /deadlineAt(?:\s*:|\s*,)/);
+  assert.match(call[1], /allowedQueryParameters\s*:/);
+  assert.match(call[1], /robotsCache(?:\s*:|\s*,)/);
 });

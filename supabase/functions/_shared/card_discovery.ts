@@ -10,6 +10,12 @@ export type CanonicalCardIdentity = {
   aliases: string[];
 };
 
+export type OfficialCardIdentityAssessment = {
+  status: "match" | "mismatch" | "ambiguous" | "unproven";
+  identity: CanonicalCardIdentity | null;
+  candidateKeys: string[];
+};
+
 export type AutomaticGateInput = {
   issuer: string;
   officialUrl: string;
@@ -252,6 +258,10 @@ function stripTitleMarketing(value: string, issuer: string): string {
   }
   return label
     .replace(
+      /(\b(?:credit\s+)?card)\s+(?:benefits?|features?|terms?(?:\s+and\s+conditions)?|conditions?|rewards?|mitc|fees?|charges?)\b[\s\S]*$/i,
+      "$1",
+    )
+    .replace(
       /\s*[-–—:]\s*(?:best\s+entertainment(?:\s+credit\s+card)?|[0-9]+%\s+fuel\s+cashback|exclusive\s+rewards?\s*(?:&|and)\s*benefits?|benefits?\s*(?:&|and)\s*features?(?:\s*[-–—]\s*apply\s+now)?)\s*$/i,
       "",
     )
@@ -259,56 +269,76 @@ function stripTitleMarketing(value: string, issuer: string): string {
     .trim();
 }
 
-export function officialCardIdentityFromHtml(
-  html: string,
+const weakIdentityAliases = new Set([
+  "gold",
+  "platinum",
+  "classic",
+  "signature",
+  "infinite",
+]);
+
+function identityKey(value: string, issuer: string): string {
+  return normalizedProduct(
+    value.replace(
+      /\b(?:visa\s+(?:infinite|signature|platinum)|master\s*card\s+(?:world(?:\s+elite)?|platinum)|rupay\s+platinum)\b/gi,
+      " ",
+    ),
+    issuer,
+  );
+}
+
+function strongExpectedIdentity(value: string, issuer: string): boolean {
+  const key = identityKey(value, issuer);
+  return key.length >= 4 && !weakIdentityAliases.has(key);
+}
+
+function identityWords(value: string, issuer: string): string[] {
+  const ignored = new Set(genericTokens);
+  for (const token of words(issuer)) ignored.add(token);
+  for (const alias of issuerAliases[issuer] ?? []) ignored.add(alias);
+  return words(value).filter((token) => !ignored.has(token));
+}
+
+function containsExpectedIdentityPhrase(
+  content: string,
+  expected: string,
+  issuer: string,
+): boolean {
+  if (!strongExpectedIdentity(expected, issuer)) return false;
+  const expectedWords = identityWords(expected, issuer);
+  const visibleWords = words(
+    decodeHtmlText(
+      content.slice(0, 120_000)
+        .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+        .replace(/<style\b[\s\S]*?<\/style>/gi, " "),
+    ),
+  );
+  return expectedWords.length > 0 &&
+    visibleWords.some((_, index) =>
+      expectedWords.every((word, offset) =>
+        visibleWords[index + offset] === word
+      )
+    );
+}
+
+function identityFromLabel(
+  value: string,
   issuer: string,
 ): CanonicalCardIdentity | null {
-  const candidates: string[] = [];
-  const patterns = [
-    {
-      pattern: /<title\b[^>]*>([\s\S]*?)<\/title>/gi,
-      documentMetadata: true,
-    },
-    {
-      pattern:
-        /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["'][^>]*>/gi,
-      documentMetadata: true,
-    },
-    {
-      pattern: /<h[1-3][^>]*>([\s\S]*?)<\/h[1-3]>/gi,
-      documentMetadata: false,
-    },
-    {
-      pattern:
-        /<[^>]+class=["'][^"']*\btitle\b[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/gi,
-      documentMetadata: false,
-    },
-  ];
-  for (const source of patterns) {
-    for (const match of html.matchAll(source.pattern)) {
-      const candidate = redactSensitiveUrlsInText(stripTitleMarketing(
-        decodeHtmlText(match[1] ?? ""),
-        issuer,
-      )).replace(/\[redacted(?:-encoded)?-url\]/g, " ")
-        .replace(/\s+/g, " ").trim();
-      if (
-        source.documentMetadata &&
-        !hasMeaningfulMetadataProductToken(candidate, issuer)
-      ) {
-        continue;
-      }
-      if (
-        /\bcard\b/i.test(candidate) &&
-        normalizedProduct(candidate, issuer).length >= 4
-      ) {
-        candidates.push(candidate);
-      }
-    }
-    if (candidates.length > 0) break;
-  }
-  const rawProduct = candidates[0];
-  if (!rawProduct) return null;
-  const identity = canonicalCardIdentity(issuer, rawProduct);
+  const rawProduct = redactSensitiveUrlsInText(stripTitleMarketing(
+    decodeHtmlText(value),
+    issuer,
+  )).replace(/\[redacted(?:-encoded)?-url\]/g, " ")
+    .replace(/\s+/g, " ").trim();
+  if (
+    !/\bcard\b/i.test(rawProduct) || /\bdebit\b/i.test(rawProduct) ||
+    identityKey(rawProduct, issuer).length < 4
+  ) return null;
+  const withoutNetworkVariant = rawProduct.replace(
+    /\b(?:visa\s+(?:infinite|signature|platinum)|master\s*card\s+(?:world(?:\s+elite)?|platinum)|rupay\s+platinum)\b/gi,
+    " ",
+  ).replace(/\s+/g, " ").trim();
+  const identity = canonicalCardIdentity(issuer, withoutNetworkVariant);
   const network = /\brupay\b/i.test(rawProduct)
     ? "RuPay"
     : /\bvisa\b/i.test(rawProduct)
@@ -319,18 +349,111 @@ export function officialCardIdentityFromHtml(
   return { ...identity, network };
 }
 
+function strongIdentityLabels(content: string, issuer: string): string[] {
+  const labels: string[] = [];
+  const add = (value: string, metadata = false) => {
+    const label = decodeHtmlText(value);
+    if (metadata && !hasMeaningfulMetadataProductToken(label, issuer)) return;
+    if (identityFromLabel(label, issuer)) labels.push(label);
+  };
+  for (const match of content.matchAll(/<title\b[^>]*>([\s\S]*?)<\/title>/gi)) {
+    add(match[1] ?? "", true);
+  }
+  for (
+    const match of content.matchAll(
+      /<meta[^>]+(?:property|name)=["'](?:og:title|twitter:title)["'][^>]+content=["']([^"']+)["'][^>]*>/gi,
+    )
+  ) add(match[1] ?? "", true);
+  for (
+    const match of content.matchAll(
+      /<script[^>]+type=["']application\/ld\+json["'][^>]*>[\s\S]*?["']name["']\s*:\s*["']([^"']+)["'][\s\S]*?<\/script>/gi,
+    )
+  ) add(match[1] ?? "", true);
+  for (const match of content.matchAll(/<h[1-2][^>]*>([\s\S]*?)<\/h[1-2]>/gi)) {
+    add(match[1] ?? "");
+  }
+  for (
+    const match of content.matchAll(
+      /<[^>]+class=["'][^"']*\btitle\b[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/gi,
+    )
+  ) add(match[1] ?? "");
+
+  const body = decodeHtmlText(
+    content.slice(0, 120_000)
+      .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+      .replace(/<title\b[\s\S]*?<\/title>/gi, " ")
+      .replace(/<h[1-2]\b[\s\S]*?<\/h[1-2]>/gi, " ")
+      .replace(/<nav\b[\s\S]*?<\/nav>/gi, " ")
+      .replace(/<a\b[\s\S]*?<\/a>/gi, " ")
+      .replace(
+        /<[^>]+class=["'][^"']*\btitle\b[^"']*["'][^>]*>[\s\S]*?<\/[^>]+>/gi,
+        " ",
+      ),
+  );
+  for (
+    const match of body.matchAll(
+      /\b(?:[A-Z][A-Za-z0-9&'-]*\s+){0,5}(?:Credit\s+)?Card\b/g,
+    )
+  ) add(match[0] ?? "");
+  return labels.slice(0, 32);
+}
+
+export function assessOfficialCardIdentity(
+  content: string,
+  issuer: string,
+  expectedProducts: string[] = [],
+): OfficialCardIdentityAssessment {
+  const candidates = strongIdentityLabels(content, issuer).map((label) => {
+    const identity = identityFromLabel(label, issuer)!;
+    return { identity, key: identityKey(identity.cardName, issuer) };
+  });
+  for (const expected of expectedProducts) {
+    if (!containsExpectedIdentityPhrase(content, expected, issuer)) continue;
+    const identity = canonicalCardIdentity(issuer, expected);
+    candidates.push({ identity, key: identityKey(identity.cardName, issuer) });
+  }
+  const candidateKeys = [
+    ...new Set(candidates.map((candidate) => candidate.key)),
+  ]
+    .sort();
+  if (candidateKeys.length === 0) {
+    return { status: "unproven", identity: null, candidateKeys };
+  }
+  if (candidateKeys.length > 1) {
+    return { status: "ambiguous", identity: null, candidateKeys };
+  }
+  const identity = candidates[0].identity;
+  if (expectedProducts.length === 0) {
+    return { status: "match", identity, candidateKeys };
+  }
+  const expectedKeys = new Set(
+    expectedProducts.filter((label) => strongExpectedIdentity(label, issuer))
+      .map((label) => identityKey(label, issuer)),
+  );
+  return expectedKeys.has(candidateKeys[0])
+    ? { status: "match", identity, candidateKeys }
+    : { status: "mismatch", identity: null, candidateKeys };
+}
+
+export function officialCardIdentityFromHtml(
+  html: string,
+  issuer: string,
+): CanonicalCardIdentity | null {
+  return assessOfficialCardIdentity(html, issuer).identity;
+}
+
 export function exactOfficialPageIdentity(
   html: string,
   issuer: string,
   expectedProduct: string,
 ): CanonicalCardIdentity | null {
-  const official = officialCardIdentityFromHtml(html, issuer);
-  if (!official) return null;
-  const expected = normalizedProduct(expectedProduct, issuer);
-  if (expected.length < 4) return null;
-  const officialLabels = [official.cardName, ...official.aliases]
-    .map((label) => normalizedProduct(label, issuer));
-  return officialLabels.includes(expected) ? official : null;
+  const assessment = assessOfficialCardIdentity(
+    html,
+    issuer,
+    [expectedProduct],
+  );
+  return assessment.status === "match" ? assessment.identity : null;
 }
 
 export function selectSubmittedUrlIdentity(input: {

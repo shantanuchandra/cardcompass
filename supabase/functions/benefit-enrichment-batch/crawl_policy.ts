@@ -78,6 +78,7 @@ const SAFE_ERROR_CODES = new Set([
   "unapproved_query",
   "identity_review",
   "identity_mismatch",
+  "identity_ambiguous",
   "insufficient_evidence",
   "js_challenge",
   "not_a_card",
@@ -363,7 +364,6 @@ function canonicalLogicalSourceUrl(value: string): string | null {
       url.protocol !== "https:" || !url.hostname || url.username ||
       url.password || url.hash
     ) return null;
-    url.searchParams.sort();
     return url.toString().replace(/\/$/, "");
   } catch {
     return null;
@@ -508,7 +508,14 @@ function assessPreparedAttempts(
     )
     .find((attempt) =>
       attempt?.status === "failed" &&
-      ["corrupt_pdf", "empty_shell", "challenge_page", "js_challenge"]
+      [
+        "corrupt_pdf",
+        "empty_shell",
+        "challenge_page",
+        "js_challenge",
+        "identity_mismatch",
+        "identity_ambiguous",
+      ]
         .includes(attempt.errorCode ?? "")
     );
   if (outstandingFallback) {

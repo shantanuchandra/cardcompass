@@ -1,5 +1,10 @@
 import { canonicalOfficialUrl } from "./card_discovery.ts";
 
+declare const officialRobotsCacheBrand: unique symbol;
+export type OfficialRobotsCache = {
+  readonly [officialRobotsCacheBrand]: true;
+};
+
 export type OfficialContentPurpose = "document" | "html" | "sitemap";
 
 export type OfficialFetchInput = {
@@ -29,8 +34,8 @@ export type OfficialFetchInput = {
   enforceRobots?: boolean;
   deadlineAt?: number;
   now?: () => number;
-  /** Internal per-observation cache; callers should not provide this. */
-  _robotsCache?: Map<string, RobotsRule[]>;
+  /** Opaque, bounded cache scoped to one caller-controlled crawl invocation. */
+  robotsCache?: OfficialRobotsCache;
 };
 
 export type OfficialFetchResult = {
@@ -537,15 +542,33 @@ const SAFE_FUNCTIONAL_QUERY_KEYS = new Set([
   "version",
   "variant",
 ]);
+const MAX_REQUEST_URL_LENGTH = 2_048;
+const MAX_QUERY_PARAMETERS = 8;
+const MAX_QUERY_KEY_LENGTH = 64;
+const MAX_QUERY_VALUE_LENGTH = 512;
+
+function boundedQueryEntries(url: URL): Array<[string, string]> {
+  const entries = [...url.searchParams.entries()];
+  if (
+    entries.length > MAX_QUERY_PARAMETERS ||
+    entries.some(([key, value]) =>
+      key.length === 0 || key.length > MAX_QUERY_KEY_LENGTH ||
+      value.length > MAX_QUERY_VALUE_LENGTH
+    )
+  ) throw fetchError("unapproved_query");
+  return entries;
+}
 
 export function approvedStoredQueryParameters(value: string): string[] {
   try {
-    const keys = [...new Set(new URL(value).searchParams.keys())];
-    return keys.length <= 16 &&
-        keys.every((key) =>
-          SAFE_FUNCTIONAL_QUERY_KEYS.has(key.toLowerCase()) &&
-          !SENSITIVE_QUERY_KEY.test(key)
-        )
+    if (value.trim().length > MAX_REQUEST_URL_LENGTH) return [];
+    const url = new URL(value);
+    const entries = boundedQueryEntries(url);
+    const keys = [...new Set(entries.map(([key]) => key))];
+    return keys.every((key) =>
+        SAFE_FUNCTIONAL_QUERY_KEYS.has(key.toLowerCase()) &&
+        !SENSITIVE_QUERY_KEY.test(key)
+      )
       ? keys
       : [];
   } catch {
@@ -559,7 +582,12 @@ function approvedRequestUrl(
   allowedQueryParameters: string[] = [],
 ): string {
   try {
-    const canonical = new URL(canonicalOfficialUrl(issuer, url));
+    const exact = url.trim();
+    if (exact.length > MAX_REQUEST_URL_LENGTH) {
+      throw fetchError("unapproved_query");
+    }
+    const submitted = new URL(exact);
+    const entries = boundedQueryEntries(submitted);
     const allowed = new Set(
       allowedQueryParameters.map((key) => key.trim().toLowerCase()).filter(
         (key) =>
@@ -567,7 +595,6 @@ function approvedRequestUrl(
           !SENSITIVE_QUERY_KEY.test(key),
       ),
     );
-    const entries = [...canonical.searchParams.entries()];
     if (
       entries.some(([key]) =>
         SENSITIVE_QUERY_KEY.test(key) ||
@@ -575,9 +602,13 @@ function approvedRequestUrl(
         !allowed.has(key.toLowerCase())
       )
     ) throw fetchError("unapproved_query");
-    const kept = entries;
-    canonical.search = "";
-    for (const [key, value] of kept) canonical.searchParams.append(key, value);
+    const exactSearch = submitted.search;
+    submitted.search = "";
+    submitted.hash = "";
+    const canonical = new URL(
+      canonicalOfficialUrl(issuer, submitted.toString()),
+    );
+    canonical.search = exactSearch;
     return canonical.toString();
   } catch (error) {
     if (error instanceof OfficialFetchError) throw error;
@@ -769,6 +800,32 @@ type RobotsRule = {
   specificity: number;
 };
 
+type RobotsCacheEntry = {
+  rules: RobotsRule[];
+  expiresAt: number;
+};
+
+const robotsCacheState = new WeakMap<object, Map<string, RobotsCacheEntry>>();
+const MAX_ROBOTS_CACHE_ENTRIES = 16;
+const ROBOTS_CACHE_TTL_MS = 5 * 60 * 1_000;
+
+export function createOfficialRobotsCache(): OfficialRobotsCache {
+  const cache = Object.freeze({}) as OfficialRobotsCache;
+  robotsCacheState.set(cache, new Map());
+  return cache;
+}
+
+function robotsEntries(
+  cache: OfficialRobotsCache | object,
+): Map<string, RobotsCacheEntry> {
+  let entries = robotsCacheState.get(cache);
+  if (!entries) {
+    entries = new Map();
+    robotsCacheState.set(cache, entries);
+  }
+  return entries;
+}
+
 const ROBOTS_USER_AGENT = "cardcompasscatalogbot";
 const MAX_ROBOTS_BYTES = 256 * 1024;
 const MAX_ROBOTS_LINES = 10_000;
@@ -890,14 +947,18 @@ export async function fetchOfficialIssuerResource(
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   let url = submittedRequestUrl;
   const visited = new Set<string>();
-  const robotsByHost = input._robotsCache ?? new Map<string, RobotsRule[]>();
+  const robotsCache = input.robotsCache ?? createOfficialRobotsCache();
+  const robotsByHost = robotsEntries(robotsCache);
   const sourceIdentityHash = await sha256(
     new TextEncoder().encode(submittedRequestUrl),
   );
 
   const productionRobotsAllowed = async (targetUrl: string) => {
     const target = new URL(targetUrl);
-    let rules = robotsByHost.get(target.host);
+    const cacheKey = `${target.protocol}//${target.host}|${ROBOTS_USER_AGENT}`;
+    const cached = robotsByHost.get(cacheKey);
+    if (cached && cached.expiresAt <= now()) robotsByHost.delete(cacheKey);
+    let rules = cached && cached.expiresAt > now() ? cached.rules : undefined;
     if (!rules) {
       ensureBeforeDeadline(input);
       const robotsUrl = `${target.protocol}//${target.host}/robots.txt`;
@@ -963,7 +1024,13 @@ export async function fetchOfficialIssuerResource(
         }
         ensureBeforeDeadline(input);
       }
-      robotsByHost.set(target.host, rules);
+      if (robotsByHost.size >= MAX_ROBOTS_CACHE_ENTRIES) {
+        robotsByHost.delete(robotsByHost.keys().next().value!);
+      }
+      robotsByHost.set(cacheKey, {
+        rules,
+        expiresAt: now() + ROBOTS_CACHE_TTL_MS,
+      });
     }
     return robotsPermit(rules, targetUrl);
   };
@@ -1178,7 +1245,7 @@ export async function fetchOfficialIssuerObservation(
   const attempts: OfficialFetchAttempt[] = [];
   let forceUnconditional = input.forceUnconditional === true;
   let unusable304Fallback = false;
-  const robotsCache = new Map<string, RobotsRule[]>();
+  const robotsCache = input.robotsCache ?? createOfficialRobotsCache();
   const waitBeforeRetry = async (milliseconds: number): Promise<boolean> => {
     if (input.deadlineAt !== undefined) {
       const remaining = input.deadlineAt - now();
@@ -1213,7 +1280,7 @@ export async function fetchOfficialIssuerObservation(
       const result = await fetchOfficialIssuerResource({
         ...input,
         forceUnconditional,
-        _robotsCache: robotsCache,
+        robotsCache,
       });
       attempts.push({ status: result.status, attemptedAt: result.retrievedAt });
       if (result.notModified) {

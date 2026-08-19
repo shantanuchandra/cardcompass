@@ -1,13 +1,18 @@
 import { type BenefitDocument } from "../_shared/benefit_enrichment.ts";
 import { redactSensitiveUrlsInText } from "../_shared/benefit_source_privacy.ts";
-import { canonicalOfficialUrl } from "../_shared/card_discovery.ts";
+import {
+  assessOfficialCardIdentity,
+  canonicalOfficialUrl,
+} from "../_shared/card_discovery.ts";
 import {
   approvedStoredQueryParameters,
+  createOfficialRobotsCache,
   fetchOfficialIssuerObservation,
   fetchOfficialIssuerResource as fetchOfficialIssuerResourceDefault,
   type OfficialFetchInput,
   type OfficialFetchResult,
   officialResourceText,
+  type OfficialRobotsCache,
   requireOfficialFetchBody,
 } from "../_shared/official_issuer_fetch.ts";
 import {
@@ -50,6 +55,7 @@ export type SupportingDocumentInput = {
   maximumLinks?: number;
   requestDeadlineAt?: number;
   parserVersion?: string;
+  robotsCache?: OfficialRobotsCache;
 };
 
 export type CollectedSources = {
@@ -171,33 +177,12 @@ async function benefitDocument(
   };
 }
 
-function supportingIdentityMatches(
-  text: string,
-  labels: string[],
-  contentType?: string,
-): boolean {
-  const normalize = (value: string) =>
-    value.toLowerCase().replace(/[^a-z0-9]+/g, "");
-  const visibleText = contentType === "application/pdf"
-    ? text
-    : text.replace(/<script\b[\s\S]*?<\/script>/gi, " ")
-      .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
-      .replace(/<[^>]+>/g, " ");
-  const normalizedText = normalize(visibleText);
-  const normalizedLabels = labels.map(normalize).filter((label) =>
-    label.length >= 4
-  );
-  if (normalizedLabels.some((label) => normalizedText.includes(label))) {
-    return true;
-  }
-  return false;
-}
-
 export async function collectSupportingBenefitDocuments(
   input: SupportingDocumentInput,
 ): Promise<CollectedSources> {
   const fetchResource = input.fetchOfficialIssuerResource ??
     fetchOfficialIssuerResourceDefault;
+  const robotsCache = input.robotsCache ?? createOfficialRobotsCache();
   const budget = Math.min(
     MAX_SUPPORTING_LINKS,
     Math.max(0, Math.trunc(input.maximumLinks ?? MAX_SUPPORTING_LINKS)),
@@ -377,6 +362,7 @@ export async function collectSupportingBenefitDocuments(
           maxBytes: 1024 * 1024,
           deadlineAt: input.requestDeadlineAt,
           allowedQueryParameters: approvedStoredQueryParameters(current.url),
+          robotsCache,
         });
       } else {
         const observation = await fetchOfficialIssuerObservation({
@@ -390,6 +376,7 @@ export async function collectSupportingBenefitDocuments(
           deadlineAt: input.requestDeadlineAt,
           enforceRobots: true,
           allowedQueryParameters: approvedStoredQueryParameters(current.url),
+          robotsCache,
         });
         for (const attempt of observation.attempts.slice(0, -1)) {
           attempts.push({
@@ -459,13 +446,12 @@ export async function collectSupportingBenefitDocuments(
       });
       continue;
     }
-    if (
-      !supportingIdentityMatches(
-        resourceText,
-        input.identityLabels,
-        resource.contentType,
-      )
-    ) {
+    const identityAssessment = assessOfficialCardIdentity(
+      resourceText,
+      input.issuer,
+      input.identityLabels,
+    );
+    if (identityAssessment.status !== "match") {
       attempts.push({
         requestedUrl: current.url,
         finalUrl: resource.canonicalUrl,
@@ -473,7 +459,9 @@ export async function collectSupportingBenefitDocuments(
         status: "failed",
         httpStatus: resource.status,
         contentHash: resource.contentHash,
-        errorCode: "identity_mismatch",
+        errorCode: identityAssessment.status === "ambiguous"
+          ? "identity_ambiguous"
+          : "identity_mismatch",
         attemptedAt: resource.retrievedAt,
       });
       continue;

@@ -17,7 +17,10 @@ import {
   selectSubmittedUrlIdentity,
 } from "../_shared/card_discovery.ts";
 import {
+  approvedStoredQueryParameters,
+  createOfficialRobotsCache,
   fetchOfficialIssuerResource,
+  type OfficialRobotsCache,
   requireOfficialFetchBody,
 } from "../_shared/official_issuer_fetch.ts";
 import { enqueueBenefitEnrichmentJob } from "../benefit-enrichment-batch/batch_policy.ts";
@@ -205,6 +208,7 @@ async function processSubmittedUrl(
   rawUrl: string,
   deadlineAt: number,
 ) {
+  const robotsCache = createOfficialRobotsCache();
   const evidence = job.evidence as SafeEvidence;
   const submittedUrl = canonicalOfficialUrl(job.issuer, rawUrl);
   const canonicalSubmittedHash = await sha256(submittedUrl);
@@ -221,6 +225,8 @@ async function processSubmittedUrl(
       url: rawUrl,
       enforceRobots: true,
       deadlineAt,
+      allowedQueryParameters: approvedStoredQueryParameters(rawUrl),
+      robotsCache,
     }),
   );
   const submittedHash = page.sourceIdentityHash ?? exactSubmittedHash;
@@ -375,6 +381,7 @@ async function discoverOfficialUrl(
   issuer: string,
   product: string,
   deadlineAt: number,
+  robotsCache: OfficialRobotsCache,
 ): Promise<string | null> {
   const normalized = normalizedProduct(product, issuer);
   const known = knownOfficialSources[issuer]?.[normalized];
@@ -391,6 +398,10 @@ async function discoverOfficialUrl(
             contentPurpose: "sitemap",
             enforceRobots: true,
             deadlineAt,
+            allowedQueryParameters: approvedStoredQueryParameters(
+              `https://${domain}${sitemapPath}`,
+            ),
+            robotsCache,
           }),
         );
         urls.push(
@@ -567,10 +578,12 @@ async function processDiscoveryJob(
 
   try {
     const canonical = canonicalCardIdentity(job.issuer, product);
+    const robotsCache = createOfficialRobotsCache();
     const officialUrl = await discoverOfficialUrl(
       job.issuer,
       canonical.cardName,
       deadlineAt,
+      robotsCache,
     );
     if (!officialUrl) {
       await putInReview(db, job, canonical, { evidence }, [
@@ -584,6 +597,8 @@ async function processDiscoveryJob(
         url: officialUrl,
         enforceRobots: true,
         deadlineAt,
+        allowedQueryParameters: approvedStoredQueryParameters(officialUrl),
+        robotsCache,
       }),
     );
     if (page.contentType === "application/pdf") {

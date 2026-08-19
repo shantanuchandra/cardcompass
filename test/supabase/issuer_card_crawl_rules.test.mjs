@@ -396,7 +396,10 @@ test('candidate body identity must match the requested product even when the URL
     fetchOfficialIssuerResource: async (input) =>
       input.url === rootSitemap
         ? resource(input.url, sitemap([privilege]), 'application/xml')
-        : resource(privilege, '<title>Regalia Credit Card | Axis Bank</title><h1>Regalia Credit Card</h1>'),
+        : resource(
+          privilege,
+          '<title>Privilege Credit Card | Axis Bank</title><h1>Regalia Gold Credit Card</h1>',
+        ),
     delay: async () => {},
   });
   assert.equal(result.candidates.length, 0);
@@ -446,6 +449,7 @@ test('issuer crawl approves linked functional query names and enforces delay dea
     },
   });
   assert.equal(queryInputs[1].allowedQueryParameters.includes('document'), true);
+  assert.equal(queryInputs[0].robotsCache, queryInputs[1].robotsCache);
 });
 
 test('requires product-specific identity context before classifying generic listings or sitewide documents positively', () => {

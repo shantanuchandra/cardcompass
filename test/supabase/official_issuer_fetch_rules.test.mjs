@@ -1235,6 +1235,91 @@ test('preserves explicitly safe functional query resources and rejects unknown o
   }
 });
 
+test('preserves approved duplicate query order exactly and rejects bounded-query overflow', async () => {
+  const ordered = `${officialUrl}?variant=z&variant=a&document=mitc%2F2026`;
+  let requested = '';
+  await fetchOfficialIssuerResource({
+    issuer,
+    url: ordered,
+    allowedQueryParameters: ['variant', 'document'],
+    fetchImpl: async (url) => {
+      requested = String(url);
+      return response('issuer body');
+    },
+    resolveHost: publicDns,
+  });
+  assert.equal(requested, ordered);
+
+  for (const url of [
+    `${officialUrl}?document=${'a'.repeat(20_000)}`,
+    `${officialUrl}?${Array.from({length: 100}, (_, index) => `variant=${index}`).join('&')}`,
+  ]) {
+    await rejectsWith({
+      issuer,
+      url,
+      allowedQueryParameters: ['document', 'variant'],
+      fetchImpl: async () => assert.fail('oversized query must not fetch'),
+      resolveHost: publicDns,
+    }, 'unapproved_query');
+  }
+
+  await rejectsWith({
+    issuer,
+    url: officialUrl,
+    allowedQueryParameters: ['variant'],
+    fetchImpl: async () => response('', {
+      status: 302,
+      headers: {location: `${officialUrl}/terms?document=mitc`},
+    }),
+    resolveHost: publicDns,
+  }, 'redirect_rejected');
+});
+
+test('shares one bounded robots policy across separate fetches in one crawl only', async () => {
+  const robotsCache = {};
+  let robotsRequests = 0;
+  const fetchImpl = async (url) => {
+    if (String(url).endsWith('/robots.txt')) {
+      robotsRequests += 1;
+      return response('User-agent: CardCompassCatalogBot\nAllow: /', {
+        headers: {'content-type': 'text/plain; charset=utf-8'},
+      });
+    }
+    return response('issuer body');
+  };
+  for (const path of ['/rd/white-reserve', '/rd/white-reserve/terms']) {
+    await fetchOfficialIssuerResource({
+      issuer,
+      url: `https://www.kotak.com${path}`,
+      enforceRobots: true,
+      robotsCache,
+      fetchImpl,
+      resolveHost: publicDns,
+    });
+  }
+  assert.equal(robotsRequests, 1);
+
+  await fetchOfficialIssuerResource({
+    issuer,
+    url: 'https://cards.kotak.com/rd/white-reserve',
+    enforceRobots: true,
+    robotsCache,
+    fetchImpl,
+    resolveHost: publicDns,
+  });
+  assert.equal(robotsRequests, 2, 'a different host reused another host policy');
+
+  await fetchOfficialIssuerResource({
+    issuer,
+    url: officialUrl,
+    enforceRobots: true,
+    robotsCache: {},
+    fetchImpl,
+    resolveHost: publicDns,
+  });
+  assert.equal(robotsRequests, 3, 'robots cache leaked across crawl scopes');
+});
+
 test('does not sleep or start a retry when the intended delay exceeds the absolute deadline', async () => {
   let now = 500;
   let sleeps = 0;

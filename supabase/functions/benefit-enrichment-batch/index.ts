@@ -25,6 +25,7 @@ import {
 } from "../_shared/issuer_card_crawl.ts";
 import {
   approvedStoredQueryParameters,
+  createOfficialRobotsCache,
   fetchOfficialIssuerObservation,
   type OfficialFetchAttempt,
   type OfficialFetchObservation,
@@ -1085,6 +1086,7 @@ async function processJob(
     if (!networkWorkMayStart(invocationStartedAt)) {
       throw new Error("deadline_exceeded");
     }
+    const robotsCache = createOfficialRobotsCache();
     const fetchObservation = await fetchOfficialIssuerObservation({
       issuer: job.issuer,
       url: job.canonical_url,
@@ -1097,6 +1099,7 @@ async function processJob(
       deadlineAt: invocationStartedAt + INVOCATION_DEADLINE_MS,
       enforceRobots: true,
       allowedQueryParameters: approvedStoredQueryParameters(job.canonical_url),
+      robotsCache,
     });
     const primaryAttemptInputs = sourceAttemptInputs(
       job.canonical_url,
@@ -1287,6 +1290,7 @@ async function processJob(
           String(alias.card_id) === job.card_id
         ).map((alias: Record<string, unknown>) => String(alias.alias ?? "")),
       ],
+      robotsCache,
     });
     const { documents } = collected;
     const assessmentTime = new Date().toISOString();
