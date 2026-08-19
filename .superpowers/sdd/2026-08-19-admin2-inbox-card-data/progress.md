@@ -118,3 +118,14 @@ Ruling: Model benefit review inputs from the server's sanitized staging diff and
 Ruling: Represent mixed benefit outcomes as `edit_approve`, while all-approve/keep-existing maps to `approve` and all-reject maps to `reject`; the Edge and Flutter allowlists accept the full four-action decision vocabulary only for the mixed/edit path. Cost if wrong: a future server operation dedicated to mixed decisions would require renaming this transport operation while retaining the same audited decision array.
 
 Ruling: Resolve deep links with the pair `(lane, target_id)` using a server-side exact-ID filter, and retain the prior selected DTO if a conflict refresh no longer finds that target. Cost if wrong: one targeted read is spent per deep-link refresh, and removed records remain visible as explicitly stale context until the operator leaves the target.
+
+## Task 5 review fixes — eligibility and complete editing
+
+- Matched visible recovery actions to the database predicates: identity retry remains available for existing review rows; benefit retry is limited to failed/review-required/quarantined; quarantine is available for queued/failed/review-required/staged, including incomplete or conflicted staging; unquarantine is limited to quarantined.
+- Expanded the sanitized benefit projection and edit form across the accepted safe schema: identity/title/description/category/type, numeric value/rate/cap/limit/threshold, currency/unit, frequency/period, eligibility, partner(s), redemption rules, notes, restrictions/exclusions, effective/start/end dates, and bounded value-config numbers.
+- Edit decisions start from and preserve the complete safe proposal. Typed number/date/list conversion occurs locally, bounded inputs reject malformed values, and the exact complete `edited_benefit` is submitted without raw or unknown fields.
+- Form and decision controllers now reset when either target ID or `updatedAt` changes. Conflict coverage proves a stale edit/choice is replaced by the refreshed server version before another submission.
+
+Ruling: Treat the shared legacy benefit presenter's documented scalar/list/value-config schema as the canonical editable surface, preserving all untouched sanitized fields and writing only allowlisted typed controls back into `edited_benefit`. Cost if wrong: adding a future safe benefit field requires one presenter allowlist and field-spec update before operators can edit it, rather than automatically exposing arbitrary parser output.
+
+Ruling: Use the locked SQL status predicates as the UI action matrix even when multiple recoveries are valid (for example, quarantined benefits expose both retry and unquarantine). Cost if wrong: operators see an extra explicitly confirmed recovery choice that the database already accepts, but no invalid transition is offered.

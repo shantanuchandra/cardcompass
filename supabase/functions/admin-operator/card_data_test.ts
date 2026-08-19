@@ -183,7 +183,10 @@ Deno.test("exact target lookup is lane-scoped and bypasses pagination", async ()
   assertEquals(output.limit, 1);
   assertEquals(output.has_more, false);
   assertEquals(
-    fake.calls.some((call) => call.method === "eq" && call.args[0] === "id" && call.args[1] === IDENTITY_ID),
+    fake.calls.some((call) =>
+      call.method === "eq" && call.args[0] === "id" &&
+      call.args[1] === IDENTITY_ID
+    ),
     true,
   );
   assertEquals(fake.calls.at(-1), { method: "range", args: [0, 0] });
@@ -216,7 +219,24 @@ Deno.test("benefit list reuses the locked presenter and bounds unsafe URLs and a
           source_excerpt: "e".repeat(700),
           raw_body: "excluded",
         })),
-        extracted_data: { raw_body: "excluded", proposals: [] },
+        extracted_data: {
+          raw_body: "excluded",
+          proposals: [{
+            dedupeKey: "lounge",
+            title: "Airport lounge",
+            rate: 2.5,
+            currency: "INR",
+            unit: "visits",
+            cap: 8,
+            frequency: "annual",
+            eligibility: "Primary cardholders",
+            partner: "Lounge A",
+            redemptionRules: "Show the card",
+            notes: "Domestic terminals",
+            effectiveFrom: "2026-09-01",
+            unsafe_payload: "excluded",
+          }],
+        },
       },
     }],
   });
@@ -238,6 +258,34 @@ Deno.test("benefit list reuses the locked presenter and bounds unsafe URLs and a
     "e".repeat(500),
   );
   assertEquals(output.items[0].result_summary.provider_response, undefined);
+  const proposal = output.items[0].staging.extracted_data.proposals[0];
+  assertEquals({
+    title: proposal.title,
+    rate: proposal.rate,
+    currency: proposal.currency,
+    unit: proposal.unit,
+    cap: proposal.cap,
+    frequency: proposal.frequency,
+    eligibility: proposal.eligibility,
+    partner: proposal.partner,
+    redemptionRules: proposal.redemptionRules,
+    notes: proposal.notes,
+    effectiveFrom: proposal.effectiveFrom,
+    unsafe_payload: proposal.unsafe_payload,
+  }, {
+    title: "Airport lounge",
+    rate: 2.5,
+    currency: "INR",
+    unit: "visits",
+    cap: 8,
+    frequency: "annual",
+    eligibility: "Primary cardholders",
+    partner: "Lounge A",
+    redemptionRules: "Show the card",
+    notes: "Domestic terminals",
+    effectiveFrom: "2026-09-01",
+    unsafe_payload: undefined,
+  });
   assertEquals(
     fake.calls.some((call) =>
       call.method === "neq" && call.args[0] === "parser_version"

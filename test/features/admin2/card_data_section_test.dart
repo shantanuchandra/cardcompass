@@ -149,19 +149,14 @@ void main() {
     expect(find.text('Compass Rewards'), findsNothing);
   });
 
-  testWidgets('terminal and active statuses expose only eligible actions', (
-    tester,
-  ) async {
+  testWidgets('resolved identity exposes only supported retry', (tester) async {
     final completed = _item(status: 'approved');
     final source = _FakeSource([
       _page(items: [completed]),
     ]);
     await _pump(tester, source);
     await tester.pumpAndSettle();
-    expect(
-      find.text('No actions are available for this state.'),
-      findsOneWidget,
-    );
+    expect(find.text('Retry'), findsOneWidget);
     expect(find.text('Approve'), findsNothing);
   });
 
@@ -189,7 +184,34 @@ void main() {
     await tester.drag(find.byType(ListView).last, const Offset(0, -500));
     await tester.pumpAndSettle();
     expect(find.text('Unquarantine'), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
+    expect(find.text('Quarantine'), findsNothing);
+  });
+
+  testWidgets('queued and incomplete staged benefits can be quarantined only', (
+    tester,
+  ) async {
+    final queued = _item(lane: CardReviewLane.benefit, status: 'queued');
+    final staged = _item(
+      id: '33333333-3333-4333-8333-333333333333',
+      lane: CardReviewLane.benefit,
+      status: 'staged',
+    );
+    final source = _FakeSource([
+      _page(lane: CardReviewLane.benefit, items: [queued, staged]),
+    ]);
+    await _pump(tester, source, initialLane: CardReviewLane.benefit);
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(ListView).last, const Offset(0, -500));
+    await tester.pumpAndSettle();
+    expect(find.text('Quarantine'), findsOneWidget);
     expect(find.text('Retry'), findsNothing);
+    await tester.tap(find.widgetWithText(ListTile, 'Compass Rewards').last);
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(ListView).last, const Offset(0, -500));
+    await tester.pumpAndSettle();
+    expect(find.text('Quarantine'), findsOneWidget);
+    expect(find.text('Submit benefit decisions'), findsNothing);
   });
 
   testWidgets('identity edit approval submits all visible edited fields', (
@@ -259,17 +281,55 @@ void main() {
     ]);
     await _pump(tester, source, initialLane: CardReviewLane.benefit);
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Submit benefit decisions'));
+    await tester.tap(find.byType(DropdownButton<String>).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Edit proposal').last);
+    await tester.pumpAndSettle();
+    Future<void> edit(String key, String value) =>
+        tester.enterText(find.byKey(Key('benefit-edit-lounge-$key')), value);
+    await edit('title', 'Airport lounge access');
+    await edit('rate', '2.5');
+    await edit('currency', 'INR');
+    await edit('unit', 'visits');
+    await edit('cap', '8');
+    await edit('frequency', 'annual');
+    await edit('eligibility', 'Primary cardholders');
+    await edit('partners', 'Lounge A, Lounge B');
+    await edit('redemptionRules', 'Show the eligible card');
+    await edit('effectiveFrom', '2026-09-01');
+    await tester.scrollUntilVisible(
+      find.text('Submit benefit decisions'),
+      1000,
+      scrollable: find
+          .descendant(
+            of: find.byType(ListView).last,
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
     await tester.tap(find.text('Submit benefit decisions'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Confirm approval'));
+    await tester.tap(find.text('Confirm edits'));
     await tester.pumpAndSettle();
     final decisions = source.actions.single.payload['decisions'] as List;
+    expect(source.actions.single.operation, CardReviewOperation.editApprove);
     expect(decisions, hasLength(2));
     expect(
       decisions.every((value) => (value as Map).containsKey('dedupe_key')),
       isTrue,
     );
+    final edited = (decisions.first as Map)['edited_benefit'] as Map;
+    expect(edited['title'], 'Airport lounge access');
+    expect(edited['rate'], 2.5);
+    expect(edited['currency'], 'INR');
+    expect(edited['unit'], 'visits');
+    expect(edited['cap'], 8);
+    expect(edited['frequency'], 'annual');
+    expect(edited['eligibility'], 'Primary cardholders');
+    expect(edited['partners'], ['Lounge A', 'Lounge B']);
+    expect(edited['redemptionRules'], 'Show the eligible card');
+    expect(edited['effectiveFrom'], '2026-09-01');
+    expect(edited['category'], 'travel');
   });
 
   testWidgets('safe evidence URL is actionable and shows retrieval freshness', (
@@ -386,6 +446,85 @@ void main() {
     expect(find.text(target.id), findsOneWidget);
     expect(source.queries.last.targetId, target.id);
   });
+
+  testWidgets(
+    'same target conflict resets decisions and controllers to new version',
+    (tester) async {
+      CardReviewItem version(DateTime updatedAt, String title) =>
+          CardReviewItem(
+            id: '11111111-1111-4111-8111-111111111111',
+            lane: CardReviewLane.benefit,
+            status: 'staged',
+            updatedAt: updatedAt,
+            evidence: const [],
+            warningCodes: const [],
+            proposedFields: const {},
+            stagingId: '22222222-2222-4222-8222-222222222222',
+            benefitProposals: [
+              BenefitReviewProposal(
+                key: 'lounge',
+                kind: BenefitProposalKind.addition,
+                current: const {},
+                proposed: {
+                  'dedupeKey': 'lounge',
+                  'title': title,
+                  'category': 'travel',
+                },
+              ),
+            ],
+          );
+      final source = _FakeSource([
+        _page(
+          lane: CardReviewLane.benefit,
+          items: [version(DateTime.utc(2026, 8, 19, 9), 'Old title')],
+        ),
+        _page(
+          lane: CardReviewLane.benefit,
+          items: [version(DateTime.utc(2026, 8, 19, 10), 'Server title')],
+        ),
+      ])..actionError = AdminStateConflict();
+      await _pump(tester, source, initialLane: CardReviewLane.benefit);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(DropdownButton<String>).first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Edit proposal').last);
+      await tester.pumpAndSettle();
+      final title = find.byKey(const Key('benefit-edit-lounge-title'));
+      await tester.enterText(title, 'Stale local title');
+      await tester.scrollUntilVisible(
+        find.text('Submit benefit decisions'),
+        1000,
+        scrollable: find
+            .descendant(
+              of: find.byType(ListView).last,
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      await tester.tap(find.text('Submit benefit decisions'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Confirm edits'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('This review changed. Check the latest state.'),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<DropdownButton<String>>(
+              find.byType(DropdownButton<String>).first,
+            )
+            .value,
+        'approve',
+      );
+      await tester.tap(find.byType(DropdownButton<String>).first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Edit proposal').last);
+      await tester.pumpAndSettle();
+      expect(tester.widget<TextField>(title).controller!.text, 'Server title');
+    },
+  );
 
   testWidgets('failed refresh retains stale queue and offers retry', (
     tester,

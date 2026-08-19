@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -545,7 +548,7 @@ class _ReviewDetail extends StatefulWidget {
 class _ReviewDetailState extends State<_ReviewDetail> {
   final _identityControllers = <String, TextEditingController>{};
   final _decisions = <String, String>{};
-  final _benefitTitleControllers = <String, TextEditingController>{};
+  final _benefitControllers = <String, Map<String, TextEditingController>>{};
   final _benefitReasonControllers = <String, TextEditingController>{};
 
   @override
@@ -557,7 +560,10 @@ class _ReviewDetailState extends State<_ReviewDetail> {
   @override
   void didUpdateWidget(covariant _ReviewDetail oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.item?.id != widget.item?.id) _resetFor(widget.item);
+    if (oldWidget.item?.id != widget.item?.id ||
+        oldWidget.item?.updatedAt != widget.item?.updatedAt) {
+      _resetFor(widget.item);
+    }
   }
 
   void _resetFor(CardReviewItem? item) {
@@ -566,12 +572,12 @@ class _ReviewDetailState extends State<_ReviewDetail> {
     }
     _identityControllers.clear();
     for (final controller in [
-      ..._benefitTitleControllers.values,
+      ..._benefitControllers.values.expand((value) => value.values),
       ..._benefitReasonControllers.values,
     ]) {
       controller.dispose();
     }
-    _benefitTitleControllers.clear();
+    _benefitControllers.clear();
     _benefitReasonControllers.clear();
     _decisions.clear();
     if (item == null) return;
@@ -587,9 +593,12 @@ class _ReviewDetailState extends State<_ReviewDetail> {
         _ when !proposal.canApprove => 'reject',
         _ => 'approve',
       };
-      _benefitTitleControllers[proposal.key] = TextEditingController(
-        text: proposal.proposed['title']?.toString() ?? proposal.title,
-      );
+      _benefitControllers[proposal.key] = {
+        for (final spec in _benefitFieldSpecs)
+          spec.key: TextEditingController(
+            text: _editableValue(proposal.proposed, spec),
+          ),
+      };
       _benefitReasonControllers[proposal.key] = TextEditingController();
     }
   }
@@ -600,7 +609,7 @@ class _ReviewDetailState extends State<_ReviewDetail> {
       controller.dispose();
     }
     for (final controller in [
-      ..._benefitTitleControllers.values,
+      ..._benefitControllers.values.expand((value) => value.values),
       ..._benefitReasonControllers.values,
     ]) {
       controller.dispose();
@@ -623,10 +632,7 @@ class _ReviewDetailState extends State<_ReviewDetail> {
         final action = _decisions[proposal.key]!;
         final decision = proposal.decision(
           action,
-          edited: {
-            ...proposal.proposed,
-            'title': _benefitTitleControllers[proposal.key]!.text.trim(),
-          },
+          edited: _editedBenefit(proposal),
         );
         if (action == 'reject') {
           final reason = _benefitReasonControllers[proposal.key]!.text.trim();
@@ -635,8 +641,45 @@ class _ReviewDetailState extends State<_ReviewDetail> {
         return decision;
       }).toList();
 
+  Map<String, dynamic> _editedBenefit(BenefitReviewProposal proposal) {
+    final edited = <String, dynamic>{...proposal.proposed};
+    final controllers = _benefitControllers[proposal.key]!;
+    for (final spec in _benefitFieldSpecs) {
+      final text = controllers[spec.key]!.text.trim();
+      final original = _readPath(proposal.proposed, spec.key);
+      if (text.isEmpty && original == null) continue;
+      if (original != null && text == _editableValue(proposal.proposed, spec)) {
+        continue;
+      }
+      final Object value = switch (spec.kind) {
+        _BenefitFieldKind.number =>
+          num.tryParse(text) ??
+              (throw FormatException('${spec.label} must be a number.')),
+        _BenefitFieldKind.date => _validDate(text, spec.label),
+        _BenefitFieldKind.list =>
+          text
+              .split(',')
+              .map((value) => value.trim())
+              .where((value) => value.isNotEmpty)
+              .take(50)
+              .toList(),
+        _BenefitFieldKind.text => text,
+      };
+      _writePath(edited, spec.key, value);
+    }
+    return edited;
+  }
+
   Future<void> _submitBenefit(CardReviewItem item) async {
-    final decisions = _benefitDecisions(item);
+    final List<Map<String, dynamic>> decisions;
+    try {
+      decisions = _benefitDecisions(item);
+    } on FormatException catch (error) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message.toString())));
+      return;
+    }
     if (decisions.isEmpty) return;
     final actions = decisions.map((value) => value['action']).toSet();
     final operation = actions.difference({'approve', 'keep_existing'}).isEmpty
@@ -821,11 +864,43 @@ class _ReviewDetailState extends State<_ReviewDetail> {
                   ],
                 ),
                 if (_decisions[proposal.key] == 'edit')
-                  TextField(
-                    controller: _benefitTitleControllers[proposal.key],
-                    decoration: const InputDecoration(
-                      labelText: 'Edited benefit title',
-                    ),
+                  Wrap(
+                    spacing: BrandSpacing.sm,
+                    runSpacing: BrandSpacing.sm,
+                    children: [
+                      for (final spec in _benefitFieldSpecs)
+                        SizedBox(
+                          width: 280,
+                          child: TextField(
+                            key: Key(
+                              'benefit-edit-${proposal.key}-${spec.key}',
+                            ),
+                            controller:
+                                _benefitControllers[proposal.key]![spec.key],
+                            enabled: !widget.submitting,
+                            keyboardType: spec.kind == _BenefitFieldKind.number
+                                ? const TextInputType.numberWithOptions(
+                                    decimal: true,
+                                  )
+                                : spec.kind == _BenefitFieldKind.date
+                                ? TextInputType.datetime
+                                : TextInputType.text,
+                            inputFormatters: [
+                              LengthLimitingTextInputFormatter(
+                                spec.kind == _BenefitFieldKind.list
+                                    ? 4000
+                                    : 2000,
+                              ),
+                            ],
+                            decoration: InputDecoration(
+                              labelText: spec.label,
+                              helperText: spec.kind == _BenefitFieldKind.list
+                                  ? 'Comma-separated values'
+                                  : null,
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                 if (_decisions[proposal.key] == 'reject')
                   TextField(
@@ -910,6 +985,9 @@ class _ReviewDetailState extends State<_ReviewDetail> {
       );
       add('Merge', CardReviewOperation.merge);
       add('Reject', CardReviewOperation.reject);
+      add('Retry', CardReviewOperation.retry);
+    } else if (item.lane == CardReviewLane.identity) {
+      add('Retry', CardReviewOperation.retry);
     } else if (item.lane == CardReviewLane.benefit) {
       if ({'staged', 'review_required'}.contains(item.status) &&
           item.stagingId != null &&
@@ -924,10 +1002,19 @@ class _ReviewDetailState extends State<_ReviewDetail> {
             ),
           ),
         );
-      } else if ({'failed', 'review_required'}.contains(item.status)) {
+      }
+      if ({'failed', 'review_required', 'quarantined'}.contains(item.status)) {
         add('Retry', CardReviewOperation.retry);
+      }
+      if ({
+        'queued',
+        'failed',
+        'review_required',
+        'staged',
+      }.contains(item.status)) {
         add('Quarantine', CardReviewOperation.quarantine);
-      } else if (item.status == 'quarantined') {
+      }
+      if (item.status == 'quarantined') {
         add('Unquarantine', CardReviewOperation.unquarantine);
       }
     }
@@ -1100,6 +1187,142 @@ const _months = [
   'Nov',
   'Dec',
 ];
+
+enum _BenefitFieldKind { text, number, date, list }
+
+final class _BenefitFieldSpec {
+  const _BenefitFieldSpec(
+    this.key,
+    this.label, [
+    this.kind = _BenefitFieldKind.text,
+  ]);
+  final String key;
+  final String label;
+  final _BenefitFieldKind kind;
+}
+
+const _benefitFieldSpecs = <_BenefitFieldSpec>[
+  _BenefitFieldSpec('title', 'Title'),
+  _BenefitFieldSpec('name', 'Name'),
+  _BenefitFieldSpec('description', 'Description'),
+  _BenefitFieldSpec('category', 'Category'),
+  _BenefitFieldSpec('benefit_category', 'Benefit category'),
+  _BenefitFieldSpec('valueType', 'Value type'),
+  _BenefitFieldSpec('benefit_type', 'Benefit type'),
+  _BenefitFieldSpec('value', 'Value'),
+  _BenefitFieldSpec('rate', 'Rate', _BenefitFieldKind.number),
+  _BenefitFieldSpec('currency', 'Currency'),
+  _BenefitFieldSpec('unit', 'Unit'),
+  _BenefitFieldSpec('cap', 'Cap', _BenefitFieldKind.number),
+  _BenefitFieldSpec('limit', 'Limit', _BenefitFieldKind.number),
+  _BenefitFieldSpec('threshold', 'Threshold', _BenefitFieldKind.number),
+  _BenefitFieldSpec('frequency', 'Frequency'),
+  _BenefitFieldSpec('period', 'Period'),
+  _BenefitFieldSpec('eligibility', 'Eligibility'),
+  _BenefitFieldSpec('partner', 'Partner'),
+  _BenefitFieldSpec('partners', 'Partners', _BenefitFieldKind.list),
+  _BenefitFieldSpec('redemptionRules', 'Redemption rules'),
+  _BenefitFieldSpec('redemption_rules', 'Redemption rules (source field)'),
+  _BenefitFieldSpec('notes', 'Notes'),
+  _BenefitFieldSpec('restrictions', 'Restrictions', _BenefitFieldKind.list),
+  _BenefitFieldSpec('exclusions', 'Exclusions', _BenefitFieldKind.list),
+  _BenefitFieldSpec('effectiveFrom', 'Effective from', _BenefitFieldKind.date),
+  _BenefitFieldSpec('effectiveTo', 'Effective to', _BenefitFieldKind.date),
+  _BenefitFieldSpec('startDate', 'Start date', _BenefitFieldKind.date),
+  _BenefitFieldSpec(
+    'start_date',
+    'Start date (source field)',
+    _BenefitFieldKind.date,
+  ),
+  _BenefitFieldSpec('endDate', 'End date', _BenefitFieldKind.date),
+  _BenefitFieldSpec(
+    'end_date',
+    'End date (source field)',
+    _BenefitFieldKind.date,
+  ),
+  _BenefitFieldSpec('valueConfig.unit', 'Value unit'),
+  _BenefitFieldSpec('valueConfig.currency_unit', 'Value currency'),
+  _BenefitFieldSpec(
+    'valueConfig.discount_percent',
+    'Discount percent',
+    _BenefitFieldKind.number,
+  ),
+  _BenefitFieldSpec(
+    'valueConfig.discount_amount',
+    'Discount amount',
+    _BenefitFieldKind.number,
+  ),
+  _BenefitFieldSpec(
+    'valueConfig.monthly_cap',
+    'Monthly cap',
+    _BenefitFieldKind.number,
+  ),
+  _BenefitFieldSpec(
+    'valueConfig.annual_cap',
+    'Annual cap',
+    _BenefitFieldKind.number,
+  ),
+  _BenefitFieldSpec(
+    'valueConfig.threshold_amount',
+    'Threshold amount',
+    _BenefitFieldKind.number,
+  ),
+  _BenefitFieldSpec(
+    'valueConfig.reward_value',
+    'Reward value',
+    _BenefitFieldKind.number,
+  ),
+  _BenefitFieldSpec(
+    'valueConfig.multiplier',
+    'Multiplier',
+    _BenefitFieldKind.number,
+  ),
+  _BenefitFieldSpec(
+    'valueConfig.base_rate',
+    'Base rate',
+    _BenefitFieldKind.number,
+  ),
+];
+
+Object? _readPath(Map<String, dynamic> source, String path) {
+  final pieces = path.split('.');
+  Object? value = source;
+  for (final piece in pieces) {
+    if (value is! Map) return null;
+    value = value[piece];
+  }
+  return value;
+}
+
+String _editableValue(Map<String, dynamic> source, _BenefitFieldSpec spec) {
+  final value = _readPath(source, spec.key);
+  if (value == null) return '';
+  if (value is List) return value.join(', ');
+  if (value is Map) return jsonEncode(value);
+  return value.toString();
+}
+
+void _writePath(Map<String, dynamic> target, String path, Object value) {
+  final pieces = path.split('.');
+  if (pieces.length == 1) {
+    target[path] = value;
+    return;
+  }
+  final parent = Map<String, dynamic>.from(
+    target[pieces.first] is Map
+        ? target[pieces.first] as Map
+        : const <String, dynamic>{},
+  );
+  parent[pieces.last] = value;
+  target[pieces.first] = parent;
+}
+
+String _validDate(String value, String label) {
+  if (value.length > 100 || DateTime.tryParse(value) == null) {
+    throw FormatException('$label must be a valid date.');
+  }
+  return value;
+}
 
 extension<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;
