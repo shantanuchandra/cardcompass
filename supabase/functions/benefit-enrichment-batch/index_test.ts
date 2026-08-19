@@ -1,9 +1,12 @@
 import {
   currentBenefitProposal,
+  handleBenefitEnrichmentBatch,
   initializePilotJobs,
   loadCatalogIdentity,
   readPilotStatus,
   requireExactCatalogIdentity,
+  runtimeControlPausesRun,
+  scheduledPipelinePaused,
   seedScheduledQueueIfAllowed,
 } from "./index.ts";
 import {
@@ -14,6 +17,109 @@ import {
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
+
+function runtimeControlDb(
+  row: unknown,
+  error: unknown = null,
+  calls: string[] = [],
+) {
+  return {
+    from(table: string) {
+      calls.push(table);
+      return {
+        select() {
+          return this;
+        },
+        eq() {
+          return this;
+        },
+        async single() {
+          return { data: row, error };
+        },
+      };
+    },
+  };
+}
+
+function scheduledRequest(): Request {
+  return new Request("http://localhost/benefit-enrichment-batch", {
+    method: "POST",
+    headers: {
+      authorization: "Bearer test-service-key",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ runMode: "scheduled" }),
+  });
+}
+
+Deno.test("scheduled runs return paused before inventory or job access", async () => {
+  const calls: string[] = [];
+  const response = await handleBenefitEnrichmentBatch(scheduledRequest(), {
+    serviceKey: "test-service-key",
+    cronSecret: "test-cron-secret",
+    createDb: () => runtimeControlDb({ is_paused: true }, null, calls),
+    runId: () => "test-run",
+  });
+  assert(response.status === 200, "paused run was not acknowledged");
+  assert(
+    JSON.stringify(await response.json()) === JSON.stringify({
+      status: "paused",
+      control: "benefit_enrichment_scheduled",
+    }),
+    "paused response changed",
+  );
+  assert(
+    calls.join(",") === "admin_runtime_controls",
+    "scheduled work touched inventory or jobs before the pause check",
+  );
+});
+
+Deno.test("scheduled runtime-control failures fail closed with a stable 503", async () => {
+  for (
+    const [label, row, error] of [
+      ["missing", null, null],
+      ["malformed", { is_paused: "yes" }, null],
+      ["database error", null, { message: "sensitive database detail" }],
+    ] as const
+  ) {
+    const response = await handleBenefitEnrichmentBatch(scheduledRequest(), {
+      serviceKey: "test-service-key",
+      cronSecret: "test-cron-secret",
+      createDb: () => runtimeControlDb(row, error),
+      runId: () => "test-run",
+    });
+    assert(response.status === 503, `${label} did not fail closed`);
+    assert(
+      JSON.stringify(await response.json()) ===
+        JSON.stringify({ error: "runtime_control_unavailable" }),
+      `${label} leaked or changed its safe response`,
+    );
+  }
+});
+
+Deno.test("pilot and manual modes do not read the scheduled-only control", async () => {
+  for (const mode of ["pilot", "manual"] as const) {
+    let reads = 0;
+    const paused = await runtimeControlPausesRun({
+      from() {
+        reads += 1;
+        throw new Error("scheduled control was read");
+      },
+    }, mode);
+    assert(paused === false, `${mode} was paused by the scheduled control`);
+    assert(reads === 0, `${mode} read the scheduled control`);
+  }
+});
+
+Deno.test("scheduledPipelinePaused accepts only an exact boolean row", async () => {
+  assert(
+    await scheduledPipelinePaused(
+      runtimeControlDb({ is_paused: false }),
+      "benefit_enrichment_scheduled",
+    ) === false,
+    "false control state changed",
+  );
+});
 
 Deno.test("pilot API refuses catalog-v1 before selecting or writing jobs", async () => {
   let rpcCalls = 0;

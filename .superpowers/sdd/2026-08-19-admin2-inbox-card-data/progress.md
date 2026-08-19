@@ -191,3 +191,8 @@ Ruling: Render decision/recovery context only from bounded, allowlisted DTO fiel
 Ruling: Supersede the narrower final-review value-config schema with the exact production union derived from `BenefitProposal`, its generators, `currentBenefitProposal`, and the locked approval RPC; preserve production exclusions as string arrays and restrictions as a value-config string array. Cost if wrong: a newly introduced generator key is rejected until the production schema and both Admin2 validators are updated together.
 
 Ruling: Begin edited benefits from the already sanitized canonical proposal and overwrite only typed controls, retaining every untouched allowlisted production field. Cost if wrong: a future field that is safe to persist but not editable remains read-only and round-trips unchanged instead of being silently dropped.
+
+## Final adjudication
+
+- Whole-plan review findings were fixed by the single final-review owner in `0c6dd93`; the scoped re-review identified one remaining production-schema loss, resolved in `e493e51` by deriving the canonical union from real enrichment generators and preserving untouched fields.
+- Controller verification passed 14 focused Edge tests and 41 focused Flutter repository tests, including real extracted BOGO, cashback, reward-points, and milestone round trips. No unresolved whole-plan finding remains; the plan is approved to continue.

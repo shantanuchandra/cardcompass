@@ -40,6 +40,13 @@ declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 
 type UntypedSupabaseClient = any;
 
+type BatchDependencies = Readonly<{
+  serviceKey?: string;
+  cronSecret?: string;
+  createDb?: (serviceKey: string) => UntypedSupabaseClient;
+  runId?: () => string;
+}>;
+
 type EnrichmentJob = {
   id: string;
   card_id: string;
@@ -96,6 +103,28 @@ function runModeFromRequest(value: unknown): RunMode | null {
   return value === "pilot" || value === "scheduled" || value === "manual"
     ? value
     : null;
+}
+
+export async function scheduledPipelinePaused(
+  db: UntypedSupabaseClient,
+  controlKey: "benefit_enrichment_scheduled",
+): Promise<boolean> {
+  const { data, error } = await db.from("admin_runtime_controls")
+    .select("is_paused")
+    .eq("control_key", controlKey)
+    .single();
+  if (error || typeof data?.is_paused !== "boolean") {
+    throw new Error("runtime_control_unavailable");
+  }
+  return data.is_paused;
+}
+
+export async function runtimeControlPausesRun(
+  db: UntypedSupabaseClient,
+  runMode: RunMode,
+): Promise<boolean> {
+  if (runMode !== "scheduled") return false;
+  return await scheduledPipelinePaused(db, "benefit_enrichment_scheduled");
 }
 
 function pilotJob(row: Record<string, any>): PilotJob {
@@ -610,12 +639,15 @@ async function loadDiscoverySeed(
 
 export async function handleBenefitEnrichmentBatch(
   request: Request,
+  dependencies: BatchDependencies = {},
 ): Promise<Response> {
   if (request.method !== "POST") {
     return json({ error: "method_not_allowed" }, 405);
   }
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-  const cronSecret = Deno.env.get("BENEFIT_ENRICHMENT_CRON_SECRET") ?? "";
+  const serviceKey = dependencies.serviceKey ??
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  const cronSecret = dependencies.cronSecret ??
+    Deno.env.get("BENEFIT_ENRICHMENT_CRON_SECRET") ?? "";
   if (!await authorized(request, serviceKey, cronSecret)) {
     return json({ error: "authentication_required" }, 401);
   }
@@ -629,8 +661,9 @@ export async function handleBenefitEnrichmentBatch(
   let runMode = runModeFromRequest(body.runMode ?? body.run_mode);
   if (!runMode) return json({ error: "invalid_run_mode" }, 400);
 
-  const db = createClient(Deno.env.get("SUPABASE_URL") ?? "", serviceKey);
-  const runId = crypto.randomUUID();
+  const db = dependencies.createDb?.(serviceKey) ??
+    createClient(Deno.env.get("SUPABASE_URL") ?? "", serviceKey);
+  const runId = dependencies.runId?.() ?? crypto.randomUUID();
   try {
     if (body.action === "initialize_pilot") {
       if (!Array.isArray(body.candidates)) {
@@ -648,6 +681,22 @@ export async function handleBenefitEnrichmentBatch(
         requestedParserVersion,
       );
       runMode = "pilot";
+    }
+    try {
+      if (await runtimeControlPausesRun(db, runMode)) {
+        return json({
+          status: "paused",
+          control: "benefit_enrichment_scheduled",
+        });
+      }
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === "runtime_control_unavailable"
+      ) {
+        return json({ error: "runtime_control_unavailable" }, 503);
+      }
+      throw error;
     }
     const pilot = await readPilotStatus(db);
     if (runMode === "scheduled" && !pilot.scheduledClaimAllowed) {
@@ -746,5 +795,5 @@ export async function handleBenefitEnrichmentBatch(
 }
 
 if (import.meta.main) {
-  serve(handleBenefitEnrichmentBatch);
+  serve((request) => handleBenefitEnrichmentBatch(request));
 }
