@@ -37,10 +37,32 @@ The live Supabase stack was unavailable because the local Docker daemon was not 
 - [ ] Record the production app deployment identifier that currently serves `/app/`; this is the rollback target.
 - [ ] Confirm a current database backup or point-in-time recovery window without copying data into this record.
 - [ ] Apply additive migrations in this exact order: `20260819090000_admin_operator_foundation.sql`, `20260819090100_admin_card_data_operations.sql`, `20260819090200_admin_runtime_controls.sql`, `20260819090300_admin_customer_ops.sql`.
-- [ ] Deploy `admin-operator`, `admin-catalog-entry`, and the changed shared module imported by them from the same commit.
-- [ ] Build the web app with the deployment environment's real public Dart defines and deploy it only after both Edge Functions are healthy.
+- [ ] Record both the current and immediately previous deployment version for every Edge Function in the coordinated deployment table below.
+- [ ] Deploy all six changed Edge Functions from the same candidate commit in the listed order. Shared modules are not independently deployable; confirm each importing function bundles the candidate versions.
+- [ ] Build the web app with the deployment environment's real public Dart defines and deploy it only after all six Edge Functions are healthy.
 - [ ] Keep the legacy endpoint deployed. Do not remove old environment variables or additive tables during this cutover.
 - [ ] Use two test accounts: the founder operator and a known active non-admin. Record only opaque test labels, never identities or credentials.
+
+### Coordinated Edge deployment
+
+Migrations must finish before step 1. For every row, record the candidate commit, new function deployment version, previous function deployment version, deployer, time, and health result. A missing-auth request is a health probe only; it must not perform application work or expose configuration.
+
+| Order | Function | Candidate version | Previous version | Candidate bundle dependency | Immediate health check |
+|---:|---|---|---|---|---|
+| 1 | `benefit-enrichment-batch` | Record: ______ | Record: ______ | Changed `batch_policy.ts`; migration `20260819090200` runtime control | Missing/invalid scheduler authorization returns the stable 401. Then use smoke 8 to prove a scheduled invocation returns `paused` before inventory access and resumes afterward. |
+| 2 | `card-discovery` | Record: ______ | Record: ______ | `_shared/active_profile.ts`, `_shared/card_discovery.ts`, and changed batch policy import | Missing/invalid user authorization returns 401. Then confirm an active user reaches validation and an inactive user gets `account_inactive` before service-role work. |
+| 3 | `gemini-proxy` | Record: ______ | Record: ______ | `_shared/active_profile.ts` | Missing/invalid user authorization returns 401. Then confirm an inactive user gets `account_inactive` and forced upstream failure returns only `request_failed`. |
+| 4 | `request-card-catalog-entry` | Record: ______ | Record: ______ | `_shared/active_profile.ts` | Missing/invalid user authorization returns 401. Then confirm an inactive user gets `account_inactive` before catalog service-role work. |
+| 5 | `admin-catalog-entry` | Record: ______ | Record: ______ | `_shared/admin_access.ts` | Missing bearer credentials return the legacy endpoint's stable unauthorized response. Then run smoke 12 to prove database-backed authorization. |
+| 6 | `admin-operator` | Record: ______ | Record: ______ | `_shared/admin_access.ts` plus all Admin2 handler modules; failure vocabularies also align with `_shared/card_discovery.ts` and batch policy | Missing bearer credentials return stable 401. Then run smokes 1–10 and confirm all four operator sections load. |
+
+Shared files such as `_shared/admin_access.ts`, `_shared/active_profile.ts`, and `_shared/card_discovery.ts` ship inside importing function bundles. Record their source commit once, but record a separate deployed and previous version for every function above.
+
+Do not expose the new operator UI until all six functions pass health checks. A partial deployment creates three material hazards:
+
+- An old `benefit-enrichment-batch` ignores the new scheduled pause control, so the UI can report paused while scheduled work continues.
+- Old `card-discovery`, `gemini-proxy`, or `request-card-catalog-entry` bundles do not apply the active-profile gate, so an inactive user's unchanged token can still reach service-role work.
+- Deploying only one Admin endpoint creates authorization mismatch: one endpoint trusts fresh database flags while the other may still use legacy email authorization, producing inconsistent founder/non-admin access.
 
 ## Production smoke
 
@@ -61,6 +83,18 @@ For each row, record the deployed app ID, function versions, tester, time, and P
 | 11 | Visit `/app/admin/catalog-review` directly. Expect an exact redirect to `/app/admin2?section=card-data`; malformed or non-allowlisted Admin2 section values must open Action Inbox. | Not Run — needs deployed router | Router tests pass. |
 | 12 | Call the still-deployed `admin-catalog-entry` endpoint as an active database admin whose email is not allowlisted; expect authorization success. Call as a verified founder-email identity with `is_admin = false`; expect denial. | Not Run — needs deployed legacy endpoint | Shared legacy authorization suite passes. |
 | 13 | In one browser/provider lifetime, switch admin A → signed out → non-admin B, then B → admin A. Expect the entry and workspace to disappear on sign-out/non-admin frames, no response reused across identities, and fresh access checks on each direct mount. | Not Run — needs deployed Auth/browser stack | Account-partition regression tests pass. |
+
+### Not Run smoke-to-deployment mapping
+
+| Smoke items | Required deployed components |
+|---|---|
+| 1–5, 7, 9–10, 13 | `admin-operator` and its bundled shared/handler modules; deployed web app for UI checks |
+| 3, 10, 12 | Both `admin-operator` and `admin-catalog-entry` from one commit to detect authorization mismatch |
+| 6 | `admin-operator`, `card-discovery`, `gemini-proxy`, and `request-card-catalog-entry`, plus migration `20260819090300`, to prove inactive profiles cannot reach any changed service-role gateway |
+| 8 | `admin-operator`, `benefit-enrichment-batch`, and migration `20260819090200`, to prove scheduled pause is enforced by the worker rather than only displayed by the console |
+| 11 | Deployed web app; retain deployed `admin-catalog-entry` for endpoint compatibility after the UI redirect |
+
+All mapped checks remain Not Run until every listed component is deployed from the candidate and its version is recorded. Passing a newer function against an older dependent bundle is not equivalent evidence.
 
 ### Card Data parity matrix (13 exact actions)
 
@@ -86,10 +120,10 @@ Rollback is application-only because all four Admin2 migrations are additive and
 
 1. Stop operator activity and record the failing deployment/function identifiers without copying request data.
 2. Restore the previous web application deployment recorded in the pre-deployment gate.
-3. Restore the previous `admin-operator` and `admin-catalog-entry` function versions together if the incident involves either endpoint or their shared authorization module.
+3. Restore the recorded matching previous versions of all six functions as one rollback set: `benefit-enrichment-batch`, `card-discovery`, `gemini-proxy`, `request-card-catalog-entry`, `admin-catalog-entry`, and `admin-operator`. Never mix candidate shared-module bundles with unmatched previous function versions.
 4. Keep `20260819090000` through `20260819090300` applied. Do **not** drop or reverse their tables, columns, functions, policies, audit rows, request receipts, runtime controls, containment state, or retry state.
 5. Keep the legacy endpoint available. If safe operation cannot be confirmed, pause operator mutations at the application/function layer; do not delete evidence.
-6. Re-run non-admin denial, founder authorization, unchanged-token containment, sanitized-response, and legacy-endpoint checks against the restored deployment.
+6. Re-run scheduler pause behavior, non-admin denial, founder authorization, unchanged-token containment across all three user service-role gateways, sanitized responses, and legacy-endpoint checks against the restored deployment.
 7. Record rollback result, remaining risk, and owner. Escalate any database remediation as a new reviewed forward migration.
 
 ## Release candidate inventory
@@ -98,10 +132,11 @@ Rollback is application-only because all four Admin2 migrations are additive and
 |---|---|
 | Code tested | `560c6ef14d2653ba48efdb6860faeb8c0deda029` plus this evidence-only checklist commit |
 | Migration order | `20260819090000` → `20260819090100` → `20260819090200` → `20260819090300` |
-| Edge deployment required | `admin-operator`; `admin-catalog-entry`; shared `_shared/admin_access.ts` ships with both bundles |
+| Edge deployment required | In order: `benefit-enrichment-batch`; `card-discovery`; `gemini-proxy`; `request-card-catalog-entry`; `admin-catalog-entry`; `admin-operator` |
+| Shared bundle changes | `_shared/active_profile.ts`, `_shared/admin_access.ts`, and `_shared/card_discovery.ts` are bundled by their importing functions; changed batch policy is bundled by batch/discovery and referenced by Admin2 failure vocabulary |
 | Flutter target | Web release at base href `/app/` |
 | Build evidence | Release compilation passed with placeholder public configuration; ephemeral artifact removed. Rebuild with real deployment public defines before deploy. |
-| Rollback target | Previous web deployment plus previous versions of both Admin Edge Functions; preserve additive database objects and evidence |
+| Rollback target | Previous web deployment plus the recorded matching previous versions of all six Edge Functions; preserve additive database objects and evidence |
 
 ## Deployment boundary
 
