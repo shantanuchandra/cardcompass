@@ -40,6 +40,13 @@ test('locked staging card and exact proposal set govern canonical publication', 
   const approval = functionBody(sql, 'approve_card_benefit_enrichment');
   const proposals = functionBody(sql, 'validate_locked_benefit_proposals');
   assert.match(approval, /FROM public\.card_benefits_staging[\s\S]*FOR UPDATE/i);
+  assert.match(approval, /hashtextextended\(\s*'card_benefit_enrichment_review:'\s*\|\|\s*staging_card_id::text,\s*0\s*\)/i);
+  const cardLookup = approval.indexOf('INTO staging_card_id');
+  const advisoryLock = approval.indexOf('pg_advisory_xact_lock');
+  const stagingRowLock = approval.indexOf('INTO staging_row');
+  assert.ok(cardLookup >= 0 && cardLookup < advisoryLock && advisoryLock < stagingRowLock,
+    'review must pre-read the card, acquire the shared advisory lock, then lock/revalidate staging');
+  assert.match(approval, /staging\.card_id\s*=\s*staging_card_id[\s\S]*FOR UPDATE/i);
   assert.match(approval, /parser_version NOT IN \('benefits-v5', 'benefits-v6'\)/i);
   assert.match(approval, /decision_proposal_index\s*:=\s*\(decision->>'proposal_index'\)::integer[\s\S]*staging_row\.extracted_data->'proposals'->decision_proposal_index/i);
   assert.match(approval, /validate_benefit_publication_envelope\([\s\S]*staging_row\.card_id[\s\S]*staged_proposal/i);

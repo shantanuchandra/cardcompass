@@ -564,6 +564,7 @@ Deno.test("scheduled rollout stays blocked until the exact safe five-job pilot p
     runMode: "pilot" as const,
     status: index === 4 ? "quarantined" : "staged",
     quarantineReason: index === 4 ? "identity_mismatch" : null,
+    safetyMetadataValid: true,
     unsafeMutationCount: 0,
     idempotencyPassed: true,
     evidencePassed: true,

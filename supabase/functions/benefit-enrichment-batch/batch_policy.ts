@@ -51,6 +51,7 @@ export type PilotJob = {
   pilotQualified: boolean;
   status: string;
   quarantineReason: string | null;
+  safetyMetadataValid: boolean;
   unsafeMutationCount: number;
   idempotencyPassed: boolean;
   evidencePassed: boolean;
@@ -364,10 +365,16 @@ export function evaluatePilotGate(jobs: readonly PilotJob[]): {
       };
     }
     const reviewBlockers = promotedPilot.flatMap((job) => {
-      const blocker = job.status === "completed"
+      const blocker = !job.safetyMetadataValid
+        ? "pilot_safety_metadata_invalid"
+        : job.status === "completed"
         ? completedPilotReviewBlocker(job)
         : null;
-      return blocker ? [blocker] : [];
+      return [
+        ...(blocker ? [blocker] : []),
+        ...(job.unsafeMutationCount !== 0 ? ["unsafe_mutation"] : []),
+        ...(job.rawBodyStored ? ["raw_body_stored"] : []),
+      ];
     });
     const blockers = [...new Set(reviewBlockers)];
     return blockers.length === 0
@@ -389,6 +396,9 @@ export function evaluatePilotGate(jobs: readonly PilotJob[]): {
     if (job.status === "failed") blockers.push("pilot_failed");
     if (job.status === "review_required") {
       blockers.push("pilot_review_required");
+    }
+    if (!job.safetyMetadataValid) {
+      blockers.push("pilot_safety_metadata_invalid");
     }
     if (job.unsafeMutationCount !== 0) blockers.push("unsafe_mutation");
     if (terminal && !job.idempotencyPassed) blockers.push("idempotency_failed");

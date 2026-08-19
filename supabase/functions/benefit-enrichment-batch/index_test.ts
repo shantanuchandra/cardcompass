@@ -212,6 +212,235 @@ Deno.test("failed primary observations reach the finalizer with bounded retry an
   }
 });
 
+async function stableCanonicalProcessFixture(
+  stagingStatus: "pending" | "approved" | "rejected" | null,
+  materialChange = false,
+) {
+  const cardId = "00000000-0000-4000-8000-000000000001";
+  const card = {
+    id: cardId,
+    card_name: "Issuer Test Card",
+    bank: "Issuer",
+    network: "Visa",
+    card_type: "credit",
+    card_url: "https://issuer.example/credit-cards/issuer-test-card",
+    is_discontinued: false,
+  };
+  const text =
+    "<html><title>Issuer Test Card Credit Card</title><h1>Issuer Test Card Credit Card</h1><p>Get 10% cashback on dining spends.</p></html>";
+  const [proposed] = await extractGroundedBenefitsV6(
+    [{ sourceUrl: card.card_url, text, contentHash: "b".repeat(64) }],
+    "benefits-v6",
+    cardId,
+  );
+  const currentText = materialChange
+    ? "Get 5% cashback on dining spends."
+    : text;
+  const [currentProposal] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: card.card_url,
+      text: currentText,
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    cardId,
+  );
+  const canonicalBytes = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(currentProposal.conditionHash),
+  );
+  const canonicalHash = [...new Uint8Array(canonicalBytes)].map((byte) =>
+    byte.toString(16).padStart(2, "0")
+  ).join("");
+  const active = [{
+    benefit: {
+      benefit_id: "11111111-1111-4111-8111-111111111111",
+      dedupe_key: currentProposal.dedupeKey,
+      title: currentProposal.title,
+      description: currentProposal.description,
+      benefit_category: currentProposal.category,
+      benefit_type: currentProposal.valueType,
+      value_config: currentProposal.valueConfig,
+      partners: currentProposal.partners,
+      exclusions: currentProposal.exclusions,
+      source_url: currentProposal.sourceUrl,
+    },
+  }];
+  const finalizations: Record<string, unknown>[] = [];
+  const stageCalls: Record<string, unknown>[] = [];
+  const tableRows: Record<string, Record<string, unknown>[]> = {
+    card_catalog: [card],
+    card_catalog_aliases: [],
+    active_card_benefits: active,
+    card_benefits_staging: stagingStatus === null ? [] : [{
+      id: "stage-old",
+      card_id: cardId,
+      parser_version: "benefits-v6",
+      request_type: "official_benefit_enrichment",
+      status: stagingStatus,
+    }],
+  };
+  const db = {
+    from(table: string) {
+      const filters = new Map<string, unknown>();
+      const query = {
+        select() {
+          return this;
+        },
+        eq(column: string, value: unknown) {
+          filters.set(column, value);
+          return this;
+        },
+        ilike() {
+          return this;
+        },
+        in() {
+          return this;
+        },
+        async single() {
+          return { data: card, error: null };
+        },
+        async maybeSingle() {
+          const rows = (tableRows[table] ?? []).filter((row) =>
+            [...filters].every(([column, value]) => row[column] === value)
+          );
+          return { data: rows[0] ?? null, error: null };
+        },
+        then<TResult1 = unknown>(
+          onfulfilled?:
+            | ((value: unknown) => TResult1 | PromiseLike<TResult1>)
+            | null,
+        ) {
+          return Promise.resolve({
+            data: tableRows[table] ?? [],
+            error: null,
+          }).then(onfulfilled);
+        },
+      };
+      return query;
+    },
+    async rpc(name: string, args: Record<string, unknown>) {
+      if (name === "stage_card_benefit_enrichment") {
+        stageCalls.push(args);
+        return {
+          data: [{ staging_id: "stage-new", reused: false }],
+          error: null,
+        };
+      }
+      assert(
+        name === "finalize_card_catalog_enrichment_job",
+        `unexpected RPC ${name}`,
+      );
+      finalizations.push(args);
+      return { data: "job-1", error: null };
+    },
+  };
+  const observedAt = new Date().toISOString();
+  const result = await processJob(
+    db,
+    {
+      id: "job-1",
+      card_id: cardId,
+      issuer: card.bank,
+      canonical_url: card.card_url,
+      parser_version: "benefits-v6",
+      attempt_count: 1,
+      run_mode: "scheduled",
+      lease_token: "lease-1",
+      staging_id: stagingStatus === null ? null : "stage-old",
+      result_summary: {
+        observation: {
+          observed_at: "2026-08-19T00:00:00.000Z",
+          crawl_complete: true,
+          crawl_reason: "complete",
+          source_manifest_hash: "a".repeat(64),
+          canonical_benefit_hash: canonicalHash,
+          absent_benefit_ids: [],
+          absent_legacy_benefit_ids: [],
+          source_attempts: [],
+        },
+      },
+    },
+    "run-1",
+    Date.now(),
+    {
+      fetchObservation: async () => ({
+        disposition: "success",
+        result: {
+          status: 200,
+          submittedUrl: card.card_url,
+          finalUrl: card.card_url,
+          canonicalUrl: card.card_url,
+          contentType: "text/html",
+          text,
+          contentHash: "b".repeat(64),
+          retrievedAt: observedAt,
+          notModified: false,
+        },
+        attempts: [{ status: 200, attemptedAt: observedAt }],
+      }),
+    },
+  );
+  return { result, finalization: finalizations[0], stageCalls };
+}
+
+Deno.test("stable canonical 200 derives reviewability from authoritative staging status", async () => {
+  for (
+    const [status, expectedOutcome, expectedStaging] of [
+      ["pending", "staged", "stage-old"],
+      ["approved", "completed", null],
+      ["rejected", "completed", null],
+      [null, "completed", null],
+    ] as const
+  ) {
+    const fixture = await stableCanonicalProcessFixture(status);
+    assert(
+      fixture.result.outcome === expectedOutcome,
+      `${status ?? "no-link"} stable observation got ${fixture.result.outcome}`,
+    );
+    assert(
+      fixture.finalization._staging_id === expectedStaging,
+      `${status ?? "no-link"} reused a non-authoritative staging link`,
+    );
+    assert(
+      fixture.stageCalls.length === 0,
+      `${status ?? "no-link"} raw-only update created a new proposal`,
+    );
+    const summary = fixture.finalization._result_summary as Record<
+      string,
+      unknown
+    >;
+    assert(
+      summary.material_proposal === false &&
+        summary.proposal_disposition === "no_change" &&
+        summary.successful_no_change === true,
+      `${
+        status ?? "no-link"
+      } stable observation was not finalized as no-change`,
+    );
+  }
+});
+
+Deno.test("material canonical 200 delegates supersession to the ordered staging RPC", async () => {
+  const fixture = await stableCanonicalProcessFixture("pending", true);
+  assert(fixture.result.outcome === "staged", "material update did not stage");
+  assert(
+    fixture.stageCalls.length === 1 &&
+      fixture.finalization._staging_id === "stage-new",
+    "material update bypassed Task 3 supersession",
+  );
+  const summary = fixture.finalization._result_summary as Record<
+    string,
+    unknown
+  >;
+  assert(
+    summary.material_proposal === true &&
+      summary.proposal_disposition === "material" &&
+      summary.successful_no_change === false,
+    "material update was collapsed into no-change",
+  );
+});
+
 Deno.test("pilot API defaults to the current movie-capable parser lane", async () => {
   let parserVersion: unknown;
   const db = {
@@ -916,6 +1145,108 @@ Deno.test("pilot projection conservatively carries Task 4 review evidence", asyn
     malformed.blockers.includes("pilot_review_metadata_invalid"),
     "malformed review metadata was normalized into a passing review",
   );
+});
+
+Deno.test("pilot projection fails closed on missing or malformed safety metadata", async () => {
+  const invalidSummaries: Array<Record<string, unknown>> = [
+    { raw_body_stored: false },
+    { unsafe_mutation_count: null, raw_body_stored: false },
+    { unsafe_mutation_count: "0", raw_body_stored: false },
+    { unsafe_mutation_count: -1, raw_body_stored: false },
+    { unsafe_mutation_count: 0.5, raw_body_stored: false },
+    { unsafe_mutation_count: 0 },
+    { unsafe_mutation_count: 0, raw_body_stored: null },
+    { unsafe_mutation_count: 0, raw_body_stored: "false" },
+  ];
+  const safeSummary = {
+    unsafe_mutation_count: 0,
+    idempotency_passed: true,
+    evidence_passed: true,
+    raw_body_stored: false,
+  };
+  for (const invalid of invalidSummaries) {
+    const invalidSummary: Record<string, unknown> = {
+      ...safeSummary,
+      ...invalid,
+    };
+    if (!Object.hasOwn(invalid, "unsafe_mutation_count")) {
+      delete invalidSummary.unsafe_mutation_count;
+    }
+    if (!Object.hasOwn(invalid, "raw_body_stored")) {
+      delete invalidSummary.raw_body_stored;
+    }
+    const rows = Array.from({ length: 5 }, (_, index) => ({
+      id: `pilot-${index}`,
+      run_mode: "pilot",
+      parser_version: "benefits-v6",
+      status: "staged",
+      failure_category: null,
+      result_summary: index === 0 ? invalidSummary : safeSummary,
+    }));
+    const query = {
+      select() {
+        return this;
+      },
+      eq() {
+        return this;
+      },
+      or() {
+        return this;
+      },
+      then<TResult1 = unknown>(
+        onfulfilled?:
+          | ((value: unknown) => TResult1 | PromiseLike<TResult1>)
+          | null,
+      ) {
+        return Promise.resolve({ data: rows, error: null }).then(onfulfilled);
+      },
+    };
+    const gate = await readPilotStatus({ from: () => query });
+    assert(
+      gate.blockers.includes("pilot_safety_metadata_invalid"),
+      `unsafe pilot metadata passed: ${JSON.stringify(invalid)}`,
+    );
+  }
+
+  for (
+    const [unsafeMutationCount, rawBodyStored, expected] of [
+      [1, false, "unsafe_mutation"],
+      [0, true, "raw_body_stored"],
+    ] as const
+  ) {
+    const rows = Array.from({ length: 5 }, (_, index) => ({
+      id: `pilot-${index}`,
+      run_mode: "pilot",
+      parser_version: "benefits-v6",
+      status: "staged",
+      failure_category: null,
+      result_summary: {
+        ...safeSummary,
+        unsafe_mutation_count: index === 0 ? unsafeMutationCount : 0,
+        raw_body_stored: index === 0 ? rawBodyStored : false,
+      },
+    }));
+    const query = {
+      select() {
+        return this;
+      },
+      eq() {
+        return this;
+      },
+      or() {
+        return this;
+      },
+      then<TResult1 = unknown>(
+        onfulfilled?:
+          | ((value: unknown) => TResult1 | PromiseLike<TResult1>)
+          | null,
+      ) {
+        return Promise.resolve({ data: rows, error: null }).then(onfulfilled);
+      },
+    };
+    const gate = await readPilotStatus({ from: () => query });
+    assert(gate.blockers.includes(expected), `${expected} was not blocked`);
+  }
 });
 
 Deno.test("catalog identity requires an exact target match instead of a product-name substring", () => {
@@ -2174,8 +2505,8 @@ Deno.test("a raw-only source change does not create a material proposal", () => 
     "canonical benefit change was not material",
   );
   assert(
-    shouldStageMaterialProposal("canonical-1", "canonical-1", null),
-    "missing prior staging link was treated as reusable",
+    !shouldStageMaterialProposal("canonical-1", "canonical-1", null),
+    "stable canonical benefits were restaged only because the link was absent",
   );
 });
 

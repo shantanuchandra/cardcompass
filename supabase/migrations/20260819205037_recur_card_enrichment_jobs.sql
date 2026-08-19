@@ -632,15 +632,18 @@ DECLARE
   ];
 BEGIN
   IF jsonb_typeof(_summary) <> 'object'
-     OR coalesce(_summary->>'unsafe_mutation_count', '0') !~ '^0$'
+     OR NOT (_summary ? 'unsafe_mutation_count')
+     OR jsonb_typeof(_summary->'unsafe_mutation_count') <> 'number'
+     OR _summary->'unsafe_mutation_count' IS DISTINCT FROM '0'::jsonb
      OR _summary->'idempotency_passed' IS DISTINCT FROM 'true'::jsonb
-     OR coalesce(_summary->'raw_body_stored', 'false'::jsonb)
-       IS DISTINCT FROM 'false'::jsonb
+     OR NOT (_summary ? 'raw_body_stored')
+     OR jsonb_typeof(_summary->'raw_body_stored') <> 'boolean'
+     OR _summary->'raw_body_stored' IS DISTINCT FROM 'false'::jsonb
      OR _status NOT IN ('staged', 'completed', 'quarantined') THEN
     RETURN false;
   END IF;
   IF _status = 'quarantined' THEN
-    RETURN nullif(trim(coalesce(_failure_category, '')), '') IS NOT NULL;
+    RETURN trim(coalesce(_failure_category, '')) ~ '^[a-z0-9_]{1,64}$';
   END IF;
   IF _summary->'evidence_passed' IS DISTINCT FROM 'true'::jsonb THEN
     RETURN false;
@@ -667,6 +670,200 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION public.card_enrichment_pilot_cohort_action(
+  _pilot_count integer,
+  _promoted_count integer,
+  _has_duplicate boolean
+) RETURNS text
+LANGUAGE sql
+IMMUTABLE
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+  SELECT CASE
+    WHEN _pilot_count IS NULL OR _promoted_count IS NULL
+      OR _pilot_count < 0 OR _promoted_count < 0
+      OR coalesce(_has_duplicate, true) THEN 'reject'
+    WHEN _pilot_count = 0 AND _promoted_count = 0 THEN 'initialize'
+    WHEN _pilot_count = 5 AND _promoted_count = 0 THEN 'return_pilot'
+    WHEN _pilot_count = 0 AND _promoted_count = 5 THEN 'return_promoted'
+    ELSE 'reject'
+  END;
+$$;
+
+-- Replace the original initializer without changing its signature. Promotion
+-- and initialization serialize on one parser-scoped key, so a caller after a
+-- successful handoff observes the same five jobs instead of creating 5+5.
+CREATE OR REPLACE FUNCTION public.initialize_card_benefit_enrichment_pilot(
+  _candidates jsonb,
+  _parser_version text
+) RETURNS SETOF public.card_catalog_enrichment_jobs
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public, extensions, pg_temp
+AS $$
+DECLARE
+  selected_parser text := CASE
+    WHEN lower(trim(coalesce(_parser_version, ''))) = 'benefits-v6'
+      THEN 'benefits-v6'
+    ELSE trim(coalesce(_parser_version, ''))
+  END;
+  pilot_count integer;
+  promoted_count integer;
+  has_duplicate boolean;
+  cohort_action text;
+  eligible_count integer;
+  distinct_card_count integer;
+  distinct_profile_count integer;
+  distinct_issuer_count integer;
+  inserted_count integer;
+BEGIN
+  IF coalesce(auth.role(), '') <> 'service_role' THEN
+    RAISE EXCEPTION 'service_role_required';
+  END IF;
+  IF _candidates IS NULL OR jsonb_typeof(_candidates) <> 'array'
+     OR jsonb_array_length(_candidates) <> 5
+     OR length(selected_parser) < 3 THEN
+    RAISE EXCEPTION 'invalid_pilot_candidates';
+  END IF;
+  IF lower(selected_parser) = 'catalog-v1' THEN
+    RAISE EXCEPTION 'reserved_parser_version';
+  END IF;
+
+  PERFORM pg_advisory_xact_lock(
+    hashtextextended('card_benefit_enrichment_pilot:' || selected_parser, 0)
+  );
+  WITH locked_cohort AS MATERIALIZED (
+    SELECT job.*
+    FROM public.card_catalog_enrichment_jobs AS job
+    WHERE job.parser_version = selected_parser
+      AND (
+        job.run_mode = 'pilot'
+        OR (
+          job.run_mode = 'scheduled'
+          AND job.result_summary->'pilot_qualified' = 'true'::jsonb
+        )
+      )
+    ORDER BY job.id
+    FOR UPDATE OF job
+  )
+  SELECT count(*) FILTER (WHERE locked_cohort.run_mode = 'pilot'),
+    count(*) FILTER (WHERE locked_cohort.run_mode = 'scheduled')
+  INTO pilot_count, promoted_count
+  FROM locked_cohort;
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.card_catalog_enrichment_jobs AS cohort_job
+    JOIN public.card_catalog_enrichment_jobs AS other_job
+      ON other_job.card_id = cohort_job.card_id
+     AND other_job.parser_version = cohort_job.parser_version
+     AND other_job.id <> cohort_job.id
+    WHERE cohort_job.parser_version = selected_parser
+      AND (
+        cohort_job.run_mode = 'pilot'
+        OR (
+          cohort_job.run_mode = 'scheduled'
+          AND cohort_job.result_summary->'pilot_qualified' = 'true'::jsonb
+        )
+      )
+  ) INTO has_duplicate;
+  cohort_action := public.card_enrichment_pilot_cohort_action(
+    pilot_count, promoted_count, has_duplicate
+  );
+
+  IF cohort_action = 'return_promoted' THEN
+    RETURN QUERY
+    SELECT job.*
+    FROM public.card_catalog_enrichment_jobs AS job
+    JOIN public.card_catalog AS card ON card.id = job.card_id
+    WHERE job.parser_version = selected_parser
+      AND job.run_mode = 'scheduled'
+      AND job.result_summary->'pilot_qualified' = 'true'::jsonb
+    ORDER BY job.issuer, card.card_name, job.created_at;
+    RETURN;
+  ELSIF cohort_action = 'return_pilot' THEN
+    RETURN QUERY
+    SELECT job.*
+    FROM public.card_catalog_enrichment_jobs AS job
+    JOIN public.card_catalog AS card ON card.id = job.card_id
+    WHERE job.parser_version = selected_parser
+      AND job.run_mode = 'pilot'
+    ORDER BY job.issuer, card.card_name, job.created_at;
+    RETURN;
+  ELSIF cohort_action <> 'initialize' THEN
+    RAISE EXCEPTION 'pilot_state_incomplete';
+  END IF;
+
+  WITH input AS (
+    SELECT candidate.card_id, lower(trim(candidate.profile)) AS profile
+    FROM jsonb_to_recordset(_candidates)
+      AS candidate(card_id uuid, profile text)
+  ), eligible AS (
+    SELECT input.card_id, input.profile, card.bank, card.card_url
+    FROM input
+    JOIN public.card_catalog AS card ON card.id = input.card_id
+    WHERE card.is_discontinued = false
+      AND lower(trim(card.card_type)) = 'credit'
+      AND card.card_url ~ '^https://'
+      AND input.profile IN (
+        'straightforward', 'redirect_or_js', 'terms_linked',
+        'known_invalid', 'additional_valid'
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM public.card_catalog_enrichment_jobs AS existing_job
+        WHERE existing_job.card_id = input.card_id
+          AND existing_job.parser_version = selected_parser
+      )
+  )
+  SELECT count(*), count(DISTINCT card_id), count(DISTINCT profile),
+         count(DISTINCT lower(trim(bank)))
+  INTO eligible_count, distinct_card_count, distinct_profile_count,
+       distinct_issuer_count
+  FROM eligible;
+
+  IF eligible_count <> 5 OR distinct_card_count <> 5
+     OR distinct_profile_count <> 5 OR distinct_issuer_count < 3 THEN
+    RAISE EXCEPTION 'invalid_pilot_candidates';
+  END IF;
+
+  INSERT INTO public.card_catalog_enrichment_jobs (
+    card_id, issuer, canonical_url, final_url_hash, content_hash,
+    parser_version, status, run_mode, job_key, result_summary, updated_at
+  )
+  SELECT card.id, card.bank, trim(card.card_url),
+    encode(extensions.digest(convert_to(trim(card.card_url), 'UTF8'), 'sha256'), 'hex'),
+    NULL, selected_parser, 'queued', 'pilot',
+    card.id::text || ':' ||
+      encode(extensions.digest(convert_to(trim(card.card_url), 'UTF8'), 'sha256'), 'hex') ||
+      ':' || selected_parser,
+    jsonb_build_object(
+      'pilot_profile', lower(trim(input.profile)),
+      'unsafe_mutation_count', 0,
+      'raw_body_stored', false,
+      'evidence_passed', false,
+      'idempotency_passed', false
+    ),
+    now()
+  FROM jsonb_to_recordset(_candidates)
+    AS input(card_id uuid, profile text)
+  JOIN public.card_catalog AS card ON card.id = input.card_id
+  ON CONFLICT (job_key) DO NOTHING;
+  GET DIAGNOSTICS inserted_count = ROW_COUNT;
+  IF inserted_count <> 5 THEN
+    RAISE EXCEPTION 'pilot_candidate_conflict';
+  END IF;
+
+  RETURN QUERY
+  SELECT job.*
+  FROM public.card_catalog_enrichment_jobs AS job
+  JOIN public.card_catalog AS card ON card.id = job.card_id
+  WHERE job.parser_version = selected_parser
+    AND job.run_mode = 'pilot'
+  ORDER BY job.issuer, card.card_name, job.created_at;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION public.promote_qualified_card_benefit_enrichment_pilot(
   _parser_version text
 ) RETURNS SETOF public.card_catalog_enrichment_jobs
@@ -684,7 +881,7 @@ BEGIN
     RAISE EXCEPTION 'invalid_pilot_promotion';
   END IF;
   PERFORM pg_advisory_xact_lock(
-    hashtextextended('card_benefit_pilot_promotion:' || selected_parser, 0)
+    hashtextextended('card_benefit_enrichment_pilot:' || selected_parser, 0)
   );
   WITH locked_pilot AS MATERIALIZED (
     SELECT job.*
@@ -903,11 +1100,9 @@ BEGIN
         ) THEN 'staged'
         WHEN job.attempt_count >= 3 THEN 'review_required'
         ELSE 'failed' END,
-      failure_category = CASE
-        WHEN public.card_enrichment_job_has_pending_staging(
-          job.staging_id, job.card_id, job.parser_version
-        ) THEN job.failure_category
-        ELSE 'worker_resource_limit' END,
+      -- expired_pending_failure_cadence: retaining a reviewable staging link
+      -- must still select the seven-day failure recurrence, never success.
+      failure_category = 'worker_resource_limit',
       next_retry_at = CASE
         WHEN public.card_enrichment_job_has_pending_staging(
           job.staging_id, job.card_id, job.parser_version
@@ -1178,6 +1373,14 @@ REVOKE ALL ON FUNCTION public.card_enrichment_pilot_job_is_qualified(text, text,
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.card_enrichment_pilot_job_is_qualified(text, text, jsonb)
   TO service_role;
+REVOKE ALL ON FUNCTION public.card_enrichment_pilot_cohort_action(integer, integer, boolean)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.card_enrichment_pilot_cohort_action(integer, integer, boolean)
+  TO service_role;
+REVOKE ALL ON FUNCTION public.initialize_card_benefit_enrichment_pilot(jsonb, text)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.initialize_card_benefit_enrichment_pilot(jsonb, text)
+  TO service_role;
 REVOKE ALL ON FUNCTION public.promote_qualified_card_benefit_enrichment_pilot(text)
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.promote_qualified_card_benefit_enrichment_pilot(text)
@@ -1286,6 +1489,15 @@ DECLARE
   approved_review jsonb;
   fully_rejected jsonb;
   partially_rejected jsonb;
+  missing_unsafe jsonb;
+  null_unsafe jsonb;
+  string_unsafe jsonb;
+  negative_unsafe jsonb;
+  noninteger_unsafe jsonb;
+  missing_raw jsonb;
+  null_raw jsonb;
+  string_raw jsonb;
+  true_raw jsonb;
 BEGIN
   successful_no_change := safe_base || jsonb_build_object(
     'successful_no_change', true
@@ -1308,6 +1520,15 @@ BEGIN
   partially_rejected := approved_review || jsonb_build_object(
     'rejected_count', 1
   );
+  missing_unsafe := safe_base - 'unsafe_mutation_count';
+  null_unsafe := safe_base || jsonb_build_object('unsafe_mutation_count', NULL);
+  string_unsafe := safe_base || jsonb_build_object('unsafe_mutation_count', '0');
+  negative_unsafe := safe_base || jsonb_build_object('unsafe_mutation_count', -1);
+  noninteger_unsafe := safe_base || jsonb_build_object('unsafe_mutation_count', 0.5);
+  missing_raw := safe_base - 'raw_body_stored';
+  null_raw := safe_base || jsonb_build_object('raw_body_stored', NULL);
+  string_raw := safe_base || jsonb_build_object('raw_body_stored', 'false');
+  true_raw := safe_base || jsonb_build_object('raw_body_stored', true);
   IF NOT public.card_enrichment_pilot_job_is_qualified(
        'staged', NULL, safe_base
      )
@@ -1336,6 +1557,33 @@ BEGIN
      OR public.card_enrichment_pilot_job_is_qualified(
        'quarantined', '', safe_base
      )
+     OR public.card_enrichment_pilot_job_is_qualified(
+       'staged', NULL, missing_unsafe
+     )
+     OR public.card_enrichment_pilot_job_is_qualified(
+       'staged', NULL, null_unsafe
+     )
+     OR public.card_enrichment_pilot_job_is_qualified(
+       'staged', NULL, string_unsafe
+     )
+     OR public.card_enrichment_pilot_job_is_qualified(
+       'staged', NULL, negative_unsafe
+     )
+     OR public.card_enrichment_pilot_job_is_qualified(
+       'staged', NULL, noninteger_unsafe
+     )
+     OR public.card_enrichment_pilot_job_is_qualified(
+       'staged', NULL, missing_raw
+     )
+     OR public.card_enrichment_pilot_job_is_qualified(
+       'staged', NULL, null_raw
+     )
+     OR public.card_enrichment_pilot_job_is_qualified(
+       'staged', NULL, string_raw
+     )
+     OR public.card_enrichment_pilot_job_is_qualified(
+       'staged', NULL, true_raw
+     )
      OR public.card_enrichment_effective_terminal_status(
        'failed', true
      ) <> 'staged'
@@ -1349,6 +1597,28 @@ BEGIN
   END IF;
 END;
 $pilot_qualification_assertions$;
+
+DO $pilot_cohort_assertions$
+BEGIN
+  -- return_promoted is the only post-handoff state; partial, five_plus_five,
+  -- and duplicate cohorts all fail closed before an insert can run.
+  IF public.card_enrichment_pilot_cohort_action(0, 5, false)
+       <> 'return_promoted'
+     OR public.card_enrichment_pilot_cohort_action(5, 0, false)
+       <> 'return_pilot'
+     OR public.card_enrichment_pilot_cohort_action(0, 0, false)
+       <> 'initialize'
+     OR public.card_enrichment_pilot_cohort_action(2, 0, false)
+       <> 'reject' -- partial
+     OR public.card_enrichment_pilot_cohort_action(5, 5, false)
+       <> 'reject' -- five_plus_five
+     OR public.card_enrichment_pilot_cohort_action(5, 0, true)
+       <> 'reject' -- duplicate
+     THEN
+    RAISE EXCEPTION 'pilot cohort assertion failed';
+  END IF;
+END;
+$pilot_cohort_assertions$;
 
 DO $recurrence_history_assertions$
 DECLARE

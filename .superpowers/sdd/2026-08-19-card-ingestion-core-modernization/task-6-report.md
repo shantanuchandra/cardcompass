@@ -189,6 +189,88 @@ linked Supabase command, migration apply/push/dry-run, external network,
 production data, or live write was used. Ordered Task 2–6 real PostgreSQL
 parse/apply/lint/transaction verification remains the explicit unresolved gate.
 
+## Review fix round 3/5 — 2026-08-20
+
+### Red proof
+
+- The worker suite reported **72 passed / 2 failed** before missing pilot safety
+  metadata failed closed and a stable canonical observation stopped being
+  restaged merely because its prior staging link was absent.
+- A real process-to-finalizer fixture then failed while a stable HTTP 200 with
+  pending staging retained the old count-level `material` disposition instead
+  of deriving no-change/reviewability from canonical materiality and locked
+  staging status. The final fixture covers pending, approved, rejected, and no
+  linked staging, plus a raw-only body/hash change.
+- The three affected migration suites reported **25 passed / 4 failed** before
+  the Task 3/Task 4 functions shared one advisory-lock namespace/order, expired
+  pending-review work selected failure cadence, pilot evidence was strict, and
+  initialization recognized the promoted exact-five cohort.
+- Apply-time cohort and qualification cases were added before their helpers:
+  partial, mixed 5+5, duplicate, missing/null/string/negative/noninteger safety
+  metadata, unsafe true raw-body storage, and exact promoted return.
+
+### Fixes
+
+- A stable canonical HTTP 200 now reads the exact linked staging row by
+  staging/card/parser/request identity. Pending remains `staged` and reviewable;
+  approved, rejected, missing, or mismatched staging completes as successful
+  no-change without presenting a reviewed row as a new proposal. A real
+  material canonical change still delegates exclusively to Task 3, which
+  deterministically supersedes an older pending proposal.
+- Task 3 and Task 4 now pre-read only immutable card identity, acquire the same
+  `card_benefit_enrichment_review:<card-id>` transaction advisory lock, and
+  then lock and revalidate their authoritative job/staging row. This removes
+  the former job-to-staging versus staging-to-job lock inversion while keeping
+  stale/superseded approval fail-closed.
+- Expired processing with pending staging retains its reviewable `staged`
+  state and link but records `worker_resource_limit`, forcing the explicit
+  seven-day failed-observation cadence rather than the 30-day staged-success
+  cadence. It cannot busy-loop and Task 4 can still resolve the proposal.
+- Pilot projection and SQL qualification require explicitly present,
+  correctly typed `unsafe_mutation_count` and `raw_body_stored`; count must be
+  a nonnegative integer equal to zero and raw-body storage must be false.
+  Idempotency/evidence/review fields remain strict. Quarantine remains eligible
+  only with an explicit lowercase bounded reason code; missing or malformed
+  evidence fails closed.
+- The authoritative same-signature initializer is versioned in the Task 6
+  migration. It and promotion use one parser-scoped advisory lock. An exact
+  five-row promoted marker cohort is returned idempotently; an exact active
+  pilot cohort is returned unchanged; partial, mixed, 5+5, and duplicate
+  card/parser states reject before insertion. Initial creation also refuses a
+  candidate with any existing same-card/parser job. No job, business table, or
+  column was added.
+
+### Green verification
+
+- Exact Task 6 Deno command — **96 passed, 0 failed**.
+- Exact Task 6 migration command — **28 passed, 0 failed**.
+- Expanded affected Task 3/4 migration command — **40 passed, 0 failed**.
+- Affected admin benefit suite — **40 passed, 0 failed**.
+- Primary Task 6 total — **124 passed, 0 failed**; expanded affected total —
+  **176 passed, 0 failed**.
+- `deno check --node-modules-dir=auto` on changed production TypeScript —
+  passed.
+- `deno fmt --check` on changed TypeScript/test files — passed.
+- `git diff --check` — passed.
+
+Changed migration sources:
+
+- `supabase/migrations/20260819122252_supersede_stale_benefit_staging.sql`
+- `supabase/migrations/20260819163046_review_card_benefit_enrichment_v2.sql`
+- `supabase/migrations/20260819205037_recur_card_enrichment_jobs.sql`
+
+Final pre-commit SHA-256 values, in the same order:
+
+- `e294fd029a2aaf30ce98764b44ce41652b8e02d19783618111cb0d3754ea2876`
+- `ae8f21413add67fece38ae8e90e7a6ecfdbc1a526edfecec0ed95919b7e4f2ca`
+- `4c556cae302b0447ad6b991c0dfba16361c07446f8c34325f8d2793a432f878b`
+
+Live applied: **no**. No Docker, database/PostgreSQL/Supabase runtime, linked
+Supabase command, migration apply/push/dry-run, external network, production
+data, or live write was used. Ordered Task 2–6 real PostgreSQL
+parse/apply/lint/transaction and concurrent-lock verification remains the
+explicit unresolved gate.
+
 ## Review fix round 2/5 — 2026-08-20
 
 ### Red proof

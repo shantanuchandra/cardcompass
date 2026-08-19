@@ -200,7 +200,13 @@ test('new v6 staging atomically rejects and audits older pending observations wi
   assert.doesNotMatch(stage, /auth\.role\(\)|service_role_required/i);
   assert.match(stage, /public\.is_valid_official_source_evidence\(_source_evidence\)/i);
   assert.match(stage, /candidate\.id\s*=\s*_job_id[\s\S]*candidate\.status\s*=\s*'processing'[\s\S]*candidate\.lease_token\s*=\s*_lease_token[\s\S]*FOR UPDATE/i);
-  assert.match(stage, /pg_advisory_xact_lock\s*\([\s\S]*hashtextextended\s*\([\s\S]*job\.card_id::text/i);
+  assert.match(stage, /hashtextextended\(\s*'card_benefit_enrichment_review:'\s*\|\|\s*job_card_id::text,\s*0\s*\)/i);
+  const cardLookup = stage.indexOf('INTO job_card_id');
+  const advisoryLock = stage.indexOf('pg_advisory_xact_lock');
+  const jobRowLock = stage.indexOf('INTO job\n');
+  assert.ok(cardLookup >= 0 && cardLookup < advisoryLock && advisoryLock < jobRowLock,
+    'stage must pre-read the card, acquire the shared advisory lock, then lock/revalidate the job');
+  assert.match(stage, /candidate\.card_id\s*=\s*job_card_id[\s\S]*FOR UPDATE/i);
   assert.match(stage, /SELECT staging\.id[\s\S]*ORDER BY staging\.id[\s\S]*FOR UPDATE/i);
   assert.match(stage, /_validated_at IS NULL[\s\S]*invalid_benefit_staging/i);
   assert.match(stage, /_validated_at\s*>\s*statement_timestamp\(\)\s*\+\s*interval\s*'5 minutes'[\s\S]*invalid_benefit_staging/i);

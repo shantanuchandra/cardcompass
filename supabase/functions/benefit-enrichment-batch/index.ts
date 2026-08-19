@@ -282,17 +282,23 @@ function pilotJob(row: Record<string, any>): PilotJob {
   const reviewMetadataMalformed =
     (hasOwn("review_status") && reviewStatus === null) ||
     reviewCountKeys.some((key) => hasOwn(key) && count(summary[key]) === null);
+  const unsafeMutationCount = count(summary.unsafe_mutation_count);
+  const safetyMetadataValid = hasOwn("unsafe_mutation_count") &&
+    typeof summary.unsafe_mutation_count === "number" &&
+    unsafeMutationCount !== null && hasOwn("raw_body_stored") &&
+    typeof summary.raw_body_stored === "boolean";
+  const quarantineReason = typeof row.failure_category === "string" &&
+      /^[a-z0-9_]{1,64}$/.test(row.failure_category.trim())
+    ? row.failure_category.trim()
+    : null;
   return {
     id: String(row.id),
     runMode: row.run_mode,
     pilotQualified: summary.pilot_qualified === true,
     status: String(row.status),
-    quarantineReason: row.status === "quarantined"
-      ? String(row.failure_category ?? "").trim() || null
-      : null,
-    unsafeMutationCount: summary.unsafe_mutation_count === undefined
-      ? 0
-      : count(summary.unsafe_mutation_count) ?? -1,
+    quarantineReason: row.status === "quarantined" ? quarantineReason : null,
+    safetyMetadataValid,
+    unsafeMutationCount: unsafeMutationCount ?? -1,
     idempotencyPassed: summary.idempotency_passed === true,
     evidencePassed: summary.evidence_passed === true,
     rawBodyStored: summary.raw_body_stored === true,
@@ -717,10 +723,28 @@ export async function readCompleteAbsenceHistory(
 export function shouldStageMaterialProposal(
   previousCanonicalHash: string | null | undefined,
   canonicalHash: string,
-  previousStagingId: string | null | undefined,
+  _previousStagingId: string | null | undefined,
 ): boolean {
-  return !previousStagingId || !previousCanonicalHash ||
-    previousCanonicalHash !== canonicalHash;
+  return !previousCanonicalHash || previousCanonicalHash !== canonicalHash;
+}
+
+export async function readAuthoritativeStagingStatus(
+  db: UntypedSupabaseClient,
+  job: EnrichmentJob,
+): Promise<"pending" | "approved" | "rejected" | null> {
+  if (!job.staging_id) return null;
+  const { data, error } = await db.from("card_benefits_staging")
+    .select("status")
+    .eq("id", job.staging_id)
+    .eq("card_id", job.card_id)
+    .eq("parser_version", job.parser_version)
+    .eq("request_type", "official_benefit_enrichment")
+    .maybeSingle();
+  if (error) throw error;
+  return data?.status === "pending" || data?.status === "approved" ||
+      data?.status === "rejected"
+    ? data.status
+    : null;
 }
 
 export function crawlProposalDisposition(input: {
@@ -1631,6 +1655,12 @@ export async function processJob(
         canonicalBenefitHash,
         job.staging_id,
       ));
+    const authoritativeStagingStatus = materialProposal
+      ? null
+      : await readAuthoritativeStagingStatus(db, job);
+    const effectiveProposalDisposition = materialProposal
+      ? proposalDisposition
+      : "no_change";
     let reusedStaging = false;
     if (materialProposal) {
       const stagingSource = await stagingSourceMetadata(
@@ -1662,12 +1692,14 @@ export async function processJob(
       stagingId = String(staged.staging_id);
       reusedStaging = staged.reused === true;
     } else {
-      stagingId = proposalDisposition === "no_change"
-        ? null
-        : String(job.staging_id);
-      reusedStaging = proposalDisposition !== "no_change";
+      stagingId = authoritativeStagingStatus === "pending"
+        ? String(job.staging_id)
+        : null;
+      reusedStaging = authoritativeStagingStatus === "pending";
     }
-    outcome = proposalDisposition === "no_change" ? "completed" : "staged";
+    outcome = materialProposal || authoritativeStagingStatus === "pending"
+      ? "staged"
+      : "completed";
     normalizedFields = {
       proposed_count: proposed.length,
       source_document_count: documents.length,
@@ -1690,8 +1722,8 @@ export async function processJob(
       conflicts: compared.conflicts.length,
       reused_staging: reusedStaging,
       material_proposal: materialProposal,
-      proposal_disposition: proposalDisposition,
-      successful_no_change: proposalDisposition === "no_change",
+      proposal_disposition: effectiveProposalDisposition,
+      successful_no_change: effectiveProposalDisposition === "no_change",
       source_manifest_hash: sourceManifestHash,
       canonical_benefit_hash: canonicalBenefitHash,
       crawl_complete: crawl.complete,

@@ -20,6 +20,7 @@ SET search_path = public, pg_temp
 AS $$
 DECLARE
   job public.card_catalog_enrichment_jobs%ROWTYPE;
+  job_card_id uuid;
   resolved_staging_id uuid;
   reused_staging boolean := false;
   newest_pending_id uuid;
@@ -42,9 +43,23 @@ BEGIN
     RAISE EXCEPTION 'invalid_benefit_staging';
   END IF;
 
+  -- Task 4 uses the same card-scoped serialization key. Pre-read only the
+  -- immutable identity, then acquire the advisory lock before any row lock.
+  SELECT candidate.card_id INTO job_card_id
+  FROM public.card_catalog_enrichment_jobs AS candidate
+  WHERE candidate.id = _job_id;
+  IF job_card_id IS NULL THEN
+    RAISE EXCEPTION 'stale_enrichment_lease';
+  END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended(
+    'card_benefit_enrichment_review:' || job_card_id::text,
+    0
+  ));
+
   SELECT candidate.* INTO job
   FROM public.card_catalog_enrichment_jobs AS candidate
   WHERE candidate.id = _job_id
+    AND candidate.card_id = job_card_id
     AND candidate.status = 'processing'
     AND candidate.lease_token = _lease_token
     AND candidate.lease_expires_at > now()
@@ -57,12 +72,6 @@ BEGIN
   END IF;
 
   IF _parser_version = 'benefits-v6' THEN
-    -- Serialize observations for one card even when separate queue jobs race.
-    PERFORM pg_advisory_xact_lock(hashtextextended(
-      'stage_card_benefit_enrichment:' || job.card_id::text,
-      0
-    ));
-
     -- Acquire row locks in UUID order so concurrent reviewers/stagers cannot
     -- invert their lock order.
     PERFORM locked.id

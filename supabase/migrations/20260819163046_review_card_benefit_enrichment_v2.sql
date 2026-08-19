@@ -855,6 +855,7 @@ DECLARE
   MAX_STAGED_PROPOSALS_BYTES constant integer := 131072;
   MAX_STAGED_STRING_CHARS constant integer := 8000;
   staging_row public.card_benefits_staging%ROWTYPE;
+  staging_card_id uuid;
   staged_proposal jsonb;
   canonical_envelope jsonb;
   canonical_benefit jsonb;
@@ -900,9 +901,23 @@ BEGIN
     ),
     'hex'
   );
+  -- Task 3 uses this exact card-scoped key before it locks either the queue job
+  -- or staging. Do the same here, then revalidate under the staging row lock.
+  SELECT staging.card_id INTO staging_card_id
+  FROM public.card_benefits_staging AS staging
+  WHERE staging.id = _staging_id
+    AND staging.request_type = 'official_benefit_enrichment';
+  IF staging_card_id IS NULL THEN
+    RAISE EXCEPTION 'invalid_benefit_staging';
+  END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended(
+    'card_benefit_enrichment_review:' || staging_card_id::text,
+    0
+  ));
   SELECT staging.* INTO staging_row
   FROM public.card_benefits_staging AS staging
   WHERE staging.id = _staging_id
+    AND staging.card_id = staging_card_id
     AND staging.request_type = 'official_benefit_enrichment'
   FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'invalid_benefit_staging'; END IF;

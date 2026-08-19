@@ -154,8 +154,9 @@ test('claiming is one-card with a 300-second lease and admin completion shares t
   );
   assert.match(
     claim,
-    /next_retry_at = CASE[\s\S]*card_enrichment_job_has_pending_staging[\s\S]*THEN NULL/i,
+    /expired_pending_failure_cadence[\s\S]*failure_category\s*=\s*'worker_resource_limit'/i,
   );
+  assert.doesNotMatch(claim, /failure_category\s*=\s*CASE[\s\S]*THEN job\.failure_category/i);
   assert.match(
     claim,
     /'retry_scheduled'[\s\S]*card_enrichment_job_has_pending_staging[\s\S]*THEN false/i,
@@ -219,12 +220,19 @@ test('pilot qualification atomically promotes the existing exact five identities
   const sql = await migrationSql();
   const qualify = functionBody(sql, 'card_enrichment_pilot_job_is_qualified');
   const promote = functionBody(sql, 'promote_qualified_card_benefit_enrichment_pilot');
+  const initialize = functionBody(sql, 'initialize_card_benefit_enrichment_pilot');
+  const cohortAction = functionBody(sql, 'card_enrichment_pilot_cohort_action');
 
   assert.match(qualify, /successful_no_change/i);
   assert.match(qualify, /review_status/i);
   assert.match(qualify, /approved_count/i);
   assert.match(qualify, /rejected_count/i);
   assert.match(qualify, /status = 'quarantined'[\s\S]*failure_category/i);
+  assert.match(qualify, /_summary \? 'unsafe_mutation_count'/i);
+  assert.match(qualify, /jsonb_typeof\(_summary->'unsafe_mutation_count'\)\s*<>\s*'number'/i);
+  assert.match(qualify, /_summary \? 'raw_body_stored'/i);
+  assert.match(qualify, /jsonb_typeof\(_summary->'raw_body_stored'\)\s*<>\s*'boolean'/i);
+  assert.match(qualify, /failure_category[\s\S]*\^\[a-z0-9_\][^$]*\$/i);
   assert.match(promote, /selected_parser\s*<>\s*'benefits-v6'/i);
   assert.match(promote, /FOR UPDATE(?: OF job)?/i);
   assert.match(promote, /count\(\*\)[\s\S]*<> 5/i);
@@ -249,8 +257,23 @@ test('pilot qualification atomically promotes the existing exact five identities
     /pilot_count <> 5 OR promoted_count <> 0 OR NOT all_qualified/i,
   );
   assert.doesNotMatch(promote, /INSERT INTO public\.card_catalog_enrichment_jobs/i);
+  const sharedPilotLock = /hashtextextended\('card_benefit_enrichment_pilot:'\s*\|\|\s*selected_parser,\s*0\)/i;
+  assert.match(promote, sharedPilotLock);
+  assert.match(initialize, sharedPilotLock);
+  assert.match(initialize, /card_enrichment_pilot_cohort_action\(/i);
+  assert.match(initialize, /'return_promoted'[\s\S]*pilot_qualified[\s\S]*RETURN;/i);
+  assert.match(initialize, /'return_pilot'[\s\S]*run_mode\s*=\s*'pilot'[\s\S]*RETURN;/i);
+  assert.match(initialize, /pilot_card_identity_conflict|pilot_state_incomplete/i);
+  assert.match(cohortAction, /_pilot_count = 0 AND _promoted_count = 5[\s\S]*'return_promoted'/i);
+  assert.match(cohortAction, /_pilot_count = 5 AND _promoted_count = 0[\s\S]*'return_pilot'/i);
+  assert.match(cohortAction, /_pilot_count = 0 AND _promoted_count = 0[\s\S]*'initialize'/i);
+  assert.match(cohortAction, /_has_duplicate[\s\S]*'reject'/i);
+  assert.doesNotMatch(initialize, /pilot_count\s*=\s*5[\s\S]*promoted_count\s*=\s*5[\s\S]*INSERT INTO/i);
   assert.match(sql, /REVOKE ALL ON FUNCTION public\.promote_qualified_card_benefit_enrichment_pilot\(text\)[\s\S]*TO service_role/i);
+  assert.match(sql, /REVOKE ALL ON FUNCTION public\.initialize_card_benefit_enrichment_pilot\(jsonb, text\)[\s\S]*TO service_role/i);
   assert.match(sql, /DO \$pilot_qualification_assertions\$[\s\S]*fully_rejected[\s\S]*partially_rejected[\s\S]*successful_no_change/i);
+  assert.match(sql, /DO \$pilot_cohort_assertions\$[\s\S]*return_promoted[\s\S]*partial[\s\S]*five_plus_five[\s\S]*duplicate/i);
+  assert.match(sql, /missing_unsafe[\s\S]*null_unsafe[\s\S]*string_unsafe[\s\S]*negative_unsafe[\s\S]*noninteger_unsafe[\s\S]*missing_raw[\s\S]*null_raw[\s\S]*string_raw[\s\S]*true_raw/i);
 });
 
 test('canonical recurrence timestamps and history normalization have apply-time parity assertions', async () => {
