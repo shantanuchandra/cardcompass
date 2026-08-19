@@ -66,25 +66,58 @@ test('benefit approvals bind the locked job to its staging row', async () => {
 });
 
 const runPostgresIntegration = process.env.RUN_ADMIN_CARD_DATA_PG_INTEGRATION === 'true';
+const psqlArgs = ['-X', '-A', '-t', '--set', 'ON_ERROR_STOP=1', '--file', '-'];
 
-function psql(databaseUrl, sql) {
+function derivePgConnection(databaseUrl, databaseName) {
+  const parsed = new URL(databaseUrl);
+  assert.ok(
+    ['postgres:', 'postgresql:'].includes(parsed.protocol),
+    'integration database URL must use PostgreSQL',
+  );
+  assert.ok(
+    parsed.hostname === '' || ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname),
+    'integration tests refuse non-loopback PostgreSQL servers',
+  );
+  assert.match(databaseName, /^[a-zA-Z0-9_]+$/, 'database name must be identifier-safe');
+
+  const env = { ...process.env, PGDATABASE: databaseName };
+  if (parsed.hostname) env.PGHOST = parsed.hostname;
+  if (parsed.port) env.PGPORT = parsed.port;
+  if (parsed.username) env.PGUSER = decodeURIComponent(parsed.username);
+  if (parsed.password) env.PGPASSWORD = decodeURIComponent(parsed.password);
+  if (parsed.searchParams.has('sslmode')) env.PGSSLMODE = parsed.searchParams.get('sslmode');
+  if (parsed.searchParams.has('options')) env.PGOPTIONS = parsed.searchParams.get('options');
+
+  return { env, secrets: [databaseUrl, env.PGPASSWORD].filter(Boolean) };
+}
+
+function redactSecrets(value, secrets) {
+  return secrets.reduce(
+    (redacted, secret) => redacted.replaceAll(secret, '[REDACTED]'),
+    String(value ?? ''),
+  );
+}
+
+function psql(connection, sql) {
   const result = spawnSync(
     'psql',
-    ['-X', '-A', '-t', '--set', 'ON_ERROR_STOP=1', '--dbname', databaseUrl, '--file', '-'],
-    { input: sql, encoding: 'utf8' },
+    psqlArgs,
+    { input: sql, encoding: 'utf8', env: connection.env },
   );
   if (result.status !== 0) {
-    throw new Error(`PostgreSQL integration command failed:\n${result.stderr}`);
+    throw new Error(
+      `PostgreSQL integration command failed:\n${redactSecrets(result.stderr, connection.secrets)}`,
+    );
   }
   return result.stdout.trim();
 }
 
-function psqlAsync(databaseUrl, sql) {
+function psqlAsync(connection, sql) {
   return new Promise((resolve, reject) => {
     const child = spawn(
       'psql',
-      ['-X', '-A', '-t', '--set', 'ON_ERROR_STOP=1', '--dbname', databaseUrl, '--file', '-'],
-      { stdio: ['pipe', 'pipe', 'pipe'] },
+      psqlArgs,
+      { stdio: ['pipe', 'pipe', 'pipe'], env: connection.env },
     );
     let stderr = '';
     child.stderr.setEncoding('utf8');
@@ -92,44 +125,54 @@ function psqlAsync(databaseUrl, sql) {
     child.on('error', reject);
     child.on('close', (code) => {
       if (code === 0) resolve();
-      else reject(new Error(`PostgreSQL integration command failed:\n${stderr}`));
+      else reject(new Error(
+        `PostgreSQL integration command failed:\n${redactSecrets(stderr, connection.secrets)}`,
+      ));
     });
     child.stdin.end(sql);
   });
 }
 
-function assertLocalDatabaseUrl(databaseUrl) {
-  if (databaseUrl.startsWith('postgresql:///') || databaseUrl.startsWith('postgres:///')) return;
-  const parsed = new URL(databaseUrl);
-  assert.ok(
-    ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname),
-    'integration tests refuse non-loopback PostgreSQL servers',
+test('PostgreSQL connection derivation keeps credentials out of process arguments', () => {
+  const connection = derivePgConnection(
+    'postgresql://operator:s3cr%40t@127.0.0.1:5544/admin?sslmode=require&options=-c%20statement_timeout%3D5000',
+    'disposable_test',
   );
-}
+  assert.equal(connection.env.PGHOST, '127.0.0.1');
+  assert.equal(connection.env.PGPORT, '5544');
+  assert.equal(connection.env.PGUSER, 'operator');
+  assert.equal(connection.env.PGPASSWORD, 's3cr@t');
+  assert.equal(connection.env.PGDATABASE, 'disposable_test');
+  assert.equal(connection.env.PGSSLMODE, 'require');
+  assert.equal(connection.env.PGOPTIONS, '-c statement_timeout=5000');
+  assert.ok(psqlArgs.every((argument) => !argument.includes('s3cr')));
+  assert.equal(redactSecrets('failure s3cr@t', connection.secrets), 'failure [REDACTED]');
+});
 
 test('RPC compiles and preserves transactional mutation invariants in PostgreSQL', {
   skip: runPostgresIntegration ? false : 'set RUN_ADMIN_CARD_DATA_PG_INTEGRATION=true for isolated local PostgreSQL coverage',
 }, async () => {
   const adminUrl = process.env.ADMIN_CARD_DATA_TEST_ADMIN_URL ?? 'postgresql:///postgres';
-  assertLocalDatabaseUrl(adminUrl);
-
   const databaseName = `admin_card_data_test_${process.pid}_${Date.now()}`;
-  const databaseUrl = `postgresql:///${databaseName}`;
+  assert.match(databaseName, /^admin_card_data_test_\d+_\d+$/);
+  const adminDatabaseName = decodeURIComponent(new URL(adminUrl).pathname.slice(1)) || 'postgres';
+  const adminConnection = derivePgConnection(adminUrl, adminDatabaseName);
+  const disposableConnection = derivePgConnection(adminUrl, databaseName);
   const requiredRoles = ['anon', 'authenticated', 'service_role'];
   const createdRoles = [];
 
   try {
     for (const role of requiredRoles) {
       const exists = psql(
-        adminUrl,
+        adminConnection,
         `select exists (select 1 from pg_roles where rolname = '${role}');`,
       );
       if (!exists.endsWith('t')) {
-        psql(adminUrl, `create role ${role} nologin;`);
+        psql(adminConnection, `create role ${role} nologin;`);
         createdRoles.push(role);
       }
     }
-    psql(adminUrl, `create database "${databaseName}";`);
+    psql(adminConnection, `create database "${databaseName}";`);
 
     const migration = await readFile(migrationUrl, 'utf8');
     const setup = `
@@ -196,7 +239,7 @@ test('RPC compiles and preserves transactional mutation invariants in PostgreSQL
       $$;
       ${migration}
     `;
-    psql(databaseUrl, setup);
+    psql(disposableConnection, setup);
 
     const assertions = `
       begin;
@@ -299,9 +342,9 @@ test('RPC compiles and preserves transactional mutation invariants in PostgreSQL
       $$;
       rollback;
     `;
-    psql(databaseUrl, assertions);
+    psql(disposableConnection, assertions);
 
-    psql(databaseUrl, `
+    psql(disposableConnection, `
       insert into auth.users(id) values ('10000000-0000-4000-8000-000000000010');
       insert into public.card_catalog_review_queue(id, status, updated_at) values
         ('20000000-0000-4000-8000-000000000010', 'pending', '2026-08-19T09:00:00Z');
@@ -316,20 +359,21 @@ test('RPC compiles and preserves transactional mutation invariants in PostgreSQL
       );
     `;
     await Promise.all([
-      psqlAsync(databaseUrl, concurrentCall),
-      psqlAsync(databaseUrl, concurrentCall),
+      psqlAsync(disposableConnection, concurrentCall),
+      psqlAsync(disposableConnection, concurrentCall),
     ]);
-    const concurrentAuditCount = psql(databaseUrl, `
+    const concurrentAuditCount = psql(disposableConnection, `
       select count(*) from public.admin_audit_log
       where request_id = '60000000-0000-4000-8000-000000000010';
     `);
     assert.ok(concurrentAuditCount.endsWith('1'), 'concurrent replay must write one audit row');
   } finally {
+    assert.match(databaseName, /^admin_card_data_test_\d+_\d+$/);
     try {
-      psql(adminUrl, `drop database if exists "${databaseName}" with (force);`);
+      psql(adminConnection, `drop database if exists "${databaseName}" with (force);`);
     } finally {
       for (const role of createdRoles.reverse()) {
-        psql(adminUrl, `drop role if exists ${role};`);
+        psql(adminConnection, `drop role if exists ${role};`);
       }
     }
   }

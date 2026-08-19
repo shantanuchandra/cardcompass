@@ -18,6 +18,7 @@ Added `public.admin_card_data_action`, a service-only, fixed-search-path wrapper
 - RED: the new three-test contract failed 3/3 with `ENOENT` before the migration existed.
 - GREEN: `node --test test/supabase/admin_operator_foundation_migration_test.js test/supabase/admin_card_data_operations_migration_test.js test/supabase/automated_benefit_enrichment_migration_test.js` passed 13/13.
 - REVIEW FIX GREEN: `RUN_ADMIN_CARD_DATA_PG_INTEGRATION=true node --test test/supabase/admin_card_data_operations_migration_test.js` passed 4/4 against an isolated disposable local PostgreSQL database. It compiled/applied the real migration and exercised exact replay, changed-request collision, stale timestamps, staging ownership, audit-failure rollback, and concurrent identical requests. Cleanup left no test databases or roles.
+- REVIEW FIX FOLLOW-UP: the harness derives admin and disposable connections from one validated loopback URL, moves credentials and connection options into libpq environment variables, keeps passwords out of process arguments, redacts failures, and guards the generated cleanup target. Unit/static and opt-in PostgreSQL coverage passed 5/5; cleanup again left no database or role residue.
 
 ## Residual risk
 
