@@ -112,7 +112,7 @@ export function refreshEligibleCard(input: {
 export async function requeueDueJobs(
   db: UntypedSupabaseClient,
   now = new Date(),
-  limit = 200,
+  limit = 1,
 ): Promise<number> {
   if (
     !Number.isInteger(limit) || limit < 1 || limit > 200 ||
@@ -532,7 +532,10 @@ export function newestValidCrawlObservations(
 ): Array<Record<string, unknown>> {
   const assessmentTimestamp = utcInstant(assessmentTime);
   if (assessmentTimestamp === null) return [];
-  const byTimestamp = new Map<string, Record<string, unknown>>();
+  const byIdentity = new Map<string, {
+    observedAt: string;
+    observation: Record<string, unknown>;
+  }>();
   for (const observation of summaries.flatMap(observationObjects)) {
     const observedAt = typeof observation.observed_at === "string"
       ? observation.observed_at
@@ -540,16 +543,33 @@ export function newestValidCrawlObservations(
     const timestamp = utcInstant(observedAt);
     if (
       timestamp === null ||
-      timestamp > assessmentTimestamp + MAX_EVIDENCE_CLOCK_SKEW_MS ||
-      byTimestamp.has(observedAt)
+      timestamp > assessmentTimestamp + MAX_EVIDENCE_CLOCK_SKEW_MS
     ) {
       continue;
     }
-    byTimestamp.set(observedAt, observation);
+    const identity = [
+      observedAt,
+      typeof observation.source_manifest_hash === "string"
+        ? observation.source_manifest_hash
+        : "",
+      typeof observation.canonical_benefit_hash === "string"
+        ? observation.canonical_benefit_hash
+        : "",
+    ].join("\u0000");
+    if (!byIdentity.has(identity)) {
+      byIdentity.set(identity, { observedAt, observation });
+    }
   }
-  return [...byTimestamp.entries()].sort((left, right) =>
-    Number(utcInstant(right[0])) - Number(utcInstant(left[0]))
-  ).slice(0, 24).map(([, observation]) => observation);
+  return [...byIdentity.values()].sort((left, right) =>
+    Number(utcInstant(right.observedAt)) -
+      Number(utcInstant(left.observedAt)) ||
+    String(left.observation.source_manifest_hash ?? "").localeCompare(
+      String(right.observation.source_manifest_hash ?? ""),
+    ) ||
+    String(left.observation.canonical_benefit_hash ?? "").localeCompare(
+      String(right.observation.canonical_benefit_hash ?? ""),
+    )
+  ).slice(0, 24).map(({ observation }) => observation);
 }
 
 function latestValidCrawlObservation(
@@ -1161,11 +1181,14 @@ function sourceAttemptInputs(
   });
 }
 
-async function processJob(
+export async function processJob(
   db: UntypedSupabaseClient,
   job: EnrichmentJob,
   runId: string,
   invocationStartedAt: number,
+  dependencies: {
+    fetchObservation?: typeof fetchOfficialIssuerObservation;
+  } = {},
 ): Promise<ProcessResult> {
   let outcome: JobOutcome = "failed";
   let retried = false;
@@ -1192,7 +1215,9 @@ async function processJob(
       throw new Error("deadline_exceeded");
     }
     const robotsCache = createOfficialRobotsCache();
-    const fetchObservation = await fetchOfficialIssuerObservation({
+    const fetchObservation = await (
+      dependencies.fetchObservation ?? fetchOfficialIssuerObservation
+    )({
       issuer: job.issuer,
       url: job.canonical_url,
       contentPurpose: "document",
@@ -1305,12 +1330,18 @@ async function processJob(
         },
       };
       failureCategory = errorCode;
-      outcome = fetchObservation.disposition === "blocked"
-        ? "quarantined"
-        : fetchObservation.disposition === "review_required"
-        ? "review_required"
-        : "failed";
-      return { outcome, retried: false };
+      if (fetchObservation.disposition === "blocked") {
+        outcome = "quarantined";
+      } else if (fetchObservation.disposition === "review_required") {
+        outcome = "review_required";
+      } else {
+        const disposition = failureDisposition(Number(job.attempt_count ?? 1));
+        outcome = disposition.status;
+        nextRetryAt = disposition.nextRetryAt;
+        retried = disposition.retried;
+        resultSummary = { ...resultSummary, retry_scheduled: retried };
+      }
+      return { outcome, retried };
     }
     const page = fetchObservation.result;
     if (page.notModified || !page.text || !page.contentHash) {
@@ -1749,7 +1780,7 @@ export async function handleBenefitEnrichmentBatch(
       );
       runMode = "pilot";
     }
-    await requeueDueJobs(db, new Date(), 200);
+    await requeueDueJobs(db, new Date());
     const pilot = await readPilotStatus(db);
     if (runMode === "scheduled" && !pilot.scheduledClaimAllowed) {
       return json({

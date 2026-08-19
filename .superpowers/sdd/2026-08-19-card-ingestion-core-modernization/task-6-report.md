@@ -106,3 +106,85 @@ The unresolved integration gate is ordered Task 2–6 real PostgreSQL
 parse/apply/lint/transaction verification in an explicitly authorized
 environment. In particular, static tests do not claim real row-lock concurrency,
 trigger execution, RPC privilege, or rollback-chain execution.
+
+## Review fix round 1/5 — 2026-08-20
+
+### Red proof
+
+The review findings were reproduced before their fixes:
+
+- The strict recurrence-policy suite reported **4 passed / 1 failed** because
+  JavaScript accepted a normalized February 30 timestamp. The retained cases
+  also reject spaces, offsets, missing milliseconds, and future values.
+- The pilot-policy suite reported **14 passed / 1 failed** because a safe
+  `completed` job was treated as nonterminal.
+- The batch suite failed type checking because the real `processJob` boundary
+  was not exported/injectable for a controlled primary fetch. After the test
+  boundary existed, four real process-to-finalizer cases covered deadline,
+  timeout, HTTP 5xx, and unreachable dispositions.
+- The expanded recurrence migration suite reported **0 passed / 6 failed** for
+  null-due revival, pilot/run-mode policy, pending staging protection, legacy
+  root history, one locked mutation, strict UTC parity, and transition helpers.
+- Three later focused reds each reported **0 passed / 1 failed** before the
+  worker used `_limit=1`, expired pending-staging work recovered to reviewable
+  `staged`, and queueable live work sorted ahead of clear-only pilot/manual
+  housekeeping.
+
+### Fixes
+
+- Failed primary fetch observations now derive the normal bounded job-level
+  retry before finalization. The finalizer receives a non-null 15/60-minute
+  retry for attempts one/two, while every compacted source attempt and terminal
+  source disposition remains in the sanitized observation.
+- `completed`, `staged`, and justified `quarantined` are explicit pilot terminal
+  states. Pilot/manual rows are one-shot qualification/operator lanes: terminal
+  scheduling recurs only `scheduled` rows, and stale non-live due fields are
+  cleared without queueing them or blocking the pilot gate.
+- Replaced the separate unbounded discontinued-row update with one policy-driven
+  `LIMIT _limit ... FOR UPDATE SKIP LOCKED` update. The worker invokes it with
+  `_limit=1`; queueable scheduled work sorts before bounded housekeeping.
+- The same transition queues an eligible scheduled terminal row whose due date
+  is null after a holder, availability, or identity-review resolution change.
+  Still-discontinued/unheld, unresolved, pending-review, future-due, retrying,
+  leased, processing, v5, pilot, and manual rows cannot be revived.
+- Added a partial v6 recurrence index over parser/run-mode/status/due/order keys.
+  No business table or column was added.
+- A linked pending staging proposal freezes recurrence and claiming. Expired
+  processing work with such a proposal returns to `staged`, not failed, so Task
+  4 can approve it. Approval changes staging status before completing the job;
+  the shared trigger then schedules the next live observation. This prevents a
+  newer observation from silently making an older pending proposal unsafe.
+- First recurrence now merges the legacy root `result_summary.observation` with
+  the existing array before sanitizing, deterministic composite deduplication,
+  sorting, and newest-24 truncation. Root/current priority is deterministic.
+- Read-side deduplication now matches SQL identity exactly:
+  observed timestamp + source-manifest hash + canonical-benefit hash. Distinct
+  same-time evidence survives; exact duplicates collapse.
+- TypeScript accepts only real canonical `YYYY-MM-DDTHH:mm:ss.SSSZ` instants.
+  SQL independently round-trips that shape and performs recurrence arithmetic
+  as epoch seconds plus exact 86,400-second UTC days, independent of session
+  timezone or DST. Migration assertions run the DST case under
+  `America/New_York` and reject malformed/noncanonical values.
+- Apply-time pure assertions now cover pilot clear, scheduled due/null revival,
+  pending/ineligible clearing, future no-op, exact DST cadence, malformed time,
+  legacy-root retention, same-time composite identity, and newest-24 history.
+
+### Green verification
+
+- Exact Task 6 Deno command — **91 passed, 0 failed**.
+- Exact Task 6 migration command — **26 passed, 0 failed**.
+- Total named behavioral/static tests — **117 passed, 0 failed**.
+- `deno check --node-modules-dir=auto` on all changed production TypeScript
+  files — passed.
+- `deno fmt --check` on all changed TypeScript/test files — passed.
+- `git diff --check` — passed.
+
+Migration remains
+`supabase/migrations/20260819205037_recur_card_enrichment_jobs.sql`.
+Review-fix SHA-256 before commit:
+`5864b39567d6ee6b4e202961a6e4e9f817be1e49d477b9d72285ca0014319466`.
+
+Live applied: **no**. No Docker, local database/PostgreSQL/Supabase runtime,
+linked Supabase command, migration apply/push/dry-run, external network,
+production data, or live write was used. Ordered Task 2–6 real PostgreSQL
+parse/apply/lint/transaction verification remains the explicit unresolved gate.

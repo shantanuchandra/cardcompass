@@ -318,10 +318,12 @@ export function evaluatePilotGate(jobs: readonly PilotJob[]): {
   const blockers: string[] = [];
   if (pilot.length !== 5) blockers.push("pilot_job_count");
   const hasNonTerminal = pilot.some((job) =>
-    job.status !== "staged" && job.status !== "quarantined"
+    job.status !== "staged" && job.status !== "completed" &&
+    job.status !== "quarantined"
   );
   for (const job of pilot) {
-    const terminal = job.status === "staged" || job.status === "quarantined";
+    const terminal = job.status === "staged" || job.status === "completed" ||
+      job.status === "quarantined";
     if (job.status === "quarantined" && !job.quarantineReason) {
       blockers.push("unjustified_quarantine");
     }
@@ -331,7 +333,10 @@ export function evaluatePilotGate(jobs: readonly PilotJob[]): {
     }
     if (job.unsafeMutationCount !== 0) blockers.push("unsafe_mutation");
     if (terminal && !job.idempotencyPassed) blockers.push("idempotency_failed");
-    if (job.status === "staged" && !job.evidencePassed) {
+    if (
+      (job.status === "staged" || job.status === "completed") &&
+      !job.evidencePassed
+    ) {
       blockers.push("evidence_failed");
     }
     if (job.rawBodyStored) blockers.push("raw_body_stored");

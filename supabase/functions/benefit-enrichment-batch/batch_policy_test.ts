@@ -572,6 +572,20 @@ Deno.test("scheduled rollout stays blocked until the exact safe five-job pilot p
     evaluatePilotGate(base).status === "passed",
     "safe terminal pilot did not pass",
   );
+  const completedNoChange = base.map((job, index) =>
+    index === 0 ? { ...job, status: "completed" } : job
+  );
+  assert(
+    evaluatePilotGate(completedNoChange).status === "passed",
+    "successful no-change completion did not finish the pilot",
+  );
+  const completedApproval = base.map((job, index) =>
+    index === 1 ? { ...job, status: "completed" } : job
+  );
+  assert(
+    evaluatePilotGate(completedApproval).scheduledClaimAllowed,
+    "admin-approved completion self-deadlocked scheduled claims",
+  );
   assert(
     evaluatePilotGate(base.slice(0, 4)).status === "running",
     "partial pilot was not blocked",

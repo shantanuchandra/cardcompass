@@ -11,6 +11,7 @@ import {
   newestValidCrawlObservations,
   observationValidatedAt,
   previousFetchValidators,
+  processJob,
   readCompleteAbsenceHistory,
   readCurrentBenefits,
   readPilotStatus,
@@ -81,19 +82,133 @@ Deno.test("every invocation requeues only bounded due v6 work before other queue
     },
   };
   const now = new Date("2026-08-20T00:00:00.000Z");
-  const count = await requeueDueJobs(db, now, 200);
+  const count = await requeueDueJobs(db, now);
   assert(count === 1, "requeue result count was lost");
   assert(
     JSON.stringify(calls) === JSON.stringify([{
       name: "requeue_due_card_catalog_enrichment_jobs",
       args: {
         _parser_version: "benefits-v6",
-        _limit: 200,
+        _limit: 1,
         _now: "2026-08-20T00:00:00.000Z",
       },
     }]),
     "worker did not invoke the bounded explicit-v6 requeue contract",
   );
+});
+
+Deno.test("failed primary observations reach the finalizer with bounded retry and retained attempts", async () => {
+  for (
+    const failureCode of [
+      "deadline_exceeded",
+      "timeout",
+      "http_5xx",
+      "unreachable",
+    ]
+  ) {
+    const finalizations: Record<string, unknown>[] = [];
+    const card = {
+      id: "00000000-0000-4000-8000-000000000001",
+      card_name: "Issuer Test Card",
+      bank: "Issuer",
+      network: "Visa",
+      card_type: "credit",
+      card_url: "https://issuer.example/card",
+      is_discontinued: false,
+    };
+    const tableRows: Record<string, Record<string, unknown>[]> = {
+      card_catalog: [card],
+      card_catalog_aliases: [],
+      active_card_benefits: [],
+    };
+    const db = {
+      from(table: string) {
+        const query = {
+          select() {
+            return this;
+          },
+          eq() {
+            return this;
+          },
+          ilike() {
+            return this;
+          },
+          in() {
+            return this;
+          },
+          async single() {
+            return { data: card, error: null };
+          },
+          then<TResult1 = unknown>(
+            onfulfilled?:
+              | ((value: unknown) => TResult1 | PromiseLike<TResult1>)
+              | null,
+          ) {
+            return Promise.resolve({
+              data: tableRows[table] ?? [],
+              error: null,
+            }).then(onfulfilled);
+          },
+        };
+        return query;
+      },
+      async rpc(name: string, args: Record<string, unknown>) {
+        assert(
+          name === "finalize_card_catalog_enrichment_job",
+          "failed primary observation called an unrelated RPC",
+        );
+        finalizations.push(args);
+        return { data: "job-1", error: null };
+      },
+    };
+    const attemptedAt = new Date().toISOString();
+    const before = Date.now();
+    const result = await processJob(
+      db,
+      {
+        id: "job-1",
+        card_id: card.id,
+        issuer: card.bank,
+        canonical_url: card.card_url,
+        parser_version: "benefits-v6",
+        attempt_count: 1,
+        run_mode: "scheduled",
+        lease_token: "lease-1",
+        staging_id: null,
+        result_summary: {},
+      },
+      "run-1",
+      before,
+      {
+        fetchObservation: async () => ({
+          disposition: "failed",
+          attempts: [{ code: failureCode, attemptedAt }],
+          reviewReason: failureCode,
+        }),
+      },
+    );
+    const finalized = finalizations[0];
+    const retryAt = Date.parse(String(finalized?._next_retry_at));
+    assert(
+      result.outcome === "failed" && result.retried,
+      `${failureCode} was not retried`,
+    );
+    assert(
+      finalized?._status === "failed",
+      `${failureCode} did not finalize as failed`,
+    );
+    assert(
+      retryAt >= before + 15 * 60_000 && retryAt <= Date.now() + 15 * 60_000,
+      `${failureCode} received an unbounded retry time`,
+    );
+    const observation = (finalized?._result_summary as Record<string, unknown>)
+      ?.observation as Record<string, unknown>;
+    const attempts = observation?.source_attempts as Record<string, unknown>[];
+    assert(
+      attempts?.some((attempt) => attempt.errorCode === failureCode),
+      `${failureCode} attempts were lost before finalization`,
+    );
+  }
 });
 
 Deno.test("pilot API defaults to the current movie-capable parser lane", async () => {
@@ -1710,6 +1825,32 @@ Deno.test("future observations cannot crowd out valid retirement history", () =>
   assert(
     observations[0].observed_at === "2026-08-18T00:00:00.000Z",
     "valid observation was crowded out",
+  );
+});
+
+Deno.test("same-time observations dedupe only when timestamp and evidence identity all match", () => {
+  const observedAt = "2026-08-20T00:00:00.000Z";
+  const first = {
+    observed_at: observedAt,
+    source_manifest_hash: "a".repeat(64),
+    canonical_benefit_hash: "b".repeat(64),
+  };
+  const distinctEvidence = {
+    ...first,
+    source_manifest_hash: "c".repeat(64),
+  };
+  const observations = newestValidCrawlObservations([{
+    observation: first,
+    observations: [{ ...first }, distinctEvidence],
+  }], observedAt);
+  assert(
+    observations.length === 2,
+    "distinct same-time evidence was collapsed",
+  );
+  assert(
+    observations.some((item) => item.source_manifest_hash === "a".repeat(64)) &&
+      observations.some((item) => item.source_manifest_hash === "c".repeat(64)),
+    "read-side history identity diverged from SQL",
   );
 });
 

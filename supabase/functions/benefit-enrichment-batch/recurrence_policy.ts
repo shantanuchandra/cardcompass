@@ -1,3 +1,5 @@
+import { utcInstant } from "./crawl_policy.ts";
+
 export type ObservationOutcome =
   | "success"
   | "not_modified"
@@ -35,10 +37,12 @@ export function nextObservationAt(input: {
   hasActiveCardholder: boolean;
   outcome: ObservationOutcome;
 }): string | null {
-  const completed = Date.parse(input.completedAt);
+  const completed = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+      .test(input.completedAt)
+    ? utcInstant(input.completedAt)
+    : null;
   if (
-    !Number.isFinite(completed) ||
-    !/(?:Z|[+-]\d{2}:\d{2})$/i.test(input.completedAt) ||
+    completed === null ||
     completed > Date.now() + MAX_CLOCK_SKEW_MS
   ) {
     throw new Error("invalid_completed_at");

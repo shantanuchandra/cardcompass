@@ -3,6 +3,13 @@ BEGIN;
 SET LOCAL lock_timeout = '10s';
 SET LOCAL statement_timeout = '120s';
 
+CREATE INDEX IF NOT EXISTS idx_card_catalog_enrichment_jobs_recurrence_v6
+  ON public.card_catalog_enrichment_jobs (
+    parser_version, run_mode, status, next_run_at, issuer, id
+  )
+  WHERE parser_version = 'benefits-v6'
+    AND status IN ('completed', 'staged', 'quarantined', 'review_required', 'failed');
+
 -- This byte-sum is intentionally simple. TypeScript uses TextEncoder over the
 -- same trimmed lowercase identifier, so jitter is stable across runtimes.
 CREATE OR REPLACE FUNCTION public.card_enrichment_jitter_days(
@@ -33,9 +40,38 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION public.canonical_card_enrichment_timestamp(
+  _value text
+) RETURNS timestamptz
+LANGUAGE plpgsql
+IMMUTABLE
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  parsed_value timestamptz;
+BEGIN
+  IF _value IS NULL OR _value !~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$' THEN
+    RETURN NULL;
+  END IF;
+  BEGIN
+    parsed_value := _value::timestamptz;
+  EXCEPTION WHEN OTHERS THEN
+    RETURN NULL;
+  END;
+  IF to_char(
+    parsed_value AT TIME ZONE 'UTC',
+    'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+  ) <> _value THEN
+    RETURN NULL;
+  END IF;
+  RETURN parsed_value;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION public.next_card_enrichment_observation_at(
   _card_id uuid,
-  _completed_at timestamptz,
+  _completed_at text,
   _is_discontinued boolean,
   _has_active_cardholder boolean,
   _outcome text
@@ -47,9 +83,13 @@ SET search_path = public, pg_temp
 AS $$
 DECLARE
   normalized_outcome text := lower(trim(coalesce(_outcome, '')));
+  completed_at_value timestamptz;
+  cadence_seconds bigint;
+  jitter_days integer;
 BEGIN
-  IF _card_id IS NULL OR _completed_at IS NULL
-     OR _completed_at > statement_timestamp() + interval '5 minutes'
+  completed_at_value := public.canonical_card_enrichment_timestamp(_completed_at);
+  IF _card_id IS NULL OR completed_at_value IS NULL
+     OR completed_at_value > statement_timestamp() + interval '5 minutes'
      OR _is_discontinued IS NULL OR _has_active_cardholder IS NULL THEN
     RAISE EXCEPTION 'invalid_recurrence_policy';
   END IF;
@@ -57,22 +97,25 @@ BEGIN
     RETURN NULL;
   END IF;
   IF normalized_outcome IN ('success', 'not_modified') THEN
-    RETURN _completed_at + interval '30 days' + make_interval(
-      days => public.card_enrichment_jitter_days(_card_id, 3)
-    );
+    cadence_seconds := extract(epoch FROM interval '30 days')::bigint;
+    jitter_days := public.card_enrichment_jitter_days(_card_id, 3);
   ELSIF normalized_outcome IN ('blocked', 'missing', 'failed') THEN
-    RETURN _completed_at + interval '7 days' + make_interval(
-      days => public.card_enrichment_jitter_days(_card_id, 1)
-    );
+    cadence_seconds := extract(epoch FROM interval '7 days')::bigint;
+    jitter_days := public.card_enrichment_jitter_days(_card_id, 1);
+  ELSE
+    RAISE EXCEPTION 'invalid_recurrence_outcome';
   END IF;
-  RAISE EXCEPTION 'invalid_recurrence_outcome';
+  RETURN to_timestamp(
+    extract(epoch FROM completed_at_value) + cadence_seconds +
+    (jitter_days::bigint * 86400)
+  );
 END;
 $$;
 
 CREATE OR REPLACE FUNCTION public.bounded_card_enrichment_timestamp(
   _value text,
   _now timestamptz
-) RETURNS timestamptz
+) RETURNS text
 LANGUAGE plpgsql
 STABLE
 SECURITY INVOKER
@@ -82,16 +125,13 @@ DECLARE
   parsed_value timestamptz;
 BEGIN
   IF _value IS NULL OR length(_value) > 64 OR _now IS NULL THEN RETURN NULL; END IF;
-  BEGIN
-    parsed_value := _value::timestamptz;
-  EXCEPTION WHEN OTHERS THEN
-    RETURN NULL;
-  END;
+  parsed_value := public.canonical_card_enrichment_timestamp(_value);
+  IF parsed_value IS NULL THEN RETURN NULL; END IF;
   IF parsed_value < '2000-01-01T00:00:00Z'::timestamptz
      OR parsed_value > _now + interval '5 minutes' THEN
     RETURN NULL;
   END IF;
-  RETURN parsed_value;
+  RETURN _value;
 END;
 $$;
 
@@ -105,7 +145,7 @@ SECURITY INVOKER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  attempted_at_value timestamptz;
+  attempted_at_value text;
   safe_url text;
   safe_history jsonb;
 BEGIN
@@ -182,7 +222,7 @@ SECURITY INVOKER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-  observed_at_value timestamptz;
+  observed_at_value text;
   safe_attempts jsonb;
   safe_absent_ids jsonb;
   safe_absent_legacy_ids jsonb;
@@ -299,13 +339,13 @@ SECURITY INVOKER
 SET search_path = public, pg_temp
 AS $$
   WITH raw_observations AS (
-    SELECT observation, 1 AS source_priority
+    SELECT observation, observation_index::bigint AS source_priority
     FROM jsonb_array_elements(
       CASE WHEN jsonb_typeof(_existing_history) = 'array'
         THEN _existing_history ELSE '[]'::jsonb END
-    ) AS existing(observation)
+    ) WITH ORDINALITY AS existing(observation, observation_index)
     UNION ALL
-    SELECT _current_observation, 0
+    SELECT _current_observation, 0::bigint
   ), sanitized AS (
     SELECT public.sanitize_card_enrichment_observation(observation, _now) AS observation,
       source_priority
@@ -446,6 +486,61 @@ AS $$
   );
 $$;
 
+CREATE OR REPLACE FUNCTION public.card_enrichment_job_has_pending_staging(
+  _staging_id uuid,
+  _card_id uuid,
+  _parser_version text
+) RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+  SELECT _staging_id IS NOT NULL AND EXISTS (
+    SELECT 1
+    FROM public.card_benefits_staging AS staging
+    WHERE staging.id = _staging_id
+      AND staging.card_id = _card_id
+      AND staging.parser_version = _parser_version
+      AND staging.request_type = 'official_benefit_enrichment'
+      AND staging.status = 'pending'
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION public.card_enrichment_requeue_action(
+  _run_mode text,
+  _status text,
+  _next_run_at timestamptz,
+  _now timestamptz,
+  _eligible boolean,
+  _has_pending_staging boolean
+) RETURNS text
+LANGUAGE plpgsql
+IMMUTABLE
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF _now IS NULL OR _eligible IS NULL OR _has_pending_staging IS NULL
+     OR _status NOT IN ('completed', 'staged', 'quarantined', 'review_required', 'failed') THEN
+    RETURN 'none';
+  END IF;
+  IF _run_mode <> 'scheduled' THEN
+    RETURN CASE WHEN _next_run_at IS NULL THEN 'none' ELSE 'clear' END;
+  END IF;
+  IF _has_pending_staging THEN
+    RETURN CASE WHEN _next_run_at IS NULL THEN 'none' ELSE 'clear' END;
+  END IF;
+  IF NOT _eligible THEN
+    RETURN CASE WHEN _next_run_at IS NULL THEN 'none' ELSE 'clear' END;
+  END IF;
+  IF _next_run_at IS NULL OR _next_run_at <= _now THEN
+    RETURN 'queue';
+  END IF;
+  RETURN 'none';
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION public.schedule_terminal_card_enrichment_observation()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -459,6 +554,7 @@ DECLARE
   recurrence_outcome text;
 BEGIN
   IF NEW.parser_version = 'benefits-v6'
+     AND NEW.run_mode = 'scheduled'
      AND NEW.status IN ('completed', 'staged', 'quarantined', 'review_required', 'failed')
      AND NEW.next_retry_at IS NULL THEN
     SELECT coalesce(card.is_discontinued, false), EXISTS (
@@ -469,6 +565,13 @@ BEGIN
     INTO card_is_discontinued, active_cardholder
     FROM public.card_catalog AS card
     WHERE card.id = NEW.card_id;
+    IF public.card_has_unresolved_catalog_identity(NEW.card_id, NEW.canonical_url)
+       OR public.card_enrichment_job_has_pending_staging(
+         NEW.staging_id, NEW.card_id, NEW.parser_version
+       ) THEN
+      NEW.next_run_at := NULL;
+      RETURN NEW;
+    END IF;
     terminal_disposition := lower(coalesce(
       NEW.result_summary#>>'{source_observation,terminal_disposition}',
       NEW.result_summary#>>'{observation,source_observation,terminal_disposition}',
@@ -487,7 +590,10 @@ BEGIN
     END;
     NEW.next_run_at := public.next_card_enrichment_observation_at(
       NEW.card_id,
-      statement_timestamp(),
+      to_char(
+        statement_timestamp() AT TIME ZONE 'UTC',
+        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+      ),
       card_is_discontinued,
       active_cardholder,
       recurrence_outcome
@@ -502,7 +608,8 @@ $$;
 DROP TRIGGER IF EXISTS schedule_terminal_card_enrichment_observation
   ON public.card_catalog_enrichment_jobs;
 CREATE TRIGGER schedule_terminal_card_enrichment_observation
-BEFORE INSERT OR UPDATE OF status, next_retry_at, result_summary, failure_category, parser_version
+BEFORE INSERT OR UPDATE OF status, next_retry_at, result_summary, failure_category,
+  parser_version, run_mode, staging_id, canonical_url, card_id
 ON public.card_catalog_enrichment_jobs
 FOR EACH ROW EXECUTE FUNCTION public.schedule_terminal_card_enrichment_observation();
 
@@ -515,9 +622,7 @@ WHERE legacy_terminal.parser_version = 'benefits-v6'
   AND legacy_terminal.status IN ('completed', 'staged', 'quarantined', 'review_required', 'failed')
   AND legacy_terminal.next_retry_at IS NULL
   AND legacy_terminal.next_run_at IS NULL
-  AND NOT public.card_has_unresolved_catalog_identity(
-    legacy_terminal.card_id, legacy_terminal.canonical_url
-  );
+;
 
 CREATE OR REPLACE FUNCTION public.requeue_due_card_catalog_enrichment_jobs(
   _parser_version text,
@@ -536,56 +641,65 @@ BEGIN
      OR _limit IS NULL OR _limit < 1 OR _limit > 200 THEN
     RAISE EXCEPTION 'invalid_enrichment_requeue';
   END IF;
-  UPDATE public.card_catalog_enrichment_jobs AS job
-  SET next_run_at = NULL,
-      updated_at = _now
-  FROM public.card_catalog AS card
-  WHERE job.card_id = card.id
-    AND job.parser_version = selected_parser
-    AND job.status IN ('completed', 'staged', 'quarantined', 'review_required', 'failed')
-    AND job.next_run_at <= _now
-    AND coalesce(card.is_discontinued, false) = true
-    AND NOT EXISTS (
-      SELECT 1 FROM public.user_cards AS user_card
-      WHERE user_card.catalog_card_id = job.card_id
-        AND user_card.is_active = true
-    );
   RETURN QUERY
-  WITH due_jobs AS (
-    SELECT job.id
+  WITH selected AS (
+    SELECT job.id, decision.action
     FROM public.card_catalog_enrichment_jobs AS job
     JOIN public.card_catalog AS card ON card.id = job.card_id
+    CROSS JOIN LATERAL (
+      SELECT public.card_enrichment_requeue_action(
+        job.run_mode,
+        job.status,
+        job.next_run_at,
+        _now,
+        (
+          (
+            coalesce(card.is_discontinued, false) = false
+            OR EXISTS (
+              SELECT 1 FROM public.user_cards AS user_card
+              WHERE user_card.catalog_card_id = job.card_id
+                AND user_card.is_active = true
+            )
+          )
+          AND NOT public.card_has_unresolved_catalog_identity(
+            job.card_id, job.canonical_url
+          )
+        ),
+        public.card_enrichment_job_has_pending_staging(
+          job.staging_id, job.card_id, job.parser_version
+        )
+      ) AS action
+    ) AS decision
     WHERE job.parser_version = selected_parser
       AND job.status IN ('completed', 'staged', 'quarantined', 'review_required', 'failed')
       AND job.status <> 'processing'
-      AND job.next_run_at <= _now
       AND job.next_retry_at IS NULL
       AND (job.lease_expires_at IS NULL OR job.lease_expires_at <= _now)
-      AND (
-        coalesce(card.is_discontinued, false) = false
-        OR EXISTS (
-          SELECT 1 FROM public.user_cards AS user_card
-          WHERE user_card.catalog_card_id = job.card_id
-            AND user_card.is_active = true
-        )
-      )
-      AND NOT public.card_has_unresolved_catalog_identity(job.card_id, job.canonical_url)
-    ORDER BY job.next_run_at, lower(trim(job.issuer)), job.id
+      AND (job.run_mode = 'scheduled' OR decision.action = 'clear')
+      AND (job.next_run_at IS NULL OR job.next_run_at <= _now OR decision.action = 'clear')
+      AND decision.action <> 'none'
+    ORDER BY CASE WHEN decision.action = 'queue' THEN 0 ELSE 1 END,
+      job.next_run_at, lower(trim(job.issuer)), job.id
     LIMIT _limit
     FOR UPDATE OF job SKIP LOCKED
-  )
-  UPDATE public.card_catalog_enrichment_jobs AS job
-  SET status = 'queued',
-      attempt_count = 0,
-      next_retry_at = NULL,
+  ), updated AS (
+    UPDATE public.card_catalog_enrichment_jobs AS job
+    SET status = CASE WHEN selected.action = 'queue' THEN 'queued' ELSE job.status END,
+      attempt_count = CASE WHEN selected.action = 'queue' THEN 0 ELSE job.attempt_count END,
+      next_retry_at = CASE WHEN selected.action = 'queue' THEN NULL ELSE job.next_retry_at END,
       next_run_at = NULL,
-      lease_expires_at = NULL,
-      lease_token = NULL,
-      failure_category = NULL,
+      lease_expires_at = CASE WHEN selected.action = 'queue' THEN NULL ELSE job.lease_expires_at END,
+      lease_token = CASE WHEN selected.action = 'queue' THEN NULL ELSE job.lease_token END,
+      failure_category = CASE WHEN selected.action = 'queue' THEN NULL ELSE job.failure_category END,
       updated_at = _now
-  FROM due_jobs
-  WHERE job.id = due_jobs.id
-  RETURNING job.*;
+    FROM selected
+    WHERE job.id = selected.id
+    RETURNING job.id, selected.action
+  )
+  SELECT job.*
+  FROM public.card_catalog_enrichment_jobs AS job
+  JOIN updated ON updated.id = job.id
+  WHERE updated.action = 'queue';
 END;
 $$;
 
@@ -617,15 +731,32 @@ BEGIN
     hashtextextended('card_catalog_enrichment_claim:' || selected_parser, 0)
   );
   UPDATE public.card_catalog_enrichment_jobs AS job
-  SET status = CASE WHEN job.attempt_count >= 3 THEN 'review_required' ELSE 'failed' END,
-      failure_category = 'worker_resource_limit',
+  SET status = CASE
+        WHEN public.card_enrichment_job_has_pending_staging(
+          job.staging_id, job.card_id, job.parser_version
+        ) THEN 'staged'
+        WHEN job.attempt_count >= 3 THEN 'review_required'
+        ELSE 'failed' END,
+      failure_category = CASE
+        WHEN public.card_enrichment_job_has_pending_staging(
+          job.staging_id, job.card_id, job.parser_version
+        ) THEN job.failure_category
+        ELSE 'worker_resource_limit' END,
       next_retry_at = CASE
+        WHEN public.card_enrichment_job_has_pending_staging(
+          job.staging_id, job.card_id, job.parser_version
+        ) THEN NULL
         WHEN job.attempt_count >= 3 THEN NULL
         WHEN job.attempt_count = 1 THEN now() + interval '15 minutes'
         ELSE now() + interval '60 minutes' END,
       next_run_at = NULL,
       result_summary = coalesce(job.result_summary, '{}'::jsonb) || jsonb_build_object(
-        'lease_expired', true, 'retry_scheduled', job.attempt_count < 3
+        'lease_expired', true,
+        'retry_scheduled', CASE
+          WHEN public.card_enrichment_job_has_pending_staging(
+            job.staging_id, job.card_id, job.parser_version
+          ) THEN false
+          ELSE job.attempt_count < 3 END
       ),
       lease_expires_at = NULL,
       lease_token = NULL,
@@ -651,6 +782,9 @@ BEGIN
       )
     )
     AND NOT public.card_has_unresolved_catalog_identity(job.card_id, job.canonical_url)
+    AND NOT public.card_enrichment_job_has_pending_staging(
+      job.staging_id, job.card_id, job.parser_version
+    )
     AND NOT EXISTS (
       SELECT 1 FROM public.card_catalog_enrichment_jobs AS leased
       WHERE lower(trim(leased.issuer)) = lower(trim(job.issuer))
@@ -682,6 +816,9 @@ BEGIN
         )
       )
       AND NOT public.card_has_unresolved_catalog_identity(job.card_id, job.canonical_url)
+      AND NOT public.card_enrichment_job_has_pending_staging(
+        job.staging_id, job.card_id, job.parser_version
+      )
     ORDER BY card.card_name, job.created_at, job.id
     LIMIT maximum_jobs
     FOR UPDATE OF job SKIP LOCKED
@@ -718,6 +855,7 @@ DECLARE
   affected_rows integer;
   job_row public.card_catalog_enrichment_jobs%ROWTYPE;
   current_observation jsonb;
+  existing_observation_history jsonb;
   observation_history jsonb;
   safe_summary jsonb;
 BEGIN
@@ -754,8 +892,17 @@ BEGIN
   current_observation := public.sanitize_card_enrichment_observation(
     _result_summary->'observation', statement_timestamp()
   );
+  existing_observation_history := CASE
+    WHEN jsonb_typeof(job_row.result_summary->'observation') = 'object'
+      THEN jsonb_build_array(job_row.result_summary->'observation')
+    ELSE '[]'::jsonb
+  END || CASE
+    WHEN jsonb_typeof(job_row.result_summary->'observations') = 'array'
+      THEN job_row.result_summary->'observations'
+    ELSE '[]'::jsonb
+  END;
   observation_history := public.normalize_card_enrichment_observation_history(
-    job_row.result_summary->'observations',
+    existing_observation_history,
     _result_summary->'observation',
     statement_timestamp()
   );
@@ -790,9 +937,13 @@ REVOKE ALL ON FUNCTION public.card_enrichment_jitter_days(uuid, integer)
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.card_enrichment_jitter_days(uuid, integer)
   TO service_role;
-REVOKE ALL ON FUNCTION public.next_card_enrichment_observation_at(uuid, timestamptz, boolean, boolean, text)
+REVOKE ALL ON FUNCTION public.canonical_card_enrichment_timestamp(text)
   FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.next_card_enrichment_observation_at(uuid, timestamptz, boolean, boolean, text)
+GRANT EXECUTE ON FUNCTION public.canonical_card_enrichment_timestamp(text)
+  TO service_role;
+REVOKE ALL ON FUNCTION public.next_card_enrichment_observation_at(uuid, text, boolean, boolean, text)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.next_card_enrichment_observation_at(uuid, text, boolean, boolean, text)
   TO service_role;
 REVOKE ALL ON FUNCTION public.sanitize_card_enrichment_source_attempt(jsonb, timestamptz)
   FROM PUBLIC, anon, authenticated;
@@ -818,6 +969,16 @@ REVOKE ALL ON FUNCTION public.card_has_unresolved_catalog_identity(uuid, text)
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.card_has_unresolved_catalog_identity(uuid, text)
   TO service_role;
+REVOKE ALL ON FUNCTION public.card_enrichment_job_has_pending_staging(uuid, uuid, text)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.card_enrichment_job_has_pending_staging(uuid, uuid, text)
+  TO service_role;
+REVOKE ALL ON FUNCTION public.card_enrichment_requeue_action(
+  text, text, timestamptz, timestamptz, boolean, boolean
+) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.card_enrichment_requeue_action(
+  text, text, timestamptz, timestamptz, boolean, boolean
+) TO service_role;
 REVOKE ALL ON FUNCTION public.schedule_terminal_card_enrichment_observation()
   FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.requeue_due_card_catalog_enrichment_jobs(text, integer, timestamptz)
@@ -836,62 +997,164 @@ GRANT EXECUTE ON FUNCTION public.finalize_card_catalog_enrichment_job(
 ) TO service_role;
 
 DO $recurrence_policy_assertions$
+DECLARE
+  previous_timezone text := current_setting('TimeZone');
 BEGIN
+  PERFORM set_config('TimeZone', 'America/New_York', true);
   IF public.card_enrichment_jitter_days('00000000-0000-4000-8000-000000000000', 3) <> 3
      OR public.card_enrichment_jitter_days('11111111-1111-4111-8111-111111111111', 3) <> -2
      OR public.card_enrichment_jitter_days('00000000-0000-4000-8000-000000000000', 1) <> -1
      OR public.next_card_enrichment_observation_at(
        '22222222-2222-4222-8222-222222222222',
-       '2024-01-31T12:00:00Z', false, false, 'success'
+       '2024-01-31T12:00:00.000Z', false, false, 'success'
      ) <> '2024-03-01T12:00:00Z'::timestamptz
      OR public.next_card_enrichment_observation_at(
        '00000000-0000-4000-8000-000000000000',
-       '2025-12-31T00:00:00Z', false, false, 'failed'
+       '2025-12-31T00:00:00.000Z', false, false, 'failed'
      ) <> '2026-01-06T00:00:00Z'::timestamptz
      OR public.next_card_enrichment_observation_at(
        '00000000-0000-4000-8000-000000000000',
-       '2025-12-31T00:00:00Z', true, false, 'success'
+       '2026-03-07T07:30:00.000Z', false, false, 'success'
+     ) <> '2026-04-09T07:30:00+00:00'::timestamptz
+     OR public.next_card_enrichment_observation_at(
+       '00000000-0000-4000-8000-000000000000',
+       '2025-12-31T00:00:00.000Z', true, false, 'success'
+     ) IS NOT NULL
+     OR public.canonical_card_enrichment_timestamp(
+       '2026-02-30T00:00:00.000Z'
+     ) IS NOT NULL
+     OR public.canonical_card_enrichment_timestamp(
+       '2026-02-20T05:30:00.000+05:30'
+     ) IS NOT NULL
+     OR public.canonical_card_enrichment_timestamp(
+       '2026-02-20 00:00:00.000Z'
      ) IS NOT NULL THEN
     RAISE EXCEPTION 'recurrence policy assertion failed';
   END IF;
+  PERFORM set_config('TimeZone', previous_timezone, true);
 END;
 $recurrence_policy_assertions$;
+
+DO $recurrence_transition_assertions$
+BEGIN
+  -- The same policy feeds the locked RPC; _limit=1 therefore mutates one row.
+  IF public.card_enrichment_requeue_action(
+       'pilot', 'completed', '2026-08-19T00:00:00Z',
+       '2026-08-20T00:00:00Z', true, false
+     ) <> 'clear'
+     OR public.card_enrichment_requeue_action(
+       'scheduled', 'completed', '2026-08-19T00:00:00Z',
+       '2026-08-20T00:00:00Z', true, false
+     ) <> 'queue'
+     OR public.card_enrichment_requeue_action(
+       'scheduled', 'completed', NULL,
+       '2026-08-20T00:00:00Z', true, false
+     ) <> 'queue'
+     OR public.card_enrichment_requeue_action(
+       'scheduled', 'staged', '2026-08-19T00:00:00Z',
+       '2026-08-20T00:00:00Z', true, true
+     ) <> 'clear'
+     OR public.card_enrichment_requeue_action(
+       'scheduled', 'completed', '2026-08-19T00:00:00Z',
+       '2026-08-20T00:00:00Z', false, false
+     ) <> 'clear'
+     OR public.card_enrichment_requeue_action(
+       'scheduled', 'completed', '2026-08-21T00:00:00Z',
+       '2026-08-20T00:00:00Z', true, false
+     ) <> 'none' THEN
+    RAISE EXCEPTION 'recurrence transition assertion failed';
+  END IF;
+END;
+$recurrence_transition_assertions$;
 
 DO $recurrence_history_assertions$
 DECLARE
   history jsonb;
+  same_time_history jsonb;
+  legacy_history jsonb;
 BEGIN
   SELECT public.normalize_card_enrichment_observation_history(
     coalesce(jsonb_agg(jsonb_build_object(
-      'observed_at', to_char(day_value, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+      'observed_at', to_char(
+        day_value AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+      ),
       'crawl_complete', true,
       'crawl_reason', 'complete',
       'source_manifest_hash', repeat('a', 64),
       'canonical_benefit_hash', repeat('b', 64),
       'body', 'must-not-survive'
     ) ORDER BY day_value), '[]'::jsonb) || jsonb_build_array(
-      jsonb_build_object('observed_at', '2999-01-01T00:00:00Z'),
+      jsonb_build_object('observed_at', '2999-01-01T00:00:00.000Z'),
       jsonb_build_object('observed_at', 'malformed')
     ),
     jsonb_build_object(
-      'observed_at', '2026-08-26T00:00:00Z',
+      'observed_at', '2026-08-26T00:00:00.000Z',
       'crawl_complete', true,
       'crawl_reason', 'duplicate',
       'source_manifest_hash', repeat('a', 64),
       'canonical_benefit_hash', repeat('b', 64)
     ),
-    '2026-09-01T00:00:00Z'
+    '2026-09-01T00:00:00Z'::timestamptz
   ) INTO history
   FROM generate_series(
     '2026-08-01T00:00:00Z'::timestamptz,
     '2026-08-26T00:00:00Z'::timestamptz,
     interval '1 day'
   ) AS days(day_value);
+  same_time_history := public.normalize_card_enrichment_observation_history(
+    jsonb_build_array(
+      jsonb_build_object(
+        'observed_at', '2026-08-20T00:00:00.000Z',
+        'crawl_complete', true,
+        'crawl_reason', 'first',
+        'source_manifest_hash', repeat('a', 64),
+        'canonical_benefit_hash', repeat('b', 64)
+      ),
+      jsonb_build_object(
+        'observed_at', '2026-08-20T00:00:00.000Z',
+        'crawl_complete', true,
+        'crawl_reason', 'distinct',
+        'source_manifest_hash', repeat('c', 64),
+        'canonical_benefit_hash', repeat('b', 64)
+      )
+    ),
+    jsonb_build_object(
+      'observed_at', '2026-08-20T00:00:00.000Z',
+      'crawl_complete', true,
+      'crawl_reason', 'duplicate',
+      'source_manifest_hash', repeat('a', 64),
+      'canonical_benefit_hash', repeat('b', 64)
+    ),
+    '2026-09-01T00:00:00Z'::timestamptz
+  );
+  legacy_history := public.normalize_card_enrichment_observation_history(
+    jsonb_build_array(
+      jsonb_build_object(
+        'observed_at', '2026-08-18T00:00:00.000Z',
+        'crawl_complete', true,
+        'crawl_reason', 'legacy-root',
+        'source_manifest_hash', repeat('d', 64),
+        'canonical_benefit_hash', repeat('e', 64)
+      ),
+      jsonb_build_object(
+        'observed_at', '2026-08-17T00:00:00.000Z',
+        'crawl_complete', true,
+        'crawl_reason', 'legacy-history',
+        'source_manifest_hash', repeat('f', 64),
+        'canonical_benefit_hash', repeat('0', 64)
+      )
+    ),
+    NULL,
+    '2026-09-01T00:00:00Z'::timestamptz
+  );
   IF jsonb_array_length(history) <> 24
-     OR history->0->>'observed_at' <> '2026-08-26T00:00:00+00:00'
-     OR history->23->>'observed_at' <> '2026-08-03T00:00:00+00:00'
+     OR history->0->>'observed_at' <> '2026-08-26T00:00:00.000Z'
+     OR history->23->>'observed_at' <> '2026-08-03T00:00:00.000Z'
      OR history::text LIKE '%must-not-survive%'
-     OR history::text LIKE '%2999-01-01%' THEN
+     OR history::text LIKE '%2999-01-01%'
+     OR jsonb_array_length(same_time_history) <> 2
+     OR legacy_history::text NOT LIKE '%legacy-root%'
+     OR legacy_history::text NOT LIKE '%legacy-history%' THEN
     RAISE EXCEPTION 'recurrence history assertion failed';
   END IF;
 END;

@@ -79,6 +79,14 @@ Deno.test("UTC-day arithmetic crosses leap and year boundaries without local-tim
     }) === "2026-01-06T00:00:00.000Z",
     "year boundary drifted",
   );
+  assert(
+    nextObservationAt({
+      ...base,
+      completedAt: "2026-03-07T07:30:00.000Z",
+      outcome: "success",
+    }) === "2026-04-09T07:30:00.000Z",
+    "fixed UTC duration drifted across a daylight-saving transition",
+  );
 });
 
 Deno.test("held discontinued cards recur and unheld discontinued cards stop", () => {
@@ -104,6 +112,26 @@ Deno.test("held discontinued cards recur and unheld discontinued cards stop", ()
 
 Deno.test("malformed and future completion timestamps fail closed", () => {
   throwsInvalid({ ...base, completedAt: "not-a-date", outcome: "success" });
+  throwsInvalid({
+    ...base,
+    completedAt: "2026-02-30T00:00:00.000Z",
+    outcome: "success",
+  });
+  throwsInvalid({
+    ...base,
+    completedAt: "2026-02-20 00:00:00.000Z",
+    outcome: "success",
+  });
+  throwsInvalid({
+    ...base,
+    completedAt: "2026-02-20T05:30:00.000+05:30",
+    outcome: "success",
+  });
+  throwsInvalid({
+    ...base,
+    completedAt: "2026-02-20T00:00:00Z",
+    outcome: "success",
+  });
   throwsInvalid({
     ...base,
     completedAt: "2999-01-01T00:00:00.000Z",
