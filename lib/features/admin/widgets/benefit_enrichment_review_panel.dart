@@ -106,6 +106,28 @@ class _BenefitEnrichmentReviewPanelState
     return result;
   }
 
+  Future<bool> _confirmApproval() async =>
+      await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Apply these benefit changes?'),
+          content: const Text(
+            'This updates the existing catalog card with the proposed benefit changes. Check the source evidence and warnings before continuing.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Apply changes'),
+            ),
+          ],
+        ),
+      ) ??
+      false;
+
   Future<void> _edit(BenefitEnrichmentReview item) async {
     final decision = item.staging.decisions.firstWhereOrNull(
       (decision) =>
@@ -237,7 +259,13 @@ class _BenefitEnrichmentReviewPanelState
                       item: item,
                       onOpenUrl: widget.onOpenUrl,
                       onApprove: !_mutating && item.canReview
-                          ? () => _run(() => widget.repository.approve(item))
+                          ? () async {
+                              if (await _confirmApproval()) {
+                                await _run(
+                                  () => widget.repository.approve(item),
+                                );
+                              }
+                            }
                           : null,
                       onEdit: !_mutating && item.canReview
                           ? () => _edit(item)
@@ -346,6 +374,10 @@ class _ProgressSummary extends StatelessWidget {
               style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: 8),
+            const Text(
+              'Review evidence-backed changes to benefits on cards already in the catalog.',
+            ),
+            const SizedBox(height: 12),
             Text('Job run coverage: $scheduled scheduled · $pilot pilot'),
             Text('All jobs by status: $completed completed · $failed failed'),
             Text(
@@ -484,11 +516,20 @@ class _BenefitReviewCard extends StatelessWidget {
               children: [
                 FilledButton(
                   onPressed: onApprove,
-                  child: const Text('Approve'),
+                  child: const Text('Approve benefit changes'),
                 ),
-                OutlinedButton(onPressed: onEdit, child: const Text('Edit')),
-                TextButton(onPressed: onReject, child: const Text('Reject')),
-                TextButton(onPressed: onRetry, child: const Text('Retry')),
+                OutlinedButton(
+                  onPressed: onEdit,
+                  child: const Text('Edit proposed changes'),
+                ),
+                TextButton(
+                  onPressed: onReject,
+                  child: const Text('Reject changes'),
+                ),
+                TextButton(
+                  onPressed: onRetry,
+                  child: const Text('Retry processing'),
+                ),
                 TextButton(
                   onPressed: onQuarantine,
                   child: Text(
@@ -549,11 +590,30 @@ class _ProposalEvidence extends StatelessWidget {
           if (evidence.isNotEmpty) Text('Evidence: $evidence'),
           if (confidence.isNotEmpty) Text('Confidence: $confidence'),
           if (proposal.warnings.isNotEmpty)
-            Text('Warnings: ${proposal.warnings.join(', ')}'),
+            Text(
+              'Warnings: ${proposal.warnings.map(_warningLabel).join(' · ')}',
+            ),
         ],
       ),
     );
   }
+}
+
+String _warningLabel(String warning) {
+  const labels = {
+    'crawler_discovered':
+        'Crawler discovery: verify against a statement or another official source.',
+    'crawler_discovered_without_statement_signal':
+        'Crawler-only discovery: no independent statement signal.',
+    'missing_evidence': 'Missing supporting evidence.',
+    'low_confidence': 'Low extraction confidence.',
+    'possible_duplicate': 'Possible duplicate benefit.',
+  };
+  final known = labels[warning];
+  if (known != null) return known;
+  final words = warning.replaceAll('_', ' ').trim();
+  if (words.isEmpty) return warning;
+  return '${words[0].toUpperCase()}${words.substring(1)}.';
 }
 
 class _AuthorizationRequired extends StatelessWidget {

@@ -36,9 +36,8 @@ class _CardCatalogReviewScreenState extends State<CardCatalogReviewScreen> {
         'admin-catalog-entry',
         body: body,
       );
-    } on FunctionException catch (error) {
-      if (error.status == 401) throw AdminAuthorizationRequired();
-      rethrow;
+    } catch (error) {
+      throwAdminInvocationError(error);
     }
     if (response.status == 401) throw AdminAuthorizationRequired();
     if (response.status < 200 || response.status >= 300) {
@@ -81,9 +80,54 @@ class _CardCatalogReviewScreenState extends State<CardCatalogReviewScreen> {
     if (fields != null) body['proposed_fields'] = fields;
     if (mergeCardId != null) body['merge_card_id'] = mergeCardId;
     if (reason != null) body['reason'] = reason;
-    await _invoke(body);
-    _reload();
+    try {
+      await _invoke(body);
+      _reload();
+      if (mounted) {
+        final message = switch (action) {
+          'approve' => 'Card approved and added to the catalog.',
+          'edit_approve' => 'Edited card approved and added to the catalog.',
+          'merge' => 'Discovery merged with the existing card.',
+          'retry' => 'Official-source discovery queued again.',
+          'reject' => 'Proposal rejected.',
+          _ => 'Review updated.',
+        };
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(message)));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not update this review: $error')),
+        );
+      }
+    }
   }
+
+  Future<bool> _confirm({
+    required String title,
+    required String message,
+    required String actionLabel,
+  }) async =>
+      await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(title),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () => context.pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => context.pop(true),
+              child: Text(actionLabel),
+            ),
+          ],
+        ),
+      ) ??
+      false;
 
   Future<String?> _askReason(String title, {bool required = false}) async {
     final controller = TextEditingController();
@@ -206,10 +250,27 @@ class _CardCatalogReviewScreenState extends State<CardCatalogReviewScreen> {
               },
               onReload: _reload,
               onAuthorizationRequired: _requestAuthorization,
-              onApprove: (item) => _act('approve', item),
+              onApprove: (item) async {
+                final approved = await _confirm(
+                  title: 'Approve as a new card?',
+                  message:
+                      'This creates a new catalog card from the proposed identity. Confirm that it is not a duplicate and the official source supports it.',
+                  actionLabel: 'Approve as new card',
+                );
+                if (approved) await _act('approve', item);
+              },
               onEditApprove: _editAndApprove,
-              onMerge: (item, cardId) =>
-                  _act('merge', item, mergeCardId: cardId),
+              onMerge: (item, cardId) async {
+                final approved = await _confirm(
+                  title: 'Merge with this existing card?',
+                  message:
+                      'This links the discovery to the selected catalog card and prevents a new duplicate card from being created.',
+                  actionLabel: 'Merge with existing',
+                );
+                if (approved) {
+                  await _act('merge', item, mergeCardId: cardId);
+                }
+              },
               onRetry: (item) async {
                 final note = await _askReason(
                   'Retry official-source discovery',
@@ -245,11 +306,180 @@ class AdminCatalogReviewTabs extends StatelessWidget
   Size get preferredSize => const Size.fromHeight(kTextTabBarHeight);
 
   @override
-  Widget build(BuildContext context) => const TabBar(
+  Widget build(BuildContext context) => TabBar(
     tabs: [
-      Tab(text: 'Card identity'),
-      Tab(text: 'Benefit enrichment'),
+      Tab(
+        child: _ReviewTabLabel(
+          label: 'Card identity',
+          tooltip: 'About card identity review',
+          onHelp: () => _showReviewHelp(context, identity: true),
+        ),
+      ),
+      Tab(
+        child: _ReviewTabLabel(
+          label: 'Benefit enrichment',
+          tooltip: 'About benefit enrichment review',
+          onHelp: () => _showReviewHelp(context, identity: false),
+        ),
+      ),
     ],
+  );
+}
+
+class _ReviewTabLabel extends StatelessWidget {
+  const _ReviewTabLabel({
+    required this.label,
+    required this.tooltip,
+    required this.onHelp,
+  });
+
+  final String label;
+  final String tooltip;
+  final VoidCallback onHelp;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Flexible(child: Text(label, overflow: TextOverflow.ellipsis)),
+      const SizedBox(width: 4),
+      IconButton(
+        tooltip: tooltip,
+        onPressed: onHelp,
+        icon: const Icon(Icons.info_outline, size: 18),
+        constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+      ),
+    ],
+  );
+}
+
+Future<void> _showReviewHelp(
+  BuildContext context, {
+  required bool identity,
+}) => showModalBottomSheet<void>(
+  context: context,
+  isScrollControlled: true,
+  showDragHandle: true,
+  builder: (context) => SafeArea(
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 680),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: identity
+              ? const [
+                  _HelpHeading('Card identity review'),
+                  _HelpItem(
+                    'What this queue is for',
+                    'Checks whether a discovered issuer page represents a new credit card, a known card, or something that is not a card at all.',
+                  ),
+                  _HelpItem(
+                    'Evidence',
+                    'The source URL, page title, extracted issuer and card name, and any matching cards already in the catalog. Use it to verify the proposal independently.',
+                  ),
+                  _HelpItem(
+                    'Confidence',
+                    'The system\'s estimate of extraction quality—not a guarantee that the page is a real or distinct card. Low confidence needs closer review.',
+                  ),
+                  _HelpItem(
+                    'Warnings',
+                    'Specific risk signals, such as weak issuer evidence, a non-card page, missing fields, or a possible duplicate. Resolve them before approval.',
+                  ),
+                  _HelpItem(
+                    'Approve as new card',
+                    'Creates a new catalog card from the proposed identity.',
+                  ),
+                  _HelpItem(
+                    'Edit and approve',
+                    'Lets you correct the proposed identity, then creates a new catalog card.',
+                  ),
+                  _HelpItem(
+                    'Merge with existing',
+                    'Links this discovery to an existing card instead of creating a duplicate.',
+                  ),
+                  _HelpItem(
+                    'Retry discovery',
+                    'Sends the item through official-source discovery again. Use this when the evidence is incomplete or stale.',
+                  ),
+                  _HelpItem(
+                    'Reject proposal',
+                    'Closes the proposal without adding or changing a catalog card. A reason is required for the audit trail.',
+                  ),
+                ]
+              : const [
+                  _HelpHeading('Benefit enrichment review'),
+                  _HelpItem(
+                    'What this queue is for',
+                    'Reviews proposed additions or changes to benefits on an existing catalog card.',
+                  ),
+                  _HelpItem(
+                    'Evidence',
+                    'Source excerpts and URLs that support each proposed benefit.',
+                  ),
+                  _HelpItem(
+                    'Confidence',
+                    'The system\'s estimate that the extracted benefit fields match the source.',
+                  ),
+                  _HelpItem(
+                    'Warnings',
+                    'Signals that evidence, mapping, or extracted values need manual attention.',
+                  ),
+                  _HelpItem(
+                    'Approve benefit changes',
+                    'Applies the proposed benefit changes to the existing card.',
+                  ),
+                  _HelpItem(
+                    'Edit proposed changes',
+                    'Lets you choose or correct changes before applying them.',
+                  ),
+                  _HelpItem(
+                    'Reject',
+                    'Closes the proposal without applying its changes.',
+                  ),
+                  _HelpItem(
+                    'Retry processing',
+                    'Runs extraction and validation for this source again.',
+                  ),
+                  _HelpItem(
+                    'Quarantine',
+                    'Removes a suspicious item from the normal queue until it is investigated.',
+                  ),
+                ],
+        ),
+      ),
+    ),
+  ),
+);
+
+class _HelpHeading extends StatelessWidget {
+  const _HelpHeading(this.text);
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 12),
+    child: Text(text, style: Theme.of(context).textTheme.headlineSmall),
+  );
+}
+
+class _HelpItem extends StatelessWidget {
+  const _HelpItem(this.title, this.description);
+  final String title;
+  final String description;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 16),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 4),
+        Text(description, style: Theme.of(context).textTheme.bodyMedium),
+      ],
+    ),
   );
 }
 
@@ -284,28 +514,48 @@ class _IdentityReviewPanel extends StatelessWidget {
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              DropdownButtonHideUnderline(
-                child: DropdownButton<String>(
-                  value: status,
-                  items: const [
-                    DropdownMenuItem(value: 'pending', child: Text('Pending')),
-                    DropdownMenuItem(
-                      value: 'approved',
-                      child: Text('Approved'),
-                    ),
-                    DropdownMenuItem(value: 'merged', child: Text('Merged')),
-                    DropdownMenuItem(
-                      value: 'rejected',
-                      child: Text('Rejected'),
-                    ),
-                  ],
-                  onChanged: onStatusChanged,
-                ),
+              Text(
+                'Decide whether each discovery is a new card, an existing card, or not a card.',
+                style: Theme.of(context).textTheme.bodyLarge,
               ),
-              const Spacer(),
-              IconButton(onPressed: onReload, icon: const Icon(Icons.refresh)),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: status,
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'pending',
+                          child: Text('Pending'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'approved',
+                          child: Text('Approved'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'merged',
+                          child: Text('Merged'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'rejected',
+                          child: Text('Rejected'),
+                        ),
+                      ],
+                      onChanged: onStatusChanged,
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    tooltip: 'Refresh card identity queue',
+                    onPressed: onReload,
+                    icon: const Icon(Icons.refresh),
+                  ),
+                ],
+              ),
             ],
           ),
         ),
@@ -314,7 +564,16 @@ class _IdentityReviewPanel extends StatelessWidget {
             future: items,
             builder: (context, snapshot) {
               if (snapshot.connectionState != ConnectionState.done) {
-                return const Center(child: CircularProgressIndicator());
+                return const Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      CircularProgressIndicator(),
+                      SizedBox(height: 12),
+                      Text('Loading card identity reviews…'),
+                    ],
+                  ),
+                );
               }
               if (snapshot.hasError) {
                 if (snapshot.error is AdminAuthorizationRequired) {
@@ -338,17 +597,44 @@ class _IdentityReviewPanel extends StatelessWidget {
                 return Center(
                   child: Padding(
                     padding: const EdgeInsets.all(24),
-                    child: Text(
-                      snapshot.error.toString().contains('Administrator access')
-                          ? 'Administrator access required.'
-                          : 'Could not load catalog review: ${snapshot.error}',
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.cloud_off_outlined, size: 36),
+                        const SizedBox(height: 12),
+                        Text(
+                          snapshot.error.toString().contains(
+                                'Administrator access',
+                              )
+                              ? 'Administrator access required.'
+                              : 'Could not load the card identity queue.',
+                        ),
+                        const SizedBox(height: 12),
+                        OutlinedButton.icon(
+                          onPressed: onReload,
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('Try again'),
+                        ),
+                      ],
                     ),
                   ),
                 );
               }
               final items = snapshot.data ?? const [];
               if (items.isEmpty) {
-                return Center(child: Text('No $status catalog items.'));
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.task_alt, size: 36),
+                        const SizedBox(height: 12),
+                        Text('No $status card identity reviews.'),
+                      ],
+                    ),
+                  ),
+                );
               }
               return ListView.separated(
                 padding: const EdgeInsets.all(24),
@@ -399,9 +685,9 @@ class _ReviewCard extends StatelessWidget {
     final evidence = Map<String, dynamic>.from(
       job['evidence'] as Map? ?? const {},
     );
-    final warnings = (item['validation_warnings'] as List? ?? const []).join(
-      ', ',
-    );
+    final warnings = (item['validation_warnings'] as List? ?? const [])
+        .map((warning) => _identityWarningLabel(warning.toString()))
+        .toList(growable: false);
     final candidates = item['existing_candidates'] as List? ?? const [];
     final pending = item['status'] == 'pending';
 
@@ -417,14 +703,23 @@ class _ReviewCard extends StatelessWidget {
               style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: 10),
+            Text(
+              'Proposed identity',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
             _line('Subject', evidence['subject_product']),
             _line('PDF filename', evidence['filename_product']),
             _line('PDF header', evidence['pdf_header_product']),
             _line('Network', fields['network'] ?? evidence['network']),
             _line('Masked last four', evidence['last_four']),
             _line('Official source', fields['official_url']),
-            _line('Confidence', item['confidence']),
-            if (warnings.isNotEmpty) _line('Warnings', warnings),
+            const SizedBox(height: 10),
+            Text(
+              'Evidence and risk',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            _line('Confidence', _confidenceLabel(item['confidence'])),
+            if (warnings.isNotEmpty) _line('Warnings', warnings.join(' · ')),
             if (evidence['pdf_header_excerpt'] != null)
               _line('Sanitized evidence', evidence['pdf_header_excerpt']),
             if (pending) ...[
@@ -435,11 +730,11 @@ class _ReviewCard extends StatelessWidget {
                 children: [
                   FilledButton(
                     onPressed: onApprove,
-                    child: const Text('Approve'),
+                    child: const Text('Approve as new card'),
                   ),
                   OutlinedButton(
                     onPressed: onEditApprove,
-                    child: const Text('Edit & approve'),
+                    child: const Text('Edit and approve'),
                   ),
                   for (final candidate in candidates.whereType<Map>())
                     OutlinedButton(
@@ -447,14 +742,17 @@ class _ReviewCard extends StatelessWidget {
                           ? () => onMerge(candidate['id'] as String)
                           : null,
                       child: Text(
-                        'Merge: ${candidate['card_name'] ?? 'existing'}',
+                        'Merge with ${candidate['card_name'] ?? 'existing card'}',
                       ),
                     ),
                   TextButton(
                     onPressed: onRetry,
-                    child: const Text('Retry scrape'),
+                    child: const Text('Retry discovery'),
                   ),
-                  TextButton(onPressed: onReject, child: const Text('Reject')),
+                  TextButton(
+                    onPressed: onReject,
+                    child: const Text('Reject proposal'),
+                  ),
                 ],
               ),
             ],
@@ -462,6 +760,11 @@ class _ReviewCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  String _confidenceLabel(Object? value) {
+    if (value is num) return '${(value * 100).round()}%';
+    return value?.toString() ?? 'Not provided';
   }
 
   Widget _line(String label, Object? value) {
@@ -473,4 +776,19 @@ class _ReviewCard extends StatelessWidget {
       child: SelectableText('$label: $value'),
     );
   }
+}
+
+String _identityWarningLabel(String warning) {
+  const labels = {
+    'crawler_discovered_without_statement_signal':
+        'Crawler-only discovery; no independent statement evidence.',
+    'possible_duplicate': 'Possible duplicate of an existing catalog card.',
+    'missing_official_url': 'Official source URL is missing.',
+    'low_confidence': 'Low identity extraction confidence.',
+  };
+  final known = labels[warning];
+  if (known != null) return known;
+  final words = warning.replaceAll('_', ' ').trim();
+  if (words.isEmpty) return warning;
+  return '${words[0].toUpperCase()}${words.substring(1)}.';
 }

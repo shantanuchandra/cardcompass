@@ -1,6 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-// @deno-types="data:application/typescript,export%20declare%20function%20createClient(...args%3A%20any%5B%5D)%3A%20any%3B"
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4?bundle&target=deno&no-dts";
+import { createClient } from "npm:@supabase/supabase-js@2.95.0";
 import { isAdminEmail } from "../_shared/card_discovery.ts";
 import {
   BenefitAdminError,
@@ -27,9 +26,24 @@ function safeError(error: unknown): { error: string; status: number } {
   return { error: "Request failed", status: 400 };
 }
 
+export function createAdminAuthClient(
+  request: Request,
+  supabaseUrl: string,
+  fallbackKey: string,
+  factory: (...args: any[]) => any = createClient,
+) {
+  const authorization = request.headers.get("Authorization") ?? "";
+  const apiKey = request.headers.get("apikey") ?? fallbackKey;
+  return factory(supabaseUrl, apiKey, {
+    global: { headers: { Authorization: authorization } },
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+}
+
 export async function handleAdminCatalogEntry(
   request: Request,
   providedDb?: UntypedSupabaseClient,
+  providedAuthDb?: UntypedSupabaseClient,
 ): Promise<Response> {
   if (request.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -50,7 +64,12 @@ export async function handleAdminCatalogEntry(
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
     );
-    const authResult = await db.auth.getUser(
+    const authDb = providedAuthDb ?? providedDb ?? createAdminAuthClient(
+      request,
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_ANON_KEY") ?? "",
+    );
+    const authResult = await authDb.auth.getUser(
       authorization.slice("Bearer ".length),
     );
     user = authResult.data.user;
@@ -128,4 +147,4 @@ export async function handleAdminCatalogEntry(
   }
 }
 
-serve(handleAdminCatalogEntry);
+serve((request) => handleAdminCatalogEntry(request));

@@ -1,6 +1,7 @@
 type AdminHandler = (
   request: Request,
   db: Record<string, unknown>,
+  authDb?: Record<string, unknown>,
 ) => Promise<Response>;
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -52,6 +53,53 @@ function withAuthenticatedUser(db: Record<string, unknown>) {
     }).auth,
   };
 }
+
+Deno.test("admin auth uses the caller project key with the bearer token", async () => {
+  const module = await import("./index.ts") as {
+    createAdminAuthClient?: (
+      request: Request,
+      supabaseUrl: string,
+      fallbackKey: string,
+      factory: (...args: unknown[]) => unknown,
+    ) => unknown;
+  };
+  assert(
+    typeof module.createAdminAuthClient === "function",
+    "request-scoped auth client factory is missing",
+  );
+  let capturedArgs: unknown[] = [];
+  const requestWithCurrentKey = new Request(
+    "https://example.test/admin-catalog-entry",
+    {
+      headers: {
+        authorization: "Bearer current-user-token",
+        apikey: "current-browser-key",
+      },
+    },
+  );
+
+  module.createAdminAuthClient(
+    requestWithCurrentKey,
+    "https://project.supabase.co",
+    "stale-hosted-key",
+    (...args: unknown[]) => {
+      capturedArgs = args;
+      return {};
+    },
+  );
+
+  assert(
+    capturedArgs[1] === "current-browser-key",
+    "stale hosted key was used instead of the caller project key",
+  );
+  const options = capturedArgs[2] as {
+    global?: { headers?: { Authorization?: string } };
+  };
+  assert(
+    options.global?.headers?.Authorization === "Bearer current-user-token",
+    "caller bearer token was not forwarded to the auth client",
+  );
+});
 
 Deno.test("protected admin handler returns 401 for missing or expired credentials before queue access", async () => {
   const handle = await handler();
@@ -113,6 +161,52 @@ Deno.test("protected admin handler requires a verified allowlisted email", async
     assert(
       allowlisted.status === 200,
       "verified allowlisted email was rejected",
+    );
+  } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  }
+});
+
+Deno.test("protected admin handler authenticates with a request-scoped client", async () => {
+  const handle = await handler();
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
+  try {
+    const serviceDb = authenticatedDb(null, new Error("service auth rejected"));
+    const requestAuthDb = {
+      auth: {
+        async getUser(token: unknown) {
+          if (token !== "valid-token") {
+            return {
+              data: { user: null },
+              error: new Error("request JWT was not provided"),
+            };
+          }
+          return {
+            data: {
+              user: {
+                id: "admin-1",
+                email: "admin@example.com",
+                email_confirmed_at: "2026-08-17T00:00:00.000Z",
+              },
+            },
+            error: null,
+          };
+        },
+      },
+    };
+
+    const response = await handle(
+      request({ action: "access" }),
+      serviceDb,
+      requestAuthDb,
+    );
+
+    assert(
+      response.status === 200,
+      "service-role auth client was used instead of request-scoped auth",
     );
   } finally {
     if (originalAllowlist === undefined) {

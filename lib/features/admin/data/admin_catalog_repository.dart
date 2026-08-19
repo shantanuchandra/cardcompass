@@ -1,3 +1,4 @@
+import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/benefit_enrichment_review.dart';
@@ -38,6 +39,26 @@ class AdminCatalogRequestFailed implements Exception {
 
   @override
   String toString() => message;
+}
+
+Never throwAdminInvocationError(Object error) {
+  if (error is FunctionException) {
+    if (error.status == 401) throw AdminAuthorizationRequired();
+    if (error.status == 403) throw AdminAccessDenied();
+    final details = error.details;
+    throw AdminCatalogRequestFailed(
+      details is Map
+          ? (details['error'] as String? ?? 'Admin request failed.')
+          : 'Admin request failed.',
+    );
+  }
+  if (error is http.ClientException &&
+      error.message.toLowerCase().contains('failed to fetch')) {
+    throw AdminCatalogRequestFailed(
+      'Could not reach the admin service. Try again.',
+    );
+  }
+  throw error;
 }
 
 abstract class BenefitEnrichmentRepository {
@@ -227,15 +248,8 @@ class AdminCatalogRepository implements BenefitEnrichmentRepository {
     final AdminCatalogEntryResponse response;
     try {
       response = await _api.invoke(body);
-    } on FunctionException catch (error) {
-      if (error.status == 401) throw AdminAuthorizationRequired();
-      if (error.status == 403) throw AdminAccessDenied();
-      final details = error.details;
-      throw AdminCatalogRequestFailed(
-        details is Map
-            ? (details['error'] as String? ?? 'Admin request failed.')
-            : 'Admin request failed.',
-      );
+    } catch (error) {
+      throwAdminInvocationError(error);
     }
     if (response.status == 401) throw AdminAuthorizationRequired();
     if (response.status == 403) throw AdminAccessDenied();

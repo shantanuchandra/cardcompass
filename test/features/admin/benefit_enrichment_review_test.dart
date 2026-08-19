@@ -4,6 +4,7 @@ import 'package:cardcompass/features/admin/screens/card_catalog_review_screen.da
 import 'package:cardcompass/features/admin/widgets/benefit_enrichment_review_panel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 const _jobJson = <String, dynamic>{
@@ -191,6 +192,20 @@ void main() {
 
       expect(find.text('Card identity'), findsOneWidget);
       expect(find.text('Benefit enrichment'), findsOneWidget);
+      expect(find.byTooltip('About card identity review'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('About card identity review'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('What this queue is for'), findsOneWidget);
+      expect(find.text('Evidence'), findsOneWidget);
+      expect(find.text('Confidence'), findsOneWidget);
+      expect(find.text('Warnings'), findsOneWidget);
+      expect(find.text('Approve as new card'), findsOneWidget);
+      expect(find.text('Edit and approve'), findsOneWidget);
+      expect(find.text('Merge with existing'), findsOneWidget);
+      expect(find.text('Retry discovery'), findsOneWidget);
+      expect(find.text('Reject proposal'), findsOneWidget);
     },
   );
 
@@ -255,6 +270,34 @@ void main() {
       expect(
         repository.loadReviewPage(),
         throwsA(isA<AdminAuthorizationRequired>()),
+      );
+    },
+  );
+
+  test(
+    'repository reports a browser fetch failure as a request failure',
+    () async {
+      final repository = AdminCatalogRepository(
+        _FakeApi(
+          AdminCatalogEntryResponse(500, const {}),
+          error: http.ClientException(
+            'Failed to fetch',
+            Uri.parse(
+              'https://example.supabase.co/functions/v1/admin-catalog-entry',
+            ),
+          ),
+        ),
+      );
+
+      expect(
+        repository.loadReviewPage(),
+        throwsA(
+          isA<AdminCatalogRequestFailed>().having(
+            (error) => error.message,
+            'message',
+            'Could not reach the admin service. Try again.',
+          ),
+        ),
       );
     },
   );
@@ -346,11 +389,16 @@ void main() {
         ),
         findsOneWidget,
       );
-      expect(find.text('Approve'), findsOneWidget);
-      expect(find.text('Edit'), findsOneWidget);
-      expect(find.text('Reject'), findsOneWidget);
-      expect(find.text('Retry'), findsOneWidget);
+      expect(find.text('Approve benefit changes'), findsOneWidget);
+      expect(find.text('Edit proposed changes'), findsOneWidget);
+      expect(find.text('Reject changes'), findsOneWidget);
+      expect(find.text('Retry processing'), findsOneWidget);
       expect(find.text('Quarantine'), findsOneWidget);
+      expect(
+        find.textContaining('Crawler discovery: verify against a statement'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('crawler_discovered'), findsNothing);
       expect(find.textContaining('Approve all'), findsNothing);
 
       await tester.tap(find.text('Open official source'));
@@ -379,4 +427,28 @@ void main() {
       expect(requestedAuthorization, isTrue);
     },
   );
+
+  testWidgets('benefit approval explains its consequence before applying', (
+    tester,
+  ) async {
+    final repository = _FakeRepository(_page());
+    await _pumpPanel(tester, repository);
+
+    final approveButton = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Approve benefit changes'),
+    );
+    approveButton.onPressed!();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Apply these benefit changes?'), findsOneWidget);
+    expect(
+      find.textContaining('updates the existing catalog card'),
+      findsOneWidget,
+    );
+    expect(repository.actions, isEmpty);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Apply changes'));
+    await tester.pumpAndSettle();
+    expect(repository.actions, ['approve']);
+  });
 }
