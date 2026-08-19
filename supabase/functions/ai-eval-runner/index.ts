@@ -346,6 +346,23 @@ function safeFailedScore(): ScoreResult {
   };
 }
 
+export async function scheduleAiEvalContinuation(
+  supabaseUrl: string,
+  serviceRoleSecret: string,
+  runId: string,
+  fetcher: typeof fetch = fetch,
+): Promise<void> {
+  const response = await fetcher(`${supabaseUrl}/functions/v1/ai-eval-runner`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${serviceRoleSecret}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ run_id: runId }),
+  });
+  if (!response.ok) throw new Error("schedule_failed");
+}
+
 function defaultDependencies(request: Request): RunnerDependencies {
   const url = Deno.env.get("SUPABASE_URL") ?? "";
   const serviceRoleSecret = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
@@ -392,17 +409,8 @@ function defaultDependencies(request: Request): RunnerDependencies {
     },
     generate: (input) =>
       generateGemini(input, { apiKeys: configuredGeminiKeys(), fetch }),
-    scheduleContinuation: async (id) => {
-      const response = await fetch(`${url}/functions/v1/ai-eval-runner`, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${serviceRoleSecret}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ run_id: id }),
-      });
-      if (!response.ok) throw new Error("schedule_failed");
-    },
+    scheduleContinuation: (id) =>
+      scheduleAiEvalContinuation(url, serviceRoleSecret, id),
     waitUntil: (promise) => EdgeRuntime.waitUntil(promise),
   };
 }

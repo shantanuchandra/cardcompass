@@ -1,5 +1,9 @@
 import { assertEquals } from "jsr:@std/assert@1";
-import { handleAiEvalRunnerRequest, type RunnerDependencies } from "./index.ts";
+import {
+  handleAiEvalRunnerRequest,
+  type RunnerDependencies,
+  scheduleAiEvalContinuation,
+} from "./index.ts";
 
 // Opt-in because this creates and drops a disposable database on a loopback PostgreSQL server.
 const adminUrl = Deno.env.get("CONTEXTUAL_EVAL_TEST_ADMIN_URL");
@@ -60,8 +64,8 @@ Deno.test({
       );
       seedCases(dbEnv);
 
-      const scheduled: string[] = [];
-      const deps = postgresDependencies(dbEnv, scheduled);
+      const dispatch = continuationCapture();
+      const deps = postgresDependencies(dbEnv, dispatch);
       for (
         const [feature, config, expectedCases] of [
           ["statement_processing", "gemini-3.6-flash-statement-v1", 7],
@@ -82,9 +86,20 @@ Deno.test({
         if (expectedCases > 5) {
           assertEquals(response.status, 202);
           assertEquals((await response.json()).continuation_required, true);
-          assertEquals(scheduled.filter((id) => id === runId).length, 1);
+          await Promise.all(dispatch.background.splice(0));
+          assertEquals(dispatch.requests.length, 1);
+          const continued = dispatch.requests.shift()!;
+          assertEquals(
+            continued.url,
+            "http://local.supabase/functions/v1/ai-eval-runner",
+          );
+          assertEquals(
+            continued.headers.get("authorization"),
+            "Bearer service-role-secret-that-is-long-enough",
+          );
+          assertEquals(await continued.clone().json(), { run_id: runId });
           response = await handleAiEvalRunnerRequest(
-            workerRequest(runId),
+            continued,
             deps,
           );
         }
@@ -112,20 +127,49 @@ Deno.test({
           dbEnv,
           `select jsonb_build_object('status',status,'metrics',aggregate_metrics,'tokens',token_usage,'cost',estimated_cost_usd) from public.ai_eval_runs where id='${runId}';`,
         );
+        const judge = feature === "recommendation" ? 1 : 0;
+        const perCaseCost = feature === "statement_processing"
+          ? 0.000008
+          : feature === "card_data"
+          ? 0.000016
+          : 0.000032;
+        const expectedCost = perCaseCost * expectedCases;
         assertEquals(summary.status, "completed");
-        assertEquals(summary.metrics.case_count, expectedCases);
-        assertEquals(summary.metrics.missing, 0);
+        assertEquals(summary.metrics, {
+          case_count: expectedCases,
+          succeeded: expectedCases,
+          failed: 0,
+          missing: 0,
+          failure_categories: {},
+          regressions: 0,
+          severe_regressions: 0,
+          average_latency_ms: feature === "recommendation" ? 29 : 17,
+        });
+        assertEquals(summary.tokens, {
+          baseline_input: 0,
+          baseline_output: 0,
+          candidate_input: expectedCases * 7 + judge * 5,
+          candidate_output: expectedCases * 3 + judge * 2,
+        });
+        assertEquals(summary.cost, expectedCost);
         assertEquals(
-          summary.tokens.candidate_input,
-          expectedCases * 7 + (feature === "recommendation" ? 5 : 0),
-        );
-        assertEquals(
-          summary.tokens.candidate_output,
-          expectedCases * 3 + (feature === "recommendation" ? 2 : 0),
-        );
-        assertEquals(
-          summary.metrics.average_latency_ms,
-          feature === "recommendation" ? 29 : 17,
+          queryJson(
+            dbEnv,
+            `select jsonb_build_object('count',count(*),'baseline_input',sum(baseline_input_tokens),'baseline_output',sum(baseline_output_tokens),'candidate_input',sum(candidate_input_tokens),'candidate_output',sum(candidate_output_tokens),'baseline_latency',sum(baseline_latency_ms),'candidate_latency',sum(candidate_latency_ms),'cost',sum(estimated_cost_usd),'min_cost',min(estimated_cost_usd),'max_cost',max(estimated_cost_usd),'attempts',sum(attempt_count)) from public.ai_eval_results where run_id='${runId}';`,
+          ),
+          {
+            count: expectedCases,
+            baseline_input: 0,
+            baseline_output: 0,
+            candidate_input: expectedCases * 7 + judge * 5,
+            candidate_output: expectedCases * 3 + judge * 2,
+            baseline_latency: 0,
+            candidate_latency: expectedCases * 17 + judge * 12,
+            cost: expectedCost,
+            min_cost: perCaseCost,
+            max_cost: perCaseCost,
+            attempts: expectedCases,
+          },
         );
         if (feature === "recommendation") {
           assertEquals(config.includes("recommendation"), true);
@@ -150,6 +194,8 @@ Deno.test({
             true,
           );
         }
+        assertEquals(dispatch.requests.length, 0);
+        assertEquals(dispatch.background.length, 0);
       }
 
       seedPassingStatementRevision(dbEnv);
@@ -158,22 +204,66 @@ Deno.test({
         `select public.admin_create_ai_eval_run('10000000-0000-4000-8000-000000000001','${crypto.randomUUID()}',2,'captured-production-v1','gemini-3.6-flash-statement-v1','gemini-3.6-flash-blind-judge-v1',100,1.0,25000);`,
       );
       const severeRunId = String(severeReceipt.run_id);
-      const severeDeps = postgresDependencies(dbEnv, scheduled, "regress");
+      const severeDispatch = continuationCapture();
+      const severeDeps = postgresDependencies(
+        dbEnv,
+        severeDispatch,
+        "regress",
+      );
       let severeResponse = await handleAiEvalRunnerRequest(
         workerRequest(severeRunId),
         severeDeps,
       );
       assertEquals(severeResponse.status, 202);
+      await Promise.all(severeDispatch.background.splice(0));
+      assertEquals(severeDispatch.requests.length, 1);
       severeResponse = await handleAiEvalRunnerRequest(
-        workerRequest(severeRunId),
+        severeDispatch.requests.shift()!,
         severeDeps,
       );
       assertEquals((await severeResponse.json()).status, "completed");
       const severeSummary = queryJson(
         dbEnv,
-        `select aggregate_metrics from public.ai_eval_runs where id='${severeRunId}';`,
+        `select jsonb_build_object('metrics',aggregate_metrics,'tokens',token_usage,'cost',estimated_cost_usd) from public.ai_eval_runs where id='${severeRunId}';`,
       );
-      assertEquals(severeSummary.severe_regressions, 7);
+      assertEquals(severeSummary, {
+        metrics: {
+          case_count: 7,
+          succeeded: 7,
+          failed: 0,
+          missing: 0,
+          failure_categories: {},
+          regressions: 7,
+          severe_regressions: 7,
+          average_latency_ms: 17,
+        },
+        tokens: {
+          baseline_input: 0,
+          baseline_output: 0,
+          candidate_input: 49,
+          candidate_output: 21,
+        },
+        cost: 0.000056,
+      });
+      assertEquals(
+        queryJson(
+          dbEnv,
+          `select jsonb_build_object('count',count(*),'baseline_input',sum(baseline_input_tokens),'baseline_output',sum(baseline_output_tokens),'candidate_input',sum(candidate_input_tokens),'candidate_output',sum(candidate_output_tokens),'baseline_latency',sum(baseline_latency_ms),'candidate_latency',sum(candidate_latency_ms),'cost',sum(estimated_cost_usd),'min_cost',min(estimated_cost_usd),'max_cost',max(estimated_cost_usd),'attempts',sum(attempt_count)) from public.ai_eval_results where run_id='${severeRunId}';`,
+        ),
+        {
+          count: 7,
+          baseline_input: 0,
+          baseline_output: 0,
+          candidate_input: 49,
+          candidate_output: 21,
+          baseline_latency: 0,
+          candidate_latency: 119,
+          cost: 0.000056,
+          min_cost: 0.000008,
+          max_cost: 0.000008,
+          attempts: 7,
+        },
+      );
       assertEquals(
         Number(
           runPsql(
@@ -183,6 +273,8 @@ Deno.test({
         ),
         7,
       );
+      assertEquals(severeDispatch.requests.length, 0);
+      assertEquals(severeDispatch.background.length, 0);
     } finally {
       try {
         runPsql(baseEnv, `drop database if exists "${database}" with (force);`);
@@ -208,7 +300,7 @@ function workerRequest(runId: string) {
 
 function postgresDependencies(
   env: Record<string, string>,
-  scheduled: string[],
+  dispatch: ReturnType<typeof continuationCapture>,
   mode: "improve" | "regress" = "improve",
 ): RunnerDependencies {
   const rpc: RunnerDependencies["rpc"] = (name, args) => {
@@ -331,11 +423,24 @@ function postgresDependencies(
         latencyMs: 17,
       };
     },
-    scheduleContinuation: (id) => {
-      scheduled.push(id);
-      return Promise.resolve();
-    },
-    waitUntil: () => {},
+    scheduleContinuation: (id) =>
+      scheduleAiEvalContinuation(
+        "http://local.supabase",
+        "service-role-secret-that-is-long-enough",
+        id,
+        async (input, init) => {
+          dispatch.requests.push(new Request(input, init));
+          return Response.json({ accepted: true }, { status: 202 });
+        },
+      ),
+    waitUntil: (promise) => dispatch.background.push(promise),
+  };
+}
+
+function continuationCapture() {
+  return {
+    requests: [] as Request[],
+    background: [] as Promise<unknown>[],
   };
 }
 
