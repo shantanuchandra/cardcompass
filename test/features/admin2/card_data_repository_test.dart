@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:cardcompass/features/admin2/card_data/card_data_models.dart';
 import 'package:cardcompass/features/admin2/card_data/card_data_repository.dart';
 import 'package:cardcompass/features/admin2/data/admin_operator_api.dart';
@@ -15,6 +17,29 @@ final class RecordingAdminOperatorApi implements AdminOperatorApi {
     bodies.add(body);
     return response;
   }
+}
+
+Map<String, dynamic> benefitPayloadWithUtf8Bytes(int targetBytes) {
+  final decisions = List.generate(
+    20,
+    (_) => <String, dynamic>{
+      'action': 'approve',
+      'benefit': <String, dynamic>{'description': ''},
+    },
+  );
+  final payload = <String, dynamic>{'decisions': decisions};
+  var remaining = targetBytes - utf8.encode(jsonEncode(payload)).length;
+  if (remaining < 0 || remaining > 20 * 2000) {
+    throw ArgumentError.value(targetBytes, 'targetBytes');
+  }
+  for (final decision in decisions) {
+    final length = remaining.clamp(0, 2000);
+    (decision['benefit'] as Map<String, dynamic>)['description'] = 'a' * length;
+    remaining -= length;
+  }
+  assert(remaining == 0);
+  assert(utf8.encode(jsonEncode(payload)).length == targetBytes);
+  return payload;
 }
 
 void main() {
@@ -490,6 +515,139 @@ void main() {
       ),
       throwsFormatException,
     );
+  });
+
+  for (final bytes in [32767, 32768]) {
+    test('accepts a safe payload of exactly $bytes UTF-8 bytes', () async {
+      final payload = benefitPayloadWithUtf8Bytes(bytes);
+      final api = RecordingAdminOperatorApi(
+        const AdminOperatorResponse(200, {'result': {}}),
+      );
+      await CardDataRepository(
+        AdminOperatorRepository(api),
+        requestIds: () => '11111111-1111-4111-8111-111111111111',
+      ).act(
+        CardReviewAction(
+          lane: CardReviewLane.benefit,
+          operation: CardReviewOperation.approve,
+          targetId: identityId,
+          observedUpdatedAt: observed,
+          stagingId: stagingId,
+          payload: payload,
+        ),
+      );
+      expect(utf8.encode(jsonEncode(payload)).length, bytes);
+      expect(api.bodies, hasLength(1));
+    });
+  }
+
+  test('rejects 32769 UTF-8 bytes when code-unit length is unchanged', () {
+    final payload = benefitPayloadWithUtf8Bytes(32768);
+    final decisions = payload['decisions'] as List<dynamic>;
+    final populated = decisions.cast<Map<String, dynamic>>().firstWhere(
+      (decision) =>
+          ((decision['benefit'] as Map<String, dynamic>)['description']
+                  as String)
+              .isNotEmpty,
+    );
+    final benefit = populated['benefit'] as Map<String, dynamic>;
+    final ascii = benefit['description'] as String;
+    benefit['description'] = '${ascii.substring(0, ascii.length - 1)}é';
+    expect(utf8.encode(jsonEncode(payload)).length, 32769);
+    final action = CardReviewAction(
+      lane: CardReviewLane.benefit,
+      operation: CardReviewOperation.approve,
+      targetId: identityId,
+      observedUpdatedAt: observed,
+      stagingId: stagingId,
+      payload: payload,
+    );
+    final api = RecordingAdminOperatorApi(
+      const AdminOperatorResponse(200, {'result': {}}),
+    );
+    expect(
+      CardDataRepository(AdminOperatorRepository(api)).act(action),
+      throwsA(isA<AdminRequestFailed>()),
+    );
+    expect(api.bodies, isEmpty);
+  });
+
+  test('caps the normalized reject payload after reason injection', () {
+    final payload = benefitPayloadWithUtf8Bytes(32768);
+    for (final decision in payload['decisions'] as List<dynamic>) {
+      (decision as Map<String, dynamic>)['action'] = 'reject';
+    }
+    expect(utf8.encode(jsonEncode(payload)).length, lessThanOrEqualTo(32768));
+    final api = RecordingAdminOperatorApi(
+      const AdminOperatorResponse(200, {'result': {}}),
+    );
+    expect(
+      CardDataRepository(AdminOperatorRepository(api)).act(
+        CardReviewAction(
+          lane: CardReviewLane.benefit,
+          operation: CardReviewOperation.reject,
+          targetId: identityId,
+          observedUpdatedAt: observed,
+          stagingId: stagingId,
+          reason: 'r' * 1000,
+          payload: payload,
+        ),
+      ),
+      throwsA(isA<AdminRequestFailed>()),
+    );
+    expect(api.bodies, isEmpty);
+  });
+
+  test('enforces timestamp, identity text, and reason boundaries', () async {
+    final api = RecordingAdminOperatorApi(
+      const AdminOperatorResponse(200, {'result': {}}),
+    );
+    final repository = CardDataRepository(
+      AdminOperatorRepository(api),
+      requestIds: () => '11111111-1111-4111-8111-111111111111',
+    );
+    CardReviewAction edit(String name, {String timestamp = observed}) =>
+        CardReviewAction(
+          lane: CardReviewLane.identity,
+          operation: CardReviewOperation.editApprove,
+          targetId: identityId,
+          observedUpdatedAt: timestamp,
+          payload: {
+            'proposed_fields': {'card_name': name},
+          },
+        );
+
+    await repository.act(edit('x' * 500));
+    await repository.act(
+      CardReviewAction(
+        lane: CardReviewLane.identity,
+        operation: CardReviewOperation.reject,
+        targetId: identityId,
+        observedUpdatedAt: observed,
+        reason: 'r' * 1000,
+      ),
+    );
+    expect(repository.act(edit('x' * 501)), throwsA(isA<AdminRequestFailed>()));
+    final longButParseableTimestamp = '2026-08-19T09:00:00.${'1' * 80}Z';
+    expect(longButParseableTimestamp.length, greaterThan(100));
+    expect(DateTime.tryParse(longButParseableTimestamp), isNotNull);
+    expect(
+      repository.act(edit('x', timestamp: longButParseableTimestamp)),
+      throwsA(isA<AdminRequestFailed>()),
+    );
+    expect(
+      repository.act(
+        CardReviewAction(
+          lane: CardReviewLane.identity,
+          operation: CardReviewOperation.reject,
+          targetId: identityId,
+          observedUpdatedAt: observed,
+          reason: 'r' * 1001,
+        ),
+      ),
+      throwsA(isA<AdminRequestFailed>()),
+    );
+    expect(api.bodies, hasLength(2));
   });
 
   test('malformed card response becomes a safe request failure', () async {

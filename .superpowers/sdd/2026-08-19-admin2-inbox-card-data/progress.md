@@ -84,3 +84,8 @@ Ruling: Preserve allowlisted server validation codes inside `AdminRequestFailed`
 Ruling: Mirror the gateway's lane-operation and nested field allowlists at the Flutter repository boundary so invalid operator intents never consume a request ID or reach the network. Cost if wrong: gateway contract changes must update the typed client validation and server validator together.
 
 Ruling: Recursively copy and freeze JSON-like action and DTO collections, rejecting non-JSON values at construction/parsing time. Cost if wrong: very large nested payloads incur an additional linear copy, bounded in practice by the gateway's 32-KiB mutation limit and list limits.
+
+- Task 4 boundary follow-up RED: a 32,769-byte UTF-8 payload containing a multibyte character was sent to the gateway instead of failing locally.
+- Task 4 boundary follow-up GREEN: 32,767- and 32,768-byte payloads pass, 32,769 bytes fail before invocation, normalized reject payload growth is included, timestamps over 100 characters fail even when parseable, and identity text/reason limits match the Edge validator. Focused repositories passed 41/41, the full Admin2 suite passed 68/68, and targeted analysis reported no issues.
+
+Ruling: Measure both the submitted mutation payload and its operation-normalized safe form with `utf8.encode(jsonEncode(...))`, enforcing the gateway's inclusive 32,768-byte ceiling before allocating a request ID. Cost if wrong: JSON encoder escaping differences across runtimes could require a shared canonical byte-count fixture, though ASCII and multibyte boundary tests currently match the Edge contract.

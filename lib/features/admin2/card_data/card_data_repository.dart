@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:uuid/uuid.dart';
 
 import '../data/admin_operator_repository.dart';
@@ -121,6 +123,7 @@ Never _invalidAction() => throw const AdminRequestFailed('invalid_request');
 
 void _validateAction(CardReviewAction action) {
   if (!_uuid.hasMatch(action.targetId) ||
+      action.observedUpdatedAt.length > 100 ||
       !RegExp(
         r'^\d{4}-\d{2}-\d{2}T',
         caseSensitive: false,
@@ -129,7 +132,7 @@ void _validateAction(CardReviewAction action) {
     _invalidAction();
   }
   final reason = action.reason?.trim();
-  if (reason != null && (reason.isEmpty || reason.length > 1000)) {
+  if (reason != null && reason.length > 1000) {
     _invalidAction();
   }
   final requiresReason =
@@ -170,6 +173,7 @@ void _validateAction(CardReviewAction action) {
       case CardReviewOperation.unquarantine:
         _invalidAction();
     }
+    _validatePayloadBytes(action.payload);
     return;
   }
 
@@ -210,6 +214,8 @@ void _validateAction(CardReviewAction action) {
     case CardReviewOperation.merge:
       _invalidAction();
   }
+  _validatePayloadBytes(action.payload);
+  _validatePayloadBytes(_safePayloadFor(action, reason));
 }
 
 bool _hasOnly(Map<String, dynamic> payload, Set<String> keys) =>
@@ -219,7 +225,7 @@ bool _validIdentityValue(Object? key, Object? value) {
   if (value is num) return value.isFinite;
   if (value is! String) return false;
   if (key is String && key.endsWith('_url')) return _safeHttpsUrl(value);
-  return true;
+  return value.length <= 500;
 }
 
 bool _safeHttpsUrl(String value) {
@@ -251,4 +257,28 @@ bool _validDecisionValue(Object? value, [String key = '', int depth = 0]) {
     );
   }
   return false;
+}
+
+void _validatePayloadBytes(Map<String, dynamic> payload) {
+  if (utf8.encode(jsonEncode(payload)).length > 32768) _invalidAction();
+}
+
+Map<String, dynamic> _safePayloadFor(
+  CardReviewAction action,
+  String? normalizedReason,
+) {
+  if (action.operation != CardReviewOperation.reject) return action.payload;
+  final decisions = action.payload['decisions'] as List;
+  return {
+    'decisions': decisions
+        .cast<Map>()
+        .map(
+          (decision) => <String, dynamic>{
+            ...decision.cast<String, dynamic>(),
+            'action': 'reject',
+            'reason': normalizedReason,
+          },
+        )
+        .toList(growable: false),
+  };
 }

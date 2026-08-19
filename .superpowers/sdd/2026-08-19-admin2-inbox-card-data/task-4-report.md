@@ -26,3 +26,10 @@
 - Replaced shallow wrappers with recursive JSON copying and freezing for action payloads and parsed DTO maps/lists; unsupported runtime objects and non-finite numbers fail safely.
 - Normalized unexpected SDK, socket, timeout, decoding, and runtime invocation failures to `AdminRequestFailed('request_failed')` while preserving recognized typed exceptions.
 - Review RED produced 13 focused failures across the three findings. Review GREEN passed the full Admin2 suite 63/63; targeted analysis reported no issues.
+
+## Boundary follow-up
+
+- Mirrored the Edge validator's 100-character timestamp maximum, 500-character identity text projection, 1,000-character reason maximum, and inclusive 32,768-byte payload cap.
+- Payload size uses encoded JSON UTF-8 bytes, not Dart code units, and checks the submitted form plus the reject form after normalized reason injection.
+- Boundary coverage accepts 32,767 and 32,768 bytes, rejects a 32,769-byte multibyte case, rejects normalized reject overflow, and isolates a parseable timestamp longer than 100 characters.
+- Focused repositories passed 41/41; the full Admin2 suite passed 68/68; targeted analysis reported no issues.
