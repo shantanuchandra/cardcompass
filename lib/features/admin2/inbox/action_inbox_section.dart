@@ -13,12 +13,14 @@ class ActionInboxSection extends StatefulWidget {
     super.key,
     required this.loadInbox,
     required this.onOpenCardTarget,
+    required this.onOpenSystemControl,
     this.onAuthenticationRequired,
     this.onAccessDenied,
   });
 
   final InboxLoader loadInbox;
   final ValueChanged<AdminInboxDestination> onOpenCardTarget;
+  final ValueChanged<AdminInboxDestination> onOpenSystemControl;
   final Future<void> Function()? onAuthenticationRequired;
   final VoidCallback? onAccessDenied;
 
@@ -165,7 +167,10 @@ class _ActionInboxSectionState extends State<ActionInboxSection> {
                               items: snapshot.items
                                   .where((item) => item.severity == severity)
                                   .toList(growable: false),
-                              onOpen: widget.onOpenCardTarget,
+                              onOpen: (destination) =>
+                                  destination.section == 'system'
+                                  ? widget.onOpenSystemControl(destination)
+                                  : widget.onOpenCardTarget(destination),
                             ),
                         ],
                       ),
@@ -295,6 +300,8 @@ String _partialFailureMessage(InboxSource source) => switch (source) {
   InboxSource.cardIdentity => 'Card identity is temporarily unavailable.',
   InboxSource.benefitEnrichment =>
     'Benefit enrichment is temporarily unavailable.',
+  InboxSource.systemOperations =>
+    'System operations are temporarily unavailable.',
 };
 
 String _severityLabel(AdminInboxSeverity severity) => switch (severity) {
@@ -306,17 +313,20 @@ String _severityLabel(AdminInboxSeverity severity) => switch (severity) {
 String _typeLabel(String type) => switch (type) {
   'card_identity_review' => 'Card identity review',
   'benefit_enrichment_review' => 'Benefit enrichment review',
+  'paused_pipeline' => 'Paused pipeline',
   _ => 'Operator action',
 };
 
 String _sectionLabel(String section) => switch (section) {
   'cardData' => 'Card Data',
+  'system' => 'System',
   _ => 'Operator workspace',
 };
 
-String _laneLabel(CardReviewLane lane) => switch (lane) {
+String _laneLabel(CardReviewLane? lane) => switch (lane) {
   CardReviewLane.identity => 'Identity',
   CardReviewLane.benefit => 'Benefits',
+  null => 'Scheduled enrichment control',
 };
 
 IconData _severityIcon(AdminInboxSeverity severity) => switch (severity) {

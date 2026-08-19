@@ -4,6 +4,7 @@ import {
   type InboxItem,
   loadBenefitInbox,
   loadIdentityInbox,
+  loadSystemInbox,
   rankInboxItems,
 } from "./inbox.ts";
 import { type AdminActionContext, AdminHttpError } from "./types.ts";
@@ -38,12 +39,18 @@ function queryResult(
     | null
     | ((statuses: unknown[] | null) => { message: string } | null),
   calls: QueryCall[],
+  countValue: unknown = 0,
 ) {
   let statuses: unknown[] | null = null;
+  let head = false;
   const query = {
     select: (
       ...args: unknown[]
-    ) => (calls.push({ table, method: "select", args }), query),
+    ) => {
+      calls.push({ table, method: "select", args });
+      head = Boolean((args[1] as { head?: unknown } | undefined)?.head);
+      return query;
+    },
     eq: (
       ...args: unknown[]
     ) => (calls.push({ table, method: "eq", args }), query),
@@ -68,6 +75,7 @@ function queryResult(
       });
       return Promise.resolve({
         data: filtered,
+        count: head ? countValue : null,
         error: typeof error === "function" ? error(statuses) : error,
       });
     },
@@ -83,6 +91,9 @@ function context(options: {
   benefitHighError?: { message: string } | null;
   benefitRoutineError?: { message: string } | null;
   calls?: QueryCall[];
+  control?: unknown[];
+  queuedCount?: unknown;
+  systemError?: { message: string } | null;
 } = {}): AdminActionContext {
   const calls = options.calls ?? [];
   return {
@@ -91,6 +102,18 @@ function context(options: {
     db: {
       from(table: string) {
         calls.push({ table, method: "from", args: [] });
+        if (table === "admin_runtime_controls") {
+          return queryResult(
+            table,
+            options.control ?? [{
+              control_key: "benefit_enrichment_scheduled",
+              is_paused: false,
+              updated_at: "2026-08-19T11:30:00Z",
+            }],
+            options.systemError ?? null,
+            calls,
+          ) as never;
+        }
         return queryResult(
           table,
           table === "card_catalog_review_queue"
@@ -99,18 +122,97 @@ function context(options: {
           table === "card_catalog_review_queue"
             ? options.identityError ?? null
             : (statuses) => {
+              if (statuses === null) return options.systemError ?? null;
               if (options.benefitError) return options.benefitError;
               return statuses?.includes("staged")
                 ? options.benefitRoutineError ?? null
                 : options.benefitHighError ?? null;
             },
           calls,
+          table === "card_catalog_enrichment_jobs"
+            ? options.queuedCount ?? 0
+            : 0,
         ) as never;
       },
       rpc: () => Promise.resolve({ data: null, error: null }),
     },
   };
 }
+
+Deno.test("paused benefit pipeline with queued work creates one critical System control item", async () => {
+  const output = await loadSystemInbox(
+    context({
+      control: [{
+        control_key: "benefit_enrichment_scheduled",
+        is_paused: true,
+        updated_at: "2026-08-19T11:30:00Z",
+      }],
+      queuedCount: 17,
+    }),
+    NOW,
+  );
+
+  assertEquals(output, [{
+    id: "system:benefit_enrichment_scheduled:paused",
+    type: "paused_pipeline",
+    severity: "critical",
+    title: "Scheduled benefit enrichment is paused",
+    explanation:
+      "17 queued benefit enrichment jobs are waiting while scheduled processing is paused.",
+    source_status: "paused",
+    age_seconds: 1800,
+    destination: {
+      section: "system",
+      control_key: "benefit_enrichment_scheduled",
+    },
+  }]);
+});
+
+Deno.test("System inbox omits paused empty and unpaused pipelines", async () => {
+  assertEquals(
+    await loadSystemInbox(
+      context({
+        control: [{
+          control_key: "benefit_enrichment_scheduled",
+          is_paused: true,
+          updated_at: "2026-08-19T11:30:00Z",
+        }],
+        queuedCount: 0,
+      }),
+      NOW,
+    ),
+    [],
+  );
+  assertEquals(
+    await loadSystemInbox(
+      context({
+        control: [{
+          control_key: "benefit_enrichment_scheduled",
+          is_paused: false,
+          updated_at: "2026-08-19T11:30:00Z",
+        }],
+        queuedCount: 17,
+      }),
+      NOW,
+    ),
+    [],
+  );
+});
+
+Deno.test("System inbox source failure is stable and does not hide other items", async () => {
+  const output = await handleInboxList(
+    { action: "inbox-list" },
+    context({
+      identity: [{ id: "identity", status: "pending", created_at: "bad" }],
+      control: [{ control_key: "wrong", is_paused: true }],
+      queuedCount: "17",
+    }),
+  );
+  assertEquals(output.items.map((entry) => entry.id), [
+    "card-identity:identity",
+  ]);
+  assertEquals(output.partial_failures, ["system_operations"]);
+});
 
 Deno.test("inbox ranks severity, then oldest age, then stable id without mutating input", () => {
   const input = [
@@ -305,9 +407,14 @@ Deno.test("source queries use deterministic created-at then id ordering before b
   ) {
     const tableCalls = calls.filter((call) => call.table === table);
     const ranges = tableCalls.filter((call) => call.method === "range");
-    assertEquals(ranges.length, table === "card_catalog_review_queue" ? 1 : 2);
+    assertEquals(ranges.length, table === "card_catalog_review_queue" ? 1 : 3);
+    finalTierRanges:
     for (const range of ranges) {
       const beforeRange = tableCalls.slice(0, tableCalls.indexOf(range));
+      if (beforeRange.at(-1)?.method === "eq") {
+        assertEquals(range.args, [0, 0]);
+        continue finalTierRanges;
+      }
       assertEquals(beforeRange.slice(-2), [{
         table,
         method: "order",

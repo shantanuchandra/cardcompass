@@ -11,6 +11,8 @@ import 'package:cardcompass/features/admin2/data/admin_operator_repository.dart'
 import 'package:cardcompass/features/admin2/inbox/inbox_models.dart';
 import 'package:cardcompass/features/admin2/inbox/inbox_repository.dart';
 import 'package:cardcompass/features/admin2/inbox/action_inbox_section.dart';
+import 'package:cardcompass/features/admin2/system/system_models.dart';
+import 'package:cardcompass/features/admin2/system/system_section.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -68,6 +70,43 @@ void main() {
       expect(snapshot.items.single.destination.lane, CardReviewLane.benefit);
       expect(snapshot.items.single.destination.targetId, 'job-1');
       expect(api.bodies.single, {'action': 'inbox-list'});
+    },
+  );
+
+  test(
+    'maps a paused pipeline to the exact System control destination',
+    () async {
+      final api = _Api(
+        const AdminOperatorResponse(200, {
+          'items': [
+            {
+              'id': 'system:benefit_enrichment_scheduled:paused',
+              'type': 'paused_pipeline',
+              'severity': 'critical',
+              'title': 'Scheduled benefit enrichment is paused',
+              'explanation': '17 queued jobs are waiting.',
+              'source_status': 'paused',
+              'age_seconds': 60,
+              'destination': {
+                'section': 'system',
+                'control_key': 'benefit_enrichment_scheduled',
+              },
+            },
+          ],
+          'partial_failures': ['system_operations'],
+          'refreshed_at': '2026-08-19T09:00:00.000Z',
+        }),
+      );
+
+      final snapshot = await InboxRepository(
+        AdminOperatorRepository(api),
+      ).load();
+      expect(snapshot.partialFailures, [InboxSource.systemOperations]);
+      expect(snapshot.items.single.destination.section, 'system');
+      expect(
+        snapshot.items.single.destination.controlKey,
+        'benefit_enrichment_scheduled',
+      );
     },
   );
 
@@ -264,6 +303,70 @@ void main() {
       expect(semantics.label, isNot(contains('private-benefit-id')));
     });
 
+    testWidgets('shows a safe paused-pipeline System destination label', (
+      tester,
+    ) async {
+      await _pumpInbox(tester, _snapshot(items: [_systemItem()]));
+
+      expect(
+        find.text('Paused pipeline · System / Scheduled enrichment control'),
+        findsOneWidget,
+      );
+      final semantics = tester.getSemantics(
+        find.byKey(
+          const Key('inbox-item-system:benefit_enrichment_scheduled:paused'),
+        ),
+      );
+      expect(
+        semantics.label,
+        contains('System. Scheduled enrichment control.'),
+      );
+      expect(semantics.label, isNot(contains('benefit_enrichment_scheduled')));
+    });
+
+    testWidgets('deep-links repeatedly to the exact System control on mobile', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            adminAccessProvider.overrideWith(
+              (_) async => const AdminAccess(isAdmin: true),
+            ),
+          ],
+          child: MaterialApp(
+            theme: AppTheme.work,
+            home: AdminOperatorScreen(
+              inboxLoader: () async => _snapshot(items: [_systemItem()]),
+              systemSource: _RecordingSystemSource(),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      for (var attempt = 0; attempt < 2; attempt++) {
+        await tester.tap(find.text('Scheduled benefit enrichment is paused'));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const Key('system-control-action')), findsOneWidget);
+        expect(
+          tester
+              .widget<FilledButton>(
+                find.byKey(const Key('system-control-action')),
+              )
+              .focusNode
+              ?.hasFocus,
+          isTrue,
+        );
+        if (attempt == 0) {
+          await tester.tap(find.byKey(const Key('admin-section-inbox')));
+          await tester.pumpAndSettle();
+        }
+      }
+    });
+
     testWidgets('refresh retains items and reports a safe retryable failure', (
       tester,
     ) async {
@@ -420,6 +523,34 @@ final class _RecordingCardSource implements CardDataSource {
   }
 }
 
+final class _RecordingSystemSource implements SystemDataSource {
+  @override
+  Future<SystemJobsPage> jobs(
+    SystemJobFamily family, {
+    int page = 1,
+    int limit = 25,
+    String? status,
+  }) async =>
+      SystemJobsPage(items: const [], page: page, limit: limit, hasMore: false);
+
+  @override
+  Future<void> mutate(SystemMutation mutation) async {}
+
+  @override
+  Future<SystemStatusSnapshot> status() async => SystemStatusSnapshot(
+    pipelines: const [],
+    controls: [
+      RuntimeControl(
+        isPaused: true,
+        reason: 'provider outage',
+        updatedAt: DateTime.utc(2026, 8, 19),
+      ),
+    ],
+    controlSourceError: null,
+    refreshedAt: DateTime.utc(2026, 8, 19),
+  );
+}
+
 Future<void> _pumpInbox(
   WidgetTester tester,
   InboxSnapshot initial, {
@@ -432,6 +563,7 @@ Future<void> _pumpInbox(
         body: ActionInboxSection(
           loadInbox: loader ?? () async => initial,
           onOpenCardTarget: onOpen ?? (_) {},
+          onOpenSystemControl: onOpen ?? (_) {},
         ),
       ),
     ),
@@ -466,5 +598,18 @@ AdminInboxItem _item(
     section: 'cardData',
     lane: lane,
     targetId: id,
+  ),
+);
+
+AdminInboxItem _systemItem() => const AdminInboxItem(
+  id: 'system:benefit_enrichment_scheduled:paused',
+  type: 'paused_pipeline',
+  severity: AdminInboxSeverity.critical,
+  title: 'Scheduled benefit enrichment is paused',
+  explanation: '17 queued jobs are waiting.',
+  sourceStatus: 'paused',
+  ageSeconds: 60,
+  destination: AdminInboxDestination.system(
+    controlKey: 'benefit_enrichment_scheduled',
   ),
 );

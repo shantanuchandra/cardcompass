@@ -21,15 +21,18 @@ class SystemSection extends StatefulWidget {
     required this.repository,
     this.onAuthenticationRequired,
     this.onAccessDenied,
+    this.initialControlKey,
   });
   final SystemDataSource repository;
   final Future<void> Function()? onAuthenticationRequired;
   final VoidCallback? onAccessDenied;
+  final String? initialControlKey;
   @override
   State<SystemSection> createState() => _SystemSectionState();
 }
 
 class _SystemSectionState extends State<SystemSection> {
+  final _controlFocus = FocusNode();
   SystemStatusSnapshot? _status;
   SystemJobsPage? _jobs;
   SystemJobFamily _family = SystemJobFamily.benefitEnrichment;
@@ -44,6 +47,12 @@ class _SystemSectionState extends State<SystemSection> {
   void initState() {
     super.initState();
     _load(initial: true);
+  }
+
+  @override
+  void dispose() {
+    _controlFocus.dispose();
+    super.dispose();
   }
 
   Future<void> _load({bool initial = false, int? page}) async {
@@ -68,6 +77,7 @@ class _SystemSectionState extends State<SystemSection> {
         _loading = false;
         _refreshing = false;
       });
+      _focusRequestedControl();
     } catch (error) {
       await _effects(error);
       if (!mounted) return;
@@ -77,6 +87,13 @@ class _SystemSectionState extends State<SystemSection> {
         _refreshing = false;
       });
     }
+  }
+
+  void _focusRequestedControl() {
+    if (widget.initialControlKey != RuntimeControl.key) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _controlFocus.requestFocus();
+    });
   }
 
   Future<void> _effects(Object error) async {
@@ -233,6 +250,7 @@ class _SystemSectionState extends State<SystemSection> {
                         unavailable: _status!.controlSourceError != null,
                         submitting: _submitting,
                         onAction: _controlAction,
+                        focusNode: _controlFocus,
                       ),
                       const SizedBox(height: BrandSpacing.lg),
                       if (wide)
@@ -484,11 +502,13 @@ class _ControlCard extends StatelessWidget {
     required this.unavailable,
     required this.submitting,
     required this.onAction,
+    required this.focusNode,
   });
   final RuntimeControl? control;
   final bool unavailable;
   final bool submitting;
   final ValueChanged<RuntimeControl> onAction;
+  final FocusNode focusNode;
   @override
   Widget build(BuildContext context) => BrandSurface(
     tone: BrandSurfaceTone.evidence,
@@ -517,6 +537,7 @@ class _ControlCard extends StatelessWidget {
         if (!unavailable && control != null)
           FilledButton(
             key: const Key('system-control-action'),
+            focusNode: focusNode,
             onPressed: submitting ? null : () => onAction(control!),
             child: Text(control!.isPaused ? 'Resume' : 'Pause'),
           ),

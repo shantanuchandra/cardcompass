@@ -19,7 +19,7 @@ Ruling: Carry the prior plan's final adjudication ledger update into the Tasks 1
 - Tasks 1–2: implementation complete, pending review — runtime control and scheduled worker enforcement
 - Task 3: implementation complete, pending review — sanitized System gateway
 - Task 4: implementation complete, pending review — typed System workspace
-- Task 5: pending — paused-pipeline Inbox item
+- Task 5: implementation complete, pending review — paused-pipeline Inbox item and exact System control deep link
 - Task 6: pending — whole-phase verification
 
 ## Tasks 1–2 evidence
@@ -103,3 +103,15 @@ Ruling: Use 1024 logical pixels as the System master-detail breakpoint and a sin
 Ruling: Centralize job recovery eligibility in the typed Dart model layer and require both presentation and repository serialization to consult it. Cost if wrong: any future gateway status expansion requires a deliberate one-line policy and matrix-test update before the client can expose or submit the action.
 
 Ruling: Reject contradictory control status DTOs at the repository boundary, while independently suppressing control actions whenever the rendered snapshot reports source uncertainty. Cost if wrong: a partially compatible backend response produces a retryable failed refresh instead of showing possibly stale control state, favoring operational safety over availability.
+
+## Task 5 evidence
+
+- RED: the focused Deno suite failed because `loadSystemInbox` did not exist; the focused Flutter suite failed because System destinations, source failures, safe labels, and the exact control callback were not modeled.
+- GREEN: the focused Inbox suites passed 11/11 Deno and 17/17 Flutter; the full admin-operator gateway passed 64/64; the full Admin2 Flutter suite passed 119/119; scoped analysis reported no issues.
+- The derived source reads only `benefit_enrichment_scheduled` plus an exact, head-only count of `queued` benefit-enrichment jobs. It emits one deterministic critical item only for paused plus nonzero queued work and caps the displayed count without exposing records.
+- Missing, errored, malformed, or contradictory source results report only `system_operations` as a partial failure and do not remove independently loaded card work.
+- Typed System destinations render safe labels, never speak the control key, and repeatedly select the System section plus focus its exact pause/resume control at compact width.
+
+Ruling: Model System Inbox work as a named-control destination rather than overloading card lanes or record IDs, and remount the System section for every deep-link selection so repeated compact navigation restores exact focus. Cost if wrong: each Inbox-to-System selection reloads bounded System status/history instead of preserving the prior local System view.
+
+Ruling: Count only jobs in the exact `queued` state for the paused-pipeline alert and cap the human-readable count at `999,999+` while retaining critical priority. Cost if wrong: other recoverable states remain represented by their existing Inbox items, and extremely large queued backlogs lose numeric precision in display only.

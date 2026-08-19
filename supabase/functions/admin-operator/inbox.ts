@@ -2,21 +2,28 @@ import { type AdminActionHandler } from "./access.ts";
 import { type AdminActionContext, AdminHttpError } from "./types.ts";
 
 type Severity = "critical" | "high" | "normal";
-type Lane = "identity" | "benefit";
+type CardDestination = Readonly<{
+  section: "cardData";
+  lane: "identity" | "benefit";
+  target_id: string;
+}>;
+type SystemDestination = Readonly<{
+  section: "system";
+  control_key: "benefit_enrichment_scheduled";
+}>;
 
 export type InboxItem = Readonly<{
   id: string;
-  type: "card_identity_review" | "benefit_enrichment_review";
+  type:
+    | "card_identity_review"
+    | "benefit_enrichment_review"
+    | "paused_pipeline";
   severity: Severity;
   title: string;
   explanation: string;
   source_status: string;
   age_seconds: number;
-  destination: Readonly<{
-    section: "cardData";
-    lane: Lane;
-    target_id: string;
-  }>;
+  destination: CardDestination | SystemDestination;
 }>;
 
 type JsonRecord = Record<string, unknown>;
@@ -100,6 +107,11 @@ function safeAge(value: unknown, nowMs: number): number {
   const timestamp = Date.parse(value);
   if (!Number.isFinite(timestamp)) return 0;
   return Math.max(0, Math.floor((nowMs - timestamp) / 1_000));
+}
+
+function validTimestamp(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 100 &&
+    Number.isFinite(Date.parse(value));
 }
 
 function boundedLimit(limit: number): number {
@@ -227,6 +239,56 @@ export async function loadBenefitInbox(
   return results.flat();
 }
 
+export async function loadSystemInbox(
+  context: AdminActionContext,
+  nowMs = Date.now(),
+): Promise<InboxItem[]> {
+  const controlQuery = (context.db as any).from("admin_runtime_controls")
+    .select("control_key,is_paused,updated_at")
+    .eq("control_key", "benefit_enrichment_scheduled")
+    .range(0, 0);
+  const queuedQuery = (context.db as any).from("card_catalog_enrichment_jobs")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "queued")
+    .range(0, 0);
+  const [controlResult, queuedResult] = await Promise.all([
+    controlQuery,
+    queuedQuery,
+  ]);
+  if (controlResult.error || queuedResult.error) sourceFailure();
+  if (!Array.isArray(controlResult.data) || controlResult.data.length !== 1) {
+    sourceFailure();
+  }
+  const control = record(controlResult.data[0]);
+  const queued = queuedResult.count;
+  if (
+    control?.control_key !== "benefit_enrichment_scheduled" ||
+    typeof control.is_paused !== "boolean" ||
+    !validTimestamp(control.updated_at) ||
+    !Number.isSafeInteger(queued) || queued < 0
+  ) sourceFailure();
+  if (!control.is_paused || queued === 0) return [];
+
+  const displayCount = Math.min(queued, 999_999);
+  const countLabel = `${displayCount.toLocaleString("en-US")}${
+    queued > displayCount ? "+" : ""
+  }`;
+  return [{
+    id: "system:benefit_enrichment_scheduled:paused",
+    type: "paused_pipeline",
+    severity: "critical",
+    title: "Scheduled benefit enrichment is paused",
+    explanation:
+      `${countLabel} queued benefit enrichment jobs are waiting while scheduled processing is paused.`,
+    source_status: "paused",
+    age_seconds: safeAge(control.updated_at, nowMs),
+    destination: {
+      section: "system",
+      control_key: "benefit_enrichment_scheduled",
+    },
+  }];
+}
+
 export async function handleInboxList(
   body: JsonRecord,
   context: AdminActionContext,
@@ -249,6 +311,7 @@ export async function handleInboxList(
       MAX_SOURCE_ITEMS,
       nowMs,
     ),
+    loadSystemInbox(context, nowMs),
   ]);
   const items = results.flatMap((result) =>
     result.status === "fulfilled" ? result.value : []
@@ -259,7 +322,13 @@ export async function handleInboxList(
       ...new Set(
         results.flatMap((result, index) =>
           result.status === "rejected"
-            ? [index === 0 ? "card_identity" : "benefit_enrichment"]
+            ? [
+              index === 0
+                ? "card_identity"
+                : index < 3
+                ? "benefit_enrichment"
+                : "system_operations",
+            ]
             : []
         ),
       ),

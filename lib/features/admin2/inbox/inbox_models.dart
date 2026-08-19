@@ -2,25 +2,39 @@ import '../card_data/card_data_models.dart';
 
 enum AdminInboxSeverity { critical, high, normal }
 
-enum InboxSource { cardIdentity, benefitEnrichment }
+enum InboxSource { cardIdentity, benefitEnrichment, systemOperations }
 
 final class AdminInboxDestination {
   const AdminInboxDestination({
     required this.section,
     required this.lane,
     required this.targetId,
+    this.controlKey,
   });
+  const AdminInboxDestination.system({required this.controlKey})
+    : section = 'system',
+      lane = null,
+      targetId = null;
   final String section;
-  final CardReviewLane lane;
-  final String targetId;
+  final CardReviewLane? lane;
+  final String? targetId;
+  final String? controlKey;
 
   factory AdminInboxDestination.fromJson(Map<String, dynamic> json) {
     final section = strictJsonString(json['section']);
+    if (section == 'system') {
+      final controlKey = strictJsonString(json['control_key']);
+      if (controlKey != 'benefit_enrichment_scheduled') {
+        throw const FormatException('Invalid control');
+      }
+      return AdminInboxDestination.system(controlKey: controlKey);
+    }
     if (section != 'cardData') throw const FormatException('Invalid section');
     return AdminInboxDestination(
       section: section,
       lane: CardReviewLane.parse(json['lane']),
       targetId: strictJsonString(json['target_id']),
+      controlKey: null,
     );
   }
 }

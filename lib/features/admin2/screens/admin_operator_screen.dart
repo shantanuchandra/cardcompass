@@ -48,6 +48,8 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
   late CardReviewLane _cardLane;
   String? _cardTargetId;
   var _cardSelectionRevision = 0;
+  String? _systemControlKey;
+  var _systemSelectionRevision = 0;
 
   @override
   void initState() {
@@ -155,6 +157,7 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
           widget.inboxLoader ??
           InboxRepository(ref.watch(adminOperatorRepositoryProvider)).load,
       onOpenCardTarget: _openCardTarget,
+      onOpenSystemControl: _openSystemControl,
       onAuthenticationRequired:
           widget.onAuthenticationRequired ??
           () => ref.read(authNotifierProvider.notifier).signOut(),
@@ -164,25 +167,37 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
 
   Widget _buildSystem() => KeyedSubtree(
     key: const Key('admin-section-content'),
-    child: SystemSection(
-      repository:
-          widget.systemSource ??
-          _RepositorySystemDataSource(
-            ref.watch(adminOperatorRepositoryProvider),
-          ),
-      onAuthenticationRequired:
-          widget.onAuthenticationRequired ??
-          () => ref.read(authNotifierProvider.notifier).signOut(),
-      onAccessDenied: widget.onAccessDenied ?? () => context.go('/app'),
+    child: KeyedSubtree(
+      key: ValueKey('admin-system-$_systemSelectionRevision'),
+      child: SystemSection(
+        repository:
+            widget.systemSource ??
+            _RepositorySystemDataSource(
+              ref.watch(adminOperatorRepositoryProvider),
+            ),
+        onAuthenticationRequired:
+            widget.onAuthenticationRequired ??
+            () => ref.read(authNotifierProvider.notifier).signOut(),
+        onAccessDenied: widget.onAccessDenied ?? () => context.go('/app'),
+        initialControlKey: _systemControlKey,
+      ),
     ),
   );
 
   void _openCardTarget(AdminInboxDestination destination) {
     setState(() {
-      _cardLane = destination.lane;
-      _cardTargetId = destination.targetId;
+      _cardLane = destination.lane!;
+      _cardTargetId = destination.targetId!;
       _cardSelectionRevision++;
       _section = AdminWorkspaceSection.cardData;
+    });
+  }
+
+  void _openSystemControl(AdminInboxDestination destination) {
+    setState(() {
+      _systemControlKey = destination.controlKey;
+      _systemSelectionRevision++;
+      _section = AdminWorkspaceSection.system;
     });
   }
 }
