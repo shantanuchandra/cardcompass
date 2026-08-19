@@ -220,3 +220,16 @@ Ruling: Treat a baseline-only deterministic miss as the measured improvement opp
 Ruling: Return a durable start receipt for queued, running, or terminal response-loss replay, and schedule only queued/running receipts. Cost if wrong: a replay never turns a completed run into an error or unnecessary worker call, while the authoritative database status remains visible.
 
 Ruling: Enforce eval cancel/resume optimistic concurrency inside the existing unreleased lifecycle RPC rather than with a gateway preflight. Cost if wrong: callers must send the exact observed `updated_at`, but stale actions cannot race past the row lock.
+
+### Task 7 review corrections
+
+- The scorer-owned `requiresReview` result is now persisted as a safe boolean and read directly by Admin2. Missing verdicts, ties, and confidence below 0.70 therefore retain exact scorer semantics instead of being reconstructed by the gateway.
+- Candidate support now requires exact `completed` status, an authoritative complete aggregate, zero failed/missing/insufficient-fixture cases, one represented successful result per manifest case, zero result review flags and severe regressions, an improved pass rate, and cost/latency within ceilings. Partial and `completed_with_failures` runs always require review.
+- Admin kickoff validates the private runner's real exact safe receipts: running continuation, not-claimed/cancelled, terminal, and cost-stop. The invented scheduling receipt was removed; durable start replay remains independent of background response delivery.
+- Review regression evidence passes: Admin Operator 105/105, runner 52/52, full frozen Edge 258/258, Admin2 171/171, and disposable PostgreSQL 2/2.
+
+Ruling: Persist the scorer's bounded review bit with each result and treat it as authoritative presentation evidence. Cost if wrong: one safe boolean is stored per case, while judge internals and raw output remain private and review semantics cannot drift across layers.
+
+Ruling: Require completed, internally consistent server aggregates and full result representation before supporting a candidate. Cost if wrong: malformed or legacy aggregates remain review-only, preferring operator attention over a false-positive recommendation.
+
+Ruling: Share an exact validator for the runner's existing safe receipt vocabulary. Cost if wrong: a future runner receipt change must update this private contract explicitly, but kickoff cannot mistake an invented delivery acknowledgment for executed work.

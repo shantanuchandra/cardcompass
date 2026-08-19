@@ -445,6 +445,7 @@ Deno.test("provider failures are recorded with safe metering fields only", async
     safe_failure_category: "model_unavailable",
     candidate_input_tokens: 0,
     candidate_output_tokens: 0,
+    requires_review: true,
   });
   assertEquals(JSON.stringify(body).includes("provider secret"), false);
 });

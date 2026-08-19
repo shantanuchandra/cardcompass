@@ -37,7 +37,7 @@ const SAFE_FAILURES = new Set([
 const RUN_COLUMNS =
   "id,dataset_version,baseline_config_key,candidate_config_key,judge_config_key,status,maximum_case_count,cost_ceiling_usd,latency_ceiling_ms,aggregate_metrics,token_usage,estimated_cost_usd,safe_failure_category,created_at,started_at,completed_at,updated_at";
 const RESULT_COLUMNS =
-  "case_id,case_revision,feature_key,deterministic_assertions,judge_verdict,regression,severe_regression,baseline_latency_ms,candidate_latency_ms,baseline_input_tokens,baseline_output_tokens,candidate_input_tokens,candidate_output_tokens,estimated_cost_usd,execution_status,safe_failure_category,attempt_count,updated_at";
+  "case_id,case_revision,feature_key,deterministic_assertions,judge_verdict,requires_review,regression,severe_regression,baseline_latency_ms,candidate_latency_ms,baseline_input_tokens,baseline_output_tokens,candidate_input_tokens,candidate_output_tokens,estimated_cost_usd,execution_status,safe_failure_category,attempt_count,updated_at";
 
 function invalid(): never {
   throw new AdminHttpError("invalid_request", 400);
@@ -377,13 +377,12 @@ export async function handleEvalRunDetail(
       throw new AdminHttpError("request_failed", 500);
     }
     const assertions = assertionSummary(row.deterministic_assertions);
-    const judge = safeObject(row.judge_verdict, 2_048);
-    const judgeRequired = row.feature_key === "recommendation";
-    const judgeValid = !judgeRequired ||
-      (["baseline", "candidate", "tie"].includes(String(judge.winner)) &&
-        typeof judge.confidence === "number");
+    safeObject(row.judge_verdict, 2_048);
+    if (typeof row.requires_review !== "boolean") {
+      throw new AdminHttpError("request_failed", 500);
+    }
     const requiresReview = execution !== "succeeded" || assertions.review ||
-      !judgeValid;
+      row.requires_review;
     if (execution === "succeeded" && assertions.baseline) baselinePass++;
     if (execution === "succeeded" && assertions.candidate) candidatePass++;
     if (requiresReview) reviewCount++;
@@ -416,7 +415,25 @@ export async function handleEvalRunDetail(
     candidateRate = count ? candidatePass / count : 0,
     p95 = quantile95(latencies);
   const aggregate = run.aggregate_metrics;
+  const authoritativeAggregate = [
+    "case_count",
+    "succeeded",
+    "failed",
+    "missing",
+    "severe_regressions",
+  ].every((key) => Object.hasOwn(aggregate, key));
+  const caseCount = safeInt(aggregate.case_count ?? 0);
+  const succeeded = safeInt(aggregate.succeeded ?? 0);
+  const failed = safeInt(aggregate.failed ?? 0);
+  const missing = safeInt(aggregate.missing ?? 0);
   const severe = safeInt(aggregate.severe_regressions ?? 0);
+  const failureCategories = record(aggregate.failure_categories) ?? {};
+  const insufficientFixture = Object.hasOwn(
+      failureCategories,
+      "insufficient_fixture",
+    )
+    ? safeInt(failureCategories.insufficient_fixture)
+    : 0;
   const blockers: string[] = [];
   if (candidateRate <= baselineRate) {
     blockers.push("candidate_pass_rate_not_improved");
@@ -427,9 +444,14 @@ export async function handleEvalRunDetail(
   }
   if (p95 > run.latency_ceiling_ms) blockers.push("latency_ceiling_exceeded");
   if (reviewCount > 0) blockers.push("manual_review_required");
-  if (run.status !== "completed" && run.status !== "completed_with_failures") {
-    blockers.push("run_not_complete");
-  }
+  if (run.status !== "completed") blockers.push("run_not_completed");
+  if (failed > 0) blockers.push("failed_cases_present");
+  if (missing > 0) blockers.push("missing_cases_present");
+  if (insufficientFixture > 0) blockers.push("insufficient_fixture_present");
+  if (
+    !authoritativeAggregate || caseCount !== count || succeeded !== caseCount ||
+    succeeded + failed + missing !== caseCount
+  ) blockers.push("incomplete_result_set");
   return {
     run,
     metrics: {

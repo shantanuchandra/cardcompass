@@ -244,6 +244,7 @@ export async function handleAiEvalRunnerRequest(
           candidate_output: candidate.output,
           deterministic_assertions: score.assertions,
           judge_verdict: score.judge ?? {},
+          requires_review: score.requiresReview,
           regression: score.regression,
           severe_regression: score.severeRegression,
           baseline_latency_ms: baseline.latencyMs,

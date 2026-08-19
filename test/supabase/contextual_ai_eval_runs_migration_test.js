@@ -25,6 +25,8 @@ test('eval run schema exposes bounded service-only lifecycle contracts', async (
   assert.match(sql, /failure_categories/);
   assert.match(sql, /retry_generation integer not null default 0/);
   assert.match(sql, /attempt_generation integer not null default 0/);
+  assert.match(sql, /requires_review boolean not null/);
+  assert.match(sql, /requires_review=excluded\.requires_review/);
   assert.match(sql, /continuation_required/);
   assert.match(sql, /admin_ai_eval_run_action\(_actor_id uuid,_request_id uuid,_run_id uuid,_action text,_observed_updated_at timestamptz\)/);
   assert.match(sql, /run\.updated_at is distinct from _observed_updated_at/);
@@ -63,7 +65,7 @@ test('eval lifecycle is idempotent, fenced, bounded, resumable and immutable in 
     assert.throws(() => psql(disposable, `select public.claim_ai_eval_run_batch('${runId}',0);`), /invalid_request/);
     assert.throws(() => psql(disposable, `select public.record_ai_eval_result('${runId}','00000000-0000-0000-0000-000000000000','50000000-0000-4000-8000-000000000001',1,'{}');`), /state_conflict/);
     assert.throws(() => psql(disposable, `select public.record_ai_eval_result('${runId}','${claim.lease_token}','50000000-0000-4000-8000-000000000001',2,'{}');`), /invalid_request/);
-    psql(disposable, `select public.record_ai_eval_result('${runId}','${claim.lease_token}','50000000-0000-4000-8000-000000000001',1,'{"feature_key":"card_data","baseline_output":{},"candidate_output":{},"deterministic_assertions":[],"judge_verdict":{},"regression":false,"severe_regression":false,"baseline_latency_ms":1,"candidate_latency_ms":2,"baseline_input_tokens":1,"baseline_output_tokens":1,"candidate_input_tokens":1,"candidate_output_tokens":1,"estimated_cost_usd":0.01,"execution_status":"succeeded","safe_failure_category":null}');`);
+    psql(disposable, `select public.record_ai_eval_result('${runId}','${claim.lease_token}','50000000-0000-4000-8000-000000000001',1,'{"feature_key":"card_data","baseline_output":{},"candidate_output":{},"deterministic_assertions":[],"judge_verdict":{},"requires_review":false,"regression":false,"severe_regression":false,"baseline_latency_ms":1,"candidate_latency_ms":2,"baseline_input_tokens":1,"baseline_output_tokens":1,"candidate_input_tokens":1,"candidate_output_tokens":1,"estimated_cost_usd":0.01,"execution_status":"succeeded","safe_failure_category":null}');`);
     psql(disposable, `select public.finish_ai_eval_run('${runId}','${claim.lease_token}');`);
     assert.equal(psql(disposable, `select status from public.ai_eval_runs;`), 'completed');
     assert.throws(() => psql(disposable, `update public.ai_eval_results set regression=true;`), /immutable_eval_result/);
@@ -87,7 +89,7 @@ test('eval lifecycle is idempotent, fenced, bounded, resumable and immutable in 
     const five = JSON.parse(psql(disposable, `select public.claim_ai_eval_run_batch('${versionTwo.run_id}',99);`));
     assert.equal(five.cases.length, 5);
     const retryCase = five.cases[0];
-    const resultPayload = (status, cost) => JSON.stringify({ feature_key: retryCase.feature_key, baseline_output: {}, candidate_output: {}, deterministic_assertions: [], judge_verdict: {}, regression: false, severe_regression: false, baseline_latency_ms: 1, candidate_latency_ms: 2, baseline_input_tokens: 1, baseline_output_tokens: 1, candidate_input_tokens: 1, candidate_output_tokens: 1, estimated_cost_usd: cost, execution_status: status, safe_failure_category: status === 'failed' ? 'provider_failed' : null });
+    const resultPayload = (status, cost) => JSON.stringify({ feature_key: retryCase.feature_key, baseline_output: {}, candidate_output: {}, deterministic_assertions: [], judge_verdict: {}, requires_review: status === 'failed', regression: false, severe_regression: false, baseline_latency_ms: 1, candidate_latency_ms: 2, baseline_input_tokens: 1, baseline_output_tokens: 1, candidate_input_tokens: 1, candidate_output_tokens: 1, estimated_cost_usd: cost, execution_status: status, safe_failure_category: status === 'failed' ? 'provider_failed' : null });
     assert.throws(() => psql(disposable, `select public.record_ai_eval_result('${versionTwo.run_id}','${five.lease_token}','${retryCase.case_id}',${retryCase.revision},'${resultPayload('succeeded', 1.01)}');`), /cost_ceiling_reached/);
     psql(disposable, `select public.record_ai_eval_result('${versionTwo.run_id}','${five.lease_token}','${retryCase.case_id}',${retryCase.revision},'${resultPayload('failed', 0.01)}');`);
     psql(disposable, `select public.record_ai_eval_result('${versionTwo.run_id}','${five.lease_token}','${retryCase.case_id}',${retryCase.revision},'${resultPayload('succeeded', 0.01)}');`);
@@ -97,7 +99,7 @@ test('eval lifecycle is idempotent, fenced, bounded, resumable and immutable in 
     const untouched = JSON.parse(psql(disposable, `select public.admin_create_ai_eval_run('10000000-0000-4000-8000-000000000001','60000000-0000-4000-8000-000000000077',2,'captured-production-v1','gemini-3.6-flash-card-data-v1','gemini-3.6-flash-blind-judge-v1',100,1.0,25000);`));
     const failedBatch = JSON.parse(psql(disposable, `select public.claim_ai_eval_run_batch('${untouched.run_id}',5);`));
     for (const item of failedBatch.cases) {
-      const payload = JSON.stringify({ feature_key: item.feature_key, baseline_output: {}, candidate_output: {}, deterministic_assertions: [], judge_verdict: {}, regression: false, severe_regression: false, estimated_cost_usd: 0, execution_status: 'failed', safe_failure_category: 'insufficient_fixture' });
+      const payload = JSON.stringify({ feature_key: item.feature_key, baseline_output: {}, candidate_output: {}, deterministic_assertions: [], judge_verdict: {}, requires_review: true, regression: false, severe_regression: false, estimated_cost_usd: 0, execution_status: 'failed', safe_failure_category: 'insufficient_fixture' });
       psql(disposable, `select public.record_ai_eval_result('${untouched.run_id}','${failedBatch.lease_token}','${item.case_id}',${item.revision},'${payload}');`);
     }
     const yielded = JSON.parse(psql(disposable, `select public.yield_ai_eval_run('${untouched.run_id}','${failedBatch.lease_token}');`));
@@ -109,13 +111,13 @@ test('eval lifecycle is idempotent, fenced, bounded, resumable and immutable in 
     const incomplete = JSON.parse(psql(disposable, `select public.admin_create_ai_eval_run('10000000-0000-4000-8000-000000000001','60000000-0000-4000-8000-000000000088',2,'captured-production-v1','gemini-3.6-flash-card-data-v1','gemini-3.6-flash-blind-judge-v1',100,1.0,25000);`));
     const incompleteClaim = JSON.parse(psql(disposable, `select public.claim_ai_eval_run_batch('${incomplete.run_id}',5);`));
     for (const item of incompleteClaim.cases) {
-      const payload = JSON.stringify({ feature_key: item.feature_key, baseline_output: {}, candidate_output: {}, deterministic_assertions: [], judge_verdict: {}, regression: false, severe_regression: false, estimated_cost_usd: 0, execution_status: 'failed', safe_failure_category: 'insufficient_fixture' });
+      const payload = JSON.stringify({ feature_key: item.feature_key, baseline_output: {}, candidate_output: {}, deterministic_assertions: [], judge_verdict: {}, requires_review: true, regression: false, severe_regression: false, estimated_cost_usd: 0, execution_status: 'failed', safe_failure_category: 'insufficient_fixture' });
       psql(disposable, `select public.record_ai_eval_result('${incomplete.run_id}','${incompleteClaim.lease_token}','${item.case_id}',${item.revision},'${payload}');`);
     }
     assert.equal(JSON.parse(psql(disposable, `select public.yield_ai_eval_run('${incomplete.run_id}','${incompleteClaim.lease_token}');`)).continuation_required, true);
     const incompleteTail = JSON.parse(psql(disposable, `select public.claim_ai_eval_run_batch('${incomplete.run_id}',5);`));
     for (const item of incompleteTail.cases) {
-      const payload = JSON.stringify({ feature_key: item.feature_key, baseline_output: {}, candidate_output: {}, deterministic_assertions: [], judge_verdict: {}, regression: false, severe_regression: false, estimated_cost_usd: 0, execution_status: 'failed', safe_failure_category: 'insufficient_fixture' });
+      const payload = JSON.stringify({ feature_key: item.feature_key, baseline_output: {}, candidate_output: {}, deterministic_assertions: [], judge_verdict: {}, requires_review: true, regression: false, severe_regression: false, estimated_cost_usd: 0, execution_status: 'failed', safe_failure_category: 'insufficient_fixture' });
       psql(disposable, `select public.record_ai_eval_result('${incomplete.run_id}','${incompleteTail.lease_token}','${item.case_id}',${item.revision},'${payload}');`);
     }
     assert.equal(JSON.parse(psql(disposable, `select public.yield_ai_eval_run('${incomplete.run_id}','${incompleteTail.lease_token}');`)).continuation_required, false);
@@ -131,7 +133,7 @@ test('eval lifecycle is idempotent, fenced, bounded, resumable and immutable in 
     const resumable = JSON.parse(psql(disposable, `select public.admin_create_ai_eval_run('10000000-0000-4000-8000-000000000001','60000000-0000-4000-8000-000000000004',2,'captured-production-v1','gemini-3.6-flash-card-data-v1','gemini-3.6-flash-blind-judge-v1',100,0.03,25000);`));
     const one = JSON.parse(psql(disposable, `select public.claim_ai_eval_run_batch('${resumable.run_id}',1);`));
     const successCase = one.cases[0];
-    const successPayload = JSON.stringify({ feature_key: successCase.feature_key, baseline_output: {}, candidate_output: {}, deterministic_assertions: [], judge_verdict: {}, regression: false, severe_regression: false, estimated_cost_usd: 0.01, execution_status: 'succeeded', safe_failure_category: null });
+    const successPayload = JSON.stringify({ feature_key: successCase.feature_key, baseline_output: {}, candidate_output: {}, deterministic_assertions: [], judge_verdict: {}, requires_review: false, regression: false, severe_regression: false, estimated_cost_usd: 0.01, execution_status: 'succeeded', safe_failure_category: null });
     psql(disposable, `select public.record_ai_eval_result('${resumable.run_id}','${one.lease_token}','${successCase.case_id}',${successCase.revision},'${successPayload}'); update public.ai_eval_runs set lease_expires_at=now()-interval '1 second' where id='${resumable.run_id}';`);
     const stopped = JSON.parse(psql(disposable, `select public.claim_ai_eval_run_batch('${resumable.run_id}',2);`));
     assert.equal(stopped.safe_failure_category, 'cost_ceiling_reached');
@@ -148,7 +150,7 @@ test('eval lifecycle is idempotent, fenced, bounded, resumable and immutable in 
     const failedOnly = JSON.parse(psql(disposable, `select public.admin_create_ai_eval_run('10000000-0000-4000-8000-000000000001','60000000-0000-4000-8000-000000000066',2,'captured-production-v1','gemini-3.6-flash-card-data-v1','gemini-3.6-flash-blind-judge-v1',1,1.0,25000);`));
     const failedOnlyClaim = JSON.parse(psql(disposable, `select public.claim_ai_eval_run_batch('${failedOnly.run_id}',5);`));
     const failedOnlyCase = failedOnlyClaim.cases[0];
-    const failedOnlyPayload = JSON.stringify({ feature_key: failedOnlyCase.feature_key, baseline_output: {}, candidate_output: {}, deterministic_assertions: [], judge_verdict: {}, regression: false, severe_regression: false, estimated_cost_usd: 0, execution_status: 'failed', safe_failure_category: 'insufficient_fixture' });
+    const failedOnlyPayload = JSON.stringify({ feature_key: failedOnlyCase.feature_key, baseline_output: {}, candidate_output: {}, deterministic_assertions: [], judge_verdict: {}, requires_review: true, regression: false, severe_regression: false, estimated_cost_usd: 0, execution_status: 'failed', safe_failure_category: 'insufficient_fixture' });
     psql(disposable, `select public.record_ai_eval_result('${failedOnly.run_id}','${failedOnlyClaim.lease_token}','${failedOnlyCase.case_id}',${failedOnlyCase.revision},'${failedOnlyPayload}');`);
     assert.equal(JSON.parse(psql(disposable, `select public.yield_ai_eval_run('${failedOnly.run_id}','${failedOnlyClaim.lease_token}');`)).continuation_required, false);
     psql(disposable, `select public.finish_ai_eval_run('${failedOnly.run_id}','${failedOnlyClaim.lease_token}');`);

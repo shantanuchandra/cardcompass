@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { validateAiEvalRunnerReceipt } from "../_shared/ai_eval_runner_receipt.ts";
 import { requireAdmin } from "./auth.ts";
 import { corsHeaders, jsonResponse } from "./http.ts";
 import { actionHandlers } from "./router.ts";
@@ -50,28 +51,8 @@ export function createEvalScheduler(deps: EvalSchedulerDependencies) {
           body: JSON.stringify({ run_id: runId }),
         }),
       );
-      if (response.status !== 202) {
-        throw new Error("eval_worker_schedule_failed");
-      }
       const receipt: unknown = await response.json();
-      if (!receipt || typeof receipt !== "object" || Array.isArray(receipt)) {
-        throw new Error("eval_worker_schedule_failed");
-      }
-      const row = receipt as Record<string, unknown>;
-      const keys = new Set([
-        "run_id",
-        "status",
-        "processed",
-        "continuation_scheduled",
-      ]);
-      if (
-        Object.keys(row).length !== keys.size ||
-        Object.keys(row).some((key) => !keys.has(key)) ||
-        row.run_id !== runId ||
-        row.status !== "accepted" || !Number.isSafeInteger(row.processed) ||
-        (row.processed as number) < 0 || (row.processed as number) > 5 ||
-        typeof row.continuation_scheduled !== "boolean"
-      ) throw new Error("eval_worker_schedule_failed");
+      validateAiEvalRunnerReceipt(response.status, receipt, runId);
     })();
     deps.waitUntil(task);
   };

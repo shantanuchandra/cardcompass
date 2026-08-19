@@ -33,4 +33,6 @@ git diff --check
 pass
 ```
 
+Review corrections additionally persist exact scorer review semantics, fail closed on partial/failed/missing/insufficient-fixture evidence, and validate the private runner's real safe receipt shapes. Verification after correction: Admin Operator 105/105, runner 52/52, full frozen Edge 258/258, Admin2 171/171, and disposable PostgreSQL 2/2. Scoped Flutter analysis, Deno check/format, and diff checks pass; the repository-wide format check still reports four unrelated pre-existing files.
+
 No provider call, deployment, push, or production migration was performed.
