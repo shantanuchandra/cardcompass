@@ -35,133 +35,221 @@ ALTER TABLE public.card_catalog
 -- structured exclusion category. Unclassified strings remain auditably
 -- available in additional.source_terms. Existing object-valued additional
 -- metadata is retained.
+CREATE OR REPLACE FUNCTION public.normalize_benefit_exclusions_value(
+  _exclusions jsonb
+) RETURNS jsonb
+LANGUAGE plpgsql
+IMMUTABLE
+SECURITY INVOKER
+SET search_path = pg_catalog
+AS $$
+DECLARE
+  root_type text := jsonb_typeof(_exclusions);
+  base_exclusions jsonb := CASE
+    WHEN jsonb_typeof(_exclusions) = 'object' THEN _exclusions
+    ELSE '{}'::jsonb
+  END;
+  existing_additional jsonb := CASE
+    WHEN jsonb_typeof(_exclusions->'additional') = 'object'
+      THEN _exclusions->'additional'
+    ELSE '{}'::jsonb
+  END;
+  normalized_additional jsonb;
+  source_terms jsonb := '[]'::jsonb;
+  legacy_values jsonb := '[]'::jsonb;
+  source_terms_was_present boolean := false;
+  legacy_values_was_present boolean := false;
+  key_name text;
+  malformed_value jsonb;
+  element record;
+BEGIN
+  IF existing_additional ? 'legacy_values' THEN
+    legacy_values_was_present := true;
+    IF jsonb_typeof(existing_additional->'legacy_values') = 'array' THEN
+      legacy_values := existing_additional->'legacy_values';
+    ELSE
+      legacy_values := legacy_values || jsonb_build_array(jsonb_build_object(
+        'path', '$.additional.legacy_values',
+        'value', existing_additional->'legacy_values'
+      ));
+    END IF;
+  END IF;
+
+  IF existing_additional ? 'source_terms' THEN
+    source_terms_was_present := true;
+    malformed_value := existing_additional->'source_terms';
+    IF jsonb_typeof(malformed_value) = 'array' THEN
+      FOR element IN
+        SELECT item.value, item.ordinality
+        FROM jsonb_array_elements(malformed_value)
+          WITH ORDINALITY AS item(value, ordinality)
+        ORDER BY item.ordinality
+      LOOP
+        IF jsonb_typeof(element.value) = 'string' THEN
+          source_terms := source_terms || jsonb_build_array(element.value);
+        ELSE
+          legacy_values := legacy_values || jsonb_build_array(jsonb_build_object(
+            'path', format(
+              '$.additional.source_terms[%s]',
+              element.ordinality - 1
+            ),
+            'value', element.value
+          ));
+        END IF;
+      END LOOP;
+    ELSE
+      IF jsonb_typeof(malformed_value) = 'string' THEN
+        source_terms := source_terms || jsonb_build_array(malformed_value);
+      END IF;
+      legacy_values := legacy_values || jsonb_build_array(jsonb_build_object(
+        'path', '$.additional.source_terms',
+        'value', malformed_value
+      ));
+    END IF;
+  END IF;
+
+  IF root_type = 'array' THEN
+    FOR element IN
+      SELECT item.value, item.ordinality
+      FROM jsonb_array_elements(_exclusions)
+        WITH ORDINALITY AS item(value, ordinality)
+      ORDER BY item.ordinality
+    LOOP
+      IF jsonb_typeof(element.value) = 'string' THEN
+        source_terms := source_terms || jsonb_build_array(element.value);
+      ELSIF jsonb_typeof(element.value) <> 'string' THEN
+        legacy_values := legacy_values || jsonb_build_array(jsonb_build_object(
+          'path', format('$[%s]', element.ordinality - 1),
+          'value', element.value
+        ));
+      END IF;
+    END LOOP;
+  ELSIF root_type = 'string' THEN
+    source_terms := source_terms || jsonb_build_array(_exclusions);
+  ELSIF root_type IN ('null', 'number', 'boolean') THEN
+    legacy_values := legacy_values || jsonb_build_array(jsonb_build_object(
+      'path', '$',
+      'value', _exclusions
+    ));
+  END IF;
+
+  IF base_exclusions ? 'additional'
+     AND jsonb_typeof(_exclusions->'additional') <> 'object' THEN
+    malformed_value := _exclusions->'additional';
+    IF jsonb_typeof(malformed_value) = 'string' THEN
+      source_terms := source_terms || jsonb_build_array(malformed_value);
+    END IF;
+    legacy_values := legacy_values || jsonb_build_array(jsonb_build_object(
+      'path', '$.additional',
+      'value', malformed_value
+    ));
+  END IF;
+
+  FOREACH key_name IN ARRAY ARRAY[
+    'days', 'mcc_codes', 'merchants', 'categories', 'transaction_types'
+  ]
+  LOOP
+    IF base_exclusions ? key_name
+       AND jsonb_typeof(_exclusions->key_name) <> 'array' THEN
+      malformed_value := _exclusions->key_name;
+      IF jsonb_typeof(malformed_value) = 'string' THEN
+        source_terms := source_terms || jsonb_build_array(malformed_value);
+      END IF;
+      legacy_values := legacy_values || jsonb_build_array(jsonb_build_object(
+        'path', format('$.%s', key_name),
+        'value', malformed_value
+      ));
+    END IF;
+  END LOOP;
+
+  normalized_additional := existing_additional
+    || CASE
+      WHEN source_terms_was_present OR jsonb_array_length(source_terms) > 0
+        THEN jsonb_build_object('source_terms', source_terms)
+      ELSE '{}'::jsonb
+    END
+    || CASE
+      WHEN legacy_values_was_present OR jsonb_array_length(legacy_values) > 0
+        THEN jsonb_build_object('legacy_values', legacy_values)
+      ELSE '{}'::jsonb
+    END;
+
+  RETURN base_exclusions || jsonb_build_object(
+    'days', CASE
+      WHEN jsonb_typeof(_exclusions->'days') = 'array'
+        THEN _exclusions->'days'
+      ELSE '[]'::jsonb
+    END,
+    'mcc_codes', CASE
+      WHEN jsonb_typeof(_exclusions->'mcc_codes') = 'array'
+        THEN _exclusions->'mcc_codes'
+      ELSE '[]'::jsonb
+    END,
+    'merchants', CASE
+      WHEN jsonb_typeof(_exclusions->'merchants') = 'array'
+        THEN _exclusions->'merchants'
+      ELSE '[]'::jsonb
+    END,
+    'categories', CASE
+      WHEN jsonb_typeof(_exclusions->'categories') = 'array'
+        THEN _exclusions->'categories'
+      ELSE '[]'::jsonb
+    END,
+    'transaction_types', CASE
+      WHEN jsonb_typeof(_exclusions->'transaction_types') = 'array'
+        THEN _exclusions->'transaction_types'
+      ELSE '[]'::jsonb
+    END,
+    'additional', normalized_additional
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.normalize_benefit_exclusions_value(jsonb)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.normalize_benefit_exclusions_value(jsonb)
+  TO service_role;
+
 WITH normalized AS (
   SELECT
     benefit.benefit_id,
     CASE
-      WHEN jsonb_typeof(benefit.exclusions) = 'object'
-        THEN benefit.exclusions
-      ELSE '{}'::jsonb
-    END AS base_exclusions,
-    CASE
-      WHEN jsonb_typeof(benefit.exclusions->'additional') = 'object'
-        THEN benefit.exclusions->'additional'
-      ELSE '{}'::jsonb
-    END AS existing_additional,
-    coalesce(
-      CASE
-        WHEN jsonb_typeof(benefit.exclusions->'additional'->'source_terms') = 'array'
-          THEN benefit.exclusions->'additional'->'source_terms'
-        ELSE '[]'::jsonb
-      END,
-      '[]'::jsonb
-    )
-    || coalesce((
-      SELECT jsonb_agg(element.value)
-      FROM jsonb_array_elements(
-        CASE
-          WHEN jsonb_typeof(benefit.exclusions) = 'array'
-            THEN benefit.exclusions
-          ELSE '[]'::jsonb
-        END
-      ) AS element(value)
-      WHERE jsonb_typeof(element.value) = 'string'
-    ), '[]'::jsonb)
-    || CASE
-      WHEN jsonb_typeof(benefit.exclusions) = 'string'
-        THEN jsonb_build_array(benefit.exclusions)
-      ELSE '[]'::jsonb
-    END
-    || CASE
-      WHEN jsonb_typeof(benefit.exclusions->'additional') = 'string'
-        THEN jsonb_build_array(benefit.exclusions->'additional')
-      ELSE '[]'::jsonb
-    END
-    || CASE
-      WHEN jsonb_typeof(benefit.exclusions->'additional'->'source_terms') = 'string'
-        THEN jsonb_build_array(benefit.exclusions->'additional'->'source_terms')
-      ELSE '[]'::jsonb
-    END
-    || CASE
-      WHEN jsonb_typeof(benefit.exclusions->'days') = 'string'
-        THEN jsonb_build_array(benefit.exclusions->'days')
-      ELSE '[]'::jsonb
-    END
-    || CASE
-      WHEN jsonb_typeof(benefit.exclusions->'mcc_codes') = 'string'
-        THEN jsonb_build_array(benefit.exclusions->'mcc_codes')
-      ELSE '[]'::jsonb
-    END
-    || CASE
-      WHEN jsonb_typeof(benefit.exclusions->'merchants') = 'string'
-        THEN jsonb_build_array(benefit.exclusions->'merchants')
-      ELSE '[]'::jsonb
-    END
-    || CASE
-      WHEN jsonb_typeof(benefit.exclusions->'categories') = 'string'
-        THEN jsonb_build_array(benefit.exclusions->'categories')
-      ELSE '[]'::jsonb
-    END
-    || CASE
-      WHEN jsonb_typeof(benefit.exclusions->'transaction_types') = 'string'
-        THEN jsonb_build_array(benefit.exclusions->'transaction_types')
-      ELSE '[]'::jsonb
-    END AS source_terms
-  FROM public.benefits AS benefit
-)
-UPDATE public.benefits AS benefit
-SET value_config = CASE
       WHEN jsonb_typeof(benefit.value_config) = 'object'
         THEN benefit.value_config
       WHEN benefit.value_config IS NULL
         THEN '{}'::jsonb
       ELSE jsonb_build_object('legacy_value', benefit.value_config)
-    END,
-    partners = CASE
+    END AS value_config,
+    CASE
       WHEN jsonb_typeof(benefit.partners) = 'array'
         THEN benefit.partners
       WHEN benefit.partners IS NULL
         THEN '[]'::jsonb
       ELSE jsonb_build_array(benefit.partners)
-    END,
-    exclusions = normalized.base_exclusions || jsonb_build_object(
-      'days', CASE
-        WHEN jsonb_typeof(benefit.exclusions->'days') = 'array'
-          THEN benefit.exclusions->'days'
-        ELSE '[]'::jsonb
-      END,
-      'mcc_codes', CASE
-        WHEN jsonb_typeof(benefit.exclusions->'mcc_codes') = 'array'
-          THEN benefit.exclusions->'mcc_codes'
-        ELSE '[]'::jsonb
-      END,
-      'merchants', CASE
-        WHEN jsonb_typeof(benefit.exclusions->'merchants') = 'array'
-          THEN benefit.exclusions->'merchants'
-        ELSE '[]'::jsonb
-      END,
-      'categories', CASE
-        WHEN jsonb_typeof(benefit.exclusions->'categories') = 'array'
-          THEN benefit.exclusions->'categories'
-        ELSE '[]'::jsonb
-      END,
-      'transaction_types', CASE
-        WHEN jsonb_typeof(benefit.exclusions->'transaction_types') = 'array'
-          THEN benefit.exclusions->'transaction_types'
-        ELSE '[]'::jsonb
-      END,
-      'additional', normalized.existing_additional
-        || jsonb_build_object('source_terms', normalized.source_terms)
-    ),
-    regions = CASE
+    END AS partners,
+    public.normalize_benefit_exclusions_value(benefit.exclusions) AS exclusions,
+    CASE
       WHEN jsonb_typeof(benefit.regions) = 'array'
         THEN benefit.regions
       WHEN benefit.regions IS NULL
         THEN '[]'::jsonb
       ELSE jsonb_build_array(benefit.regions)
-    END
+    END AS regions
+  FROM public.benefits AS benefit
+)
+UPDATE public.benefits AS benefit
+SET value_config = normalized.value_config,
+    partners = normalized.partners,
+    exclusions = normalized.exclusions,
+    regions = normalized.regions
 FROM normalized
-WHERE normalized.benefit_id = benefit.benefit_id;
+WHERE normalized.benefit_id = benefit.benefit_id
+  AND (
+    normalized.value_config IS DISTINCT FROM benefit.value_config
+    OR normalized.partners IS DISTINCT FROM benefit.partners
+    OR normalized.exclusions IS DISTINCT FROM benefit.exclusions
+    OR normalized.regions IS DISTINCT FROM benefit.regions
+  );
 
 -- Keep the benefits-v5 rollback lane write-compatible while the live column
 -- contract is object-shaped. The legacy RPC supplies a flat string array;
@@ -172,93 +260,8 @@ LANGUAGE plpgsql
 SECURITY INVOKER
 SET search_path = public, pg_temp
 AS $$
-DECLARE
-  base_exclusions jsonb;
-  existing_additional jsonb;
-  source_terms jsonb;
 BEGIN
-  base_exclusions := CASE
-    WHEN jsonb_typeof(NEW.exclusions) = 'object' THEN NEW.exclusions
-    ELSE '{}'::jsonb
-  END;
-  existing_additional := CASE
-    WHEN jsonb_typeof(NEW.exclusions->'additional') = 'object'
-      THEN NEW.exclusions->'additional'
-    ELSE '{}'::jsonb
-  END;
-  source_terms := CASE
-    WHEN jsonb_typeof(NEW.exclusions->'additional'->'source_terms') = 'array'
-      THEN NEW.exclusions->'additional'->'source_terms'
-    ELSE '[]'::jsonb
-  END;
-
-  IF jsonb_typeof(NEW.exclusions) = 'array' THEN
-    SELECT coalesce(jsonb_agg(element.value), '[]'::jsonb)
-    INTO source_terms
-    FROM jsonb_array_elements(NEW.exclusions) AS element(value)
-    WHERE jsonb_typeof(element.value) = 'string';
-  ELSIF jsonb_typeof(NEW.exclusions) = 'string' THEN
-    source_terms := source_terms || jsonb_build_array(NEW.exclusions);
-  END IF;
-
-  IF jsonb_typeof(NEW.exclusions->'additional') = 'string' THEN
-    source_terms := source_terms
-      || jsonb_build_array(NEW.exclusions->'additional');
-  END IF;
-  IF jsonb_typeof(NEW.exclusions->'additional'->'source_terms') = 'string' THEN
-    source_terms := source_terms
-      || jsonb_build_array(NEW.exclusions->'additional'->'source_terms');
-  END IF;
-
-  IF jsonb_typeof(NEW.exclusions->'days') = 'string' THEN
-    source_terms := source_terms || jsonb_build_array(NEW.exclusions->'days');
-  END IF;
-  IF jsonb_typeof(NEW.exclusions->'mcc_codes') = 'string' THEN
-    source_terms := source_terms
-      || jsonb_build_array(NEW.exclusions->'mcc_codes');
-  END IF;
-  IF jsonb_typeof(NEW.exclusions->'merchants') = 'string' THEN
-    source_terms := source_terms
-      || jsonb_build_array(NEW.exclusions->'merchants');
-  END IF;
-  IF jsonb_typeof(NEW.exclusions->'categories') = 'string' THEN
-    source_terms := source_terms
-      || jsonb_build_array(NEW.exclusions->'categories');
-  END IF;
-  IF jsonb_typeof(NEW.exclusions->'transaction_types') = 'string' THEN
-    source_terms := source_terms
-      || jsonb_build_array(NEW.exclusions->'transaction_types');
-  END IF;
-
-  NEW.exclusions := base_exclusions || jsonb_build_object(
-    'days', CASE
-      WHEN jsonb_typeof(NEW.exclusions->'days') = 'array'
-        THEN NEW.exclusions->'days'
-      ELSE '[]'::jsonb
-    END,
-    'mcc_codes', CASE
-      WHEN jsonb_typeof(NEW.exclusions->'mcc_codes') = 'array'
-        THEN NEW.exclusions->'mcc_codes'
-      ELSE '[]'::jsonb
-    END,
-    'merchants', CASE
-      WHEN jsonb_typeof(NEW.exclusions->'merchants') = 'array'
-        THEN NEW.exclusions->'merchants'
-      ELSE '[]'::jsonb
-    END,
-    'categories', CASE
-      WHEN jsonb_typeof(NEW.exclusions->'categories') = 'array'
-        THEN NEW.exclusions->'categories'
-      ELSE '[]'::jsonb
-    END,
-    'transaction_types', CASE
-      WHEN jsonb_typeof(NEW.exclusions->'transaction_types') = 'array'
-        THEN NEW.exclusions->'transaction_types'
-      ELSE '[]'::jsonb
-    END,
-    'additional', existing_additional
-      || jsonb_build_object('source_terms', source_terms)
-  );
+  NEW.exclusions := public.normalize_benefit_exclusions_value(NEW.exclusions);
   RETURN NEW;
 END;
 $$;
@@ -301,8 +304,12 @@ SET request_type = CASE
     AND nullif(trim(source_url_hash), '') IS NOT NULL
     AND nullif(trim(content_hash), '') IS NOT NULL
     AND jsonb_typeof(extracted_data) = 'object'
-    AND jsonb_typeof(source_evidence) = 'array'
-    AND jsonb_array_length(source_evidence) > 0
+    AND source_evidence IS NOT NULL
+    AND CASE
+      WHEN jsonb_typeof(source_evidence) = 'array'
+        THEN jsonb_array_length(source_evidence) > 0
+      ELSE false
+    END
     THEN 'official_benefit_enrichment'
   WHEN coalesce(nullif(trim(request_type), ''), extracted_data->>'request_type')
        = 'catalog_entry'
@@ -311,8 +318,7 @@ SET request_type = CASE
     THEN 'catalog_entry'
   ELSE 'legacy'
 END
-WHERE request_type IS NULL
-   OR request_type = ''
+WHERE nullif(trim(request_type), '') IS NULL
    OR request_type IN ('official_benefit_enrichment', 'catalog_entry');
 
 DO $$
@@ -401,8 +407,12 @@ BEGIN
           AND nullif(trim(source_url_hash), '') IS NOT NULL
           AND nullif(trim(content_hash), '') IS NOT NULL
           AND jsonb_typeof(extracted_data) = 'object'
-          AND jsonb_typeof(source_evidence) = 'array'
-          AND jsonb_array_length(source_evidence) > 0
+          AND source_evidence IS NOT NULL
+          AND CASE
+            WHEN jsonb_typeof(source_evidence) = 'array'
+              THEN jsonb_array_length(source_evidence) > 0
+            ELSE false
+          END
         )
       ) NOT VALID;
   END IF;

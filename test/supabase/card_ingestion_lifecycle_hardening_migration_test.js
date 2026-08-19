@@ -18,6 +18,61 @@ async function lifecycleMigration() {
   return readFile(new URL(names[0], migrationsRoot), 'utf8');
 }
 
+function requiredMatch(sql, pattern, description) {
+  const match = sql.match(pattern)?.[0];
+  assert.ok(match, description);
+  return match;
+}
+
+function benefitRepairStatement(sql) {
+  return requiredMatch(
+    sql,
+    /WITH normalized AS \([\s\S]*?\)\s*UPDATE public\.benefits AS benefit[\s\S]*?WHERE normalized\.benefit_id = benefit\.benefit_id[\s\S]*?;/i,
+    'benefits normalization update is required',
+  );
+}
+
+function stagingClassificationStatement(sql) {
+  return requiredMatch(
+    sql,
+    /UPDATE public\.card_benefits_staging[\s\S]*?;/i,
+    'staging classification update is required',
+  );
+}
+
+function constraintDefinition(sql, name) {
+  return requiredMatch(
+    sql,
+    new RegExp(`ADD CONSTRAINT ${name}[\\s\\S]*?NOT VALID;`, 'i'),
+    `${name} definition is required`,
+  );
+}
+
+function functionDefinition(sql, name) {
+  return requiredMatch(
+    sql,
+    new RegExp(`CREATE OR REPLACE FUNCTION public\\.${name}\\([\\s\\S]*?\\$\\$;`, 'i'),
+    `${name} function is required`,
+  );
+}
+
+function escaped(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function sqlSignaturePattern(signature) {
+  const openParen = signature.indexOf('(');
+  const name = signature.slice(0, openParen);
+  const argumentList = signature.slice(openParen + 1, -1).trim();
+  const argumentsPattern = argumentList === ''
+    ? ''
+    : argumentList
+      .split(',')
+      .map((argument) => escaped(argument.trim()).replaceAll(' ', '\\s+'))
+      .join('\\s*,\\s*');
+  return `${escaped(name)}\\s*\\(\\s*${argumentsPattern}\\s*\\)`;
+}
+
 test('adds only the two lifecycle columns with bounded deployment locks and due indexes', async () => {
   const sql = await lifecycleMigration();
 
@@ -40,16 +95,23 @@ test('adds only the two lifecycle columns with bounded deployment locks and due 
     /CREATE INDEX IF NOT EXISTS \w+[\s\S]*ON public\.card_benefit_mapping\s*\(\s*card_id\s*,\s*display_priority\s*\)[\s\S]*WHERE retired_at IS NULL/i,
   );
 
-  const addedColumns = [...sql.matchAll(/ADD COLUMN IF NOT EXISTS\s+([a-z_]+)/gi)]
-    .map((match) => match[1])
-    .filter((name) => name === 'next_run_at' || name === 'retired_at');
-  assert.deepEqual(addedColumns.sort(), ['next_run_at', 'retired_at']);
+  const addedColumns = [...sql.matchAll(
+    /ALTER TABLE\s+([a-z_][a-z0-9_.]*)\s+ADD COLUMN(?: IF NOT EXISTS)?\s+([a-z_][a-z0-9_]*)/gi,
+  )].map((match) => ({ table: match[1], column: match[2] }));
+  assert.deepEqual(addedColumns, [
+    {
+      table: 'public.card_catalog_enrichment_jobs',
+      column: 'next_run_at',
+    },
+    { table: 'public.card_benefit_mapping', column: 'retired_at' },
+  ]);
   assert.doesNotMatch(sql, /CREATE\s+(?:UNLOGGED\s+)?TABLE\b/i);
   assert.doesNotMatch(sql, /DROP\s+(?:TABLE|SCHEMA|COLUMN)\b/i);
 });
 
 test('repairs legacy catalog and JSON values before validating strict shapes', async () => {
   const sql = await lifecycleMigration();
+  const repair = benefitRepairStatement(sql);
 
   const discontinuedRepair = sql.search(
     /UPDATE public\.card_catalog[\s\S]*is_discontinued\s*=\s*false[\s\S]*WHERE is_discontinued IS NULL/i,
@@ -59,14 +121,17 @@ test('repairs legacy catalog and JSON values before validating strict shapes', a
   );
   assert.ok(discontinuedRepair >= 0 && discontinuedRepair < discontinuedNotNull);
 
-  assert.match(
-    sql,
-    /UPDATE public\.benefits[\s\S]*value_config[\s\S]*partners[\s\S]*exclusions[\s\S]*regions/i,
-  );
-  assert.match(sql, /jsonb_array_elements\([^)]+exclusions[^)]*\)/i);
-  assert.match(sql, /jsonb_typeof\([^)]+\)\s*=\s*'string'/i);
-  assert.match(sql, /'source_terms'/i);
-  assert.match(sql, /existing_additional[\s\S]*\|\|[\s\S]*jsonb_build_object\(\s*'source_terms'/i);
+  assert.match(repair, /SET value_config\s*=\s*normalized\.value_config/i);
+  assert.match(repair, /partners\s*=\s*normalized\.partners/i);
+  assert.match(repair, /exclusions\s*=\s*normalized\.exclusions/i);
+  assert.match(repair, /regions\s*=\s*normalized\.regions/i);
+  for (const column of ['value_config', 'partners', 'exclusions', 'regions']) {
+    assert.match(
+      repair,
+      new RegExp(`normalized\\.${column} IS DISTINCT FROM benefit\\.${column}`, 'i'),
+      `${column} must participate in the no-op update filter`,
+    );
+  }
 
   for (const constraint of [
     'benefits_value_config_object_check',
@@ -77,7 +142,7 @@ test('repairs legacy catalog and JSON values before validating strict shapes', a
   ]) {
     assert.match(
       sql,
-      new RegExp(`ADD CONSTRAINT ${constraint}[\\s\\S]*NOT VALID`, 'i'),
+      new RegExp(`ADD CONSTRAINT ${constraint}[\\s\\S]*?NOT VALID`, 'i'),
     );
     assert.match(
       sql,
@@ -85,10 +150,23 @@ test('repairs legacy catalog and JSON values before validating strict shapes', a
     );
   }
 
-  assert.match(sql, /jsonb_typeof\(value_config\)\s*=\s*'object'/i);
-  assert.match(sql, /jsonb_typeof\(partners\)\s*=\s*'array'/i);
-  assert.match(sql, /jsonb_typeof\(regions\)\s*=\s*'array'/i);
-  assert.match(sql, /jsonb_typeof\(exclusions\)\s*=\s*'object'/i);
+  assert.match(
+    constraintDefinition(sql, 'benefits_value_config_object_check'),
+    /jsonb_typeof\(value_config\)\s*=\s*'object'/i,
+  );
+  assert.match(
+    constraintDefinition(sql, 'benefits_partners_array_check'),
+    /jsonb_typeof\(partners\)\s*=\s*'array'/i,
+  );
+  assert.match(
+    constraintDefinition(sql, 'benefits_regions_array_check'),
+    /jsonb_typeof\(regions\)\s*=\s*'array'/i,
+  );
+  const exclusionsConstraint = constraintDefinition(
+    sql,
+    'benefits_exclusions_object_check',
+  );
+  assert.match(exclusionsConstraint, /jsonb_typeof\(exclusions\)\s*=\s*'object'/i);
   for (const key of [
     'days',
     'mcc_codes',
@@ -97,19 +175,25 @@ test('repairs legacy catalog and JSON values before validating strict shapes', a
     'transaction_types',
   ]) {
     assert.match(
-      sql,
+      exclusionsConstraint,
       new RegExp(`jsonb_typeof\\(exclusions->'${key}'\\)\\s*=\\s*'array'`, 'i'),
     );
   }
-  assert.match(sql, /jsonb_typeof\(exclusions->'additional'\)\s*=\s*'object'/i);
+  assert.match(exclusionsConstraint, /jsonb_typeof\(exclusions->'additional'\)\s*=\s*'object'/i);
   assert.match(
-    sql,
+    exclusionsConstraint,
     /jsonb_typeof\(exclusions->'additional'->'source_terms'\)\s*=\s*'array'/i,
   );
-  assert.match(sql, /jsonb_typeof\(result_summary\)\s*=\s*'object'/i);
   assert.match(
-    sql,
-    /CREATE OR REPLACE FUNCTION public\.normalize_benefit_exclusions_shape\(\)[\s\S]*jsonb_typeof\(NEW\.exclusions\)\s*=\s*'array'[\s\S]*'source_terms'/i,
+    constraintDefinition(
+      sql,
+      'card_catalog_enrichment_jobs_result_summary_object_check',
+    ),
+    /jsonb_typeof\(result_summary\)\s*=\s*'object'/i,
+  );
+  assert.match(
+    functionDefinition(sql, 'normalize_benefit_exclusions_shape'),
+    /NEW\.exclusions\s*:=\s*public\.normalize_benefit_exclusions_value\(NEW\.exclusions\)/i,
   );
   assert.match(
     sql,
@@ -117,11 +201,62 @@ test('repairs legacy catalog and JSON values before validating strict shapes', a
   );
 });
 
+test('losslessly audits mixed exclusion arrays while separating source strings', async () => {
+  const normalizer = functionDefinition(
+    await lifecycleMigration(),
+    'normalize_benefit_exclusions_value',
+  );
+
+  assert.match(normalizer, /jsonb_array_elements\(_exclusions\)\s+WITH ORDINALITY/i);
+  assert.match(normalizer, /jsonb_typeof\(element\.value\)\s*=\s*'string'[\s\S]*source_terms/i);
+  assert.match(normalizer, /jsonb_typeof\(element\.value\)\s*<>\s*'string'[\s\S]*legacy_values/i);
+  assert.match(normalizer, /'path'\s*,\s*format\(\s*'\$\[%s\]'/i);
+  assert.match(normalizer, /'value'\s*,\s*element\.value/i);
+});
+
+test('losslessly audits JSON null, numeric, and boolean root exclusion scalars', async () => {
+  const normalizer = functionDefinition(
+    await lifecycleMigration(),
+    'normalize_benefit_exclusions_value',
+  );
+
+  for (const scalarType of ['null', 'number', 'boolean']) {
+    assert.match(
+      normalizer,
+      new RegExp(`root_type IN \\([^)]*'${scalarType}'`, 'i'),
+      `${scalarType} roots must enter the lossless audit branch`,
+    );
+  }
+  assert.match(normalizer, /jsonb_build_object\(\s*'path'\s*,\s*'\$'/i);
+  assert.match(normalizer, /'value'\s*,\s*_exclusions/i);
+});
+
+test('losslessly audits malformed known, additional, and source_terms nested values', async () => {
+  const normalizer = functionDefinition(
+    await lifecycleMigration(),
+    'normalize_benefit_exclusions_value',
+  );
+
+  assert.match(normalizer, /FOREACH key_name IN ARRAY ARRAY\[\s*'days'[\s\S]*'transaction_types'/i);
+  assert.match(normalizer, /jsonb_typeof\(_exclusions->key_name\)\s*<>\s*'array'/i);
+  assert.match(normalizer, /format\(\s*'\$\.%s'\s*,\s*key_name\s*\)/i);
+  assert.match(normalizer, /'\$\.additional'/i);
+  assert.match(normalizer, /'\$\.additional\.source_terms\[%s\]'/i);
+  assert.match(normalizer, /'\$\.additional\.legacy_values'/i);
+  assert.match(
+    normalizer,
+    /normalized_additional\s*:=\s*existing_additional[\s\S]*jsonb_build_object\(\s*'source_terms'\s*,\s*source_terms/i,
+  );
+  assert.match(
+    normalizer,
+    /jsonb_build_object\(\s*'legacy_values'\s*,\s*legacy_values/i,
+  );
+});
+
 test('classifies legacy staging before enforcing request-specific contracts', async () => {
   const sql = await lifecycleMigration();
-  const classification = sql.search(
-    /UPDATE public\.card_benefits_staging[\s\S]*SET request_type\s*=\s*CASE/i,
-  );
+  const classificationStatement = stagingClassificationStatement(sql);
+  const classification = sql.indexOf(classificationStatement);
   const officialConstraint = sql.search(
     /ADD CONSTRAINT card_benefits_staging_official_shape_check/i,
   );
@@ -133,11 +268,27 @@ test('classifies legacy staging before enforcing request-specific contracts', as
   assert.ok(classification < catalogConstraint);
 
   assert.match(
-    sql,
-    /request_type\s*<>\s*'official_benefit_enrichment'[\s\S]*card_id IS NOT NULL[\s\S]*nullif\(trim\(source_url\)[\s\S]*nullif\(trim\(parser_version\)[\s\S]*nullif\(trim\(source_url_hash\)[\s\S]*nullif\(trim\(content_hash\)[\s\S]*jsonb_typeof\(source_evidence\)\s*=\s*'array'[\s\S]*jsonb_array_length\(source_evidence\)\s*>\s*0/i,
+    classificationStatement,
+    /source_evidence IS NOT NULL[\s\S]*CASE\s+WHEN jsonb_typeof\(source_evidence\)\s*=\s*'array'\s+THEN jsonb_array_length\(source_evidence\)\s*>\s*0\s+ELSE false\s+END/i,
   );
   assert.match(
+    classificationStatement,
+    /WHERE nullif\(trim\(request_type\),\s*''\) IS NULL/i,
+  );
+  const officialShape = constraintDefinition(
     sql,
+    'card_benefits_staging_official_shape_check',
+  );
+  assert.match(
+    officialShape,
+    /request_type\s*<>\s*'official_benefit_enrichment'[\s\S]*card_id IS NOT NULL[\s\S]*nullif\(trim\(source_url\)[\s\S]*nullif\(trim\(parser_version\)[\s\S]*nullif\(trim\(source_url_hash\)[\s\S]*nullif\(trim\(content_hash\)/i,
+  );
+  assert.match(
+    officialShape,
+    /source_evidence IS NOT NULL[\s\S]*CASE\s+WHEN jsonb_typeof\(source_evidence\)\s*=\s*'array'\s+THEN jsonb_array_length\(source_evidence\)\s*>\s*0\s+ELSE false\s+END/i,
+  );
+  assert.match(
+    constraintDefinition(sql, 'card_benefits_staging_catalog_entry_shape_check'),
     /request_type\s*<>\s*'catalog_entry'[\s\S]*requested_by IS NOT NULL[\s\S]*jsonb_typeof\(extracted_data\)\s*=\s*'object'/i,
   );
   for (const constraint of [
@@ -218,20 +369,36 @@ test('adds authenticated read policies before narrowing client table and RPC gra
 
   assert.match(sql, /create_credit_card/i);
   assert.match(sql, /create_or_get_card_catalog/i);
-  assert.match(sql, /REVOKE ALL ON FUNCTION[\s\S]*FROM PUBLIC, anon, authenticated/i);
-
   for (const signature of [
-    'initialize_card_benefit_enrichment_pilot\\(jsonb, text\\)',
-    'claim_card_catalog_enrichment_jobs\\(integer, integer, text, text\\)',
-    'stage_card_benefit_enrichment\\(',
-    'finalize_card_catalog_enrichment_job\\(',
-    'approve_card_benefit_enrichment\\(uuid, uuid, jsonb\\)',
-    'approve_catalog_entry_request\\(uuid, uuid\\)',
-    'reject_catalog_entry_request\\(uuid, uuid\\)',
+    'normalize_benefit_exclusions_value(jsonb)',
+    'create_or_get_card_catalog(text, text, text, text, numeric, numeric, numeric)',
+    'resolve_card_catalog_identity(text, text, text, text, text, text)',
+    'initialize_card_benefit_enrichment_pilot(jsonb, text)',
+    'claim_card_catalog_enrichment_jobs(integer, integer, text, text)',
+    'stage_card_benefit_enrichment(uuid, uuid, text, text, text, text, jsonb, numeric, jsonb, jsonb, jsonb, timestamptz)',
+    'finalize_card_catalog_enrichment_job(uuid, uuid, text, uuid, text, jsonb, jsonb, text, timestamptz)',
+    'approve_card_benefit_enrichment(uuid, uuid, jsonb)',
+    'list_pending_catalog_entry_requests()',
+    'approve_catalog_entry_request(uuid, uuid)',
+    'reject_catalog_entry_request(uuid, uuid)',
+    'review_card_catalog_discovery(uuid, uuid, text, jsonb, uuid, text)',
+    'submit_card_catalog_request(uuid, text, text, text)',
   ]) {
     assert.match(
       sql,
-      new RegExp(`GRANT EXECUTE ON FUNCTION public\\.${signature}[\\s\\S]*TO service_role`, 'i'),
+      new RegExp(
+        `REVOKE ALL ON FUNCTION public\\.${sqlSignaturePattern(signature)}[^;]*FROM PUBLIC, anon, authenticated;`,
+        'i',
+      ),
+      `${signature} must be revoked from every client role in its own statement`,
+    );
+    assert.match(
+      sql,
+      new RegExp(
+        `GRANT EXECUTE ON FUNCTION public\\.${sqlSignaturePattern(signature)}[^;]*TO service_role;`,
+        'i',
+      ),
+      `${signature} must be granted to service_role in its own statement`,
     );
   }
   assert.doesNotMatch(sql, /auth\.role\s*\(/i);
