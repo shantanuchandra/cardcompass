@@ -35,4 +35,6 @@ pass
 
 Review corrections additionally persist exact scorer review semantics, fail closed on partial/failed/missing/insufficient-fixture evidence, and validate the private runner's real safe receipt shapes. Verification after correction: Admin Operator 105/105, runner 52/52, full frozen Edge 258/258, Admin2 171/171, and disposable PostgreSQL 2/2. Scoped Flutter analysis, Deno check/format, and diff checks pass; the repository-wide format check still reports four unrelated pre-existing files.
 
+Re-review aligned the scorer policy with the decision policy: valid baseline-only deterministic misses are improvement opportunities, while invalid evidence and ambiguous/regressive outcomes remain reviewed. A real score-to-Admin2 decision test proves support is reachable. The shared receipt parser is restricted to actual producer forms and runner tests validate emitted receipts through it. Full frozen Edge passes 262/262, Admin2 passes 171/171, and live disposable PostgreSQL passes 2/2.
+
 No provider call, deployment, push, or production migration was performed.

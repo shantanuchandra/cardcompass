@@ -361,6 +361,28 @@ Deno.test("invalid execution output is a severe schema regression", () => {
   assertEquals(score.requiresReview, true);
 });
 
+Deno.test("a structured baseline-only assertion miss is an improvement opportunity", () => {
+  const item = fixture("statement_processing", { category: "grocery" }, {
+    assertions: [{
+      key: "category",
+      path: "$.category",
+      operator: "equals",
+      expectedPath: "$.category",
+    }],
+  });
+  const score = scoreStructuredCase(
+    item,
+    succeeded(statement({ category: "shopping" })),
+    succeeded(statement({ category: "grocery" })),
+  );
+  const category = score.assertions.find((assertion) =>
+    assertion.key === "category"
+  );
+  assertEquals(category?.baselinePassed, false);
+  assertEquals(category?.candidatePassed, true);
+  assertEquals(score.requiresReview, false);
+});
+
 Deno.test("normalized captured card baseline lets the scorer expose a candidate identity regression", async () => {
   const base = fixture("card_data", { card_id: "card-1" }, {
     assertions: [{
@@ -655,6 +677,51 @@ Deno.test("tie, low-confidence, and invalid judge output require review and neve
     assertEquals(score.requiresReview, true);
     assertEquals(score.judge?.winner === "candidate", false);
   }
+});
+
+Deno.test("recommendation baseline-only miss can be supported by a confident candidate judge win", async () => {
+  const item = fixture(
+    "recommendation",
+    {
+      selected_card_id: "card-1",
+      selected_benefit_id: "benefit-1",
+      savings: 200,
+      final_amount: 600,
+      explanation: "candidate",
+    },
+    {
+      assertions: [{
+        key: "explanation",
+        path: "$.explanation",
+        operator: "equals",
+        expectedPath: "$.explanation",
+      }],
+    },
+    {},
+    "case-b",
+  );
+  const score = await scoreRecommendationCase(
+    item,
+    succeeded({ ...item.expectedOutput, explanation: "base" }),
+    succeeded({ ...item.expectedOutput, explanation: "candidate" }),
+    async () => {
+      return {
+        model: "gemini-3.6-flash",
+        response: {
+          winner: "A",
+          confidence: .9,
+          explanation: "Candidate is accurate.",
+        },
+        inputTokens: 1,
+        outputTokens: 1,
+        latencyMs: 1,
+      };
+    },
+    { runId: "run", judgeConfigKey: "gemini-3.6-flash-blind-judge-v1" },
+  );
+  assertEquals(score.assertions.some((a) => !a.baselinePassed), true);
+  assertEquals(score.judge?.winner, "candidate");
+  assertEquals(score.requiresReview, false);
 });
 
 Deno.test("recommendation regression includes a confident judge worsening and severe deterministic failures", async () => {

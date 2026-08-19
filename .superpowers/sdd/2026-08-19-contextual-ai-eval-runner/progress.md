@@ -233,3 +233,15 @@ Ruling: Persist the scorer's bounded review bit with each result and treat it as
 Ruling: Require completed, internally consistent server aggregates and full result representation before supporting a candidate. Cost if wrong: malformed or legacy aggregates remain review-only, preferring operator attention over a false-positive recommendation.
 
 Ruling: Share an exact validator for the runner's existing safe receipt vocabulary. Cost if wrong: a future runner receipt change must update this private contract explicitly, but kickoff cannot mistake an invented delivery acknowledgment for executed work.
+
+### Task 7 re-review corrections
+
+- Structured and recommendation scoring now distinguish a valid baseline-only assertion miss from invalid evidence. A passing candidate is not held merely because it improves a normal deterministic assertion; invalid baseline schema/rubric, candidate misses, regressions, severe failures, and ambiguous judge evidence remain review-only.
+- Recommendation scoring invokes the blind judge when the rubric, baseline schema, and candidate are valid even if a normal baseline assertion missed. Only an exact candidate win at confidence >=0.70 can avoid review; baseline wins, ties, low confidence, missing/invalid verdicts remain reviewed.
+- A real structured score is carried through the persisted safe fields and Admin2 detail presenter to prove `candidate_supported` is reachable without fabricated scorer semantics.
+- The shared private runner receipt validator now accepts only producer-real terminal statuses (`completed`, `completed_with_failures`), plus actual 202 running/not-claimed/cancelled and the exact cost-stop variant. Runner tests validate its own produced bodies through the shared parser.
+- Re-review verification passes: full frozen Edge 262/262, Admin2 171/171, live disposable PostgreSQL 2/2, scoped Flutter analysis, Deno check/format, and diff checks.
+
+Ruling: Treat normal baseline-only misses as measurable improvement while retaining review for invalid baseline schema or rubric. Cost if wrong: a valid candidate can be supported against weaker production behavior, but any uncertainty in evidence validity still fails closed.
+
+Ruling: Restrict terminal kickoff receipts to statuses emitted by `finish_ai_eval_run`; reject hypothetical failed/cancelled HTTP 200 shapes. Cost if wrong: adding a future terminal producer status requires an explicit parser and contract-test update.

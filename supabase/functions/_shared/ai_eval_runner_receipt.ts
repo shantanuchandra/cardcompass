@@ -31,9 +31,8 @@ export function validateAiEvalRunnerReceipt(
     (status === "not_claimed" || status === "cancelled") &&
     exact(row, ["run_id", "status", "processed"]);
   const terminal = httpStatus === 200 &&
-    ["completed", "completed_with_failures", "failed", "cancelled"].includes(
-      String(status),
-    ) && exact(row, ["run_id", "status", "processed"]);
+    ["completed", "completed_with_failures"].includes(String(status)) &&
+    exact(row, ["run_id", "status", "processed"]);
   const costStop = httpStatus === 200 && status === "completed_with_failures" &&
     exact(row, [
       "run_id",

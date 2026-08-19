@@ -5,6 +5,7 @@ import evalMigration from "../../migrations/20260819090500_contextual_ai_eval_ru
   type: "text",
 };
 import supabaseConfig from "../../config.toml" with { type: "text" };
+import { validateAiEvalRunnerReceipt } from "../_shared/ai_eval_runner_receipt.ts";
 
 const runId = "10000000-0000-4000-8000-000000000099";
 const lease = "20000000-0000-4000-8000-000000000099";
@@ -196,6 +197,16 @@ Deno.test("request body is an exact run_id object", async () => {
   }
 });
 
+Deno.test("an unclaimed run emits the shared exact safe receipt", async () => {
+  const { deps } = dependencies();
+  deps.rpc = () => Promise.resolve(null);
+  const response = await handleAiEvalRunnerRequest(
+    request({ run_id: runId }),
+    deps,
+  );
+  validateAiEvalRunnerReceipt(response.status, await response.json(), runId);
+});
+
 Deno.test("exactly five completed cases finish without a false continuation", async () => {
   const { deps, calls, recorded } = dependencies(5);
   let schedules = 0;
@@ -218,6 +229,11 @@ Deno.test("exactly five completed cases finish without a false continuation", as
     deps,
   );
   assertEquals(response.status, 200);
+  validateAiEvalRunnerReceipt(
+    response.status,
+    await response.clone().json(),
+    runId,
+  );
   assertEquals(peak, 1);
   assertEquals(calls[0], {
     name: "claim_ai_eval_run_batch",
@@ -270,6 +286,11 @@ Deno.test("cancellation between cases stops without recording or finishing anoth
     request({ run_id: runId }),
     deps,
   );
+  validateAiEvalRunnerReceipt(
+    response.status,
+    await response.clone().json(),
+    runId,
+  );
   assertEquals((await response.json()).status, "cancelled");
   assertEquals(recorded.length, 1);
   assertEquals(calls.some((call) => call.name === "finish_ai_eval_run"), false);
@@ -291,6 +312,11 @@ Deno.test("database cost stop is returned safely without provider work", async (
   const response = await handleAiEvalRunnerRequest(
     request({ run_id: runId }),
     deps,
+  );
+  validateAiEvalRunnerReceipt(
+    response.status,
+    await response.clone().json(),
+    runId,
   );
   assertEquals(await response.json(), {
     run_id: runId,
@@ -326,6 +352,11 @@ Deno.test("a full batch yields its lease and schedules exactly one continuation"
     deps,
   );
   assertEquals(response.status, 202);
+  validateAiEvalRunnerReceipt(
+    response.status,
+    await response.clone().json(),
+    runId,
+  );
   assertObjectMatch(await response.clone().json(), {
     status: "running",
     continuation_required: true,

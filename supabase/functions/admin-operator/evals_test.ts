@@ -8,6 +8,11 @@ import {
 import { type AdminActionContext, AdminHttpError } from "./types.ts";
 import { createEvalScheduler } from "./index.ts";
 import { validateAiEvalRunnerReceipt } from "../_shared/ai_eval_runner_receipt.ts";
+import { scoreStructuredCase } from "../ai-eval-runner/scorers.ts";
+import type {
+  EvalCaseFixture,
+  EvalExecutionResult,
+} from "../ai-eval-runner/types.ts";
 
 const actor = "00000000-0000-4000-8000-000000000001";
 const runId = "00000000-0000-4000-8000-000000000010";
@@ -414,6 +419,65 @@ Deno.test("recommendation review semantics are persisted for missing, tied, and 
   }
 });
 
+Deno.test("a real scored baseline-only miss survives persistence presentation and supports the candidate", async () => {
+  const transaction = {
+    id: "txn-1",
+    user_card_id: "uc-1",
+    statement_id: "st-1",
+    amount: 100,
+    currency: "INR",
+    merchant_name: "Store",
+    transaction_date: "2026-08-01",
+  };
+  const fixture: EvalCaseFixture = {
+    caseId: "00000000-0000-4000-8000-000000000011",
+    revision: 1,
+    featureKey: "statement_processing",
+    inputFixture: {
+      safe_input_context: { kind: "transaction", transaction },
+      authoritative_context: {},
+    },
+    capturedOutput: {},
+    expectedOutput: { category: "grocery" },
+    scoringRubric: {
+      assertions: [{
+        key: "category",
+        path: "$.category",
+        operator: "equals",
+        expectedPath: "$.category",
+      }],
+    },
+    severeFailureConditions: {},
+  };
+  const execution = (category: string): EvalExecutionResult => ({
+    executionStatus: "succeeded",
+    output: { ...transaction, category, transaction_type: "debit" },
+    model: null,
+    inputTokens: 0,
+    outputTokens: 0,
+    latencyMs: 10,
+    estimatedCostUsd: 0,
+  });
+  const score = scoreStructuredCase(
+    fixture,
+    execution("shopping"),
+    execution("grocery"),
+  );
+  assertEquals(score.requiresReview, false);
+  const output = await decisionFor(
+    decisionRun({
+      candidate_config_key: "gemini-3.6-flash-statement-v1",
+    }),
+    [decisionResult({
+      feature_key: "statement_processing",
+      deterministic_assertions: score.assertions,
+      judge_verdict: score.judge ?? {},
+      requires_review: score.requiresReview,
+    })],
+  );
+  assertEquals(output.decision.status, "candidate_supported");
+});
+
 Deno.test("candidate support fails closed for failed, missing, partial, and insufficient-fixture runs", async () => {
   const cases = [
     decisionRun({
@@ -545,4 +609,18 @@ Deno.test("gateway scheduler accepts every real safe runner receipt and rejects 
     Error,
     "eval_worker_schedule_failed",
   );
+  for (const impossible of ["failed", "cancelled"]) {
+    assertRejects(
+      () =>
+        Promise.resolve().then(() =>
+          validateAiEvalRunnerReceipt(200, {
+            run_id: runId,
+            status: impossible,
+            processed: 1,
+          }, runId)
+        ),
+      Error,
+      "eval_worker_schedule_failed",
+    );
+  }
 });

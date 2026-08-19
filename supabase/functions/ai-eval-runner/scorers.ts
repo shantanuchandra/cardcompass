@@ -65,6 +65,10 @@ export function scoreStructuredCase(
   const candidatePassed = assertions.every((assertion) =>
     assertion.candidatePassed
   );
+  const evidenceInvalid = assertions.some((assertion) =>
+    assertion.key === "rubric_contract_invalid" ||
+    (assertion.key === "schema" && !assertion.baselinePassed)
+  );
   const regression = baselinePassed && !candidatePassed;
   return {
     passed: candidatePassed,
@@ -74,7 +78,7 @@ export function scoreStructuredCase(
         assertion.severity === "severe" && assertion.baselinePassed &&
         !assertion.candidatePassed
       ),
-    requiresReview: !baselinePassed || !candidatePassed,
+    requiresReview: evidenceInvalid || !candidatePassed,
     assertions,
     judge: null,
   };
@@ -99,6 +103,9 @@ export async function scoreRecommendationCase(
   const rubricValid = !assertions.some((assertion) =>
     assertion.key === "rubric_contract_invalid"
   );
+  const baselineSchemaValid =
+    assertions.find((assertion) => assertion.key === "schema")
+      ?.baselinePassed === true;
   const assignment = await blindAssignment(
     `${options.runId}:${item.caseId}:${item.revision}`,
   );
@@ -106,7 +113,7 @@ export async function scoreRecommendationCase(
     ? [baseline.output, candidate.output]
     : [candidate.output, baseline.output];
   let verdict: ParsedJudge | null = null;
-  if (rubricValid && baselinePassed && candidatePassed) {
+  if (rubricValid && baselineSchemaValid && candidatePassed) {
     try {
       const generation = await judgeGenerate({
         model: config.model,
@@ -127,8 +134,9 @@ export async function scoreRecommendationCase(
       assertion.severity === "severe" && assertion.baselinePassed &&
       !assertion.candidatePassed,
   );
-  const requiresReview = !baselinePassed || !candidatePassed || !verdict ||
-    decoded.winner === "tie" || decoded.confidence < MIN_JUDGE_CONFIDENCE;
+  const requiresReview = !rubricValid || !baselineSchemaValid ||
+    !candidatePassed || !verdict || decoded.winner !== "candidate" ||
+    decoded.confidence < MIN_JUDGE_CONFIDENCE;
   return {
     passed: candidatePassed && !judgeRegression,
     regression,
