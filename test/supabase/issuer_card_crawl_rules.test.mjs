@@ -247,6 +247,33 @@ test('quarantines known invalid Axis, HDFC, Kotak, and generic PNB pages without
   }
 });
 
+test('quarantines calculator URLs even when their headings contain credit-card product signals', async () => {
+  const calculator =
+    'https://www.axis.bank.in/calculators/balance-on-emi-credit-card-calculator';
+  const requested = [];
+  const result = await discoverIssuerCardCandidates({
+    issuer,
+    sitemapUrl: rootSitemap,
+    fetchOfficialIssuerResource: async (input) => {
+      requested.push(input.url);
+      if (input.url === rootSitemap) {
+        return resource(input.url, sitemap([calculator]), 'application/xml');
+      }
+      return resource(
+        input.url,
+        '<title>Balance on EMI Credit Card Calculator</title><h1>Axis Bank Credit Card Calculator</h1>',
+      );
+    },
+    delay: async () => {},
+  });
+
+  assert.equal(result.consideredCount, 1);
+  assert.equal(result.fetchedCount, 0);
+  assert.equal(result.candidates.length, 0);
+  assert.equal(result.quarantined[0]?.kind, 'not_a_card');
+  assert.deepEqual(requested, [rootSitemap]);
+});
+
 test('redacts long digit sequences from every returned result string', async () => {
   const product = 'https://www.axis.bank.in/cards/credit-card/privilege-credit-card?account=1234567890123456';
   const result = await discoverIssuerCardCandidates({
