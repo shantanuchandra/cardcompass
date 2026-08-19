@@ -145,3 +145,92 @@ Deno.test("recommendation catalog requires every card and benefit to remain acti
     "not_found",
   );
 });
+
+Deno.test("transaction and statement fixtures contain bounded reproducible fields, not histories", async () => {
+  const transaction = {
+    id: "txn-1",
+    user_id: "owner",
+    user_card_id: "uc-1",
+    statement_id: "st-1",
+    amount: 1249,
+    currency: "INR",
+    merchant_name: "  Big Bazaar  ",
+    category: "shopping",
+    transaction_type: "debit",
+    transaction_date: "2026-08-01",
+    description: "secret raw line",
+  };
+  const resolved = await resolveFeedbackContext(
+    fakeDb({ transactions: [transaction] }),
+    "owner",
+    "statement_processing",
+    "transaction",
+    "txn-1",
+  );
+  assertEquals(resolved.safeInputContext, {
+    kind: "transaction",
+    transaction: {
+      id: "txn-1",
+      user_card_id: "uc-1",
+      statement_id: "st-1",
+      amount: 1249,
+      currency: "INR",
+      merchant_name: "Big Bazaar",
+      category: "shopping",
+      transaction_type: "debit",
+      transaction_date: "2026-08-01",
+    },
+  });
+  assertEquals(JSON.stringify(resolved).includes("secret raw line"), false);
+});
+
+Deno.test("card fixture carries authoritative current identity facts", async () => {
+  const resolved = await resolveFeedbackContext(
+    fakeDb({
+      user_cards: [{
+        id: "uc-1",
+        user_id: "owner",
+        catalog_card_id: "card-1",
+        last_four_digits: "1234",
+        is_active: true,
+        created_at: "x",
+        updated_at: "y",
+      }],
+      card_catalog: [{
+        id: "card-1",
+        card_name: "Regalia Gold",
+        bank: "HDFC",
+        network: "Visa",
+        card_type: "credit",
+        annual_fee: 2500,
+        joining_fee: 2500,
+        is_discontinued: false,
+        updated_at: "z",
+      }],
+      card_benefit_mapping: [{
+        card_id: "card-1",
+        benefit: {
+          benefit_id: "benefit-1",
+          title: "Lounge",
+          description: "Four visits",
+          benefit_category: "travel",
+          value_config: { limit: 4 },
+          valid_from: "2026-01-01",
+          valid_until: null,
+          updated_at: "z",
+        },
+      }],
+    }),
+    "owner",
+    "card_data",
+    "user_card",
+    "uc-1",
+  );
+  assertEquals(resolved.safeInputContext, {
+    kind: "card_data",
+    user_card: { id: "uc-1", catalog_card_id: "card-1", is_active: true },
+    catalog_card: resolved.authoritativeContext.catalog_card,
+    benefits: resolved.authoritativeContext.benefits,
+  });
+  assertEquals((resolved.authoritativeContext.benefits as unknown[]).length, 1);
+});

@@ -63,6 +63,7 @@ Deno.test("recommendation traces accept only the closed Movie Deals fixture", ()
       selected_benefit_id: "20000000-0000-4000-8000-000000000001",
       savings: 300,
       final_amount: 600,
+      explanation: "Save on two tickets.",
     },
     card_ids: ["10000000-0000-4000-8000-000000000001"],
     benefit_ids: ["20000000-0000-4000-8000-000000000001"],

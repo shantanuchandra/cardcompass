@@ -963,6 +963,7 @@ class _RecommendationFeedbackActionState
           'selected_benefit_id': candidate.benefitId,
           'savings': candidate.savings,
           'final_amount': candidate.finalAmount,
+          'explanation': candidate.explanation.characters.take(1000).toString(),
         },
         cardIds: [candidate.cardId],
         benefitIds: [candidate.benefitId],

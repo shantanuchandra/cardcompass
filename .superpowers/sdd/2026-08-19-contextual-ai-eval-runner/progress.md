@@ -63,3 +63,14 @@ Ruling: Bind each run manifest to the single feature family derived from its all
 - Candidate prompts contain only the bounded safe fixture and a fixed server-owned schema instruction. Expected outputs, feedback, rubrics, severe conditions, and captured baselines never enter candidate generation.
 
 Ruling: Import the migration SQL as text in the registry test and derive its candidate key/cost mapping for direct parity with the code registry. Cost if wrong: SQL formatting changes may require updating the narrow extractor, but a cost or allowlist drift fails before release.
+
+### Task 4 review corrections
+
+- Feedback capture now builds bounded, reproducible fixtures from the real persisted transaction, statement, user-card, catalog, and mapped-benefit DTOs. It never includes raw statement lines or histories.
+- Recommendation traces retain the production-selected card, benefit, savings, final amount, and bounded explanation with server-resolved catalog facts and ownership context.
+- Executors consume the migration's real `{safe_input_context, authoritative_context}` fixture envelope and return the application's production output shapes. Empty, foreign-ID, non-finite financial, ungrounded, and under-specified historical cases fail safely; invalid generation retains metering.
+- Registry parity covers candidate costs and feature mappings plus the captured baseline and pinned judge keys from SQL.
+
+Ruling: Treat legacy cases without a closed reproducible fixture as `insufficient_fixture`, including captured baselines, rather than accepting unevaluable output. Cost if wrong: older approved cases require a reviewed new revision before they can contribute evidence.
+
+Ruling: Keep statement feedback reproducible at its selected target granularity: one exact transaction or bounded statement metadata, never a full statement history reconstructed from unsafe/raw inputs. Cost if wrong: feedback about an unselected missing transaction remains human-review evidence until a safe selected-transaction fixture is authored.

@@ -18,14 +18,103 @@ const fixture = (
   revision: 1,
   featureKey,
   inputFixture: featureKey === "statement_processing"
-    ? { statement: { currency: "INR", lines: ["Grocer 12.50"] } }
+    ? {
+      safe_input_context: {
+        kind: "transaction",
+        transaction: {
+          id: "txn-1",
+          user_card_id: "uc-1",
+          statement_id: "st-1",
+          amount: 1249,
+          currency: "INR",
+          merchant_name: "Big Bazaar",
+          category: "shopping",
+          transaction_type: "debit",
+          transaction_date: "2026-08-01",
+        },
+      },
+      authoritative_context: {},
+    }
     : featureKey === "card_data"
     ? {
-      card_name: "Regalia Gold",
-      authoritative_context: { source_ids: ["source-1"] },
+      safe_input_context: {
+        kind: "card_data",
+        user_card: { id: "uc-1", catalog_card_id: "card-1", is_active: true },
+        catalog_card: {
+          id: "card-1",
+          card_name: "Regalia Gold",
+          bank: "HDFC",
+          network: "Visa",
+          card_type: "credit",
+          annual_fee: 2500,
+          joining_fee: 2500,
+          is_discontinued: false,
+          updated_at: "2026-08-01",
+        },
+      },
+      authoritative_context: {
+        catalog_card: {
+          id: "card-1",
+          card_name: "Regalia Gold",
+          bank: "HDFC",
+          network: "Visa",
+          card_type: "credit",
+          annual_fee: 2500,
+          joining_fee: 2500,
+          is_discontinued: false,
+          updated_at: "2026-08-01",
+        },
+      },
     }
-    : { owned_card_ids: ["card-1"], eligible_card_ids: ["card-1"] },
-  capturedOutput: { secretBaseline: true },
+    : {
+      safe_input_context: { number_of_tickets: 2, price_per_ticket: 400 },
+      authoritative_context: {
+        cards: [{ id: "card-1" }],
+        benefits: [{ benefit_id: "benefit-1" }],
+        owned_card_ids: ["card-1"],
+      },
+    },
+  capturedOutput: featureKey === "statement_processing"
+    ? {
+      id: "txn-1",
+      user_card_id: "uc-1",
+      statement_id: "st-1",
+      amount: 1249,
+      currency: "INR",
+      merchant_name: "Big Bazaar",
+      category: "shopping",
+      transaction_type: "debit",
+      transaction_date: "2026-08-01",
+    }
+    : featureKey === "card_data"
+    ? {
+      user_card: {
+        id: "uc-1",
+        catalog_card_id: "card-1",
+        last_four_digits: "1234",
+        is_active: true,
+        created_at: "x",
+        updated_at: "y",
+      },
+      catalog_card: {
+        id: "card-1",
+        card_name: "Regalia Gold",
+        bank: "HDFC",
+        network: "Visa",
+        card_type: "credit",
+        annual_fee: 2500,
+        joining_fee: 2500,
+        is_discontinued: false,
+        updated_at: "2026-08-01",
+      },
+    }
+    : {
+      selected_card_id: "card-1",
+      selected_benefit_id: "benefit-1",
+      savings: 200,
+      final_amount: 600,
+      explanation: "Save on two tickets.",
+    },
   expectedOutput: { secretExpected: true },
   operatorFeedback: "secret feedback",
   scoringRubric: { secretRubric: true },
@@ -58,6 +147,29 @@ Deno.test("registry exposes only reviewed configuration keys and SQL-parity cost
       .map((match) => [match[1], Number(match[2])]),
   );
   assertRegistryMatchesDatabasePolicy(databasePolicy);
+  assertEquals(
+    evalMigration.includes("_baseline_config_key<>'captured-production-v1'"),
+    true,
+  );
+  assertEquals(
+    evalMigration.includes(
+      "_judge_config_key<>'gemini-3.6-flash-blind-judge-v1'",
+    ),
+    true,
+  );
+  for (
+    const [key, feature] of [
+      ["gemini-3.6-flash-statement-v1", "statement_processing"],
+      ["gemini-3.6-flash-card-data-v1", "card_data"],
+      ["gemini-3.6-flash-recommendation-v1", "recommendation"],
+    ]
+  ) {
+    assertEquals(
+      evalMigration.includes(`when '${key}' then '${feature}'`),
+      true,
+    );
+    assertEquals(getCandidateConfig(key).featureKey, feature);
+  }
 });
 
 Deno.test("unknown and feature-mismatched keys fail before model execution", async () => {
@@ -111,9 +223,19 @@ Deno.test("candidate receives only deeply sanitized fixture inside a fixed, deli
     generate: async (input) => {
       seen.push(input);
       return fakeGeneration({
-        card: { id: "card-1", name: "Regalia Gold", issuer: "HDFC" },
-        benefits: [],
-        sources: [{ id: "source-1", field_paths: ["card.name"] }],
+        user_card: { id: "uc-1", catalog_card_id: "card-1", is_active: true },
+        catalog_card: {
+          id: "card-1",
+          card_name: "Regalia Gold",
+          bank: "HDFC",
+          network: "Visa",
+          card_type: "credit",
+          annual_fee: 2500,
+          joining_fee: 2500,
+          is_discontinued: false,
+          updated_at: "2026-08-01",
+        },
+        sources: [{ id: "card-1", field_paths: ["catalog_card.card_name"] }],
       });
     },
   });
@@ -154,43 +276,61 @@ Deno.test("fixture rejects nested ground-truth fields before model execution", a
   assertEquals(calls, 0);
 });
 
+Deno.test("historical under-specified fixtures fail safely before baseline or candidate execution", async () => {
+  for (
+    const key of ["captured-production-v1", "gemini-3.6-flash-statement-v1"]
+  ) {
+    const result = await executeEvalCase(
+      {
+        ...fixture("statement_processing"),
+        inputFixture: { safe_input_context: {}, authoritative_context: {} },
+      },
+      key,
+      {
+        generate: () => {
+          throw new Error("must_not_call");
+        },
+      },
+    );
+    assertEquals(result.safeFailureCategory, "insufficient_fixture");
+  }
+});
+
 Deno.test("candidate output is exact, bounded, typed, and grounded", async () => {
   const bad = [
     {
-      parsed_statement: {
+      transactions: [{
+        id: "t1",
+        date: "2026-01-01",
+        merchant: "M",
+        amount: 10,
         currency: "INR",
-        transactions: [{
-          id: "t1",
-          date: "2026-01-01",
-          merchant: "M",
-          amount: 10,
-          currency: "INR",
-          type: "debit",
-          category: "grocery",
-          extra: true,
-        }],
-      },
+        type: "debit",
+        category: "grocery",
+        extra: true,
+      }],
     },
     {
-      card: { id: "card-1", name: "X", issuer: "Y" },
-      benefits: [{
-        id: "b1",
-        title: "Lounge",
-        limit: 4,
-        period: "quarter",
-        eligibility: "all",
-        source_ids: ["missing"],
-      }],
+      user_card: { id: "uc-1", catalog_card_id: "foreign", is_active: true },
+      catalog_card: {
+        id: "foreign",
+        card_name: "X",
+        bank: "Y",
+        network: "Visa",
+        card_type: "credit",
+        annual_fee: 1,
+        joining_fee: 1,
+        is_discontinued: false,
+        updated_at: "x",
+      },
       sources: [],
     },
     {
-      recommendations: [{
-        rank: 1,
-        card_id: "card-1",
-        benefit_ids: [],
-        explanation: "x".repeat(1001),
-        source_ids: [],
-      }],
+      selected_card_id: "foreign",
+      selected_benefit_id: "benefit-1",
+      savings: Number.NaN,
+      final_amount: 600,
+      explanation: "x".repeat(1001),
     },
   ];
   const cases = [
@@ -203,6 +343,62 @@ Deno.test("candidate output is exact, bounded, typed, and grounded", async () =>
       generate: async () => fakeGeneration(bad[index]),
     });
     assertEquals(result.executionStatus, "failed");
+    assertEquals(result.safeFailureCategory, "invalid_model_output");
+  }
+});
+
+Deno.test("real captured-shape candidates succeed for every feature family", async () => {
+  for (
+    const [feature, key, output] of [
+      [
+        "statement_processing",
+        "gemini-3.6-flash-statement-v1",
+        fixture("statement_processing").capturedOutput,
+      ],
+      ["card_data", "gemini-3.6-flash-card-data-v1", {
+        user_card: { id: "uc-1", catalog_card_id: "card-1", is_active: true },
+        catalog_card:
+          (fixture("card_data").inputFixture.safe_input_context as Record<
+            string,
+            unknown
+          >).catalog_card,
+        sources: [{ id: "card-1", field_paths: ["catalog_card.card_name"] }],
+      }],
+      [
+        "recommendation",
+        "gemini-3.6-flash-recommendation-v1",
+        fixture("recommendation").capturedOutput,
+      ],
+    ] as const
+  ) {
+    const result = await executeEvalCase(fixture(feature), key, {
+      generate: async () => fakeGeneration(output),
+    });
+    assertEquals(result.executionStatus, "succeeded");
+  }
+});
+
+Deno.test("empty and foreign-id outputs never count as successful evidence", async () => {
+  for (
+    const [feature, key, output] of [
+      ["statement_processing", "gemini-3.6-flash-statement-v1", {}],
+      ["card_data", "gemini-3.6-flash-card-data-v1", {
+        user_card: {},
+        catalog_card: {},
+        sources: [],
+      }],
+      ["recommendation", "gemini-3.6-flash-recommendation-v1", {
+        selected_card_id: "foreign",
+        selected_benefit_id: "foreign",
+        savings: 1,
+        final_amount: 1,
+        explanation: "unsupported",
+      }],
+    ] as const
+  ) {
+    const result = await executeEvalCase(fixture(feature), key, {
+      generate: async () => fakeGeneration(output),
+    });
     assertEquals(result.safeFailureCategory, "invalid_model_output");
   }
 });

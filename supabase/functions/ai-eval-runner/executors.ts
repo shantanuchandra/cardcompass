@@ -24,7 +24,23 @@ export async function executeEvalCase(
   dependencies: Readonly<{ generate: EvalGenerate }>,
 ): Promise<EvalExecutionResult> {
   const config = getEvalConfig(configKey);
+  if (config.provider !== "captured" && config.featureKey !== item.featureKey) {
+    throw new Error("invalid_request");
+  }
+  let fixture: Record<string, unknown>;
+  try {
+    fixture = sanitizeFixture(item.inputFixture);
+  } catch (error) {
+    if (error instanceof Error && error.message === "invalid_request") {
+      throw error;
+    }
+    return insufficientResult();
+  }
+  if (!validFixture(item.featureKey, fixture)) return insufficientResult();
   if (config.provider === "captured") {
+    if (Object.keys(item.capturedOutput).length === 0) {
+      return insufficientResult();
+    }
     return {
       executionStatus: "succeeded",
       output: structuredClone(item.capturedOutput),
@@ -35,8 +51,6 @@ export async function executeEvalCase(
       estimatedCostUsd: 0,
     };
   }
-  if (config.featureKey !== item.featureKey) throw new Error("invalid_request");
-  const fixture = sanitizeFixture(item.inputFixture);
   const payload = promptPayload(
     config.promptVersion,
     config.maxOutputTokens,
@@ -133,10 +147,10 @@ function promptPayload(
   feature: string,
 ) {
   const schema = feature === "statement_processing"
-    ? "{parsed_statement:{currency:ISO-4217,transactions:[{id,date:YYYY-MM-DD,merchant,amount:number,currency:ISO-4217,type:debit|credit,category}]}}"
+    ? "For kind=transaction return {id,user_card_id,statement_id,amount,currency,merchant_name,category,transaction_type,transaction_date}; for kind=statement_metadata return {id,user_card_id,statement_date,due_date,total_amount,minimum_payment,closing_balance,fees_charged,processed,transaction_count}"
     : feature === "card_data"
-    ? "{card:{id,name,issuer},benefits:[{id,title,limit:number|null,period,eligibility,source_ids:[id]}],sources:[{id,field_paths:[path]}]}"
-    : "{recommendations:[{rank:consecutive integer,card_id,benefit_ids:[id],explanation<=1000 chars,source_ids:[id]}]}";
+    ? "{user_card:{id,catalog_card_id,is_active},catalog_card:{id,card_name,bank,network,card_type,annual_fee,joining_fee,is_discontinued,updated_at},sources:[{id,field_paths:[path]}]}"
+    : "{selected_card_id,selected_benefit_id,savings:number,final_amount:number,explanation<=1000 chars}";
   return {
     systemInstruction: {
       parts: [{
@@ -177,9 +191,40 @@ function validateOutput(
   output: Record<string, unknown>,
   fixture: Record<string, unknown>,
 ): boolean {
-  if (feature === "statement_processing") return validateStatement(output);
+  if (feature === "statement_processing") {
+    return validateStatement(output, fixture);
+  }
   if (feature === "card_data") return validateCardData(output, fixture);
   return validateRecommendation(output, fixture);
+}
+
+function validFixture(
+  feature: string,
+  fixture: Record<string, unknown>,
+): boolean {
+  if (
+    !exactKeys(fixture, ["safe_input_context", "authoritative_context"]) ||
+    !isRecord(fixture.safe_input_context) ||
+    !isRecord(fixture.authoritative_context)
+  ) return false;
+  const safe = fixture.safe_input_context;
+  if (feature === "statement_processing") {
+    return (safe.kind === "transaction" && isRecord(safe.transaction) &&
+      validTransaction(safe.transaction)) ||
+      (safe.kind === "statement_metadata" && isRecord(safe.statement) &&
+        validStatementMetadata(safe.statement));
+  }
+  if (feature === "card_data") {
+    return safe.kind === "card_data" && isRecord(safe.user_card) &&
+      isRecord(safe.catalog_card) && validUserCard(safe.user_card) &&
+      validCatalogCard(safe.catalog_card);
+  }
+  const authoritative = fixture.authoritative_context;
+  return typeof safe.number_of_tickets === "number" &&
+    Number.isInteger(safe.number_of_tickets) && safe.number_of_tickets > 0 &&
+    finiteMoney(safe.price_per_ticket) && Array.isArray(authoritative.cards) &&
+    authoritative.cards.length > 0 && Array.isArray(authoritative.benefits) &&
+    authoritative.benefits.length > 0;
 }
 
 function exactKeys(
@@ -195,36 +240,60 @@ function bounded(value: unknown, max: number): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= max;
 }
 
-function validateStatement(output: Record<string, unknown>): boolean {
-  if (
-    !exactKeys(output, ["parsed_statement"]) ||
-    !isRecord(output.parsed_statement)
-  ) return false;
-  const statement = output.parsed_statement;
-  if (
-    !exactKeys(statement, ["currency", "transactions"]) ||
-    !/^[A-Z]{3}$/.test(String(statement.currency)) ||
-    !Array.isArray(statement.transactions) ||
-    statement.transactions.length > 500
-  ) return false;
-  return statement.transactions.every((value) =>
-    isRecord(value) &&
-    exactKeys(value, [
-      "id",
-      "date",
-      "merchant",
-      "amount",
-      "currency",
-      "type",
-      "category",
-    ]) && id.test(String(value.id)) &&
-    /^\d{4}-\d{2}-\d{2}$/.test(String(value.date)) &&
-    bounded(value.merchant, 200) && typeof value.amount === "number" &&
-    Number.isFinite(value.amount) && Math.abs(value.amount) <= 1e12 &&
+function validateStatement(
+  output: Record<string, unknown>,
+  fixture: Record<string, unknown>,
+): boolean {
+  const safe = fixture.safe_input_context as Record<string, unknown>;
+  if (safe.kind === "transaction") {
+    return validTransaction(output) &&
+      output.id === (safe.transaction as Record<string, unknown>).id;
+  }
+  return validStatementMetadata(output) &&
+    output.id === (safe.statement as Record<string, unknown>).id;
+}
+
+function validTransaction(value: Record<string, unknown>): boolean {
+  return exactKeys(value, [
+    "id",
+    "user_card_id",
+    "statement_id",
+    "amount",
+    "currency",
+    "merchant_name",
+    "category",
+    "transaction_type",
+    "transaction_date",
+  ]) && id.test(String(value.id)) && id.test(String(value.user_card_id)) &&
+    id.test(String(value.statement_id)) && finiteMoney(value.amount) &&
     /^[A-Z]{3}$/.test(String(value.currency)) &&
-    ["debit", "credit"].includes(String(value.type)) &&
-    bounded(value.category, 100)
-  );
+    bounded(value.merchant_name, 200) && bounded(value.category, 100) &&
+    ["debit", "credit"].includes(String(value.transaction_type)) &&
+    /^\d{4}-\d{2}-\d{2}/.test(String(value.transaction_date));
+}
+function validStatementMetadata(value: Record<string, unknown>): boolean {
+  return exactKeys(value, [
+    "id",
+    "user_card_id",
+    "statement_date",
+    "due_date",
+    "total_amount",
+    "minimum_payment",
+    "closing_balance",
+    "fees_charged",
+    "processed",
+    "transaction_count",
+  ]) && id.test(String(value.id)) && id.test(String(value.user_card_id)) &&
+    /^\d{4}-\d{2}-\d{2}/.test(String(value.statement_date)) &&
+    /^\d{4}-\d{2}-\d{2}/.test(String(value.due_date)) &&
+    [
+      value.total_amount,
+      value.minimum_payment,
+      value.closing_balance,
+      value.fees_charged,
+    ].every(finiteMoney) && typeof value.processed === "boolean" &&
+    Number.isInteger(value.transaction_count) &&
+    Number(value.transaction_count) >= 0;
 }
 
 function validateCardData(
@@ -232,15 +301,13 @@ function validateCardData(
   fixture: Record<string, unknown>,
 ): boolean {
   if (
-    !exactKeys(output, ["card", "benefits", "sources"]) ||
-    !isRecord(output.card) || !Array.isArray(output.benefits) ||
-    !Array.isArray(output.sources) || output.benefits.length > 100 ||
+    !exactKeys(output, ["user_card", "catalog_card", "sources"]) ||
+    !isRecord(output.user_card) || !isRecord(output.catalog_card) ||
+    !Array.isArray(output.sources) || output.sources.length === 0 ||
     output.sources.length > 100
   ) return false;
   if (
-    !exactKeys(output.card, ["id", "name", "issuer"]) ||
-    !id.test(String(output.card.id)) || !bounded(output.card.name, 200) ||
-    !bounded(output.card.issuer, 200)
+    !validUserCard(output.user_card) || !validCatalogCard(output.catalog_card)
   ) return false;
   const sourceIds = new Set<string>();
   for (const value of output.sources) {
@@ -254,25 +321,34 @@ function validateCardData(
   }
   const allowed = collectFixtureIds(fixture);
   if ([...sourceIds].some((source) => !allowed.has(source))) return false;
-  return output.benefits.every((value) =>
-    isRecord(value) &&
-    exactKeys(value, [
-      "id",
-      "title",
-      "limit",
-      "period",
-      "eligibility",
-      "source_ids",
-    ]) && id.test(String(value.id)) && bounded(value.title, 200) &&
-    (value.limit === null ||
-      (typeof value.limit === "number" && Number.isFinite(value.limit) &&
-        value.limit >= 0 && value.limit <= 1e9)) &&
-    bounded(value.period, 100) && bounded(value.eligibility, 500) &&
-    Array.isArray(value.source_ids) && value.source_ids.length > 0 &&
-    value.source_ids.every((source) =>
-      typeof source === "string" && sourceIds.has(source)
-    )
-  );
+  const safe = fixture.safe_input_context as Record<string, any>;
+  return output.user_card.id === safe.user_card.id &&
+    output.user_card.catalog_card_id === safe.user_card.catalog_card_id &&
+    output.catalog_card.id === safe.catalog_card.id;
+}
+
+function validUserCard(value: Record<string, unknown>): boolean {
+  return exactKeys(value, ["id", "catalog_card_id", "is_active"]) &&
+    id.test(String(value.id)) && id.test(String(value.catalog_card_id)) &&
+    typeof value.is_active === "boolean";
+}
+function validCatalogCard(value: Record<string, unknown>): boolean {
+  return exactKeys(value, [
+    "id",
+    "card_name",
+    "bank",
+    "network",
+    "card_type",
+    "annual_fee",
+    "joining_fee",
+    "is_discontinued",
+    "updated_at",
+  ]) && id.test(String(value.id)) && bounded(value.card_name, 200) &&
+    bounded(value.bank, 200) && bounded(value.network, 100) &&
+    bounded(value.card_type, 100) && finiteMoney(value.annual_fee) &&
+    finiteMoney(value.joining_fee) &&
+    typeof value.is_discontinued === "boolean" &&
+    bounded(value.updated_at, 100);
 }
 
 function validateRecommendation(
@@ -280,28 +356,38 @@ function validateRecommendation(
   fixture: Record<string, unknown>,
 ): boolean {
   if (
-    !exactKeys(output, ["recommendations"]) ||
-    !Array.isArray(output.recommendations) || output.recommendations.length > 20
+    !exactKeys(output, [
+      "selected_card_id",
+      "selected_benefit_id",
+      "savings",
+      "final_amount",
+      "explanation",
+    ])
   ) return false;
   const allowed = collectFixtureIds(fixture);
-  return output.recommendations.every((value, index) =>
-    isRecord(value) &&
-    exactKeys(value, [
-      "rank",
-      "card_id",
-      "benefit_ids",
-      "explanation",
-      "source_ids",
-    ]) && value.rank === index + 1 && id.test(String(value.card_id)) &&
-    (allowed.size === 0 || allowed.has(String(value.card_id))) &&
-    Array.isArray(value.benefit_ids) && value.benefit_ids.length <= 50 &&
-    value.benefit_ids.every((item) =>
-      id.test(String(item)) && (allowed.size === 0 || allowed.has(String(item)))
-    ) && bounded(value.explanation, 1000) && Array.isArray(value.source_ids) &&
-    value.source_ids.length <= 50 && value.source_ids.every((item) =>
-      id.test(String(item)) && (allowed.size === 0 || allowed.has(String(item)))
-    )
-  );
+  return allowed.has(String(output.selected_card_id)) &&
+    allowed.has(String(output.selected_benefit_id)) &&
+    finiteMoney(output.savings) && Number(output.savings) >= 0 &&
+    finiteMoney(output.final_amount) && Number(output.final_amount) >= 0 &&
+    bounded(output.explanation, 1000);
+}
+
+function finiteMoney(value: unknown): boolean {
+  return typeof value === "number" && Number.isFinite(value) &&
+    Math.abs(value) <= 1e12;
+}
+
+function insufficientResult(): EvalExecutionResult {
+  return {
+    executionStatus: "failed",
+    output: {},
+    safeFailureCategory: "insufficient_fixture",
+    model: null,
+    inputTokens: 0,
+    outputTokens: 0,
+    latencyMs: 0,
+    estimatedCostUsd: 0,
+  };
 }
 
 function collectFixtureIds(

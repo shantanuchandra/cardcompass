@@ -135,6 +135,7 @@ class FeedbackRepository {
       'selected_benefit_id',
       'savings',
       'final_amount',
+      'explanation',
     };
     if (!input.safeInputContext.keys.toSet().containsAll(requiredInput) ||
         input.safeInputContext.keys.any((key) => !inputKeys.contains(key)) ||
@@ -146,6 +147,12 @@ class FeedbackRepository {
         input.outputSnapshot['final_amount'] is! num ||
         input.outputSnapshot['selected_card_id'] is! String ||
         input.outputSnapshot['selected_benefit_id'] is! String) {
+      throw FeedbackInvalidRequest();
+    }
+    final explanation = input.outputSnapshot['explanation'];
+    if (explanation is! String ||
+        explanation.trim().isEmpty ||
+        explanation.length > 1000) {
       throw FeedbackInvalidRequest();
     }
   }

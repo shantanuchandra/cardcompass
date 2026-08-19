@@ -37,9 +37,20 @@ export async function resolveFeedbackContext(
       refId,
       userId,
     );
+    const transaction = {
+      id: row.id,
+      user_card_id: row.user_card_id,
+      statement_id: row.statement_id,
+      amount: row.amount,
+      currency: row.currency,
+      merchant_name: boundedText(row.merchant_name, 200),
+      category: row.category,
+      transaction_type: row.transaction_type,
+      transaction_date: row.transaction_date,
+    };
     return {
-      safeInputContext: { transaction_id: row.id },
-      outputSnapshot: row,
+      safeInputContext: { kind: "transaction", transaction },
+      outputSnapshot: transaction,
       authoritativeContext: {},
       metadata: { parser_version: "persisted_transaction_v1" },
     };
@@ -52,9 +63,21 @@ export async function resolveFeedbackContext(
       refId,
       userId,
     );
+    const statement = {
+      id: row.id,
+      user_card_id: row.user_card_id,
+      statement_date: row.statement_date,
+      due_date: row.due_date,
+      total_amount: row.total_amount,
+      minimum_payment: row.minimum_payment,
+      closing_balance: row.closing_balance,
+      fees_charged: row.fees_charged,
+      processed: row.processed,
+      transaction_count: row.transaction_count,
+    };
     return {
-      safeInputContext: { statement_id: row.id },
-      outputSnapshot: row,
+      safeInputContext: { kind: "statement_metadata", statement },
+      outputSnapshot: statement,
       authoritativeContext: {},
       metadata: { parser_version: "persisted_statement_v1" },
     };
@@ -73,10 +96,30 @@ export async function resolveFeedbackContext(
       "id,card_name,bank,network,card_type,annual_fee,joining_fee,is_discontinued,updated_at",
       row.catalog_card_id,
     );
+    const { data: mappings, error: benefitsError } = await db
+      .from("card_benefit_mapping")
+      .select(
+        "benefit:benefits(benefit_id,title,description,benefit_category,value_config,valid_from,valid_until,updated_at)",
+      )
+      .eq("card_id", row.catalog_card_id);
+    if (benefitsError) throw new Error("request_failed");
+    const benefits = (mappings ?? []).slice(0, 50)
+      .map((entry: Record<string, unknown>) => entry.benefit)
+      .filter((entry: unknown) => entry && typeof entry === "object");
+    const currentCard = {
+      id: row.id,
+      catalog_card_id: row.catalog_card_id,
+      is_active: row.is_active,
+    };
     return {
-      safeInputContext: { user_card_id: row.id },
+      safeInputContext: {
+        kind: "card_data",
+        user_card: currentCard,
+        catalog_card: catalog,
+        benefits,
+      },
       outputSnapshot: { user_card: row, catalog_card: catalog },
-      authoritativeContext: { catalog_card: catalog },
+      authoritativeContext: { catalog_card: catalog, benefits },
       metadata: { parser_version: "persisted_card_match_v1" },
     };
   }
@@ -105,6 +148,11 @@ export async function resolveFeedbackContext(
     };
   }
   throw new Error("invalid_request");
+}
+
+function boundedText(value: unknown, maximum: number): string | null {
+  if (typeof value !== "string") return null;
+  return value.trim().slice(0, maximum);
 }
 
 export async function resolveRecommendationCatalog(

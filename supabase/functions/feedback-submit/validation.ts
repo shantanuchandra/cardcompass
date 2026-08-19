@@ -45,6 +45,7 @@ function recommendationFixture(input: unknown, output: unknown) {
     "selected_benefit_id",
     "savings",
     "final_amount",
+    "explanation",
   ]);
   if (
     !Number.isInteger(safe.number_of_tickets) ||
@@ -60,7 +61,10 @@ function recommendationFixture(input: unknown, output: unknown) {
     !uuid.test(snapshot.selected_card_id) ||
     typeof snapshot.selected_benefit_id !== "string" ||
     !uuid.test(snapshot.selected_benefit_id) ||
-    !finite(snapshot.savings) || !finite(snapshot.final_amount)
+    !finite(snapshot.savings) || !finite(snapshot.final_amount) ||
+    typeof snapshot.explanation !== "string" ||
+    snapshot.explanation.trim().length < 1 ||
+    [...snapshot.explanation].length > 1000
   ) throw new Error("invalid_request");
 }
 

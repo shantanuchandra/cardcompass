@@ -29,7 +29,10 @@ export type EvalCaseFixture = Readonly<{
 export type EvalExecutionResult = Readonly<{
   executionStatus: "succeeded" | "failed";
   output: Record<string, unknown>;
-  safeFailureCategory?: "invalid_model_output" | "model_unavailable";
+  safeFailureCategory?:
+    | "invalid_model_output"
+    | "model_unavailable"
+    | "insufficient_fixture";
   model: string | null;
   inputTokens: number;
   outputTokens: number;
