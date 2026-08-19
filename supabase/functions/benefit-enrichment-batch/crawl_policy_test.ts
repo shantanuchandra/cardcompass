@@ -84,6 +84,54 @@ Deno.test("latest successful retry completes one logical primary source", () => 
   assert(result.attempts.length === 2, "retry evidence was discarded");
 });
 
+Deno.test("global compaction keeps the logical source retry status sequence", () => {
+  const attempts = [
+    attempt({
+      status: "failed",
+      httpStatus: 404,
+      contentHash: undefined,
+      errorCode: "http_404",
+      attemptedAt: "2026-08-19T00:00:00.000Z",
+    }),
+    attempt({ attemptedAt: "2026-08-19T00:00:01.000Z" }),
+    ...Array.from({ length: 9 }, (_, index) =>
+      attempt({
+        requestedUrl: `${PRIMARY}/optional-${index}`,
+        role: "supporting",
+        attemptedAt: `2026-08-19T00:01:${String(index).padStart(2, "0")}.000Z`,
+      })),
+  ];
+  const result = assessCrawlCompleteness(
+    attempts,
+    "2026-08-19T00:02:00.000Z",
+  );
+  const primary = result.attempts.find((item) => item.role === "primary");
+  assert(result.complete, "compaction lost the successful terminal retry");
+  assert(
+    primary?.attemptHistory?.map((item) => item.status).join(",") ===
+      "failed,success",
+    "404 to 200 history could not be reconstructed after compaction",
+  );
+});
+
+Deno.test("overflowing one logical retry history is explicitly incomplete", () => {
+  const result = assessCrawlCompleteness(
+    Array.from({ length: 8 }, (_, index) =>
+      attempt({
+        status: index === 7 ? "success" : "failed",
+        contentHash: index === 7 ? "a".repeat(64) : undefined,
+        errorCode: index === 7 ? undefined : "http_5xx",
+        attemptedAt: `2026-08-19T00:00:0${index}.000Z`,
+      })),
+    "2026-08-19T00:01:00.000Z",
+  );
+  assert(!result.complete, "overflowed retry history established completeness");
+  assert(
+    result.reason === "attempt_history_overflow",
+    "retry history overflow was not explicit",
+  );
+});
+
 Deno.test("latest failed retry keeps one logical primary source incomplete", () => {
   const result = assessCrawlCompleteness([
     attempt({ attemptedAt: "2026-08-19T00:00:00.000Z" }),

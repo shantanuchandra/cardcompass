@@ -19,11 +19,70 @@ function resource(
     contentType,
     bytes: new TextEncoder().encode(text),
     text: contentType === "application/pdf" ? "" : text,
-    contentHash: `hash:${url}`,
+    contentHash: "a".repeat(64),
     retrievedAt: "2026-08-17T00:00:00.000Z",
     notModified: false,
   };
 }
+
+Deno.test("supporting redirects remain bound to the expected card identity", async () => {
+  const privilege = "https://www.axis.bank.in/cards/credit-card/privilege";
+  const terms = `${privilege}/terms`;
+  for (
+    const fixture of [
+      {
+        label: "same card",
+        finalUrl: terms,
+        body: "Privilege Credit Card terms and fee waiver",
+        complete: true,
+      },
+      {
+        label: "different card",
+        finalUrl: "https://www.axis.bank.in/cards/credit-card/regalia/terms",
+        body: "Regalia Credit Card terms and benefits",
+        complete: false,
+      },
+      {
+        label: "generic redirect",
+        finalUrl: "https://www.axis.bank.in/cards/credit-card/terms",
+        body: "Generic credit card terms and conditions",
+        complete: false,
+      },
+    ]
+  ) {
+    const primary = resource(
+      privilege,
+      `<h1>Privilege Credit Card</h1><a href="${terms}">Terms</a>`,
+    );
+    const collected = await collectSupportingBenefitDocuments({
+      issuer: "Axis Bank",
+      primary,
+      identityLabels: ["Privilege Credit Card"],
+      fetchOfficialIssuerResource: async () => ({
+        ...resource(fixture.finalUrl, fixture.body),
+        submittedUrl: terms,
+        finalUrl: fixture.finalUrl,
+        canonicalUrl: fixture.finalUrl,
+      }),
+    });
+    const assessed = assessCrawlCompleteness(
+      collected.attempts,
+      "2026-08-17T00:01:00.000Z",
+    );
+    assert(
+      assessed.complete === fixture.complete,
+      `${fixture.label} identity result was not conservative`,
+    );
+    if (!fixture.complete) {
+      assert(
+        collected.attempts.some((attempt) =>
+          attempt.errorCode === "identity_mismatch"
+        ),
+        `${fixture.label} did not retain identity mismatch evidence`,
+      );
+    }
+  }
+});
 
 Deno.test("supporting crawl follows relevant official links to depth two and retains PDF provenance", async () => {
   const product = "https://www.axis.bank.in/cards/credit-card/privilege";
@@ -91,7 +150,7 @@ Deno.test("supporting crawl follows relevant official links to depth two and ret
     "PDF text was not included",
   );
   assert(
-    pdfDocument?.contentHash === `hash:${pdf}`,
+    pdfDocument?.contentHash === "a".repeat(64),
     "PDF hash provenance was lost",
   );
 });

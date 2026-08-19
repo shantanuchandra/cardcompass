@@ -19,7 +19,7 @@ function resource(url, text, contentType = 'text/html') {
     contentType,
     text,
     bytes: new TextEncoder().encode(text),
-    contentHash: 'test',
+    contentHash: 'a'.repeat(64),
     retrievedAt: '2026-08-17T00:00:00.000Z',
     notModified: false,
   };
@@ -84,6 +84,17 @@ test('builds conventional same-host sitemap and credit-card index fallbacks', ()
       ],
     },
   );
+});
+
+test('crawler classifications never expose URL query or encoded heading credentials', () => {
+  const classified = classifyIssuerPage({
+    issuer,
+    url: 'https://www.axis.bank.in/cards/credit-card/privilege?session=secret#private',
+    html: '<title>Privilege Credit Card https%253A%252F%252Fuser%253Apass%2540www.axis.bank.in%252Fcard%253Ftoken%253Dsecret</title>',
+  });
+  const serialized = JSON.stringify(classified);
+  assert.equal(classified.canonicalUrl, 'https://www.axis.bank.in/cards/credit-card/privilege');
+  assert.doesNotMatch(serialized, /session|secret|user|pass|token|private/i);
 });
 
 test('falls back from unavailable sitemaps to same-host credit-card indexes', async () => {
@@ -348,6 +359,33 @@ test('anchors sitemap, candidate, and returned canonical URLs to the initial app
   assert.equal(result.candidates.length, 0);
   assert.equal(result.quarantined.length, 1);
   assert.doesNotMatch(result.quarantined[0].canonicalUrl, /axisbank\.com/);
+});
+
+test('same-host candidate redirects stay bound to the discovered card identity', async () => {
+  const privilege = 'https://www.axis.bank.in/cards/credit-card/privilege-credit-card';
+  const regalia = 'https://www.axis.bank.in/cards/credit-card/regalia-credit-card';
+  for (const [finalUrl, body, accepted] of [
+    [`${privilege}/benefits`, '<h1>Privilege Credit Card Benefits</h1>', true],
+    [regalia, '<h1>Regalia Credit Card</h1>', false],
+    ['https://www.axis.bank.in/cards/credit-card', '<h1>Credit Cards</h1>', false],
+  ]) {
+    const result = await discoverIssuerCardCandidates({
+      issuer,
+      sitemapUrl: rootSitemap,
+      fetchOfficialIssuerResource: async (input) => input.url === rootSitemap
+        ? resource(input.url, sitemap([privilege]), 'application/xml')
+        : {...resource(finalUrl, body), submittedUrl: privilege},
+      delay: async () => {},
+    });
+    assert.equal(
+      result.candidates.length > 0,
+      accepted,
+      `redirect identity binding failed for ${finalUrl}`,
+    );
+    if (!accepted) {
+      assert.equal(result.quarantined[0]?.warnings.includes('redirect_identity_mismatch'), true);
+    }
+  }
 });
 
 test('requires product-specific identity context before classifying generic listings or sitewide documents positively', () => {

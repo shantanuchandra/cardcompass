@@ -3,7 +3,7 @@ const hrefAttribute = /(\bhref\s*=\s*)(["'])([\s\S]*?)(\2)/gi;
 const structuralEncoding =
   /%(?:3a|2f|3f|23|40|5b|5d)|&#(?:x(?:3a|2f|3f|23|40)|(?:58|47|63|35|64));?|&(?:colon|sol|quest|num|commat);/gi;
 const secretBearingReference =
-  /(?:https?:\/\/|\/\/|(?:[a-z0-9-]+\.)+[a-z]{2,}(?=[:/]))[^\s<>"']*|\/(?:[^\s<>"']*)?[?#][^\s<>"']*|[?#](?:[^\s<>"']+)/gi;
+  /(?:https?:\/\/|\/\/|(?:[a-z0-9-]+\.)+[a-z]{2,}(?=[:/]))[^\s<>"']*|\/(?:[^\s<>"']*)?[?#][^\s<>"']*|(?<!&)(?<!&amp;)[?#](?:[^\s<>"']+)/gi;
 // Scan candidates independently of surrounding punctuation. Delimiters are
 // excluded from the match, so braces, brackets, slashes and trailing prose
 // remain intact while password-bearing userinfo can never escape redaction.
@@ -129,11 +129,8 @@ function safeHrefValue(value: string): string {
     : safe.slice(0, 2_048);
 }
 
-/** Redacts URL secrets before source text can enter parser or admin payloads. */
-export function redactSensitiveUrlsInText(value: string): string {
-  const probe = decodeProbe(value);
-  const decoded = probe.decoded;
-  const redacted = decoded
+function redactDirectUrlCandidates(value: string): string {
+  return value
     .replace(
       hrefAttribute,
       (_match, prefix: string, quote: string, href: string) =>
@@ -175,17 +172,28 @@ export function redactSensitiveUrlsInText(value: string): string {
       }
       return base || "[redacted-url]";
     });
-  // Structural decoding is a bounded detection probe. Preserve ordinary
-  // percent/entity prose byte-for-byte unless it revealed a URL credential or
-  // secret-bearing reference that was actually redacted.
-  if (redacted !== decoded) return redacted.slice(0, MAX_REDACTION_INPUT);
-  if (
-    probe.exhausted &&
-    (looksLikeSecretUrlCandidate(value) || looksLikeSecretUrlCandidate(decoded))
-  ) return ENCODED_URL_MARKER;
-  return value.length <= MAX_REDACTION_INPUT
-    ? value
-    : "[redacted-oversized-source-text]";
+}
+
+const encodedCandidate =
+  /[^\s<>"']*(?:%(?:25|26|3a|2f|3f|23|40|5b|5d)|&(?:amp;|#(?:x[0-9a-f]+|\d+);?|(?:colon|sol|quest|num|commat);))[^\s<>"']*/gi;
+
+/** Redacts URL secrets before source text can enter parser or admin payloads. */
+export function redactSensitiveUrlsInText(value: string): string {
+  if (value.length > MAX_REDACTION_INPUT) {
+    return "[redacted-oversized-source-text]";
+  }
+  const direct = redactDirectUrlCandidates(value);
+  return direct.replace(encodedCandidate, (candidate) => {
+    const probe = decodeProbe(candidate);
+    const redacted = redactDirectUrlCandidates(probe.decoded);
+    if (redacted !== probe.decoded) return redacted;
+    if (
+      probe.exhausted &&
+      (looksLikeSecretUrlCandidate(candidate) ||
+        looksLikeSecretUrlCandidate(probe.decoded))
+    ) return ENCODED_URL_MARKER;
+    return candidate;
+  }).slice(0, MAX_REDACTION_INPUT);
 }
 
 export function redactSensitiveUrlsInValue(

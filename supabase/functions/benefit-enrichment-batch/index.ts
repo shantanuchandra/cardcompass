@@ -24,6 +24,7 @@ import {
   persistCrawlerCandidate,
 } from "../_shared/issuer_card_crawl.ts";
 import {
+  approvedStoredQueryParameters,
   fetchOfficialIssuerObservation,
   type OfficialFetchAttempt,
   type OfficialFetchObservation,
@@ -322,7 +323,10 @@ async function sha256Text(value: string): Promise<string> {
     .join("");
 }
 
-export async function stagingSourceMetadata(sourceUrl: string): Promise<{
+export async function stagingSourceMetadata(
+  sourceUrl: string,
+  transientSourceIdentityHash?: string,
+): Promise<{
   sourceUrl: string;
   sourceUrlHash: string;
 }> {
@@ -343,7 +347,9 @@ export async function stagingSourceMetadata(sourceUrl: string): Promise<{
   identityUrl.searchParams.sort();
   return {
     sourceUrl: displayUrl,
-    sourceUrlHash: await sha256Text(identityUrl.toString()),
+    sourceUrlHash: /^[0-9a-f]{64}$/i.test(transientSourceIdentityHash ?? "")
+      ? transientSourceIdentityHash!.toLowerCase()
+      : await sha256Text(identityUrl.toString()),
   };
 }
 
@@ -920,13 +926,14 @@ export function requireExactCatalogIdentity(
   }
 }
 
-function previousFetchValidators(
+export function previousFetchValidators(
   job: EnrichmentJob,
 ): {
   parserVersion: string;
   etag?: string;
   lastModified?: string;
   reusableExtraction: boolean;
+  contentHash?: string;
 } | undefined {
   const previousObservation = observationObjects(job.result_summary).at(-1);
   const source = previousObservation?.source_observation;
@@ -942,12 +949,19 @@ function previousFetchValidators(
   const lastModified = typeof value.last_modified === "string"
     ? value.last_modified.slice(0, 512)
     : undefined;
+  const contentHash = typeof value.content_hash === "string" &&
+      /^[0-9a-f]{64}$/i.test(value.content_hash)
+    ? value.content_hash.toLowerCase()
+    : undefined;
+  const canonicalBenefitHash = previousObservation?.canonical_benefit_hash;
   return {
     parserVersion,
     ...(etag ? { etag } : {}),
     ...(lastModified ? { lastModified } : {}),
+    ...(contentHash ? { contentHash } : {}),
     reusableExtraction: previousObservation?.crawl_complete === true &&
-      typeof previousObservation?.canonical_benefit_hash === "string",
+      typeof canonicalBenefitHash === "string" &&
+      /^[0-9a-f]{64}$/i.test(canonicalBenefitHash) && Boolean(contentHash),
   };
 }
 
@@ -1025,6 +1039,9 @@ async function processJob(
       previous: previousFetchValidators(job),
       maxAttempts: 3,
       maxBackoffMs: 30_000,
+      deadlineAt: invocationStartedAt + INVOCATION_DEADLINE_MS,
+      enforceRobots: true,
+      allowedQueryParameters: approvedStoredQueryParameters(job.canonical_url),
     });
     const primaryAttemptInputs = sourceAttemptInputs(
       job.canonical_url,
@@ -1370,7 +1387,10 @@ async function processJob(
     let reusedStaging = false;
     let rawOnlyDueAt: string | null = null;
     if (materialProposal) {
-      const stagingSource = await stagingSourceMetadata(page.submittedUrl);
+      const stagingSource = await stagingSourceMetadata(
+        page.submittedUrl,
+        page.sourceIdentityHash,
+      );
       const { data: stagedRows, error: stageError } = await db.rpc(
         "stage_card_benefit_enrichment",
         {

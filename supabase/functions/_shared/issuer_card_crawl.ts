@@ -8,7 +8,12 @@ import {
   fetchOfficialIssuerResource as fetchOfficialIssuerResourceDefault,
   type OfficialFetchInput,
   type OfficialFetchResult,
+  requireOfficialFetchBody,
 } from "./official_issuer_fetch.ts";
+import {
+  redactSensitiveUrlsInText,
+  safeHttpsDisplayUrl,
+} from "./benefit_source_privacy.ts";
 
 export const MAX_SITEMAP_URLS = 200;
 export const MAX_CANDIDATE_FETCHES = 40;
@@ -171,7 +176,10 @@ function redactLongDigits(value: string): string {
 }
 
 function sanitizeEvidence(value: string): string {
-  return redactLongDigits(textOnly(value)).slice(0, 300);
+  return redactSensitiveUrlsInText(redactLongDigits(textOnly(value))).slice(
+    0,
+    300,
+  );
 }
 
 function evidenceFromHtml(html: string): string[] {
@@ -238,6 +246,21 @@ function hasProductSpecificUrlContext(url: string): boolean {
   return urlPathTokens(url, "").size > 0;
 }
 
+function redirectPreservesProductIdentity(
+  requestedUrl: string,
+  finalUrl: string,
+  issuer: string,
+): boolean {
+  const requested = safeHttpsDisplayUrl(requestedUrl);
+  const final = safeHttpsDisplayUrl(finalUrl);
+  if (!requested || !final) return false;
+  if (requested === final) return true;
+  const requestedTokens = urlPathTokens(requested, issuer);
+  const finalTokens = urlPathTokens(final, issuer);
+  return requestedTokens.size > 0 &&
+    [...requestedTokens].some((token) => finalTokens.has(token));
+}
+
 function hasSharedProductIdentityContext(
   identity: { cardName: string; aliases: string[] } | null,
   url: string,
@@ -293,13 +316,19 @@ function emptyClassification(url: string, warning: string): PageClassification {
 function sanitizeClassification(page: PageClassification): PageClassification {
   return {
     ...page,
-    canonicalUrl: redactLongDigits(page.canonicalUrl),
+    canonicalUrl: safeHttpsDisplayUrl(page.canonicalUrl) ?? "invalid-source",
     proposedName: page.proposedName
-      ? redactLongDigits(page.proposedName)
+      ? redactSensitiveUrlsInText(redactLongDigits(page.proposedName))
       : undefined,
-    aliases: page.aliases.map(redactLongDigits),
-    network: page.network ? redactLongDigits(page.network) : undefined,
-    warnings: page.warnings.map(redactLongDigits),
+    aliases: page.aliases.map((value) =>
+      redactSensitiveUrlsInText(redactLongDigits(value))
+    ),
+    network: page.network
+      ? redactSensitiveUrlsInText(redactLongDigits(page.network))
+      : undefined,
+    warnings: page.warnings.map((value) =>
+      redactSensitiveUrlsInText(redactLongDigits(value))
+    ),
     sanitizedEvidence: page.sanitizedEvidence.map(sanitizeEvidence),
   };
 }
@@ -694,7 +723,16 @@ export async function discoverIssuerCardCandidates(
       throw new Error("deadline_exceeded");
     }
     hasRequested = true;
-    return await fetchResource({ issuer: input.issuer, url, contentPurpose });
+    return requireOfficialFetchBody(
+      await fetchResource({
+        issuer: input.issuer,
+        url,
+        contentPurpose,
+        deadlineAt: input.deadlineAt,
+        now: input.now,
+        enforceRobots: input.fetchOfficialIssuerResource === undefined,
+      }),
+    );
   };
 
   for (const rawUrl of sitemapStarts) {
@@ -820,6 +858,18 @@ export async function discoverIssuerCardCandidates(
         !isAnchoredToHost(response.canonicalUrl, anchorHost)
       ) {
         quarantined.push(emptyClassification(url, "cross_host_response"));
+        continue;
+      }
+      if (
+        !redirectPreservesProductIdentity(
+          url,
+          response.canonicalUrl,
+          input.issuer,
+        )
+      ) {
+        quarantined.push(
+          emptyClassification(url, "redirect_identity_mismatch"),
+        );
         continue;
       }
       const page = classifyIssuerPage({

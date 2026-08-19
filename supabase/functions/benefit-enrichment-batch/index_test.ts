@@ -10,6 +10,7 @@ import {
   networkWorkMayStart,
   newestValidCrawlObservations,
   observationValidatedAt,
+  previousFetchValidators,
   rawOnlyNextRunAt,
   readCompleteAbsenceHistory,
   readCurrentBenefits,
@@ -1147,6 +1148,49 @@ Deno.test("identity review preserves the HTTP observation while marking it incom
   );
 });
 
+Deno.test("conditional cache reuse requires prior complete canonical and content evidence", () => {
+  const job = (
+    sourceObservation: Record<string, unknown>,
+    observation: Record<string, unknown>,
+  ) => ({
+    result_summary: {
+      observation: {
+        ...observation,
+        source_observation: sourceObservation,
+      },
+    },
+  });
+  const complete = previousFetchValidators(job({
+    parser_version: "benefits-v6",
+    etag: '"v1"',
+    content_hash: "a".repeat(64),
+  }, {
+    crawl_complete: true,
+    canonical_benefit_hash: "b".repeat(64),
+  }) as never);
+  assert(complete?.reusableExtraction === true, "complete cache was rejected");
+  assert(complete?.contentHash === "a".repeat(64), "content evidence was lost");
+
+  for (
+    const invalid of [
+      job({ parser_version: "benefits-v6", etag: '"v1"' }, {
+        crawl_complete: true,
+        canonical_benefit_hash: "b".repeat(64),
+      }),
+      job({
+        parser_version: "benefits-v6",
+        etag: '"v1"',
+        content_hash: "a".repeat(64),
+      }, { crawl_complete: false, canonical_benefit_hash: "b".repeat(64) }),
+    ]
+  ) {
+    assert(
+      previousFetchValidators(invalid as never)?.reusableExtraction === false,
+      "incomplete cache sent conditional validators",
+    );
+  }
+});
+
 Deno.test("scheduled seeding skips pilot conflicts and preserves processing and terminal jobs on repeats", async () => {
   const urlHash =
     "a9681b52e7105d3d3540076b1705c9d446e1171de165973e833940f671eedadf";
@@ -1957,6 +2001,18 @@ Deno.test("staging source metadata contains only a validated display URL", async
   assert(
     rotated.sourceUrlHash !== metadata.sourceUrlHash,
     "exact transient source identity was not digested before redaction",
+  );
+  const transientDigest = "f".repeat(64);
+  const fromFetcher = await (boundary as (
+    url: string,
+    digest?: string,
+  ) => Promise<{ sourceUrl: string; sourceUrlHash: string }>)(
+    "https://issuer.example/card",
+    transientDigest,
+  );
+  assert(
+    fromFetcher.sourceUrlHash === transientDigest,
+    "fetcher transient identity digest was discarded after URL redaction",
   );
 });
 

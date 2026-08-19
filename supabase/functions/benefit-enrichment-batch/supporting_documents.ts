@@ -7,6 +7,7 @@ import {
   type OfficialFetchInput,
   type OfficialFetchResult,
   officialResourceText,
+  requireOfficialFetchBody,
 } from "../_shared/official_issuer_fetch.ts";
 import {
   boundedSourceUrl,
@@ -160,12 +161,42 @@ async function benefitDocument(
   resource: OfficialFetchResult,
   requestedUrl = resource.submittedUrl,
 ): Promise<BenefitDocument> {
+  const body = requireOfficialFetchBody(resource);
   return {
     sourceUrl: requestedUrl,
-    finalUrl: resource.canonicalUrl,
-    text: redactSensitiveUrlsInText(await officialResourceText(resource)),
-    contentHash: resource.contentHash,
+    finalUrl: body.canonicalUrl,
+    text: redactSensitiveUrlsInText(await officialResourceText(body)),
+    contentHash: body.contentHash,
   };
+}
+
+function supportingIdentityMatches(
+  resource: OfficialFetchResult,
+  text: string,
+  labels: string[],
+  primaryUrl: string,
+  exactCuratedIdentity = false,
+): boolean {
+  if (exactCuratedIdentity) return true;
+  const normalize = (value: string) =>
+    value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const normalizedText = normalize(text);
+  const normalizedLabels = labels.map(normalize).filter((label) =>
+    label.length >= 4
+  );
+  if (normalizedLabels.some((label) => normalizedText.includes(label))) {
+    return true;
+  }
+  try {
+    const primaryPath = new URL(primaryUrl).pathname.replace(/\/$/, "");
+    const finalPath = new URL(resource.canonicalUrl).pathname.replace(
+      /\/$/,
+      "",
+    );
+    return finalPath === primaryPath || finalPath.startsWith(`${primaryPath}/`);
+  } catch {
+    return false;
+  }
 }
 
 export async function collectSupportingBenefitDocuments(
@@ -177,8 +208,9 @@ export async function collectSupportingBenefitDocuments(
     MAX_SUPPORTING_LINKS,
     Math.max(0, Math.trunc(input.maximumLinks ?? MAX_SUPPORTING_LINKS)),
   );
+  const primary = requireOfficialFetchBody(input.primary);
   const primaryDocument = await benefitDocument(
-    input.primary,
+    primary,
     input.primary.submittedUrl,
   );
   const documents = primaryDocument.text.trim() ? [primaryDocument] : [];
@@ -359,6 +391,8 @@ export async function collectSupportingBenefitDocuments(
           parserVersion: input.parserVersion ?? "benefits-v6",
           maxAttempts: 3,
           maxBackoffMs: 30_000,
+          deadlineAt: input.requestDeadlineAt,
+          enforceRobots: true,
         });
         for (const attempt of observation.attempts.slice(0, -1)) {
           attempts.push({
@@ -396,6 +430,44 @@ export async function collectSupportingBenefitDocuments(
         status: "failed",
         errorCode: sanitizedSourceErrorCode(error),
         attemptedAt: new Date().toISOString(),
+      });
+      continue;
+    }
+    try {
+      resource = requireOfficialFetchBody(resource);
+    } catch (error) {
+      attempts.push({
+        requestedUrl: current.url,
+        finalUrl: resource.canonicalUrl,
+        role: current.role,
+        status: "failed",
+        ...(resource.status ? { httpStatus: resource.status } : {}),
+        errorCode: sanitizedSourceErrorCode(error),
+        attemptedAt: resource.retrievedAt,
+      });
+      continue;
+    }
+    const resourceText = await officialResourceText(resource);
+    if (
+      !supportingIdentityMatches(
+        resource,
+        resourceText,
+        input.identityLabels,
+        input.primary.canonicalUrl,
+        exactSet.has(current.url) &&
+          boundedSourceUrl(resource.canonicalUrl) ===
+            boundedSourceUrl(current.url),
+      )
+    ) {
+      attempts.push({
+        requestedUrl: current.url,
+        finalUrl: resource.canonicalUrl,
+        role: current.role,
+        status: "failed",
+        httpStatus: resource.status,
+        contentHash: resource.contentHash,
+        errorCode: "identity_mismatch",
+        attemptedAt: resource.retrievedAt,
       });
       continue;
     }

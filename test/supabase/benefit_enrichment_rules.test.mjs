@@ -553,3 +553,12 @@ test('source privacy scans beyond admin-sized excerpts without truncating ordina
   assert.doesNotMatch(safe, /tail-secret|private/);
   assert.equal(safe.endsWith('https://issuer.example/card'), true);
 });
+
+test('source privacy decodes only the credential candidate and preserves adjacent prose byte-for-byte', () => {
+  const ordinary = 'Save 20%25; use 3%3A reward math; email offers@example.com.';
+  const input = `${ordinary} Link https%253A%252F%252Fuser%253Apass%2540issuer.example%252Fcard%253Ftoken%253Dsecret then keep 5%25.`;
+  const safe = redactSensitiveUrlsInText(input);
+  assert.equal(safe.startsWith(`${ordinary} Link `), true);
+  assert.equal(safe.endsWith(' then keep 5%25.'), true);
+  assert.doesNotMatch(safe, /user|pass|token|secret/i);
+});

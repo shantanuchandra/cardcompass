@@ -1,3 +1,8 @@
+import {
+  redactSensitiveUrlsInText,
+  redactSensitiveUrlsInValue,
+} from "./benefit_source_privacy.ts";
+
 export type CanonicalCardIdentity = {
   issuer: string;
   cardName: string;
@@ -281,10 +286,11 @@ export function officialCardIdentityFromHtml(
   ];
   for (const source of patterns) {
     for (const match of html.matchAll(source.pattern)) {
-      const candidate = stripTitleMarketing(
+      const candidate = redactSensitiveUrlsInText(stripTitleMarketing(
         decodeHtmlText(match[1] ?? ""),
         issuer,
-      );
+      )).replace(/\[redacted(?:-encoded)?-url\]/g, " ")
+        .replace(/\s+/g, " ").trim();
       if (
         source.documentMetadata &&
         !hasMeaningfulMetadataProductToken(candidate, issuer)
@@ -442,7 +448,7 @@ export function rankOfficialUrls(
 }
 
 export function sanitizeEvidence(value: string): string {
-  return value
+  return redactSensitiveUrlsInText(value)
     .split(/\r?\n/)
     .filter((line) =>
       /credit\s*card|primary\s+card|card\s+ending|amex|visa|mastercard|rupay/i
@@ -456,4 +462,8 @@ export function sanitizeEvidence(value: string): string {
         .trim()
     )
     .join("\n");
+}
+
+export function sanitizeDiscoveryEvidence(value: unknown): unknown {
+  return redactSensitiveUrlsInValue(value);
 }

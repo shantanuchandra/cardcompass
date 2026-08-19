@@ -3,8 +3,14 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.110.2";
 import {
   diffCatalogFields,
   normalizeOfficialCatalogPage,
+  requireCatalogPageIdentity,
 } from "../_shared/card_catalog_enrichment.ts";
-import { fetchOfficialIssuerResource } from "../_shared/official_issuer_fetch.ts";
+import {
+  approvedStoredQueryParameters,
+  fetchOfficialIssuerResource,
+  requireOfficialFetchBody,
+} from "../_shared/official_issuer_fetch.ts";
+import { safeHttpsDisplayUrl } from "../_shared/benefit_source_privacy.ts";
 
 type UntypedSupabaseClient = any;
 
@@ -23,7 +29,8 @@ async function queueConflictReview(
       discovery_job_id: job.discovery_job_id,
       proposed_fields: { card_id: job.card_id },
       source_evidence: {
-        official_url: job.canonical_url,
+        official_url: safeHttpsDisplayUrl(job.canonical_url) ??
+          "invalid-source",
         content_hash: job.content_hash,
         field_conflicts: conflicts,
       },
@@ -90,16 +97,29 @@ export async function processCatalogEnrichmentJob(
   if (!claimed) return "already_processing";
 
   try {
-    const page = await fetchOfficialIssuerResource({
-      issuer: claimed.issuer,
-      url: claimed.canonical_url,
-      contentPurpose: "html",
-    });
-    const normalized = normalizeOfficialCatalogPage(page.text, page.finalUrl);
+    const page = requireOfficialFetchBody(
+      await fetchOfficialIssuerResource({
+        issuer: claimed.issuer,
+        url: claimed.canonical_url,
+        contentPurpose: "html",
+        enforceRobots: true,
+        allowedQueryParameters: approvedStoredQueryParameters(
+          claimed.canonical_url,
+        ),
+      }),
+    );
     const { data: catalog, error: catalogError } = await db.from("card_catalog")
-      .select("id, network, card_type, joining_fee, annual_fee, apr")
+      .select(
+        "id, bank, card_name, network, card_type, joining_fee, annual_fee, apr",
+      )
       .eq("id", claimed.card_id).single();
     if (catalogError) throw catalogError;
+    requireCatalogPageIdentity(
+      page.text,
+      claimed.issuer,
+      String(catalog.card_name ?? ""),
+    );
+    const normalized = normalizeOfficialCatalogPage(page.text, page.finalUrl);
 
     const compared = diffCatalogFields(catalog, normalized.patch);
     if (Object.keys(compared.backfill).length > 0) {

@@ -17,9 +17,15 @@ export type OfficialFetchInput = {
     etag?: string;
     lastModified?: string;
     reusableExtraction: boolean;
+    contentHash?: string;
   };
   forceUnconditional?: boolean;
+  allowedQueryParameters?: string[];
+  enforceRobots?: boolean;
+  deadlineAt?: number;
   now?: () => number;
+  /** Internal per-observation cache; callers should not provide this. */
+  _robotsCache?: Map<string, RobotsRule[]>;
 };
 
 export type OfficialFetchResult = {
@@ -35,6 +41,13 @@ export type OfficialFetchResult = {
   etag?: string;
   lastModified?: string;
   notModified: boolean;
+  sourceIdentityHash?: string;
+};
+
+export type OfficialFetchBodyResult = OfficialFetchResult & {
+  notModified: false;
+  text: string;
+  contentHash: string;
 };
 
 export type OfficialFetchAttempt = {
@@ -78,6 +91,23 @@ export class OfficialFetchError extends Error {
     this.httpStatus = options.httpStatus;
     this.retryAfter = options.retryAfter;
   }
+}
+
+export function requireOfficialFetchBody(
+  result: OfficialFetchResult,
+): OfficialFetchBodyResult {
+  if (result.notModified || result.status === 304) {
+    throw new OfficialFetchError("unusable_not_modified", {
+      httpStatus: result.status,
+    });
+  }
+  if (
+    typeof result.text !== "string" ||
+    (result.contentType === "application/pdf" &&
+      !(result.bytes instanceof Uint8Array)) ||
+    !/^[0-9a-f]{64}$/i.test(result.contentHash ?? "")
+  ) throw new OfficialFetchError("unsupported_content");
+  return result as OfficialFetchBodyResult;
 }
 
 function decodePdfLiteral(value: string): string {
@@ -189,6 +219,7 @@ type OfficialFetchCode =
   | "empty_shell"
   | "unsupported_charset"
   | "robots_disallowed"
+  | "deadline_exceeded"
   | "identity_review";
 
 type ContentPolicy = {
@@ -225,26 +256,77 @@ function fetchError(
   return new OfficialFetchError(code, options);
 }
 
+function ipv4Octets(value: string): number[] | null {
+  const match = value.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (!match) return null;
+  const octets = match.slice(1).map(Number);
+  return octets.every((part) => part >= 0 && part <= 255) ? octets : null;
+}
+
+function globallyRoutableIpv4(octets: number[]): boolean {
+  const [first, second, third] = octets;
+  return !(first === 0 || first === 10 || first === 127 ||
+    (first === 100 && second >= 64 && second <= 127) ||
+    (first === 169 && second === 254) ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 0) ||
+    (first === 192 && second === 168) ||
+    (first === 198 && (second === 18 || second === 19)) ||
+    (first === 198 && second === 51 && third === 100) ||
+    (first === 203 && second === 0 && third === 113) ||
+    first >= 224);
+}
+
+function ipv6Words(value: string): number[] | null {
+  const normalized = value.trim().toLowerCase().replace(/^\[|\]$/g, "")
+    .split("%")[0];
+  if (!normalized.includes(":")) return null;
+  const sides = normalized.split("::");
+  if (sides.length > 2) return null;
+  const parseSide = (side: string): number[] | null => {
+    if (!side) return [];
+    const parts = side.split(":");
+    const words: number[] = [];
+    for (const [index, part] of parts.entries()) {
+      const ipv4 = ipv4Octets(part);
+      if (ipv4 && index === parts.length - 1) {
+        words.push(ipv4[0] << 8 | ipv4[1], ipv4[2] << 8 | ipv4[3]);
+      } else if (/^[0-9a-f]{1,4}$/.test(part)) {
+        words.push(Number.parseInt(part, 16));
+      } else {
+        return null;
+      }
+    }
+    return words;
+  };
+  const left = parseSide(sides[0]);
+  const right = parseSide(sides[1] ?? "");
+  if (!left || !right) return null;
+  if (sides.length === 1) return left.length === 8 ? left : null;
+  const missing = 8 - left.length - right.length;
+  return missing >= 1 ? [...left, ...Array(missing).fill(0), ...right] : null;
+}
+
 function isPrivateAddress(address: string): boolean {
   const value = address.trim().toLowerCase().replace(/^\[|\]$/g, "");
-  const mappedIpv4 = value.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-  if (mappedIpv4) return isPrivateAddress(mappedIpv4[1]);
-  const ipv4 = value.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
-  if (ipv4) {
-    const octets = ipv4.slice(1).map(Number);
-    if (octets.some((part) => part < 0 || part > 255)) return true;
-    const [first, second] = octets;
-    return first === 0 || first === 10 || first === 127 ||
-      (first === 100 && second >= 64 && second <= 127) ||
-      (first === 169 && second === 254) ||
-      (first === 172 && second >= 16 && second <= 31) ||
-      (first === 192 && second === 0) ||
-      (first === 192 && second === 168) ||
-      (first === 198 && (second === 18 || second === 19)) ||
-      first >= 224;
+  const directIpv4 = ipv4Octets(value);
+  if (directIpv4) return !globallyRoutableIpv4(directIpv4);
+  const words = ipv6Words(value);
+  if (!words) return true;
+  const mapped = words.slice(0, 5).every((word) => word === 0) &&
+    words[5] === 0xffff;
+  if (mapped) {
+    return !globallyRoutableIpv4([
+      words[6] >> 8,
+      words[6] & 0xff,
+      words[7] >> 8,
+      words[7] & 0xff,
+    ]);
   }
-  return value === "::" || value === "::1" ||
-    /^fc|^fd/.test(value) || /^fe[89ab]/.test(value) || /^ff/.test(value);
+  const first = words[0];
+  const documentation = first === 0x2001 && words[1] === 0x0db8;
+  const benchmark = first === 0x2001 && words[1] === 0x0002 && words[2] === 0;
+  return (first & 0xe000) !== 0x2000 || documentation || benchmark;
 }
 
 async function defaultResolveHost(host: string): Promise<string[]> {
@@ -382,17 +464,53 @@ async function sha256(bytes: Uint8Array): Promise<string> {
     .join("");
 }
 
-function canonicalInitialUrl(issuer: string, url: string): string {
+const SENSITIVE_QUERY_KEY =
+  /(?:token|session|secret|password|passwd|credential|auth|signature|sig|key|code|state|nonce|gclid|fbclid|^utm_)/i;
+
+export function approvedStoredQueryParameters(value: string): string[] {
   try {
-    return canonicalOfficialUrl(issuer, url);
+    return [
+      ...new Set(
+        [...new URL(value).searchParams.keys()].filter((key) =>
+          key && !SENSITIVE_QUERY_KEY.test(key)
+        ),
+      ),
+    ].slice(0, 16);
+  } catch {
+    return [];
+  }
+}
+
+function approvedRequestUrl(
+  issuer: string,
+  url: string,
+  allowedQueryParameters: string[] = [],
+): string {
+  try {
+    const canonical = new URL(canonicalOfficialUrl(issuer, url));
+    const allowed = new Set(
+      allowedQueryParameters.map((key) => key.trim().toLowerCase()).filter(
+        (key) => key && !SENSITIVE_QUERY_KEY.test(key),
+      ),
+    );
+    const kept = [...canonical.searchParams.entries()].filter(([key]) =>
+      allowed.has(key.toLowerCase()) && !SENSITIVE_QUERY_KEY.test(key)
+    );
+    canonical.search = "";
+    for (const [key, value] of kept) canonical.searchParams.append(key, value);
+    return canonical.toString();
   } catch {
     throw fetchError("unapproved_domain");
   }
 }
 
-function canonicalRedirectUrl(issuer: string, url: string): string {
+function canonicalRedirectUrl(
+  issuer: string,
+  url: string,
+  allowedQueryParameters: string[] = [],
+): string {
   try {
-    return canonicalOfficialUrl(issuer, url);
+    return approvedRequestUrl(issuer, url, allowedQueryParameters);
   } catch {
     throw fetchError("redirect_rejected");
   }
@@ -426,7 +544,17 @@ function contentMetadata(value: string | null): {
 }
 
 function decodeText(bytes: Uint8Array, charset?: string): string {
-  const normalized = charset === "iso-8859-1" ? "windows-1252" : charset;
+  const bomCharset = bytes.length >= 3 && bytes[0] === 0xef &&
+      bytes[1] === 0xbb && bytes[2] === 0xbf
+    ? "utf-8"
+    : bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe
+    ? "utf-16le"
+    : bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff
+    ? "utf-16be"
+    : undefined;
+  const normalized = charset === "iso-8859-1"
+    ? "windows-1252"
+    : charset ?? bomCharset;
   try {
     return new TextDecoder(normalized || "utf-8", { fatal: true }).decode(
       bytes,
@@ -438,12 +566,19 @@ function decodeText(bytes: Uint8Array, charset?: string): string {
 
 function validateHtmlBody(text: string): void {
   const normalized = text.replace(/\s+/g, " ").trim();
+  const checkpoint = [
+    ...normalized.matchAll(
+      /<(?:title|h1|h2)[^>]*>([\s\S]*?)<\/(?:title|h1|h2)>/gi,
+    ),
+  ].map((match) => match[1].replace(/<[^>]+>/g, " ")).join(" ");
   if (
-    /(?:page\s+not\s+found|error\s*404|<h1[^>]*>\s*404\b|requested\s+page\s+(?:does\s+not\s+exist|was\s+not\s+found))/i
-      .test(normalized)
+    /(?:page\s+not\s+found|error\s*404|\b404\b|requested\s+page\s+(?:does\s+not\s+exist|was\s+not\s+found)|can(?:not|'t)\s+find\s+(?:that|this|the)\s+page)/i
+      .test(checkpoint)
   ) throw fetchError("soft_404", { httpStatus: 200 });
   if (
-    /(?:captcha|access\s+denied|verify\s+(?:you\s+are\s+)?human|cloudflare\s+ray|<input[^>]+type=["']password|<form[^>]+(?:login|sign[-_ ]?in))/i
+    /(?:captcha|security\s+check|access\s+denied|request\s+rejected|verify\s+(?:you\s+are\s+)?human|checking\s+your\s+browser|enable\s+cookies\s+to\s+continue)/i
+      .test(checkpoint) ||
+    /(?:cloudflare\s+ray|automated\s+requests?\s+(?:are\s+)?blocked|<input[^>]+type=["']password|<form[^>]+(?:login|sign[-_ ]?in))/i
       .test(normalized)
   ) throw fetchError("challenge_page", { httpStatus: 200 });
   const withoutScripts = normalized
@@ -481,7 +616,9 @@ function statusError(response: Response): OfficialFetchError {
 function conditionalHeaders(input: OfficialFetchInput): Record<string, string> {
   if (
     input.forceUnconditional || !input.previous || !input.parserVersion ||
-    input.previous.parserVersion !== input.parserVersion
+    input.previous.parserVersion !== input.parserVersion ||
+    input.previous.reusableExtraction !== true ||
+    !/^[0-9a-f]{64}$/i.test(input.previous.contentHash ?? "")
   ) return {};
   return {
     ...(boundedHeader(input.previous.etag ?? null)
@@ -504,13 +641,65 @@ function redirectNeedsIdentityReview(value: string): boolean {
   ) || /^\/(?:cards?\/credit-cards?|credit-cards?)$/.test(path);
 }
 
+function ensureBeforeDeadline(input: OfficialFetchInput): void {
+  if (
+    input.deadlineAt !== undefined &&
+    (input.now ?? Date.now)() >= input.deadlineAt
+  ) throw fetchError("deadline_exceeded");
+}
+
+type RobotsRule = { allow: boolean; path: string };
+
+function parseRobotsRules(text: string): RobotsRule[] {
+  const groups: Array<{ agents: string[]; rules: RobotsRule[] }> = [];
+  let agents: string[] = [];
+  let rules: RobotsRule[] = [];
+  const flush = () => {
+    if (agents.length > 0) groups.push({ agents, rules });
+    agents = [];
+    rules = [];
+  };
+  for (const rawLine of text.slice(0, 256 * 1024).split(/\r?\n/)) {
+    const line = rawLine.replace(/#.*$/, "").trim();
+    const separator = line.indexOf(":");
+    if (separator < 0) continue;
+    const field = line.slice(0, separator).trim().toLowerCase();
+    const value = line.slice(separator + 1).trim();
+    if (field === "user-agent") {
+      if (rules.length > 0) flush();
+      agents.push(value.toLowerCase());
+    } else if ((field === "allow" || field === "disallow") && agents.length) {
+      if (value) rules.push({ allow: field === "allow", path: value });
+    }
+  }
+  flush();
+  const exact = groups.filter((group) =>
+    group.agents.some((agent) => agent === "cardcompasscatalogbot")
+  );
+  const selected = exact.length > 0
+    ? exact
+    : groups.filter((group) => group.agents.includes("*"));
+  return selected.flatMap((group) => group.rules);
+}
+
+function robotsPermit(rules: RobotsRule[], url: string): boolean {
+  const target = `${new URL(url).pathname}${new URL(url).search}`;
+  const matching = rules.filter((rule) => target.startsWith(rule.path))
+    .sort((left, right) =>
+      right.path.length - left.path.length || Number(right.allow) -
+        Number(left.allow)
+    );
+  return matching[0]?.allow ?? true;
+}
+
 export async function fetchOfficialIssuerResource(
   input: OfficialFetchInput,
 ): Promise<OfficialFetchResult> {
   const exactSubmittedUrl = input.url.trim();
-  const submittedRequestUrl = canonicalInitialUrl(
+  const submittedRequestUrl = approvedRequestUrl(
     input.issuer,
     exactSubmittedUrl,
+    input.allowedQueryParameters,
   );
   const maxBytes = input.maxBytes ?? DEFAULT_MAX_BYTES;
   const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -521,14 +710,75 @@ export async function fetchOfficialIssuerResource(
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   let url = submittedRequestUrl;
   const visited = new Set<string>();
+  const robotsByHost = input._robotsCache ?? new Map<string, RobotsRule[]>();
+  const sourceIdentityHash = await sha256(
+    new TextEncoder().encode(exactSubmittedUrl),
+  );
+
+  const productionRobotsAllowed = async (targetUrl: string) => {
+    const target = new URL(targetUrl);
+    let rules = robotsByHost.get(target.host);
+    if (!rules) {
+      ensureBeforeDeadline(input);
+      const robotsUrl = `${target.protocol}//${target.host}/robots.txt`;
+      await ensurePublicHost(robotsUrl, resolveHost, controller.signal);
+      ensureBeforeDeadline(input);
+      let response: Response;
+      try {
+        response = await raceWithDeadline(
+          fetchImpl(robotsUrl, {
+            redirect: "manual",
+            headers: {
+              "User-Agent": "CardCompassCatalogBot/1.0 (+catalog verification)",
+              Accept: "text/plain",
+            },
+            signal: controller.signal,
+          }),
+          controller.signal,
+        );
+      } catch {
+        throw fetchError("robots_disallowed");
+      }
+      if (response.status === 404) {
+        // A genuinely missing robots resource permits crawling. Transport,
+        // malformed, redirect, oversized, and other HTTP outcomes fail closed.
+        cancelResponseBody(response);
+        rules = [];
+      } else if (!response.ok || response.status >= 300) {
+        cancelResponseBody(response);
+        throw fetchError("robots_disallowed");
+      } else {
+        let bytes: Uint8Array;
+        try {
+          bytes = await readResponseBytes(response, 256 * 1024, controller);
+        } catch {
+          throw fetchError("robots_disallowed");
+        }
+        try {
+          rules = parseRobotsRules(
+            new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+          );
+        } catch {
+          throw fetchError("robots_disallowed");
+        }
+      }
+      robotsByHost.set(target.host, rules);
+    }
+    return robotsPermit(rules, targetUrl);
+  };
 
   try {
     for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects++) {
+      ensureBeforeDeadline(input);
       if (visited.has(url)) throw fetchError("redirect_rejected");
       visited.add(url);
-      if (input.robotsAllowed) {
+      if (input.robotsAllowed || input.enforceRobots) {
         try {
-          if (!await input.robotsAllowed(url)) {
+          ensureBeforeDeadline(input);
+          const allowed = input.robotsAllowed
+            ? await input.robotsAllowed(url)
+            : await productionRobotsAllowed(url);
+          if (!allowed) {
             throw fetchError("robots_disallowed");
           }
         } catch (error) {
@@ -536,7 +786,9 @@ export async function fetchOfficialIssuerResource(
           throw fetchError("robots_disallowed");
         }
       }
+      ensureBeforeDeadline(input);
       await ensurePublicHost(url, resolveHost, controller.signal);
+      ensureBeforeDeadline(input);
       let response: Response;
       try {
         response = await raceWithDeadline(
@@ -567,15 +819,17 @@ export async function fetchOfficialIssuerResource(
         cancelResponseBody(response);
         return {
           status: 304,
-          submittedUrl: exactSubmittedUrl,
-          finalUrl: url,
+          submittedUrl: displayUrl(submittedRequestUrl),
+          finalUrl: displayUrl(url),
           canonicalUrl: displayUrl(url),
           retrievedAt,
+          contentHash: input.previous?.contentHash,
           etag: boundedHeader(response.headers.get("etag")) ??
             boundedHeader(input.previous?.etag ?? null),
           lastModified: boundedHeader(response.headers.get("last-modified")) ??
             boundedHeader(input.previous?.lastModified ?? null),
           notModified: true,
+          sourceIdentityHash,
         };
       }
       if (response.status >= 300 && response.status < 400) {
@@ -591,7 +845,11 @@ export async function fetchOfficialIssuerResource(
         } catch {
           throw fetchError("redirect_rejected");
         }
-        url = canonicalRedirectUrl(input.issuer, redirectUrl);
+        url = canonicalRedirectUrl(
+          input.issuer,
+          redirectUrl,
+          input.allowedQueryParameters,
+        );
         if (redirectNeedsIdentityReview(url)) {
           throw fetchError("identity_review");
         }
@@ -634,8 +892,8 @@ export async function fetchOfficialIssuerResource(
 
       const result: OfficialFetchResult = {
         status: response.status,
-        submittedUrl: exactSubmittedUrl,
-        finalUrl: url,
+        submittedUrl: displayUrl(submittedRequestUrl),
+        finalUrl: displayUrl(url),
         canonicalUrl: displayUrl(url),
         contentType,
         bytes,
@@ -647,6 +905,7 @@ export async function fetchOfficialIssuerResource(
         etag: boundedHeader(response.headers.get("etag")),
         lastModified: boundedHeader(response.headers.get("last-modified")),
         notModified: false,
+        sourceIdentityHash,
       };
       result.text = await officialResourceText(result);
       if (
@@ -666,13 +925,15 @@ function retryAfterMilliseconds(
   value: string | undefined,
   now: number,
   maximum: number,
-): number {
-  if (!value) return 0;
+): number | undefined {
+  if (!value) return undefined;
   const seconds = Number(value);
-  const parsed = Number.isFinite(seconds) && seconds >= 0
+  const parsed = value.trim() !== "" && Number.isFinite(seconds) && seconds >= 0
     ? seconds * 1000
     : Date.parse(value) - now;
-  return Math.min(maximum, Math.max(0, Number.isFinite(parsed) ? parsed : 0));
+  return Number.isFinite(parsed) && parsed >= 0
+    ? Math.min(maximum, parsed)
+    : undefined;
 }
 
 /** Executes the bounded source-observation retry matrix without hiding attempts. */
@@ -691,18 +952,30 @@ export async function fetchOfficialIssuerObservation(
   const attempts: OfficialFetchAttempt[] = [];
   let forceUnconditional = input.forceUnconditional === true;
   let unusable304Fallback = false;
+  const robotsCache = new Map<string, RobotsRule[]>();
 
   for (let index = 0; index < maxAttempts; index += 1) {
+    if (input.deadlineAt !== undefined && now() >= input.deadlineAt) {
+      const attemptedAt = new Date(now()).toISOString();
+      attempts.push({ code: "deadline_exceeded", attemptedAt });
+      return {
+        disposition: "failed",
+        attempts,
+        reviewReason: "deadline_exceeded",
+      };
+    }
     try {
       const result = await fetchOfficialIssuerResource({
         ...input,
         forceUnconditional,
+        _robotsCache: robotsCache,
       });
       attempts.push({ status: result.status, attemptedAt: result.retrievedAt });
       if (result.notModified) {
         const reusable304 = input.previous?.reusableExtraction === true &&
           input.previous.parserVersion === input.parserVersion &&
           Boolean(input.previous.etag || input.previous.lastModified) &&
+          Boolean(result.contentHash) &&
           !forceUnconditional;
         if (reusable304) {
           return { disposition: "not_modified", result, attempts };
@@ -797,7 +1070,32 @@ export async function fetchOfficialIssuerObservation(
         maxBackoffMs,
         1000 * 2 ** index,
       );
-      await delay(backoff);
+      const remaining = input.deadlineAt === undefined
+        ? backoff
+        : Math.max(0, input.deadlineAt - now());
+      if (remaining <= 0) {
+        attempts.push({
+          code: "deadline_exceeded",
+          attemptedAt: new Date(now()).toISOString(),
+        });
+        return {
+          disposition: "failed",
+          attempts,
+          reviewReason: "deadline_exceeded",
+        };
+      }
+      await delay(Math.min(backoff, remaining));
+      if (input.deadlineAt !== undefined && now() >= input.deadlineAt) {
+        attempts.push({
+          code: "deadline_exceeded",
+          attemptedAt: new Date(now()).toISOString(),
+        });
+        return {
+          disposition: "failed",
+          attempts,
+          reviewReason: "deadline_exceeded",
+        };
+      }
     }
   }
   return { disposition: "failed", attempts, reviewReason: "retry_exhausted" };

@@ -12,10 +12,14 @@ import {
   publicReasonCode,
   rankOfficialUrls,
   reviewRequiredJobPatch,
+  sanitizeDiscoveryEvidence,
   sanitizeEvidence,
   selectSubmittedUrlIdentity,
 } from "../_shared/card_discovery.ts";
-import { fetchOfficialIssuerResource } from "../_shared/official_issuer_fetch.ts";
+import {
+  fetchOfficialIssuerResource,
+  requireOfficialFetchBody,
+} from "../_shared/official_issuer_fetch.ts";
 import { enqueueBenefitEnrichmentJob } from "../benefit-enrichment-batch/batch_policy.ts";
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
@@ -87,7 +91,7 @@ function safeEvidence(raw: unknown): SafeEvidence {
     short("filename_product"),
     short("pdf_header_product"),
   ].filter((item): item is string => Boolean(item));
-  return {
+  return sanitizeDiscoveryEvidence({
     issuer,
     subject_product: short("subject_product"),
     filename_product: short("filename_product"),
@@ -110,7 +114,7 @@ function safeEvidence(raw: unknown): SafeEvidence {
     confidence: typeof value.confidence === "number"
       ? Math.max(0, Math.min(1, value.confidence))
       : 0,
-  };
+  }) as SafeEvidence;
 }
 
 async function sha256(value: string): Promise<string> {
@@ -201,14 +205,22 @@ async function processSubmittedUrl(
 ) {
   const evidence = job.evidence as SafeEvidence;
   const submittedUrl = canonicalOfficialUrl(job.issuer, rawUrl);
-  const submittedHash = await sha256(submittedUrl);
-  const knownSubmitted = await findCatalogCardByUrlHashes(db, [submittedHash]);
+  const canonicalSubmittedHash = await sha256(submittedUrl);
+  const exactSubmittedHash = await sha256(rawUrl.trim());
+  const knownSubmitted = await findCatalogCardByUrlHashes(
+    db,
+    [exactSubmittedHash, canonicalSubmittedHash],
+  );
   if (knownSubmitted) return markResolved(db, job.id, knownSubmitted);
 
-  const page = await fetchOfficialIssuerResource({
-    issuer: job.issuer,
-    url: submittedUrl,
-  });
+  const page = requireOfficialFetchBody(
+    await fetchOfficialIssuerResource({
+      issuer: job.issuer,
+      url: rawUrl,
+      enforceRobots: true,
+    }),
+  );
+  const submittedHash = page.sourceIdentityHash ?? exactSubmittedHash;
   const finalUrl = page.canonicalUrl;
   const finalHash = await sha256(finalUrl);
   const knownFinal = await findCatalogCardByUrlHashes(
@@ -319,7 +331,7 @@ async function processSubmittedUrl(
     .upsert({
       card_id: cardId,
       source_url: finalUrl,
-      canonical_submitted_url: submittedUrl,
+      canonical_submitted_url: page.submittedUrl,
       canonical_final_url: finalUrl,
       submitted_url_hash: submittedHash,
       final_url_hash: finalHash,
@@ -368,11 +380,14 @@ async function discoverOfficialUrl(
   for (const domain of officialDomainsForIssuer(issuer)) {
     for (const sitemapPath of ["/sitemap.xml", "/sitemap_index.xml"]) {
       try {
-        const response = await fetchOfficialIssuerResource({
-          issuer,
-          url: `https://${domain}${sitemapPath}`,
-          contentPurpose: "sitemap",
-        });
+        const response = requireOfficialFetchBody(
+          await fetchOfficialIssuerResource({
+            issuer,
+            url: `https://${domain}${sitemapPath}`,
+            contentPurpose: "sitemap",
+            enforceRobots: true,
+          }),
+        );
         urls.push(
           ...Array.from(
             response.text.matchAll(/<loc>\s*([^<]+)\s*<\/loc>/gi),
@@ -398,6 +413,17 @@ async function putInReview(
   existingCandidates: unknown[] = [],
   preserveTerminal = false,
 ) {
+  proposedFields = sanitizeDiscoveryEvidence(proposedFields) as Record<
+    string,
+    unknown
+  >;
+  sourceEvidence = sanitizeDiscoveryEvidence(sourceEvidence) as Record<
+    string,
+    unknown
+  >;
+  existingCandidates = sanitizeDiscoveryEvidence(
+    existingCandidates,
+  ) as unknown[];
   if (preserveTerminal) {
     const { data: currentReview, error: currentReviewError } = await db
       .from("card_catalog_review_queue")
@@ -545,10 +571,13 @@ async function processDiscoveryJob(
       ], evidence.confidence ?? 0);
       return;
     }
-    const page = await fetchOfficialIssuerResource({
-      issuer: job.issuer,
-      url: officialUrl,
-    });
+    const page = requireOfficialFetchBody(
+      await fetchOfficialIssuerResource({
+        issuer: job.issuer,
+        url: officialUrl,
+        enforceRobots: true,
+      }),
+    );
     if (page.contentType === "application/pdf") {
       await putInReview(
         db,

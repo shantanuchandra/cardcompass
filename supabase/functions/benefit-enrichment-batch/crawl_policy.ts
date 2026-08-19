@@ -17,6 +17,15 @@ export type SourceAttemptInput = {
   errorCode?: string;
   attemptedAt: string;
   parserCacheReusable?: boolean;
+  attemptHistory?: SourceAttemptHistory[];
+  attemptHistoryOverflow?: boolean;
+};
+
+export type SourceAttemptHistory = {
+  status: SourceAttemptStatus;
+  httpStatus?: number;
+  errorCode?: string;
+  attemptedAt: string;
 };
 
 export type SourceAttempt = {
@@ -32,6 +41,8 @@ export type SourceAttempt = {
   parserCacheReusable?: boolean;
   /** Internally derived SHA-256 of the full canonical requested URL. */
   logicalSourceKey?: string;
+  attemptHistory?: SourceAttemptHistory[];
+  attemptHistoryOverflow?: boolean;
 };
 
 export type CrawlAssessment = {
@@ -43,11 +54,13 @@ export type CrawlAssessment = {
 const SAFE_ERROR_CODES = new Set([
   "corrupt_pdf",
   "deadline_exceeded",
+  "unusable_not_modified",
   "empty_document",
   "fetch_budget_exhausted",
   "required_source_overflow",
   "decisive_attempt_overflow",
   "invalid_attempt_history",
+  "attempt_history_overflow",
   "invalid_source_url",
   "invalid_attempt",
   "http_403",
@@ -76,6 +89,7 @@ const SAFE_ERROR_CODES = new Set([
   "unsupported_content",
 ]);
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_ATTEMPT_HISTORY = 6;
 export const MAX_EVIDENCE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 export function sanitizedSourceErrorCode(error: unknown): string {
@@ -246,6 +260,19 @@ export function sanitizedSourceAttempt(
       attemptedAt: bounded(attempt.attemptedAt, 64) ?? "",
     };
   }
+  const attemptHistory = attempt.attemptHistory?.slice(0, MAX_ATTEMPT_HISTORY)
+    .map((entry) => ({
+      status: entry.status,
+      ...(Number.isInteger(entry.httpStatus) &&
+          Number(entry.httpStatus) >= 100 &&
+          Number(entry.httpStatus) <= 599
+        ? { httpStatus: Number(entry.httpStatus) }
+        : {}),
+      ...(entry.errorCode && SAFE_ERROR_CODES.has(entry.errorCode)
+        ? { errorCode: entry.errorCode }
+        : {}),
+      attemptedAt: bounded(entry.attemptedAt, 64) ?? "",
+    }));
   return {
     url: boundedSourceUrl(finalUrl),
     role: attempt.role,
@@ -267,6 +294,11 @@ export function sanitizedSourceAttempt(
       ? { parserCacheReusable: true }
       : {}),
     logicalSourceKey: sourceIdentityDigest(requestedUrl),
+    ...(attemptHistory?.length ? { attemptHistory } : {}),
+    ...(attempt.attemptHistoryOverflow === true ||
+        (attempt.attemptHistory?.length ?? 0) > MAX_ATTEMPT_HISTORY
+      ? { attemptHistoryOverflow: true }
+      : {}),
   };
 }
 
@@ -292,7 +324,24 @@ function validSourceAttemptInput(value: unknown): value is SourceAttemptInput {
     (attempt.errorCode === undefined ||
       typeof attempt.errorCode === "string") &&
     (attempt.parserCacheReusable === undefined ||
-      typeof attempt.parserCacheReusable === "boolean");
+      typeof attempt.parserCacheReusable === "boolean") &&
+    (attempt.attemptHistoryOverflow === undefined ||
+      typeof attempt.attemptHistoryOverflow === "boolean") &&
+    (attempt.attemptHistory === undefined ||
+      (Array.isArray(attempt.attemptHistory) &&
+        attempt.attemptHistory.every((entry) =>
+          entry !== null && typeof entry === "object" &&
+          !Array.isArray(entry) &&
+          ["success", "not_modified", "failed"].includes(
+            String((entry as Record<string, unknown>).status),
+          ) &&
+          typeof (entry as Record<string, unknown>).attemptedAt === "string" &&
+          ((entry as Record<string, unknown>).httpStatus === undefined ||
+            typeof (entry as Record<string, unknown>).httpStatus ===
+              "number") &&
+          ((entry as Record<string, unknown>).errorCode === undefined ||
+            typeof (entry as Record<string, unknown>).errorCode === "string")
+        )));
 }
 
 function invalidAttemptMarker(attemptedAt: string): SourceAttempt {
@@ -417,6 +466,18 @@ function assessPreparedAttempts(
     };
   }
   const grouped = groupedAttempts(persisted);
+  if (
+    [...grouped.values()].some((entries) =>
+      entries.length > MAX_ATTEMPT_HISTORY ||
+      entries.some((entry) => entry.attempt.attemptHistoryOverflow === true)
+    )
+  ) {
+    return {
+      complete: false,
+      reason: "attempt_history_overflow",
+      attempts: persisted.slice(0, 9),
+    };
+  }
   const primaryGroups = [...grouped.entries()].filter(([key]) =>
     key.startsWith("primary:")
   );
@@ -499,7 +560,24 @@ export function compactSourceAttempts(
       ? decisive
       : optional;
     if (terminal) {
-      target.push(terminal);
+      const history = entries.map(({ attempt }) => ({
+        status: attempt.status,
+        ...(attempt.httpStatus !== undefined
+          ? { httpStatus: attempt.httpStatus }
+          : {}),
+        ...(attempt.errorCode ? { errorCode: attempt.errorCode } : {}),
+        attemptedAt: attempt.attemptedAt,
+      }));
+      target.push({
+        ...terminal,
+        attempt: {
+          ...terminal.attempt,
+          attemptHistory: history.slice(-MAX_ATTEMPT_HISTORY),
+          ...(history.length > MAX_ATTEMPT_HISTORY
+            ? { attemptHistoryOverflow: true }
+            : {}),
+        },
+      });
       continue;
     }
     if (target === decisive) {

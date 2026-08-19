@@ -15,6 +15,7 @@ import {
   rankOfficialUrls,
   reviewRequiredJobPatch,
   sanitizeEvidence,
+  sanitizeDiscoveryEvidence,
   selectSubmittedUrlIdentity,
 } from '../../supabase/functions/_shared/card_discovery.ts';
 
@@ -457,4 +458,19 @@ test('sanitizes full numbers and unrelated customer text from evidence', () => {
   assert.equal(safe.includes('Jane Doe'), false);
   assert.equal(safe.includes('5123 4567 8912'), false);
   assert.equal(safe.includes('Privilege Credit Card'), true);
+});
+
+test('sanitizes visible, href, encoded, keyed, and nested discovery evidence URL secrets', () => {
+  const safeExcerpt = sanitizeEvidence(
+    'Privilege Credit Card <a href="https://user:pass@www.axis.bank.in/card?token=secret#private">Terms</a> https%253A%252F%252Fuser%253Apass%2540www.axis.bank.in%252Fcard%253Fsession%253Dsecret',
+  );
+  const nested = sanitizeDiscoveryEvidence({
+    'https://user:pass@www.axis.bank.in/key?token=secret': {
+      description: safeExcerpt,
+      source: '//user:pass@www.axis.bank.in/card?token=secret#private',
+    },
+  });
+  const serialized = JSON.stringify(nested);
+  assert.doesNotMatch(serialized, /user:pass|token|session|secret|private/i);
+  assert.match(serialized, /Privilege Credit Card/);
 });

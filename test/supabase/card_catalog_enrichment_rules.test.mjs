@@ -5,6 +5,7 @@ import {
   diffCatalogFields,
   normalizeMoney,
   normalizeOfficialCatalogPage,
+  requireCatalogPageIdentity,
 } from '../../supabase/functions/_shared/card_catalog_enrichment.ts';
 
 test('normalizes explicit Indian fee and APR values', () => {
@@ -54,6 +55,15 @@ test('backfills null fields but reports non-null conflicts', () => {
   assert.equal(conflict.conflicts[0].field, 'annual_fee');
   assert.equal(conflict.conflicts[0].existing, 1000);
   assert.equal(conflict.conflicts[0].proposed, 1500);
+
+  const privateConflict = diffCatalogFields(
+    {network: 'https://user:pass@issuer.example/network?token=secret'},
+    {network: {value: 'Visa', confidence: 0.96, evidence: 'Network Visa'}},
+  );
+  assert.doesNotMatch(
+    JSON.stringify(privateConflict),
+    /user:pass|token|secret/i,
+  );
 });
 
 test('extracts grounded benefits without inventing missing values', () => {
@@ -73,4 +83,37 @@ test('extracts grounded benefits without inventing missing values', () => {
   assert.equal(result.benefits[0].cap, 500);
   assert.equal(result.benefits[0].period, 'statement month');
   assert.match(result.benefits[0].fieldEvidence.cap, /capped at ₹500/i);
+});
+
+test('catalog field excerpts and nested benefit evidence remove visible and encoded URL secrets', () => {
+  const result = normalizeOfficialCatalogPage(`
+    <html><body>
+      <h1>Privilege Credit Card</h1>
+      <p>Annual Fee ₹1,500; terms https://user:pass@www.axis.bank.in/card?token=secret#private</p>
+      <p>Get 10% cashback on dining. https%253A%252F%252Fuser%253Apass%2540www.axis.bank.in%252Fcard%253Fsession%253Dsecret</p>
+    </body></html>
+  `, 'https://www.axis.bank.in/cards/credit-card/privilege?session=source-secret');
+  const serialized = JSON.stringify(result);
+  assert.doesNotMatch(serialized, /user:pass|token|session|source-secret|secret#private/i);
+  assert.match(serialized, /Annual Fee/);
+});
+
+test('catalog normalization remains bound to the exact target card after redirects', () => {
+  assert.equal(
+    requireCatalogPageIdentity(
+      '<title>Privilege Credit Card | Axis Bank</title>',
+      'Axis Bank',
+      'Privilege',
+    ).cardName,
+    'Privilege',
+  );
+  for (const html of [
+    '<title>Regalia Credit Card | HDFC Bank</title>',
+    '<title>Credit Cards | Axis Bank</title>',
+  ]) {
+    assert.throws(
+      () => requireCatalogPageIdentity(html, 'Axis Bank', 'Privilege'),
+      /identity_mismatch/,
+    );
+  }
 });
