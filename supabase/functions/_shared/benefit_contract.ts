@@ -66,14 +66,54 @@ function canonicalScalar(value: unknown): unknown {
 
 function canonicalObject(value: unknown): CanonicalObject {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  // Collision policy: exact snake_case keys are authoritative, followed by a
+  // camelCase alias. Other normalized aliases are ordered by their canonical
+  // value representation. This is independent of JSON property insertion
+  // order, including recursively nested configuration objects.
+  const candidates = Object.entries(value as Record<string, unknown>)
+    .map(([key, item]) => {
+      const canonicalKey = normalizedKey(key);
+      const canonicalValue = canonicalUnknown(item);
+      return {
+        canonicalKey,
+        canonicalValue,
+        key: key.normalize("NFKC").trim(),
+        priority: aliasPriority(key, canonicalKey),
+      };
+    })
+    .filter((candidate) => candidate.canonicalValue !== undefined)
+    .sort((left, right) =>
+      compare(left.canonicalKey, right.canonicalKey) ||
+      left.priority - right.priority ||
+      compare(
+        stableJson(left.canonicalValue),
+        stableJson(right.canonicalValue),
+      ) ||
+      compare(left.key, right.key)
+    );
+  const selected = new Map<string, unknown>();
+  for (const candidate of candidates) {
+    if (!selected.has(candidate.canonicalKey)) {
+      selected.set(candidate.canonicalKey, candidate.canonicalValue);
+    }
+  }
   return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .map(([key, item]) =>
-        [normalizedKey(key), canonicalUnknown(item)] as const
-      )
-      .filter(([, item]) => item !== undefined)
-      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0),
+    [...selected.entries()].sort(([left], [right]) => compare(left, right)),
   );
+}
+
+function compare(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function aliasPriority(key: string, canonicalKey: string): number {
+  const normalized = key.normalize("NFKC").trim();
+  if (normalized === canonicalKey) return 0;
+  const camelCase = canonicalKey.replace(
+    /_([a-z])/g,
+    (_, letter: string) => letter.toUpperCase(),
+  );
+  return normalized === camelCase ? 1 : 2;
 }
 
 function canonicalUnknown(value: unknown): unknown {
@@ -86,7 +126,15 @@ function canonicalUnknown(value: unknown): unknown {
 }
 
 function canonicalTerms(value: unknown): string[] {
-  const values = Array.isArray(value) ? value : value == null ? [] : [value];
+  const values: unknown[] = [];
+  const collect = (item: unknown): void => {
+    if (Array.isArray(item)) {
+      item.forEach(collect);
+    } else if (item != null) {
+      values.push(item);
+    }
+  };
+  collect(value);
   return [
     ...new Set(
       values
@@ -101,11 +149,13 @@ function canonicalTerms(value: unknown): string[] {
     .sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
 }
 
-function field(object: Record<string, unknown>, ...names: string[]): unknown {
-  for (const [key, value] of Object.entries(object)) {
-    if (names.includes(normalizedKey(key))) return value;
-  }
-  return undefined;
+function fields(
+  object: Record<string, unknown>,
+  ...names: string[]
+): unknown[] {
+  return Object.entries(object)
+    .filter(([key]) => names.includes(normalizedKey(key)))
+    .map(([, value]) => value);
 }
 
 /** Converts legacy exclusion arrays and current JSON objects to the stable JSONB shape. */
@@ -113,23 +163,26 @@ export function canonicalExclusions(input: unknown): Record<string, unknown> {
   const object = input && typeof input === "object" && !Array.isArray(input)
     ? input as Record<string, unknown>
     : {};
-  const additional = field(object, "additional");
-  const additionalObject =
-    additional && typeof additional === "object" && !Array.isArray(additional)
-      ? additional as Record<string, unknown>
-      : {};
+  const additionalObjects = fields(object, "additional")
+    .filter((item): item is Record<string, unknown> =>
+      Boolean(item) && typeof item === "object" && !Array.isArray(item)
+    );
   const sourceTerms = Array.isArray(input) || typeof input === "string"
-    ? input
-    : field(additionalObject, "source_terms", "sourceterms") ??
-      field(object, "source_terms", "sourceterms");
+    ? [input]
+    : [
+      ...fields(object, "source_terms", "sourceterms"),
+      ...additionalObjects.flatMap((additional) =>
+        fields(additional, "source_terms", "sourceterms")
+      ),
+    ];
   return {
     additional: { source_terms: canonicalTerms(sourceTerms) },
-    categories: canonicalTerms(field(object, "categories")),
-    days: canonicalTerms(field(object, "days")),
-    mcc_codes: canonicalTerms(field(object, "mcc_codes", "mcccodes")),
-    merchants: canonicalTerms(field(object, "merchants")),
+    categories: canonicalTerms(fields(object, "categories")),
+    days: canonicalTerms(fields(object, "days")),
+    mcc_codes: canonicalTerms(fields(object, "mcc_codes", "mcccodes")),
+    merchants: canonicalTerms(fields(object, "merchants")),
     transaction_types: canonicalTerms(
-      field(object, "transaction_types", "transactiontypes"),
+      fields(object, "transaction_types", "transactiontypes"),
     ),
   };
 }

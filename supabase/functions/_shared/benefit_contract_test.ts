@@ -104,6 +104,56 @@ Deno.test("canonical exclusions accepts legacy arrays and normalizes current obj
   );
 });
 
+Deno.test("canonical aliases resolve independently of property order", async () => {
+  // Catches aliases whose selected scalar or exclusion array depends on the
+  // order an upstream JSON parser happened to insert object properties.
+  const first = {
+    title: "Movie benefit",
+    valueConfig: {
+      "Max Usage Per Month": 1,
+      max_usage_per_month: 2,
+      nested: { "Reward Rate": 1, reward_rate: 2 },
+    },
+    exclusions: {
+      mccCodes: ["5411", "5541"],
+      mcc_codes: ["5541", "5812"],
+    },
+  };
+  const reversed = {
+    title: "Movie benefit",
+    valueConfig: {
+      nested: { reward_rate: 2, "Reward Rate": 1 },
+      max_usage_per_month: 2,
+      "Max Usage Per Month": 1,
+    },
+    exclusions: {
+      mcc_codes: ["5541", "5812"],
+      mccCodes: ["5411", "5541"],
+    },
+  };
+  assertEquals(canonicalValueConfig(first), {
+    max_usage_per_month: 2,
+    nested: { reward_rate: 2 },
+  });
+  assertEquals(canonicalValueConfig(first), canonicalValueConfig(reversed));
+  assertEquals(canonicalExclusions(first.exclusions), {
+    additional: { source_terms: [] },
+    categories: [],
+    days: [],
+    mcc_codes: ["5411", "5541", "5812"],
+    merchants: [],
+    transaction_types: [],
+  });
+  assertEquals(
+    canonicalExclusions(first.exclusions),
+    canonicalExclusions(reversed.exclusions),
+  );
+  assertEquals(
+    await canonicalBenefitHash([first]),
+    await canonicalBenefitHash([reversed]),
+  );
+});
+
 Deno.test("canonical condition omits null presentation fields and is independent of property order", async () => {
   // Catches condition hashes that change with object insertion order, presentational
   // title wording, or omitted optional values.

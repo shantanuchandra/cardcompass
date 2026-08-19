@@ -10,6 +10,31 @@ import {
 
 const SOURCE = 'https://issuer.example/cards/aurora';
 
+test('keeps benefits-v5 synchronous legacy proposals and array exclusions unchanged', () => {
+  // Catches an accidental v6 projection leaking into the rollback lane.
+  const proposals = extractGroundedBenefits([{
+    sourceUrl: SOURCE,
+    text: 'Get 5% cashback on online spends, excluding fuel and wallet reloads.',
+  }], 'benefits-v5');
+
+  assert.equal(Array.isArray(proposals), true);
+  assert.deepEqual(proposals.map((proposal) => ({
+    parserVersion: proposal.parserVersion,
+    dedupeKey: proposal.dedupeKey,
+    valueConfig: proposal.valueConfig,
+    exclusions: proposal.exclusions,
+    benefitId: proposal.benefitId ?? null,
+    conditionHash: proposal.conditionHash ?? null,
+  })), [{
+    parserVersion: 'benefits-v5',
+    dedupeKey: 'benefit-58e9c49040ba5a39',
+    valueConfig: undefined,
+    exclusions: ['fuel', 'wallet reloads'],
+    benefitId: null,
+    conditionHash: null,
+  }]);
+});
+
 test('projects v6 proposals through the card-scoped canonical contract and golden corpus', async () => {
   // Catches the v6 path silently keeping flat terms, legacy array exclusions,
   // or globally-scoped keys while the rollback v5 output remains unchanged.
