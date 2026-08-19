@@ -21,7 +21,22 @@ Ruling: Carry the Feedback plan's final adjudication into the Tasks 1–3 code-b
 - Task 5: complete — deterministic and blind scoring
 - Task 6: complete — private bounded resumable worker
 - Task 7: complete — Admin2 controls and decision support
-- Task 8: pending — full verification and release boundary
+- Task 8: complete — full verification and release boundary
+
+## Task 8 evidence
+
+- RED: the new real-lifecycle smoke first failed because its PostgreSQL adapter returned an unresolved process promise; after switching to synchronous disposable SQL files, it exposed an invalid recommendation baseline fixture and then proved the corrected fixed-selection baseline through the real executor/scorer.
+- GREEN: the opt-in smoke applies the real migrations to a disposable loopback database and drives the real private worker with injected no-network candidate/judge adapters across statement, Card Data, and recommendation families. Seven statement cases force one continuation after five, every manifest item persists once, exact aggregate/token/cost/latency evidence matches, clean improvement has no review blockers, and a severe historical regression produces seven severe/review results.
+- Full Flutter passes 709 tests with 25 deployed-stack skips. All Node source and disposable-PostgreSQL suites pass 55/55 sequentially. The full frozen Edge suite passes 262 tests with the opt-in smoke ignored; the separately enabled real PostgreSQL/worker smoke passes 1/1. Candidate formatting, scoped analysis, Deno checks, privacy scans, and diff checks pass.
+- Repository-wide analysis retains 12 pre-existing info diagnostics and repository-wide Deno formatting retains one unrelated pre-existing file. Docker/Auth/PostgREST/browser smokes and the live provider pilot are explicitly Not Run. No provider call, spend, deployment, push, production migration, or remote mutation occurred.
+
+Ruling: Verify the worker/database boundary with a loopback disposable PostgreSQL database and injected deterministic model/judge adapters, while retaining the exact production handler, executors, scorers, and RPC lifecycle. Cost if wrong: this proves orchestration and evidence integrity but not provider availability or deployed Edge/Auth networking.
+
+Ruling: Leave the live-provider pilot Not Run until provider spend is explicitly authorized. Cost if wrong: model-version and upstream billing behavior remain a release risk to be closed during an authorized maximum-three-case pilot, but the verification cannot spend money implicitly.
+
+Ruling: Coordinate seven additive migrations and eight changed Edge Functions, and roll back only application/function versions while preserving all additive feedback and eval evidence. Cost if wrong: deployment and rollback require a larger atomic inventory, but no audit, dataset, result, or retry history is destroyed.
+
+Ruling: Distinguish candidate verification from unrelated repository baseline drift instead of reformatting or refactoring out-of-scope files. Cost if wrong: one pre-existing formatter failure and 12 analyzer infos remain visible release debt, while Task 8 avoids silently changing unrelated production code.
 
 ## Tasks 1–3 evidence
 
