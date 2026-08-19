@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const user = '00000000-0000-4000-8000-000000000002';
+const userB = '00000000-0000-4000-8000-000000000004';
 final summary = CustomerSummary(
   id: user,
   email: 'user@example.com',
@@ -37,15 +38,52 @@ final class _Source implements CustomerDataSource {
   Completer<List<CustomerSummary>>? pendingSearch;
   final mutations = <CustomerMutation>[];
   Object? mutationError;
+  final detailCompleters = <String, Completer<CustomerDetail>>{};
+  var requestId = '00000000-0000-4000-8000-000000000003';
+  CustomerDetail currentDetail = customerDetail;
   @override
   Future<List<CustomerSummary>> search(String query) =>
       pendingSearch?.future ?? Future.value(results);
   @override
-  Future<CustomerDetail> detail(String targetId) async => customerDetail;
+  Future<CustomerDetail> detail(String targetId) async =>
+      detailCompleters[targetId]?.future ?? currentDetail;
+
+  @override
+  String newRequestId() => requestId;
   @override
   Future<CustomerReceipt> mutate(CustomerMutation mutation) async {
     mutations.add(mutation);
-    if (mutationError case final e?) throw e;
+    if (mutationError case final e?) {
+      if (e is AdminRequestFailed &&
+          e.message == 'auth_ban_pending' &&
+          mutation is DisableCustomer) {
+        mutationError = null;
+        currentDetail = CustomerDetail(
+          summary: CustomerSummary(
+            id: customerDetail.summary.id,
+            email: customerDetail.summary.email,
+            createdAt: customerDetail.summary.createdAt,
+            lastActivityAt: customerDetail.summary.lastActivityAt,
+            isActive: false,
+          ),
+          gmailConnected: customerDetail.gmailConnected,
+          gmailStatus: customerDetail.gmailStatus,
+          gmailFailure: customerDetail.gmailFailure,
+          gmailUpdatedAt: customerDetail.gmailUpdatedAt,
+          ownedCardCount: customerDetail.ownedCardCount,
+          statementCount: customerDetail.statementCount,
+          processedStatementCount: customerDetail.processedStatementCount,
+          emailCount: customerDetail.emailCount,
+          processedEmailCount: customerDetail.processedEmailCount,
+          latestStatementAt: customerDetail.latestStatementAt,
+          latestEmailAt: customerDetail.latestEmailAt,
+          deletionStatus: customerDetail.deletionStatus,
+          deletionUpdatedAt: customerDetail.deletionUpdatedAt,
+        );
+        throw CustomerAuthBanPending(mutation);
+      }
+      throw e;
+    }
     return mutation is QueueGmailRetry
         ? const GmailRetryReceipt(
             requestId: '00000000-0000-4000-8000-000000000003',
@@ -196,5 +234,66 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('Database access is blocked'), findsOneWidget);
     expect(find.textContaining('Auth ban needs retry'), findsOneWidget);
+    expect(find.text('Disabled'), findsOneWidget);
+    expect(find.byKey(const Key('customer-auth-ban-retry')), findsOneWidget);
+    await tester.ensureVisible(
+      find.byKey(const Key('customer-auth-ban-retry')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('customer-auth-ban-retry')));
+    await tester.pumpAndSettle();
+    expect(source.mutations, hasLength(2));
+    expect(source.mutations[1], same(source.mutations[0]));
+    expect(source.mutations[1].requestId, source.mutations[0].requestId);
+    expect(find.byKey(const Key('customer-auth-ban-retry')), findsNothing);
   });
+
+  testWidgets(
+    'new selection disables stale detail actions until matching detail arrives',
+    (tester) async {
+      final source = _Source();
+      final summaryB = CustomerSummary(
+        id: userB,
+        email: 'second@example.com',
+        createdAt: DateTime.utc(2026),
+        lastActivityAt: DateTime.utc(2026),
+        isActive: true,
+      );
+      source.results = [summary, summaryB];
+      await _pump(tester, source);
+      await tester.enterText(
+        find.byKey(const Key('customer-search-field')),
+        'user',
+      );
+      await tester.tap(find.byKey(const Key('customer-search-submit')));
+      await tester.pumpAndSettle();
+      source.detailCompleters[userB] = Completer<CustomerDetail>();
+      await tester.tap(find.text('second@example.com'));
+      await tester.pump();
+      expect(find.byKey(const Key('customer-detail-loading')), findsOneWidget);
+      expect(find.byKey(const Key('customer-retry')), findsNothing);
+      expect(source.mutations, isEmpty);
+      source.detailCompleters[userB]!.complete(
+        CustomerDetail(
+          summary: summaryB,
+          gmailConnected: true,
+          gmailStatus: CustomerOperationStatus.failed,
+          gmailFailure: CustomerFailure.processingFailed,
+          gmailUpdatedAt: DateTime.utc(2026),
+          ownedCardCount: 0,
+          statementCount: 0,
+          processedStatementCount: 0,
+          emailCount: 0,
+          processedEmailCount: 0,
+          latestStatementAt: null,
+          latestEmailAt: null,
+          deletionStatus: null,
+          deletionUpdatedAt: null,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('second@example.com'), findsWidgets);
+      expect(find.byKey(const Key('customer-retry')), findsOneWidget);
+    },
+  );
 }

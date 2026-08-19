@@ -207,28 +207,34 @@ final class CustomerDetail {
   bool get retryEligible =>
       summary.isActive &&
       gmailConnected &&
-      gmailStatus != CustomerOperationStatus.queued &&
-      gmailStatus != CustomerOperationStatus.claimed;
+      gmailStatus == CustomerOperationStatus.failed &&
+      gmailFailure != null;
 }
 
-sealed class CustomerMutation {
-  const CustomerMutation({
+sealed class CustomerOperation {
+  const CustomerOperation({
+    required this.requestId,
     required this.targetId,
     required this.observedUpdatedAt,
   });
+  final String requestId;
   final String targetId;
   final String observedUpdatedAt;
 }
 
-final class QueueGmailRetry extends CustomerMutation {
+typedef CustomerMutation = CustomerOperation;
+
+final class QueueGmailRetry extends CustomerOperation {
   const QueueGmailRetry({
+    required super.requestId,
     required super.targetId,
     required super.observedUpdatedAt,
   });
 }
 
-sealed class ConfirmedCustomerMutation extends CustomerMutation {
+sealed class ConfirmedCustomerMutation extends CustomerOperation {
   const ConfirmedCustomerMutation({
+    required super.requestId,
     required super.targetId,
     required super.observedUpdatedAt,
     required this.reason,
@@ -240,6 +246,7 @@ sealed class ConfirmedCustomerMutation extends CustomerMutation {
 
 final class DisableCustomer extends ConfirmedCustomerMutation {
   const DisableCustomer({
+    required super.requestId,
     required super.targetId,
     required super.observedUpdatedAt,
     required super.reason,
@@ -249,6 +256,7 @@ final class DisableCustomer extends ConfirmedCustomerMutation {
 
 final class SetCustomerDeletionStatus extends ConfirmedCustomerMutation {
   const SetCustomerDeletionStatus({
+    required super.requestId,
     required super.targetId,
     required super.observedUpdatedAt,
     required super.reason,

@@ -6,6 +6,7 @@ import 'customer_models.dart';
 typedef CustomerRequestIdFactory = String Function();
 
 abstract interface class CustomerDataSource {
+  String newRequestId();
   Future<List<CustomerSummary>> search(String query);
   Future<CustomerDetail> detail(String targetId);
   Future<CustomerReceipt> mutate(CustomerMutation mutation);
@@ -17,6 +18,13 @@ final class CustomerRepository implements CustomerDataSource {
   final AdminOperatorRepository _operator;
   final CustomerRequestIdFactory _requestIds;
   @override
+  String newRequestId() {
+    final value = _requestIds();
+    if (!_uuid.hasMatch(value)) _invalid();
+    return value;
+  }
+
+  @override
   Future<List<CustomerSummary>> search(String query) async {
     final normalized = query.trim().toLowerCase();
     if ((!_uuid.hasMatch(normalized) && normalized.length < 3) ||
@@ -24,7 +32,7 @@ final class CustomerRepository implements CustomerDataSource {
       _invalid();
     }
     try {
-      final response = await _invoke('customer-search', {
+      final response = await _invoke('customer-search', newRequestId(), {
         'query': normalized,
         'limit': 25,
       });
@@ -46,11 +54,13 @@ final class CustomerRepository implements CustomerDataSource {
   Future<CustomerDetail> detail(String targetId) async {
     if (!_uuid.hasMatch(targetId)) _invalid();
     try {
-      final response = await _invoke('customer-detail', {
+      final response = await _invoke('customer-detail', newRequestId(), {
         'target_id': targetId,
       });
       _exact(response, const {'customer'});
-      return CustomerDetail.fromJson(_map(response['customer']));
+      final detail = CustomerDetail.fromJson(_map(response['customer']));
+      if (detail.summary.id != targetId) throw const FormatException();
+      return detail;
     } on FormatException {
       throw const AdminRequestFailed('request_failed');
     } catch (error) {
@@ -89,7 +99,16 @@ final class CustomerRepository implements CustomerDataSource {
           action = 'customer-disable';
         }
     }
-    final response = await _invoke(action, body);
+    if (!_uuid.hasMatch(mutation.requestId)) _invalid();
+    final Map<String, dynamic> response;
+    try {
+      response = await _invoke(action, mutation.requestId, body);
+    } on AdminRequestFailed catch (error) {
+      if (error.message == 'auth_ban_pending' && mutation is DisableCustomer) {
+        throw CustomerAuthBanPending(mutation);
+      }
+      rethrow;
+    }
     try {
       _exact(response, const {'result'});
       final result = _map(response['result']);
@@ -112,9 +131,9 @@ final class CustomerRepository implements CustomerDataSource {
 
   Future<Map<String, dynamic>> _invoke(
     String action,
+    String requestId,
     Map<String, dynamic> body,
   ) {
-    final requestId = _requestIds();
     if (!_uuid.hasMatch(requestId)) _invalid();
     final request = {...body, 'request_id': requestId};
     if (utf8.encode(jsonEncode({'action': action, ...request})).length >
@@ -123,6 +142,11 @@ final class CustomerRepository implements CustomerDataSource {
     }
     return _operator.invoke(action, request);
   }
+}
+
+final class CustomerAuthBanPending implements Exception {
+  const CustomerAuthBanPending(this.operation);
+  final DisableCustomer operation;
 }
 
 GmailRetryReceipt _retryReceipt(Map<String, dynamic> json) {

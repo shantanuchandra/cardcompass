@@ -122,3 +122,19 @@ Ruling: Preserve `auth_ban_pending` in the shared operator repository's stable-c
 Ruling: Fence Customer search and detail loads with a monotonically increasing generation while retaining the last successful list during refresh. Cost if wrong: an obsolete response is discarded and the operator must repeat that search, rather than letting stale identity or activity metadata replace the latest request.
 
 Ruling: Use the profile `last_activity_at` and deletion `updated_at` values returned by the audited detail as the exact observed versions for profile and deletion mutations. Cost if wrong: concurrent state changes return `state_conflict` and force one refresh instead of applying against stale support context.
+
+## Task 5 review fix
+
+- Selection now immediately clears the prior detail and actions, shows a keyed loading state, and accepts a detail response only when its generation, selected target, and decoded customer ID all match. Stale failures cannot invoke authentication or authorization effects.
+- Every mutation is a replayable `CustomerOperation` carrying its generated request UUID. Read calls continue generating independent audit request IDs.
+- `auth_ban_pending` becomes a typed partial-containment result carrying the exact `DisableCustomer` operation. The UI refreshes to show the database-confirmed inactive state and offers one locked `Retry Auth ban` action that resends the same request ID and complete body; success removes the retry.
+- Gmail retry eligibility is now closed to only active, Gmail-connected customers whose latest operation is `failed` with one actual allowlisted safe failure category.
+- Focused Customer coverage passes 17/17, the full Admin2 suite passes 143/143, and scoped analysis reports no issues.
+
+Ruling: Bind rendered customer detail to the selected user ID, the latest load generation, and the decoded detail ID, clearing prior actions while a new target loads. Cost if wrong: the operator briefly sees a loading surface instead of stale metadata, but can never submit customer A's action after selecting customer B.
+
+Ruling: Make request identity part of the immutable Customer operation before invocation and retain the exact disable operation on `auth_ban_pending`. Cost if wrong: each new intentional mutation allocates its UUID slightly earlier, while retries can safely re-enter the server's idempotent receipt path without creating a second disable action.
+
+Ruling: Treat `auth_ban_pending` as successful database containment plus an incomplete Auth side effect, refresh server detail immediately, and expose only an exact-request Auth-ban retry. Cost if wrong: the operator must explicitly retry the ban, but the console never misstates database access as active or generates a conflicting disable request.
+
+Ruling: Permit queued Gmail recovery only when the latest operation is failed and carries one allowlisted safe failure category, in addition to an active profile and connected Gmail identity. Cost if wrong: ambiguous null or completed states require fresh diagnosis rather than enqueueing an unnecessary customer-session operation.

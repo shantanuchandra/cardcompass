@@ -22,6 +22,7 @@ class _CustomersSectionState extends State<CustomersSection> {
   final _search = TextEditingController();
   List<CustomerSummary>? _results;
   CustomerDetail? _detail;
+  DisableCustomer? _pendingAuthBan;
   String? _selectedId, _message;
   Object? _error;
   bool _loading = false, _submitting = false, _compactDetail = false;
@@ -39,6 +40,9 @@ class _CustomersSectionState extends State<CustomersSection> {
       _loading = true;
       _error = null;
       _message = null;
+      _detail = null;
+      _selectedId = null;
+      _pendingAuthBan = null;
     });
     try {
       final results = await widget.repository.search(_search.text);
@@ -76,11 +80,16 @@ class _CustomersSectionState extends State<CustomersSection> {
       _selectedId = customer.id;
       _compactDetail = compact;
       _error = null;
+      _detail = null;
+      if (_pendingAuthBan?.targetId != customer.id) _pendingAuthBan = null;
     });
     try {
       final detail = await widget.repository.detail(customer.id);
       if (!mounted || active != _generation || _selectedId != customer.id) {
         return;
+      }
+      if (detail.summary.id != customer.id) {
+        throw const AdminRequestFailed('request_failed');
       }
       setState(() {
         _detail = detail;
@@ -130,6 +139,7 @@ class _CustomersSectionState extends State<CustomersSection> {
     if (confirmed != true || !mounted) return;
     await _mutate(
       QueueGmailRetry(
+        requestId: widget.repository.newRequestId(),
         targetId: detail.summary.id,
         observedUpdatedAt: detail.summary.lastActivityAt.toIso8601String(),
       ),
@@ -150,12 +160,14 @@ class _CustomersSectionState extends State<CustomersSection> {
     if (result == null || !mounted) return;
     final mutation = disable
         ? DisableCustomer(
+            requestId: widget.repository.newRequestId(),
             targetId: detail.summary.id,
             observedUpdatedAt: detail.summary.lastActivityAt.toIso8601String(),
             reason: result.reason,
             confirmationUserId: result.target,
           )
         : SetCustomerDeletionStatus(
+            requestId: widget.repository.newRequestId(),
             targetId: detail.summary.id,
             observedUpdatedAt:
                 detail.deletionUpdatedAt?.toIso8601String() ??
@@ -179,7 +191,10 @@ class _CustomersSectionState extends State<CustomersSection> {
     try {
       await widget.repository.mutate(mutation);
       if (!mounted) return;
-      setState(() => _message = success);
+      setState(() {
+        _message = success;
+        if (mutation is DisableCustomer) _pendingAuthBan = null;
+      });
       final current = _results
           ?.where((e) => e.id == mutation.targetId)
           .firstOrNull;
@@ -194,12 +209,21 @@ class _CustomersSectionState extends State<CustomersSection> {
           ?.where((e) => e.id == mutation.targetId)
           .firstOrNull;
       if (current != null) await _select(current, compact: _compactDetail);
-    } on AdminRequestFailed catch (error) {
+    } on CustomerAuthBanPending catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _pendingAuthBan = error.operation;
+        _message = 'Database access is blocked, but the Auth ban needs retry.';
+      });
+      final current = _results
+          ?.where((e) => e.id == error.operation.targetId)
+          .firstOrNull;
+      if (current != null) await _select(current, compact: _compactDetail);
+    } on AdminRequestFailed {
       if (!mounted) return;
       setState(
-        () => _message = error.message == 'auth_ban_pending'
-            ? 'Database access is blocked, but the Auth ban needs retry.'
-            : 'Action failed safely. Review the latest state and try again.',
+        () => _message =
+            'Action failed safely. Review the latest state and try again.',
       );
     } catch (error) {
       await _access(error);
@@ -335,7 +359,12 @@ class _CustomersSectionState extends State<CustomersSection> {
   );
   Widget _detailView({bool compact = false}) {
     final item = _detail;
-    if (item == null) return const Center(child: CircularProgressIndicator());
+    if (item == null) {
+      return const Center(
+        key: Key('customer-detail-loading'),
+        child: CircularProgressIndicator(),
+      );
+    }
     return ListView(
       padding: const EdgeInsets.all(BrandSpacing.lg),
       children: [
@@ -398,6 +427,15 @@ class _CustomersSectionState extends State<CustomersSection> {
               icon: const Icon(Icons.assignment_outlined),
               label: const Text('Update deletion status'),
             ),
+            if (_pendingAuthBan case final pending?)
+              FilledButton.icon(
+                key: const Key('customer-auth-ban-retry'),
+                onPressed: !_submitting && pending.targetId == item.summary.id
+                    ? () => _mutate(pending, 'Auth ban confirmed.')
+                    : null,
+                icon: const Icon(Icons.lock_reset),
+                label: const Text('Retry Auth ban'),
+              ),
           ],
         ),
       ],

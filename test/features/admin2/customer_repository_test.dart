@@ -118,6 +118,21 @@ void main() {
     },
   );
 
+  test('detail rejects a valid but different customer identity', () async {
+    final api = _Api([
+      AdminOperatorResponse(200, {
+        'customer': {...detail(), 'id': '00000000-0000-4000-8000-000000000004'},
+      }),
+    ]);
+    await expectLater(
+      CustomerRepository(
+        AdminOperatorRepository(api),
+        requestIds: () => request,
+      ).detail(user),
+      throwsA(isA<AdminRequestFailed>()),
+    );
+  });
+
   test('sends exact retry request and validates canonical receipt', () async {
     final api = _Api([
       const AdminOperatorResponse(200, {
@@ -129,7 +144,11 @@ void main() {
       requestIds: () => request,
     );
     final receipt = await repository.mutate(
-      const QueueGmailRetry(targetId: user, observedUpdatedAt: updated),
+      const QueueGmailRetry(
+        requestId: request,
+        targetId: user,
+        observedUpdatedAt: updated,
+      ),
     );
     expect(receipt, isA<GmailRetryReceipt>());
     expect(api.bodies.single, {
@@ -149,18 +168,21 @@ void main() {
       );
       for (final mutation in <CustomerMutation>[
         const DisableCustomer(
+          requestId: request,
           targetId: user,
           observedUpdatedAt: updated,
           reason: ' ',
           confirmationUserId: user,
         ),
         const DisableCustomer(
+          requestId: request,
           targetId: user,
           observedUpdatedAt: updated,
           reason: 'abuse',
           confirmationUserId: request,
         ),
         const SetCustomerDeletionStatus(
+          requestId: request,
           targetId: user,
           observedUpdatedAt: updated,
           reason: ' ',
@@ -195,6 +217,7 @@ void main() {
     );
     await repository.mutate(
       const DisableCustomer(
+        requestId: request,
         targetId: user,
         observedUpdatedAt: updated,
         reason: ' suspected abuse ',
@@ -203,6 +226,7 @@ void main() {
     );
     await repository.mutate(
       const SetCustomerDeletionStatus(
+        requestId: request,
         targetId: user,
         observedUpdatedAt: updated,
         reason: ' verified request ',
@@ -238,6 +262,7 @@ void main() {
     await expectLater(
       repository.mutate(
         DisableCustomer(
+          requestId: request,
           targetId: user,
           observedUpdatedAt: updated,
           reason: 'x' * 33000,
@@ -260,19 +285,100 @@ void main() {
     await expectLater(
       repository.mutate(
         const DisableCustomer(
+          requestId: request,
           targetId: user,
           observedUpdatedAt: updated,
           reason: 'suspected abuse',
           confirmationUserId: user,
         ),
       ),
-      throwsA(
-        isA<AdminRequestFailed>().having(
-          (error) => error.message,
-          'message',
-          'auth_ban_pending',
-        ),
+      throwsA(isA<CustomerAuthBanPending>()),
+    );
+  });
+
+  test('auth_ban_pending retains exact replayable disable operation', () async {
+    final api = _Api([
+      const AdminOperatorResponse(502, {'error': 'auth_ban_pending'}),
+      const AdminOperatorResponse(200, {
+        'result': {'user_id': user, 'is_active': false, 'auth_banned': true},
+      }),
+    ]);
+    final repository = CustomerRepository(AdminOperatorRepository(api));
+    const operation = DisableCustomer(
+      requestId: request,
+      targetId: user,
+      observedUpdatedAt: updated,
+      reason: 'suspected abuse',
+      confirmationUserId: user,
+    );
+    CustomerAuthBanPending? pending;
+    try {
+      await repository.mutate(operation);
+    } on CustomerAuthBanPending catch (error) {
+      pending = error;
+    }
+    expect(pending?.operation, same(operation));
+    await repository.mutate(pending!.operation);
+    expect(api.bodies, hasLength(2));
+    expect(api.bodies[1], api.bodies[0]);
+    expect(api.bodies.first.containsKey('raw_error'), isFalse);
+  });
+
+  test('Gmail retry eligibility is failed plus a safe failure only', () {
+    CustomerDetail build(
+      CustomerOperationStatus? status,
+      CustomerFailure? failure, {
+      bool active = true,
+      bool connected = true,
+    }) => CustomerDetail(
+      summary: CustomerSummary(
+        id: user,
+        email: 'user@example.com',
+        createdAt: DateTime.utc(2026),
+        lastActivityAt: DateTime.utc(2026),
+        isActive: active,
       ),
+      gmailConnected: connected,
+      gmailStatus: status,
+      gmailFailure: failure,
+      gmailUpdatedAt: DateTime.utc(2026),
+      ownedCardCount: 0,
+      statementCount: 0,
+      processedStatementCount: 0,
+      emailCount: 0,
+      processedEmailCount: 0,
+      latestStatementAt: null,
+      latestEmailAt: null,
+      deletionStatus: null,
+      deletionUpdatedAt: null,
+    );
+    for (final failure in CustomerFailure.values) {
+      expect(
+        build(CustomerOperationStatus.failed, failure).retryEligible,
+        isTrue,
+      );
+    }
+    expect(build(null, null).retryEligible, isFalse);
+    expect(
+      build(CustomerOperationStatus.completed, null).retryEligible,
+      isFalse,
+    );
+    expect(build(CustomerOperationStatus.failed, null).retryEligible, isFalse);
+    expect(
+      build(
+        CustomerOperationStatus.failed,
+        CustomerFailure.processingFailed,
+        active: false,
+      ).retryEligible,
+      isFalse,
+    );
+    expect(
+      build(
+        CustomerOperationStatus.failed,
+        CustomerFailure.processingFailed,
+        connected: false,
+      ).retryEligible,
+      isFalse,
     );
   });
 }

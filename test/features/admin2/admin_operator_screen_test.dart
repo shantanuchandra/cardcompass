@@ -85,6 +85,8 @@ final class _ShellSystemSource implements SystemDataSource {
 
 final class _ShellCustomerSource implements CustomerDataSource {
   @override
+  String newRequestId() => '00000000-0000-4000-8000-000000000001';
+  @override
   Future<CustomerDetail> detail(String targetId) => throw UnimplementedError();
   @override
   Future<CustomerReceipt> mutate(CustomerMutation mutation) =>
