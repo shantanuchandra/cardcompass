@@ -111,6 +111,21 @@ void main() {
     );
   });
 
+  test('FunctionException access error maps to denial', () async {
+    final api = FakeAdminOperatorApi(
+      const AdminOperatorResponse(500, {}),
+      error: const FunctionException(
+        status: 403,
+        details: {'error': 'administrator_access_required'},
+      ),
+    );
+
+    expect(
+      AdminOperatorRepository(api).access(),
+      throwsA(isA<AdminAccessDenied>()),
+    );
+  });
+
   test('FunctionException server error maps to request failure', () async {
     final api = FakeAdminOperatorApi(
       const AdminOperatorResponse(500, {}),
@@ -139,6 +154,24 @@ void main() {
         'Failed to fetch',
         Uri.parse('https://example.supabase.co/functions/v1/admin-operator'),
       ),
+    );
+
+    expect(
+      AdminOperatorRepository(api).access(),
+      throwsA(
+        isA<AdminRequestFailed>().having(
+          (error) => error.message,
+          'message',
+          'request_failed',
+        ),
+      ),
+    );
+  });
+
+  test('malformed invocation response maps to request failure', () async {
+    final api = FakeAdminOperatorApi(
+      const AdminOperatorResponse(500, {}),
+      error: const FormatException('Unexpected end of JSON input'),
     );
 
     expect(

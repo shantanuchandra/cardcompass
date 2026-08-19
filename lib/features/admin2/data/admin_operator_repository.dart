@@ -54,6 +54,9 @@ class AdminOperatorRepository {
     if (error is http.ClientException) {
       throw const AdminRequestFailed('request_failed');
     }
+    if (error is FormatException) {
+      throw const AdminRequestFailed('request_failed');
+    }
     throw error;
   }
 }
