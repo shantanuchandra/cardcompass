@@ -165,12 +165,10 @@ export function currentBenefitProposal(
     description: redactSensitiveUrlsInText(
       String(benefit.description ?? ""),
     ).slice(0, 500),
-    // V6 condition identity uses the shared semantic category contract. Database
-    // enums/codes are commonly upper-case; normalizing them here keeps replay
-    // byte-stable without changing the legacy V5 comparison contract.
-    category: canonicalV6
-      ? canonicalBenefitCategory(presentedCategory) ?? presentedCategory
-      : presentedCategory,
+    // Database category codes/names are presentation aliases, not condition
+    // identity. Normalize every generation while leaving legacy dedupe IDs in
+    // their original identifier lane.
+    category: canonicalBenefitCategory(presentedCategory) ?? presentedCategory,
     ...(benefit.benefit_type
       ? { valueType: redactSensitiveUrlsInText(String(benefit.benefit_type)) }
       : {}),
@@ -774,11 +772,30 @@ function comparisonExclusions(benefit: {
     : benefit.exclusions.map((item) => normalize(String(item))).sort();
 }
 
-function conditionKey(benefit: ParsedFields | BenefitProposalV6): string {
-  const hasStructuredValue = benefit.valueConfig !== undefined &&
-    Object.keys(benefit.valueConfig).length > 0;
+function conditionKey(
+  benefit: ParsedFields | BenefitProposalV6,
+  normalizeCategoryAlias = false,
+): string {
+  const projectedValueConfig = Object.fromEntries(
+    Object.entries(benefit.valueConfig ?? {}).filter(([key]) =>
+      ![
+        "value",
+        "rate",
+        "cap",
+        "threshold",
+        "frequency",
+        "period",
+        "offer_subject",
+        "restrictions",
+        "exclusions",
+      ].includes(key)
+    ),
+  );
+  const hasStructuredValue = Object.keys(projectedValueConfig).length > 0;
   return JSON.stringify({
-    category: benefit.category,
+    category: normalizeCategoryAlias
+      ? canonicalBenefitCategory(benefit.category) ?? benefit.category
+      : benefit.category,
     valueType: benefit.valueType,
     // Movie proposals persist their commercial terms in value_config. The
     // flat parser fields are a transient projection of those same terms and
@@ -788,7 +805,9 @@ function conditionKey(benefit: ParsedFields | BenefitProposalV6): string {
     rate: hasStructuredValue ? undefined : benefit.rate,
     cap: hasStructuredValue ? undefined : benefit.cap,
     threshold: hasStructuredValue ? undefined : benefit.threshold,
-    valueConfig: canonicalJson(benefit.valueConfig),
+    valueConfig: hasStructuredValue
+      ? canonicalJson(projectedValueConfig)
+      : undefined,
     partners: benefit.partners?.map(normalize).sort(),
     frequency: hasStructuredValue || benefit.frequency === undefined
       ? undefined
@@ -1149,6 +1168,8 @@ export function diffBenefits(
   current: BenefitComparisonProposal[],
   proposed: BenefitComparisonProposal[],
 ): BenefitDiff {
+  const comparisonConditionKey = (benefit: BenefitComparisonProposal) =>
+    conditionKey(benefit, true);
   const currentByKey = new Map<string, BenefitComparisonProposal[]>();
   const proposedByKey = new Map<string, BenefitComparisonProposal[]>();
   for (const benefit of current) {
@@ -1173,8 +1194,8 @@ export function diffBenefits(
     const currentMatches = sorted(currentByKey.get(key) ?? []);
     const proposedMatches = sorted(proposedByKey.get(key) ?? []);
     if (
-      new Set(currentMatches.map(conditionKey)).size < 2 &&
-      new Set(proposedMatches.map(conditionKey)).size < 2
+      new Set(currentMatches.map(comparisonConditionKey)).size < 2 &&
+      new Set(proposedMatches.map(comparisonConditionKey)).size < 2
     ) continue;
     conflicts.push({
       code: "dedupe_key_condition_mismatch",
@@ -1195,7 +1216,7 @@ export function diffBenefits(
   const conflictedDedupeKeys = new Set<string>();
   for (const [key, candidates] of proposedBySemantic) {
     if (
-      new Set(candidates.map(conditionKey)).size < 2 ||
+      new Set(candidates.map(comparisonConditionKey)).size < 2 ||
       new Set(candidates.map(sourceIdentity)).size < 2
     ) continue;
     const currentMatches = current.filter((benefit) =>
@@ -1253,8 +1274,12 @@ export function diffBenefits(
   for (const key of sharedDedupeKeys) {
     const currentMatches = sorted(currentByKey.get(key)!);
     const proposedMatches = sorted(proposedByKey.get(key)!);
-    const currentConditions = new Set(currentMatches.map(conditionKey));
-    const proposedConditions = new Set(proposedMatches.map(conditionKey));
+    const currentConditions = new Set(
+      currentMatches.map(comparisonConditionKey),
+    );
+    const proposedConditions = new Set(
+      proposedMatches.map(comparisonConditionKey),
+    );
     if (
       currentConditions.size !== 1 ||
       proposedConditions.size !== 1 ||

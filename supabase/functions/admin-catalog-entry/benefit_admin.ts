@@ -12,6 +12,10 @@ import {
   redactSensitiveUrlsInText,
   safeHttpsDisplayUrl,
 } from "../_shared/benefit_source_privacy.ts";
+import {
+  BENEFIT_ADMIN_PRESENTATION_LIMITS,
+  BENEFIT_PUBLICATION_LIMITS,
+} from "../_shared/benefit_publication_limits.ts";
 
 export type UntypedSupabaseClient = any;
 
@@ -239,10 +243,57 @@ function validateCanonicalNumbers(value: unknown): void {
   }
 }
 
+function jsonBytes(value: unknown): number {
+  return new TextEncoder().encode(stableCanonicalJson(value)).byteLength;
+}
+
+function validateBoundedJsonTree(
+  value: unknown,
+  maximumStringChars: number,
+  depth = 0,
+  state = { keys: 0 },
+): void {
+  const limits = BENEFIT_PUBLICATION_LIMITS;
+  if (depth > limits.MAX_CANONICAL_DEPTH) {
+    throw new BenefitAdminError("canonical_nesting_limit", 409);
+  }
+  if (typeof value === "string") {
+    if (value.length > maximumStringChars) {
+      throw new BenefitAdminError("canonical_string_limit", 409);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    if (value.length > limits.MAX_CANONICAL_ARRAY_ITEMS) {
+      throw new BenefitAdminError("canonical_array_limit", 409);
+    }
+    value.forEach((item) =>
+      validateBoundedJsonTree(item, maximumStringChars, depth + 1, state)
+    );
+    return;
+  }
+  const record = asRecord(value);
+  if (!record) return;
+  const entries = Object.entries(record);
+  state.keys += entries.length;
+  if (state.keys > limits.MAX_CANONICAL_KEYS) {
+    throw new BenefitAdminError("canonical_key_limit", 409);
+  }
+  for (const [key, item] of entries) {
+    if (key.length > limits.MAX_CANONICAL_STRING_CHARS) {
+      throw new BenefitAdminError("canonical_string_limit", 409);
+    }
+    validateBoundedJsonTree(item, maximumStringChars, depth + 1, state);
+  }
+}
+
 function validateStringList(value: unknown, maximum: number, field: string) {
   if (
     !Array.isArray(value) || value.length > maximum ||
-    value.some((item) => typeof item !== "string" || item.length > 2_000)
+    value.some((item) =>
+      typeof item !== "string" ||
+      item.length > BENEFIT_PUBLICATION_LIMITS.MAX_CANONICAL_STRING_CHARS
+    )
   ) throw new BenefitAdminError(`invalid_${field}`, 409);
 }
 
@@ -303,6 +354,13 @@ function validateCanonicalCondition(
     validateStringList(condition[field], 64, `canonical_${field}`);
   }
   validateCanonicalNumbers(condition);
+  validateBoundedJsonTree(
+    condition,
+    BENEFIT_PUBLICATION_LIMITS.MAX_CANONICAL_STRING_CHARS,
+  );
+  if (jsonBytes(condition) > BENEFIT_PUBLICATION_LIMITS.MAX_CONDITION_BYTES) {
+    throw new BenefitAdminError("canonical_condition_bytes_limit", 409);
+  }
 }
 
 export function validateCanonicalPublicationEnvelope(value: unknown): void {
@@ -319,8 +377,9 @@ export function validateCanonicalPublicationEnvelope(value: unknown): void {
     !digest(envelope.condition_hash) ||
     typeof envelope.dedupe_key !== "string" ||
     envelope.dedupe_key.length > 200 ||
-    stableCanonicalJson(envelope).length > 262_144
+    jsonBytes(envelope) > BENEFIT_PUBLICATION_LIMITS.MAX_ENVELOPE_BYTES
   ) throw new BenefitAdminError("invalid_canonical_envelope", 409);
+  validateBoundedJsonTree(envelope.staged_proposal_binding, 8_000);
   validateCanonicalNumbers(envelope.staged_proposal_binding);
   validateCanonicalCondition(envelope.condition);
   const benefit = asRecord(envelope.benefit);
@@ -349,6 +408,13 @@ export function validateCanonicalPublicationEnvelope(value: unknown): void {
   ) throw new BenefitAdminError("invalid_canonical_value_config", 409);
   validateCanonicalExclusions(benefit.exclusions);
   validateCanonicalNumbers(benefit);
+  validateBoundedJsonTree(
+    { ...benefit, description: "" },
+    BENEFIT_PUBLICATION_LIMITS.MAX_CANONICAL_STRING_CHARS,
+  );
+  if (jsonBytes(benefit) > BENEFIT_PUBLICATION_LIMITS.MAX_BENEFIT_BYTES) {
+    throw new BenefitAdminError("canonical_benefit_bytes_limit", 409);
+  }
   if (envelope.identity_migration !== undefined) {
     const migration = asRecord(envelope.identity_migration);
     if (!migration) {
@@ -415,15 +481,114 @@ function textList(value: unknown, maximumItems = 64): string[] {
 }
 
 export function sanitizeAdminDto<T>(value: T): T {
+  if (!adminPresentationFits(value)) return presentationInvalidMarker() as T;
+  const sanitized = sanitizeAdminDtoUnchecked(value);
+  try {
+    if (
+      new TextEncoder().encode(JSON.stringify(sanitized)).byteLength >
+        BENEFIT_ADMIN_PRESENTATION_LIMITS.MAX_ADMIN_DTO_BYTES
+    ) return presentationInvalidMarker() as T;
+  } catch {
+    return presentationInvalidMarker() as T;
+  }
+  return sanitized;
+}
+
+function presentationInvalidMarker() {
+  return {
+    presentation_truncated: true,
+    presentation_invalid: true,
+    presentation_reason: "presentation_budget_exceeded",
+  };
+}
+
+function adminPresentationFits(value: unknown): boolean {
+  const limits = BENEFIT_ADMIN_PRESENTATION_LIMITS;
+  const seen = new WeakSet<object>();
+  let workItems = 0;
+  let approximateBytes = 0;
+  const visit = (item: unknown, depth: number): boolean => {
+    workItems += 1;
+    if (
+      workItems > limits.MAX_ADMIN_WORK_ITEMS || depth > limits.MAX_ADMIN_DEPTH
+    ) {
+      return false;
+    }
+    if (typeof item === "string") {
+      approximateBytes += new TextEncoder().encode(item).byteLength;
+      return item.length <= limits.MAX_ADMIN_STRING_CHARS &&
+        approximateBytes <= limits.MAX_ADMIN_DTO_BYTES;
+    }
+    if (Array.isArray(item)) {
+      if (item.length > limits.MAX_ADMIN_ARRAY_ITEMS || seen.has(item)) {
+        return false;
+      }
+      seen.add(item);
+      const valid = item.every((entry) => visit(entry, depth + 1));
+      seen.delete(item);
+      return valid;
+    }
+    if (item !== null && typeof item === "object") {
+      if (seen.has(item)) return false;
+      seen.add(item);
+      const entries = Object.entries(item as JsonRecord);
+      if (entries.length > limits.MAX_ADMIN_OBJECT_KEYS) {
+        seen.delete(item);
+        return false;
+      }
+      for (const [key, entry] of entries) {
+        approximateBytes += new TextEncoder().encode(key).byteLength;
+        if (
+          key.length > limits.MAX_ADMIN_KEY_CHARS ||
+          approximateBytes > limits.MAX_ADMIN_DTO_BYTES ||
+          !visit(entry, depth + 1)
+        ) {
+          seen.delete(item);
+          return false;
+        }
+      }
+      seen.delete(item);
+    }
+    return true;
+  };
+  return visit(value, 0);
+}
+
+function benefitPresentationFits(value: unknown): boolean {
+  if (!adminPresentationFits(value)) return false;
+  const row = asRecord(value);
+  const rawStaging = row?.card_benefits_staging;
+  const staging = asRecord(
+    Array.isArray(rawStaging) ? rawStaging[0] : rawStaging,
+  );
+  if (!staging) return true;
+  const extraction = asRecord(staging.extracted_data);
+  return !(
+    (Array.isArray(staging.source_evidence) &&
+      staging.source_evidence.length >
+        BENEFIT_PUBLICATION_LIMITS.MAX_SOURCE_EVIDENCE_ITEMS) ||
+    (Array.isArray(staging.benefit_decisions) &&
+      staging.benefit_decisions.length >
+        BENEFIT_PUBLICATION_LIMITS.MAX_DECISIONS) ||
+    (Array.isArray(extraction?.proposals) &&
+      extraction.proposals.length >
+        BENEFIT_PUBLICATION_LIMITS.MAX_STAGED_PROPOSALS)
+  );
+}
+
+function sanitizeAdminDtoUnchecked<T>(value: T): T {
   if (typeof value === "string") {
     return redactSensitiveUrlsInText(value) as T;
   }
-  if (Array.isArray(value)) return value.map(sanitizeAdminDto) as T;
+  if (Array.isArray(value)) return value.map(sanitizeAdminDtoUnchecked) as T;
   if (value !== null && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value as JsonRecord).map(([key, item], index) => {
         const redactedKey = redactSensitiveUrlsInText(key).slice(0, 500);
-        return [redactedKey || `redacted_key_${index}`, sanitizeAdminDto(item)];
+        return [
+          redactedKey || `redacted_key_${index}`,
+          sanitizeAdminDtoUnchecked(item),
+        ];
       }),
     ) as T;
   }
@@ -697,6 +862,7 @@ function stagingForOutput(value: unknown) {
 }
 
 export function presentBenefitJob(value: unknown, crawlerDiscovered = false) {
+  if (!benefitPresentationFits(value)) return presentationInvalidMarker();
   const row = asRecord(value) ?? {};
   const card = asRecord(row.card_catalog) ?? {};
   return sanitizeAdminDto({
@@ -842,7 +1008,7 @@ async function allowedDecisions(
   if (!Array.isArray(value) || value.length === 0) {
     throw new BenefitAdminError("benefit_decisions_are_required");
   }
-  if (value.length > 64) {
+  if (value.length > BENEFIT_PUBLICATION_LIMITS.MAX_DECISIONS) {
     throw new BenefitAdminError("benefit_decisions_limit", 409);
   }
   const decisions = value.map(asRecord);
@@ -856,25 +1022,32 @@ async function allowedDecisions(
   ) {
     throw new BenefitAdminError("invalid_benefit_decision");
   }
+  let validated: JsonRecord[];
   if (parserVersion === "benefits-v5") {
     if (!cardId) {
       throw new BenefitAdminError("invalid_benefit_job_staging", 409);
     }
-    return await validateV5ApprovalDecisions(
+    validated = await validateV5ApprovalDecisions(
+      decisions as JsonRecord[],
+      stagedExtraction,
+      cardId,
+    );
+  } else if (parserVersion !== "benefits-v6") {
+    throw new BenefitAdminError("invalid_benefit_job_staging", 409);
+  } else {
+    if (!cardId) {
+      throw new BenefitAdminError("invalid_benefit_job_staging", 409);
+    }
+    validated = await validateV6ApprovalDecisions(
       decisions as JsonRecord[],
       stagedExtraction,
       cardId,
     );
   }
-  if (parserVersion !== "benefits-v6") {
-    throw new BenefitAdminError("invalid_benefit_job_staging", 409);
+  if (jsonBytes(validated) > BENEFIT_PUBLICATION_LIMITS.MAX_REVIEW_BYTES) {
+    throw new BenefitAdminError("benefit_review_bytes_limit", 409);
   }
-  if (!cardId) throw new BenefitAdminError("invalid_benefit_job_staging", 409);
-  return await validateV6ApprovalDecisions(
-    decisions as JsonRecord[],
-    stagedExtraction,
-    cardId,
-  );
+  return validated;
 }
 
 async function validateV5ApprovalDecisions(
@@ -882,16 +1055,22 @@ async function validateV5ApprovalDecisions(
   stagedExtraction: unknown,
   cardId: string,
 ): Promise<JsonRecord[]> {
-  if (decisions.length > 64) {
+  if (decisions.length > BENEFIT_PUBLICATION_LIMITS.MAX_DECISIONS) {
     throw new BenefitAdminError("benefit_decisions_limit", 409);
   }
   const extraction = asRecord(stagedExtraction);
   if (
     !extraction || extraction.request_type !== "official_benefit_enrichment" ||
     extraction.parser_version !== "benefits-v5" ||
-    !Array.isArray(extraction.proposals) ||
-    extraction.proposals.some((proposal) => !asRecord(proposal))
+    !Array.isArray(extraction.proposals)
   ) throw new BenefitAdminError("invalid_benefit_job_staging", 409);
+  if (
+    extraction.proposals.length >
+      BENEFIT_PUBLICATION_LIMITS.MAX_STAGED_PROPOSALS
+  ) throw new BenefitAdminError("invalid_staged_presentation_bounds", 409);
+  if (extraction.proposals.some((proposal) => !asRecord(proposal))) {
+    throw new BenefitAdminError("invalid_benefit_job_staging", 409);
+  }
   const proposals = extraction.proposals as JsonRecord[];
   const byKey = new Map<string, { proposal: JsonRecord; index: number }>();
   proposals.forEach((proposal, index) => {
@@ -1150,6 +1329,27 @@ export async function buildCanonicalPublicationEnvelope(
   if (!staged || !effective) {
     throw new BenefitAdminError("invalid_benefit_proposal");
   }
+  validateBoundedJsonTree(
+    {
+      category: effective.category,
+      valueType: effective.valueType ?? effective.benefit_type,
+      offerSubject: effective.offerSubject,
+      value: effective.value,
+      rate: effective.rate,
+      cap: effective.cap,
+      threshold: effective.threshold,
+      frequency: effective.frequency,
+      period: effective.period,
+      valueConfig: effective.valueConfig ?? effective.value_config,
+      exclusions: effective.exclusions,
+      restrictions: effective.restrictions,
+      partners: effective.partners,
+      regions: effective.regions,
+      effectiveFrom: effective.effectiveFrom,
+      effectiveTo: effective.effectiveTo,
+    },
+    BENEFIT_PUBLICATION_LIMITS.MAX_CANONICAL_STRING_CHARS,
+  );
   const input = canonicalApprovalInput(effective);
   const validFrom = strictDate(input.validFrom, "benefit_valid_from");
   const validUntil = strictDate(input.validUntil, "benefit_valid_until");
@@ -1281,7 +1481,10 @@ export async function validateV6ApprovalDecisions(
   stagedExtraction: unknown,
   cardId: string,
 ): Promise<JsonRecord[]> {
-  if (Array.isArray(decisions) && decisions.length > 64) {
+  if (
+    Array.isArray(decisions) &&
+    decisions.length > BENEFIT_PUBLICATION_LIMITS.MAX_DECISIONS
+  ) {
     throw new BenefitAdminError("benefit_decisions_limit", 409);
   }
   const extraction = asRecord(stagedExtraction);
@@ -1291,6 +1494,12 @@ export async function validateV6ApprovalDecisions(
     !Array.isArray(extraction.proposals) || !Array.isArray(decisions) ||
     decisions.length === 0 || decisions.some((decision) => !asRecord(decision))
   ) throw new BenefitAdminError("invalid_benefit_job_staging", 409);
+  if (
+    extraction.proposals.length >
+      BENEFIT_PUBLICATION_LIMITS.MAX_STAGED_PROPOSALS
+  ) {
+    throw new BenefitAdminError("invalid_staged_presentation_bounds", 409);
+  }
   if (extraction.proposals.some((proposal) => !asRecord(proposal))) {
     throw new BenefitAdminError("invalid_staged_benefit_identity", 409);
   }

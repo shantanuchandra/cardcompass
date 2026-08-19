@@ -136,3 +136,39 @@ The new review contracts were first exercised on `55559bfb45fcb61e65215a39a569ba
 Migration remains `supabase/migrations/20260819163046_review_card_benefit_enrichment_v2.sql`; fix-round-2 SHA-256 before commit: `5bc1106051c0c515194cb61b3cd06cabedd4dd71733056cb781c3f9cc445e4ad`.
 
 Live applied: **no**. No Docker, local PostgreSQL/Supabase, external network, production data, linked Supabase command, migration apply/push/dry-run, reset, or repair was used. Real PostgreSQL parse/apply and transactional fixtures for concurrency, Card B byte-for-byte immutability, UTC future-boundary visibility, job fan-out, replay, and the ordered Task 2/3/4 integration remain the explicit unresolved live gate; static and pure tests do not claim to cover that gate.
+
+## Review fix round 3/5 — 2026-08-19
+
+### Red proof
+
+The new review contracts were first exercised against `d1e039677eff58dad4ca34cfc2f4fa823986a63c`:
+
+- `benefit_admin_test.ts` reported **29 passed / 4 failed**. The failures reproduced username-only userinfo disclosure, partial presentation of oversized staging without an invalid marker, an accepted canonical-envelope boundary overflow, and unbounded work over 10,000 proposals. A later lane-specific red proved 33 evidence records and 65 decisions/proposals must fail before mapping.
+- `benefit-enrichment-batch/index_test.ts` reported **58 passed / 1 failed** because real uppercase `CASHBACK` V5 DB rows did not replay unchanged. Additional focused fixtures failed for live category names such as `Cashback Rewards` before the shared aliases were added.
+- `review_card_benefit_enrichment_v2_migration_test.js` reported **9 passed / 1 failed** because there was no shared Edge/SQL publication-limit module or equality contract.
+- The Node golden suite deliberately changed from **29 passed / 0 failed** to **28 passed / 1 failed** when semantic category normalization was initially applied to extraction identity. Splitting comparison normalization from extraction identity restored the exact V5 golden while retaining uppercase DB replay.
+
+### Fixes
+
+- Extended bounded, iterative structural secret detection to redact username-only and username/password userinfo for dotted hosts, IPv4, bracketed IPv6, localhost, and single-label hosts when URL path/port/query/fragment structure is present. Encoded and mixed entity/percent variants redact in real admin DTO values and object keys; ordinary email prose and percent text remain intact.
+- Canonicalized every reconstructed current DB category through the shared alias contract for semantic comparison, including uppercase codes and human-readable names for cashback, points, and lounge. Legacy V5 identifiers and hashes remain the extraction authority and exact replay is unchanged.
+- Added one shared TypeScript publication-limits contract and mirrored its named values exactly in SQL: 64 decisions/array items/staged proposals, 500-character canonical strings, 32 KiB conditions/evidence, 64 KiB benefits, 128 KiB envelopes, 256 KiB reviews, depth 8, and 256 aggregate canonical keys. Edge validates these inclusive boundaries before hashing/RPC; SQL validates the same closed envelope and the migration asserts exact pass/fail boundaries.
+- Bounded admin presentation independently by recursion depth, object keys, array items, strings/keys, total work, and 128 KiB serialized output. Oversized, deeply nested, cyclic, or lane-overflow input returns an explicit `presentation_truncated` + `presentation_invalid` marker; approval still validates the untouched locked staging and cannot approve a displayed subset.
+- Kept lifecycle claims precise: the scheduled reader test now states it verifies view selection and returned UUID only, while a static contract verifies Task 2's `active_card_benefits` UTC `valid_from`, `valid_until`, and `retired_at` predicates. Real database-boundary execution remains pending.
+- Added an invoker-only bounded JSON-shape helper with service-role execution only and apply-time assertions. No business schema/table/column changes were introduced.
+
+### Green verification
+
+- `node --test test/supabase/review_card_benefit_enrichment_v2_migration_test.js` — 10 passed, 0 failed.
+- `deno test --allow-env --allow-read --allow-net=0.0.0.0:8000 --node-modules-dir=auto supabase/functions/admin-catalog-entry/benefit_admin_test.ts` — 33 passed, 0 failed.
+- `deno test --allow-env --allow-read --node-modules-dir=auto supabase/functions/benefit-enrichment-batch/index_test.ts` — 59 passed, 0 failed.
+- `deno test --allow-env --allow-read --node-modules-dir=auto supabase/functions/_shared/benefit_contract_test.ts` — 7 passed, 0 failed.
+- `node --test test/supabase/benefit_enrichment_rules.test.mjs test/supabase/automated_benefit_enrichment_migration_test.js` — 29 passed, 0 failed.
+- Total named behavioral/static tests: **138 passed, 0 failed**.
+- `deno check --node-modules-dir=auto` on all seven changed TypeScript/test files — passed.
+- `deno fmt --check` on all seven changed TypeScript/test files — passed.
+- `git diff --check` — passed.
+
+Migration remains `supabase/migrations/20260819163046_review_card_benefit_enrichment_v2.sql`; fix-round-3 SHA-256 before commit: `562113c472106a9a8058fe8df50e3252f07dca84019efd2189639a80c8fb3bb0`.
+
+Live applied: **no**. No Docker, local PostgreSQL/Supabase, external network, production data, linked Supabase command, migration apply/push/dry-run, reset, or repair was used. Real PostgreSQL parse/apply plus transactional fixtures for concurrent review, Card B byte-for-byte immutability, UTC lifecycle boundaries, linked-job fan-out, exact replay, and ordered Task 2/3/4 integration remain the explicit unresolved live gate; static/pure tests do not claim database-boundary coverage.

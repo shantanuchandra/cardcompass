@@ -277,7 +277,7 @@ Deno.test("DB category codes replay through the shared canonical category contra
   }
 });
 
-Deno.test("scheduled enrichment reads only lifecycle-active benefits and retains the live UUID", async () => {
+Deno.test("scheduled enrichment requests the lifecycle view and retains its returned live UUID", async () => {
   const [old] = await extractGroundedBenefitsV6(
     [{
       sourceUrl: "https://issuer.example/card",
@@ -335,6 +335,70 @@ Deno.test("scheduled enrichment reads only lifecycle-active benefits and retains
     diff.possibleRemovals.length === 0,
     "old scheduled mapping became a possible removal before its boundary",
   );
+});
+
+Deno.test("legacy v5 DB category codes replay semantically without changing legacy identifiers", () => {
+  const fixtures = [
+    "Get 10% cashback on dining spends.",
+    "Earn 5 reward points for every Rs. 150 spent on eligible purchases.",
+    "Get 2 lounge visits per quarter at domestic airports.",
+  ];
+  const databaseCategories = [
+    ["CASHBACK", "Cashback Rewards"],
+    ["POINTS", "Reward Points"],
+    ["LOUNGE", "Airport Lounge Access"],
+  ];
+  for (const [index, sourceText] of fixtures.entries()) {
+    const [proposed] = extractGroundedBenefits([{
+      sourceUrl: "https://issuer.example/card",
+      text: sourceText,
+      contentHash: String(index + 4).repeat(64),
+    }], "benefits-v5");
+    assert(proposed != null, "v5 fixture did not extract");
+    const legacyId = `legacy:${index}:${proposed.dedupeKey}`;
+    for (const databaseCategory of databaseCategories[index]) {
+      const current = currentBenefitProposal({
+        benefit_id: `${index + 4}`.repeat(8) +
+          "-1111-4111-8111-111111111111",
+        dedupe_key: legacyId,
+        title: proposed.title,
+        description: proposed.description,
+        benefit_category: databaseCategory,
+        benefit_type: proposed.valueType,
+        value_config: {
+          ...proposed.valueConfig,
+          ...(proposed.value === undefined ? {} : { value: proposed.value }),
+          ...(proposed.rate === undefined ? {} : { rate: proposed.rate }),
+          ...(proposed.cap === undefined ? {} : { cap: proposed.cap }),
+          ...(proposed.threshold === undefined
+            ? {}
+            : { threshold: proposed.threshold }),
+          ...(proposed.frequency === undefined
+            ? {}
+            : { frequency: proposed.frequency }),
+          ...(proposed.period === undefined ? {} : { period: proposed.period }),
+          restrictions: proposed.restrictions,
+        },
+        exclusions: proposed.exclusions,
+        partners: proposed.partners,
+        valid_from: proposed.effectiveFrom,
+        valid_until: proposed.effectiveTo,
+      });
+      assert(current != null, "legacy DB row did not reconstruct");
+      assert(
+        current.dedupeKey === legacyId && !("benefitId" in current),
+        "legacy identifier was rewritten into the v2 identity lane",
+      );
+      const diff = diffBenefits([current], [{
+        ...proposed,
+        dedupeKey: legacyId,
+      }]);
+      assert(
+        diff.unchanged.length === 1 && diff.conflicts.length === 0,
+        `${databaseCategory} did not replay as unchanged v5 semantics`,
+      );
+    }
+  }
 });
 
 for (

@@ -32,6 +32,10 @@ const categoryAliases: Readonly<Record<string, string>> = Object.freeze({
   rewards: "points",
   point: "points",
   points: "points",
+  lounge: "travel",
+  "cashback rewards": "cashback",
+  "reward points": "points",
+  "airport lounge access": "travel",
 });
 
 /** The single application-level alias contract for live benefit categories. */

@@ -85,6 +85,56 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION public.canonical_json_shape_is_bounded(
+  _value jsonb,
+  _max_depth integer,
+  _max_keys integer,
+  _max_array_items integer,
+  _max_string_chars integer
+) RETURNS boolean
+LANGUAGE sql
+IMMUTABLE
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+  WITH RECURSIVE nodes(value, depth) AS (
+    SELECT _value, 0
+    UNION ALL
+    SELECT child.value, nodes.depth + 1
+    FROM nodes
+    CROSS JOIN LATERAL (
+      SELECT item.value
+      FROM jsonb_each(
+        CASE WHEN jsonb_typeof(nodes.value) = 'object'
+          THEN nodes.value ELSE '{}'::jsonb END
+      ) AS item(key, value)
+      UNION ALL
+      SELECT item.value
+      FROM jsonb_array_elements(
+        CASE WHEN jsonb_typeof(nodes.value) = 'array'
+          THEN nodes.value ELSE '[]'::jsonb END
+      ) AS item(value)
+    ) AS child(value)
+    WHERE nodes.depth < _max_depth + 1
+  ), measurements AS (
+    SELECT
+      coalesce(max(depth), 0) AS maximum_depth,
+      coalesce(sum(CASE WHEN jsonb_typeof(value) = 'object' THEN (
+        SELECT count(*) FROM jsonb_object_keys(value)
+      ) ELSE 0 END), 0) AS key_count,
+      coalesce(max(CASE WHEN jsonb_typeof(value) = 'array'
+        THEN jsonb_array_length(value) ELSE 0 END), 0) AS maximum_array_items,
+      coalesce(max(CASE WHEN jsonb_typeof(value) = 'string'
+        THEN length(value #>> '{}') ELSE 0 END), 0) AS maximum_string_chars
+    FROM nodes
+  )
+  SELECT maximum_depth <= _max_depth
+    AND key_count <= _max_keys
+    AND maximum_array_items <= _max_array_items
+    AND maximum_string_chars <= _max_string_chars
+  FROM measurements;
+$$;
+
 CREATE OR REPLACE FUNCTION public.canonical_benefit_condition_hash(
   _condition jsonb
 ) RETURNS text
@@ -131,6 +181,18 @@ SECURITY INVOKER
 SET search_path = public, extensions, pg_temp
 AS $$
 DECLARE
+  MAX_DECISIONS constant integer := 64;
+  MAX_CANONICAL_ARRAY_ITEMS constant integer := 64;
+  MAX_CANONICAL_STRING_CHARS constant integer := 500;
+  MAX_CONDITION_BYTES constant integer := 32768;
+  MAX_BENEFIT_BYTES constant integer := 65536;
+  MAX_ENVELOPE_BYTES constant integer := 131072;
+  MAX_REVIEW_BYTES constant integer := 262144;
+  MAX_SOURCE_EVIDENCE_ITEMS constant integer := 32;
+  MAX_SOURCE_EVIDENCE_BYTES constant integer := 32768;
+  MAX_CANONICAL_DEPTH constant integer := 8;
+  MAX_CANONICAL_KEYS constant integer := 256;
+  MAX_STAGED_PROPOSALS constant integer := 64;
   condition_value jsonb;
   benefit_value jsonb;
   expected_staged_hash text;
@@ -162,6 +224,9 @@ BEGIN
   ) THEN RAISE EXCEPTION 'unknown_canonical_envelope_key'; END IF;
   condition_value := _envelope->'condition';
   benefit_value := _envelope->'benefit';
+  IF octet_length(public.canonical_json_text(_envelope)) > MAX_ENVELOPE_BYTES THEN
+    RAISE EXCEPTION 'canonical_envelope_bytes_limit';
+  END IF;
   IF jsonb_typeof(condition_value) <> 'object'
      OR jsonb_typeof(benefit_value) <> 'object'
      OR jsonb_typeof(condition_value->'value_config') <> 'object'
@@ -237,11 +302,11 @@ BEGIN
   FOREACH array_key IN ARRAY ARRAY['partners', 'regions', 'restrictions']
   LOOP
     IF jsonb_typeof(condition_value->array_key) <> 'array'
-       OR jsonb_array_length(condition_value->array_key) > 64
+       OR jsonb_array_length(condition_value->array_key) > MAX_CANONICAL_ARRAY_ITEMS
        OR EXISTS (
          SELECT 1 FROM jsonb_array_elements(condition_value->array_key) AS item(value)
          WHERE jsonb_typeof(item.value) <> 'string'
-           OR length(item.value #>> '{}') > 500
+           OR length(item.value #>> '{}') > MAX_CANONICAL_STRING_CHARS
        ) THEN
       RAISE EXCEPTION 'invalid_canonical_envelope_shape';
     END IF;
@@ -251,30 +316,43 @@ BEGIN
   ]
   LOOP
     IF jsonb_typeof(condition_value->'exclusions'->array_key) <> 'array'
-       OR jsonb_array_length(condition_value->'exclusions'->array_key) > 64
+       OR jsonb_array_length(condition_value->'exclusions'->array_key) > MAX_CANONICAL_ARRAY_ITEMS
        OR EXISTS (
          SELECT 1
          FROM jsonb_array_elements(condition_value->'exclusions'->array_key) AS item(value)
          WHERE jsonb_typeof(item.value) <> 'string'
-           OR length(item.value #>> '{}') > 500
+           OR length(item.value #>> '{}') > MAX_CANONICAL_STRING_CHARS
        ) THEN
       RAISE EXCEPTION 'invalid_canonical_exclusions';
     END IF;
   END LOOP;
   IF jsonb_typeof(condition_value->'exclusions'->'additional') <> 'object'
      OR jsonb_typeof(condition_value->'exclusions'->'additional'->'source_terms') <> 'array'
-     OR jsonb_array_length(condition_value->'exclusions'->'additional'->'source_terms') > 64
+     OR jsonb_array_length(condition_value->'exclusions'->'additional'->'source_terms') > MAX_CANONICAL_ARRAY_ITEMS
      OR EXISTS (
        SELECT 1
        FROM jsonb_array_elements(
          condition_value->'exclusions'->'additional'->'source_terms'
        ) AS item(value)
        WHERE jsonb_typeof(item.value) <> 'string'
-         OR length(item.value #>> '{}') > 500
+         OR length(item.value #>> '{}') > MAX_CANONICAL_STRING_CHARS
      )
-     OR octet_length(public.canonical_json_text(condition_value)) > 32768
-     OR octet_length(public.canonical_json_text(benefit_value)) > 65536 THEN
+     OR octet_length(public.canonical_json_text(condition_value)) > MAX_CONDITION_BYTES
+     OR octet_length(public.canonical_json_text(benefit_value)) > MAX_BENEFIT_BYTES THEN
     RAISE EXCEPTION 'invalid_canonical_exclusions';
+  END IF;
+  IF NOT public.canonical_json_shape_is_bounded(
+       condition_value, MAX_CANONICAL_DEPTH, MAX_CANONICAL_KEYS,
+       MAX_CANONICAL_ARRAY_ITEMS, MAX_CANONICAL_STRING_CHARS
+     ) OR NOT public.canonical_json_shape_is_bounded(
+       jsonb_set(benefit_value, '{description}', '""'::jsonb),
+       MAX_CANONICAL_DEPTH, MAX_CANONICAL_KEYS,
+       MAX_CANONICAL_ARRAY_ITEMS, MAX_CANONICAL_STRING_CHARS
+     ) OR NOT public.canonical_json_shape_is_bounded(
+       _staged_proposal, MAX_CANONICAL_DEPTH, MAX_CANONICAL_KEYS,
+       MAX_CANONICAL_ARRAY_ITEMS, 8000
+     ) THEN
+    RAISE EXCEPTION 'canonical_shape_limit';
   END IF;
 
   expected_staged_hash := encode(
@@ -518,6 +596,12 @@ SECURITY INVOKER
 SET search_path = public, extensions, pg_temp
 AS $$
 DECLARE
+  MAX_DECISIONS constant integer := 64;
+  MAX_CANONICAL_STRING_CHARS constant integer := 500;
+  MAX_REVIEW_BYTES constant integer := 262144;
+  MAX_SOURCE_EVIDENCE_ITEMS constant integer := 32;
+  MAX_SOURCE_EVIDENCE_BYTES constant integer := 32768;
+  MAX_STAGED_PROPOSALS constant integer := 64;
   staging_row public.card_benefits_staging%ROWTYPE;
   staged_proposal jsonb;
   canonical_envelope jsonb;
@@ -548,8 +632,8 @@ DECLARE
 BEGIN
   IF _staging_id IS NULL OR _reviewed_by IS NULL OR _decisions IS NULL
      OR jsonb_typeof(_decisions) <> 'array' OR jsonb_array_length(_decisions) = 0
-     OR jsonb_array_length(_decisions) > 64
-     OR octet_length(public.canonical_json_text(_decisions)) > 262144 THEN
+     OR jsonb_array_length(_decisions) > MAX_DECISIONS
+     OR octet_length(public.canonical_json_text(_decisions)) > MAX_REVIEW_BYTES THEN
     RAISE EXCEPTION 'invalid_benefit_approval';
   END IF;
   SELECT jsonb_agg(item.value - 'benefit' - 'edited_benefit' ORDER BY item.ordinality)
@@ -589,12 +673,13 @@ BEGIN
      OR staging_row.parser_version NOT IN ('benefits-v5', 'benefits-v6')
      OR NOT public.is_valid_official_source_evidence(staging_row.source_evidence)
      OR jsonb_typeof(staging_row.source_evidence) <> 'array'
-     OR jsonb_array_length(staging_row.source_evidence) > 32
-     OR octet_length(public.canonical_json_text(staging_row.source_evidence)) > 32768
+     OR jsonb_array_length(staging_row.source_evidence) > MAX_SOURCE_EVIDENCE_ITEMS
+     OR octet_length(public.canonical_json_text(staging_row.source_evidence)) > MAX_SOURCE_EVIDENCE_BYTES
      OR jsonb_typeof(staging_row.extracted_data) <> 'object'
      OR staging_row.extracted_data->>'request_type' <> 'official_benefit_enrichment'
      OR staging_row.extracted_data->>'parser_version' <> staging_row.parser_version
      OR jsonb_typeof(staging_row.extracted_data->'proposals') <> 'array'
+     OR jsonb_array_length(staging_row.extracted_data->'proposals') > MAX_STAGED_PROPOSALS
      OR EXISTS (
        SELECT 1 FROM jsonb_array_elements(staging_row.extracted_data->'proposals') AS proposal(value)
        WHERE jsonb_typeof(proposal.value) <> 'object'
@@ -614,8 +699,8 @@ BEGIN
         'existing_benefit_id', 'benefit', 'edited_benefit',
         'canonical_envelope'
       )
-    ) OR length(coalesce(decision->>'reason', '')) > 500
-      OR octet_length(public.canonical_json_text(decision)) > 131072 THEN
+    ) OR length(coalesce(decision->>'reason', '')) > MAX_CANONICAL_STRING_CHARS
+      OR octet_length(public.canonical_json_text(decision)) > MAX_REVIEW_BYTES THEN
       RAISE EXCEPTION 'invalid_benefit_decision_shape';
     END IF;
     decision_action := lower(trim(coalesce(decision->>'action', '')));
@@ -987,12 +1072,50 @@ DECLARE
   unknown_key_assertion boolean := false;
   unsafe_numeric_assertion boolean := false;
   identity_migration_assertion boolean := false;
+  shape_boundary_assertion boolean := false;
   legacy_condition jsonb;
   legacy_condition_hash text;
   legacy_dedupe_key text;
   legacy_staged_proposal jsonb;
   legacy_envelope jsonb;
+  boundary_value jsonb;
+  depth_index integer;
 BEGIN
+  IF NOT public.canonical_json_shape_is_bounded(
+       jsonb_build_object('value', repeat('x', 500)), 8, 256, 64, 500
+     ) OR public.canonical_json_shape_is_bounded(
+       jsonb_build_object('value', repeat('x', 501)), 8, 256, 64, 500
+     ) OR NOT public.canonical_json_shape_is_bounded(
+       to_jsonb(ARRAY(SELECT value FROM generate_series(1, 64))),
+       8, 256, 64, 500
+     ) OR public.canonical_json_shape_is_bounded(
+       to_jsonb(ARRAY(SELECT value FROM generate_series(1, 65))),
+       8, 256, 64, 500
+     ) THEN
+    RAISE EXCEPTION 'canonical shape boundary assertion failed';
+  END IF;
+  SELECT jsonb_object_agg('key_' || value::text, value)
+  INTO boundary_value FROM generate_series(1, 256) AS item(value);
+  IF NOT public.canonical_json_shape_is_bounded(
+    boundary_value, 8, 256, 64, 500
+  ) THEN RAISE EXCEPTION 'canonical key boundary assertion failed'; END IF;
+  SELECT jsonb_object_agg('key_' || value::text, value)
+  INTO boundary_value FROM generate_series(1, 257) AS item(value);
+  IF public.canonical_json_shape_is_bounded(
+    boundary_value, 8, 256, 64, 500
+  ) THEN RAISE EXCEPTION 'canonical key overflow assertion failed'; END IF;
+  boundary_value := '"leaf"'::jsonb;
+  FOR depth_index IN 1..8 LOOP
+    boundary_value := jsonb_build_object('next', boundary_value);
+  END LOOP;
+  IF NOT public.canonical_json_shape_is_bounded(
+    boundary_value, 8, 256, 64, 500
+  ) THEN RAISE EXCEPTION 'canonical depth boundary assertion failed'; END IF;
+  boundary_value := jsonb_build_object('next', boundary_value);
+  IF public.canonical_json_shape_is_bounded(
+    boundary_value, 8, 256, 64, 500
+  ) THEN RAISE EXCEPTION 'canonical depth overflow assertion failed'; END IF;
+  shape_boundary_assertion := true;
   staged_hash := encode(
     extensions.digest(
       convert_to(public.canonical_json_text(staged_proposal), 'UTF8'), 'sha256'
@@ -1090,7 +1213,8 @@ BEGIN
      OR NOT cross_card_rejected
      OR NOT unknown_key_assertion
      OR NOT unsafe_numeric_assertion
-     OR NOT identity_migration_assertion THEN
+     OR NOT identity_migration_assertion
+     OR NOT shape_boundary_assertion THEN
     RAISE EXCEPTION 'canonical envelope assertion failed';
   END IF;
 END;
@@ -1098,6 +1222,7 @@ $publication_envelope_v2_assertions$;
 
 REVOKE ALL ON FUNCTION public.canonical_json_text(jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.canonical_json_numbers_are_safe(jsonb) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.canonical_json_shape_is_bounded(jsonb, integer, integer, integer, integer) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.canonical_benefit_condition_hash(jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.card_scoped_benefit_key(uuid, jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.validate_benefit_publication_envelope(jsonb, uuid, jsonb) FROM PUBLIC, anon, authenticated;
@@ -1106,6 +1231,7 @@ REVOKE ALL ON FUNCTION public.approve_card_benefit_enrichment(uuid, uuid, jsonb)
 
 GRANT EXECUTE ON FUNCTION public.canonical_json_text(jsonb) TO service_role;
 GRANT EXECUTE ON FUNCTION public.canonical_json_numbers_are_safe(jsonb) TO service_role;
+GRANT EXECUTE ON FUNCTION public.canonical_json_shape_is_bounded(jsonb, integer, integer, integer, integer) TO service_role;
 GRANT EXECUTE ON FUNCTION public.canonical_benefit_condition_hash(jsonb) TO service_role;
 GRANT EXECUTE ON FUNCTION public.card_scoped_benefit_key(uuid, jsonb) TO service_role;
 GRANT EXECUTE ON FUNCTION public.validate_benefit_publication_envelope(jsonb, uuid, jsonb) TO service_role;
@@ -1125,6 +1251,7 @@ BEGIN
   FOREACH protected_oid IN ARRAY ARRAY[
     'public.canonical_json_text(jsonb)'::regprocedure,
     'public.canonical_json_numbers_are_safe(jsonb)'::regprocedure,
+    'public.canonical_json_shape_is_bounded(jsonb,integer,integer,integer,integer)'::regprocedure,
     'public.canonical_benefit_condition_hash(jsonb)'::regprocedure,
     'public.card_scoped_benefit_key(uuid,jsonb)'::regprocedure,
     'public.validate_benefit_publication_envelope(jsonb,uuid,jsonb)'::regprocedure,

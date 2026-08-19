@@ -1580,6 +1580,196 @@ Deno.test("admin DTO privacy covers encoded, relative, protocol-relative, and ba
   );
 });
 
+Deno.test("real benefit presentation strips structured userinfo without treating email prose as credentials", () => {
+  const credentials = [
+    "alice@issuer.example:443/terms?token=secret#fragment",
+    "alice:password@issuer.example:443/terms?token=secret#fragment",
+    "alice@127.0.0.1:8080/terms?token=secret",
+    "alice:password@127.0.0.1:8080/terms?token=secret",
+    "alice@[2001:db8::1]:8443/terms#secret",
+    "alice:password@[2001:db8::1]:8443/terms#secret",
+    "alice@localhost:8000/terms?token=secret",
+    "alice:password@localhost:8000/terms?token=secret",
+    "alice@internal/terms?token=secret",
+    "alice:password@internal/terms?token=secret",
+    "alice%3Apassword%40localhost%3A8000%2Fterms%3Ftoken=secret",
+    "alice%253Apassword%2540%255B2001%253Adb8%253A%253A1%255D%253A8443%252Fterms%253Ftoken=secret",
+    "alice&amp;#58;password&amp;#64;internal/terms&amp;#63;token=secret",
+  ];
+  for (const credential of credentials) {
+    const presented = presentBenefitJob({
+      id: "job-1",
+      issuer: `Issuer ${credential}`,
+      parser_version: "benefits-v6",
+      card_catalog: { id: "card-1", bank: credential, card_name: credential },
+    });
+    const serialized = JSON.stringify(presented).toLowerCase();
+    for (const leaked of ["alice", "password", "token=", "#secret"]) {
+      assert(!serialized.includes(leaked), `presented DTO leaked ${leaked}`);
+    }
+  }
+
+  const keyPresentation = sanitizeAdminDto(
+    Object.fromEntries(
+      credentials.map((credential) => [credential, credential]),
+    ),
+  );
+  const keyJson = JSON.stringify(keyPresentation).toLowerCase();
+  for (const leaked of ["alice", "password", "token=", "#secret"]) {
+    assert(!keyJson.includes(leaked), `presented DTO key leaked ${leaked}`);
+  }
+
+  const ordinary = sanitizeAdminDto({
+    "support@example.com": "Email support@example.com or save 25% today",
+  });
+  const ordinaryJson = JSON.stringify(ordinary);
+  assert(
+    ordinaryJson.includes("support@example.com") &&
+      ordinaryJson.includes("25%"),
+    "ordinary email or percent prose was treated as URL userinfo",
+  );
+});
+
+Deno.test("admin presentation rejects oversized or cyclic input before traversing a displayed subset", () => {
+  const oversizedLanes = [
+    {
+      extracted_data: { proposals: Array.from({ length: 10_000 }, () => ({})) },
+    },
+    { source_evidence: Array.from({ length: 10_000 }, () => ({})) },
+    { benefit_decisions: Array.from({ length: 10_000 }, () => ({})) },
+    { source_evidence: Array.from({ length: 33 }, () => ({})) },
+    { benefit_decisions: Array.from({ length: 65 }, () => ({})) },
+    { extracted_data: { proposals: Array.from({ length: 65 }, () => ({})) } },
+  ];
+  for (const staging of oversizedLanes) {
+    const presented = presentBenefitJob({
+      id: "job-oversized",
+      status: "staged",
+      parser_version: "benefits-v6",
+      card_benefits_staging: staging,
+    }) as Record<string, unknown>;
+    assert(
+      presented.presentation_truncated === true &&
+        presented.presentation_invalid === true &&
+        JSON.stringify(presented).length < 2_000,
+      "oversized staging was partially displayed without an invalid marker",
+    );
+  }
+
+  const cyclic: Record<string, unknown> = { safe: "value" };
+  cyclic.self = cyclic;
+  const cyclicResult = sanitizeAdminDto(cyclic) as Record<string, unknown>;
+  assert(
+    cyclicResult.presentation_truncated === true &&
+      cyclicResult.presentation_invalid === true,
+    "runtime cycle was traversed or silently omitted",
+  );
+  const largeKeyResult = sanitizeAdminDto({
+    ["k".repeat(9_000)]: "value",
+  }) as Record<string, unknown>;
+  assert(
+    largeKeyResult.presentation_truncated === true,
+    "oversized object key was silently truncated",
+  );
+  const byteResult = sanitizeAdminDto({ value: "x".repeat(200_000) }) as Record<
+    string,
+    unknown
+  >;
+  assert(
+    byteResult.presentation_truncated === true &&
+      JSON.stringify(byteResult).length < 2_000,
+    "aggregate DTO byte budget was not enforced",
+  );
+  assert(
+    JSON.stringify(sanitizeAdminDto({ partner: "BookMyShow", rate: 5 })) ===
+      '{"partner":"BookMyShow","rate":5}',
+    "ordinary bounded presentation changed",
+  );
+});
+
+Deno.test("canonical envelope limits reject Edge-SQL drift boundaries before hashing", async () => {
+  const cardId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const base = {
+    title: "Dining cashback",
+    category: "cashback",
+    valueType: "cashback",
+    offerSubject: "cashback:cashback:dining",
+    rate: 10,
+    restrictions: ["x".repeat(500)],
+    exclusions: [],
+    partners: [],
+    regions: ["IN"],
+  };
+  await buildCanonicalPublicationEnvelope(cardId, base);
+  await buildCanonicalPublicationEnvelope(cardId, {
+    ...base,
+    restrictions: Array.from({ length: 64 }, () => "term"),
+  });
+  const withExtraKeys = (count: number) => ({
+    ...base,
+    ...Object.fromEntries(
+      Array.from({ length: count }, (_, index) => [`extra_${index}`, index]),
+    ),
+  });
+  await buildCanonicalPublicationEnvelope(cardId, withExtraKeys(247));
+  const nested = (objectCount: number) => {
+    let value: unknown = "leaf";
+    for (let index = 0; index < objectCount; index += 1) {
+      value = { next: value };
+    }
+    return value;
+  };
+  await buildCanonicalPublicationEnvelope(cardId, {
+    ...base,
+    nested: nested(7),
+  });
+
+  for (
+    const invalid of [
+      { ...base, restrictions: ["x".repeat(501)] },
+      { ...base, restrictions: Array.from({ length: 65 }, () => "term") },
+      {
+        ...base,
+        valueConfig: { platform: "x".repeat(48 * 1024) },
+      },
+      { ...base, padding: "x".repeat(132 * 1024) },
+      withExtraKeys(248),
+      { ...base, nested: nested(8) },
+    ]
+  ) {
+    let error: unknown;
+    try {
+      await buildCanonicalPublicationEnvelope(cardId, invalid);
+    } catch (caught) {
+      error = caught;
+    }
+    assert(error instanceof Error, "out-of-domain Edge envelope was accepted");
+  }
+});
+
+Deno.test("oversized locked proposal sets cannot approve a displayed subset", async () => {
+  let error: unknown;
+  try {
+    await validateV6ApprovalDecisions(
+      [{ action: "reject", reason: "not valid" }],
+      {
+        request_type: "official_benefit_enrichment",
+        parser_version: "benefits-v6",
+        proposals: Array.from({ length: 10_000 }, () => ({})),
+      },
+      "card-1",
+    );
+  } catch (caught) {
+    error = caught;
+  }
+  assert(
+    error instanceof Error &&
+      (error as { code?: string }).code ===
+        "invalid_staged_presentation_bounds",
+    "approval accepted an oversized raw proposal set hidden by presentation bounds",
+  );
+});
+
 Deno.test("retirement proof is recomputed from locked complete absence evidence", () => {
   const base: Record<string, any> = {
     crawl_observation: {

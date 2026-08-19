@@ -1,11 +1,11 @@
 const absoluteHttpUrl = /https?:\/\/[^\s<>"']+/gi;
 const hrefAttribute = /(\bhref\s*=\s*)(["'])([\s\S]*?)(\2)/gi;
 const structuralEncoding =
-  /%(?:3a|2f|3f|23|40)|&#(?:x(?:3a|2f|3f|23|40)|(?:58|47|63|35|64));?|&(?:colon|sol|quest|num|commat);/gi;
+  /%(?:3a|2f|3f|23|40|5b|5d)|&#(?:x(?:3a|2f|3f|23|40)|(?:58|47|63|35|64));?|&(?:colon|sol|quest|num|commat);/gi;
 const secretBearingReference =
   /(?:https?:\/\/|\/\/|(?:[a-z0-9-]+\.)+[a-z]{2,}(?=[:/]))[^\s<>"']*|\/(?:[^\s<>"']*)?[?#][^\s<>"']*|[?#](?:[^\s<>"']+)/gi;
-const bareUserInfo =
-  /\b[^\s:@/]+:[^\s@/]+@((?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?(?:\/[^\s?#]*)?)(?:[?#][^\s]*)?/gi;
+const structuredUserInfo =
+  /(^|[\s("'`])[^\s@/?#:<>'"]+(?::[^\s@/?#<>'"]*)?@(\[[0-9a-f:.]+\]|(?:\d{1,3}\.){3}\d{1,3}|(?:[a-z0-9-]+\.)+[a-z0-9-]+|localhost|[a-z0-9-]+)((?::\d+)?(?:\/[^\s<>"']*|[?#][^\s<>"']*))/gi;
 
 const MAX_PRESENTATION_INPUT = 16_384;
 const MAX_STRUCTURAL_DECODE_PASSES = 4;
@@ -21,7 +21,7 @@ function decodeStructuralEncoding(value: string): string {
         "&#$1;",
       )
       // Peel percent layers only when they lead to a structural delimiter.
-      .replace(/%25(?=(?:25){0,2}(?:3a|2f|3f|23|40))/gi, "%")
+      .replace(/%25(?=(?:25){0,2}(?:3a|2f|3f|23|40|5b|5d))/gi, "%")
       // Likewise, unwrap ampersands only when the result remains a structural
       // named/numeric entity; unrelated HTML prose remains untouched.
       .replace(
@@ -42,6 +42,8 @@ function decodeStructuralEncoding(value: string): string {
         if (["%23", "&#x23", "&#35", "&num"].includes(normalized)) {
           return "#";
         }
+        if (normalized === "%5b") return "[";
+        if (normalized === "%5d") return "]";
         return "@";
       });
     if (next === decoded) break;
@@ -94,7 +96,11 @@ export function redactSensitiveUrlsInText(value: string): string {
       absoluteHttpUrl,
       (candidate) => safeHttpsDisplayUrl(candidate) ?? "[redacted-url]",
     )
-    .replace(bareUserInfo, (_candidate, safeHost: string) => safeHost)
+    .replace(
+      structuredUserInfo,
+      (_candidate, prefix: string, safeHost: string, structuredTail: string) =>
+        `${prefix}${safeHost}${structuredTail}`,
+    )
     .replace(secretBearingReference, (candidate) => {
       const boundary = candidate.search(/[?#]/);
       const base = boundary >= 0 ? candidate.slice(0, boundary) : candidate;

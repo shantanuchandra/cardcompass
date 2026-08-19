@@ -73,10 +73,10 @@ test('retirement, audit append, replay, and linked-job completion fail closed', 
   assert.match(retirement, /retirementEligible[\s\S]*retirementReason[\s\S]*retirement_not_eligible/i);
   assert.match(approval, /benefit_decisions\s*=\s*CASE[\s\S]*\|\|\s*audit_decisions/i);
   assert.match(approval, /source_evidence/i);
-  assert.match(approval, /jsonb_array_length\(staging_row\.source_evidence\)\s*>\s*32[\s\S]*octet_length[\s\S]*32768/i);
+  assert.match(approval, /jsonb_array_length\(staging_row\.source_evidence\)\s*>\s*MAX_SOURCE_EVIDENCE_ITEMS[\s\S]*octet_length[\s\S]*MAX_SOURCE_EVIDENCE_BYTES/i);
   assert.match(approval, /audit_source_evidence[\s\S]*evidence_attached[\s\S]*source_evidence/i);
-  assert.match(approval, /jsonb_array_length\(_decisions\)\s*>\s*64[\s\S]*octet_length[\s\S]*262144/i);
-  assert.match(approval, /length\(coalesce\(decision->>'reason'[\s\S]*>\s*500/i);
+  assert.match(approval, /jsonb_array_length\(_decisions\)\s*>\s*MAX_DECISIONS[\s\S]*octet_length[\s\S]*MAX_REVIEW_BYTES/i);
+  assert.match(approval, /length\(coalesce\(decision->>'reason'[\s\S]*>\s*MAX_CANONICAL_STRING_CHARS/i);
   assert.match(approval, /review_payload_hash[\s\S]*already_reviewed/i);
   assert.match(approval, /UPDATE public\.card_catalog_enrichment_jobs[\s\S]*status\s*=\s*'completed'[\s\S]*next_run_at\s*=\s*statement_timestamp\(\)\s*\+\s*interval '30 days'/i);
   assert.match(approval, /staging_id\s*=\s*staging_row\.id/i);
@@ -147,4 +147,55 @@ test('linked completion is card/parser/status scoped and asserts a first-review 
   assert.match(approval, /job\.parser_version\s*=\s*staging_row\.parser_version/i);
   assert.match(approval, /job\.status\s*=\s*'staged'/i);
   assert.match(approval, /GET DIAGNOSTICS linked_job_count = ROW_COUNT[\s\S]*linked_job_count < 1/i);
+});
+
+test('Edge and SQL publication limits have one exact named boundary contract', async () => {
+  const sql = await migrationSql();
+  const limitsSource = await readFile(
+    new URL('supabase/functions/_shared/benefit_publication_limits.ts', repoRoot),
+    'utf8',
+  );
+  const expected = {
+    MAX_DECISIONS: 64,
+    MAX_CANONICAL_ARRAY_ITEMS: 64,
+    MAX_CANONICAL_STRING_CHARS: 500,
+    MAX_CONDITION_BYTES: 32768,
+    MAX_BENEFIT_BYTES: 65536,
+    MAX_ENVELOPE_BYTES: 131072,
+    MAX_REVIEW_BYTES: 262144,
+    MAX_SOURCE_EVIDENCE_ITEMS: 32,
+    MAX_SOURCE_EVIDENCE_BYTES: 32768,
+    MAX_CANONICAL_DEPTH: 8,
+    MAX_CANONICAL_KEYS: 256,
+    MAX_STAGED_PROPOSALS: 64,
+  };
+  for (const [name, value] of Object.entries(expected)) {
+    assert.match(limitsSource, new RegExp(`${name}:\\s*${value}\\b`));
+    const declarations = [
+      ...sql.matchAll(
+        new RegExp(`${name}\\s+constant\\s+integer\\s*:=\\s*(\\d+)\\b`, 'gi'),
+      ),
+    ];
+    assert.ok(declarations.length > 0, `${name} SQL declaration is required`);
+    assert.deepEqual(
+      declarations.map((match) => Number(match[1])),
+      declarations.map(() => value),
+      `${name} SQL declarations drifted from the Edge limit`,
+    );
+  }
+});
+
+test('Task 2 active view owns the exact UTC lifecycle boundary used by Task 4 reads', async () => {
+  const lifecycle = await readFile(
+    new URL('supabase/migrations/20260819112813_card_ingestion_lifecycle_hardening.sql', repoRoot),
+    'utf8',
+  );
+  const view = lifecycle.match(
+    /CREATE OR REPLACE VIEW public\.active_card_benefits[\s\S]*?;/i,
+  )?.[0];
+  assert.ok(view, 'Task 2 active lifecycle view is required');
+  assert.match(view, /timezone\(\s*'UTC'\s*,\s*statement_timestamp\(\)\s*\)::date AS utc_date/i);
+  assert.match(view, /mapping\.retired_at IS NULL\s+OR mapping\.retired_at\s*>\s*now\(\)/i);
+  assert.match(view, /benefit\.valid_from IS NULL\s+OR benefit\.valid_from\s*<=\s*database_clock\.utc_date/i);
+  assert.match(view, /benefit\.valid_until IS NULL\s+OR benefit\.valid_until\s*>=\s*database_clock\.utc_date/i);
 });
