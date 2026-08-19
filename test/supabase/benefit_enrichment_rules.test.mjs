@@ -1,12 +1,63 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
   diffBenefits,
   extractGroundedBenefits,
+  extractGroundedBenefitsV6,
 } from '../../supabase/functions/_shared/benefit_enrichment.ts';
 
 const SOURCE = 'https://issuer.example/cards/aurora';
+
+test('projects v6 proposals through the card-scoped canonical contract and golden corpus', async () => {
+  // Catches the v6 path silently keeping flat terms, legacy array exclusions,
+  // or globally-scoped keys while the rollback v5 output remains unchanged.
+  const golden = JSON.parse(readFileSync(
+    new URL('./fixtures/benefit-enrichment/v6-golden.json', import.meta.url),
+    'utf8',
+  ));
+  const cardId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  for (const fixture of golden) {
+    const proposals = await extractGroundedBenefitsV6([{
+      sourceUrl: SOURCE,
+      text: fixture.text,
+    }], 'benefits-v6', cardId);
+    assert.deepEqual(proposals.map((proposal) => ({
+      benefitId: proposal.benefitId,
+      dedupeKey: proposal.dedupeKey,
+      conditionHash: proposal.conditionHash,
+      parserVersion: proposal.parserVersion,
+      title: proposal.title,
+      description: proposal.description,
+      category: proposal.category,
+      valueType: proposal.valueType,
+      value: proposal.value ?? null,
+      rate: proposal.rate ?? null,
+      cap: proposal.cap ?? null,
+      threshold: proposal.threshold ?? null,
+      valueConfig: proposal.valueConfig,
+      partners: proposal.partners ?? [],
+      frequency: proposal.frequency ?? null,
+      period: proposal.period ?? null,
+      restrictions: proposal.restrictions,
+      exclusions: proposal.exclusions,
+      effectiveFrom: proposal.effectiveFrom ?? null,
+      effectiveTo: proposal.effectiveTo ?? null,
+      warnings: proposal.warnings,
+    })), fixture.expected, fixture.name);
+  }
+
+  const [first] = await extractGroundedBenefitsV6([{
+    sourceUrl: SOURCE,
+    text: 'Get 10% cashback on dining spends, capped at ₹500 per statement month.',
+  }], 'benefits-v6', cardId);
+  const [sameTermsOtherCard] = await extractGroundedBenefitsV6([{
+    sourceUrl: SOURCE,
+    text: 'Get 10% cashback on dining spends, capped at ₹500 per statement month.',
+  }], 'benefits-v6', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+  assert.notEqual(first.dedupeKey, sameTermsOtherCard.dedupeKey);
+});
 
 test('extracts movie discounts, BOGO tickets, and annual allowances into the approved value-config contract', () => {
   // Catches the production failure where issuer pages were crawled but every

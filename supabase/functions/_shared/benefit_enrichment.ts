@@ -1,3 +1,11 @@
+import {
+  canonicalBenefitHash,
+  type CanonicalBenefitInput,
+  canonicalExclusions,
+  canonicalValueConfig,
+  cardScopedBenefitKey,
+} from "./benefit_contract.ts";
+
 export type BenefitDocument = {
   sourceUrl: string;
   text: string;
@@ -31,6 +39,16 @@ export type BenefitProposal = {
   evidence: Record<string, string>;
   warnings: string[];
 };
+
+export type BenefitProposalV6 =
+  & Omit<BenefitProposal, "dedupeKey" | "valueConfig" | "exclusions">
+  & {
+    benefitId: string;
+    dedupeKey: string;
+    conditionHash: string;
+    valueConfig: Record<string, unknown>;
+    exclusions: Record<string, unknown>;
+  };
 
 export type BenefitDiff = {
   additions: BenefitProposal[];
@@ -720,6 +738,56 @@ export function extractGroundedBenefits(
       sourceUrl: sources[0],
       sourceUrls: sources,
       warnings: conflict ? ["conflicting_official_terms"] : [],
+    };
+  }));
+}
+
+/**
+ * Projects the existing deterministic parser into the v6 card-scoped contract.
+ * v5 deliberately remains on the synchronous legacy proposal shape for rollback.
+ */
+export async function extractGroundedBenefitsV6(
+  documents: BenefitDocument[],
+  parserVersion: "benefits-v6",
+  cardId: string,
+): Promise<BenefitProposalV6[]> {
+  const legacy = extractGroundedBenefits(documents, parserVersion);
+  const canonical = legacy.filter((benefit) =>
+    !/\b(?:no\s+longer\s+available|discontinued)\b/i.test(
+      benefit.sourceExcerpt,
+    ) &&
+    !/\bup\s+to\s+(?:₹|rs\.?|inr)\s*[0-9][0-9,]*(?:\.\d{1,2})?\s+cashback\b/i
+      .test(benefit.sourceExcerpt)
+  );
+  return await Promise.all(canonical.map(async (benefit) => {
+    const input: CanonicalBenefitInput = {
+      title: benefit.title,
+      description: benefit.description,
+      category: benefit.category,
+      benefitType: benefit.valueType ?? null,
+      semanticKey: `${benefit.category}:${benefit.valueType ?? "benefit"}`,
+      value: benefit.value,
+      rate: benefit.rate,
+      cap: benefit.cap,
+      threshold: benefit.threshold,
+      frequency: benefit.frequency,
+      period: benefit.period,
+      valueConfig: benefit.valueConfig,
+      exclusions: benefit.exclusions,
+      restrictions: benefit.restrictions,
+      partners: benefit.partners,
+      validFrom: benefit.effectiveFrom,
+      validUntil: benefit.effectiveTo,
+    };
+    const conditionHash = await canonicalBenefitHash([input]);
+    const dedupeKey = await cardScopedBenefitKey(cardId, input);
+    return {
+      ...benefit,
+      benefitId: dedupeKey,
+      dedupeKey,
+      conditionHash,
+      valueConfig: canonicalValueConfig(input),
+      exclusions: canonicalExclusions(input.exclusions),
     };
   }));
 }
