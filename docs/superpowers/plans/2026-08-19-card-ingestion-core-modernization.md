@@ -29,7 +29,7 @@
 - Use a named crawler user agent/contact, issuer-specific rate limits, bounded same-host concurrency, and the approved-source/robots policy. Never submit application/login forms or execute page-provided instructions.
 - Authorize admin operations primarily with the server-governed `public.users.is_admin` flag for the authenticated user ID. Keep the email allowlist only as a logged break-glass path for a confirmed email; never treat an unverified email claim as admin authority.
 - Use `supabase migration new <name>` for every new migration. Never hand-invent a migration timestamp.
-- Docker is currently unavailable on the development machine. Unit work may proceed, but no schema task is complete and no deployment may begin until Docker is running and the local reset/integration gates pass.
+- Per the execution override, do not use Docker or local Supabase. Run database gates against the linked active project `cardcompass` (`prbcoxqobhjnnfnxevxf`) only after re-verifying that exact name/ref, completing the read-only audit, and proving the migration set with `supabase db push --linked --dry-run`. Apply additive, rollback-compatible migrations only; never reset, seed, or repair migration history on the live project.
 - Every task follows red-green-refactor: add a failing focused test, demonstrate the intended failure, implement the minimum change, run focused tests, then run the named regression set.
 
 ## Plan at Three Depths
@@ -57,7 +57,7 @@ flowchart LR
 
 | Slice | Outcome | Deployment state | Exit gate |
 |---|---|---|---|
-| A — Foundations | Read-only preflight, canonical contracts, additive columns, indexes, RLS/grants | No behavior change | Unit/static tests and local DB reset pass |
+| A — Foundations | Read-only preflight, canonical contracts, additive columns, indexes, RLS/grants | No behavior change | Unit/static tests plus guarded live migration and role checks pass |
 | B — Safe observation | HTTP semantics, crawl completeness, deterministic v6 proposals, recurring jobs | `benefits-v6` pilot/manual only | Golden corpus and five-card pilot pass |
 | C — Reviewed publication | Card-scoped approvals, mapping retirement, unified identity publication, admin UI | Scheduled claims still off | Integration tests and admin acceptance pass |
 | D — Scheduled rollout | Daily discovery plus recurring benefit observation | Issuer allowlist ramp: 1 → 3 → all | SLOs, no unsafe removals, rollback rehearsal |
@@ -176,7 +176,7 @@ Primary product evidence is required. A supporting document is required only whe
 | GitHub schedule is down | `next_run_at` remains overdue; the next successful invocation catches up with a bounded claim |
 | Issuer discovery starves behind benefit jobs | Separate daily discovery action; deterministic rotating issuer selection |
 | RLS blocks the app after hardening | Add authenticated read policies before revoking broad grants; verify anon/authenticated/service-role behavior locally |
-| Root `schema.sql` disagrees with migrations | Regenerate it only after local DB reset and record migrations as the source of truth |
+| Root `schema.sql` disagrees with migrations | Regenerate it only from the verified linked live schema after migration history is clean; migrations remain the source of truth |
 | Browser-only issuer pages remain unreadable | Quarantine with `rendering_required`; do not call the core rollout complete for those issuers; handle under the follow-on extraction program |
 
 ---
@@ -237,24 +237,24 @@ Expected: FAIL because the audit file does not exist.
 
 Use stable section labels in a `check_name` column so results can be attached to a release ticket. Redact customer identifiers; return counts, conflicting catalog IDs, and schema metadata only.
 
-- [ ] **Step 3: Run static and local preflight checks**
+- [ ] **Step 3: Run static and linked-project preflight checks**
 
 ```bash
 node --test test/supabase/card_ingestion_audit_contract_test.js
-supabase status
+supabase projects list
 ```
 
-Expected now: Node PASS. `supabase status` may fail until Docker is started; record that as an environment blocker, not as a skipped database gate.
+Expected now: Node PASS and exactly the intended active project is identified as `cardcompass` (`prbcoxqobhjnnfnxevxf`).
 
-- [ ] **Step 4: Once Docker is available, establish the immutable baseline**
+- [ ] **Step 4: Establish the immutable live baseline without writes**
 
 ```bash
-supabase db reset
-supabase db query --local --file scripts/audit-card-ingestion.sql
-supabase migration list --local
+test "$(sed -n '1p' supabase/.temp/project-ref)" = "prbcoxqobhjnnfnxevxf"
+supabase db query --linked --file scripts/audit-card-ingestion.sql
+supabase migration list --linked
 ```
 
-Expected: reset and audit succeed. Attach the audit output; resolve unexplained orphan rows or URL conflicts before Task 2.
+Expected: the read-only audit and linked migration inventory succeed. Attach the audit output; resolve unexplained orphan rows or URL conflicts before Task 2. A linked-login failure is a blocker for live schema work, never a reason to substitute Docker or skip the audit.
 
 - [ ] **Step 5: Record verified cardinalities in the modernization review**
 
@@ -433,19 +433,23 @@ node --test test/supabase/card_ingestion_lifecycle_hardening_migration_test.js t
 
 Expected: PASS.
 
-- [ ] **Step 7: Run the mandatory local database gate**
+- [ ] **Step 7: Run the mandatory guarded live database gate**
 
 ```bash
-supabase db reset
-supabase migration list --local
-supabase db lint --local --level warning --fail-on error
-supabase db advisors --local --type security --level warn --fail-on error
-supabase db advisors --local --type performance --level warn --fail-on error
+test "$(sed -n '1p' supabase/.temp/project-ref)" = "prbcoxqobhjnnfnxevxf"
+supabase db query --linked --file scripts/audit-card-ingestion.sql
+supabase migration list --linked
+supabase db push --linked --dry-run
+supabase db push --linked
+supabase migration list --linked
+supabase db lint --linked --level warning --fail-on error
+supabase db advisors --linked --type security --level warn --fail-on error
+supabase db advisors --linked --type performance --level warn --fail-on error
 ```
 
-Then run the local integration command documented in `test/supabase/README.md`, including the local-only environment guards.
+Then run the guarded live integration command documented in `test/supabase/README.md`. It must require the exact project ref, use uniquely prefixed synthetic fixtures, avoid existing rows, and clean up only fixture identifiers it created.
 
-Expected: all migrations apply from zero; no new lint warning; role and lifecycle integration tests pass. This step may not be waived because Docker was unavailable during planning.
+Expected: the dry run lists only the intended additive migration, the live apply succeeds, migration history matches, no new lint warning appears, and role/lifecycle integration tests pass. Do not use migration repair, reset, seed, or destructive cleanup to force this gate through.
 
 - [ ] **Step 8: Commit the schema slice**
 
@@ -527,11 +531,14 @@ Create the migration with:
 supabase migration new supersede_stale_benefit_staging
 ```
 
-- [ ] **Step 7: Run focused tests and migration reset**
+- [ ] **Step 7: Run focused tests and guarded live migration verification**
 
 ```bash
 deno test --node-modules-dir=auto --allow-env --frozen supabase/functions/benefit-enrichment-batch/crawl_policy_test.ts supabase/functions/benefit-enrichment-batch/index_test.ts
-supabase db reset
+test "$(sed -n '1p' supabase/.temp/project-ref)" = "prbcoxqobhjnnfnxevxf"
+supabase db push --linked --dry-run
+supabase db push --linked
+supabase db lint --linked --level warning --fail-on error
 ```
 
 Expected: PASS. A missing required source cannot produce a removal; a later crawl supersedes rather than deletes.
@@ -612,7 +619,10 @@ Allow only explicit parser versions `benefits-v5` and `benefits-v6` during the r
 ```bash
 node --test test/supabase/review_card_benefit_enrichment_v2_migration_test.js
 deno test --node-modules-dir=auto --allow-env --allow-net=0.0.0.0:8000 --frozen supabase/functions/admin-catalog-entry/benefit_admin_test.ts
-supabase db reset
+test "$(sed -n '1p' supabase/.temp/project-ref)" = "prbcoxqobhjnnfnxevxf"
+supabase db push --linked --dry-run
+supabase db push --linked
+supabase db lint --linked --level warning --fail-on error
 ```
 
 Run the focused Dart integration test for shared benefit rows described in `test/supabase/README.md`.
@@ -782,7 +792,10 @@ Do not use `eq(is_discontinued, false)` alone because historical nulls and curre
 ```bash
 deno test --node-modules-dir=auto --allow-env --frozen supabase/functions/benefit-enrichment-batch/recurrence_policy_test.ts supabase/functions/benefit-enrichment-batch/batch_policy_test.ts supabase/functions/benefit-enrichment-batch/index_test.ts
 node --test test/supabase/recur_card_enrichment_jobs_migration_test.js test/supabase/scope_benefit_claims_by_parser_migration_test.js
-supabase db reset
+test "$(sed -n '1p' supabase/.temp/project-ref)" = "prbcoxqobhjnnfnxevxf"
+supabase db push --linked --dry-run
+supabase db push --linked
+supabase db lint --linked --level warning --fail-on error
 ```
 
 Expected: PASS; the same v6 job may be observed repeatedly while v5 remains immutable.
@@ -864,7 +877,10 @@ Replace `purgeCalculatorReviewRows` and any equivalent delete-based cleanup with
 deno test --node-modules-dir=auto --allow-env --frozen supabase/functions/_shared/catalog_identity_publication_test.ts
 node --test test/supabase/publish_reviewed_card_identity_migration_test.js
 flutter test test/supabase/card_catalog_url_identity_test.dart
-supabase db reset
+test "$(sed -n '1p' supabase/.temp/project-ref)" = "prbcoxqobhjnnfnxevxf"
+supabase db push --linked --dry-run
+supabase db push --linked
+supabase db lint --linked --level warning --fail-on error
 ```
 
 Also run existing card-discovery and catalog-enrichment tests.
@@ -1092,7 +1108,7 @@ rg -n "esm\.sh/.+@2([\"'/]|$)|jsr:.+@\^|npm:.+@\^" supabase/functions deno.json 
 
 Pin only dependencies touched by this rollout to an exact compatible version already proven elsewhere in the repository; refresh and commit the lockfile.
 
-- [ ] **Step 2: Run all non-Docker tests**
+- [ ] **Step 2: Run all credential-free tests**
 
 ```bash
 node --test test/supabase/*.test.js test/supabase/*.test.mjs test/gtm/*.test.js
@@ -1104,32 +1120,35 @@ git diff --check
 
 If a glob includes unrelated tests requiring unavailable credentials, run the documented credential-free set and list every excluded test with its required environment. Do not report “all tests pass” when exclusions exist.
 
-- [ ] **Step 3: Start Docker and run the full local stack**
+- [ ] **Step 3: Run the full guarded live validation**
 
 ```bash
-supabase stop
-supabase start
-supabase db reset
-supabase functions serve --env-file supabase/.env.local
+test "$(sed -n '1p' supabase/.temp/project-ref)" = "prbcoxqobhjnnfnxevxf"
+supabase db query --linked --file scripts/audit-card-ingestion.sql
+supabase db push --linked --dry-run
+supabase migration list --linked
+supabase db lint --linked --level warning --fail-on error
+supabase db advisors --linked --type security --level warn --fail-on error
+supabase db advisors --linked --type performance --level warn --fail-on error
 ```
 
-In a second shell, run the complete Dart integration command from `test/supabase/README.md` with local anon/service keys and official-fetch fixtures.
+Run the complete Dart integration command from `test/supabase/README.md` against that same project with its guarded synthetic-fixture mode. Require the exact project ref and a unique run ID, and clean up only rows created by that run. Deploy Edge Functions only in Task 12's dark-deploy step; do not substitute local serving.
 
 Expected: identity, queue, recurrence, RLS, staging, approval, retirement, and rollback-lane tests all pass.
 
-- [ ] **Step 4: Regenerate the schema snapshot after reset**
+- [ ] **Step 4: Regenerate the schema snapshot from the verified live schema**
 
 The installed Supabase CLI 2.109.1 supports the required flags. Run:
 
 ```bash
-supabase db dump --local --schema public --file schema.sql
+supabase db dump --linked --schema public --file schema.sql
 ```
 
 Verify the diff contains the effective schema and no seed/customer data.
 
 - [ ] **Step 5: Add one documented validation command sequence**
 
-Update `test/supabase/README.md` with prerequisites, local-only safety guards, test commands, expected outputs, environment variables, fixture behavior, and cleanup. Call out Docker as mandatory for the release gate.
+Update `test/supabase/README.md` with prerequisites, exact-project live safety guards, test commands, expected outputs, environment variables, fixture isolation, and cleanup. Explicitly prohibit Docker/local Supabase and live reset/seed/migration-repair commands for this execution.
 
 - [ ] **Step 6: Commit reproducibility changes**
 
@@ -1268,7 +1287,7 @@ Every row below needs an automated unit/integration test, a runbook outcome, or 
 
 Do not advance to production scheduling until all are true:
 
-- [ ] All CLI-generated migrations apply from a blank local database.
+- [ ] All CLI-generated migrations pass static contracts, appear exactly once in linked migration history, and the final guarded live dry run reports no pending migration.
 - [ ] Data audit has no unexplained orphan mapping, identity conflict, or malformed exclusion shape.
 - [ ] Node, Deno, Flutter, analyzer, and integration suites pass with exclusions explicitly documented.
 - [ ] `benefits-v5` scheduled behavior remains functional as the rollback lane.
