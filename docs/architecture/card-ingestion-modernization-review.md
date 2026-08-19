@@ -42,6 +42,18 @@ These are P0/P1 issues. Expanding the parser or adding an LLM before fixing them
 
 The local Supabase database was not running during this review, so the effective schema was reconstructed from every ordered migration rather than from the stale root `schema.sql` alone.
 
+### Read-only baseline audit — 2026-08-19
+
+`scripts/audit-card-ingestion.sql` is the release-ticket baseline query. It returns only aggregate counts, catalog IDs involved in a conflict, and database metadata; it does not return customer identifiers.
+
+| Audit area | Verified finding count | Baseline status |
+|---|---:|---|
+| Catalog/discontinuation, benefit JSON shapes, mappings, staging, jobs, identity, URL provenance, and active discontinued-card assignments | Not executed | Not zero: local Docker was unavailable, so no database cardinality has been recorded. |
+| RLS state, policies, relation grants, and function grants | Not executed | Not zero: this metadata requires the same local migrated database. |
+| Static audit contract | 0 contract failures | Executed: the Node contract test confirms every required stable check label and rejects mutating SQL. |
+
+When Docker is available, run `supabase db reset`, then `supabase db query --local --file scripts/audit-card-ingestion.sql`, and attach the output to the release ticket before treating any unexecuted check as a zero finding.
+
 ### Catalog and identity
 
 | Table | Effective purpose | Important fields and constraints | Review |
