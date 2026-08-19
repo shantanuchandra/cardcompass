@@ -68,7 +68,7 @@ test('benefit approvals bind the locked job to its staging row', async () => {
 const runPostgresIntegration = process.env.RUN_ADMIN_CARD_DATA_PG_INTEGRATION === 'true';
 const psqlArgs = ['-X', '-A', '-t', '--set', 'ON_ERROR_STOP=1', '--file', '-'];
 
-function derivePgConnection(databaseUrl, databaseName) {
+function derivePgConnection(databaseUrl, databaseName, inheritedEnv = process.env) {
   const parsed = new URL(databaseUrl);
   assert.ok(
     ['postgres:', 'postgresql:'].includes(parsed.protocol),
@@ -80,13 +80,42 @@ function derivePgConnection(databaseUrl, databaseName) {
   );
   assert.match(databaseName, /^[a-zA-Z0-9_]+$/, 'database name must be identifier-safe');
 
-  const env = { ...process.env, PGDATABASE: databaseName };
-  if (parsed.hostname) env.PGHOST = parsed.hostname;
-  if (parsed.port) env.PGPORT = parsed.port;
+  // Start from an allowlist so ambient libpq selectors cannot redirect this
+  // safety-sensitive integration harness to another server or service.
+  const env = {};
+  for (const name of ['PATH', 'LANG', 'LC_ALL', 'TMPDIR', 'SYSTEMROOT']) {
+    if (inheritedEnv[name]) env[name] = inheritedEnv[name];
+  }
+  env.PGHOST = parsed.hostname || '/tmp';
+  env.PGPORT = parsed.port || '5432';
+  env.PGDATABASE = databaseName;
+  env.PGPASSFILE = '/dev/null';
+  env.PGSERVICEFILE = '/dev/null';
   if (parsed.username) env.PGUSER = decodeURIComponent(parsed.username);
   if (parsed.password) env.PGPASSWORD = decodeURIComponent(parsed.password);
-  if (parsed.searchParams.has('sslmode')) env.PGSSLMODE = parsed.searchParams.get('sslmode');
-  if (parsed.searchParams.has('options')) env.PGOPTIONS = parsed.searchParams.get('options');
+
+  const supportedOptions = new Map([
+    ['sslmode', 'PGSSLMODE'],
+    ['sslcert', 'PGSSLCERT'],
+    ['sslkey', 'PGSSLKEY'],
+    ['sslrootcert', 'PGSSLROOTCERT'],
+    ['sslcrl', 'PGSSLCRL'],
+    ['sslcrldir', 'PGSSLCRLDIR'],
+    ['sslcertmode', 'PGSSLCERTMODE'],
+    ['sslnegotiation', 'PGSSLNEGOTIATION'],
+    ['sslsni', 'PGSSLSNI'],
+    ['channel_binding', 'PGCHANNELBINDING'],
+    ['connect_timeout', 'PGCONNECT_TIMEOUT'],
+    ['target_session_attrs', 'PGTARGETSESSIONATTRS'],
+    ['application_name', 'PGAPPNAME'],
+    ['options', 'PGOPTIONS'],
+  ]);
+  for (const [name] of parsed.searchParams) {
+    assert.ok(supportedOptions.has(name), `unsupported PostgreSQL URL option: ${name}`);
+  }
+  for (const [parameter, variable] of supportedOptions) {
+    if (parsed.searchParams.has(parameter)) env[variable] = parsed.searchParams.get(parameter);
+  }
 
   return { env, secrets: [databaseUrl, env.PGPASSWORD].filter(Boolean) };
 }
@@ -134,9 +163,24 @@ function psqlAsync(connection, sql) {
 }
 
 test('PostgreSQL connection derivation keeps credentials out of process arguments', () => {
+  const hostileEnvironment = {
+    PATH: process.env.PATH,
+    PGHOST: 'attacker.example',
+    PGHOSTADDR: '203.0.113.20',
+    PGPORT: '6543',
+    PGDATABASE: 'production',
+    PGUSER: 'wrong-user',
+    PGPASSWORD: 'wrong-password',
+    PGSERVICE: 'production-service',
+    PGSERVICEFILE: '/tmp/hostile-service.conf',
+    PGSSLMODE: 'disable',
+    PGOPTIONS: '-c search_path=hostile',
+    PGTARGETSESSIONATTRS: 'read-write',
+  };
   const connection = derivePgConnection(
     'postgresql://operator:s3cr%40t@127.0.0.1:5544/admin?sslmode=require&options=-c%20statement_timeout%3D5000',
     'disposable_test',
+    hostileEnvironment,
   );
   assert.equal(connection.env.PGHOST, '127.0.0.1');
   assert.equal(connection.env.PGPORT, '5544');
@@ -145,14 +189,34 @@ test('PostgreSQL connection derivation keeps credentials out of process argument
   assert.equal(connection.env.PGDATABASE, 'disposable_test');
   assert.equal(connection.env.PGSSLMODE, 'require');
   assert.equal(connection.env.PGOPTIONS, '-c statement_timeout=5000');
+  assert.equal(connection.env.PGPASSFILE, '/dev/null');
+  assert.equal(connection.env.PGSERVICEFILE, '/dev/null');
+  assert.equal(connection.env.PGSERVICE, undefined);
+  assert.equal(connection.env.PGHOSTADDR, undefined);
+  assert.equal(connection.env.PGTARGETSESSIONATTRS, undefined);
+  assert.equal(connection.env.HOME, undefined);
   assert.ok(psqlArgs.every((argument) => !argument.includes('s3cr')));
   assert.equal(redactSecrets('failure s3cr@t', connection.secrets), 'failure [REDACTED]');
+
+  const socketConnection = derivePgConnection(
+    'postgresql:///postgres',
+    'socket_test',
+    hostileEnvironment,
+  );
+  assert.equal(socketConnection.env.PGHOST, '/tmp');
+  assert.equal(socketConnection.env.PGPORT, '5432');
+  assert.equal(socketConnection.env.PGDATABASE, 'socket_test');
+  assert.equal(socketConnection.env.PGUSER, undefined);
+  assert.equal(socketConnection.env.PGPASSWORD, undefined);
+  assert.equal(socketConnection.env.PGSERVICE, undefined);
+  assert.equal(socketConnection.env.PGOPTIONS, undefined);
 });
 
 test('RPC compiles and preserves transactional mutation invariants in PostgreSQL', {
   skip: runPostgresIntegration ? false : 'set RUN_ADMIN_CARD_DATA_PG_INTEGRATION=true for isolated local PostgreSQL coverage',
 }, async () => {
-  const adminUrl = process.env.ADMIN_CARD_DATA_TEST_ADMIN_URL ?? 'postgresql:///postgres';
+  const adminUrl = process.env.ADMIN_CARD_DATA_TEST_ADMIN_URL
+    ?? 'postgresql://127.0.0.1:5432/postgres';
   const databaseName = `admin_card_data_test_${process.pid}_${Date.now()}`;
   assert.match(databaseName, /^admin_card_data_test_\d+_\d+$/);
   const adminDatabaseName = decodeURIComponent(new URL(adminUrl).pathname.slice(1)) || 'postgres';
