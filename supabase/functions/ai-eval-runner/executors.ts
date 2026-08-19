@@ -73,7 +73,7 @@ export async function executeEvalCase(
     };
   }
   const output = extractOutput(generation.response);
-  if (!output || !validateOutput(item.featureKey, output, fixture)) {
+  if (!output || !validateEvalOutput(item.featureKey, output, fixture)) {
     return {
       executionStatus: "failed",
       output: {},
@@ -186,7 +186,7 @@ function extractOutput(
   return isRecord(response) ? response : null;
 }
 
-function validateOutput(
+export function validateEvalOutput(
   feature: string,
   output: Record<string, unknown>,
   fixture: Record<string, unknown>,
@@ -384,21 +384,21 @@ function validateCardData(
       "limit",
       "period",
       "eligibility",
-    ]) && sourceBenefits.some((source) => deepEqual(source, benefit))
+    ]) && sourceBenefits.some((source) => deepStructuralEqual(source, benefit))
   );
 }
 
-function deepEqual(left: unknown, right: unknown): boolean {
+export function deepStructuralEqual(left: unknown, right: unknown): boolean {
   if (left === right) return true;
   if (Array.isArray(left) && Array.isArray(right)) {
     return left.length === right.length &&
-      left.every((value, index) => deepEqual(value, right[index]));
+      left.every((value, index) => deepStructuralEqual(value, right[index]));
   }
   if (!isRecord(left) || !isRecord(right)) return false;
   const keys = Object.keys(left);
   return keys.length === Object.keys(right).length &&
     keys.every((key) =>
-      Object.hasOwn(right, key) && deepEqual(left[key], right[key])
+      Object.hasOwn(right, key) && deepStructuralEqual(left[key], right[key])
     );
 }
 

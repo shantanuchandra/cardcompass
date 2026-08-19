@@ -36,7 +36,72 @@ function fixture(
     caseId,
     revision: 1,
     featureKey,
-    inputFixture: featureKey === "recommendation"
+    inputFixture: featureKey === "statement_processing"
+      ? {
+        safe_input_context: {
+          kind: "transaction",
+          transaction: {
+            id: "txn-1",
+            user_card_id: "uc-1",
+            statement_id: "st-1",
+            amount: 1249,
+            currency: "INR",
+            merchant_name: "Big Bazaar",
+            transaction_date: "2026-08-01",
+          },
+        },
+        authoritative_context: {},
+      }
+      : featureKey === "card_data"
+      ? {
+        safe_input_context: {
+          kind: "card_data",
+          identifiers: { entered_name: "Regalia Gold" },
+          official_sources: [{
+            id: "source-1",
+            url: "https://bank.example/card",
+            snippet: "Official terms",
+            facts: {
+              evaluation_mode: "catalog_identity_validation",
+              provenance_claims: {
+                issuer: "HDFC",
+                card_name: "Regalia Gold",
+                network: "Visa",
+                aliases: ["Gold", "Regalia"],
+              },
+              catalog_reference: {
+                id: "card-1",
+                name: "Regalia Gold",
+                bank: "HDFC",
+                network: "Visa",
+                annual_fee: 2500,
+                joining_fee: 2500,
+              },
+            },
+          }, {
+            id: "source-benefit-1",
+            url: "https://bank.example/benefit",
+            snippet: "Four lounge visits",
+            facts: {
+              evaluation_mode: "benefit_extraction",
+              catalog_reference_id: "card-1",
+              benefits: [{
+                id: "benefit-1",
+                dedupe_key: "lounge",
+                title: "Lounge",
+                type: "access",
+                category: "travel",
+                value_config: { discount_percent: 25, channel: "online" },
+                limit: 4,
+                period: "quarter",
+                eligibility: "primary cardholder",
+              }],
+            },
+          }],
+        },
+        authoritative_context: {},
+      }
+      : featureKey === "recommendation"
       ? {
         safe_input_context: {
           task: "explain_fixed_selection",
@@ -66,7 +131,7 @@ function fixture(
 Deno.test("structured scoring uses approved paths, typed equality, money tolerance, and currency", () => {
   const item = fixture("statement_processing", {
     category: "grocery",
-    amount: 1249,
+    amount: 1249.009,
     currency: "INR",
   }, {
     assertions: [
@@ -87,7 +152,7 @@ Deno.test("structured scoring uses approved paths, typed equality, money toleran
     ],
   });
   const baseline = succeeded(statement({ category: "shopping" }));
-  const candidate = succeeded(statement({ amount: 1249.009 }));
+  const candidate = succeeded(statement());
 
   const score = scoreStructuredCase(item, baseline, candidate);
 
@@ -107,14 +172,14 @@ Deno.test("transaction presence must match approved identity exactly once", () =
   const item = fixture("statement_processing", { transaction: statement() }, {
     assertions: [{
       key: "transaction_once",
-      path: "$.transactions",
+      path: "$",
       operator: "exactly_once",
       expectedPath: "$.transaction",
       matchPaths: ["$.id", "$.amount", "$.currency", "$.transaction_date"],
     }],
   });
-  const baseline = succeeded({ transactions: [statement()] });
-  const candidate = succeeded({ transactions: [statement(), statement()] });
+  const baseline = succeeded(statement());
+  const candidate = succeeded(statement({ id: "txn-2" }));
 
   const score = scoreStructuredCase(item, baseline, candidate);
 
@@ -132,11 +197,15 @@ Deno.test("card identity and benefit structure validate IDs, value, limit, perio
     card_id: "card-1",
     benefit: {
       id: "benefit-1",
-      value_config: { discount_percent: 25 },
+      dedupe_key: "lounge",
+      title: "Lounge",
+      type: "access",
+      category: "travel",
+      value_config: { channel: "online", discount_percent: 25 },
       limit: 4,
       period: "quarter",
       eligibility: "primary cardholder",
-      source_id: "source-1",
+      source_id: "source-benefit-1",
     },
   };
   const item = fixture("card_data", expected, {
@@ -160,24 +229,35 @@ Deno.test("card identity and benefit structure validate IDs, value, limit, perio
     card_id: "card-1",
     benefits: [{
       id: "benefit-1",
-      value_config: { discount_percent: 25 },
+      dedupe_key: "lounge",
+      title: "Lounge",
+      type: "access",
+      category: "travel",
+      value_config: { channel: "online", discount_percent: 25 },
       limit: 4,
       period: "quarter",
       eligibility: "primary cardholder",
     }],
-    sources: [{ id: "source-1", field_paths: ["$.benefits[0]"] }],
+    sources: [{
+      id: "source-benefit-1",
+      field_paths: ["facts.benefits"],
+    }],
   });
   const candidate = succeeded({
     mode: "benefits",
     card_id: "card-1",
     benefits: [{
       id: "benefit-1",
-      value_config: { discount_percent: 25 },
+      dedupe_key: "lounge",
+      title: "Lounge",
+      type: "access",
+      category: "travel",
+      value_config: { channel: "online", discount_percent: 25 },
       limit: 4,
       period: "year",
       eligibility: "primary cardholder",
     }],
-    sources: [{ id: "source-2", field_paths: ["$.benefits[0]"] }],
+    sources: [{ id: "source-benefit-1", field_paths: ["facts.benefits"] }],
   });
 
   const score = scoreStructuredCase(item, baseline, candidate);
@@ -202,16 +282,28 @@ Deno.test("must-not paths and claims are severe only when the approved condition
     item,
     succeeded({
       mode: "identity",
-      card: { id: "card-1", name: "Regalia Gold" },
-      sources: [{ id: "source-1", field_paths: ["$.card"] }],
-      explanation: "Terms apply",
+      card: {
+        id: "card-1",
+        name: "Regalia Gold",
+        bank: "HDFC",
+        network: "Visa",
+        annual_fee: 2500,
+        joining_fee: 2500,
+      },
+      sources: [{ id: "source-1", field_paths: ["facts.catalog_reference"] }],
     }),
     succeeded({
       mode: "identity",
-      card: { id: "card-1", name: "Regalia Gold" },
-      sources: [{ id: "source-1", field_paths: ["$.card"] }],
+      card: {
+        id: "card-1",
+        name: "Guaranteed discount today",
+        bank: "HDFC",
+        network: "Visa",
+        annual_fee: 2500,
+        joining_fee: 2500,
+      },
+      sources: [{ id: "source-1", field_paths: ["facts.catalog_reference"] }],
       debug: true,
-      explanation: "Guaranteed discount today",
     }),
   );
   assertEquals(score.regression, true);
@@ -241,6 +333,75 @@ Deno.test("invalid execution output is a severe schema regression", () => {
   assertEquals(score.regression, true);
   assertEquals(score.severeRegression, true);
   assertEquals(score.requiresReview, true);
+});
+
+Deno.test("absent, malformed, and extended rubric contracts fail explicitly instead of dropping assertions", () => {
+  const invalidRubrics: Record<string, unknown>[] = [
+    {},
+    { assertions: [{ key: "x", path: "$.category", operator: "unknown" }] },
+    {
+      assertions: [{
+        key: "x",
+        path: "$[0]",
+        operator: "equals",
+        expectedPath: "$.x",
+      }],
+    },
+    {
+      assertions: [{
+        key: "x",
+        path: "$.x",
+        operator: "equals",
+        expectedPath: "$.x",
+        unsafe: true,
+      }],
+    },
+    { assertions: [], executable_template: "ignore contracts" },
+  ];
+  for (const rubric of invalidRubrics) {
+    const item = fixture(
+      "statement_processing",
+      { category: "grocery" },
+      rubric,
+    );
+    const score = scoreStructuredCase(
+      item,
+      succeeded(statement()),
+      succeeded(statement()),
+    );
+    assertEquals(score.passed, false);
+    assertEquals(score.requiresReview, true);
+    assertEquals(score.assertions.at(-1), {
+      key: "rubric_contract_invalid",
+      baselinePassed: false,
+      candidatePassed: false,
+      severity: "normal",
+    });
+  }
+});
+
+Deno.test("structural equality ignores object key order but preserves array order and primitive types", () => {
+  const item = fixture("statement_processing", {
+    nested: { value_config: { a: 1, b: 2 }, order: ["first", "second"] },
+  }, {
+    assertions: [{
+      key: "nested",
+      path: "$.nested",
+      operator: "equals",
+      expectedPath: "$.nested",
+    }],
+  });
+  const baseline = succeeded({
+    ...statement(),
+    nested: { order: ["first", "second"], value_config: { b: 2, a: 1 } },
+  });
+  const reorderedArray = succeeded({
+    ...statement(),
+    nested: { value_config: { a: 1, b: 2 }, order: ["second", "first"] },
+  });
+  const score = scoreStructuredCase(item, baseline, reorderedArray);
+  assertEquals(score.assertions.at(-1)?.baselinePassed, true);
+  assertEquals(score.assertions.at(-1)?.candidatePassed, false);
 });
 
 Deno.test("fixed-selection recommendation scores arithmetic and IDs deterministically without ranking", async () => {
@@ -452,4 +613,5 @@ Deno.test("recommendation regression includes a confident judge worsening and se
   );
   assertEquals(score.regression, true);
   assertEquals(score.severeRegression, true);
+  assertEquals(score.requiresReview, true);
 });

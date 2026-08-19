@@ -1,4 +1,5 @@
 import { getJudgeConfig } from "./config_registry.ts";
+import { deepStructuralEqual, validateEvalOutput } from "./executors.ts";
 import type {
   EvalCaseFixture,
   EvalExecutionResult,
@@ -73,7 +74,7 @@ export function scoreStructuredCase(
         assertion.severity === "severe" && assertion.baselinePassed &&
         !assertion.candidatePassed
       ),
-    requiresReview: !candidatePassed,
+    requiresReview: !baselinePassed || !candidatePassed,
     assertions,
     judge: null,
   };
@@ -95,6 +96,9 @@ export async function scoreRecommendationCase(
   const candidatePassed = assertions.every((assertion) =>
     assertion.candidatePassed
   );
+  const rubricValid = !assertions.some((assertion) =>
+    assertion.key === "rubric_contract_invalid"
+  );
   const assignment = await blindAssignment(
     `${options.runId}:${item.caseId}:${item.revision}`,
   );
@@ -102,14 +106,16 @@ export async function scoreRecommendationCase(
     ? [baseline.output, candidate.output]
     : [candidate.output, baseline.output];
   let verdict: ParsedJudge | null = null;
-  try {
-    const generation = await judgeGenerate({
-      model: config.model,
-      payload: judgePayload(item.scoringRubric ?? {}, outputA, outputB),
-    });
-    verdict = parseJudge(generation.response);
-  } catch {
-    // A provider or schema failure is review evidence, never a selection.
+  if (rubricValid && baselinePassed && candidatePassed) {
+    try {
+      const generation = await judgeGenerate({
+        model: config.model,
+        payload: judgePayload(item.scoringRubric ?? {}, outputA, outputB),
+      });
+      verdict = parseJudge(generation.response);
+    } catch {
+      // A provider or schema failure is review evidence, never a selection.
+    }
   }
   const decoded = decodeJudge(verdict, assignment);
   const deterministicRegression = baselinePassed && !candidatePassed;
@@ -121,7 +127,7 @@ export async function scoreRecommendationCase(
       assertion.severity === "severe" && assertion.baselinePassed &&
       !assertion.candidatePassed,
   );
-  const requiresReview = severeRegression || !verdict ||
+  const requiresReview = !baselinePassed || !candidatePassed || !verdict ||
     decoded.winner === "tie" || decoded.confidence < MIN_JUDGE_CONFIDENCE;
   return {
     passed: candidatePassed && !judgeRegression,
@@ -140,15 +146,23 @@ function scoreAssertions(
 ): ScoreResult["assertions"] {
   const schema = {
     key: "schema",
-    baselinePassed: validExecution(item.featureKey, baseline),
-    candidatePassed: validExecution(item.featureKey, candidate),
+    baselinePassed: validExecution(item, baseline),
+    candidatePassed: validExecution(item, candidate),
     severity: "severe" as const,
   };
   const rubric = parseRubric(item.scoringRubric);
   const severeKeys = parseSevereKeys(item.severeFailureConditions);
+  if (!rubric.valid) {
+    return [schema, {
+      key: "rubric_contract_invalid",
+      baselinePassed: false,
+      candidatePassed: false,
+      severity: "normal",
+    }];
+  }
   return [
     schema,
-    ...rubric.map((assertion) => ({
+    ...rubric.assertions.map((assertion) => ({
       key: assertion.key,
       baselinePassed: applyAssertion(
         assertion,
@@ -166,131 +180,142 @@ function scoreAssertions(
 }
 
 function validExecution(
-  feature: EvalCaseFixture["featureKey"],
+  item: EvalCaseFixture,
   result: EvalExecutionResult,
 ): boolean {
-  if (result.executionStatus !== "succeeded" || !plainJson(result.output, 0)) {
-    return false;
-  }
-  const output = result.output;
-  if (feature === "statement_processing") {
-    if (Array.isArray(output.transactions)) {
-      return Object.keys(output).length === 1 &&
-        output.transactions.length > 0 &&
-        output.transactions.every(validTransactionShape);
-    }
-    return validTransactionShape(output);
-  }
-  if (feature === "card_data") {
-    if (!Array.isArray(output.sources) || output.sources.length === 0) {
-      return false;
-    }
-    if (output.mode === "identity") return isRecord(output.card);
-    return output.mode === "benefits" && typeof output.card_id === "string" &&
-      Array.isArray(output.benefits) && output.benefits.length > 0;
-  }
-  return exactKeys(output, [
-    "selected_card_id",
-    "selected_benefit_id",
-    "savings",
-    "final_amount",
-    "explanation",
-  ]) && typeof output.selected_card_id === "string" &&
-    typeof output.selected_benefit_id === "string" &&
-    finiteNumber(output.savings) && finiteNumber(output.final_amount) &&
-    typeof output.explanation === "string" && output.explanation.length <= 1000;
+  return result.executionStatus === "succeeded" &&
+    validateEvalOutput(item.featureKey, result.output, item.inputFixture);
 }
 
-function validTransactionShape(value: unknown): boolean {
-  return isRecord(value) && exactKeys(value, [
-    "id",
-    "user_card_id",
-    "statement_id",
-    "amount",
-    "currency",
-    "merchant_name",
-    "category",
-    "transaction_type",
-    "transaction_date",
-  ]) && finiteNumber(value.amount) && /^[A-Z]{3}$/.test(String(value.currency));
-}
+type ParsedRubric = Readonly<{
+  valid: boolean;
+  assertions: readonly Assertion[];
+}>;
 
-function exactKeys(
-  value: Record<string, unknown>,
-  keys: readonly string[],
-): boolean {
-  return Object.keys(value).sort().join("|") === [...keys].sort().join("|");
-}
-
-function finiteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
-}
-
-function plainJson(value: unknown, depth: number): boolean {
-  if (depth > 12) return false;
+function parseRubric(value: unknown): ParsedRubric {
   if (
-    value === null || typeof value === "string" || typeof value === "boolean"
-  ) return true;
-  if (typeof value === "number") return Number.isFinite(value);
-  if (Array.isArray(value)) {
-    return value.every((entry) => plainJson(entry, depth + 1));
+    !isRecord(value) ||
+    !exactObjectKeys(value, ["assertions"], ["explanationCriteria"])
+  ) {
+    return { valid: false, assertions: [] };
   }
-  return isRecord(value) && Object.getPrototypeOf(value) === Object.prototype &&
-    Object.values(value).every((entry) => plainJson(entry, depth + 1));
+  if (
+    !Array.isArray(value.assertions) || value.assertions.length > 100 ||
+    (Object.hasOwn(value, "explanationCriteria") &&
+      (!Array.isArray(value.explanationCriteria) ||
+        value.explanationCriteria.length > 50 ||
+        !value.explanationCriteria.every((entry) =>
+          typeof entry === "string" && entry.length > 0 && entry.length <= 200
+        )))
+  ) return { valid: false, assertions: [] };
+  const assertions: Assertion[] = [];
+  const keys = new Set<string>();
+  for (const entry of value.assertions) {
+    const parsed = parseAssertion(entry);
+    if (!parsed || keys.has(parsed.key)) {
+      return { valid: false, assertions: [] };
+    }
+    keys.add(parsed.key);
+    assertions.push(parsed);
+  }
+  return { valid: true, assertions };
 }
 
-function parseRubric(value: unknown): readonly Assertion[] {
-  if (!isRecord(value) || !Array.isArray(value.assertions)) return [];
-  return value.assertions.flatMap((entry): Assertion[] => {
+function parseAssertion(entry: unknown): Assertion | null {
+  if (
+    !isRecord(entry) || typeof entry.key !== "string" ||
+    entry.key.length === 0 || entry.key.length > 100 ||
+    typeof entry.path !== "string" || !validPath(entry.path) ||
+    typeof entry.operator !== "string"
+  ) return null;
+  const base = { key: entry.key, path: entry.path };
+  if (entry.operator === "must_not_exist") {
+    return exactObjectKeys(entry, ["key", "path", "operator"])
+      ? { ...base, operator: entry.operator }
+      : null;
+  }
+  if (entry.operator === "must_not_claim") {
+    return exactObjectKeys(entry, ["key", "path", "operator", "claims"]) &&
+        Array.isArray(entry.claims) && entry.claims.length > 0 &&
+        entry.claims.length <= 50 && entry.claims.every((claim) =>
+          typeof claim === "string" && claim.length > 0 && claim.length <= 200
+        )
+      ? { ...base, operator: entry.operator, claims: entry.claims as string[] }
+      : null;
+  }
+  if (
+    !["equals", "catalog_id", "benefit", "money", "exactly_once"].includes(
+      entry.operator,
+    )
+  ) {
+    return null;
+  }
+  if (
+    typeof entry.expectedPath !== "string" || !validPath(entry.expectedPath)
+  ) return null;
+  if (["equals", "catalog_id", "benefit"].includes(entry.operator)) {
+    return exactObjectKeys(entry, ["key", "path", "operator", "expectedPath"])
+      ? {
+        ...base,
+        operator: entry.operator as "equals" | "catalog_id" | "benefit",
+        expectedPath: entry.expectedPath,
+      }
+      : null;
+  }
+  if (entry.operator === "money") {
     if (
-      !isRecord(entry) || typeof entry.key !== "string" ||
-      entry.key.length === 0 || entry.key.length > 100 ||
-      typeof entry.path !== "string" || !validPath(entry.path) ||
-      ![
-        "equals",
-        "money",
-        "exactly_once",
-        "catalog_id",
-        "benefit",
-        "must_not_exist",
-        "must_not_claim",
-      ].includes(String(entry.operator))
-    ) return [];
-    const expectedPath = typeof entry.expectedPath === "string" &&
-        validPath(entry.expectedPath)
-      ? entry.expectedPath
-      : undefined;
-    const currencyPath = typeof entry.currencyPath === "string" &&
-        validPath(entry.currencyPath)
-      ? entry.currencyPath
-      : undefined;
-    const matchPaths = Array.isArray(entry.matchPaths) &&
-        entry.matchPaths.every((path) =>
-          typeof path === "string" && validPath(path)
-        )
-      ? entry.matchPaths as string[]
-      : undefined;
-    const claims = Array.isArray(entry.claims) &&
-        entry.claims.every((claim) =>
-          typeof claim === "string" && claim.length <= 200
-        )
-      ? entry.claims as string[]
-      : undefined;
-    return [{
-      key: entry.key,
-      path: entry.path,
-      operator: entry.operator as Assertion["operator"],
-      expectedPath,
-      currencyPath,
-      tolerance: typeof entry.tolerance === "number" &&
-          Number.isFinite(entry.tolerance) && entry.tolerance >= 0 &&
-          entry.tolerance <= 1
-        ? entry.tolerance
-        : undefined,
-      matchPaths,
-      claims,
-    }];
-  });
+      !exactObjectKeys(entry, ["key", "path", "operator", "expectedPath"], [
+        "currencyPath",
+        "tolerance",
+      ])
+    ) return null;
+    if (
+      Object.hasOwn(entry, "currencyPath") &&
+      (typeof entry.currencyPath !== "string" || !validPath(entry.currencyPath))
+    ) return null;
+    if (
+      Object.hasOwn(entry, "tolerance") &&
+      (typeof entry.tolerance !== "number" ||
+        !Number.isFinite(entry.tolerance) || entry.tolerance < 0 ||
+        entry.tolerance > 1)
+    ) return null;
+    return {
+      ...base,
+      operator: entry.operator,
+      expectedPath: entry.expectedPath,
+      currencyPath: entry.currencyPath as string | undefined,
+      tolerance: entry.tolerance as number | undefined,
+    };
+  }
+  if (
+    !exactObjectKeys(entry, [
+      "key",
+      "path",
+      "operator",
+      "expectedPath",
+      "matchPaths",
+    ]) || !Array.isArray(entry.matchPaths) || entry.matchPaths.length === 0 ||
+    entry.matchPaths.length > 20 ||
+    !entry.matchPaths.every((path) =>
+      typeof path === "string" && validPath(path)
+    )
+  ) return null;
+  return {
+    ...base,
+    operator: "exactly_once",
+    expectedPath: entry.expectedPath,
+    matchPaths: entry.matchPaths as string[],
+  };
+}
+
+function exactObjectKeys(
+  value: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[] = [],
+): boolean {
+  const keys = Object.keys(value);
+  return required.every((key) => Object.hasOwn(value, key)) &&
+    keys.every((key) => required.includes(key) || optional.includes(key));
 }
 
 function parseSevereKeys(value: unknown): ReadonlySet<string> {
@@ -331,7 +356,7 @@ function applyAssertion(
     case "equals":
     case "catalog_id":
       return wanted.found && actual.found &&
-        deepEqual(actual.value, wanted.value);
+        deepStructuralEqual(actual.value, wanted.value);
     case "money": {
       if (
         !wanted.found || !actual.found || typeof wanted.value !== "number" ||
@@ -350,8 +375,10 @@ function applyAssertion(
         (assertion.tolerance ?? MONEY_TOLERANCE);
     }
     case "exactly_once":
-      return wanted.found && Array.isArray(actual.value) &&
-        actual.value.filter((entry) =>
+      return wanted.found && actual.found &&
+        (Array.isArray(actual.value) ? actual.value : [actual.value]).filter((
+            entry,
+          ) =>
             matchesExpected(
               entry,
               wanted.value,
@@ -379,10 +406,11 @@ function matchesExpected(
   paths: readonly string[],
 ): boolean {
   if (!isRecord(actual) || !isRecord(expected)) return false;
-  if (paths.length === 0) return deepEqual(actual, expected);
+  if (paths.length === 0) return deepStructuralEqual(actual, expected);
   return paths.every((path) => {
     const left = atPath(actual, path), right = atPath(expected, path);
-    return left.found && right.found && deepEqual(left.value, right.value);
+    return left.found && right.found &&
+      deepStructuralEqual(left.value, right.value);
   });
 }
 
@@ -398,7 +426,7 @@ function validBenefit(actual: unknown, expected: unknown): boolean {
   const matchingBenefits = actual.benefits.filter((benefit) =>
     isRecord(benefit) &&
     Object.entries(expectedBenefit).every(([key, value]) =>
-      Object.hasOwn(benefit, key) && deepEqual(benefit[key], value)
+      Object.hasOwn(benefit, key) && deepStructuralEqual(benefit[key], value)
     )
   );
   return matchingBenefits.length === 1 && typeof expectedSource === "string" &&
@@ -424,10 +452,6 @@ function atPath(root: unknown, path: string): PathResult {
     current = current[segment];
   }
   return { found: true, value: current };
-}
-
-function deepEqual(left: unknown, right: unknown): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 async function blindAssignment(

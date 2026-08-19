@@ -119,3 +119,16 @@ Ruling: Define the approved scoring rubric as a closed list of typed assertions 
 Ruling: Judge only fixed-selection explanation text, with the complete reviewed rubric, after deterministic card, benefit, savings, and final-amount checks. Cost if wrong: explanation comparisons cannot support a ranking-quality claim, but expected answers and arithmetic never contaminate the subjective comparison.
 
 Ruling: Derive blind orientation from the first byte of SHA-256 over `run_id:case_id:revision`, using even for baseline A and odd for baseline B. Cost if wrong: the assignment is reproducible rather than nondeterministic, but remains balanced by cryptographic hashing and is recorded for audit/decoding.
+
+### Task 5 review corrections
+
+- Rubrics now use a fail-closed exact contract. Missing assertions, unknown top-level or assertion fields, unsupported operators, malformed paths, duplicate keys, or invalid operator-specific values emit `rubric_contract_invalid`; neither side passes and operator review is mandatory. No assertion is silently dropped.
+- Executor and scorer share the exact grounded output validator and recursive structural equality implementation. Objects are key-order independent, arrays remain order-sensitive, and primitive types and numeric values remain exact.
+- Invalid baseline schemas require review. Invalid candidate schemas and deterministic failures cannot be rescued by the explanation judge; the judge is not called unless both sides pass every deterministic assertion and the rubric contract is valid.
+- Root frozen-lock verification identified the wildcard `@std/assert` entry as required by two existing versionless Feedback imports. It resolves to the already-pinned `1.0.19`, is retained in the code-bearing correction commit, and did not change across frozen eval and complete Edge Function runs.
+
+Ruling: Treat any malformed or legacy free-form rubric as explicit non-passing evidence for both sides and require operator review. Cost if wrong: old cases must receive a reviewed rubric revision before comparison, preventing partial or guessed scoring.
+
+Ruling: Reuse the executor's fixture-grounded output validator for both scorer sides and skip subjective judging unless both deterministic sides pass. Cost if wrong: captured production shapes that do not satisfy the current exact executor contract remain review-only instead of contributing incomparable baseline evidence.
+
+Ruling: Retain the generated root-lock `jsr:@std/assert@*` resolution because existing versionless Feedback imports require it in the complete frozen suite. Cost if wrong: the lock contains one alias resolving to the same pinned version, avoiding future mutation during root verification.

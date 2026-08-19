@@ -22,4 +22,12 @@ deno check + deno fmt --check + git diff --check
 pass
 ```
 
-Residual risk: draft rubrics are stored as JSON without a database-level typed assertion schema. A malformed or legacy free-form rubric therefore produces schema-only evidence until an operator revises the case, rather than allowing the runner to infer ground truth.
+Review corrections:
+
+- Rubric parsing is exact and fail closed. Every malformed, incomplete, unknown, or legacy free-form shape emits `rubric_contract_invalid`, fails both sides, and requires review; nothing is silently discarded.
+- Scoring imports the executor's exact fixture-grounded output validator. Baseline and candidate schema assertions therefore cannot drift from executable output contracts, and an invalid baseline also requires review.
+- The executor's recursive equality is exported and shared. Object field order is immaterial, while array order, number values, and primitive types remain significant.
+- Deterministic recommendation failure always requires review and suppresses the explanation judge, so a subjective result can never rescue invalid IDs, arithmetic, schema, or rubric evidence.
+- Frozen root verification passed all 222 Edge Function tests. The root lock's wildcard assert entry is required by two existing versionless Feedback imports and resolves to the existing pinned `1.0.19`; frozen verification left the lock hash unchanged.
+
+Residual risk: draft rubrics are stored as JSON without a database-level typed assertion schema. Malformed or legacy cases now fail safely at scoring and require operator revision, but database creation does not yet reject them earlier.
