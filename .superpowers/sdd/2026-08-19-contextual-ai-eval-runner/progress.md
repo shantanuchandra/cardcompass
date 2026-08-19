@@ -176,3 +176,18 @@ Ruling: Require exact ordered canonical grounding paths per Card Data mode, shar
 - The shared canonical helper, fixed candidate prompt, normalized outputs, scorer fixtures, and real Feedback integration all use `facts.catalog_reference.network`.
 
 Ruling: Use catalog-reference network as the identity network oracle and citation target; treat a non-null provenance network only as a required consistency check. Cost if wrong: provenance cannot independently override the selected catalog network, preventing a null or contradictory extraction from becoming ambiguous evidence.
+
+## Task 6 evidence
+
+- RED: the worker suite first failed because the private entrypoint did not exist. Subsequent red cycles proved the missing lease-yield RPC, explicit private function configuration, safe scoring-failure persistence, and recovery when background-task registration throws.
+- GREEN: service-role authorization uses fixed-length SHA-256 comparison and occurs before method handling, body reads, or database access. The body is the exact bounded `{run_id}` schema; user/admin bearer tokens are rejected.
+- Each invocation claims at most five manifest entries, reloads the immutable case revision, checks run status and lease ownership between cases, executes baseline/candidate and scoring sequentially, and persists outputs, assertions, verdict, regression flags, latency, tokens, and cost through the fenced result RPC.
+- A five-case batch yields its lease while preserving `running`, then schedules one self-continuation with `EdgeRuntime.waitUntil`. Promise rejection or synchronous scheduler registration failure leaves the run unleased and resumable. Smaller/empty final batches finish through the existing terminal RPC.
+- Candidate and blind-judge metering are aggregated into the candidate-side persistence fields. Recommendation per-case cost projection includes the judge ceiling. Provider/executor/scoring failures persist only stable categories and metering; responses contain only run/status/count receipts.
+- Focused Eval tests pass 51/51. The frozen full Edge Function suite passes 246/246. Deno formatting, type-check, and diff checks pass.
+
+Ruling: Yield a full-batch lease before scheduling continuation while keeping the run in `running`. Cost if wrong: a scheduler failure requires a later retry, but no active lease or false terminal state blocks exact resume.
+
+Ruling: Aggregate blind-judge usage into the candidate token, latency, and cost fields and reserve its reviewed $0.01 ceiling for recommendation cases. Cost if wrong: the schema does not distinguish judge usage from candidate usage, but total metering and ceiling enforcement remain conservative and auditable.
+
+Ruling: Treat unexpected executor or scorer exceptions as a persisted `provider_failed` case with any metering accumulated before failure. Cost if wrong: configuration defects appear as safe reviewed failures rather than leaking internals or abandoning the entire resumable run.

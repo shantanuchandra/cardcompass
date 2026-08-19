@@ -401,6 +401,12 @@ enabled = true
 verify_jwt = true
 entrypoint = "./functions/feedback-submit/index.ts"
 
+# Internal worker: only its timing-safe service-role check may authorize work.
+[functions.ai-eval-runner]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/ai-eval-runner/index.ts"
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 

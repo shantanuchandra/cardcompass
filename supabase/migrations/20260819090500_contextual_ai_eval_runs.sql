@@ -56,7 +56,7 @@ create trigger protect_completed_ai_eval_results before update on public.ai_eval
 
 create or replace function public.admin_create_ai_eval_run(_actor_id uuid,_request_id uuid,_dataset_version bigint,_baseline_config_key text,_candidate_config_key text,_judge_config_key text,_maximum_case_count integer,_cost_ceiling_usd numeric,_latency_ceiling_ms integer) returns jsonb
 language plpgsql security definer set search_path = '' as $$ declare manifest jsonb; existing public.ai_eval_runs; created public.ai_eval_runs; normalized jsonb; receipt jsonb; _per_case_max_cost_usd numeric; _candidate_feature_key text; begin
-  _per_case_max_cost_usd=case _candidate_config_key when 'gemini-3.6-flash-statement-v1' then 0.01 when 'gemini-3.6-flash-card-data-v1' then 0.02 when 'gemini-3.6-flash-recommendation-v1' then 0.03 else null end;
+  _per_case_max_cost_usd=(case _candidate_config_key when 'gemini-3.6-flash-statement-v1' then 0.01 when 'gemini-3.6-flash-card-data-v1' then 0.02 when 'gemini-3.6-flash-recommendation-v1' then 0.03 else null end)+case when _candidate_config_key='gemini-3.6-flash-recommendation-v1' then 0.01 else 0 end;
   _candidate_feature_key=case _candidate_config_key when 'gemini-3.6-flash-statement-v1' then 'statement_processing' when 'gemini-3.6-flash-card-data-v1' then 'card_data' when 'gemini-3.6-flash-recommendation-v1' then 'recommendation' else null end;
   if _baseline_config_key<>'captured-production-v1' or _judge_config_key<>'gemini-3.6-flash-blind-judge-v1' or _per_case_max_cost_usd is null or _dataset_version<1 or _maximum_case_count not between 1 and 100 or _cost_ceiling_usd<=0 or _per_case_max_cost_usd>_cost_ceiling_usd or _latency_ceiling_ms<=0 then raise exception 'invalid_request'; end if;
   normalized=jsonb_build_object('dataset_version',_dataset_version,'baseline_config_key',_baseline_config_key,'candidate_config_key',_candidate_config_key,'judge_config_key',_judge_config_key,'maximum_case_count',_maximum_case_count,'cost_ceiling_usd',_cost_ceiling_usd,'latency_ceiling_ms',_latency_ceiling_ms,'per_case_max_cost_usd',_per_case_max_cost_usd);
@@ -104,6 +104,13 @@ language plpgsql security definer set search_path = '' as $$ declare run public.
   update public.ai_eval_runs set status=next_status,safe_failure_category=case when succeeded=0 and failed>0 and not exists(select 1 from public.ai_eval_results where run_id=_run_id and safe_failure_category is distinct from 'insufficient_fixture') then 'insufficient_fixture' else null end,aggregate_metrics=jsonb_build_object('case_count',total,'succeeded',succeeded,'failed',failed,'missing',total-succeeded-failed,'failure_categories',(select coalesce(jsonb_object_agg(category,count),'{}'::jsonb) from (select safe_failure_category category,count(*) count from public.ai_eval_results where run_id=_run_id and execution_status='failed' and safe_failure_category is not null group by safe_failure_category) failures),'regressions',(select count(*) from public.ai_eval_results where run_id=_run_id and regression),'severe_regressions',(select count(*) from public.ai_eval_results where run_id=_run_id and severe_regression),'average_latency_ms',(select coalesce(avg(baseline_latency_ms+candidate_latency_ms),0) from public.ai_eval_results where run_id=_run_id)),token_usage=tokens,estimated_cost_usd=cost,completed_at=now(),lease_token=null,lease_expires_at=null,updated_at=now() where id=_run_id;
   return jsonb_build_object('run_id',_run_id,'status',next_status); end $$;
 
+create or replace function public.yield_ai_eval_run(_run_id uuid,_lease_token uuid) returns jsonb
+language plpgsql security definer set search_path = '' as $$ declare run public.ai_eval_runs; begin
+  select * into run from public.ai_eval_runs where id=_run_id for update;
+  if not found or run.status<>'running' or run.lease_token is distinct from _lease_token or run.lease_expires_at<now() then raise exception 'state_conflict'; end if;
+  update public.ai_eval_runs set lease_token=null,lease_expires_at=null,updated_at=now() where id=_run_id;
+  return jsonb_build_object('run_id',_run_id,'status','running'); end $$;
+
 create or replace function public.admin_ai_eval_run_action(_actor_id uuid,_request_id uuid,_run_id uuid,_action text) returns jsonb
 language plpgsql security definer set search_path = '' as $$ declare run public.ai_eval_runs; normalized jsonb; prior jsonb; result jsonb; remaining boolean; begin
   if _action not in ('cancel','resume_failed') then raise exception 'invalid_request'; end if; normalized=jsonb_build_object('run_id',_run_id,'action',_action); perform pg_advisory_xact_lock(hashtextextended(_actor_id::text||':'||_request_id::text,0)); select details into prior from public.admin_audit_log where actor_id=_actor_id and request_id=_request_id; if found then if prior->'request' is distinct from normalized then raise exception 'request_id_collision'; end if; return prior->'result'; end if;
@@ -117,8 +124,10 @@ revoke all on function public.admin_ai_eval_run_action(uuid,uuid,uuid,text) from
 revoke all on function public.claim_ai_eval_run_batch(uuid,integer) from public,anon,authenticated;
 revoke all on function public.record_ai_eval_result(uuid,uuid,uuid,integer,jsonb) from public,anon,authenticated;
 revoke all on function public.finish_ai_eval_run(uuid,uuid) from public,anon,authenticated;
+revoke all on function public.yield_ai_eval_run(uuid,uuid) from public,anon,authenticated;
 grant execute on function public.admin_create_ai_eval_run(uuid,uuid,bigint,text,text,text,integer,numeric,integer) to service_role;
 grant execute on function public.admin_ai_eval_run_action(uuid,uuid,uuid,text) to service_role;
 grant execute on function public.claim_ai_eval_run_batch(uuid,integer) to service_role;
 grant execute on function public.record_ai_eval_result(uuid,uuid,uuid,integer,jsonb) to service_role;
 grant execute on function public.finish_ai_eval_run(uuid,uuid) to service_role;
+grant execute on function public.yield_ai_eval_run(uuid,uuid) to service_role;
