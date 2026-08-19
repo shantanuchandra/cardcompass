@@ -316,6 +316,10 @@ Deno.test("real provenance-shaped card feedback becomes a runnable immutable eva
     "uc-1",
   );
   assertEquals(context.safeInputContext.kind, "card_data");
+  assertEquals(
+    context.safeInputContext.evaluation_mode,
+    "catalog_identity_validation",
+  );
   const result = await executeEvalCase(
     {
       caseId: "case-1",

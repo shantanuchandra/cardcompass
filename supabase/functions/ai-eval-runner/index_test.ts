@@ -37,6 +37,7 @@ const fixture = (
     ? {
       safe_input_context: {
         kind: "card_data",
+        evaluation_mode: "catalog_identity_validation",
         identifiers: {
           entered_name: "Regalia Gold",
           issuer_hint: "HDFC",
@@ -229,11 +230,10 @@ Deno.test("unknown and feature-mismatched keys fail before model execution", asy
   assertEquals(calls, 0);
 });
 
-Deno.test("captured baseline supports every family without a model call", async () => {
+Deno.test("captured baseline supports structured non-card families without a model call", async () => {
   for (
     const feature of [
       "statement_processing",
-      "card_data",
       "recommendation",
     ] as const
   ) {
@@ -247,6 +247,132 @@ Deno.test("captured baseline supports every family without a model call", async 
     assertEquals(result.estimatedCostUsd, 0);
     assertEquals(result.inputTokens, 0);
     assertEquals(result.outputTokens, 0);
+  }
+});
+
+Deno.test("captured card identity baseline normalizes persisted DTOs into the exact grounded mode", async () => {
+  const item = fixture("card_data");
+  const result = await executeEvalCase(item, "captured-production-v1", {
+    generate: () => {
+      throw new Error("must_not_call");
+    },
+  });
+  assertEquals(result.executionStatus, "succeeded");
+  assertEquals(result.output, {
+    mode: "identity",
+    card: {
+      id: "card-1",
+      name: "Regalia Gold",
+      bank: "HDFC",
+      network: "Visa",
+      annual_fee: 2500,
+      joining_fee: 2500,
+    },
+    sources: [{ id: "source-1", field_paths: ["facts.catalog_reference"] }],
+  });
+});
+
+Deno.test("captured benefit baseline uses persisted values and official grounding without answer leakage", async () => {
+  const item = fixture("card_data");
+  const safe = item.inputFixture.safe_input_context as Record<string, unknown>;
+  const official = safe.official_sources as Record<string, unknown>[];
+  const benefitItem: EvalCaseFixture = {
+    ...item,
+    inputFixture: {
+      ...item.inputFixture,
+      safe_input_context: {
+        ...safe,
+        evaluation_mode: "benefit_extraction",
+        official_sources: official.map((source) =>
+          source.id === "source-benefit-1"
+            ? {
+              ...source,
+              facts: {
+                evaluation_mode: "benefit_extraction",
+                catalog_reference_id: "card-1",
+                benefits: [{
+                  id: "benefit-1",
+                  dedupe_key: "benefit-1",
+                  title: "Lounge",
+                  type: "access",
+                  category: "travel",
+                  value_config: { limit: 4, usage_period: "quarter" },
+                  limit: 4,
+                  period: "quarter",
+                  eligibility: "see official terms",
+                }],
+              },
+            }
+            : source
+        ),
+      },
+    },
+    capturedOutput: {
+      ...item.capturedOutput,
+      benefits: [{
+        benefit_id: "benefit-1",
+        title: "Lounge",
+        benefit_type: "access",
+        benefit_category: "travel",
+        value_config: { limit: 4, usage_period: "quarter" },
+      }],
+    },
+  };
+  const result = await executeEvalCase(benefitItem, "captured-production-v1", {
+    generate: () => {
+      throw new Error("must_not_call");
+    },
+  });
+  assertEquals(result.executionStatus, "succeeded");
+  assertEquals(result.output, {
+    mode: "benefits",
+    card_id: "card-1",
+    benefits: [{
+      id: "benefit-1",
+      dedupe_key: "benefit-1",
+      title: "Lounge",
+      type: "access",
+      category: "travel",
+      value_config: { limit: 4, usage_period: "quarter" },
+      limit: 4,
+      period: "quarter",
+      eligibility: "see official terms",
+    }],
+    sources: [{
+      id: "source-benefit-1",
+      field_paths: ["facts.benefits"],
+    }],
+  });
+});
+
+Deno.test("ambiguous or incomplete captured card baselines fail as insufficient fixtures", async () => {
+  const item = fixture("card_data");
+  const safe = item.inputFixture.safe_input_context as Record<string, unknown>;
+  for (
+    const candidate of [
+      {
+        ...item,
+        inputFixture: {
+          ...item.inputFixture,
+          safe_input_context: { ...safe, evaluation_mode: undefined },
+        },
+      },
+      {
+        ...item,
+        capturedOutput: {
+          ...item.capturedOutput,
+          catalog_card: { id: "card-1" },
+        },
+      },
+    ]
+  ) {
+    const result = await executeEvalCase(candidate, "captured-production-v1", {
+      generate: () => {
+        throw new Error("must_not_call");
+      },
+    });
+    assertEquals(result.executionStatus, "failed");
+    assertEquals(result.safeFailureCategory, "insufficient_fixture");
   }
 });
 
@@ -501,6 +627,15 @@ Deno.test("immutable transaction evidence, card paths and financial math are enf
 });
 
 Deno.test("grounded benefit extraction accepts the exact official benefit only", async () => {
+  const base = fixture("card_data");
+  const safe = base.inputFixture.safe_input_context as Record<string, unknown>;
+  const benefitFixture: EvalCaseFixture = {
+    ...base,
+    inputFixture: {
+      ...base.inputFixture,
+      safe_input_context: { ...safe, evaluation_mode: "benefit_extraction" },
+    },
+  };
   const benefit = {
     id: "benefit-1",
     dedupe_key: "lounge",
@@ -520,7 +655,7 @@ Deno.test("grounded benefit extraction accepts the exact official benefit only",
   };
   assertEquals(
     (await executeEvalCase(
-      fixture("card_data"),
+      benefitFixture,
       "gemini-3.6-flash-card-data-v1",
       { generate: async () => fakeGeneration(valid) },
     )).executionStatus,
@@ -529,7 +664,7 @@ Deno.test("grounded benefit extraction accepts the exact official benefit only",
   const hallucinated = { ...valid, benefits: [{ ...benefit, limit: 8 }] };
   assertEquals(
     (await executeEvalCase(
-      fixture("card_data"),
+      benefitFixture,
       "gemini-3.6-flash-card-data-v1",
       { generate: async () => fakeGeneration(hallucinated) },
     )).safeFailureCategory,

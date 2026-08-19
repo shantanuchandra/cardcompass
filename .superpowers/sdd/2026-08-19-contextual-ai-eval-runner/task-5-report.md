@@ -31,3 +31,10 @@ Review corrections:
 - Frozen root verification passed all 222 Edge Function tests. The root lock's wildcard assert entry is required by two existing versionless Feedback imports and resolves to the existing pinned `1.0.19`; frozen verification left the lock hash unchanged.
 
 Residual risk: draft rubrics are stored as JSON without a database-level typed assertion schema. Malformed or legacy cases now fail safely at scoring and require operator revision, but database creation does not yet reject them earlier.
+
+Captured-card baseline correction:
+
+- New `user_card` feedback fixtures explicitly select catalog-identity validation from their contextual target; no expected result or rubric selects the mode.
+- Captured production card DTOs normalize into the same discriminated, grounded identity/benefit output contract used by candidates. Answer values come from captured catalog/benefit rows; official sources attach citations and validate provenance without rewriting those values.
+- Ambiguous historical modes, missing required fields, absent citations, or source mismatches return `insufficient_fixture` before scoring.
+- Focused Eval and Feedback coverage passes 42 tests, including real identity/benefit normalization and scorer regression behavior.

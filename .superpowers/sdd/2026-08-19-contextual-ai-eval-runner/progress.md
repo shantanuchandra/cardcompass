@@ -132,3 +132,14 @@ Ruling: Treat any malformed or legacy free-form rubric as explicit non-passing e
 Ruling: Reuse the executor's fixture-grounded output validator for both scorer sides and skip subjective judging unless both deterministic sides pass. Cost if wrong: captured production shapes that do not satisfy the current exact executor contract remain review-only instead of contributing incomparable baseline evidence.
 
 Ruling: Retain the generated root-lock `jsr:@std/assert@*` resolution because existing versionless Feedback imports require it in the complete frozen suite. Cost if wrong: the lock contains one alias resolving to the same pinned version, avoiding future mutation during root verification.
+
+### Task 5 captured-card baseline correction
+
+- Card capture now declares `catalog_identity_validation` from the contextual `user_card` target. The mode is fixture metadata, not expected ground truth, and candidate prompts still exclude captured output, expected output, feedback, rubric, and severe conditions.
+- `captured-production-v1` normalizes persisted `{user_card,catalog_card,benefits}` into the exact identity or benefit executor output contract selected by fixture mode. Captured fields supply answer values; official evidence supplies only bounded citations and grounding validation.
+- Identity maps catalog ID/name/issuer/network/fees. Benefit mode maps persisted benefit ID/title/type/category/value configuration/derived structured limits and attaches official benefit citations. Ambiguous modes, missing captured fields, absent grounding, or mismatched evidence return `insufficient_fixture` before scoring.
+- Real normalized identity and benefit baselines validate under the shared executor/scorer contract. A normalized passing identity baseline produces a severe reviewed regression for an invalid candidate identity.
+
+Ruling: Set the current `user_card` feedback fixture to `catalog_identity_validation`; support `benefit_extraction` only when the fixture explicitly selects it. Cost if wrong: existing ambiguous card cases remain insufficient until revised, and future benefit-specific capture must set its contextual mode rather than inferring it from expected output.
+
+Ruling: Normalize captured card answer values into the selected evaluator schema, then use source evidence only for citations and validation. Cost if wrong: a persisted answer that lacks matching official provenance becomes `insufficient_fixture` instead of a schema-invalid baseline or a source-rewritten answer.

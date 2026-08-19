@@ -178,6 +178,7 @@ export async function resolveFeedbackContext(
         kind: runnable ? "card_data" : "card_requires_review",
         ...(runnable
           ? {
+            evaluation_mode: "catalog_identity_validation",
             identifiers: {
               last_four_digits: boundedText(row.last_four_digits, 4),
             },

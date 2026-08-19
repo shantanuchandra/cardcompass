@@ -41,9 +41,15 @@ export async function executeEvalCase(
     if (Object.keys(item.capturedOutput).length === 0) {
       return insufficientResult();
     }
+    const output = item.featureKey === "card_data"
+      ? normalizeCapturedCard(item.capturedOutput, fixture)
+      : structuredClone(item.capturedOutput);
+    if (!output || !validateEvalOutput(item.featureKey, output, fixture)) {
+      return insufficientResult();
+    }
     return {
       executionStatus: "succeeded",
-      output: structuredClone(item.capturedOutput),
+      output,
       model: null,
       inputTokens: 0,
       outputTokens: 0,
@@ -213,7 +219,10 @@ function validFixture(
       validTransactionEvidence(safe.transaction);
   }
   if (feature === "card_data") {
-    return safe.kind === "card_data" && isRecord(safe.identifiers) &&
+    return safe.kind === "card_data" &&
+      ["catalog_identity_validation", "benefit_extraction"].includes(
+        String(safe.evaluation_mode),
+      ) && isRecord(safe.identifiers) &&
       Array.isArray(safe.official_sources) &&
       safe.official_sources.length > 0 &&
       safe.official_sources.length <= 20 &&
@@ -316,6 +325,12 @@ function validateCardData(
     sourceIds.add(String(value.id));
   }
   const safe = fixture.safe_input_context as Record<string, unknown>;
+  if (
+    (safe.evaluation_mode === "catalog_identity_validation" &&
+      output.mode !== "identity") ||
+    (safe.evaluation_mode === "benefit_extraction" &&
+      output.mode !== "benefits")
+  ) return false;
   const official = safe.official_sources as Record<string, unknown>[];
   const byId = new Map(official.map((source) => [String(source.id), source]));
   if ([...sourceIds].some((source) => !byId.has(source))) return false;
@@ -369,9 +384,14 @@ function validateCardData(
     facts.evaluation_mode !== "benefit_extraction" ||
     output.card_id !== facts.catalog_reference_id
   ) return false;
-  const sourceBenefits = Array.isArray(facts.benefits)
-    ? facts.benefits.filter(isRecord)
-    : [];
+  const sourceBenefits = official.flatMap((source) => {
+    const value = source.facts;
+    return isRecord(value) && value.evaluation_mode === "benefit_extraction" &&
+        value.catalog_reference_id === output.card_id &&
+        Array.isArray(value.benefits)
+      ? value.benefits.filter(isRecord)
+      : [];
+  });
   return output.benefits.every((benefit) =>
     isRecord(benefit) &&
     exactKeys(benefit, [
@@ -386,6 +406,86 @@ function validateCardData(
       "eligibility",
     ]) && sourceBenefits.some((source) => deepStructuralEqual(source, benefit))
   );
+}
+
+function normalizeCapturedCard(
+  captured: Record<string, unknown>,
+  fixture: Record<string, unknown>,
+): Record<string, unknown> | null {
+  const safe = fixture.safe_input_context;
+  if (!isRecord(safe) || !Array.isArray(safe.official_sources)) return null;
+  const sources = safe.official_sources.filter(isRecord);
+  if (safe.evaluation_mode === "catalog_identity_validation") {
+    if (!isRecord(captured.catalog_card)) return null;
+    const card = captured.catalog_card;
+    if (
+      !id.test(String(card.id)) || !bounded(card.card_name, 200) ||
+      !bounded(card.bank, 200) || !bounded(card.network, 100) ||
+      !finiteMoney(card.annual_fee) || !finiteMoney(card.joining_fee)
+    ) return null;
+    const grounding = sources.filter((source) =>
+      isRecord(source.facts) &&
+      source.facts.evaluation_mode === "catalog_identity_validation"
+    ).map((source) => ({
+      id: source.id,
+      field_paths: ["facts.catalog_reference"],
+    }));
+    if (grounding.length === 0) return null;
+    return {
+      mode: "identity",
+      card: {
+        id: card.id,
+        name: card.card_name,
+        bank: card.bank,
+        network: card.network,
+        annual_fee: card.annual_fee,
+        joining_fee: card.joining_fee,
+      },
+      sources: grounding,
+    };
+  }
+  if (safe.evaluation_mode !== "benefit_extraction") return null;
+  if (!Array.isArray(captured.benefits) || !isRecord(captured.catalog_card)) {
+    return null;
+  }
+  const benefits = captured.benefits.map(normalizeCapturedBenefit);
+  if (benefits.length === 0 || benefits.some((benefit) => benefit === null)) {
+    return null;
+  }
+  const grounding = sources.filter((source) =>
+    isRecord(source.facts) &&
+    source.facts.evaluation_mode === "benefit_extraction"
+  ).map((source) => ({ id: source.id, field_paths: ["facts.benefits"] }));
+  if (grounding.length === 0) return null;
+  return {
+    mode: "benefits",
+    card_id: captured.catalog_card.id,
+    benefits,
+    sources: grounding,
+  };
+}
+
+function normalizeCapturedBenefit(
+  value: unknown,
+): Record<string, unknown> | null {
+  if (
+    !isRecord(value) || !id.test(String(value.benefit_id)) ||
+    !bounded(value.title, 300) || !bounded(value.benefit_category, 100) ||
+    !isRecord(value.value_config)
+  ) return null;
+  const config = value.value_config;
+  return {
+    id: value.benefit_id,
+    dedupe_key: String(value.benefit_id),
+    title: value.title,
+    type: bounded(value.benefit_type, 100) ? value.benefit_type : "unknown",
+    category: value.benefit_category,
+    value_config: structuredClone(config),
+    limit: config.limit ?? config.max_usage_per_period ??
+      config.max_usage_per_month ?? null,
+    period: config.usage_period ?? null,
+    eligibility: "see official terms",
+  };
 }
 
 export function deepStructuralEqual(left: unknown, right: unknown): boolean {

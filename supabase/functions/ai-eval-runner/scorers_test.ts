@@ -1,4 +1,5 @@
 import { assertEquals, assertMatch } from "jsr:@std/assert@1";
+import { executeEvalCase } from "./executors.ts";
 import { scoreRecommendationCase, scoreStructuredCase } from "./scorers.ts";
 import type { EvalCaseFixture, EvalExecutionResult } from "./types.ts";
 
@@ -56,6 +57,7 @@ function fixture(
       ? {
         safe_input_context: {
           kind: "card_data",
+          evaluation_mode: "benefit_extraction",
           identifiers: { entered_name: "Regalia Gold" },
           official_sources: [{
             id: "source-1",
@@ -267,7 +269,7 @@ Deno.test("card identity and benefit structure validate IDs, value, limit, perio
 });
 
 Deno.test("must-not paths and claims are severe only when the approved condition is violated", () => {
-  const item = fixture("card_data", {}, {
+  const base = fixture("card_data", {}, {
     assertions: [
       { key: "no_debug", path: "$.debug", operator: "must_not_exist" },
       {
@@ -278,6 +280,17 @@ Deno.test("must-not paths and claims are severe only when the approved condition
       },
     ],
   }, { assertionKeys: ["no_debug", "no_promise"] });
+  const safe = base.inputFixture.safe_input_context as Record<string, unknown>;
+  const item: EvalCaseFixture = {
+    ...base,
+    inputFixture: {
+      ...base.inputFixture,
+      safe_input_context: {
+        ...safe,
+        evaluation_mode: "catalog_identity_validation",
+      },
+    },
+  };
   const score = scoreStructuredCase(
     item,
     succeeded({
@@ -330,6 +343,62 @@ Deno.test("invalid execution output is a severe schema regression", () => {
   };
   const score = scoreStructuredCase(item, succeeded(statement()), failed);
   assertEquals(score.passed, false);
+  assertEquals(score.regression, true);
+  assertEquals(score.severeRegression, true);
+  assertEquals(score.requiresReview, true);
+});
+
+Deno.test("normalized captured card baseline lets the scorer expose a candidate identity regression", async () => {
+  const base = fixture("card_data", { card_id: "card-1" }, {
+    assertions: [{
+      key: "identity",
+      path: "$.card.id",
+      operator: "catalog_id",
+      expectedPath: "$.card_id",
+    }],
+  });
+  const safe = base.inputFixture.safe_input_context as Record<string, unknown>;
+  const item: EvalCaseFixture = {
+    ...base,
+    inputFixture: {
+      ...base.inputFixture,
+      safe_input_context: {
+        ...safe,
+        evaluation_mode: "catalog_identity_validation",
+      },
+    },
+    capturedOutput: {
+      user_card: { id: "uc-1", catalog_card_id: "card-1" },
+      catalog_card: {
+        id: "card-1",
+        card_name: "Regalia Gold",
+        bank: "HDFC",
+        network: "Visa",
+        annual_fee: 2500,
+        joining_fee: 2500,
+      },
+      benefits: [],
+    },
+  };
+  const baseline = await executeEvalCase(item, "captured-production-v1", {
+    generate: () => {
+      throw new Error("must_not_call");
+    },
+  });
+  const candidate = succeeded({
+    mode: "identity",
+    card: {
+      id: "card-legacy",
+      name: "Regalia",
+      bank: "HDFC",
+      network: "Visa",
+      annual_fee: 2500,
+      joining_fee: 2500,
+    },
+    sources: [{ id: "source-1", field_paths: ["facts.catalog_reference"] }],
+  });
+  const score = scoreStructuredCase(item, baseline, candidate);
+  assertEquals(score.assertions[0].baselinePassed, true);
   assertEquals(score.regression, true);
   assertEquals(score.severeRegression, true);
   assertEquals(score.requiresReview, true);
