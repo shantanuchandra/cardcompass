@@ -24,14 +24,38 @@ function item(id: string, severity: InboxItem["severity"], age: number): InboxIt
   };
 }
 
-function queryResult(rows: unknown[], error: { message: string } | null = null) {
+type QueryCall = { table: string; method: string; args: unknown[] };
+
+function queryResult(
+  table: string,
+  rows: unknown[],
+  error: { message: string } | null | ((statuses: unknown[] | null) => { message: string } | null),
+  calls: QueryCall[],
+) {
+  let statuses: unknown[] | null = null;
   const query = {
-    select: () => query,
-    eq: () => query,
-    neq: () => query,
-    in: () => query,
-    order: () => query,
-    range: () => Promise.resolve({ data: rows, error }),
+    select: (...args: unknown[]) => (calls.push({ table, method: "select", args }), query),
+    eq: (...args: unknown[]) => (calls.push({ table, method: "eq", args }), query),
+    neq: (...args: unknown[]) => (calls.push({ table, method: "neq", args }), query),
+    in: (...args: unknown[]) => {
+      calls.push({ table, method: "in", args });
+      if (args[0] === "status" && Array.isArray(args[1])) statuses = args[1];
+      return query;
+    },
+    order: (...args: unknown[]) => (calls.push({ table, method: "order", args }), query),
+    range: (...args: unknown[]) => {
+      calls.push({ table, method: "range", args });
+      const filtered = statuses === null ? rows : rows.filter((value) => {
+        const status = value && typeof value === "object"
+          ? (value as Record<string, unknown>).status
+          : null;
+        return statuses!.includes(status);
+      });
+      return Promise.resolve({
+        data: filtered,
+        error: typeof error === "function" ? error(statuses) : error,
+      });
+    },
   };
   return query;
 }
@@ -41,19 +65,31 @@ function context(options: {
   benefit?: unknown[];
   identityError?: { message: string } | null;
   benefitError?: { message: string } | null;
+  benefitHighError?: { message: string } | null;
+  benefitRoutineError?: { message: string } | null;
+  calls?: QueryCall[];
 } = {}): AdminActionContext {
+  const calls = options.calls ?? [];
   return {
     actor: { id: "admin" },
     requestId: null,
     db: {
       from(table: string) {
+        calls.push({ table, method: "from", args: [] });
         return queryResult(
+          table,
           table === "card_catalog_review_queue"
             ? options.identity ?? []
             : options.benefit ?? [],
           table === "card_catalog_review_queue"
             ? options.identityError ?? null
-            : options.benefitError ?? null,
+            : (statuses) => {
+              if (options.benefitError) return options.benefitError;
+              return statuses?.includes("staged")
+                ? options.benefitRoutineError ?? null
+                : options.benefitHighError ?? null;
+            },
+          calls,
         ) as never;
       },
       rpc: () => Promise.resolve({ data: null, error: null }),
@@ -95,6 +131,7 @@ Deno.test("identity adapter returns exact safe pending-review DTOs and safe ages
       id: "identity-1",
       status: "pending",
       created_at: "2026-08-19T11:59:00Z",
+      card_discovery_jobs: { issuer: " Issuer\u0000 Bank ", proposed_product: " Premier   Card " },
       source_evidence: { raw_body: "secret" },
       proposed_fields: { card_name: "must not leak" },
     }, {
@@ -109,7 +146,7 @@ Deno.test("identity adapter returns exact safe pending-review DTOs and safe ages
     id: "card-identity:identity-1",
     type: "card_identity_review",
     severity: "normal",
-    title: "Review card identity proposal",
+    title: "Review identity: Issuer Bank — Premier Card",
     explanation: "A pending card identity proposal needs review.",
     source_status: "pending",
     age_seconds: 60,
@@ -122,7 +159,7 @@ Deno.test("identity adapter returns exact safe pending-review DTOs and safe ages
     id: "card-identity:identity-2",
     type: "card_identity_review",
     severity: "normal",
-    title: "Review card identity proposal",
+    title: "Review card identity • identity",
     explanation: "A pending card identity proposal needs review.",
     source_status: "pending",
     age_seconds: 0,
@@ -136,32 +173,73 @@ Deno.test("identity adapter returns exact safe pending-review DTOs and safe ages
 
 Deno.test("benefit adapter maps actionable statuses to exact safe DTOs", async () => {
   const output = await loadBenefitInbox(context({ benefit: [
-    { id: "review", status: "review_required", created_at: "2026-08-19T11:58:00Z", raw_body: "secret" },
-    { id: "failed", status: "failed", created_at: "2026-08-19T11:57:00Z" },
-    { id: "quarantined", status: "quarantined", created_at: "2026-08-19T11:56:00Z" },
-    { id: "staged", status: "staged", created_at: "2026-08-19T11:55:00Z" },
+    { id: "review", status: "review_required", created_at: "2026-08-19T11:58:00Z", card_catalog: { bank: "Issuer", card_name: "Premier" }, raw_body: "secret" },
+    { id: "failed", status: "failed", created_at: "2026-08-19T11:57:00Z", card_catalog: { bank: "Issuer", card_name: "Travel" } },
+    { id: "quarantined", status: "quarantined", created_at: "2026-08-19T11:56:00Z", card_catalog: { bank: "", card_name: "\u0001" } },
+    { id: "staged", status: "staged", created_at: "2026-08-19T11:55:00Z", card_catalog: { bank: "Issuer", card_name: "Cashback" } },
   ] }), 100, NOW);
 
   assertEquals(output.map(({ id, source_status, severity, title, explanation }) => ({
     id, source_status, severity, title, explanation,
   })), [{
     id: "benefit-enrichment:review", source_status: "review_required", severity: "high",
-    title: "Review benefit enrichment", explanation: "A benefit proposal needs operator review.",
+    title: "Review benefits: Issuer — Premier", explanation: "A benefit proposal needs operator review.",
   }, {
     id: "benefit-enrichment:failed", source_status: "failed", severity: "high",
-    title: "Recover failed benefit enrichment", explanation: "Benefit enrichment failed and needs recovery.",
+    title: "Recover benefits: Issuer — Travel", explanation: "Benefit enrichment failed and needs recovery.",
   }, {
     id: "benefit-enrichment:quarantined", source_status: "quarantined", severity: "high",
-    title: "Review quarantined benefit enrichment", explanation: "A quarantined benefit job needs operator review.",
+    title: "Review quarantined benefits • quaranti", explanation: "A quarantined benefit job needs operator review.",
   }, {
     id: "benefit-enrichment:staged", source_status: "staged", severity: "normal",
-    title: "Review staged benefits", explanation: "A staged benefit proposal is ready for review.",
+    title: "Review benefits: Issuer — Cashback", explanation: "A staged benefit proposal is ready for review.",
   }]);
   assertEquals(output.every((entry) =>
     entry.destination.section === "cardData" &&
     entry.destination.lane === "benefit" &&
     Object.keys(entry).length === 8
   ), true);
+});
+
+Deno.test("benefit failures cannot be starved by more than 100 staged rows", async () => {
+  const benefit = [
+    ...Array.from({ length: 140 }, (_, index) => ({
+      id: `staged-${index.toString().padStart(3, "0")}`,
+      status: "staged",
+      created_at: "2026-08-18T00:00:00Z",
+    })),
+    { id: "failed-newer", status: "failed", created_at: "2026-08-19T11:59:59Z" },
+  ];
+
+  const output = await handleInboxList({ action: "inbox-list" }, context({ benefit }));
+
+  assertEquals(output.items.length, 100);
+  assertEquals(output.items[0].id, "benefit-enrichment:failed-newer");
+  assertEquals(output.items[0].severity, "high");
+});
+
+Deno.test("source queries use deterministic created-at then id ordering before bounded ranges", async () => {
+  const calls: QueryCall[] = [];
+  await handleInboxList({ action: "inbox-list" }, context({ calls }));
+
+  for (const table of ["card_catalog_review_queue", "card_catalog_enrichment_jobs"]) {
+    const tableCalls = calls.filter((call) => call.table === table);
+    const ranges = tableCalls.filter((call) => call.method === "range");
+    assertEquals(ranges.length, table === "card_catalog_review_queue" ? 1 : 2);
+    for (const range of ranges) {
+      const beforeRange = tableCalls.slice(0, tableCalls.indexOf(range));
+      assertEquals(beforeRange.slice(-2), [{
+        table,
+        method: "order",
+        args: ["created_at", { ascending: true }],
+      }, {
+        table,
+        method: "order",
+        args: ["id", { ascending: true }],
+      }]);
+      assertEquals(range.args, [0, 99]);
+    }
+  }
 });
 
 Deno.test("inbox caps the merged ranked result at 100 items", async () => {
@@ -204,6 +282,21 @@ Deno.test("inbox isolates each failed source and reports stable public names", a
   assertEquals(both.items, []);
   assertEquals(both.partial_failures, ["card_identity", "benefit_enrichment"]);
   assertEquals(JSON.stringify(both).includes("secret"), false);
+
+  const routineOnlyFailure = await handleInboxList(
+    { action: "inbox-list" },
+    context({
+      benefit: [
+        { id: "failed-kept", status: "failed", created_at: "bad" },
+        { id: "staged-dropped", status: "staged", created_at: "bad" },
+      ],
+      benefitRoutineError: { message: "routine query detail" },
+    }),
+  );
+  assertEquals(routineOnlyFailure.items.map((entry) => entry.id), [
+    "benefit-enrichment:failed-kept",
+  ]);
+  assertEquals(routineOnlyFailure.partial_failures, ["benefit_enrichment"]);
 });
 
 Deno.test("inbox rejects non-allowlisted input and router registration is immutable and prototype-safe", async () => {

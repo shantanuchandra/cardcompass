@@ -18,7 +18,7 @@ Ruling: Include the foundation's final adjudication ledger update in Task 1's co
 
 - Task 1: implementation complete, pending review — atomic audited card-data mutation RPC
 - Task 2: implementation complete, pending review — sanitized Card Data gateway actions
-- Task 3: pending — derived ranked Action Inbox
+- Task 3: implementation complete, pending review — derived ranked Action Inbox
 - Task 4: pending — typed Flutter repositories
 - Task 5: pending — Card Data review workspace
 - Task 6: pending — Action Inbox and deep-linking
@@ -49,3 +49,19 @@ Ruling: Bind benefit approvals to the locked job's exact staging row and card, t
 Ruling: Map the mutation RPC's `request_id_collision` to the public `state_conflict` code because the API contract does not expose a collision-specific code and the safe operator response is to refresh and issue a new request ID. Cost if wrong: clients cannot distinguish a stale transition from request-ID reuse without server-side logs.
 
 Ruling: Permit only HTTPS URLs without embedded credentials at the new Card Data boundary, while returning `null` for unsafe stored read URLs and rejecting unsafe mutation URLs. Cost if wrong: a legitimate issuer resource available only over HTTP would be hidden until upgraded or explicitly allowlisted.
+
+## Task 3 evidence
+
+- RED: the focused Deno test failed type-checking because `inbox.ts` did not exist.
+- GREEN: 17/17 focused inbox and router tests passed after adding bounded identity and benefit adapters, exact sanitized DTOs, deterministic ranking, partial-source isolation, and immutable null-prototype registration.
+- Regression: the complete `admin-operator` Deno suite passed 44/44.
+
+Ruling: Use fixed operator-safe titles and explanations rather than interpolating issuer, card, failure, or evidence fields from source rows; only the source record ID, allowlisted status, safe age, and typed Card Data destination cross the inbox boundary. Cost if wrong: the operator must open the Card Data detail to identify the exact card, trading one click for a substantially smaller leakage surface.
+
+Ruling: Treat malformed, future, or missing source timestamps as age zero while retaining the actionable item, so bad metadata cannot incorrectly elevate priority or hide work. Cost if wrong: malformed old items rank as newest until their source timestamp is corrected.
+
+- Task 3 review fix: split benefit reads into separately bounded high-severity and routine tiers so staged volume cannot starve failed, review-required, or quarantined work. Added deterministic `created_at, id` database ordering before every range, sanitized catalog/discovery labels with short-reference fallback, and preserved successful tiers when a sibling tier fails. Focused inbox/router: 19/19 passed; full admin-operator: 46/46 passed.
+
+Ruling: Revise the earlier generic-title decision after review: expose only control-character-stripped, whitespace-normalized, length-bounded issuer plus product labels from the explicit discovery/catalog relations, falling back to an eight-character safe record reference. Cost if wrong: an upstream issuer or product label could still be misleading, though no raw evidence, provider, or customer-content columns are selected or interpolated.
+
+Ruling: Spend at most three bounded inbox reads (identity, high-priority benefits, routine benefits) and preserve fulfilled tiers independently; any failed benefit tier emits the single stable `benefit_enrichment` partial-failure name. Cost if wrong: the extra bounded benefit query adds one database round trip per inbox refresh in exchange for preventing priority starvation.

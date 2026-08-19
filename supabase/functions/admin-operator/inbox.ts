@@ -22,6 +22,8 @@ export type InboxItem = Readonly<{
 type JsonRecord = Record<string, unknown>;
 
 const MAX_SOURCE_ITEMS = 100;
+const HIGH_BENEFIT_STATUSES = ["review_required", "failed", "quarantined"] as const;
+const ROUTINE_BENEFIT_STATUSES = ["staged"] as const;
 const severityOrder: Readonly<Record<Severity, number>> = Object.freeze({
   critical: 0,
   high: 1,
@@ -66,6 +68,32 @@ function safeId(value: unknown): string | null {
     : null;
 }
 
+function safeLabelPart(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value
+    .replace(/[\p{Cc}\p{Cf}]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (normalized.length < 2) return null;
+  return [...normalized].slice(0, 80).join("");
+}
+
+function shortReference(id: string): string {
+  const safe = id.replace(/[^a-z0-9-]/gi, "").slice(0, 8);
+  return safe || "unknown";
+}
+
+function safeDisplayLabel(
+  issuer: unknown,
+  product: unknown,
+): string | null {
+  const safeIssuer = safeLabelPart(issuer);
+  const safeProduct = safeLabelPart(product);
+  return safeIssuer !== null && safeProduct !== null
+    ? `${safeIssuer} — ${safeProduct}`
+    : null;
+}
+
 function safeAge(value: unknown, nowMs: number): number {
   if (typeof value !== "string" || value.length > 100) return 0;
   const timestamp = Date.parse(value);
@@ -98,9 +126,15 @@ export async function loadIdentityInbox(
 ): Promise<InboxItem[]> {
   const limit = boundedLimit(requestedLimit);
   const query = (context.db as any).from("card_catalog_review_queue")
-    .select("id, status, created_at")
+    .select(`
+      id, status, created_at,
+      card_discovery_jobs!card_catalog_review_queue_discovery_job_id_fkey!inner(
+        issuer, proposed_product
+      )
+    `)
     .eq("status", "pending")
     .order("created_at", { ascending: true })
+    .order("id", { ascending: true })
     .range(0, limit - 1);
   const { data, error } = await query;
   if (error) sourceFailure();
@@ -109,11 +143,15 @@ export async function loadIdentityInbox(
     const row = record(value);
     const targetId = safeId(row?.id);
     if (!row || targetId === null || row.status !== "pending") return [];
+    const discovery = record(row.card_discovery_jobs);
+    const label = safeDisplayLabel(discovery?.issuer, discovery?.proposed_product);
     return [{
       id: `card-identity:${targetId}`,
       type: "card_identity_review" as const,
       severity: "normal" as const,
-      title: "Review card identity proposal",
+      title: label === null
+        ? `Review card identity • ${shortReference(targetId)}`
+        : `Review identity: ${label}`,
       explanation: "A pending card identity proposal needs review.",
       source_status: "pending",
       age_seconds: safeAge(row.created_at, nowMs),
@@ -126,17 +164,19 @@ export async function loadIdentityInbox(
   });
 }
 
-export async function loadBenefitInbox(
+async function loadBenefitInboxTier(
   context: AdminActionContext,
-  requestedLimit = MAX_SOURCE_ITEMS,
-  nowMs = Date.now(),
+  statuses: readonly string[],
+  requestedLimit: number,
+  nowMs: number,
 ): Promise<InboxItem[]> {
   const limit = boundedLimit(requestedLimit);
   const query = (context.db as any).from("card_catalog_enrichment_jobs")
-    .select("id, status, created_at")
+    .select("id, status, created_at, card_catalog!inner(bank, card_name)")
     .neq("parser_version", "catalog-v1")
-    .in("status", Object.keys(benefitPresentation))
+    .in("status", statuses)
     .order("created_at", { ascending: true })
+    .order("id", { ascending: true })
     .range(0, limit - 1);
   const { data, error } = await query;
   if (error) sourceFailure();
@@ -149,11 +189,20 @@ export async function loadBenefitInbox(
       status as keyof typeof benefitPresentation
     ];
     if (!row || targetId === null || !presentation) return [];
+    const catalog = record(row.card_catalog);
+    const label = safeDisplayLabel(catalog?.bank, catalog?.card_name);
+    const action = status === "failed"
+      ? "Recover benefits"
+      : status === "quarantined"
+      ? "Review quarantined benefits"
+      : "Review benefits";
     return [{
       id: `benefit-enrichment:${targetId}`,
       type: "benefit_enrichment_review" as const,
       severity: presentation.severity,
-      title: presentation.title,
+      title: label === null
+        ? `${action} • ${shortReference(targetId)}`
+        : `${action}: ${label}`,
       explanation: presentation.explanation,
       source_status: status,
       age_seconds: safeAge(row.created_at, nowMs),
@@ -166,6 +215,28 @@ export async function loadBenefitInbox(
   });
 }
 
+export async function loadBenefitInbox(
+  context: AdminActionContext,
+  requestedLimit = MAX_SOURCE_ITEMS,
+  nowMs = Date.now(),
+): Promise<InboxItem[]> {
+  const results = await Promise.all([
+    loadBenefitInboxTier(
+      context,
+      HIGH_BENEFIT_STATUSES,
+      requestedLimit,
+      nowMs,
+    ),
+    loadBenefitInboxTier(
+      context,
+      ROUTINE_BENEFIT_STATUSES,
+      requestedLimit,
+      nowMs,
+    ),
+  ]);
+  return results.flat();
+}
+
 export async function handleInboxList(
   body: JsonRecord,
   context: AdminActionContext,
@@ -176,18 +247,29 @@ export async function handleInboxList(
   const nowMs = Date.now();
   const results = await Promise.allSettled([
     loadIdentityInbox(context, MAX_SOURCE_ITEMS, nowMs),
-    loadBenefitInbox(context, MAX_SOURCE_ITEMS, nowMs),
+    loadBenefitInboxTier(
+      context,
+      HIGH_BENEFIT_STATUSES,
+      MAX_SOURCE_ITEMS,
+      nowMs,
+    ),
+    loadBenefitInboxTier(
+      context,
+      ROUTINE_BENEFIT_STATUSES,
+      MAX_SOURCE_ITEMS,
+      nowMs,
+    ),
   ]);
   const items = results.flatMap((result) =>
     result.status === "fulfilled" ? result.value : []
   );
   return {
     items: rankInboxItems(items).slice(0, MAX_SOURCE_ITEMS),
-    partial_failures: results.flatMap((result, index) =>
+    partial_failures: [...new Set(results.flatMap((result, index) =>
       result.status === "rejected"
         ? [index === 0 ? "card_identity" : "benefit_enrichment"]
         : []
-    ),
+    ))],
     refreshed_at: new Date(nowMs).toISOString(),
   };
 }
