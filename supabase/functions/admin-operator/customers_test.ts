@@ -348,6 +348,7 @@ Deno.test("router executes customer retry and deletion handlers with canonical r
       {
         action: "customer-deletion-status",
         target_id: USER,
+        confirmation_user_id: USER,
         request_id: REQUEST,
         observed_updated_at: UPDATED,
         status: "scheduled",
@@ -392,6 +393,7 @@ Deno.test("router maps validation and raw dependency failures to stable non-leak
       {
         action: "customer-deletion-status",
         target_id: USER,
+        confirmation_user_id: USER,
         request_id: REQUEST,
         observed_updated_at: UPDATED,
         status: "deleted",
@@ -431,5 +433,99 @@ Deno.test("router maps validation and raw dependency failures to stable non-leak
     const payload = await response.json();
     assertEquals(payload, { error: code });
     assertEquals(JSON.stringify(payload).includes("secret"), false);
+  }
+});
+
+Deno.test("deletion status requires exact typed target confirmation before RPC", async () => {
+  for (const confirmation of [undefined, null, ACTOR]) {
+    let rpcCalls = 0;
+    const body: Record<string, unknown> = {
+      action: "customer-deletion-status",
+      target_id: USER,
+      request_id: REQUEST,
+      observed_updated_at: UPDATED,
+      status: "scheduled",
+      reason: "verified request",
+    };
+    if (confirmation !== undefined) body.confirmation_user_id = confirmation;
+    const error = await assertRejects(
+      () =>
+        customerActionHandlers["customer-deletion-status"](
+          body,
+          context({
+            rpc: () => {
+              rpcCalls++;
+            },
+          }),
+        ),
+      AdminHttpError,
+    );
+    assertEquals(error.code, "invalid_request");
+    assertEquals(rpcCalls, 0);
+  }
+});
+
+Deno.test("deletion status accepts exact typed confirmation without copying it into RPC payload", async () => {
+  const rpcCalls: Record<string, unknown>[] = [];
+  const output = await customerActionHandlers["customer-deletion-status"](
+    {
+      action: "customer-deletion-status",
+      target_id: USER,
+      confirmation_user_id: USER,
+      request_id: REQUEST,
+      observed_updated_at: UPDATED,
+      status: "scheduled",
+      reason: "verified request",
+    },
+    context({
+      rpc: (_name: string, args: Record<string, unknown>) => {
+        rpcCalls.push(args);
+        return Promise.resolve({
+          data: { user_id: USER, status: "scheduled", updated_at: UPDATED },
+          error: null,
+        });
+      },
+    }),
+  );
+  assertEquals(output, {
+    result: { user_id: USER, status: "scheduled", updated_at: UPDATED },
+  });
+  assertEquals(rpcCalls[0]._target_user_id, USER);
+  assertEquals(rpcCalls[0]._payload, { status: "scheduled" });
+  assertEquals(
+    JSON.stringify(rpcCalls[0]).includes("confirmation_user_id"),
+    false,
+  );
+});
+
+Deno.test("deletion status HTTP route rejects absent null and mismatched confirmation without RPC", async () => {
+  for (const confirmation of [undefined, null, ACTOR]) {
+    let rpcCalls = 0;
+    const body: Record<string, unknown> = {
+      action: "customer-deletion-status",
+      target_id: USER,
+      request_id: REQUEST,
+      observed_updated_at: UPDATED,
+      status: "scheduled",
+      reason: "verified request",
+    };
+    if (confirmation !== undefined) body.confirmation_user_id = confirmation;
+    const response = await handleAdminOperator(
+      new Request("http://local", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+      {
+        authorize: () => Promise.resolve({ id: ACTOR }),
+        db: {
+          rpc: () => {
+            rpcCalls++;
+          },
+        } as never,
+      },
+    );
+    assertEquals(response.status, 400);
+    assertEquals(await response.json(), { error: "invalid_request" });
+    assertEquals(rpcCalls, 0);
   }
 });

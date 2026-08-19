@@ -99,3 +99,12 @@ Ruling: Treat any unavailable or malformed customer-detail source as a closed `r
 Ruling: Derive Gmail connection only from whether Auth Admin returns a Google identity, discard the identity objects immediately, and expose one boolean. Cost if wrong: provider connection diagnosis depends on Auth Admin availability, but no identity metadata or provider credential can cross the gateway.
 
 Ruling: Reinvoke the idempotent database RPC on disable replay to validate the original target, action, request payload, and canonical containment receipt before retrying Auth ban; never trust a client claim that containment already happened. Cost if wrong: a pending Auth ban costs one receipt lookup per retry, while collision or target drift fails safely before Auth mutation.
+
+## Task 4 review fix
+
+- Added `confirmation_user_id` to the exact `customer-deletion-status` gateway contract, matching the existing disablement confirmation boundary required by the interaction spec.
+- Missing, null, malformed, or target-mismatched confirmation now returns `invalid_request` before the audited mutation RPC is invoked.
+- The validated confirmation is intentionally not copied into `_payload`; the audited RPC already binds the canonical target user ID and needs only the requested deletion status.
+- Direct handler and full HTTP-router regressions cover absent, null, mismatched, and valid exact confirmation. The complete `admin-operator` suite passes 84/84.
+
+Ruling: Require the same exact typed target UUID confirmation for deletion-progress transitions as for account disablement, validate it before any RPC, and discard the redundant confirmation after validation. Cost if wrong: clients must type the full user UUID for each deletion status change, but a stale or mistargeted confirmation cannot create an audited transition and redundant sensitive identifiers do not enter the audit payload.

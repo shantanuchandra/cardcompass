@@ -388,6 +388,7 @@ export async function handleCustomerDeletionStatus(
     new Set([
       "action",
       "target_id",
+      "confirmation_user_id",
       "request_id",
       "observed_updated_at",
       "status",
@@ -397,6 +398,8 @@ export async function handleCustomerDeletionStatus(
   if (typeof body.status !== "string" || !DELETION_STATUSES.has(body.status)) {
     invalid();
   }
+  const confirmedTargetId = uuid(body.confirmation_user_id);
+  if (confirmedTargetId !== uuid(body.target_id)) invalid();
   const { targetId, receipt } = await customerMutation(
     body,
     context,
