@@ -10,12 +10,17 @@ import { type AdminActionContext, AdminHttpError } from "./types.ts";
 import { handleAdminOperator } from "./index.ts";
 
 const ACTOR = "00000000-0000-4000-8000-000000000001";
+const ACTOR_B = "00000000-0000-4000-8000-000000000005";
 const USER = "00000000-0000-4000-8000-000000000002";
 const REQUEST = "00000000-0000-4000-8000-000000000003";
 const UPDATED = "2026-08-19T10:00:00Z";
 
-function context(db: unknown, authAdmin?: unknown): AdminActionContext {
-  return { actor: { id: ACTOR }, requestId: null, db, authAdmin } as never;
+function context(
+  db: unknown,
+  authAdmin?: unknown,
+  actorId = ACTOR,
+): AdminActionContext {
+  return { actor: { id: actorId }, requestId: null, db, authAdmin } as never;
 }
 
 function query(result: unknown, calls: unknown[]) {
@@ -259,6 +264,7 @@ Deno.test("disable applies audited database containment before Auth ban and vali
             user_id: USER,
             is_active: false,
             containment: "database_contained",
+            auth_ban_id: REQUEST,
             auth_ban_status: "pending",
           },
           error: null,
@@ -271,6 +277,7 @@ Deno.test("disable applies audited database containment before Auth ban and vali
             user_id: USER,
             status: "processing",
             claimed: true,
+            claim_token: REQUEST,
           },
           error: null,
         });
@@ -310,6 +317,7 @@ Deno.test("disable applies audited database containment before Auth ban and vali
 Deno.test("disable preserves containment receipt and returns auth_ban_pending on every replayed ban failure", async () => {
   let databaseCalls = 0;
   let banCalls = 0;
+  let failed = false;
   const args = {
     action: "customer-disable",
     target_id: USER,
@@ -327,6 +335,7 @@ Deno.test("disable preserves containment receipt and returns auth_ban_pending on
             user_id: USER,
             is_active: false,
             containment: "database_contained",
+            auth_ban_id: REQUEST,
             auth_ban_status: "pending",
           },
           error: null,
@@ -337,12 +346,14 @@ Deno.test("disable preserves containment receipt and returns auth_ban_pending on
           data: {
             id: REQUEST,
             user_id: USER,
-            status: "processing",
-            claimed: true,
+            status: failed ? "failed" : "processing",
+            claimed: !failed,
+            claim_token: failed ? null : REQUEST,
           },
           error: null,
         });
       }
+      failed = true;
       return Promise.resolve({
         data: { user_id: USER, auth_ban_status: "failed" },
         error: null,
@@ -364,7 +375,7 @@ Deno.test("disable preserves containment receipt and returns auth_ban_pending on
     );
     assertEquals(error.code, "auth_ban_pending");
   }
-  assertEquals([databaseCalls, banCalls], [6, 2]);
+  assertEquals([databaseCalls, banCalls], [5, 1]);
 });
 
 Deno.test("dedicated Auth-ban retry reconstructs work from the authoritative target record", async () => {
@@ -376,19 +387,26 @@ Deno.test("dedicated Auth-ban retry reconstructs work from the authoritative tar
       request_id: REQUEST,
     },
     context({
-      rpc: (name: string) => {
+      rpc: (name: string, args: any) => {
         calls.push(name);
         if (name === "claim_admin_auth_ban") {
+          assertEquals(args, {
+            _target_user_id: USER,
+            _attempt_actor_id: ACTOR,
+            _attempt_request_id: REQUEST,
+          });
           return Promise.resolve({
             data: {
               id: REQUEST,
               user_id: USER,
               status: "processing",
               claimed: true,
+              claim_token: REQUEST,
             },
             error: null,
           });
         }
+        assertEquals(args._claim_token, REQUEST);
         return Promise.resolve({
           data: { user_id: USER, auth_ban_status: "completed" },
           error: null,
@@ -400,6 +418,41 @@ Deno.test("dedicated Auth-ban retry reconstructs work from the authoritative tar
   assertEquals(output, {
     result: { user_id: USER, is_active: false, auth_banned: true },
   });
+});
+
+Deno.test("completed retry replay is attributed to operator B and never repeats Auth", async () => {
+  let authCalls = 0;
+  const output = await handleCustomerAuthBanRetry(
+    {
+      action: "customer-auth-ban-retry",
+      target_id: USER,
+      request_id: REQUEST,
+    },
+    context({
+      rpc: (name: string, args: any) => {
+        assertEquals(name, "claim_admin_auth_ban");
+        assertEquals(args._attempt_actor_id, ACTOR_B);
+        assertEquals(args._attempt_request_id, REQUEST);
+        return Promise.resolve({
+          data: {
+            id: REQUEST,
+            user_id: USER,
+            status: "completed",
+            claimed: false,
+            claim_token: null,
+          },
+          error: null,
+        });
+      },
+    }, {
+      updateUserById: () => {
+        authCalls++;
+        return Promise.resolve({ error: null });
+      },
+    }, ACTOR_B),
+  );
+  assertEquals(authCalls, 0);
+  assertEquals(output.result.auth_banned, true);
 });
 
 Deno.test("customer action registry is frozen, null-prototype, and complete", () => {

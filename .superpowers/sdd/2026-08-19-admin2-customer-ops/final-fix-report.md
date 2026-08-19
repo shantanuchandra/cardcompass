@@ -11,8 +11,8 @@
 ## Verification
 
 - Flutter: `656` passed, `25` expected local-integration skips.
-- Deno: `148` passed.
-- Node migration/static: `47` passed, `3` opt-in skips in the aggregate run.
+- Deno: `149` passed.
+- Node migration/static: `48` passed, `3` opt-in skips in the aggregate run.
 - Disposable PostgreSQL, sequential: Card Data `5/5`, Runtime Controls `5/5`, Customer Ops `5/5`.
 - `flutter analyze --no-fatal-infos`: pass with the repository's 12 pre-existing unrelated info diagnostics.
 - Deno checks, formatters, `git diff --check`: pass.
@@ -20,3 +20,9 @@
 ## Residual verification limitation
 
 The real hosted/local Supabase Auth HTTP service was not mutated or exercised. Auth Admin behavior is covered at the gateway boundary, while durable attempt state, failure/retry transitions, concurrency, RLS containment, and stale versions are exercised in disposable local PostgreSQL.
+
+## Residual review closure
+
+- Auth-ban claims rotate an opaque UUID token under a five-minute lease; completion is token-fenced and outbound Auth work is bounded to 30 seconds. Disposable PostgreSQL covers concurrent ownership, expiry/reclaim, stale-token rejection, and successful current-token completion.
+- Claim identity is the retrying operator plus validated request UUID. Exact completed replay avoids another Auth call, cross-target identity reuse collides safely, and final audit attribution reflects the retry operator while linking the originating disable event.
+- Both privileged-path inventories are repository-derived rather than hand-maintained: migration-state analysis includes default `PUBLIC` execution and later grant/security changes, while recursive Edge discovery detects end-user JWT plus service-role gateways and enforces an early shared gate. Synthetic fixtures prove each contract catches a newly introduced bypass.

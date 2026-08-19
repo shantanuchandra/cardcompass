@@ -179,3 +179,16 @@ Ruling: Classify account disablement audit outcome as `database_contained` until
 Ruling: Run authenticated user-data RPCs as `SECURITY INVOKER` wherever active-owner RLS supplies the required privilege, retaining a definer only for the narrow reset operation with an explicit active check. Cost if wrong: a future policy regression would fail closed or surface in the grant/integration contracts instead of silently bypassing RLS.
 
 Ruling: Fence an initial deletion-status create with the observed profile `updated_at`, and fence later transitions with the existing deletion row `updated_at`. Cost if wrong: an operator must refresh after any concurrent profile or deletion change, avoiding the first-row stale-create gap.
+
+## Residual security-review superseding fixes
+
+- Every Auth-ban claim now receives a rotated opaque UUID token and a five-minute lease. Completion requires the matching current token and `processing` state; PostgreSQL coverage proves one concurrent owner, expiry/reclaim token rotation, stale completion rejection, and current completion success. The external Auth request is bounded to 30 seconds.
+- Retry attempts persist the current operator and request UUID. Exact completed replays return the authoritative receipt without another Auth call; identity reuse against another target fails as `request_id_collision`. Final attempt audits belong to the retrying operator/request and retain the originating disable identity only as linked details.
+- The authenticated-definer contract now derives final function state repository-wide from every migration, including default `PUBLIC` execute, grants, revokes, replacements, drops, and later security-mode changes. A tiny documented exemption set remains, and synthetic ungated/revoked fixtures exercise the analyzer itself.
+- The Edge gateway contract now recursively discovers end-user JWT plus service-role functions and requires the shared active gate before privileged database, storage, or RPC access. Synthetic fixtures prove an ungated gateway fails while internal admin/cron functions remain out of scope.
+
+Ruling: Fence each leased Auth-ban attempt with a newly rotated claim token, a five-minute database lease, and a 30-second outbound Auth timeout. Cost if wrong: an ambiguous provider attempt waits at most five minutes before reclaim, while stale workers can never finalize a newer attempt.
+
+Ruling: Attribute every retry attempt and final audit to the operator and request UUID that actually claimed it, preserving the original disable identity only as provenance. Cost if wrong: the initial disable uses the durable ban-row UUID as its internal attempt request identity, while exact replay is safe and cross-target reuse fails closed.
+
+Ruling: Derive privileged-path inventories from repository state instead of hand-maintained function lists. Cost if wrong: unconventional future SQL or gateway syntax may require extending the deliberately conservative analyzer, but a new exposed definer or ungated user gateway fails review by default.

@@ -113,10 +113,15 @@ create table public.admin_auth_ban_requests (
     safe_failure_category is null or safe_failure_category = 'auth_provider_unavailable'
   ),
   claimed_at timestamptz,
+  claim_expires_at timestamptz,
+  claim_token uuid,
+  attempt_actor_id uuid references auth.users(id) on delete restrict,
+  attempt_request_id uuid,
   completed_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (originating_actor_id, originating_request_id)
+  unique (originating_actor_id, originating_request_id),
+  unique (attempt_actor_id, attempt_request_id)
 );
 
 alter table public.admin_customer_operation_requests enable row level security;
@@ -378,6 +383,7 @@ begin
       updated_at = now();
     result := result || pg_catalog.jsonb_build_object(
       'containment', 'database_contained',
+      'auth_ban_id', (select id from public.admin_auth_ban_requests where user_id = _target_user_id),
       'auth_ban_status', (select status from public.admin_auth_ban_requests where user_id = _target_user_id)
     );
   else
@@ -418,38 +424,71 @@ begin
 end;
 $$;
 
-create or replace function public.claim_admin_auth_ban(_target_user_id uuid)
+create or replace function public.claim_admin_auth_ban(
+  _target_user_id uuid, _attempt_actor_id uuid, _attempt_request_id uuid
+)
 returns jsonb language plpgsql security definer set search_path = '' as $$
-declare request public.admin_auth_ban_requests%rowtype;
+declare
+  request public.admin_auth_ban_requests%rowtype;
+  collision_user_id uuid;
+  new_claim_token uuid := gen_random_uuid();
 begin
+  if _target_user_id is null or _attempt_actor_id is null or _attempt_request_id is null then
+    raise exception 'invalid_request';
+  end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
+    _attempt_actor_id::text || ':' || _attempt_request_id::text, 0
+  ));
+  select candidate.user_id into collision_user_id
+  from public.admin_auth_ban_requests candidate
+  where candidate.attempt_actor_id = _attempt_actor_id
+    and candidate.attempt_request_id = _attempt_request_id;
+  if found and collision_user_id <> _target_user_id then
+    raise exception 'request_id_collision';
+  end if;
   select candidate.* into request from public.admin_auth_ban_requests candidate
-  where candidate.user_id = _target_user_id and (
-    candidate.status in ('pending', 'failed') or
-    (candidate.status = 'processing' and candidate.claimed_at < now() - interval '2 minutes')
-  ) for update;
-  if not found then
-    select candidate.* into request from public.admin_auth_ban_requests candidate
-      where candidate.user_id = _target_user_id;
-    if found and request.status = 'completed' then
-      return pg_catalog.jsonb_build_object('id', request.id, 'user_id', request.user_id, 'status', request.status, 'claimed', false);
-    elsif found and request.status = 'processing' then
-      return pg_catalog.jsonb_build_object('id', request.id, 'user_id', request.user_id, 'status', request.status, 'claimed', false);
-    end if;
-    raise exception 'state_conflict';
+  where candidate.user_id = _target_user_id for update;
+  if not found then raise exception 'not_found'; end if;
+  if request.attempt_actor_id = _attempt_actor_id
+     and request.attempt_request_id = _attempt_request_id
+     and request.status in ('processing', 'failed', 'completed') then
+    return pg_catalog.jsonb_build_object(
+      'id', request.id, 'user_id', request.user_id, 'status', request.status,
+      'claimed', false, 'claim_token', null
+    );
+  end if;
+  if request.status = 'completed' then
+    return pg_catalog.jsonb_build_object(
+      'id', request.id, 'user_id', request.user_id, 'status', request.status,
+      'claimed', false, 'claim_token', null
+    );
+  end if;
+  if request.status = 'processing' and request.claim_expires_at > now() then
+    return pg_catalog.jsonb_build_object(
+      'id', request.id, 'user_id', request.user_id, 'status', request.status,
+      'claimed', false, 'claim_token', null
+    );
   end if;
   update public.admin_auth_ban_requests set status = 'processing',
-    attempt_count = attempt_count + 1, claimed_at = now(), updated_at = now()
+    attempt_count = attempt_count + 1, claimed_at = now(),
+    claim_expires_at = now() + interval '5 minutes', claim_token = new_claim_token,
+    attempt_actor_id = _attempt_actor_id, attempt_request_id = _attempt_request_id,
+    safe_failure_category = null, updated_at = now()
   where id = request.id returning * into request;
-  return pg_catalog.jsonb_build_object('id', request.id, 'user_id', request.user_id, 'status', request.status, 'claimed', true);
+  return pg_catalog.jsonb_build_object(
+    'id', request.id, 'user_id', request.user_id, 'status', request.status,
+    'claimed', true, 'claim_token', request.claim_token
+  );
 end;
 $$;
 
 create or replace function public.complete_admin_auth_ban(
-  _ban_id uuid, _succeeded boolean, _safe_failure_category text default null
+  _ban_id uuid, _claim_token uuid, _succeeded boolean,
+  _safe_failure_category text default null
 ) returns jsonb language plpgsql security definer set search_path = '' as $$
 declare request public.admin_auth_ban_requests%rowtype;
 begin
-  if _succeeded is null or (_succeeded and _safe_failure_category is not null)
+  if _claim_token is null or _succeeded is null or (_succeeded and _safe_failure_category is not null)
      or (not _succeeded and _safe_failure_category <> 'auth_provider_unavailable') then
     raise exception 'invalid_request';
   end if;
@@ -457,18 +496,21 @@ begin
     status = case when _succeeded then 'completed' else 'failed' end,
     safe_failure_category = _safe_failure_category,
     completed_at = case when _succeeded then now() else null end,
+    claim_token = null, claim_expires_at = null,
     updated_at = now()
-  where id = _ban_id and status = 'processing' returning * into request;
+  where id = _ban_id and status = 'processing' and claim_token = _claim_token
+  returning * into request;
   if not found then raise exception 'state_conflict'; end if;
   insert into public.admin_audit_log (
     actor_id, action, target_type, target_id, request_id, outcome, details
   ) values (
-    request.originating_actor_id,
+    request.attempt_actor_id,
     case when _succeeded then 'customer.auth_ban_completed' else 'customer.auth_ban_failed' end,
-    'user', request.user_id::text, gen_random_uuid(),
+    'user', request.user_id::text, request.attempt_request_id,
     case when _succeeded then 'succeeded' else 'failed' end,
     pg_catalog.jsonb_build_object(
       'originating_request_id', request.originating_request_id,
+      'originating_actor_id', request.originating_actor_id,
       'safe_failure_category', request.safe_failure_category,
       'result', pg_catalog.jsonb_build_object('user_id', request.user_id, 'auth_ban_status', request.status)
     )
@@ -492,7 +534,7 @@ grant execute on function public.renew_my_admin_operation_request(uuid, uuid) to
 grant execute on function public.admin_customer_action(
   uuid, uuid, text, uuid, jsonb, text, timestamptz
 ) to service_role;
-revoke all on function public.claim_admin_auth_ban(uuid) from public, anon, authenticated;
-revoke all on function public.complete_admin_auth_ban(uuid, boolean, text) from public, anon, authenticated;
-grant execute on function public.claim_admin_auth_ban(uuid) to service_role;
-grant execute on function public.complete_admin_auth_ban(uuid, boolean, text) to service_role;
+revoke all on function public.claim_admin_auth_ban(uuid, uuid, uuid) from public, anon, authenticated;
+revoke all on function public.complete_admin_auth_ban(uuid, uuid, boolean, text) from public, anon, authenticated;
+grant execute on function public.claim_admin_auth_ban(uuid, uuid, uuid) to service_role;
+grant execute on function public.complete_admin_auth_ban(uuid, uuid, boolean, text) to service_role;

@@ -373,6 +373,70 @@ test('inactive profile immediately blocks an unchanged authenticated database se
       select status = 'pending' and originating_actor_id = '${actorId}'
       from public.admin_auth_ban_requests where user_id = '${userId}';
     `).endsWith('t'));
+    const actorB = '20000000-0000-4000-8000-000000000002';
+    const attemptA = '40000000-0000-4000-8000-000000000001';
+    const attemptB = '40000000-0000-4000-8000-000000000002';
+    const attemptC = '40000000-0000-4000-8000-000000000003';
+    psql(disposableConnection, `
+      insert into auth.users(id) values ('${actorB}');
+      insert into public.users(id, email, is_admin) values ('${actorB}', 'operator-b@example.test', true);
+    `);
+    await Promise.all([
+      psqlAsync(disposableConnection, `select public.claim_admin_auth_ban('${userId}', '${actorId}', '${attemptA}');`),
+      psqlAsync(disposableConnection, `select public.claim_admin_auth_ban('${userId}', '${actorB}', '${attemptB}');`),
+    ]);
+    assert.ok(psql(disposableConnection, `
+      select status = 'processing' and attempt_count = 1 and claim_token is not null
+      from public.admin_auth_ban_requests where user_id = '${userId}';
+    `).endsWith('t'));
+    const staleToken = psql(disposableConnection, `
+      select claim_token from public.admin_auth_ban_requests where user_id = '${userId}';
+    `);
+    psql(disposableConnection, `
+      update public.admin_auth_ban_requests set claim_expires_at = now() - interval '1 second'
+      where user_id = '${userId}';
+      select public.claim_admin_auth_ban('${userId}', '${actorB}', '${attemptC}');
+    `);
+    const currentToken = psql(disposableConnection, `
+      select claim_token from public.admin_auth_ban_requests where user_id = '${userId}';
+    `);
+    assert.notEqual(currentToken, staleToken);
+    assert.throws(() => psql(disposableConnection, `
+      select public.complete_admin_auth_ban(
+        (select id from public.admin_auth_ban_requests where user_id = '${userId}'),
+        '${staleToken}', true, null
+      );
+    `), /state_conflict/);
+    psql(disposableConnection, `
+      select public.complete_admin_auth_ban(
+        (select id from public.admin_auth_ban_requests where user_id = '${userId}'),
+        '${currentToken}', true, null
+      );
+    `);
+    assert.ok(psql(disposableConnection, `
+      select count(*) = 1 from public.admin_audit_log
+      where actor_id = '${actorB}' and request_id = '${attemptC}'
+        and action = 'customer.auth_ban_completed' and outcome = 'succeeded';
+    `).endsWith('t'));
+    assert.ok(psql(disposableConnection, `
+      select (public.claim_admin_auth_ban(
+        '${userId}', '${actorB}', '${attemptC}'
+      ) ->> 'status') = 'completed';
+    `).endsWith('t'));
+    assert.ok(psql(disposableConnection, `
+      select count(*) = 1 from public.admin_audit_log
+      where actor_id = '${actorB}' and request_id = '${attemptC}';
+    `).endsWith('t'));
+    psql(disposableConnection, `
+      insert into public.admin_auth_ban_requests (
+        user_id, originating_actor_id, originating_request_id
+      ) values ('${newUserId}', '${actorB}', gen_random_uuid());
+    `);
+    assert.throws(() => psql(disposableConnection, `
+      select public.claim_admin_auth_ban(
+        '${newUserId}', '${actorB}', '${attemptC}'
+      );
+    `), /request_id_collision/);
     assert.throws(() => psql(disposableConnection, `
       update public.users set is_active=true, updated_at=clock_timestamp() where id='${userId}';
       select public.admin_customer_action(
