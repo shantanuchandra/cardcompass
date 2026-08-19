@@ -14,7 +14,7 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 
-Deno.test("a lease claim recovers expired work and claims at most five rows from one issuer", () => {
+Deno.test("a lease claim recovers expired work and claims exactly one row per invocation", () => {
   const now = new Date("2026-08-17T12:00:00.000Z");
   const jobs = [
     ...Array.from({ length: 6 }, (_, index) => ({
@@ -42,7 +42,7 @@ Deno.test("a lease claim recovers expired work and claims at most five rows from
     result.recoveredIds.join(",") === "axis-0",
     "expired lease was not recovered",
   );
-  assert(result.claimed.length === 5, "claim exceeded the five-job maximum");
+  assert(result.claimed.length === 1, "claim exceeded the one-card maximum");
   assert(
     result.claimed.every((job) => job.issuer === "Axis Bank"),
     "claim mixed issuers",
@@ -134,7 +134,7 @@ Deno.test("batch claims reserve catalog-v1 for the legacy worker in every run mo
   );
 });
 
-Deno.test("one-issuer claims group bank casing and whitespace variants", () => {
+Deno.test("one-card claims keep deterministic issuer ordering across casing variants", () => {
   const result = simulateLeaseClaim(
     [
       {
@@ -169,8 +169,8 @@ Deno.test("one-issuer claims group bank casing and whitespace variants", () => {
     "scheduled",
   );
   assert(
-    result.claimed.map((job) => job.id).sort().join(",") === "axis-a,axis-b",
-    "one bank was split into separate issuer lanes",
+    result.claimed.map((job) => job.id).join(",") === "axis-a",
+    "one-card claim lost deterministic normalized-issuer ordering",
   );
 });
 

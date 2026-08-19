@@ -11,11 +11,11 @@ import {
   newestValidCrawlObservations,
   observationValidatedAt,
   previousFetchValidators,
-  rawOnlyNextRunAt,
   readCompleteAbsenceHistory,
   readCurrentBenefits,
   readPilotStatus,
   refreshEligibleCard,
+  requeueDueJobs,
   requireExactCatalogIdentity,
   seedScheduledQueueIfAllowed,
   shouldStageMaterialProposal,
@@ -69,6 +69,30 @@ Deno.test("new network work stops at the 180-second invocation deadline", () => 
   assert(
     !networkWorkMayStart(1_000, 181_000),
     "work started at the deadline",
+  );
+});
+
+Deno.test("every invocation requeues only bounded due v6 work before other queue work", async () => {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const db = {
+    async rpc(name: string, args: Record<string, unknown>) {
+      calls.push({ name, args });
+      return { data: [{ id: "job-1" }], error: null };
+    },
+  };
+  const now = new Date("2026-08-20T00:00:00.000Z");
+  const count = await requeueDueJobs(db, now, 200);
+  assert(count === 1, "requeue result count was lost");
+  assert(
+    JSON.stringify(calls) === JSON.stringify([{
+      name: "requeue_due_card_catalog_enrichment_jobs",
+      args: {
+        _parser_version: "benefits-v6",
+        _limit: 200,
+        _now: "2026-08-20T00:00:00.000Z",
+      },
+    }]),
+    "worker did not invoke the bounded explicit-v6 requeue contract",
   );
 });
 
@@ -847,13 +871,14 @@ type CatalogFixture = {
   bank: string;
   card_url: string | null;
   card_type: string;
-  is_discontinued: boolean;
+  is_discontinued: boolean | null;
 };
 
 function scheduledSeederDb(
   catalog: CatalogFixture[],
   initialJobs: Record<string, unknown>[] = [],
   activeHeldCardIds: string[] = [],
+  pendingIdentityReviews: Record<string, unknown>[] = [],
 ) {
   const jobs = new Map(
     initialJobs.map((job) => [String(job.job_key), { ...job }]),
@@ -867,6 +892,29 @@ function scheduledSeederDb(
       return catalogReads;
     },
     from(table: string) {
+      if (table === "card_catalog_review_queue") {
+        let from = 0;
+        let to = pendingIdentityReviews.length - 1;
+        return {
+          select() {
+            return this;
+          },
+          eq() {
+            return this;
+          },
+          order() {
+            return this;
+          },
+          async range(nextFrom: number, nextTo: number) {
+            from = nextFrom;
+            to = nextTo;
+            return {
+              data: pendingIdentityReviews.slice(from, to + 1),
+              error: null,
+            };
+          },
+        };
+      }
       if (table === "user_cards") {
         let selectedIds: string[] = [];
         let activeOnly = false;
@@ -1040,6 +1088,7 @@ Deno.test("scheduled seeding keeps only held discontinued, credit, and safe cata
       validCatalogCard,
       { ...validCatalogCard, id: "discontinued", is_discontinued: true },
       { ...validCatalogCard, id: "held-discontinued", is_discontinued: true },
+      { ...validCatalogCard, id: "historical-null", is_discontinued: null },
       { ...validCatalogCard, id: "debit", card_type: "debit" },
       {
         ...validCatalogCard,
@@ -1059,8 +1108,34 @@ Deno.test("scheduled seeding keeps only held discontinued, credit, and safe cata
 
   const seeded = await seedScheduledQueueIfAllowed(db, "scheduled", true);
 
-  assert(seeded === 2, "held discontinued card was not refresh eligible");
-  assert(db.jobs.size === 2, "filtered inventory reached the queue");
+  assert(
+    seeded === 3,
+    "held discontinued or historical-null card was not refresh eligible",
+  );
+  assert(db.jobs.size === 3, "filtered inventory reached the queue");
+});
+
+Deno.test("scheduled seeding excludes cards named by an unresolved official-URL review", async () => {
+  const db = scheduledSeederDb(
+    [validCatalogCard, { ...validCatalogCard, id: "safe-card" }],
+    [],
+    [],
+    [{
+      id: "pending-review",
+      status: "pending",
+      existing_candidates: [],
+      proposed_fields: {
+        official_url:
+          "https://www.axis.bank.in/cards/credit-card/privilege/?review=1",
+      },
+      source_evidence: {},
+    }],
+  );
+
+  const seeded = await seedScheduledQueueIfAllowed(db, "scheduled", true);
+
+  assert(seeded === 0, "unresolved URL identity reached recurring seeding");
+  assert(db.jobs.size === 0, "unresolved URL identity created a job");
 });
 
 Deno.test("acquisition discontinuation never suppresses refresh for an actively held card", () => {
@@ -1209,6 +1284,47 @@ Deno.test("conditional cache reuse requires prior complete canonical and content
       "incomplete cache sent conditional validators",
     );
   }
+});
+
+Deno.test("conditional cache reuse reads the newest recurring observation rather than the oldest retained history", () => {
+  const source = (observedAt: string, etag: string) => ({
+    observed_at: observedAt,
+    crawl_complete: true,
+    crawl_reason: "complete",
+    source_manifest_hash: "a".repeat(64),
+    canonical_benefit_hash: "b".repeat(64),
+    absent_benefit_ids: [],
+    absent_legacy_benefit_ids: [],
+    source_attempts: [],
+    source_observation: {
+      parser_version: "benefits-v6",
+      terminal_disposition: "success",
+      crawl_complete: true,
+      etag,
+      content_hash: "a".repeat(64),
+      submitted_identity_hash: "c".repeat(64),
+      final_resource_identity_hash: "d".repeat(64),
+      final_resource_url: "https://issuer.example/card",
+      card_identity_validated: true,
+    },
+  });
+  const newest = source("2026-08-19T18:00:00.000Z", '"newest"');
+  const older = source("2026-07-20T00:00:00.000Z", '"oldest"');
+  const validators = previousFetchValidators({
+    id: "job-1",
+    card_id: "card-1",
+    issuer: "Issuer",
+    canonical_url: "https://issuer.example/card",
+    parser_version: "benefits-v6",
+    attempt_count: 0,
+    run_mode: "scheduled",
+    lease_token: "lease-1",
+    result_summary: {
+      observation: newest,
+      observations: [newest, older],
+    },
+  });
+  assert(validators?.etag === '"newest"', "oldest history supplied validators");
 });
 
 Deno.test("crawl observation preserves compacted retry history and manifest hashes ignore nested timestamps", async () => {
@@ -1810,11 +1926,6 @@ Deno.test("a raw-only source change does not create a material proposal", () => 
   assert(
     shouldStageMaterialProposal("canonical-1", "canonical-1", null),
     "missing prior staging link was treated as reusable",
-  );
-  assert(
-    rawOnlyNextRunAt("2026-08-19T00:00:00.000Z") ===
-      "2026-09-18T00:00:00.000Z",
-    "raw-only retrieval did not advance the due date by 30 days",
   );
 });
 

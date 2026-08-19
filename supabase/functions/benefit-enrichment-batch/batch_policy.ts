@@ -1,5 +1,5 @@
-export const MAX_BATCH_SIZE = 5;
-export const LEASE_SECONDS = 15 * 60;
+export const MAX_BATCH_SIZE = 1;
+export const LEASE_SECONDS = 5 * 60;
 export const RETRY_SCHEDULE_MINUTES = [15, 60, 240] as const;
 
 export type RunMode = "pilot" | "scheduled" | "manual";
