@@ -1,0 +1,108 @@
+# Admin2 production cutover checklist
+
+This is the operator runbook and evidence record for `/app/admin2`. It deliberately contains no bearer tokens, customer content, statement data, provider responses, or secret values.
+
+## Verification record
+
+| Field | Value |
+|---|---|
+| Date | 2026-08-19 |
+| Environment | Local worktree; isolated ephemeral PostgreSQL for opt-in database tests; no local Supabase Auth/Edge stack |
+| Tested code HEAD | `560c6ef14d2653ba48efdb6860faeb8c0deda029` |
+| Tester | Codex |
+| Production deployment | Not performed |
+| Overall status | Candidate-scoped release checks pass; repository-wide formatting has unrelated baseline drift and analysis has 12 pre-existing info diagnostics; production smoke is Not Run pending deployment authorization |
+
+## Local release evidence
+
+| Check | Result | Evidence |
+|---|---:|---|
+| Formatting | Candidate pass; baseline drift recorded | Candidate-changed Dart and TypeScript files pass formatter check with no changes. The prescribed repository-wide command exposed 31 unrelated pre-existing Dart/TypeScript formatting changes; those generated differences were discarded. |
+| Admin2 scoped analysis | Pass | `flutter analyze --no-fatal-infos lib/features/admin2 lib/core/router/app_router.dart lib/features/settings test/features/admin2 test/core/router/app_router_test.dart test/features/settings` reported no issues. |
+| Full Flutter analysis | Pass with baseline notices | `flutter analyze` found 12 info-level diagnostics in pre-existing non-Admin2 files and no errors or warnings. The command exits 1 because infos are fatal by default. |
+| Full Flutter tests | Pass | 668 passed; 25 explicitly skipped because `RUN_SUPABASE_INTEGRATION` was not enabled. |
+| Node migration/contract tests | Pass | 48 passed; 3 opt-in PostgreSQL cases skipped in the aggregate run. |
+| Deno Edge Function tests | Pass | 156 passed; 0 failed. |
+| Opt-in Card Data PostgreSQL | Pass | 5 passed; isolated local PostgreSQL; no skips. |
+| Opt-in runtime-control PostgreSQL | Pass | 5 passed; isolated local PostgreSQL; no skips. |
+| Opt-in customer containment PostgreSQL | Pass | 5 passed; isolated local PostgreSQL; no skips, including unchanged-token RLS denial. |
+| Runtime authorization reference scan | Pass | No `ADMIN_EMAIL`, `ADMIN_ALLOWLIST`, or founder-email reference exists in `lib` or `supabase/functions`. Founder references remain only in historical docs and seed/data migrations. |
+| Web release compilation | Pass, non-deployable fixture build | `flutter build web --release --base-href /app/` completed with non-secret placeholder public configuration. The ephemeral 43 MB `build/web` output was removed after verification. A deployable artifact must be rebuilt with the deployment environment's real public defines. |
+| Repository hygiene | Pass | Generated `node_modules` and placeholder build output removed; `git diff --check` passes before commit. |
+
+The live Supabase stack was unavailable because the local Docker daemon was not running. Therefore every production/Auth smoke item below is explicitly **Not Run** rather than inferred from unit or isolated-PostgreSQL evidence.
+
+## Pre-deployment gate
+
+- [ ] Record the production app deployment identifier that currently serves `/app/`; this is the rollback target.
+- [ ] Confirm a current database backup or point-in-time recovery window without copying data into this record.
+- [ ] Apply additive migrations in this exact order: `20260819090000_admin_operator_foundation.sql`, `20260819090100_admin_card_data_operations.sql`, `20260819090200_admin_runtime_controls.sql`, `20260819090300_admin_customer_ops.sql`.
+- [ ] Deploy `admin-operator`, `admin-catalog-entry`, and the changed shared module imported by them from the same commit.
+- [ ] Build the web app with the deployment environment's real public Dart defines and deploy it only after both Edge Functions are healthy.
+- [ ] Keep the legacy endpoint deployed. Do not remove old environment variables or additive tables during this cutover.
+- [ ] Use two test accounts: the founder operator and a known active non-admin. Record only opaque test labels, never identities or credentials.
+
+## Production smoke
+
+For each row, record the deployed app ID, function versions, tester, time, and Pass/Fail in the deployment log. Never paste response bodies beyond the listed stable status/code, or any user/provider content.
+
+| # | Smoke test and exact expected result | Status | Local evidence |
+|---:|---|---:|---|
+| 1 | Sign in as the founder operator, open `/app/admin2`, and invoke `access`. Expect the four-section workspace and HTTP 200 with `allowed: true`. | Not Run — no deployed/local Auth stack | Shared database-auth and access UI tests pass. |
+| 2 | Sign in as the active non-admin and call `admin-operator` directly. Expect HTTP 403 with the stable forbidden response; no privileged query or mutation runs and the Admin entry stays hidden. | Not Run — no deployed/local Auth stack | Authorization and conditional-entry tests pass. |
+| 3 | While the founder session remains signed in, set that profile's `is_admin` false through an approved database operator path, then make the next privileged request with the unchanged token. Expect HTTP 403 immediately. Restore the flag through the same approved path and verify a fresh request succeeds. | Not Run — production DB mutation requires authorization | Fresh-per-request database authorization tests pass. |
+| 4 | Execute the 13 Card Data parity actions below one at a time. For each mutation, expect one stable receipt, disabled controls while pending, and a server-confirmed list refresh only after success. Confirm no bulk-approval control exists. | Not Run — needs deployed data fixtures | Exact executable parity suite passes. |
+| 5 | Open a customer detail record. Verify an append-only `customer.read` audit row exists before any customer data source is read; simulate/read an audit failure and expect the detail request to fail closed. | Not Run — needs deployed audit inspection | Audit-first handler tests pass. |
+| 6 | With an already-issued ordinary-user token, disable that account. Reuse the unchanged token to query each protected user-data surface. Expect RLS/RPC denial immediately; do not depend on token expiry or refresh. | Not Run — needs deployed Auth/RLS stack | Isolated customer PostgreSQL suite passes, including unchanged-token denial. |
+| 7 | Trigger an Auth-ban dependency failure after database containment. Expect `auth_ban_pending`, preserved containment, and a durable pending attempt. Retry with the dedicated action; expect either the same retryable state or a completed receipt, never a second containment mutation. | Not Run — needs deployed Auth dependency | Durable retry/fencing tests pass. |
+| 8 | Pause `benefit_enrichment_scheduled` with the current observed version and a reason. Invoke a scheduled run and expect a stable paused response before inventory/job access. Resume with the new observed version; expect scheduling to proceed. | Not Run — needs deployed scheduler | Runtime-control and batch policy tests pass. |
+| 9 | Replay the same request ID and payload for one Card Data mutation and one runtime-control mutation. Expect the original receipt and no duplicate audit or state transition. Then reuse the ID with a different payload and expect rejection. | Not Run — needs deployed persistence | Isolated PostgreSQL idempotency suites pass. |
+| 10 | Submit malformed, unauthorized, stale-version, and forced dependency-failure requests to both Admin endpoints. Expect only documented status/code vocabulary; verify logs and client responses do not contain SQL, stack traces, tokens, emails, statement data, or provider output. | Not Run — needs deployed endpoints/logs | Gateway and legacy error-sanitization tests pass. |
+| 11 | Visit `/app/admin/catalog-review` directly. Expect an exact redirect to `/app/admin2?section=card-data`; malformed or non-allowlisted Admin2 section values must open Action Inbox. | Not Run — needs deployed router | Router tests pass. |
+| 12 | Call the still-deployed `admin-catalog-entry` endpoint as an active database admin whose email is not allowlisted; expect authorization success. Call as a verified founder-email identity with `is_admin = false`; expect denial. | Not Run — needs deployed legacy endpoint | Shared legacy authorization suite passes. |
+| 13 | In one browser/provider lifetime, switch admin A → signed out → non-admin B, then B → admin A. Expect the entry and workspace to disappear on sign-out/non-admin frames, no response reused across identities, and fresh access checks on each direct mount. | Not Run — needs deployed Auth/browser stack | Account-partition regression tests pass. |
+
+### Card Data parity matrix (13 exact actions)
+
+| Lane | Action | Fixture and expected result |
+|---|---|---|
+| Identity | `list` | Load a bounded pending-review page; only safe evidence metadata appears. |
+| Identity | `approve` | Approve one observed version; receive its audited receipt, then refresh. |
+| Identity | `editApprove` | Edit bank/card/network fields, approve the same observed version, then refresh. |
+| Identity | `merge` | Supply one explicit destination card UUID; merge only that review item, then refresh. |
+| Identity | `reject` | Supply a non-empty operator reason; reject only that item, then refresh. |
+| Identity | `retry` | Retry one eligible failed item; do not attach a staging ID; then refresh. |
+| Benefit | `list` | Load staged/failed/review-required/quarantined items with bounded safe evidence. |
+| Benefit | `approve` | Submit explicit approve decisions tied to the locked staging row, then refresh. |
+| Benefit | `editApprove` | Submit complete edited-benefit decisions tied to the staging row, then refresh. |
+| Benefit | `reject` | Submit per-proposal rejection reason plus operator reason tied to staging, then refresh. |
+| Benefit | `retry` | Retry one failed review item without a staging ID, then refresh. |
+| Benefit | `quarantine` | Quarantine one review-required item with a reason and without staging identity, then refresh. |
+| Benefit | `unquarantine` | Release one quarantined review item without staging identity, then refresh. |
+
+## Rollback
+
+Rollback is application-only because all four Admin2 migrations are additive and may already contain audit, request, containment, or retry records.
+
+1. Stop operator activity and record the failing deployment/function identifiers without copying request data.
+2. Restore the previous web application deployment recorded in the pre-deployment gate.
+3. Restore the previous `admin-operator` and `admin-catalog-entry` function versions together if the incident involves either endpoint or their shared authorization module.
+4. Keep `20260819090000` through `20260819090300` applied. Do **not** drop or reverse their tables, columns, functions, policies, audit rows, request receipts, runtime controls, containment state, or retry state.
+5. Keep the legacy endpoint available. If safe operation cannot be confirmed, pause operator mutations at the application/function layer; do not delete evidence.
+6. Re-run non-admin denial, founder authorization, unchanged-token containment, sanitized-response, and legacy-endpoint checks against the restored deployment.
+7. Record rollback result, remaining risk, and owner. Escalate any database remediation as a new reviewed forward migration.
+
+## Release candidate inventory
+
+| Component | Candidate |
+|---|---|
+| Code tested | `560c6ef14d2653ba48efdb6860faeb8c0deda029` plus this evidence-only checklist commit |
+| Migration order | `20260819090000` → `20260819090100` → `20260819090200` → `20260819090300` |
+| Edge deployment required | `admin-operator`; `admin-catalog-entry`; shared `_shared/admin_access.ts` ships with both bundles |
+| Flutter target | Web release at base href `/app/` |
+| Build evidence | Release compilation passed with placeholder public configuration; ephemeral artifact removed. Rebuild with real deployment public defines before deploy. |
+| Rollback target | Previous web deployment plus previous versions of both Admin Edge Functions; preserve additive database objects and evidence |
+
+## Deployment boundary
+
+No push, Edge Function deploy, production migration, environment-variable removal, legacy-code deletion, or production smoke execution is authorized by this checklist. Obtain explicit authorization before any of those actions.

@@ -19,8 +19,8 @@ Ruling: Carry the Customer plan's final adjudication ledger update into Task 1's
 - Task 1: complete — executable Card Data parity
 - Task 2: complete — shared database-backed legacy authorization
 - Task 3: complete — legacy redirect and conditional navigation entry
-- Task 4: pending — cutover checklist and full verification
-- Task 5: pending — stop at deployment boundary
+- Task 4: complete — cutover checklist and full local verification
+- Task 5: complete — release inventory recorded; stopped before deploy/push
 
 ## Task 1 evidence
 
@@ -64,3 +64,15 @@ Ruling: Resolve conditional discoverability through the cached Admin Operator ac
 - Focused route, Settings, and full Admin2 coverage passes 157/157; scoped analysis reports no issues; `git diff --check` is clean.
 
 Ruling: Use user ID only to partition two independent auto-disposed caches—one for discoverability and one for a direct Admin2 mount—while the gateway remains the sole authorization authority. Cost if wrong: each entry-to-route transition makes a second small access request, but database flag changes are observed on the route check and cross-account results cannot be reused.
+
+## Task 4 and Task 5 evidence
+
+- `docs/operations/admin2-cutover-checklist.md` records exact production smoke steps, evidence-safe result fields, all 13 Card Data parity actions, account-switch behavior, and an application/function rollback that preserves additive database evidence.
+- Full Flutter tests pass 668 with 25 explicit live-Supabase skips; Node contract tests pass 48 with the three opt-in PostgreSQL cases skipped in the aggregate run; Deno Edge Function tests pass 156.
+- All three opt-in isolated PostgreSQL suites were then run sequentially and pass 5/5 each, including unchanged-token RLS containment, idempotency/concurrency, and service-only grant boundaries.
+- Candidate-changed Dart and TypeScript files pass formatter check without changes. The repository-wide formatting command exposes 31 unrelated baseline changes, which were discarded. Admin2 scoped analysis is clean. Full `flutter analyze` has no errors or warnings and reports 12 pre-existing info diagnostics outside Admin2; its default exit is non-zero because infos are fatal.
+- The runtime authorization scan is empty across `lib` and `supabase/functions`. Founder references are limited to historical documentation and seed/data migrations.
+- The configured npm release command cannot run in this worktree because ignored `dart_defines.json` is absent. A non-deployable release compile with placeholder public values succeeds; its generated artifact and dependency directory were removed.
+- The local Docker daemon is unavailable, so the live Supabase Auth/Edge production smoke items are explicitly Not Run. No remote system was contacted or mutated.
+
+Ruling: Treat the successful placeholder-configured web release compile as build-target verification, not a deployable artifact; require a fresh build with the deployment environment's real public Dart defines after authorization. Cost if wrong: release packaging must be repeated, but no placeholder-configured artifact can be deployed accidentally.
