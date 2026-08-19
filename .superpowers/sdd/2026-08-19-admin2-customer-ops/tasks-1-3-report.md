@@ -52,3 +52,9 @@
 - Fake-clock lifecycle coverage runs beyond the ten-minute lease with one sync, exercises renewal loss and session replacement, and proves an empty dashboard creates no polling. The disposable local PostgreSQL suite proves renewal/reclaim and stale-token fencing end to end.
 
 Residual boundary: persistence and statement processing are existing indivisible phases. A lease lost during one phase is detected immediately afterward; no subsequent phase or success completion proceeds. Making every individual row write cancellable would require a separate transaction-bound service refactor.
+
+## Dashboard harness boundary
+
+- `DashboardScreen` exposes an optional queued-recovery initializer for isolated embedding. Omitting it—the production/default path—still resolves and invokes `GmailSyncNotifier.initializeQueuedRecovery()`.
+- Responsive widget tests inject an explicit no-op initializer, so they test layout without requiring global Supabase initialization. Separate default-path coverage proves production recovery remains active.
+- The complete Dashboard directory now passes 56/56; no Supabase assertion is caught and no production recovery path is silently disabled.

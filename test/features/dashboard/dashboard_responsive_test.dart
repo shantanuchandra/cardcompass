@@ -73,7 +73,7 @@ Future<void> pumpDashboard(
           data: MediaQueryData(textScaler: TextScaler.linear(textScale)),
           child: AppTabSelection(
             onSelect: (_) {},
-            child: const DashboardScreen(),
+            child: DashboardScreen(queuedRecoveryInitializer: () async {}),
           ),
         ),
       ),
@@ -84,6 +84,35 @@ Future<void> pumpDashboard(
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  testWidgets('injected recovery initializer avoids Supabase dependencies', (
+    tester,
+  ) async {
+    var initializations = 0;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          currentUserProvider.overrideWithValue(null),
+          pendingCardAssignmentsProvider.overrideWith((ref) async => []),
+          dashboardProvider.overrideWith((ref) async => _fixture),
+        ],
+        child: MaterialApp(
+          home: AppTabSelection(
+            onSelect: (_) {},
+            child: DashboardScreen(
+              queuedRecoveryInitializer: () async {
+                initializations++;
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(initializations, 1);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'monthly spend is primary and supporting metrics stack at scale',

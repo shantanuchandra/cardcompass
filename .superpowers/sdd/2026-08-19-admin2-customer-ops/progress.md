@@ -74,3 +74,11 @@ Ruling: If auth identity changes while claim is awaiting, suppress execution and
 Ruling: Renew every two minutes against a ten-minute lease and at meaningful write-phase boundaries, then require a final renewal before reporting success. Cost if wrong: a transient renewal failure abandons the current attempt conservatively; the same owner can reclaim after expiry instead of risking two live writers.
 
 Ruling: Do not poll when there is no claimed request, and swallow only the heartbeat callback's expected lease-loss signal while retaining the shared fence. Cost if wrong: recovery has no background database cost while idle, and a lost lease may finish its current indivisible phase but cannot enter the next phase or report success.
+
+## Dashboard test-boundary fix
+
+- `DashboardScreen` now accepts an optional queued-recovery initializer. The production default still resolves the real authenticated notifier; isolated widget harnesses inject a no-op without constructing Supabase.
+- The default-path widget test continues to prove Dashboard entry invokes the notifier, while the responsive harness explicitly proves its injected initializer runs without touching Supabase.
+- All Dashboard tests pass 56/56, removing the prior eight harness-only Supabase initialization failures without catching or suppressing production errors.
+
+Ruling: Put the injection seam at the Dashboard side-effect boundary rather than weakening the provider or catching an uninitialized Supabase assertion. Cost if wrong: one optional constructor dependency exists solely for embedding/tests, while production behavior remains unchanged and directly covered.

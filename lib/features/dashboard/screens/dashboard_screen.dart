@@ -28,6 +28,7 @@ import '../providers/gmail_sync_provider.dart';
 import '../providers/imported_data_refresh_provider.dart';
 
 typedef GmailReconnect = Future<void> Function();
+typedef QueuedRecoveryInitializer = Future<void> Function();
 
 final gmailReconnectProvider = Provider<GmailReconnect>((ref) {
   return () => ref.read(authNotifierProvider.notifier).signInWithGoogle();
@@ -105,7 +106,11 @@ final cardUrlResolverProvider = Provider<CardUrlResolver>((ref) {
 });
 
 class DashboardScreen extends ConsumerStatefulWidget {
-  const DashboardScreen({super.key});
+  const DashboardScreen({super.key, this.queuedRecoveryInitializer});
+
+  /// Test/embedding seam. Production leaves this null so recovery resolves
+  /// through the authenticated Riverpod notifier.
+  final QueuedRecoveryInitializer? queuedRecoveryInitializer;
 
   @override
   ConsumerState<DashboardScreen> createState() => _DashboardScreenState();
@@ -117,9 +122,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      unawaited(
-        ref.read(gmailSyncProvider.notifier).initializeQueuedRecovery(),
-      );
+      final initialize =
+          widget.queuedRecoveryInitializer ??
+          ref.read(gmailSyncProvider.notifier).initializeQueuedRecovery;
+      unawaited(initialize());
     });
   }
 
