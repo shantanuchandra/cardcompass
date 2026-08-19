@@ -33,3 +33,15 @@ Ruling: Carry the Feedback plan's final adjudication into the Tasks 1–3 code-b
 Ruling: Fence every recorded case with the current run lease token and persist that token on its result row. Cost if wrong: a case already executing when a lease expires is rejected and must be retried, preferring duplicate compute over accepting evidence from an obsolete worker.
 
 Ruling: Retain raw upstream status/body fields as a compatibility intersection on the exact metered Gemini result. Cost if wrong: private eval consumers see the required structured model/response/token/latency contract while the existing public proxy continues byte-for-byte upstream passthrough without a second transport.
+
+### Tasks 1–3 review corrections
+
+- Dataset manifests select the newest revision in each feedback lineage that was approved and not retired at the requested historical version. Version-one runs retain revision one; version-two runs select revision two without rewriting history.
+- Per-case maximum cost is derived from the SQL copy of the code-owned configuration allowlist at creation. Claims accept no projected-cost input, clamp to five, and derive their own conservative projection; result persistence atomically rejects actual cumulative spend beyond the ceiling.
+- Service role retains read access but all table writes flow through service-only security-definer RPCs. The forgeable custom setting was removed; terminal resume is the exact failed/partial-to-queued transition, while direct service inserts, updates, and deletes remain denied.
+- Gemini rejects unknown models and UTF-8 payloads above 100 KB before fetch, and reports candidate plus thought/reasoning tokens exactly once across supported usage field variants.
+- Disposable PostgreSQL now covers historical revision selection, exact manifests, the five-case clamp, invalid projection inputs, actual-cost rejection, failed-result replacement, cancel/resume audit idempotency, audit rollback, success preservation, and terminal service-role write denial.
+
+Ruling: Derive the persisted per-case maximum cost from the same finite configuration keys enforced at run creation, rather than accepting worker-supplied projections. Cost if wrong: every new candidate configuration requires a reviewed SQL allowlist/cost update alongside its code registry entry, preventing a caller from weakening the ceiling.
+
+Ruling: Select one latest applicable revision per source feedback lineage for each historical dataset version. Cost if wrong: two unrelated feedback reports remain separate cases even when semantically similar, while revisions of one report never double-weight a run.

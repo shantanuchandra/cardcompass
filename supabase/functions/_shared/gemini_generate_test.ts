@@ -159,3 +159,50 @@ Deno.test("Gemini transport normalizes absent and malformed usage counts", async
     output: 0,
   });
 });
+
+Deno.test("Gemini transport includes reasoning tokens exactly once", async () => {
+  const result = await generateGemini(input, {
+    apiKeys: ["key"],
+    fetch: () =>
+      Promise.resolve(
+        new Response(JSON.stringify({
+          candidates: [],
+          usageMetadata: {
+            promptTokenCount: 4,
+            candidatesTokenCount: 7,
+            thoughtsTokenCount: 3,
+            totalTokenCount: 14,
+          },
+        })),
+      ),
+  });
+  assertEquals(result.inputTokens, 4);
+  assertEquals(result.outputTokens, 10);
+});
+
+Deno.test("Gemini transport rejects unknown models and oversized private payloads before fetch", async () => {
+  let calls = 0;
+  const dependencies = {
+    apiKeys: ["key"],
+    fetch: () => {
+      calls++;
+      return Promise.resolve(new Response("{}"));
+    },
+  };
+  await assertRejects(
+    () =>
+      generateGemini({ model: "attacker-model", payload: {} }, dependencies),
+    Error,
+    "invalid_request",
+  );
+  await assertRejects(
+    () =>
+      generateGemini({
+        model: "gemini-3.6-flash",
+        payload: { text: "€".repeat(40_000) },
+      }, dependencies),
+    Error,
+    "invalid_request",
+  );
+  assertEquals(calls, 0);
+});

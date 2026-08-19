@@ -11,3 +11,5 @@ Verification:
 - Deno checks and `git diff --check` — clean.
 
 Residual risk: projected cost is intentionally conservative at claim time; a lease expiry can waste an in-flight provider call, but stale workers cannot persist it and successful evidence is never rerun.
+
+Review correction: manifests now collapse revision lineages at the selected historical dataset version; cost projection is derived from persisted code-owned config pricing; service-role writes are RPC-only; terminal resume uses no custom setting; Gemini validates model/UTF-8 size and includes thought tokens; and the live PostgreSQL suite covers multi-revision, five-case, cost-bypass, replacement, cancel/resume, rollback, preservation, and direct-write denial paths.

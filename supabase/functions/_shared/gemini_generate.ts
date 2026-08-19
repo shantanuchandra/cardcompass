@@ -1,4 +1,5 @@
 import {
+  allowedModels,
   modelCandidates,
   preparePayloadForModel,
   shouldTryAnotherModel,
@@ -50,13 +51,24 @@ export function configuredGeminiKeys(
 }
 
 const safeError = (
-  code: "model_unavailable" | "invalid_model_output" | "provider_failed",
+  code:
+    | "invalid_request"
+    | "model_unavailable"
+    | "invalid_model_output"
+    | "provider_failed",
 ) => new Error(code);
 
 export async function generateGemini(
   input: GeminiInput,
   dependencies: GeminiDependencies,
 ): Promise<GeminiResult> {
+  const requestedModel = input.model || "gemini-3.6-flash";
+  if (!allowedModels.has(requestedModel)) throw safeError("invalid_request");
+  if (
+    new TextEncoder().encode(JSON.stringify(input.payload)).byteLength > 100_000
+  ) {
+    throw safeError("invalid_request");
+  }
   if (dependencies.apiKeys.length === 0) throw safeError("model_unavailable");
   const now = dependencies.now ?? Date.now;
   const timeoutSignal = dependencies.timeoutSignal ?? AbortSignal.timeout;
@@ -64,7 +76,7 @@ export async function generateGemini(
     | { status: number; body: string; model: string; started: number }
     | undefined;
   try {
-    for (const candidateModel of modelCandidates(input.model)) {
+    for (const candidateModel of modelCandidates(requestedModel)) {
       const payload = preparePayloadForModel(candidateModel, input.payload);
       for (const apiKey of dependencies.apiKeys) {
         const started = now();
@@ -118,10 +130,16 @@ function resultFrom(
     ? (usage as Record<string, unknown>).totalTokenCount
     : undefined;
   const input = usage && typeof usage === "object"
-    ? (usage as Record<string, unknown>).promptTokenCount
+    ? (usage as Record<string, unknown>).promptTokenCount ??
+      (usage as Record<string, unknown>).inputTokenCount
     : undefined;
   const output = usage && typeof usage === "object"
-    ? (usage as Record<string, unknown>).candidatesTokenCount
+    ? (usage as Record<string, unknown>).candidatesTokenCount ??
+      (usage as Record<string, unknown>).outputTokenCount
+    : undefined;
+  const thoughts = usage && typeof usage === "object"
+    ? (usage as Record<string, unknown>).thoughtsTokenCount ??
+      (usage as Record<string, unknown>).reasoningTokenCount
     : undefined;
   return {
     model: value.model,
@@ -132,9 +150,11 @@ function resultFrom(
     inputTokens: typeof input === "number" && Number.isFinite(input)
       ? input
       : 0,
-    outputTokens: typeof output === "number" && Number.isFinite(output)
-      ? output
-      : 0,
+    outputTokens:
+      (typeof output === "number" && Number.isFinite(output) ? output : 0) +
+      (typeof thoughts === "number" && Number.isFinite(thoughts)
+        ? thoughts
+        : 0),
     status: value.status,
     body: value.body,
     parsedJson,
