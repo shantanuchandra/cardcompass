@@ -18,7 +18,7 @@ Ruling: Carry the Feedback plan's final adjudication into the Tasks 1–3 code-b
 
 - Tasks 1–3: complete — immutable run storage/lifecycle and metered transport
 - Task 4: complete — code-owned configs and feature-safe executors
-- Task 5: pending — deterministic and blind scoring
+- Task 5: complete — deterministic and blind scoring
 - Task 6: pending — private bounded resumable worker
 - Task 7: pending — Admin2 controls and decision support
 - Task 8: pending — full verification and release boundary
@@ -106,3 +106,16 @@ Ruling: Publish recommendation scope as fixed-selection explanation and arithmet
 - Benefit evidence remains separately discriminated and official-source grounded. The query-shaped integration test uses the exact card-discovery `extracted_fields` payload and validates resolver-to-executor behavior.
 
 Ruling: Card identity eval scope validates an already selected catalog reference against official provenance; it does not measure catalog selection. Cost if wrong: selection quality requires a future fixture with a bounded candidate set and a distinct configuration scope.
+
+## Task 5 evidence
+
+- RED: the focused scorer suite failed because `scorers.ts` did not exist; after the first green pass, schema-focused integration tests exposed that execution status alone could not validate captured-output shape.
+- GREEN: structured scoring evaluates approved typed path assertions separately for baseline and candidate, including exact values, one-paisa financial/currency tolerance, exactly-once transactions, catalog identity, grounded benefit fields, prohibited paths/claims, and feature output schemas. Regression is emitted only when a passing baseline becomes a failing candidate; severe status is limited to the approved severe classes.
+- Recommendation scoring is explicitly fixed-selection explanation/arithmetic evidence, not ranking. IDs and money are deterministic; only the bounded explanation enters a SHA-256-oriented blind A/B judge with the reviewed rubric, a pinned code-owned configuration, no tools, exact output schema, and untrusted-data delimiters.
+- Both A/B orientations and decoding pass. Invalid, tied, or sub-0.70 judgments require review and cannot select the candidate. The full runner Deno suite passes 25 tests.
+
+Ruling: Define the approved scoring rubric as a closed list of typed assertions over exact root-relative paths, while preserving an explicit `assertionKeys` severe override. Cost if wrong: existing free-form draft rubrics must be revised into the typed contract before they yield deterministic evidence, instead of being guessed by the scorer.
+
+Ruling: Judge only fixed-selection explanation text, with the complete reviewed rubric, after deterministic card, benefit, savings, and final-amount checks. Cost if wrong: explanation comparisons cannot support a ranking-quality claim, but expected answers and arithmetic never contaminate the subjective comparison.
+
+Ruling: Derive blind orientation from the first byte of SHA-256 over `run_id:case_id:revision`, using even for baseline A and odd for baseline B. Cost if wrong: the assignment is reproducible rather than nondeterministic, but remains balanced by cryptographic hashing and is recorded for audit/decoding.
