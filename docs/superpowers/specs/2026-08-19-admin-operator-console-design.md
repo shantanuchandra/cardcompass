@@ -38,6 +38,8 @@ The only initial operator is the verified account associated with `shantanu.msp@
 - no prohibited raw financial or email content reaches the console; and
 - changing `public.users.is_admin` to `false` blocks the next privileged request.
 
+The separate [Contextual AI Feedback and Evaluations Design](./2026-08-19-contextual-ai-feedback-evals-design.md) defines how user and admin text feedback becomes human-approved evaluation cases. This console surfaces that workflow without adding a fifth top-level section.
+
 ## Architecture
 
 ### Flutter workspace
@@ -109,6 +111,9 @@ The Edge Function accepts `POST` requests with an `action` discriminator. Initia
 
 - `access`: returns whether the current session has database-backed admin access;
 - `inbox-list`: returns ranked actionable exceptions and counts;
+- `feedback-list` and `feedback-detail`: return contextual feedback and sanitized evaluation metadata;
+- `feedback-review` and `feedback-triage-retry`: apply human review outcomes or retry advisory triage;
+- `eval-case-action` and `eval-run-action`: manage approved cases and bounded evaluation runs;
 - `customer-search` and `customer-detail`: return sanitized account and processing metadata;
 - `customer-retry`: retries one allowlisted, idempotent operation;
 - `customer-disable`: disables the app account and revokes active access through the approved server path;
@@ -136,6 +141,7 @@ The server performs bounded source queries and merges their sanitized results. E
 |---|---|---|
 | A customer's Gmail sync has exhausted automatic retries. | Open the linked customer, review the sanitized failure category, and retry the eligible sync. | Restore ingestion without SQL or engineering support. |
 | A card identity proposal has two plausible catalog matches. | Open the linked proposal and resolve it using its source evidence. | Prevent a duplicate card or incorrect customer-card match. |
+| A user reports an incorrect AI-assisted output and triage proposes an eval case. | Review the captured context, correct the expected result and rubric, then approve or route the feedback. | Convert a real failure into reusable human-approved quality coverage. |
 | A core pipeline is paused while actionable jobs are accumulating. | Open System, verify the named control and backlog, then resume the supported pipeline when safe. | Reduce customer impact and processing delay. |
 
 ### Customers
@@ -150,12 +156,12 @@ Customer Ops shows only the metadata needed to diagnose support issues:
 
 It does not expose raw emails, attachments, PDFs, passwords, access tokens, full transaction lists, or unmasked financial identifiers.
 
-Initial actions are retrying a specifically failed sync or processing operation, disabling an account through a server-owned operation, and recording deletion-request progress. A retry is unavailable while the same operation is running. Account disablement requires a reason, confirmation, session revocation, and an audit record. Destructive data deletion remains outside the console until a separately approved retention and deletion design exists.
+Initial actions are retrying a specifically failed sync or processing operation, disabling an account through a server-owned operation, and recording deletion-request progress. A retry is unavailable while the same operation is running. Account disablement requires a reason, confirmation, an immediate database-backed access block, a server-side Auth ban, and an audit record. Supabase access JWTs remain valid until expiry, so user-data RLS policies must check `public.users.is_active` and deny an already-issued JWT immediately. Destructive data deletion remains outside the console until a separately approved retention and deletion design exists.
 
 | Example signal | Operator action | Operational outcome |
 |---|---|---|
 | A customer reports that a recent statement has not appeared. | Search by user ID or email fragment, inspect sync and processing timestamps, and retry the failed eligible operation. | Resolve the support issue without reading the email or statement. |
-| An account must be contained because of suspected compromise or abuse. | Confirm the target and reason, disable the account, and revoke active sessions. | Stop access immediately and leave an auditable record. |
+| An account must be contained because of suspected compromise or abuse. | Confirm the target and reason, set the database access block, and ban future authentication through the server-owned Auth client. | Stop app-data access immediately and leave an auditable record even while an issued JWT awaits expiry. |
 | A deletion request is awaiting operational follow-up. | Review consent and request metadata, then record the approved progress state. | Keep the request traceable without exposing or deleting raw data from this console. |
 
 ### Card Data
@@ -164,11 +170,20 @@ Card Data combines card-identity and benefit-enrichment review into one section 
 
 Supported actions are approve, edit and approve, merge, reject with reason, retry, quarantine, and unquarantine. The console reuses the existing locked resolution and approval paths rather than directly updating catalog or benefit tables. Bulk approval is excluded. Actions are unavailable when the source item is no longer in an eligible state.
 
-| Example signal | Operator action | Operational outcome |
-|---|---|---|
-| An issuer record for “Regalia Gold” matches more than one catalog candidate. | Compare the official source and field evidence, then merge into or approve the correct card. | Avoid duplicate catalog entries and incorrect ownership records. |
-| An official issuer page changes the lounge-access entitlement. | Review the retrieved evidence, edit the proposed value if needed, and approve it. | Publish accurate benefits while preserving human verification. |
-| A proposal has weak confidence or missing source evidence. | Reject it with a reason, or quarantine and retry the source job when appropriate. | Keep low-quality data out of the customer experience. |
+| Area | Example signal | Operator action | Operational outcome |
+|---|---|---|---|
+| Card identity | An official issuer product page describes a genuine card with strong evidence and no catalog match. | Verify the issuer, card name, network, and source, then approve it as a new card. | Expand catalog coverage so more customer cards can be recognized automatically. |
+| Card identity | A genuine card is discovered, but its extracted name, issuer, or network is incomplete or incorrect. | Correct the proposed fields and use edit and approve. | Prevent bad attributes from weakening matching, comparison, and benefit recommendations. |
+| Card identity | An issuer record for “Regalia Gold” resolves to an existing catalog card. | Compare the official source and identity evidence, then merge the discovery into the existing card. | Avoid duplicate catalog entries and fragmented ownership records. |
+| Card identity | Two similarly named co-branded or premium variants may be either distinct products or duplicates. | Compare product-specific evidence and either approve the distinct card or merge it into the correct existing record. | Preserve meaningful variants without inflating the catalog with duplicates. |
+| Source quality | A rewards page, fee calculator, campaign page, or generic issuer landing page is misclassified as a card. | Reject the proposal with the applicable reason. | Keep non-product pages out of the catalog and reduce downstream review noise. |
+| Source quality | A crawler-only discovery has no statement signal and weak or incomplete issuer evidence. | Retry discovery when fresher evidence may help; otherwise quarantine it for investigation. | Avoid publishing an unverified card while keeping the normal queue moving. |
+| Benefit addition | An official source introduces a new dining credit, travel privilege, insurance cover, or milestone reward. | Verify applicability and evidence, then approve the addition. | Surface newly available customer value without waiting for manual catalog maintenance. |
+| Benefit modification | The value, frequency, cap, eligibility rule, partner, or redemption method of an existing benefit changes. | Compare current and proposed values, correct the proposal if necessary, and approve the supported change. | Prevent stale recommendations and incorrect savings estimates. |
+| Benefit removal | A benefit is absent from the latest page but the source does not clearly confirm its withdrawal. | Keep the existing benefit during edit and approve, and retry later when stronger evidence is available. | Avoid prematurely removing customer value because of a temporary or incomplete page. |
+| Benefit conflict | Two official excerpts imply different values or rules for the same benefit. | Compare source recency and scope, edit and approve only the supported value, or quarantine the item if the conflict remains unresolved. | Prevent contradictory benefit information from reaching customers. |
+| Recovery | A proposal was generated from stale retrieval data, an outdated parser, or incomplete evidence. | Retry discovery or enrichment to produce a fresh staged proposal before deciding. | Reduce manual corrections and avoid decisions based on obsolete input. |
+| Recovery | Repeated extraction or validation failures produce a malformed proposal that blocks normal review. | Quarantine it with a reason; after the source or parser issue is corrected, unquarantine and retry it. | Protect queue throughput while retaining a controlled recovery path. |
 
 ### System
 
@@ -180,6 +195,7 @@ The console never exposes secrets, raw fetched content, authorization headers, p
 |---|---|---|
 | A statement-processing job failed with a retryable provider error. | Review its safe failure category and attempt count, then retry the individual job. | Recover processing without resetting unrelated work. |
 | One malformed job repeatedly fails and delays the queue. | Quarantine the job with a reason and leave the remaining queue running. | Preserve throughput while isolating the bad input for investigation. |
+| An approved eval dataset is ready to compare a candidate prompt or model with production. | Start a bounded baseline-versus-candidate run and review accuracy, regressions, latency, and cost. | Improve AI quality using measured evidence without automatic production changes. |
 | A provider outage is causing avoidable failures and cost. | Pause the supported named pipeline control, monitor recovery, and resume it when healthy. | Limit error volume and spend without deploying code. |
 
 ## Interaction design
@@ -202,6 +218,8 @@ The console never exposes secrets, raw fetched content, authorization headers, p
 
 Each phase receives its own implementation plan, acceptance checks, and review boundary. Phase 1 is required before any operational section ships. After that foundation, Phases 2, 3, and 4 may be delivered in the stated order or reordered without weakening their individual exit criteria; Phase 5 begins only after all supported workflows reach parity.
 
+The contextual feedback and evaluation loop is delivered through its own phased design. Its Action Inbox and System integrations require this console's Phase 1 foundation but are not a parity requirement for retiring the old catalog-review route.
+
 ### Phase 1: Foundation
 
 Build the `/app/admin2` shell, database-backed authorization, modular Edge Function, audit table, typed repository boundary, and route tests. Exit when non-admin access is blocked and every test mutation is audited.
@@ -216,7 +234,7 @@ Add pipeline status, job detail, retry, quarantine, and only the runtime control
 
 ### Phase 4: Customer Ops
 
-First make `public.users.is_active` server-governed and verify that disabled users cannot restore access. Then add user search, metadata timeline, safe retry, account disablement, and deletion-request status. Exit when common support issues can be diagnosed without exposing prohibited customer content and a disabled account cannot reactivate itself.
+First make `public.users.is_active` server-governed and require it in user-data RLS policies so an already-issued JWT cannot access app data after disablement. Then add user search, metadata timeline, safe retry, account disablement with an Auth ban, and deletion-request status. Exit when common support issues can be diagnosed without exposing prohibited customer content and a disabled account cannot reactivate itself or read or write app data.
 
 ### Phase 5: Cutover
 
@@ -239,7 +257,7 @@ Expose the admin entry point to database-authorized users, run production smoke 
 
 - Admin flag defaults false and cannot be assigned by authenticated clients.
 - Founder backfill is correct.
-- Before Customer Ops ships, authenticated clients cannot write `is_active`, while the server-owned disable path can update it and revoke sessions.
+- Before Customer Ops ships, authenticated clients cannot write `is_active`, all user-data policies deny inactive users, and the server-owned disable path can update the flag and ban future authentication.
 - Audit and runtime-control tables deny browser access.
 - Mutating functions require the service role, validate state, apply once, and write audit rows atomically.
 - Repeated request IDs do not duplicate state changes.
