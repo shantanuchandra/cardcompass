@@ -70,6 +70,20 @@ function object(value: unknown, max = 32_768): JsonRecord {
   ) invalid();
   return result;
 }
+function meaningfulObject(value: unknown, max = 32_768): JsonRecord {
+  const result = object(value, max);
+  const entries = Object.entries(result);
+  if (
+    entries.length === 0 ||
+    entries.some(([key, item]) =>
+      key.trim().length === 0 || key.length > 100 || item === null ||
+      (typeof item === "string" && item.trim().length === 0) ||
+      (Array.isArray(item) && item.length === 0) ||
+      (record(item) !== null && Object.keys(record(item)!).length === 0)
+    )
+  ) invalid();
+  return result;
+}
 function timestamp(value: unknown): string {
   if (
     typeof value !== "string" || value.length > 100 ||
@@ -175,7 +189,9 @@ function safeFeedback(rowValue: unknown, detail = false) {
       authoritative_context: safeJson(row.authoritative_context, 32_768),
       triage_proposal: triage,
       engine_version: safeString(row.engine_version, 100),
+      provider: safeString(row.provider, 100),
       parser_version: safeString(row.parser_version, 100),
+      trace_id: safeString(row.trace_id, 100),
     });
   }
   return base;
@@ -231,7 +247,7 @@ export async function handleFeedbackDetail(
   });
   if (audit.error) throw dbError(audit.error);
   const result = await (context.db as any).from("ai_feedback").select(
-    "id,feature_key,feedback_text,safe_input_context,output_snapshot,authoritative_context,triage_status,triage_result,review_status,engine_version,model,prompt_version,parser_version,created_at",
+    "id,feature_key,feedback_text,safe_input_context,output_snapshot,authoritative_context,triage_status,triage_result,review_status,provider,engine_version,model,prompt_version,parser_version,trace_id,created_at",
   ).eq("id", feedbackId).range(0, 0);
   if (result.error) throw new AdminHttpError("request_failed", 500);
   if (!Array.isArray(result.data) || result.data.length === 0) {
@@ -239,7 +255,7 @@ export async function handleFeedbackDetail(
   }
   if (result.data.length !== 1) throw new AdminHttpError("request_failed", 500);
   const cases = await (context.db as any).from("ai_eval_cases").select(
-    "id,status,revision,updated_at,approved_in_dataset_version,retired_in_dataset_version",
+    "id,status,revision,updated_at,approved_in_dataset_version,retired_in_dataset_version,approved_at",
   ).eq("source_feedback_id", feedbackId).order("revision", { ascending: false })
     .range(0, 9);
   if (cases.error || !Array.isArray(cases.data)) {
@@ -262,6 +278,7 @@ export async function handleFeedbackReview(
       "feedback_id",
       "review_action",
       "operator_feedback",
+      "ground_truth_confirmed",
       "expected_output",
       "scoring_rubric",
       "severe_failure_conditions",
@@ -276,11 +293,15 @@ export async function handleFeedbackReview(
   let payload: JsonRecord = {};
   let reason: string | null = null;
   if (action === "create_eval_draft") {
+    if (body.ground_truth_confirmed !== true) invalid();
     payload = {
       operator_feedback: text(body.operator_feedback, 2, 2000),
-      expected_output: object(body.expected_output),
-      scoring_rubric: object(body.scoring_rubric, 16_000),
-      severe_failure_conditions: object(body.severe_failure_conditions, 16_000),
+      expected_output: meaningfulObject(body.expected_output),
+      scoring_rubric: meaningfulObject(body.scoring_rubric, 16_000),
+      severe_failure_conditions: meaningfulObject(
+        body.severe_failure_conditions,
+        16_000,
+      ),
     };
   } else {try {
       reason = text(body.reason, 2, 1000);
@@ -327,6 +348,7 @@ export async function handleEvalCaseAction(
       "case_action",
       "observed_updated_at",
       "confirmation",
+      "ground_truth_confirmed",
       "operator_feedback",
       "expected_output",
       "scoring_rubric",
@@ -343,12 +365,16 @@ export async function handleEvalCaseAction(
     (action === "approve" && body.confirmation !== "APPROVE") ||
     (action === "retire" && body.confirmation !== "RETIRE")
   ) invalid();
+  if (action === "revise" && body.ground_truth_confirmed !== true) invalid();
   const payload = action === "revise"
     ? {
       operator_feedback: text(body.operator_feedback, 2, 2000),
-      expected_output: object(body.expected_output),
-      scoring_rubric: object(body.scoring_rubric, 16_000),
-      severe_failure_conditions: object(body.severe_failure_conditions, 16_000),
+      expected_output: meaningfulObject(body.expected_output),
+      scoring_rubric: meaningfulObject(body.scoring_rubric, 16_000),
+      severe_failure_conditions: meaningfulObject(
+        body.severe_failure_conditions,
+        16_000,
+      ),
     }
     : {};
   return await rpc(context, "admin_ai_eval_case_action", {

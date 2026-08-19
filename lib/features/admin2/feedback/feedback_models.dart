@@ -29,6 +29,14 @@ final class AdminFeedbackDetail {
     this.caseId,
     this.caseStatus,
     this.caseUpdatedAt,
+    this.provider,
+    this.engineVersion,
+    this.parserVersion,
+    this.traceId,
+    this.caseRevision,
+    this.approvedDatasetVersion,
+    this.retiredDatasetVersion,
+    this.approvedAt,
   }) : capturedOutput = Map.unmodifiable(capturedOutput),
        safeContext = Map.unmodifiable(safeContext),
        advisoryExpectedOutput = Map.unmodifiable(advisoryExpectedOutput);
@@ -40,6 +48,9 @@ final class AdminFeedbackDetail {
       advisoryDiagnosis,
       advisorySeverity;
   final String? model, promptVersion, caseId, caseStatus;
+  final String? provider, engineVersion, parserVersion, traceId;
+  final int? caseRevision, approvedDatasetVersion, retiredDatasetVersion;
+  final DateTime? approvedAt;
   final DateTime? caseUpdatedAt;
   final DateTime createdAt;
   final Map<String, dynamic> capturedOutput,
@@ -59,10 +70,12 @@ final class AdminFeedbackAction {
     this.severeConditions,
     this.reason,
     this.confirmation,
+    this.groundTruthConfirmed = false,
   });
   final AdminFeedbackActionKind kind;
   final String feedbackId;
   final String? caseId, operatorBehavior, reason, confirmation;
+  final bool groundTruthConfirmed;
   final DateTime? observedUpdatedAt;
   final Map<String, dynamic>? expectedOutput, rubric, severeConditions;
 }
@@ -84,6 +97,15 @@ Map<String, dynamic> parseJsonObject(String value) {
   final parsed = jsonDecode(value);
   if (parsed is! Map<String, dynamic>) {
     throw const FormatException('Object required');
+  }
+  if (parsed.isEmpty ||
+      parsed.entries.any(
+        (entry) =>
+            entry.key.trim().isEmpty ||
+            entry.value == null ||
+            entry.value is String && (entry.value as String).trim().isEmpty,
+      )) {
+    throw const FormatException('Meaningful object required');
   }
   return parsed;
 }

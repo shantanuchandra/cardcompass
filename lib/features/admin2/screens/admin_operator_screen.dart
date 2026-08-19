@@ -16,6 +16,7 @@ import '../inbox/inbox_models.dart';
 import '../inbox/inbox_repository.dart';
 import '../feedback/feedback_detail.dart';
 import '../feedback/feedback_repository.dart';
+import '../feedback/feedback_models.dart';
 import '../providers/admin_access_provider.dart';
 import '../system/system_models.dart';
 import '../system/system_repository.dart';
@@ -59,6 +60,9 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
   String? _systemControlKey;
   var _systemSelectionRevision = 0;
   String? _feedbackId;
+  Future<AdminFeedbackDetail>? _feedbackFuture;
+  int _feedbackGeneration = 0;
+  int _feedbackEffectGeneration = -1;
 
   @override
   void initState() {
@@ -170,8 +174,7 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
           InboxRepository(ref.watch(adminOperatorRepositoryProvider)).load,
       onOpenCardTarget: _openCardTarget,
       onOpenSystemControl: _openSystemControl,
-      onOpenFeedback: (destination) =>
-          setState(() => _feedbackId = destination.feedbackId),
+      onOpenFeedback: _openFeedback,
       onAuthenticationRequired:
           widget.onAuthenticationRequired ??
           () => ref.read(authNotifierProvider.notifier).signOut(),
@@ -183,16 +186,35 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
     final repository = FeedbackAdminRepository(
       ref.watch(adminOperatorRepositoryProvider),
     );
+    _feedbackFuture ??= repository.detail(_feedbackId!);
+    final generation = _feedbackGeneration;
     return FutureBuilder(
-      future: repository.detail(_feedbackId!),
+      future: _feedbackFuture,
       builder: (context, snapshot) {
-        if (snapshot.hasError) {
+        final error = snapshot.error;
+        if (error != null) {
+          if (_feedbackEffectGeneration != generation &&
+              generation == _feedbackGeneration) {
+            _feedbackEffectGeneration = generation;
+            if (error is AdminAuthenticationRequired ||
+                error is AdminAccessDenied) {
+              _scheduleAccessEffect(error);
+            }
+          }
           return BrandStateView(
-            title: 'Feedback could not be loaded.',
-            message: 'Return to the Inbox and retry.',
+            title: error is AdminAuthenticationRequired
+                ? 'Sign in again to continue.'
+                : error is AdminAccessDenied
+                ? 'Administrator access required.'
+                : 'Feedback could not be loaded.',
+            message: error is AdminAuthenticationRequired
+                ? 'Your session is no longer valid.'
+                : error is AdminAccessDenied
+                ? 'Returning you to CardCompass.'
+                : 'Check your connection and retry.',
             icon: Icons.cloud_off_outlined,
-            actionLabel: 'Back to Inbox',
-            onAction: () => setState(() => _feedbackId = null),
+            actionLabel: error is AdminRequestFailed ? 'Try again' : null,
+            onAction: error is AdminRequestFailed ? _reloadFeedback : null,
           );
         }
         if (!snapshot.hasData) {
@@ -205,12 +227,38 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
           detail: snapshot.data!,
           onAction: (action) async {
             final receipt = await repository.act(action);
-            if (mounted) setState(() {});
             return receipt;
           },
+          onRefresh: _reloadFeedback,
+          onAuthenticationRequired:
+              widget.onAuthenticationRequired ??
+              () => ref.read(authNotifierProvider.notifier).signOut(),
+          onAccessDenied: widget.onAccessDenied ?? () => context.go('/app'),
         );
       },
     );
+  }
+
+  void _openFeedback(AdminInboxDestination destination) {
+    setState(() {
+      _feedbackId = destination.feedbackId;
+      _feedbackFuture = null;
+      _feedbackGeneration++;
+    });
+  }
+
+  Future<void> _reloadFeedback() async {
+    if (!mounted || _feedbackId == null) return;
+    final repository = FeedbackAdminRepository(
+      ref.read(adminOperatorRepositoryProvider),
+    );
+    setState(() {
+      _feedbackGeneration++;
+      _feedbackFuture = repository.detail(_feedbackId!);
+    });
+    try {
+      await _feedbackFuture;
+    } catch (_) {}
   }
 
   Widget _buildSystem() => KeyedSubtree(

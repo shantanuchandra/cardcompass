@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../../../core/theme/brand_tokens.dart';
+import '../data/admin_operator_repository.dart';
 import 'feedback_models.dart';
 
 typedef FeedbackAdminAction =
@@ -11,9 +12,15 @@ class FeedbackDetailView extends StatefulWidget {
     super.key,
     required this.detail,
     required this.onAction,
+    this.onRefresh,
+    this.onAuthenticationRequired,
+    this.onAccessDenied,
   });
   final AdminFeedbackDetail detail;
   final FeedbackAdminAction onAction;
+  final Future<void> Function()? onRefresh;
+  final Future<void> Function()? onAuthenticationRequired;
+  final VoidCallback? onAccessDenied;
   @override
   State<FeedbackDetailView> createState() => _FeedbackDetailViewState();
 }
@@ -25,16 +32,15 @@ class _FeedbackDetailViewState extends State<FeedbackDetailView> {
       severe = TextEditingController();
   String? message;
   bool busy = false;
+  bool groundTruthConfirmed = false;
   String? caseId;
   DateTime? caseUpdated;
   @override
   void initState() {
     super.initState();
-    output.text = const JsonEncoder.withIndent(
-      '  ',
-    ).convert(widget.detail.advisoryExpectedOutput);
-    rubric.text = '{}';
-    severe.text = '{}';
+    output.text = '';
+    rubric.text = '';
+    severe.text = '';
     caseId = widget.detail.caseId;
     caseUpdated = widget.detail.caseUpdatedAt;
   }
@@ -50,15 +56,16 @@ class _FeedbackDetailViewState extends State<FeedbackDetailView> {
 
   Future<void> createDraft() async {
     if ([
-      behavior.text,
-      output.text,
-      rubric.text,
-      severe.text,
-    ].any((v) => v.trim().isEmpty)) {
+          behavior.text,
+          output.text,
+          rubric.text,
+          severe.text,
+        ].any((v) => v.trim().isEmpty) ||
+        !groundTruthConfirmed) {
       setState(() => message = 'Complete all operator ground-truth fields.');
       return;
     }
-    try {
+    await _run(() async {
       final receipt = await widget.onAction(
         AdminFeedbackAction(
           kind: AdminFeedbackActionKind.createDraft,
@@ -67,17 +74,17 @@ class _FeedbackDetailViewState extends State<FeedbackDetailView> {
           expectedOutput: parseJsonObject(output.text),
           rubric: parseJsonObject(rubric.text),
           severeConditions: parseJsonObject(severe.text),
+          groundTruthConfirmed: groundTruthConfirmed,
         ),
       );
-      if (!mounted) return;
-      setState(() {
-        caseId = receipt.caseId;
-        caseUpdated = receipt.updatedAt;
-        message = 'Draft created from operator ground truth.';
-      });
-    } catch (_) {
-      setState(() => message = 'Check each field is a valid JSON object.');
-    }
+      if (mounted) {
+        setState(() {
+          caseId = receipt.caseId;
+          caseUpdated = receipt.updatedAt;
+          message = 'Draft created from operator ground truth.';
+        });
+      }
+    });
   }
 
   Future<void> approve() async {
@@ -110,21 +117,23 @@ class _FeedbackDetailViewState extends State<FeedbackDetailView> {
       ),
     );
     if (accepted != true) return;
-    final receipt = await widget.onAction(
-      AdminFeedbackAction(
-        kind: AdminFeedbackActionKind.approve,
-        feedbackId: widget.detail.id,
-        caseId: caseId,
-        observedUpdatedAt: caseUpdated,
-        confirmation: 'APPROVE',
-      ),
-    );
-    if (mounted) {
-      setState(
-        () => message =
-            'Approved in dataset version ${receipt.datasetVersion ?? 'confirmed'}.',
+    await _run(() async {
+      final receipt = await widget.onAction(
+        AdminFeedbackAction(
+          kind: AdminFeedbackActionKind.approve,
+          feedbackId: widget.detail.id,
+          caseId: caseId,
+          observedUpdatedAt: caseUpdated,
+          confirmation: 'APPROVE',
+        ),
       );
-    }
+      if (mounted) {
+        setState(
+          () => message =
+              'Approved in dataset version ${receipt.datasetVersion ?? 'confirmed'}.',
+        );
+      }
+    });
   }
 
   Future<void> route(AdminFeedbackActionKind kind, String title) async {
@@ -151,14 +160,54 @@ class _FeedbackDetailViewState extends State<FeedbackDetailView> {
       ),
     );
     if (reason == null || reason.length < 2) return;
-    await widget.onAction(
-      AdminFeedbackAction(
-        kind: kind,
-        feedbackId: widget.detail.id,
-        reason: reason,
-      ),
-    );
-    if (mounted) setState(() => message = '$title recorded.');
+    await _run(() async {
+      await widget.onAction(
+        AdminFeedbackAction(
+          kind: kind,
+          feedbackId: widget.detail.id,
+          reason: reason,
+        ),
+      );
+      if (mounted) setState(() => message = '$title recorded.');
+    });
+  }
+
+  Future<void> _run(Future<void> Function() operation) async {
+    if (busy) return;
+    setState(() {
+      busy = true;
+      message = null;
+    });
+    try {
+      await operation();
+      await widget.onRefresh?.call();
+    } on AdminStateConflict {
+      if (mounted) {
+        setState(
+          () => message = 'This record changed. Reloading the latest version.',
+        );
+      }
+      await widget.onRefresh?.call();
+    } on AdminAuthenticationRequired {
+      await widget.onAuthenticationRequired?.call();
+    } on AdminAccessDenied {
+      widget.onAccessDenied?.call();
+    } on FormatException {
+      if (mounted) {
+        setState(
+          () => message =
+              'Use valid, non-empty JSON objects with meaningful fields.',
+        );
+      }
+    } on AdminRequestFailed {
+      if (mounted) {
+        setState(
+          () => message = 'The action could not be completed. Try again.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
   }
 
   @override
@@ -190,8 +239,29 @@ class _FeedbackDetailViewState extends State<FeedbackDetailView> {
             _Panel(
               title: 'LLM proposal · advisory',
               color: Colors.amber.shade50,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${widget.detail.advisorySeverity.toUpperCase()} · ${widget.detail.advisoryDiagnosis}',
+                  ),
+                  const SizedBox(height: 8),
+                  SelectableText(
+                    jsonEncode(widget.detail.advisoryExpectedOutput),
+                  ),
+                ],
+              ),
+            ),
+            _Panel(
+              title: 'Source metadata',
               child: Text(
-                '${widget.detail.advisorySeverity.toUpperCase()} · ${widget.detail.advisoryDiagnosis}',
+                'Feature: ${widget.detail.feature}\nProvider: ${widget.detail.provider ?? 'Unknown'}\nModel: ${widget.detail.model ?? 'Unknown'}\nEngine: ${widget.detail.engineVersion ?? 'Unknown'}\nPrompt: ${widget.detail.promptVersion ?? 'Unknown'}\nParser: ${widget.detail.parserVersion ?? 'Unknown'}\nTrace: ${widget.detail.traceId ?? 'Not captured'}\nCreated: ${widget.detail.createdAt.toIso8601String()}',
+              ),
+            ),
+            _Panel(
+              title: 'Eval case',
+              child: Text(
+                'Status: ${widget.detail.caseStatus ?? 'Not created'}\nRevision: ${widget.detail.caseRevision?.toString() ?? 'Unknown'}\nApproved dataset: ${widget.detail.approvedDatasetVersion?.toString() ?? 'Not approved'}\nRetired dataset: ${widget.detail.retiredDatasetVersion?.toString() ?? 'Not retired'}\nApproved: ${widget.detail.approvedAt?.toIso8601String() ?? 'Not approved'}',
               ),
             ),
             _Panel(
@@ -204,6 +274,19 @@ class _FeedbackDetailViewState extends State<FeedbackDetailView> {
                     decoration: const InputDecoration(
                       labelText: 'Expected behavior',
                     ),
+                  ),
+                  CheckboxListTile(
+                    key: const Key('ground-truth-confirmed'),
+                    value: groundTruthConfirmed,
+                    onChanged: busy
+                        ? null
+                        : (value) => setState(
+                            () => groundTruthConfirmed = value == true,
+                          ),
+                    title: const Text(
+                      'I reviewed and authored this ground truth',
+                    ),
+                    controlAffinity: ListTileControlAffinity.leading,
                   ),
                   TextField(
                     key: const Key('operator-output'),
@@ -281,17 +364,19 @@ class _FeedbackDetailViewState extends State<FeedbackDetailView> {
                     onPressed: busy
                         ? null
                         : () async {
-                            await widget.onAction(
-                              AdminFeedbackAction(
-                                kind: AdminFeedbackActionKind.retryTriage,
-                                feedbackId: widget.detail.id,
-                              ),
-                            );
-                            if (mounted) {
-                              setState(
-                                () => message = 'Triage retry scheduled.',
+                            await _run(() async {
+                              await widget.onAction(
+                                AdminFeedbackAction(
+                                  kind: AdminFeedbackActionKind.retryTriage,
+                                  feedbackId: widget.detail.id,
+                                ),
                               );
-                            }
+                              if (mounted) {
+                                setState(
+                                  () => message = 'Triage retry scheduled.',
+                                );
+                              }
+                            });
                           },
                     child: const Text('Retry triage'),
                   ),

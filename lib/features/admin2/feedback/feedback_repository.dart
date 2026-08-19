@@ -42,6 +42,16 @@ final class FeedbackAdminRepository {
         caseUpdatedAt: latest == null
             ? null
             : DateTime.parse(latest['updated_at'] as String),
+        provider: row['provider'] as String?,
+        engineVersion: row['engine_version'] as String?,
+        parserVersion: row['parser_version'] as String?,
+        traceId: row['trace_id'] as String?,
+        caseRevision: latest?['revision'] as int?,
+        approvedDatasetVersion: latest?['approved_in_dataset_version'] as int?,
+        retiredDatasetVersion: latest?['retired_in_dataset_version'] as int?,
+        approvedAt: latest?['approved_at'] == null
+            ? null
+            : DateTime.parse(latest!['approved_at'] as String),
       );
     } catch (_) {
       throw const AdminRequestFailed('request_failed');
@@ -80,6 +90,9 @@ final class FeedbackAdminRepository {
       },
       if (action.operatorBehavior != null)
         'operator_feedback': action.operatorBehavior,
+      if (action.kind == AdminFeedbackActionKind.createDraft ||
+          action.kind == AdminFeedbackActionKind.revise)
+        'ground_truth_confirmed': action.groundTruthConfirmed,
       if (action.expectedOutput != null)
         'expected_output': action.expectedOutput,
       if (action.rubric != null) 'scoring_rubric': action.rubric,

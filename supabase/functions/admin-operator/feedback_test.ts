@@ -82,6 +82,7 @@ Deno.test("draft review sends only complete operator-authored ground truth", asy
       feedback_id: id,
       review_action: "create_eval_draft",
       operator_feedback: "Expected the grocery category",
+      ground_truth_confirmed: true,
       expected_output: { category: "Groceries" },
       scoring_rubric: { exact: true },
       severe_failure_conditions: { wrong_amount: true },
@@ -109,6 +110,7 @@ Deno.test("draft review sends only complete operator-authored ground truth", asy
         feedback_id: id,
         review_action: "create_eval_draft",
         operator_feedback: "",
+        ground_truth_confirmed: true,
         expected_output: {},
         scoring_rubric: {},
         severe_failure_conditions: {},
@@ -116,6 +118,48 @@ Deno.test("draft review sends only complete operator-authored ground truth", asy
     AdminHttpError,
     "invalid_request",
   );
+  for (
+    const invalid of [
+      {
+        expected_output: {},
+        scoring_rubric: { exact: true },
+        severe_failure_conditions: { wrong: true },
+        ground_truth_confirmed: true,
+      },
+      {
+        expected_output: { category: "Groceries" },
+        scoring_rubric: {},
+        severe_failure_conditions: { wrong: true },
+        ground_truth_confirmed: true,
+      },
+      {
+        expected_output: { category: "Groceries" },
+        scoring_rubric: { exact: true },
+        severe_failure_conditions: {},
+        ground_truth_confirmed: true,
+      },
+      {
+        expected_output: { category: "Groceries" },
+        scoring_rubric: { exact: true },
+        severe_failure_conditions: { wrong: true },
+        ground_truth_confirmed: false,
+      },
+    ]
+  ) {
+    await assertRejects(
+      () =>
+        handleFeedbackReview({
+          action: "feedback-review",
+          request_id: "30000000-0000-4000-8000-000000000001",
+          feedback_id: id,
+          review_action: "create_eval_draft",
+          operator_feedback: "Human authored behavior",
+          ...invalid,
+        }, rpcContext([])),
+      AdminHttpError,
+      "invalid_request",
+    );
+  }
 });
 
 Deno.test("routing decisions require operator reasons", async () => {

@@ -113,3 +113,13 @@ Ruling: Bound feedback previews at the shared presentation boundary to 120 Unico
 - All 91 Admin gateway tests and all 154 Admin2 tests pass. Focused feedback/Inbox coverage passes 20 Deno and 19 Flutter tests; scoped analysis and `git diff --check` are clean.
 
 Ruling: Keep LLM triage strictly advisory and require a separately persisted operator draft plus typed `APPROVE` confirmation before dataset admission. Cost if wrong: the founder performs one additional confirmation step, but no model-authored proposal can become ground truth autonomously.
+
+### Task 7 review corrections
+
+- Advisory expected output is now displayed only in the LLM panel; every operator field starts blank. Draft/revision requests require `ground_truth_confirmed: true` at the gateway plus meaningful non-empty expected output, rubric, and severe-condition objects under the existing byte bounds.
+- The detail surface carries generation-scoped load futures into the existing 401 signout/re-auth and 403 ordinary-app return effects. Stable request errors remain retryable, while malformed JSON and state conflicts have distinct messages and conflict refreshes the authoritative version.
+- One shared in-flight guard now covers draft, approval, reasoned routing, and triage retry. Every mutation control disables synchronously, repeated activation is ignored, and successful actions refresh server state before further work.
+- Bounded source provenance and eval-case lifecycle metadata are visible with explicit unknown/not-applicable labels; no credentials, email, or raw source content are selected or rendered.
+- Post-correction verification passes 91/91 Admin gateway tests and 155/155 Admin2 tests; scoped analysis and diff checks are clean.
+
+Ruling: Never seed an operator ground-truth editor from an LLM proposal; require an explicit human-authorship confirmation at the server boundary for both draft creation and revision. Cost if wrong: operators must deliberately enter or paste expected values even when the advisory proposal is correct, preserving provenance over speed.
