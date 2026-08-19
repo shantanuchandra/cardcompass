@@ -152,3 +152,11 @@ Ruling: Normalize captured card answer values into the selected evaluator schema
 - The same per-citation agreement checks strengthen candidate output validation, so an output cannot cite a conflicting applicable source merely because another source supports it.
 
 Ruling: Require unanimous support from every official source applicable to the explicitly selected card evaluation mode; ignore only sources with a different mode discriminant. Cost if wrong: partial/conflicting provenance reduces runnable coverage, but no citation can imply support it does not provide.
+
+### Task 5 candidate citation-completeness correction
+
+- Candidate Card Data validation now derives the complete same-mode official-source set from the fixture and requires the candidate citation IDs to match it exactly. A candidate cannot omit adverse applicable evidence while citing only an agreeing source.
+- Every applicable identity or benefit source is then checked through the same consensus rules as captured normalization. Identity conflicts and wrong-card benefit linkage produce `invalid_model_output`; other-mode evidence remains outside the applicable set.
+- Explicit regressions cover an identity candidate cherry-picking one agreeing source while omitting a second conflicting source, and a benefit candidate omitting applicable evidence linked to another card.
+
+Ruling: Require candidate Card Data citations to equal the full applicable same-mode fixture source set, then validate every source. Cost if wrong: redundant applicable sources must all be cited, trading payload brevity for complete and non-cherry-picked provenance.

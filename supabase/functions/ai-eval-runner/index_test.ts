@@ -486,6 +486,109 @@ Deno.test("captured benefit baseline rejects an applicable source linked to anot
   assertEquals(result.safeFailureCategory, "insufficient_fixture");
 });
 
+Deno.test("identity candidate cannot omit a conflicting applicable source", async () => {
+  const item = fixture("card_data");
+  const safe = item.inputFixture.safe_input_context as Record<string, unknown>;
+  const official = safe.official_sources as Record<string, unknown>[];
+  const conflicted: EvalCaseFixture = {
+    ...item,
+    inputFixture: {
+      ...item.inputFixture,
+      safe_input_context: {
+        ...safe,
+        official_sources: [...official, {
+          id: "source-conflict",
+          url: "https://bank.example/conflict",
+          snippet: "Another identity",
+          facts: {
+            evaluation_mode: "catalog_identity_validation",
+            provenance_claims: {
+              issuer: "HDFC",
+              card_name: "Legacy Regalia",
+              network: "Visa",
+              aliases: [],
+            },
+            catalog_reference: {
+              id: "card-legacy",
+              name: "Legacy Regalia",
+              bank: "HDFC",
+              network: "Visa",
+              annual_fee: 2500,
+              joining_fee: 2500,
+            },
+          },
+        }],
+      },
+    },
+  };
+  const result = await executeEvalCase(
+    conflicted,
+    "gemini-3.6-flash-card-data-v1",
+    {
+      generate: async () =>
+        fakeGeneration({
+          mode: "identity",
+          card: {
+            id: "card-1",
+            name: "Regalia Gold",
+            bank: "HDFC",
+            network: "Visa",
+            annual_fee: 2500,
+            joining_fee: 2500,
+          },
+          sources: [{
+            id: "source-1",
+            field_paths: ["facts.catalog_reference"],
+          }],
+        }),
+    },
+  );
+  assertEquals(result.safeFailureCategory, "invalid_model_output");
+});
+
+Deno.test("benefit candidate cannot omit applicable evidence linked to another card", async () => {
+  const item = fixture("card_data");
+  const safe = item.inputFixture.safe_input_context as Record<string, unknown>;
+  const official = safe.official_sources as Record<string, unknown>[];
+  const benefitSafe = {
+    ...safe,
+    evaluation_mode: "benefit_extraction",
+    official_sources: [...official, {
+      id: "source-wrong-card",
+      url: "https://bank.example/wrong-card",
+      snippet: "Benefit for another card",
+      facts: {
+        evaluation_mode: "benefit_extraction",
+        catalog_reference_id: "card-2",
+        benefits: (official[1].facts as Record<string, unknown>).benefits,
+      },
+    }],
+  };
+  const result = await executeEvalCase(
+    {
+      ...item,
+      inputFixture: {
+        ...item.inputFixture,
+        safe_input_context: benefitSafe,
+      },
+    },
+    "gemini-3.6-flash-card-data-v1",
+    {
+      generate: async () =>
+        fakeGeneration({
+          mode: "benefits",
+          card_id: "card-1",
+          benefits: (official[1].facts as Record<string, unknown>).benefits,
+          sources: [{
+            id: "source-benefit-1",
+            field_paths: ["facts.benefits"],
+          }],
+        }),
+    },
+  );
+  assertEquals(result.safeFailureCategory, "invalid_model_output");
+});
+
 Deno.test("candidate receives only deeply sanitized fixture inside a fixed, delimited prompt", async () => {
   const item = fixture("card_data");
   const seen: unknown[] = [];

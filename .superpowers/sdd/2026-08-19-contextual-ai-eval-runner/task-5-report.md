@@ -44,3 +44,9 @@ Citation-consensus correction:
 - Every emitted identity or benefit citation now individually validates the complete captured answer for its selected mode.
 - Conflicting applicable identity evidence, benefit evidence linked to another card, or disagreement with captured values fails closed as `insufficient_fixture` even when another valid source exists.
 - Sources for the other explicit evaluation mode remain unrelated, are ignored safely, and are never emitted.
+
+Candidate citation-completeness correction:
+
+- Candidate citations must exactly cover every official source applicable to the selected evaluation mode; citing only a favorable subset is invalid model output.
+- All applicable sources then pass the same identity/benefit/card-link consensus checks used by captured normalization. Other-mode sources remain ignored by discriminant.
+- Explicit tests reject identity and benefit candidates that omit conflicting applicable evidence while citing a valid source.

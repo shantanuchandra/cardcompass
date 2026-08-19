@@ -344,6 +344,16 @@ function validateCardData(
   const expectedMode = output.mode === "benefits"
     ? "benefit_extraction"
     : "catalog_identity_validation";
+  const applicableSources = official.filter((source) =>
+    isRecord(source.facts) && source.facts.evaluation_mode === expectedMode
+  );
+  const applicableIds = new Set(
+    applicableSources.map((source) => String(source.id)),
+  );
+  if (
+    applicableIds.size === 0 || applicableIds.size !== sourceIds.size ||
+    [...applicableIds].some((sourceId) => !sourceIds.has(sourceId))
+  ) return false;
   const facts = official.map((source) => source.facts).find((value) =>
     isRecord(value) && value.evaluation_mode === expectedMode
   ) as Record<string, unknown> | undefined;
