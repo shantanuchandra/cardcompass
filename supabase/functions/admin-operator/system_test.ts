@@ -4,8 +4,11 @@ import {
   handleSystemJobs,
   handleSystemMutation,
   handleSystemStatus,
+  SAFE_SYSTEM_FAILURE_CATEGORIES,
   systemActionHandlers,
 } from "./system.ts";
+import { BENEFIT_FAILURE_CATEGORIES } from "../benefit-enrichment-batch/batch_policy.ts";
+import { CARD_DISCOVERY_REASON_CODES } from "../_shared/card_discovery.ts";
 import { type AdminActionContext, AdminHttpError } from "./types.ts";
 
 type Call = { kind: string; name: string; args: unknown };
@@ -317,6 +320,7 @@ Deno.test("system mutations enforce supported family/status and exact audited RP
   const calls: Call[] = [];
   const result = await handleSystemMutation({
     action: "system-quarantine",
+    operation: "quarantine",
     family: "benefit_enrichment",
     status: "failed",
     target_id: "00000000-0000-4000-8000-000000000010",
@@ -386,6 +390,103 @@ Deno.test("system mutations enforce supported family/status and exact audited RP
     >)._operation,
     "unquarantine",
   );
+});
+
+Deno.test("router mutation bodies enforce one exact action contract", async () => {
+  const base = {
+    family: "benefit_enrichment",
+    status: "failed",
+    target_id: "00000000-0000-4000-8000-000000000010",
+    request_id: "00000000-0000-4000-8000-000000000020",
+    observed_updated_at: "2026-08-19T12:00:00Z",
+  };
+  const retry = systemActionHandlers["system-retry"];
+  const quarantine = systemActionHandlers["system-quarantine"];
+  assertEquals(
+    await retry(
+      { action: "system-retry", ...base },
+      context({
+        rpcData: {
+          admin_card_data_action: {
+            job_id: base.target_id,
+            resulting_status: "queued",
+          },
+        },
+      }),
+    ),
+    { result: { job_id: base.target_id, resulting_status: "queued" } },
+  );
+  await assertRejects(
+    () =>
+      retry({ action: "system-retry", operation: "retry", ...base }, context()),
+    AdminHttpError,
+    "invalid_request",
+  );
+  await assertRejects(
+    () =>
+      retry({ action: "system-retry", operation: null, ...base }, context()),
+    AdminHttpError,
+    "invalid_request",
+  );
+  await assertRejects(
+    () =>
+      quarantine(
+        { action: "system-quarantine", ...base, reason: "bad source" },
+        context(),
+      ),
+    AdminHttpError,
+    "invalid_request",
+  );
+  assertEquals(
+    await quarantine({
+      action: "system-quarantine",
+      operation: "quarantine",
+      ...base,
+      reason: "bad source",
+    }, context()),
+    { result: { job_id: base.target_id, resulting_status: "quarantined" } },
+  );
+});
+
+Deno.test("system failure vocabulary covers every canonical producer code", () => {
+  const exposed = new Set(SAFE_SYSTEM_FAILURE_CATEGORIES);
+  for (
+    const code of [
+      ...BENEFIT_FAILURE_CATEGORIES,
+      ...CARD_DISCOVERY_REASON_CODES,
+    ]
+  ) {
+    assertEquals(exposed.has(code), true, `missing producer code: ${code}`);
+  }
+});
+
+Deno.test("system jobs map unsafe failure details to a stable category", async () => {
+  const adversarial = [
+    "postgres://operator:secret@db.internal/jobs",
+    "https://provider.invalid/result?token=secret",
+    "SQLSTATE 23505 duplicate key provider payload",
+    "sk-live-secret-value",
+  ];
+  for (const failure_category of adversarial) {
+    const output = await handleSystemJobs(
+      { action: "system-jobs", family: "card_discovery" },
+      context({
+        rows: {
+          card_discovery_jobs: [{
+            id: "safe-id",
+            status: "failed",
+            failure_category,
+            attempt_count: 1,
+            next_retry_at: null,
+            updated_at: "2026-08-19T10:00:00Z",
+          }],
+        },
+      }),
+    );
+    assertEquals(output.items[0].failure_category, "unknown_failure");
+    assertEquals(JSON.stringify(output).includes("secret"), false);
+    assertEquals(JSON.stringify(output).includes("provider.invalid"), false);
+  }
 });
 
 Deno.test("system rejects mismatched or malformed mutation receipts", async () => {

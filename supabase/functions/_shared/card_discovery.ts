@@ -26,6 +26,20 @@ export type CardDiscoveryReasonCode =
   | "identity_conflict"
   | "review_required";
 
+export const CARD_DISCOVERY_REASON_CODES = Object.freeze(
+  [
+    "invalid_url",
+    "unapproved_domain",
+    "issuer_mismatch",
+    "not_product_page",
+    "unsafe_redirect",
+    "fetch_timeout",
+    "unsupported_content",
+    "identity_conflict",
+    "review_required",
+  ] as const satisfies readonly CardDiscoveryReasonCode[],
+);
+
 type DiscoveryJobPublicSource = {
   id: string;
   status: string;
@@ -36,17 +50,7 @@ type DiscoveryJobPublicSource = {
 
 export function publicReasonCode(error: unknown): CardDiscoveryReasonCode {
   const message = error instanceof Error ? error.message : String(error);
-  const known: CardDiscoveryReasonCode[] = [
-    "invalid_url",
-    "unapproved_domain",
-    "issuer_mismatch",
-    "not_product_page",
-    "unsafe_redirect",
-    "fetch_timeout",
-    "unsupported_content",
-    "identity_conflict",
-    "review_required",
-  ];
+  const known: readonly CardDiscoveryReasonCode[] = CARD_DISCOVERY_REASON_CODES;
   if (known.includes(message as CardDiscoveryReasonCode)) {
     return message as CardDiscoveryReasonCode;
   }

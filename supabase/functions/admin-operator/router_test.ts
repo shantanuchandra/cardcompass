@@ -112,6 +112,29 @@ Deno.test("gateway rejects unsupported actions with a stable invalid_request cod
   assertEquals(await response.json(), { error: "invalid_request" });
 });
 
+Deno.test("gateway rejects retry with an explicitly present null operation", async () => {
+  const response = await handleAdminOperator(
+    jsonRequest(JSON.stringify({
+      action: "system-retry",
+      operation: null,
+      family: "benefit_enrichment",
+      status: "failed",
+      target_id: "00000000-0000-4000-8000-000000000010",
+      request_id: "00000000-0000-4000-8000-000000000020",
+      observed_updated_at: "2026-08-19T12:00:00Z",
+    })),
+    dependencies({
+      db: {
+        rpc: () => {
+          throw new Error("must not reach rpc");
+        },
+      },
+    }),
+  );
+  assertEquals(response.status, 400);
+  assertEquals(await response.json(), { error: "invalid_request" });
+});
+
 Deno.test("gateway rejects inherited constructor actions without echoing the body", async () => {
   const response = await handleAdminOperator(
     jsonRequest(

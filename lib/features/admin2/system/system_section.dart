@@ -43,6 +43,7 @@ class _SystemSectionState extends State<SystemSection> {
   bool _refreshing = false;
   bool _submitting = false;
   bool _compactDetail = false;
+  int _loadGeneration = 0;
   @override
   void initState() {
     super.initState();
@@ -56,6 +57,9 @@ class _SystemSectionState extends State<SystemSection> {
   }
 
   Future<void> _load({bool initial = false, int? page}) async {
+    final generation = ++_loadGeneration;
+    final requestedFamily = _family;
+    final requestedPage = page ?? _jobs?.page ?? 1;
     setState(() {
       if (initial && _status == null) _loading = true;
       if (_status != null) _refreshing = true;
@@ -64,9 +68,13 @@ class _SystemSectionState extends State<SystemSection> {
     try {
       final results = await Future.wait<Object>([
         widget.repository.status(),
-        widget.repository.jobs(_family, page: page ?? _jobs?.page ?? 1),
+        widget.repository.jobs(requestedFamily, page: requestedPage),
       ]);
-      if (!mounted) return;
+      if (!mounted ||
+          generation != _loadGeneration ||
+          requestedFamily != _family) {
+        return;
+      }
       final jobs = results[1] as SystemJobsPage;
       setState(() {
         _status = results[0] as SystemStatusSnapshot;
@@ -79,8 +87,17 @@ class _SystemSectionState extends State<SystemSection> {
       });
       _focusRequestedControl();
     } catch (error) {
+      if (!mounted ||
+          generation != _loadGeneration ||
+          requestedFamily != _family) {
+        return;
+      }
       await _effects(error);
-      if (!mounted) return;
+      if (!mounted ||
+          generation != _loadGeneration ||
+          requestedFamily != _family) {
+        return;
+      }
       setState(() {
         _error = error;
         _loading = false;
@@ -121,7 +138,7 @@ class _SystemSectionState extends State<SystemSection> {
     required String action,
     bool reasonRequired = false,
   }) async {
-    if (_submitting) return;
+    if (_submitting || _refreshing) return;
     final reason = await showDialog<String>(
       context: context,
       builder: (_) => _SystemConfirmationDialog(
@@ -248,7 +265,7 @@ class _SystemSectionState extends State<SystemSection> {
                       _ControlCard(
                         control: _status!.controls.firstOrNull,
                         unavailable: _status!.controlSourceError != null,
-                        submitting: _submitting,
+                        submitting: _submitting || _refreshing,
                         onAction: _controlAction,
                         focusNode: _controlFocus,
                       ),
@@ -308,7 +325,7 @@ class _SystemSectionState extends State<SystemSection> {
               child: ListTile(
                 minVerticalPadding: 10,
                 contentPadding: EdgeInsets.zero,
-                title: Text(job.failureCategory ?? job.status),
+                title: Text(job.failureCategory?.label ?? job.status),
                 subtitle: Text('${job.status} · ${job.id.substring(0, 8)}'),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => setState(() {
@@ -376,12 +393,12 @@ class _SystemSectionState extends State<SystemSection> {
                 Text('Attempt ${job.attemptCount}'),
                 Text('Updated ${_time(job.updatedAt)}'),
                 if (job.failureCategory != null)
-                  Text('Failure: ${job.failureCategory}'),
+                  Text('Failure: ${job.failureCategory!.label}'),
                 const SizedBox(height: BrandSpacing.lg),
                 if (actions.contains(SystemJobAction.retry))
                   OutlinedButton(
                     key: const Key('system-retry-action'),
-                    onPressed: _submitting
+                    onPressed: _submitting || _refreshing
                         ? null
                         : () => _confirm(
                             (_) => RetrySystemJob(
@@ -399,7 +416,7 @@ class _SystemSectionState extends State<SystemSection> {
                 if (actions.contains(SystemJobAction.unquarantine))
                   FilledButton(
                     key: const Key('system-unquarantine-action'),
-                    onPressed: _submitting
+                    onPressed: _submitting || _refreshing
                         ? null
                         : () => _confirm(
                             (_) => UnquarantineSystemJob(
@@ -417,7 +434,7 @@ class _SystemSectionState extends State<SystemSection> {
                 if (actions.contains(SystemJobAction.quarantine))
                   FilledButton(
                     key: const Key('system-quarantine-action'),
-                    onPressed: _submitting
+                    onPressed: _submitting || _refreshing
                         ? null
                         : () => _confirm(
                             (reason) => QuarantineSystemJob(

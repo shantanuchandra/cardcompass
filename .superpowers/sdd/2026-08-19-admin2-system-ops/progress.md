@@ -2,7 +2,7 @@
 
 - Plan: `docs/superpowers/plans/2026-08-19-admin2-system-ops.md`
 - Base: `e493e5174b56e842dd186815323e836303249dbf`
-- Status: active
+- Status: implementation verified; pending whole-phase review
 
 ## Preflight
 
@@ -20,7 +20,7 @@ Ruling: Carry the prior plan's final adjudication ledger update into the Tasks 1
 - Task 3: implementation complete, pending review — sanitized System gateway
 - Task 4: implementation complete, pending review — typed System workspace
 - Task 5: implementation complete, pending review — paused-pipeline Inbox item and exact System control deep link
-- Task 6: pending — whole-phase verification
+- Task 6: complete — whole-phase verification
 
 ## Tasks 1–2 evidence
 
@@ -123,3 +123,42 @@ Ruling: Count only jobs in the exact `queued` state for the paused-pipeline aler
 - Focused Inbox tests passed 13/13; the full admin-operator gateway passed 66/66; the production gateway entry point passed type checking.
 
 Ruling: Define “queued while scheduled processing is paused” as queued work eligible for the current scheduled worker population, including its run mode, parser generation, and due-time gate. Cost if wrong: deferred retries and non-current parser generations do not appear in this critical count until they become eligible for this scheduler.
+
+## Task 6 verification
+
+- Formatting was stable: Dart formatted 13 files with 0 changes; Deno checked 22 files with 0 changes.
+- Scoped Flutter analysis of the Admin2 System, Inbox, and feature tests passed with no issues. Both production Deno entry points passed type checking through the reviewed root `deno.json` dependency map.
+- Exact repository-wide `flutter analyze` exited 1 only for the same 12 informational diagnostics in unrelated, pre-existing `lib/core/services/*` files; no System-phase file produced a diagnostic.
+- Full Flutter suite: 608 passed, 25 documented opt-in integration skips, 0 failed.
+- Full Node Supabase suite: 39 passed, 2 documented opt-in disposable-PostgreSQL skips, 0 failed.
+- Full Deno Functions suite: 128 passed, 0 failed.
+- `git diff --check` passed. Deno-generated untracked dependency artifacts were removed exactly; the worktree was clean before this documentation-only verification record.
+
+Ruling: Use the root Deno configuration for whole-repository checks because the plan's nested per-function configuration paths do not exist and the reviewed root config pins and resolves the Admin Operator graph. Cost if wrong: a future function-local import-map divergence would need an explicit nested config and a corresponding verification command.
+
+## Whole-phase final review fix
+
+- Unified the job-mutation wire contract: `system-retry` has no redundant operation field, while `system-quarantine` requires the exact `quarantine|unquarantine` discriminator. A registry-through-handler regression now rejects every divergent shape.
+- Replaced arbitrary truncated database failure strings with a closed safe-code mapping. Unknown provider, SQL, URL, credential-like, or future raw values become `unknown_failure`; Dart strictly decodes the same codes and renders operator-safe labels.
+- Corrected the paused Inbox backlog to sum exact, independently validated counts for current-parser scheduled jobs in both `queued` and `failed` states whose retry time is null or due. Any partial or malformed count fails only this source.
+- Added load generations to the System workspace. Only the latest matching family/page request may commit, stale content remains visible during refresh, and mutations are disabled until refresh completion. Completer-driven widget tests prove newest-family and newest-page responses win out of order.
+
+Ruling: Define the mutation wire contract as no `operation` key for `system-retry`, and a required `operation: quarantine|unquarantine` for `system-quarantine`; enforce it in Flutter serialization and the registered gateway handlers. Cost if wrong: an older client that sent redundant retry operations or omitted quarantine operations receives `invalid_request` and must refresh to the current client.
+
+Ruling: Expose only the shared closed failure-category vocabulary and map every unknown or raw database string to `unknown_failure`, with Dart rejecting values outside that vocabulary and rendering fixed human labels. Cost if wrong: newly introduced safe backend reason codes initially lose specificity until deliberately added to both allowlists.
+
+Ruling: Supersede the queued-only paused-backlog rulings with the scheduled worker's exact eligible population: current `benefits-v5`, scheduled mode, due-or-null retry time, and status `queued` or `failed`, counted independently and summed only when both exact counts are safe. Cost if wrong: the Inbox performs one additional head-only count query per refresh, while any partial count failure suppresses this derived alert rather than understating it.
+
+Ruling: Associate every System load with a monotonically increasing generation plus requested family/page, allow navigation requests to supersede one another, and disable mutations while any latest refresh is outstanding. Cost if wrong: rapid navigation can issue redundant bounded reads, but stale responses cannot overwrite the operator's newest context or enable a mutation against a refresh in flight.
+
+## Final-fix residual adjudication
+
+- Exported the canonical benefit and discovery producer vocabularies and added parity coverage proving System exposes every established producer code. Dart now has stable labels for the complete producer set while arbitrary raw strings still collapse to `unknown_failure`.
+- Moved generation/family currency checks ahead of authentication and authorization effects. Completer races prove stale 401 and 403 responses cannot sign out or redirect after a newer successful family load; current errors retain their existing effect coverage.
+- Retry now distinguishes an absent `operation` property from explicit null via `Object.hasOwn`. Both direct handler and full HTTP gateway tests reject explicit null before RPC access.
+
+Ruling: Treat the exported benefit batch and card-discovery reason lists as the canonical producer vocabulary that System must cover, while retaining separately reviewed administrative codes and `unknown_failure`. Cost if wrong: adding a producer code without updating System fails a contract test, intentionally blocking release until a safe operator label is chosen.
+
+Ruling: Apply request currency checks before any irreversible authentication or authorization effect, and again after an awaited effect before committing local error state. Cost if wrong: an auth failure superseded by newer operator navigation is ignored, while a current auth effect that itself triggers navigation cannot subsequently write stale local UI state.
+
+Ruling: Define retry's operation discriminator as structurally absent, not nullish, using an own-property check at the gateway boundary. Cost if wrong: serializers that emit `operation: null` must remove the key rather than relying on null equivalence.

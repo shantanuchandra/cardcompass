@@ -39,7 +39,7 @@ function queryResult(
     | null
     | ((statuses: unknown[] | null) => { message: string } | null),
   calls: QueryCall[],
-  countValue: unknown = 0,
+  countValue: unknown | ((equals: Map<unknown, unknown>) => unknown) = 0,
   countRows?: unknown[],
 ) {
   let statuses: unknown[] | null = null;
@@ -104,7 +104,7 @@ function queryResult(
                 Date.parse(row.next_retry_at) <= Date.parse(cutoff));
           }).length
           : head
-          ? countValue
+          ? typeof countValue === "function" ? countValue(equals) : countValue
           : null,
         error: typeof error === "function" ? error(statuses) : error,
       });
@@ -123,6 +123,7 @@ function context(options: {
   calls?: QueryCall[];
   control?: unknown[];
   queuedCount?: unknown;
+  failedCount?: unknown;
   queuedRows?: unknown[];
   systemError?: { message: string } | null;
 } = {}): AdminActionContext {
@@ -161,7 +162,10 @@ function context(options: {
             },
           calls,
           table === "card_catalog_enrichment_jobs"
-            ? options.queuedCount ?? 0
+            ? (equals: Map<unknown, unknown>) =>
+              equals.get("status") === "failed"
+                ? options.failedCount ?? 0
+                : options.queuedCount ?? 0
             : 0,
           table === "card_catalog_enrichment_jobs"
             ? options.queuedRows
@@ -237,7 +241,65 @@ Deno.test("System count query mirrors the scheduled worker population", async ()
       table: "card_catalog_enrichment_jobs",
       method: "range",
       args: [0, 0],
+    }, {
+      table: "card_catalog_enrichment_jobs",
+      method: "from",
+      args: [],
+    }, {
+      table: "card_catalog_enrichment_jobs",
+      method: "select",
+      args: ["id", { count: "exact", head: true }],
+    }, {
+      table: "card_catalog_enrichment_jobs",
+      method: "eq",
+      args: ["run_mode", "scheduled"],
+    }, {
+      table: "card_catalog_enrichment_jobs",
+      method: "eq",
+      args: ["parser_version", "benefits-v5"],
+    }, {
+      table: "card_catalog_enrichment_jobs",
+      method: "eq",
+      args: ["status", "failed"],
+    }, {
+      table: "card_catalog_enrichment_jobs",
+      method: "or",
+      args: [
+        "next_retry_at.is.null,next_retry_at.lte.2026-08-19T12:00:00.000Z",
+      ],
+    }, {
+      table: "card_catalog_enrichment_jobs",
+      method: "range",
+      args: [0, 0],
     }],
+  );
+});
+
+Deno.test("only failed scheduler-eligible work triggers the paused alert", async () => {
+  const output = await loadSystemInbox(
+    context({
+      control: [{
+        control_key: "benefit_enrichment_scheduled",
+        is_paused: true,
+        updated_at: "2026-08-19T11:30:00Z",
+      }],
+      queuedCount: 0,
+      failedCount: 3,
+    }),
+    NOW,
+  );
+  assertEquals(output.length, 1);
+  assertEquals(
+    output[0].explanation,
+    "3 queued benefit enrichment jobs are waiting while scheduled processing is paused.",
+  );
+});
+
+Deno.test("a malformed failed count fails the entire System inbox source", async () => {
+  await assertRejects(
+    () => loadSystemInbox(context({ failedCount: Number.NaN }), NOW),
+    Error,
+    "source_unavailable",
   );
 });
 
@@ -272,6 +334,12 @@ Deno.test("pilot manual legacy and deferred queued rows neither trigger nor infl
       parser_version: "benefits-v5",
       next_retry_at: "2026-08-20T00:00:00Z",
     },
+    {
+      status: "failed",
+      run_mode: "scheduled",
+      parser_version: "benefits-v5",
+      next_retry_at: "2026-08-20T00:00:00Z",
+    },
   ];
   assertEquals(
     await loadSystemInbox(context({ control, queuedRows: unrelated }), NOW),
@@ -281,19 +349,28 @@ Deno.test("pilot manual legacy and deferred queued rows neither trigger nor infl
   const output = await loadSystemInbox(
     context({
       control,
-      queuedRows: [...unrelated, {
-        status: "queued",
-        run_mode: "scheduled",
-        parser_version: "benefits-v5",
-        next_retry_at: "2026-08-19T11:00:00Z",
-      }],
+      queuedRows: [
+        ...unrelated,
+        {
+          status: "queued",
+          run_mode: "scheduled",
+          parser_version: "benefits-v5",
+          next_retry_at: "2026-08-19T11:00:00Z",
+        },
+        {
+          status: "failed",
+          run_mode: "scheduled",
+          parser_version: "benefits-v5",
+          next_retry_at: null,
+        },
+      ],
     }),
     NOW,
   );
   assertEquals(output.length, 1);
   assertEquals(
     output[0].explanation,
-    "1 queued benefit enrichment job is waiting while scheduled processing is paused.",
+    "2 queued benefit enrichment jobs are waiting while scheduled processing is paused.",
   );
 });
 
@@ -536,7 +613,7 @@ Deno.test("source queries use deterministic created-at then id ordering before b
   ) {
     const tableCalls = calls.filter((call) => call.table === table);
     const ranges = tableCalls.filter((call) => call.method === "range");
-    assertEquals(ranges.length, table === "card_catalog_review_queue" ? 1 : 3);
+    assertEquals(ranges.length, table === "card_catalog_review_queue" ? 1 : 4);
     finalTierRanges:
     for (const range of ranges) {
       const beforeRange = tableCalls.slice(0, tableCalls.indexOf(range));

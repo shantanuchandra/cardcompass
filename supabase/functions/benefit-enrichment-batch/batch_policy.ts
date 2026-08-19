@@ -354,9 +354,8 @@ export function evaluatePilotGate(jobs: readonly PilotJob[]): {
   };
 }
 
-export function safeFailureCategory(error: unknown): string {
-  const value = error instanceof Error ? error.message : "enrichment_failed";
-  const allowed = new Set([
+export const BENEFIT_FAILURE_CATEGORIES = Object.freeze(
+  [
     "not_a_card",
     "ambiguous_product",
     "identity_mismatch",
@@ -368,6 +367,12 @@ export function safeFailureCategory(error: unknown): string {
     "private_address",
     "oversized",
     "timeout",
-  ]);
+    "enrichment_failed",
+  ] as const,
+);
+
+export function safeFailureCategory(error: unknown): string {
+  const value = error instanceof Error ? error.message : "enrichment_failed";
+  const allowed = new Set<string>(BENEFIT_FAILURE_CATEGORIES);
   return allowed.has(value) ? value : "enrichment_failed";
 }

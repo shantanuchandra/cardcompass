@@ -122,6 +122,10 @@ void main() {
       AdminOperatorRepository(api),
     ).jobs(SystemJobFamily.benefitEnrichment, page: 2, status: 'failed');
     expect(page.items.single.attemptCount, 3);
+    expect(
+      page.items.single.failureCategory,
+      SystemFailureCategory.sourceTimeout,
+    );
     expect(page.hasMore, isTrue);
     expect(api.bodies.single, {
       'action': 'system-jobs',
@@ -130,6 +134,69 @@ void main() {
       'limit': 25,
       'status': 'failed',
     });
+  });
+
+  test('accepts only stable failure category codes from the gateway', () async {
+    for (final unsafe in [
+      'postgres://user:secret@db/jobs',
+      'https://provider.invalid?token=secret',
+      'SQLSTATE 23505 raw detail',
+    ]) {
+      final api = _Api([
+        AdminOperatorResponse(200, {
+          'items': [
+            {
+              'id': jobId,
+              'family': 'benefit_enrichment',
+              'status': 'failed',
+              'failure_category': unsafe,
+              'attempt_count': 1,
+              'next_retry_at': null,
+              'updated_at': observed,
+            },
+          ],
+          'page': 1,
+          'limit': 25,
+          'has_more': false,
+        }),
+      ]);
+      await expectLater(
+        SystemRepository(
+          AdminOperatorRepository(api),
+        ).jobs(SystemJobFamily.benefitEnrichment),
+        throwsA(isA<AdminRequestFailed>()),
+      );
+    }
+  });
+
+  test('decodes every producer failure code with a stable label', () {
+    const producerCodes = {
+      'not_a_card',
+      'ambiguous_product',
+      'identity_mismatch',
+      'unapproved_domain',
+      'unsupported_content',
+      'unreachable',
+      'insufficient_evidence',
+      'redirect_rejected',
+      'private_address',
+      'oversized',
+      'timeout',
+      'enrichment_failed',
+      'invalid_url',
+      'issuer_mismatch',
+      'not_product_page',
+      'unsafe_redirect',
+      'fetch_timeout',
+      'identity_conflict',
+      'review_required',
+    };
+    for (final code in producerCodes) {
+      final category = SystemFailureCategory.parse(code);
+      expect(category, isNotNull, reason: code);
+      expect(category!.label, isNotEmpty, reason: code);
+      expect(category.label, isNot(contains('_')), reason: code);
+    }
   });
 
   test('serializes every mutation exactly with a fresh request id', () async {
@@ -181,7 +248,6 @@ void main() {
     );
     expect(api.bodies[0], {
       'action': 'system-retry',
-      'operation': 'retry',
       'family': 'benefit_enrichment',
       'target_id': jobId,
       'status': 'failed',

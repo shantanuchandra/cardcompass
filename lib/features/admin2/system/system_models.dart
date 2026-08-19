@@ -14,6 +14,78 @@ enum SystemJobFamily {
 
 enum SystemJobAction { retry, quarantine, unquarantine }
 
+enum SystemFailureCategory {
+  sourceTimeout('source_timeout', 'Source timeout'),
+  providerTimeout('provider_timeout', 'Provider timeout'),
+  workerResourceLimit('worker_resource_limit', 'Worker resource limit'),
+  manualQuarantine('manual_quarantine', 'Manually quarantined'),
+  manualReview('manual_review', 'Manual review required'),
+  ambiguousIdentity('ambiguous_identity', 'Ambiguous card identity'),
+  fetchFailed('fetch_failed', 'Source fetch failed'),
+  parseFailed('parse_failed', 'Source parsing failed'),
+  validationFailed('validation_failed', 'Validation failed'),
+  rateLimited('rate_limited', 'Provider rate limited'),
+  notACard('not_a_card', 'Page is not a card'),
+  ambiguousProduct('ambiguous_product', 'Ambiguous card product'),
+  identityMismatch('identity_mismatch', 'Card identity mismatch'),
+  unapprovedDomain('unapproved_domain', 'Domain is not approved'),
+  unsupportedContent('unsupported_content', 'Unsupported source content'),
+  unreachable('unreachable', 'Source is unreachable'),
+  insufficientEvidence('insufficient_evidence', 'Insufficient evidence'),
+  redirectRejected('redirect_rejected', 'Source redirect rejected'),
+  privateAddress('private_address', 'Private source address rejected'),
+  oversized('oversized', 'Source content is too large'),
+  timeout('timeout', 'Enrichment timed out'),
+  enrichmentFailed('enrichment_failed', 'Enrichment failed'),
+  invalidUrl('invalid_url', 'Invalid source URL'),
+  issuerMismatch('issuer_mismatch', 'Issuer does not match'),
+  notProductPage('not_product_page', 'Source is not a product page'),
+  unsafeRedirect('unsafe_redirect', 'Unsafe source redirect'),
+  fetchTimeout('fetch_timeout', 'Source fetch timed out'),
+  identityConflict('identity_conflict', 'Card identity conflict'),
+  reviewRequired('review_required', 'Manual review required'),
+  unknownFailure('unknown_failure', 'Unknown failure');
+
+  const SystemFailureCategory(this.wireValue, this.label);
+  final String wireValue;
+  final String label;
+
+  static SystemFailureCategory? parse(Object? value) => switch (value) {
+    null => null,
+    'source_timeout' => sourceTimeout,
+    'provider_timeout' => providerTimeout,
+    'worker_resource_limit' => workerResourceLimit,
+    'manual_quarantine' => manualQuarantine,
+    'manual_review' => manualReview,
+    'ambiguous_identity' => ambiguousIdentity,
+    'fetch_failed' => fetchFailed,
+    'parse_failed' => parseFailed,
+    'validation_failed' => validationFailed,
+    'rate_limited' => rateLimited,
+    'not_a_card' => notACard,
+    'ambiguous_product' => ambiguousProduct,
+    'identity_mismatch' => identityMismatch,
+    'unapproved_domain' => unapprovedDomain,
+    'unsupported_content' => unsupportedContent,
+    'unreachable' => unreachable,
+    'insufficient_evidence' => insufficientEvidence,
+    'redirect_rejected' => redirectRejected,
+    'private_address' => privateAddress,
+    'oversized' => oversized,
+    'timeout' => timeout,
+    'enrichment_failed' => enrichmentFailed,
+    'invalid_url' => invalidUrl,
+    'issuer_mismatch' => issuerMismatch,
+    'not_product_page' => notProductPage,
+    'unsafe_redirect' => unsafeRedirect,
+    'fetch_timeout' => fetchTimeout,
+    'identity_conflict' => identityConflict,
+    'review_required' => reviewRequired,
+    'unknown_failure' => unknownFailure,
+    _ => throw const FormatException('Invalid failure category'),
+  };
+}
+
 abstract final class SystemJobPolicy {
   static Set<SystemJobAction> actionsFor(
     SystemJobFamily family,
@@ -165,7 +237,7 @@ final class SystemJob {
   final String id;
   final SystemJobFamily family;
   final String status;
-  final String? failureCategory;
+  final SystemFailureCategory? failureCategory;
   final int attemptCount;
   final DateTime? nextRetryAt;
   final DateTime updatedAt;
@@ -183,7 +255,7 @@ final class SystemJob {
       id: _string(json['id']),
       family: SystemJobFamily.parse(json['family']),
       status: _string(json['status']),
-      failureCategory: _nullableString(json['failure_category']),
+      failureCategory: SystemFailureCategory.parse(json['failure_category']),
       attemptCount: _count(json['attempt_count']),
       nextRetryAt: _nullableDate(json['next_retry_at']),
       updatedAt: _date(json['updated_at']),

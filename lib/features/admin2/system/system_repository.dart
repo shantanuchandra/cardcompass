@@ -172,7 +172,7 @@ final class SystemRepository {
       return (
         action,
         {
-          'operation': operation,
+          if (action == 'system-quarantine') 'operation': operation,
           'family': job.family.wireValue,
           'target_id': job.targetId,
           'status': job.status,

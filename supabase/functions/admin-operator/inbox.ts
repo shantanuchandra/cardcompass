@@ -248,40 +248,48 @@ export async function loadSystemInbox(
     .select("control_key,is_paused,updated_at")
     .eq("control_key", "benefit_enrichment_scheduled")
     .range(0, 0);
-  const queuedQuery = (context.db as any).from("card_catalog_enrichment_jobs")
-    .select("id", { count: "exact", head: true })
-    .eq("run_mode", "scheduled")
-    .eq("parser_version", SCHEDULED_BENEFIT_PARSER_VERSION)
-    .eq("status", "queued")
-    .or(
-      `next_retry_at.is.null,next_retry_at.lte.${
-        new Date(nowMs).toISOString()
-      }`,
-    )
-    .range(0, 0);
-  const [controlResult, queuedResult] = await Promise.all([
+  const eligibleCount = (status: "queued" | "failed") =>
+    (context.db as any).from("card_catalog_enrichment_jobs")
+      .select("id", { count: "exact", head: true })
+      .eq("run_mode", "scheduled")
+      .eq("parser_version", SCHEDULED_BENEFIT_PARSER_VERSION)
+      .eq("status", status)
+      .or(
+        `next_retry_at.is.null,next_retry_at.lte.${
+          new Date(nowMs).toISOString()
+        }`,
+      )
+      .range(0, 0);
+  const [controlResult, queuedResult, failedResult] = await Promise.all([
     controlQuery,
-    queuedQuery,
+    eligibleCount("queued"),
+    eligibleCount("failed"),
   ]);
-  if (controlResult.error || queuedResult.error) sourceFailure();
+  if (controlResult.error || queuedResult.error || failedResult.error) {
+    sourceFailure();
+  }
   if (!Array.isArray(controlResult.data) || controlResult.data.length !== 1) {
     sourceFailure();
   }
   const control = record(controlResult.data[0]);
   const queued = queuedResult.count;
+  const failed = failedResult.count;
   if (
     control?.control_key !== "benefit_enrichment_scheduled" ||
     typeof control.is_paused !== "boolean" ||
     !validTimestamp(control.updated_at) ||
-    !Number.isSafeInteger(queued) || queued < 0
+    !Number.isSafeInteger(queued) || queued < 0 ||
+    !Number.isSafeInteger(failed) || failed < 0 ||
+    !Number.isSafeInteger(queued + failed)
   ) sourceFailure();
-  if (!control.is_paused || queued === 0) return [];
+  const backlog = queued + failed;
+  if (!control.is_paused || backlog === 0) return [];
 
-  const displayCount = Math.min(queued, 999_999);
+  const displayCount = Math.min(backlog, 999_999);
   const countLabel = `${displayCount.toLocaleString("en-US")}${
-    queued > displayCount ? "+" : ""
+    backlog > displayCount ? "+" : ""
   }`;
-  const queueNoun = queued === 1 ? "job is" : "jobs are";
+  const queueNoun = backlog === 1 ? "job is" : "jobs are";
   return [{
     id: "system:benefit_enrichment_scheduled:paused",
     type: "paused_pipeline",

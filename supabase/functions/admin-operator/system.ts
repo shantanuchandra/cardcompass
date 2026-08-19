@@ -40,6 +40,42 @@ const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_LIMIT = 50;
 const MAX_PAGE = 10_000;
+export const SAFE_SYSTEM_FAILURE_CATEGORIES = Object.freeze(
+  [
+    "source_timeout",
+    "provider_timeout",
+    "worker_resource_limit",
+    "manual_quarantine",
+    "manual_review",
+    "ambiguous_identity",
+    "fetch_failed",
+    "parse_failed",
+    "validation_failed",
+    "rate_limited",
+    "not_a_card",
+    "ambiguous_product",
+    "identity_mismatch",
+    "unapproved_domain",
+    "unsupported_content",
+    "unreachable",
+    "insufficient_evidence",
+    "redirect_rejected",
+    "private_address",
+    "oversized",
+    "timeout",
+    "enrichment_failed",
+    "invalid_url",
+    "issuer_mismatch",
+    "not_product_page",
+    "unsafe_redirect",
+    "fetch_timeout",
+    "identity_conflict",
+    "review_required",
+  ] as const,
+);
+const safeFailureCategories = new Set<string>(
+  SAFE_SYSTEM_FAILURE_CATEGORIES,
+);
 const statuses: Readonly<Record<JobFamily, ReadonlySet<string>>> = Object
   .freeze({
     benefit_enrichment: new Set([
@@ -306,9 +342,12 @@ function presentJob(
     id: row.id,
     family: selectedFamily,
     status: row.status,
-    failure_category: typeof row.failure_category === "string"
-      ? row.failure_category.slice(0, 80)
-      : null,
+    failure_category: row.failure_category == null
+      ? null
+      : typeof row.failure_category === "string" &&
+          safeFailureCategories.has(row.failure_category)
+      ? row.failure_category
+      : "unknown_failure",
     attempt_count: typeof row.attempt_count === "number" &&
         Number.isSafeInteger(row.attempt_count) && row.attempt_count >= 0
       ? row.attempt_count
@@ -381,11 +420,13 @@ export async function handleSystemMutation(
   );
   if (family(body.family) !== "benefit_enrichment") invalidRequest();
   let operation: "retry" | "quarantine" | "unquarantine";
-  if (body.action === "system-retry" && body.operation == null) {
+  if (
+    body.action === "system-retry" && !Object.hasOwn(body, "operation")
+  ) {
     operation = "retry";
   } else if (
     body.action === "system-quarantine" &&
-    (body.operation == null || body.operation === "quarantine" ||
+    (body.operation === "quarantine" ||
       body.operation === "unquarantine")
   ) {
     operation = body.operation === "unquarantine"

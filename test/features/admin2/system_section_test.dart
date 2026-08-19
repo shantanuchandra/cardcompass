@@ -13,6 +13,7 @@ final class _Source implements SystemDataSource {
   Object? nextStatusError;
   Object? mutationError;
   bool controlUnavailable = false;
+  SystemFailureCategory failureCategory = SystemFailureCategory.sourceTimeout;
   Completer<void>? mutationGate;
   @override
   Future<SystemStatusSnapshot> status() async {
@@ -73,7 +74,7 @@ final class _Source implements SystemDataSource {
                 id: '22222222-2222-4222-8222-222222222222',
                 family: SystemJobFamily.benefitEnrichment,
                 status: 'failed',
-                failureCategory: 'source_timeout',
+                failureCategory: failureCategory,
                 attemptCount: 3,
                 nextRetryAt: null,
                 updatedAt: DateTime.utc(2026, 8, 19, 9),
@@ -84,7 +85,7 @@ final class _Source implements SystemDataSource {
                 id: '33333333-3333-4333-8333-333333333333',
                 family: SystemJobFamily.cardDiscovery,
                 status: 'failed',
-                failureCategory: 'source_timeout',
+                failureCategory: failureCategory,
                 attemptCount: 2,
                 nextRetryAt: null,
                 updatedAt: DateTime.utc(2026, 8, 19, 9),
@@ -103,6 +104,100 @@ final class _Source implements SystemDataSource {
     await mutationGate?.future;
   }
 }
+
+final class _PendingJobs {
+  _PendingJobs(this.family, this.page);
+  final SystemJobFamily family;
+  final int page;
+  final completer = Completer<SystemJobsPage>();
+}
+
+final class _RacingSource implements SystemDataSource {
+  final pending = <_PendingJobs>[];
+  var statusCalls = 0;
+
+  @override
+  Future<SystemStatusSnapshot> status() async {
+    statusCalls++;
+    return SystemStatusSnapshot(
+      pipelines: const [],
+      controls: const [],
+      controlSourceError: SystemSourceError.sourceUnavailable,
+      refreshedAt: DateTime.utc(2026, 8, 19, 10, statusCalls),
+    );
+  }
+
+  @override
+  Future<SystemJobsPage> jobs(
+    SystemJobFamily family, {
+    int page = 1,
+    int limit = 25,
+    String? status,
+  }) {
+    final request = _PendingJobs(family, page);
+    pending.add(request);
+    return request.completer.future;
+  }
+
+  @override
+  Future<void> mutate(SystemMutation mutation) async {}
+}
+
+final class _EffectRacingSource implements SystemDataSource {
+  final pendingStatus = <Completer<SystemStatusSnapshot>>[];
+
+  @override
+  Future<SystemStatusSnapshot> status() {
+    final completer = Completer<SystemStatusSnapshot>();
+    pendingStatus.add(completer);
+    return completer.future;
+  }
+
+  @override
+  Future<SystemJobsPage> jobs(
+    SystemJobFamily family, {
+    int page = 1,
+    int limit = 25,
+    String? status,
+  }) async =>
+      SystemJobsPage(items: const [], page: page, limit: limit, hasMore: false);
+
+  @override
+  Future<void> mutate(SystemMutation mutation) async {}
+}
+
+SystemStatusSnapshot _raceStatus(int minute) => SystemStatusSnapshot(
+  pipelines: const [],
+  controls: const [],
+  controlSourceError: SystemSourceError.sourceUnavailable,
+  refreshedAt: DateTime.utc(2026, 8, 19, 10, minute),
+);
+
+SystemJobsPage _racePage(
+  SystemJobFamily family,
+  int page,
+  String category, {
+  bool hasMore = true,
+}) => SystemJobsPage(
+  items: [
+    SystemJob(
+      id: family == SystemJobFamily.benefitEnrichment
+          ? '22222222-2222-4222-8222-222222222222'
+          : '33333333-3333-4333-8333-333333333333',
+      family: family,
+      status: 'failed',
+      failureCategory: SystemFailureCategory.values.firstWhere(
+        (value) => value.wireValue == category,
+      ),
+      attemptCount: page,
+      nextRetryAt: null,
+      updatedAt: DateTime.utc(2026, 8, 19, 9, page),
+    ),
+  ],
+  page: page,
+  limit: 25,
+  hasMore: hasMore,
+);
 
 Future<void> _pump(
   WidgetTester tester,
@@ -139,7 +234,19 @@ void main() {
     expect(find.text('2 failed'), findsOneWidget);
     expect(find.text('Health unavailable'), findsOneWidget);
     expect(find.textContaining('Refreshed'), findsOneWidget);
-    expect(find.text('source_timeout'), findsOneWidget);
+    expect(find.text('Source timeout'), findsOneWidget);
+  });
+
+  testWidgets('renders producer failure codes as fixed operator labels', (
+    tester,
+  ) async {
+    final source = _Source()..failureCategory = SystemFailureCategory.timeout;
+    await _pump(tester, source);
+    expect(find.text('Enrichment timed out'), findsOneWidget);
+    source.failureCategory = SystemFailureCategory.identityConflict;
+    await tester.tap(find.text('Card discovery').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Card identity conflict'), findsOneWidget);
   });
 
   testWidgets('compact view drills from jobs into a detail surface', (
@@ -148,8 +255,8 @@ void main() {
     final source = _Source();
     await _pump(tester, source, size: const Size(390, 844));
     expect(find.byKey(const Key('system-compact-layout')), findsOneWidget);
-    await tester.ensureVisible(find.text('source_timeout'));
-    await tester.tap(find.text('source_timeout'));
+    await tester.ensureVisible(find.text('Source timeout'));
+    await tester.tap(find.text('Source timeout'));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('system-job-detail')), findsOneWidget);
     expect(find.text('Attempt 3'), findsOneWidget);
@@ -211,8 +318,8 @@ void main() {
     (tester) async {
       final source = _Source();
       await _pump(tester, source);
-      await tester.ensureVisible(find.text('source_timeout'));
-      await tester.tap(find.text('source_timeout'));
+      await tester.ensureVisible(find.text('Source timeout'));
+      await tester.tap(find.text('Source timeout'));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('system-quarantine-action')));
       await tester.pumpAndSettle();
@@ -245,8 +352,8 @@ void main() {
   ) async {
     final source = _Source()..mutationError = AdminStateConflict();
     await _pump(tester, source);
-    await tester.ensureVisible(find.text('source_timeout'));
-    await tester.tap(find.text('source_timeout'));
+    await tester.ensureVisible(find.text('Source timeout'));
+    await tester.tap(find.text('Source timeout'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('system-retry-action')));
     await tester.pumpAndSettle();
@@ -275,10 +382,119 @@ void main() {
     await _pump(tester, source);
     await tester.tap(find.text('Card discovery').last);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('source_timeout'));
+    await tester.tap(find.text('Source timeout'));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('system-retry-action')), findsNothing);
     expect(find.byKey(const Key('system-quarantine-action')), findsNothing);
     expect(find.byKey(const Key('system-unquarantine-action')), findsNothing);
   });
+
+  testWidgets('newest family request wins when responses arrive out of order', (
+    tester,
+  ) async {
+    final source = _RacingSource();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.work,
+        home: Scaffold(body: SystemSection(repository: source)),
+      ),
+    );
+    await tester.pump();
+    source.pending.single.completer.complete(
+      _racePage(SystemJobFamily.benefitEnrichment, 1, 'source_timeout'),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Card discovery').last);
+    await tester.pump();
+    await tester.tap(find.text('Benefit enrichment').last);
+    await tester.pump();
+    final discovery = source.pending[1];
+    final benefit = source.pending[2];
+    benefit.completer.complete(
+      _racePage(SystemJobFamily.benefitEnrichment, 1, 'manual_review'),
+    );
+    await tester.pumpAndSettle();
+    discovery.completer.complete(
+      _racePage(SystemJobFamily.cardDiscovery, 1, 'provider_timeout'),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Manual review required'), findsOneWidget);
+    expect(find.text('Provider timeout'), findsNothing);
+  });
+
+  testWidgets('newest pagination request wins when responses race', (
+    tester,
+  ) async {
+    final source = _RacingSource();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.work,
+        home: Scaffold(body: SystemSection(repository: source)),
+      ),
+    );
+    await tester.pump();
+    source.pending.single.completer.complete(
+      _racePage(SystemJobFamily.benefitEnrichment, 2, 'source_timeout'),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Previous page'));
+    await tester.pump();
+    await tester.tap(find.byTooltip('Next page'));
+    await tester.pump();
+    final previous = source.pending[1];
+    final next = source.pending[2];
+    next.completer.complete(
+      _racePage(SystemJobFamily.benefitEnrichment, 3, 'manual_review'),
+    );
+    await tester.pumpAndSettle();
+    previous.completer.complete(
+      _racePage(SystemJobFamily.benefitEnrichment, 1, 'provider_timeout'),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Page 3'), findsOneWidget);
+    expect(find.text('Manual review required'), findsOneWidget);
+    expect(find.text('Provider timeout'), findsNothing);
+  });
+
+  for (final staleError in [
+    AdminAuthenticationRequired(),
+    AdminAccessDenied(),
+  ]) {
+    testWidgets(
+      'stale ${staleError.runtimeType} cannot trigger access effects',
+      (tester) async {
+        var authCalls = 0;
+        var deniedCalls = 0;
+        final source = _EffectRacingSource();
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: AppTheme.work,
+            home: Scaffold(
+              body: SystemSection(
+                repository: source,
+                onAuthenticationRequired: () async => authCalls++,
+                onAccessDenied: () => deniedCalls++,
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        source.pendingStatus[0].complete(_raceStatus(1));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.byKey(const Key('system-refresh')));
+        await tester.pump();
+        await tester.tap(find.text('Card discovery').last);
+        await tester.pump();
+        source.pendingStatus[2].complete(_raceStatus(3));
+        await tester.pumpAndSettle();
+        source.pendingStatus[1].completeError(staleError);
+        await tester.pumpAndSettle();
+        expect(authCalls, 0);
+        expect(deniedCalls, 0);
+        expect(find.textContaining('Refreshed'), findsOneWidget);
+      },
+    );
+  }
 }
