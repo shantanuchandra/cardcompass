@@ -1,14 +1,23 @@
 import {
+  applyRemovalPolicy,
+  buildCrawlObservation,
+  claimLimitForInvocation,
+  computeSourceManifestHash,
   currentBenefitProposal,
   initializePilotJobs,
   loadCatalogIdentity,
+  networkWorkMayStart,
+  rawOnlyNextRunAt,
+  readCompleteAbsenceHistory,
   readPilotStatus,
   requireExactCatalogIdentity,
   seedScheduledQueueIfAllowed,
+  shouldStageMaterialProposal,
 } from "./index.ts";
 import {
   diffBenefits,
   extractGroundedBenefits,
+  extractGroundedBenefitsV6,
 } from "../_shared/benefit_enrichment.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -34,6 +43,23 @@ Deno.test("pilot API refuses catalog-v1 before selecting or writing jobs", async
     "reserved parser was not rejected at the pilot API boundary",
   );
   assert(rpcCalls === 0, "rejected parser reached the pilot RPC");
+});
+
+Deno.test("every scheduled, pilot, and manual invocation claims only one card", () => {
+  for (const mode of ["scheduled", "pilot", "manual"] as const) {
+    assert(
+      claimLimitForInvocation(mode) === 1,
+      `${mode} invocation claimed a batch`,
+    );
+  }
+});
+
+Deno.test("new network work stops at the 180-second invocation deadline", () => {
+  assert(networkWorkMayStart(1_000, 180_999), "work stopped before deadline");
+  assert(
+    !networkWorkMayStart(1_000, 181_000),
+    "work started at the deadline",
+  );
 });
 
 Deno.test("pilot API defaults to the current movie-capable parser lane", async () => {
@@ -68,7 +94,7 @@ Deno.test("pilot API defaults to the current movie-capable parser lane", async (
 
   await initializePilotJobs(db, candidates);
 
-  assert(parserVersion === "benefits-v5", "pilot defaulted to a stale parser");
+  assert(parserVersion === "benefits-v6", "pilot defaulted to a stale parser");
 });
 
 Deno.test("pilot API rejects a different benefit parser generation", async () => {
@@ -121,6 +147,52 @@ Deno.test("approved movie config and partners survive the next enrichment compar
     proposal?.partners?.join(",") === "BookMyShow",
     "approved partners were dropped before diffing",
   );
+});
+
+Deno.test("approved v6 identifiers and canonical exclusion terms survive comparison", () => {
+  const dedupeKey = "card-benefit-v2:card-1:cashback";
+  const proposal = currentBenefitProposal({
+    dedupe_key: dedupeKey,
+    title: "10% cashback",
+    exclusions: {
+      additional: { source_terms: ["fuel", "wallet reloads"] },
+      categories: [],
+    },
+  });
+
+  assert(proposal?.benefitId === dedupeKey, "card-scoped identifier was lost");
+  assert(
+    proposal?.exclusions.join(",") === "fuel,wallet reloads",
+    "canonical exclusion source terms were lost",
+  );
+});
+
+Deno.test("an identical approved v6 exclusion object remains unchanged", async () => {
+  const [proposed] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback, excluding fuel.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const current = currentBenefitProposal({
+    dedupe_key: proposed.dedupeKey,
+    title: proposed.title,
+    description: proposed.description,
+    benefit_category: proposed.category,
+    benefit_type: proposed.valueType,
+    value_config: proposed.valueConfig,
+    partners: proposed.partners,
+    exclusions: proposed.exclusions,
+    source_url: proposed.sourceUrl,
+  });
+  assert(current != null, "approved v6 proposal was not reconstructed");
+
+  const diff = diffBenefits([current], [proposed]);
+  assert(diff.unchanged.length === 1, "identical v6 exclusions looked changed");
+  assert(diff.conflicts.length === 0, "identical v6 exclusions conflicted");
 });
 
 for (
@@ -178,6 +250,7 @@ Deno.test("pilot gate evaluates only the current parser lane", async () => {
     "benefits-v3",
     "benefits-v4",
     "benefits-v5",
+    "benefits-v6",
   ]
     .flatMap((parserVersion) =>
       Array.from({ length: 5 }, (_, index) => ({
@@ -220,7 +293,7 @@ Deno.test("pilot gate evaluates only the current parser lane", async () => {
   const gate = await readPilotStatus(db);
 
   assert(
-    filters.get("parser_version") === "benefits-v5",
+    filters.get("parser_version") === "benefits-v6",
     "pilot gate mixed parser generations",
   );
   assert(
@@ -531,7 +604,7 @@ Deno.test("passed scheduled orchestration seeds an empty queue across bounded ca
   );
   assert(db.jobs.size === 3, "empty scheduled lane was not populated");
   const row = db.jobs.get(
-    "card-valid:a9681b52e7105d3d3540076b1705c9d446e1171de165973e833940f671eedadf:benefits-v5",
+    "card-valid:a9681b52e7105d3d3540076b1705c9d446e1171de165973e833940f671eedadf:benefits-v6",
   );
   assert(
     row?.canonical_url ===
@@ -543,7 +616,7 @@ Deno.test("passed scheduled orchestration seeds an empty queue across bounded ca
       "a9681b52e7105d3d3540076b1705c9d446e1171de165973e833940f671eedadf",
     "URL hash changed",
   );
-  assert(row?.parser_version === "benefits-v5", "wrong parser lane");
+  assert(row?.parser_version === "benefits-v6", "wrong parser lane");
   assert(row?.run_mode === "scheduled", "wrong run mode");
   assert(row?.status === "queued", "new inventory was not queued");
   assert(row?.content_hash === null, "unfetched content was fabricated");
@@ -594,27 +667,27 @@ Deno.test("scheduled seeding skips pilot conflicts and preserves processing and 
   const initial = [
     {
       id: "pilot-job",
-      job_key: `card-valid:${urlHash}:benefits-v5`,
+      job_key: `card-valid:${urlHash}:benefits-v6`,
       card_id: "card-valid",
-      parser_version: "benefits-v5",
+      parser_version: "benefits-v6",
       run_mode: "pilot",
       status: "completed",
       result_summary: { pilot: true },
     },
     {
       id: "processing-job",
-      job_key: `card-processing:${urlHash}:benefits-v5`,
+      job_key: `card-processing:${urlHash}:benefits-v6`,
       card_id: "card-processing",
-      parser_version: "benefits-v5",
+      parser_version: "benefits-v6",
       run_mode: "scheduled",
       status: "processing",
       lease_token: "lease-1",
     },
     {
       id: "terminal-job",
-      job_key: `card-terminal:${urlHash}:benefits-v5`,
+      job_key: `card-terminal:${urlHash}:benefits-v6`,
       card_id: "card-terminal",
-      parser_version: "benefits-v5",
+      parser_version: "benefits-v6",
       run_mode: "scheduled",
       status: "review_required",
       failure_category: "manual_review",
@@ -639,8 +712,8 @@ Deno.test("scheduled seeding excludes pilot card and parser identity despite cos
   const pilot = {
     id: "pilot-cosmetic-url",
     card_id: "card-valid",
-    parser_version: "benefits-v5",
-    job_key: `card-valid:${"f".repeat(64)}:benefits-v5`,
+    parser_version: "benefits-v6",
+    job_key: `card-valid:${"f".repeat(64)}:benefits-v6`,
     run_mode: "pilot",
     status: "completed",
   };
@@ -666,3 +739,424 @@ Deno.test("scheduled inventory is not read until the pilot gate passes", async (
   assert(db.catalogReads === 0, "catalog was read before the scheduled gate");
   assert(db.jobs.size === 0, "queue was written before the scheduled gate");
 });
+
+Deno.test("incomplete observations suppress every possible removal and preserve sorted absence IDs", () => {
+  const removals = [
+    {
+      benefit: {
+        ...currentBenefitProposal({
+          dedupe_key: "legacy:zeta",
+          title: "Zeta cashback",
+        })!,
+        benefitId: "card-benefit-v2:card-1:zeta",
+      },
+      informational: true as const,
+    },
+    {
+      benefit: {
+        ...currentBenefitProposal({
+          dedupe_key: "legacy:alpha",
+          title: "Alpha cashback",
+        })!,
+        benefitId: "card-benefit-v2:card-1:alpha",
+      },
+      informational: true as const,
+    },
+  ];
+  const result = applyRemovalPolicy({
+    possibleRemovals: removals,
+    crawlComplete: false,
+    observedAt: "2026-08-19T00:00:00.000Z",
+    completeAbsenceHistory: {},
+  });
+
+  assert(result.possibleRemovals.length === 0, "incomplete removals survived");
+  assert(result.suppressedRemovalCount === 2, "suppressed count was lost");
+  assert(
+    result.absentBenefitIds.join(",") ===
+      "card-benefit-v2:card-1:alpha,card-benefit-v2:card-1:zeta",
+    "card-scoped absence IDs were not sorted",
+  );
+  assert(
+    result.absentLegacyBenefitIds.join(",") === "legacy:alpha,legacy:zeta",
+    "legacy absence IDs were not sorted",
+  );
+});
+
+Deno.test("a removal becomes eligible only after a prior complete observation seven days earlier", () => {
+  const removal = {
+    benefit: {
+      ...currentBenefitProposal({ dedupe_key: "legacy:cashback" })!,
+      benefitId: "card-benefit-v2:card-1:cashback",
+    },
+    informational: true as const,
+  };
+  const first = applyRemovalPolicy({
+    possibleRemovals: [removal],
+    crawlComplete: true,
+    observedAt: "2026-08-19T00:00:00.000Z",
+    completeAbsenceHistory: {},
+  });
+  const corroborated = applyRemovalPolicy({
+    possibleRemovals: [removal],
+    crawlComplete: true,
+    observedAt: "2026-08-19T00:00:00.000Z",
+    completeAbsenceHistory: {
+      "card-benefit-v2:card-1:cashback": ["2026-08-12T00:00:00.000Z"],
+    },
+  });
+
+  assert(
+    first.possibleRemovals[0].retirementEligible === false,
+    "first complete absence became retirement eligible",
+  );
+  assert(
+    corroborated.possibleRemovals[0].retirementEligible === true,
+    "seven-day corroborated absence stayed ineligible",
+  );
+});
+
+Deno.test("same-card v6 observation history is bounded and ignores other identifiers", async () => {
+  const filters = new Map<string, unknown>();
+  let limit = 0;
+  let stagingLimit = 0;
+  let stagingIds: string[] = [];
+  const rows = [{
+    id: "prior",
+    card_id: "card-1",
+    parser_version: "benefits-v6",
+    staging_id: "stage-1",
+    result_summary: {
+      observation: {
+        observed_at: "2026-08-12T00:00:00.000Z",
+        crawl_complete: true,
+        absent_benefit_ids: ["card-benefit-v2:card-1:cashback", "other"],
+        absent_legacy_benefit_ids: ["legacy:cashback"],
+      },
+    },
+  }];
+  const db = {
+    from(table: string) {
+      if (table === "card_benefits_staging") {
+        return {
+          select() {
+            return this;
+          },
+          eq(column: string, value: unknown) {
+            filters.set(`staging:${column}`, value);
+            return this;
+          },
+          in(_column: string, values: string[]) {
+            stagingIds = values;
+            return this;
+          },
+          limit(value: number) {
+            stagingLimit = value;
+            return Promise.resolve({
+              data: [{
+                id: "stage-1",
+                card_id: "card-1",
+                parser_version: "benefits-v6",
+                status: "pending",
+                extracted_data: {
+                  request_type: "official_benefit_enrichment",
+                  parser_version: "benefits-v6",
+                },
+              }],
+              error: null,
+            });
+          },
+        };
+      }
+      assert(
+        table === "card_catalog_enrichment_jobs",
+        "unexpected history table",
+      );
+      return {
+        select() {
+          return this;
+        },
+        eq(column: string, value: unknown) {
+          filters.set(column, value);
+          return this;
+        },
+        order() {
+          return this;
+        },
+        limit(value: number) {
+          limit = value;
+          return Promise.resolve({ data: rows, error: null });
+        },
+      };
+    },
+  };
+
+  const history = await readCompleteAbsenceHistory(db, "card-1", [
+    "card-benefit-v2:card-1:cashback",
+    "legacy:cashback",
+  ]);
+
+  assert(filters.get("card_id") === "card-1", "history crossed cards");
+  assert(
+    filters.get("parser_version") === "benefits-v6",
+    "history crossed parser lanes",
+  );
+  assert(limit === 24, "history query was not bounded to 24 observations");
+  assert(
+    filters.get("staging:card_id") === "card-1",
+    "staging audit crossed cards",
+  );
+  assert(
+    filters.get("staging:parser_version") === "benefits-v6",
+    "staging audit crossed parser lanes",
+  );
+  assert(
+    stagingIds.join(",") === "stage-1",
+    "unbounded staging identities were queried",
+  );
+  assert(stagingLimit === 24, "staging corroboration was not bounded");
+  assert(
+    history["card-benefit-v2:card-1:cashback"]?.length === 1,
+    "card-scoped history was lost",
+  );
+  assert(history["legacy:cashback"]?.length === 1, "legacy history was lost");
+  assert(
+    history.other === undefined,
+    "unrequested absence identifier leaked in",
+  );
+});
+
+Deno.test("crawl observation retains bounded attempts and both hashes without raw bodies", () => {
+  const observation = buildCrawlObservation({
+    observedAt: "2026-08-19T00:00:00.000Z",
+    crawlComplete: true,
+    crawlReason: "complete",
+    sourceManifestHash: "a".repeat(64),
+    canonicalBenefitHash: "b".repeat(64),
+    absentBenefitIds: ["z", "a"],
+    absentLegacyBenefitIds: ["legacy-z", "legacy-a"],
+    attempts: [{
+      url: "https://issuer.example/card",
+      role: "primary",
+      status: "success",
+      httpStatus: 200,
+      contentHash: "c".repeat(64),
+      attemptedAt: "2026-08-19T00:00:00.000Z",
+    }],
+  });
+
+  assert(
+    observation.absent_benefit_ids.join(",") === "a,z",
+    "absence IDs were not sorted",
+  );
+  assert(
+    observation.absent_legacy_benefit_ids.join(",") === "legacy-a,legacy-z",
+    "legacy IDs were not sorted",
+  );
+  assert(
+    observation.source_manifest_hash === "a".repeat(64),
+    "raw manifest hash was lost",
+  );
+  assert(
+    observation.canonical_benefit_hash === "b".repeat(64),
+    "canonical hash was lost",
+  );
+  assert(
+    !JSON.stringify(observation).includes("body"),
+    "raw body field was persisted",
+  );
+});
+
+Deno.test("source manifest hash covers bounded success and failure outcomes", async () => {
+  const baseline = await computeSourceManifestHash([{
+    url: "https://issuer.example/card?credential=secret",
+    role: "primary",
+    status: "success",
+    httpStatus: 200,
+    contentHash: "a".repeat(64),
+    attemptedAt: "2026-08-19T00:00:00.000Z",
+  }, {
+    url: "https://issuer.example/terms.pdf",
+    role: "required_supporting",
+    status: "failed",
+    errorCode: "http_404",
+    attemptedAt: "2026-08-19T00:00:00.000Z",
+  }]);
+  const laterTimestamp = await computeSourceManifestHash([{
+    url: "https://issuer.example/card",
+    role: "primary",
+    status: "success",
+    httpStatus: 200,
+    contentHash: "a".repeat(64),
+    attemptedAt: "2026-08-20T00:00:00.000Z",
+  }, {
+    url: "https://issuer.example/terms.pdf",
+    role: "required_supporting",
+    status: "failed",
+    errorCode: "http_404",
+    attemptedAt: "2026-08-20T00:00:00.000Z",
+  }]);
+  const recovered = await computeSourceManifestHash([{
+    url: "https://issuer.example/card",
+    role: "primary",
+    status: "success",
+    httpStatus: 200,
+    contentHash: "a".repeat(64),
+    attemptedAt: "2026-08-20T00:00:00.000Z",
+  }, {
+    url: "https://issuer.example/terms.pdf",
+    role: "required_supporting",
+    status: "success",
+    httpStatus: 200,
+    contentHash: "b".repeat(64),
+    attemptedAt: "2026-08-20T00:00:00.000Z",
+  }]);
+
+  assert(
+    baseline === laterTimestamp,
+    "retrieval time destabilized the manifest",
+  );
+  assert(baseline !== recovered, "a supporting-source outcome was omitted");
+});
+
+Deno.test("a raw-only source change does not create a material proposal", () => {
+  assert(
+    !shouldStageMaterialProposal("canonical-1", "canonical-1", "stage-1"),
+    "same canonical benefits created a new proposal",
+  );
+  assert(
+    shouldStageMaterialProposal("canonical-1", "canonical-2", "stage-1"),
+    "canonical benefit change was not material",
+  );
+  assert(
+    shouldStageMaterialProposal("canonical-1", "canonical-1", null),
+    "missing prior staging link was treated as reusable",
+  );
+  assert(
+    rawOnlyNextRunAt("2026-08-19T00:00:00.000Z") ===
+      "2026-09-18T00:00:00.000Z",
+    "raw-only retrieval did not advance the due date by 30 days",
+  );
+});
+
+Deno.test("v5 keeps divergent source terms as separate legacy additions", () => {
+  const shared = {
+    title: "Dining cashback",
+    description: "Dining cashback",
+    category: "dining",
+    valueType: "percentage",
+    value: 10,
+    rate: 10,
+    cap: 500,
+    frequency: "monthly",
+    period: "statement_month",
+    valueConfig: {},
+    partners: [],
+    restrictions: [],
+    effectiveFrom: undefined,
+    effectiveTo: undefined,
+    confidence: { value: 1 },
+    evidence: { value: "10%" },
+    warnings: [],
+  };
+  const diff = diffBenefits([], [{
+    ...shared,
+    dedupeKey: "legacy:fuel",
+    exclusions: ["fuel"],
+    sourceUrl: "https://issuer.example/card",
+    sourceExcerpt: "10% cashback excluding fuel",
+    contentHash: "a".repeat(64),
+    parserVersion: "benefits-v5",
+  }, {
+    ...shared,
+    dedupeKey: "legacy:wallets",
+    exclusions: ["wallet reloads"],
+    sourceUrl: "https://issuer.example/terms.pdf",
+    sourceExcerpt: "10% cashback excluding wallet reloads",
+    contentHash: "b".repeat(64),
+    parserVersion: "benefits-v5",
+  }]);
+
+  assert(diff.additions.length === 2, "v5 additions changed semantics");
+  assert(diff.conflicts.length === 0, "v5 gained a v6 conflict rule");
+});
+
+for (
+  const fixture of [
+    {
+      label: "cap",
+      first:
+        "Get 10% cashback on dining spends, capped at ₹500 per statement month.",
+      second:
+        "Get 10% cashback on dining spends, capped at ₹600 per statement month.",
+    },
+    {
+      label: "rate",
+      first:
+        "Get 10% cashback on dining spends, capped at ₹500 per statement month.",
+      second:
+        "Get 15% cashback on dining spends, capped at ₹500 per statement month.",
+    },
+    {
+      label: "threshold",
+      first: "Earn 10 reward points for every Rs. 100 spent on dining.",
+      second: "Earn 10 reward points for every Rs. 200 spent on dining.",
+    },
+    {
+      label: "validity",
+      first: "Get 2 lounge visits per quarter, valid until 31 December 2026.",
+      second: "Get 2 lounge visits per quarter, valid until 31 January 2027.",
+    },
+    {
+      label: "eligibility",
+      first: "Earn 10 reward points for every Rs. 100 spent on dining.",
+      second:
+        "Earn 10 reward points for every Rs. 100 spent on dining and movies.",
+    },
+    {
+      label: "exclusions",
+      first: "Get 10% cashback on dining spends, excluding fuel.",
+      second: "Get 10% cashback on dining spends, excluding wallet reloads.",
+    },
+  ]
+) {
+  Deno.test(`contradictory official ${fixture.label} terms require review with bounded evidence`, async () => {
+    const proposals = await extractGroundedBenefitsV6(
+      [
+        {
+          sourceUrl: "https://issuer.example/card",
+          text: fixture.first,
+          contentHash: "a".repeat(64),
+        },
+        {
+          sourceUrl: "https://issuer.example/card/terms.pdf",
+          text: fixture.second,
+          contentHash: "b".repeat(64),
+        },
+      ],
+      "benefits-v6",
+      "card-1",
+    );
+    const diff = diffBenefits([], proposals);
+
+    assert(
+      diff.additions.length === 0,
+      `${fixture.label} conflict auto-selected a favorable term`,
+    );
+    assert(
+      diff.conflicts.length === 1,
+      `${fixture.label} disagreement did not require review`,
+    );
+    assert(
+      diff.conflicts[0].proposed.length === 2,
+      `${fixture.label} conflict lost one official source`,
+    );
+    assert(
+      diff.conflicts[0].proposed.every((proposal) =>
+        proposal.sourceExcerpt.length <= 500 &&
+        proposal.contentHash.length <= 128
+      ),
+      `${fixture.label} conflict evidence was unbounded`,
+    );
+  });
+}

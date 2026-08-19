@@ -13,6 +13,7 @@ export type BenefitDocument = {
 };
 
 export type BenefitProposal = {
+  benefitId?: string;
   dedupeKey: string;
   title: string;
   description: string;
@@ -50,18 +51,29 @@ export type BenefitProposalV6 =
     exclusions: Record<string, unknown>;
   };
 
+export type BenefitComparisonProposal = BenefitProposal | BenefitProposalV6;
+
 export type BenefitDiff = {
-  additions: BenefitProposal[];
-  modifications: Array<{ current: BenefitProposal; proposed: BenefitProposal }>;
-  possibleRemovals: Array<{ benefit: BenefitProposal; informational: true }>;
-  unchanged: Array<{ current: BenefitProposal; proposed: BenefitProposal }>;
+  additions: BenefitComparisonProposal[];
+  modifications: Array<{
+    current: BenefitComparisonProposal;
+    proposed: BenefitComparisonProposal;
+  }>;
+  possibleRemovals: Array<{
+    benefit: BenefitComparisonProposal;
+    informational: true;
+  }>;
+  unchanged: Array<{
+    current: BenefitComparisonProposal;
+    proposed: BenefitComparisonProposal;
+  }>;
   conflicts: Array<{
     code:
       | "ambiguous_benefit_match"
       | "conflicting_proposed_terms"
       | "dedupe_key_condition_mismatch";
-    current?: BenefitProposal[];
-    proposed: BenefitProposal[];
+    current?: BenefitComparisonProposal[];
+    proposed: BenefitComparisonProposal[];
   }>;
 };
 
@@ -596,7 +608,17 @@ function canonicalJson(value: unknown): unknown {
   return value;
 }
 
-function conditionKey(benefit: ParsedFields): string {
+function comparisonExclusions(benefit: {
+  exclusions: unknown;
+  benefitId?: string;
+}): unknown {
+  return !Array.isArray(benefit.exclusions) ||
+      benefit.benefitId?.startsWith("card-benefit-v2:")
+    ? canonicalJson(canonicalExclusions(benefit.exclusions))
+    : benefit.exclusions.map((item) => normalize(String(item))).sort();
+}
+
+function conditionKey(benefit: ParsedFields | BenefitProposalV6): string {
   const hasStructuredValue = benefit.valueConfig !== undefined &&
     Object.keys(benefit.valueConfig).length > 0;
   return JSON.stringify({
@@ -619,7 +641,7 @@ function conditionKey(benefit: ParsedFields): string {
       ? undefined
       : normalize(benefit.period),
     restrictions: benefit.restrictions.map(normalize).sort(),
-    exclusions: benefit.exclusions.map(normalize).sort(),
+    exclusions: comparisonExclusions(benefit),
     effectiveFrom: benefit.effectiveFrom,
     effectiveTo: benefit.effectiveTo,
   });
@@ -627,7 +649,7 @@ function conditionKey(benefit: ParsedFields): string {
 
 function semanticKey(
   benefit: Pick<
-    BenefitProposal,
+    BenefitComparisonProposal,
     "category" | "valueType" | "partners" | "restrictions" | "exclusions"
   >,
 ): string {
@@ -638,8 +660,29 @@ function semanticKey(
       : normalize(benefit.valueType),
     partners: benefit.partners?.map(normalize).sort(),
     restrictions: benefit.restrictions.map(normalize).sort(),
-    exclusions: benefit.exclusions.map(normalize).sort(),
+    exclusions: comparisonExclusions(benefit),
   });
+}
+
+function conflictSubjectKey(
+  benefit: Pick<
+    BenefitComparisonProposal,
+    "category" | "valueType" | "partners"
+  >,
+): string {
+  return JSON.stringify({
+    category: normalize(benefit.category),
+    valueType: benefit.valueType === undefined
+      ? undefined
+      : normalize(benefit.valueType),
+    partners: benefit.partners?.map(normalize).sort(),
+  });
+}
+
+function isCanonicalV6Proposal(
+  benefit: BenefitComparisonProposal,
+): boolean {
+  return benefit.benefitId?.startsWith("card-benefit-v2:") === true;
 }
 
 function sorted<T extends { dedupeKey: string }>(benefits: T[]): T[] {
@@ -797,11 +840,11 @@ export async function extractGroundedBenefitsV6(
  * field, so absence from a crawl cannot be approved as a destructive mutation.
  */
 export function diffBenefits(
-  current: BenefitProposal[],
-  proposed: BenefitProposal[],
+  current: BenefitComparisonProposal[],
+  proposed: BenefitComparisonProposal[],
 ): BenefitDiff {
-  const currentByKey = new Map<string, BenefitProposal[]>();
-  const proposedByKey = new Map<string, BenefitProposal[]>();
+  const currentByKey = new Map<string, BenefitComparisonProposal[]>();
+  const proposedByKey = new Map<string, BenefitComparisonProposal[]>();
   for (const benefit of current) {
     currentByKey.set(benefit.dedupeKey, [
       ...(currentByKey.get(benefit.dedupeKey) ?? []),
@@ -835,7 +878,7 @@ export function diffBenefits(
     currentByKey.delete(key);
     proposedByKey.delete(key);
   }
-  const proposedBySemantic = new Map<string, BenefitProposal[]>();
+  const proposedBySemantic = new Map<string, BenefitComparisonProposal[]>();
   for (const benefit of proposed) {
     const key = semanticKey(benefit);
     proposedBySemantic.set(key, [
@@ -843,10 +886,47 @@ export function diffBenefits(
       benefit,
     ]);
   }
+  const conflictedDedupeKeys = new Set<string>();
   for (const [key, candidates] of proposedBySemantic) {
     if (new Set(candidates.map(conditionKey)).size < 2) continue;
     const currentMatches = current.filter((benefit) =>
       semanticKey(benefit) === key
+    );
+    conflicts.push({
+      code: "conflicting_proposed_terms",
+      ...(currentMatches.length > 0 ? { current: sorted(currentMatches) } : {}),
+      proposed: sorted(candidates),
+    });
+    for (const benefit of candidates) proposedByKey.delete(benefit.dedupeKey);
+    for (const benefit of candidates) {
+      conflictedDedupeKeys.add(benefit.dedupeKey);
+    }
+    for (const benefit of currentMatches) {
+      currentByKey.delete(benefit.dedupeKey);
+    }
+  }
+  const proposedByConflictSubject = new Map<
+    string,
+    BenefitComparisonProposal[]
+  >();
+  for (const benefit of proposed) {
+    if (
+      conflictedDedupeKeys.has(benefit.dedupeKey) ||
+      !isCanonicalV6Proposal(benefit)
+    ) continue;
+    const key = conflictSubjectKey(benefit);
+    proposedByConflictSubject.set(key, [
+      ...(proposedByConflictSubject.get(key) ?? []),
+      benefit,
+    ]);
+  }
+  for (const [key, candidates] of proposedByConflictSubject) {
+    if (
+      new Set(candidates.map(semanticKey)).size < 2 ||
+      new Set(candidates.map((benefit) => benefit.sourceUrl)).size < 2
+    ) continue;
+    const currentMatches = current.filter((benefit) =>
+      conflictSubjectKey(benefit) === key
     );
     conflicts.push({
       code: "conflicting_proposed_terms",
@@ -888,8 +968,11 @@ export function diffBenefits(
     proposedByKey.delete(key);
   }
 
-  const currentBySemantic = new Map<string, BenefitProposal[]>();
-  const unmatchedProposedBySemantic = new Map<string, BenefitProposal[]>();
+  const currentBySemantic = new Map<string, BenefitComparisonProposal[]>();
+  const unmatchedProposedBySemantic = new Map<
+    string,
+    BenefitComparisonProposal[]
+  >();
   for (const benefits of currentByKey.values()) {
     for (const benefit of benefits) {
       const key = semanticKey(benefit);

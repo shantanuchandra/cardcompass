@@ -15,6 +15,10 @@ const expiredLeaseMigration = new URL(
   'supabase/migrations/20260817082925_quarantine_expired_benefit_enrichment_leases.sql',
   repoRoot,
 );
+const supersedeStaleMigration = new URL(
+  'supabase/migrations/20260819122252_supersede_stale_benefit_staging.sql',
+  repoRoot,
+);
 
 async function migrationSql() {
   return readFile(migration, 'utf8');
@@ -184,4 +188,42 @@ test('expired worker leases back off and reach review instead of blocking foreve
   assert.match(claim, /next_retry_at\s*=\s*CASE[\s\S]*attempt_count\s*=\s*1[\s\S]*15 minutes[\s\S]*60 minutes/i);
   assert.match(claim, /lease_expires_at\s*=\s*NULL[\s\S]*lease_token\s*=\s*NULL/i);
   assert.match(claim, /status IN \('queued', 'failed'\)[\s\S]*next_retry_at/i);
+});
+
+test('new v6 staging atomically rejects and audits older pending observations without deleting history', async () => {
+  const sql = await readFile(supersedeStaleMigration, 'utf8');
+  const stage = functionBody(sql, 'stage_card_benefit_enrichment');
+
+  assert.match(stage, /stage_card_benefit_enrichment\s*\(\s*_job_id uuid,\s*_lease_token uuid,\s*_source_url text,\s*_source_url_hash text,\s*_parser_version text,\s*_content_hash text,\s*_extracted_data jsonb,\s*_calculated_confidence numeric,\s*_validation_reasons jsonb,\s*_validation_warnings jsonb,\s*_source_evidence jsonb,\s*_validated_at timestamptz\s*\)/i);
+  assert.match(stage, /SECURITY INVOKER/i);
+  assert.match(stage, /auth\.role\(\)[\s\S]*service_role_required/i);
+  assert.match(stage, /candidate\.id\s*=\s*_job_id[\s\S]*candidate\.status\s*=\s*'processing'[\s\S]*candidate\.lease_token\s*=\s*_lease_token[\s\S]*FOR UPDATE/i);
+  assert.match(stage, /_parser_version\s*=\s*'benefits-v6'[\s\S]*status\s*=\s*'pending'[\s\S]*FOR UPDATE/i);
+  const supersessionBlock = stage.match(
+    /IF _parser_version = 'benefits-v6' THEN([\s\S]*?)END IF;/i,
+  )?.[1] ?? '';
+  assert.doesNotMatch(
+    supersessionBlock,
+    /source_url_hash\s*=\s*_source_url_hash/i,
+    'a changed canonical source URL must not leave an older same-card v6 proposal pending',
+  );
+  assert.match(
+    supersessionBlock,
+    /staging\.id\s*<>\s*resolved_staging_id/i,
+    'all prior pending rows except the exact row being reused must be superseded',
+  );
+  assert.match(stage, /jsonb_typeof\(staging\.benefit_decisions\)\s*=\s*'array'[\s\S]*jsonb_build_array[\s\S]*legacy_malformed_benefit_decisions/i);
+  assert.match(stage, /staging\.benefit_decisions IS NULL[\s\S]*'\[\]'::jsonb/i);
+  assert.match(stage, /benefit_decisions\s*=[\s\S]*superseded_by_newer_crawl/i);
+  assert.match(stage, /status\s*=\s*'rejected'/i);
+  assert.match(stage, /INSERT INTO public\.card_benefits_staging[\s\S]*resolved_staging_id/i);
+  assert.match(stage, /UPDATE public\.card_catalog_enrichment_jobs[\s\S]*staging_id\s*=\s*resolved_staging_id[\s\S]*id\s*=\s*_job_id/i);
+  assert.doesNotMatch(stage, /DELETE\s+FROM\s+public\.card_benefits_staging/i);
+  assert.ok(
+    stage.indexOf('superseded_by_newer_crawl') <
+      stage.indexOf('RETURN QUERY SELECT resolved_staging_id, true'),
+    'reusing an exact v6 row must still supersede a different older pending row',
+  );
+  assert.match(sql, /REVOKE ALL ON FUNCTION public\.stage_card_benefit_enrichment\(\s*uuid, uuid, text, text, text, text, jsonb, numeric, jsonb, jsonb, jsonb, timestamptz\s*\)\s+FROM PUBLIC, anon, authenticated/i);
+  assert.match(sql, /GRANT EXECUTE ON FUNCTION public\.stage_card_benefit_enrichment\(\s*uuid, uuid, text, text, text, text, jsonb, numeric, jsonb, jsonb, jsonb, timestamptz\s*\)\s+TO service_role/i);
 });

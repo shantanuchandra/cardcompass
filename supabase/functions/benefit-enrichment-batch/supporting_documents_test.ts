@@ -39,7 +39,7 @@ Deno.test("supporting crawl follows relevant official links to depth two and ret
   `,
   );
   const requested: string[] = [];
-  const documents = await collectSupportingBenefitDocuments({
+  const { documents, attempts } = await collectSupportingBenefitDocuments({
     issuer: "Axis Bank",
     primary,
     identityLabels: ["Privilege"],
@@ -80,6 +80,7 @@ Deno.test("supporting crawl follows relevant official links to depth two and ret
     "crawl exceeded relevant depth-two links",
   );
   assert(documents.length === 5, "primary/supporting evidence was lost");
+  assert(attempts.length === 5, "successful source attempts were not retained");
   const pdfDocument = documents.find((document) => document.sourceUrl === pdf);
   assert(
     pdfDocument?.text.includes("2 lounge visits per quarter"),
@@ -98,7 +99,7 @@ Deno.test("supporting crawl fetches at most eight relevant links", async () => {
     (_, index) => `${product}/benefits-${index}`,
   );
   let fetches = 0;
-  const documents = await collectSupportingBenefitDocuments({
+  const { documents, attempts } = await collectSupportingBenefitDocuments({
     issuer: "Axis Bank",
     identityLabels: ["Privilege"],
     primary: resource(
@@ -113,6 +114,32 @@ Deno.test("supporting crawl fetches at most eight relevant links", async () => {
 
   assert(fetches === 8, "supporting fetch budget exceeded eight");
   assert(documents.length === 9, "bounded supporting documents were omitted");
+  assert(attempts.length === 9, "bounded successful attempts were omitted");
+});
+
+Deno.test("supporting crawl records required work blocked by the invocation deadline", async () => {
+  const product = "https://www.axis.bank.in/cards/credit-card/privilege";
+  const pdf = `${product}/terms.pdf`;
+  let fetches = 0;
+  const { attempts } = await collectSupportingBenefitDocuments({
+    issuer: "Axis Bank",
+    identityLabels: ["Privilege"],
+    primary: resource(product, `<a href="${pdf}">Terms</a>`),
+    requestDeadlineAt: 0,
+    fetchOfficialIssuerResource: async () => {
+      fetches += 1;
+      return resource(pdf, "unused", "application/pdf");
+    },
+  });
+
+  assert(fetches === 0, "supporting request started after the deadline");
+  assert(
+    attempts.some((attempt) =>
+      attempt.url === pdf && attempt.role === "required_supporting" &&
+      attempt.errorCode === "deadline_exceeded"
+    ),
+    "deadline-blocked required source was not retained",
+  );
 });
 
 Deno.test("supporting crawl rejects another card variant and counts failed attempts", async () => {
@@ -124,7 +151,7 @@ Deno.test("supporting crawl rejects another card variant and counts failed attem
   const other =
     "https://www.axis.bank.in/cards/credit-card/regalia-gold/benefits";
   const requested: string[] = [];
-  await collectSupportingBenefitDocuments({
+  const { attempts } = await collectSupportingBenefitDocuments({
     issuer: "Axis Bank",
     identityLabels: ["Privilege"],
     primary: resource(
@@ -139,6 +166,13 @@ Deno.test("supporting crawl rejects another card variant and counts failed attem
 
   assert(requested.length === 8, "failed requests did not consume the budget");
   assert(!requested.includes(other), "cross-card supporting link was fetched");
+  assert(attempts.length === 9, "failed attempts were dropped");
+  assert(
+    attempts.slice(1).every((attempt) =>
+      attempt.status === "failed" && attempt.errorCode === "unreachable"
+    ),
+    "failed attempts retained unsanitized thrown errors",
+  );
 });
 
 Deno.test("SBI Card ELITE receives its exact official campaign terms before generic links", async () => {
@@ -148,7 +182,7 @@ Deno.test("SBI Card ELITE receives its exact official campaign terms before gene
   const genericTerms =
     "https://www.sbicard.com/en/most-important-terms-and-conditions.page";
   const requested: string[] = [];
-  const documents = await collectSupportingBenefitDocuments({
+  const { documents, attempts } = await collectSupportingBenefitDocuments({
     issuer: "SBI Card",
     identityLabels: ["Elite"],
     maximumLinks: 1,
@@ -170,6 +204,10 @@ Deno.test("SBI Card ELITE receives its exact official campaign terms before gene
     "the exact ELITE source did not receive the bounded supporting slot",
   );
   assert(documents.length === 2, "the ELITE campaign evidence was omitted");
+  assert(
+    attempts[1]?.role === "required_supporting",
+    "curated required terms were not marked required",
+  );
 });
 
 Deno.test("curated SBI ELITE terms do not leak to another SBI card variant", async () => {
@@ -188,4 +226,27 @@ Deno.test("curated SBI ELITE terms do not leak to another SBI card variant", asy
   });
 
   assert(requested.length === 0, "ELITE evidence leaked across SBI variants");
+});
+
+Deno.test("a corrupt linked PDF is retained as a required failed attempt without body text", async () => {
+  const product = "https://www.axis.bank.in/cards/credit-card/privilege";
+  const pdf = `${product}/terms.pdf`;
+  const { documents, attempts } = await collectSupportingBenefitDocuments({
+    issuer: "Axis Bank",
+    identityLabels: ["Privilege"],
+    primary: resource(product, `<a href="${pdf}">Terms PDF</a>`),
+    fetchOfficialIssuerResource: async () =>
+      resource(pdf, "not-a-pdf", "application/pdf"),
+  });
+
+  assert(documents.length === 1, "corrupt PDF became a source document");
+  assert(attempts.length === 2, "corrupt PDF attempt was dropped");
+  assert(attempts[1].role === "required_supporting", "PDF was optionalized");
+  assert(attempts[1].status === "failed", "corrupt PDF looked successful");
+  assert(attempts[1].errorCode === "corrupt_pdf", "wrong PDF failure code");
+  assert(
+    !Object.hasOwn(attempts[1] as object, "text") &&
+      !Object.hasOwn(attempts[1] as object, "bytes"),
+    "raw body material leaked into persisted attempt evidence",
+  );
 });
