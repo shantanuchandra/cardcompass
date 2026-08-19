@@ -12,6 +12,35 @@ enum SystemJobFamily {
   };
 }
 
+enum SystemJobAction { retry, quarantine, unquarantine }
+
+abstract final class SystemJobPolicy {
+  static Set<SystemJobAction> actionsFor(
+    SystemJobFamily family,
+    String status,
+  ) {
+    if (family != SystemJobFamily.benefitEnrichment) return const {};
+    return switch (status) {
+      'queued' || 'staged' => const {SystemJobAction.quarantine},
+      'failed' || 'review_required' => const {
+        SystemJobAction.retry,
+        SystemJobAction.quarantine,
+      },
+      'quarantined' => const {
+        SystemJobAction.retry,
+        SystemJobAction.unquarantine,
+      },
+      _ => const {},
+    };
+  }
+
+  static bool allows(
+    SystemJobFamily family,
+    String status,
+    SystemJobAction action,
+  ) => actionsFor(family, status).contains(action);
+}
+
 enum PipelineHealth {
   healthy,
   degraded,

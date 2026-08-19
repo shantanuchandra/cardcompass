@@ -141,7 +141,7 @@ void main() {
         'result': {'job_id': jobId, 'resulting_status': 'quarantined'},
       }),
       const AdminOperatorResponse(200, {
-          'result': {'job_id': jobId, 'resulting_status': 'queued'},
+        'result': {'job_id': jobId, 'resulting_status': 'queued'},
       }),
     ]);
     var next = 0;
@@ -279,6 +279,111 @@ void main() {
           observedUpdatedAt: observed,
         ),
       ),
+      throwsA(isA<AdminRequestFailed>()),
+    );
+  });
+
+  test('recovery policy matches the complete gateway family/status matrix', () {
+    const benefit = {
+      'queued': <SystemJobAction>{SystemJobAction.quarantine},
+      'processing': <SystemJobAction>{},
+      'completed': <SystemJobAction>{},
+      'review_required': <SystemJobAction>{
+        SystemJobAction.retry,
+        SystemJobAction.quarantine,
+      },
+      'failed': <SystemJobAction>{
+        SystemJobAction.retry,
+        SystemJobAction.quarantine,
+      },
+      'staged': <SystemJobAction>{SystemJobAction.quarantine},
+      'quarantined': <SystemJobAction>{
+        SystemJobAction.retry,
+        SystemJobAction.unquarantine,
+      },
+    };
+    for (final entry in benefit.entries) {
+      expect(
+        SystemJobPolicy.actionsFor(
+          SystemJobFamily.benefitEnrichment,
+          entry.key,
+        ),
+        entry.value,
+        reason: entry.key,
+      );
+    }
+    for (final status in const [
+      'queued',
+      'discovering',
+      'resolved',
+      'review_required',
+      'rejected',
+      'failed',
+    ]) {
+      expect(
+        SystemJobPolicy.actionsFor(SystemJobFamily.cardDiscovery, status),
+        isEmpty,
+        reason: status,
+      );
+    }
+  });
+
+  test('repository rejects every mutation outside the shared policy', () async {
+    final api = _Api([]);
+    final repository = SystemRepository(AdminOperatorRepository(api));
+    final invalid = <SystemMutation>[
+      const RetrySystemJob(
+        family: SystemJobFamily.benefitEnrichment,
+        targetId: jobId,
+        status: 'queued',
+        observedUpdatedAt: observed,
+      ),
+      const QuarantineSystemJob(
+        family: SystemJobFamily.benefitEnrichment,
+        targetId: jobId,
+        status: 'processing',
+        observedUpdatedAt: observed,
+        reason: 'Not eligible',
+      ),
+      const UnquarantineSystemJob(
+        family: SystemJobFamily.benefitEnrichment,
+        targetId: jobId,
+        status: 'failed',
+        observedUpdatedAt: observed,
+      ),
+      const RetrySystemJob(
+        family: SystemJobFamily.cardDiscovery,
+        targetId: jobId,
+        status: 'failed',
+        observedUpdatedAt: observed,
+      ),
+    ];
+    for (final mutation in invalid) {
+      await expectLater(
+        repository.mutate(mutation),
+        throwsA(isA<AdminRequestFailed>()),
+      );
+    }
+    expect(api.bodies, isEmpty);
+  });
+
+  test('contradictory control source state is rejected as malformed', () async {
+    final api = _Api([
+      const AdminOperatorResponse(200, {
+        'pipelines': [],
+        'controls': [
+          {
+            'control_key': 'benefit_enrichment_scheduled',
+            'is_paused': false,
+            'reason': null,
+            'updated_at': observed,
+          },
+        ],
+        'control_source_error': 'source_unavailable',
+      }),
+    ]);
+    await expectLater(
+      SystemRepository(AdminOperatorRepository(api)).status(),
       throwsA(isA<AdminRequestFailed>()),
     );
   });

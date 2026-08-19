@@ -327,6 +327,9 @@ class _SystemSectionState extends State<SystemSection> {
 
   Widget _detail({bool compact = false}) {
     final job = _selected;
+    final actions = job == null
+        ? const <SystemJobAction>{}
+        : SystemJobPolicy.actionsFor(job.family, job.status);
     return BrandSurface(
       key: const Key('system-job-detail'),
       tone: BrandSurfaceTone.ledger,
@@ -357,9 +360,7 @@ class _SystemSectionState extends State<SystemSection> {
                 if (job.failureCategory != null)
                   Text('Failure: ${job.failureCategory}'),
                 const SizedBox(height: BrandSpacing.lg),
-                if (job.status == 'failed' ||
-                    job.status == 'review_required' ||
-                    job.status == 'quarantined')
+                if (actions.contains(SystemJobAction.retry))
                   OutlinedButton(
                     key: const Key('system-retry-action'),
                     onPressed: _submitting
@@ -377,7 +378,7 @@ class _SystemSectionState extends State<SystemSection> {
                           ),
                     child: const Text('Retry job'),
                   ),
-                if (job.status == 'quarantined')
+                if (actions.contains(SystemJobAction.unquarantine))
                   FilledButton(
                     key: const Key('system-unquarantine-action'),
                     onPressed: _submitting
@@ -394,8 +395,8 @@ class _SystemSectionState extends State<SystemSection> {
                             action: 'Confirm return',
                           ),
                     child: const Text('Return to queue'),
-                  )
-                else if (job.family == SystemJobFamily.benefitEnrichment)
+                  ),
+                if (actions.contains(SystemJobAction.quarantine))
                   FilledButton(
                     key: const Key('system-quarantine-action'),
                     onPressed: _submitting
@@ -513,7 +514,7 @@ class _ControlCard extends StatelessWidget {
             ],
           ),
         ),
-        if (control != null)
+        if (!unavailable && control != null)
           FilledButton(
             key: const Key('system-control-action'),
             onPressed: submitting ? null : () => onAction(control!),

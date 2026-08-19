@@ -25,16 +25,21 @@ final class SystemRepository {
         'controls',
         'control_source_error',
       });
+      final controls = strictSystemList(
+        json['controls'],
+      ).map((e) => RuntimeControl.fromJson(strictSystemMap(e))).toList();
+      final controlSourceError = SystemSourceError.parse(
+        json['control_source_error'],
+      );
+      if (controlSourceError != null && controls.isNotEmpty) {
+        throw const FormatException('Contradictory control availability');
+      }
       return SystemStatusSnapshot(
         pipelines: strictSystemList(
           json['pipelines'],
         ).map((e) => PipelineSummary.fromJson(strictSystemMap(e))).toList(),
-        controls: strictSystemList(
-          json['controls'],
-        ).map((e) => RuntimeControl.fromJson(strictSystemMap(e))).toList(),
-        controlSourceError: SystemSourceError.parse(
-          json['control_source_error'],
-        ),
+        controls: controls,
+        controlSourceError: controlSourceError,
         refreshedAt: _now().toUtc(),
       );
     } on FormatException {
@@ -150,11 +155,17 @@ final class SystemRepository {
         throw const AdminRequestFailed('invalid_request');
       }
       validVersion(job.observedUpdatedAt);
-      final operation = switch (mutation) {
-        RetrySystemJob() => 'retry',
-        QuarantineSystemJob() => 'quarantine',
-        UnquarantineSystemJob() => 'unquarantine',
+      final (operation, policyAction) = switch (mutation) {
+        RetrySystemJob() => ('retry', SystemJobAction.retry),
+        QuarantineSystemJob() => ('quarantine', SystemJobAction.quarantine),
+        UnquarantineSystemJob() => (
+          'unquarantine',
+          SystemJobAction.unquarantine,
+        ),
       };
+      if (!SystemJobPolicy.allows(job.family, job.status, policyAction)) {
+        throw const AdminRequestFailed('invalid_request');
+      }
       final action = operation == 'retry'
           ? 'system-retry'
           : 'system-quarantine';

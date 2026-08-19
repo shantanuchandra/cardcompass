@@ -12,6 +12,7 @@ final class _Source implements SystemDataSource {
   final mutations = <SystemMutation>[];
   Object? nextStatusError;
   Object? mutationError;
+  bool controlUnavailable = false;
   Completer<void>? mutationGate;
   @override
   Future<SystemStatusSnapshot> status() async {
@@ -50,7 +51,9 @@ final class _Source implements SystemDataSource {
           updatedAt: DateTime.utc(2026, 8, 19, 9),
         ),
       ],
-      controlSourceError: null,
+      controlSourceError: controlUnavailable
+          ? SystemSourceError.sourceUnavailable
+          : null,
       refreshedAt: DateTime.utc(2026, 8, 19, 10, statusCalls),
     );
   }
@@ -76,7 +79,17 @@ final class _Source implements SystemDataSource {
                 updatedAt: DateTime.utc(2026, 8, 19, 9),
               ),
             ]
-          : const [],
+          : [
+              SystemJob(
+                id: '33333333-3333-4333-8333-333333333333',
+                family: SystemJobFamily.cardDiscovery,
+                status: 'failed',
+                failureCategory: 'source_timeout',
+                attemptCount: 2,
+                nextRetryAt: null,
+                updatedAt: DateTime.utc(2026, 8, 19, 9),
+              ),
+            ],
       page: page,
       limit: limit,
       hasMore: false,
@@ -244,5 +257,28 @@ void main() {
       findsOneWidget,
     );
     expect(source.statusCalls, 2);
+  });
+
+  testWidgets('unavailable control state suppresses pause and resume', (
+    tester,
+  ) async {
+    final source = _Source()..controlUnavailable = true;
+    await _pump(tester, source);
+    expect(find.text('Control state unavailable'), findsOneWidget);
+    expect(find.byKey(const Key('system-control-action')), findsNothing);
+  });
+
+  testWidgets('card discovery remains read-only in the job detail', (
+    tester,
+  ) async {
+    final source = _Source();
+    await _pump(tester, source);
+    await tester.tap(find.text('Card discovery').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('source_timeout'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('system-retry-action')), findsNothing);
+    expect(find.byKey(const Key('system-quarantine-action')), findsNothing);
+    expect(find.byKey(const Key('system-unquarantine-action')), findsNothing);
   });
 }

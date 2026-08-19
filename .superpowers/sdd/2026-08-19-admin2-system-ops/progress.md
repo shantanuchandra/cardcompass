@@ -18,7 +18,7 @@ Ruling: Carry the prior plan's final adjudication ledger update into the Tasks 1
 
 - Tasks 1–2: implementation complete, pending review — runtime control and scheduled worker enforcement
 - Task 3: implementation complete, pending review — sanitized System gateway
-- Task 4: pending — typed System workspace
+- Task 4: implementation complete, pending review — typed System workspace
 - Task 5: pending — paused-pipeline Inbox item
 - Task 6: pending — whole-phase verification
 
@@ -77,3 +77,29 @@ Ruling: Supersede the 1,000-row sampling decision with exact `head: true, count:
 Ruling: Treat named-control unavailability as benefit-pipeline unavailability and expose only the stable `control_source_error` category. Cost if wrong: a transient control read failure hides otherwise valid benefit counts behind `unknown`, deliberately matching scheduled-worker fail-closed semantics.
 
 Ruling: Reject successful RPC responses unless their bounded receipt proves the exact requested target, state, and a newer control version. Cost if wrong: an older RPC implementation returning incomplete receipts will fail safely until its response contract is upgraded.
+
+## Task 4 evidence
+
+- RED: the repository suite failed to compile because the typed System models/repository did not exist; the widget suite then failed to compile because the System section and injected data-source seam did not exist.
+- GREEN: the focused repository, section, and shell suites passed 31/31; the full Admin2 Flutter suite passed 111/111; targeted analysis reported no issues.
+- The repository strictly decodes exact status, control, job, pagination, and mutation receipt fields; rejects malformed/coercible values and mismatched receipts; bounds complete UTF-8 requests to 32 KiB; and generates one fresh UUID for each operator submission.
+- The workspace retains prior data during failed refreshes, marks it stale with its server-refresh time, exposes source/control uncertainty, and separates compact job browsing from detail/recovery.
+- Mutations begin from a detail/confirmation surface, require bounded reasons for quarantine/pause/resume, disable duplicate submission, await server confirmation, and reload after success or state conflict. Authentication and authorization failures use the shell's injected effects.
+
+Ruling: Keep System status and job history in one injected `SystemDataSource` owned by the section, with the production shell adapting `SystemRepository`; this avoids hidden provider reads inside the operational UI and makes 401/403, stale refresh, and mutation behavior deterministic in tests. Cost if wrong: future caching shared across admin sections requires an adapter/provider above this seam rather than adding Riverpod dependencies directly inside the section.
+
+Ruling: Treat only benefit-enrichment jobs as mutable in the Dart repository, matching the gateway's existing atomic job RPC, while continuing to render card-discovery health and history as read-only. Cost if wrong: a future discovery recovery RPC needs a deliberate new mutation type and allowlist change before the UI can expose it.
+
+Ruling: Validate successful mutation receipts again at the client boundary and require job target/result or control key/state/reason/newer-version equality before refreshing the workspace. Cost if wrong: a temporarily skewed older backend response fails safely as `request_failed` even if the server-side mutation committed, requiring an operator refresh before another action.
+
+Ruling: Use 1024 logical pixels as the System master-detail breakpoint and a single scrollable compact drill-in below it, preserving minimum 44-pixel controls and exact operational context at 390 pixels. Cost if wrong: medium-width tablets use the compact navigation pattern rather than a denser split view.
+
+## Task 4 review fix
+
+- Added one typed `SystemJobPolicy` consumed by both repository preflight and UI rendering. Its complete matrix mirrors the gateway: benefit retry from failed/review-required/quarantined, quarantine from queued/failed/review-required/staged, unquarantine only from quarantined, and no card-discovery mutations.
+- Added policy-matrix, repository rejection, read-only discovery detail, contradictory control DTO, and unavailable-control UI coverage.
+- A status response that combines `control_source_error` with an actionable control now fails as malformed; an injected unavailable snapshot always displays uncertainty without Pause/Resume.
+
+Ruling: Centralize job recovery eligibility in the typed Dart model layer and require both presentation and repository serialization to consult it. Cost if wrong: any future gateway status expansion requires a deliberate one-line policy and matrix-test update before the client can expose or submit the action.
+
+Ruling: Reject contradictory control status DTOs at the repository boundary, while independently suppressing control actions whenever the rendered snapshot reports source uncertainty. Cost if wrong: a partially compatible backend response produces a retryable failed refresh instead of showing possibly stale control state, favoring operational safety over availability.
