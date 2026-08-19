@@ -132,6 +132,12 @@ The inbox presents a single ranked list with item type, severity, title, concise
 
 The server performs bounded source queries and merges their sanitized results. Each item links to the relevant customer, card-data, or system detail. Resolving the source removes the item on refresh.
 
+| Example signal | Operator action | Operational outcome |
+|---|---|---|
+| A customer's Gmail sync has exhausted automatic retries. | Open the linked customer, review the sanitized failure category, and retry the eligible sync. | Restore ingestion without SQL or engineering support. |
+| A card identity proposal has two plausible catalog matches. | Open the linked proposal and resolve it using its source evidence. | Prevent a duplicate card or incorrect customer-card match. |
+| A core pipeline is paused while actionable jobs are accumulating. | Open System, verify the named control and backlog, then resume the supported pipeline when safe. | Reduce customer impact and processing delay. |
+
 ### Customers
 
 Customer Ops shows only the metadata needed to diagnose support issues:
@@ -146,17 +152,35 @@ It does not expose raw emails, attachments, PDFs, passwords, access tokens, full
 
 Initial actions are retrying a specifically failed sync or processing operation, disabling an account through a server-owned operation, and recording deletion-request progress. A retry is unavailable while the same operation is running. Account disablement requires a reason, confirmation, session revocation, and an audit record. Destructive data deletion remains outside the console until a separately approved retention and deletion design exists.
 
+| Example signal | Operator action | Operational outcome |
+|---|---|---|
+| A customer reports that a recent statement has not appeared. | Search by user ID or email fragment, inspect sync and processing timestamps, and retry the failed eligible operation. | Resolve the support issue without reading the email or statement. |
+| An account must be contained because of suspected compromise or abuse. | Confirm the target and reason, disable the account, and revoke active sessions. | Stop access immediately and leave an auditable record. |
+| A deletion request is awaiting operational follow-up. | Review consent and request metadata, then record the approved progress state. | Keep the request traceable without exposing or deleting raw data from this console. |
+
 ### Card Data
 
 Card Data combines card-identity and benefit-enrichment review into one section with distinct filters. Every proposal shows its current state, proposed state, confidence, warnings, official source, retrieval time, parser version, and field-level evidence where available.
 
 Supported actions are approve, edit and approve, merge, reject with reason, retry, quarantine, and unquarantine. The console reuses the existing locked resolution and approval paths rather than directly updating catalog or benefit tables. Bulk approval is excluded. Actions are unavailable when the source item is no longer in an eligible state.
 
+| Example signal | Operator action | Operational outcome |
+|---|---|---|
+| An issuer record for “Regalia Gold” matches more than one catalog candidate. | Compare the official source and field evidence, then merge into or approve the correct card. | Avoid duplicate catalog entries and incorrect ownership records. |
+| An official issuer page changes the lounge-access entitlement. | Review the retrieved evidence, edit the proposed value if needed, and approve it. | Publish accurate benefits while preserving human verification. |
+| A proposal has weak confidence or missing source evidence. | Reject it with a reason, or quarantine and retry the source job when appropriate. | Keep low-quality data out of the customer experience. |
+
 ### System
 
 System Ops shows pipeline health, last successful run, queued/running/failed/quarantined counts, sanitized failure categories, attempt count, and next retry time. It supports retrying eligible jobs, quarantining with a reason, unquarantining, and operating only the explicit runtime controls implemented by the relevant workers.
 
 The console never exposes secrets, raw fetched content, authorization headers, provider payloads, or unrestricted log search. A system action that would affect multiple jobs requires a separate future design; V1 actions target one job or one named control.
+
+| Example signal | Operator action | Operational outcome |
+|---|---|---|
+| A statement-processing job failed with a retryable provider error. | Review its safe failure category and attempt count, then retry the individual job. | Recover processing without resetting unrelated work. |
+| One malformed job repeatedly fails and delays the queue. | Quarantine the job with a reason and leave the remaining queue running. | Preserve throughput while isolating the bad input for investigation. |
+| A provider outage is causing avoidable failures and cost. | Pause the supported named pipeline control, monitor recovery, and resume it when healthy. | Limit error volume and spend without deploying code. |
 
 ## Interaction design
 
