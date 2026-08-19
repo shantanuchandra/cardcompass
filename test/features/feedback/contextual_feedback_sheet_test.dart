@@ -1,0 +1,212 @@
+import 'package:cardcompass/core/theme/app_theme.dart';
+import 'package:cardcompass/features/feedback/contextual_feedback_button.dart';
+import 'package:cardcompass/features/feedback/contextual_feedback_sheet.dart';
+import 'package:cardcompass/features/feedback/feedback_models.dart';
+import 'package:cardcompass/features/feedback/feedback_repository.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+const target = TransactionFeedbackTarget(
+  '20000000-0000-4000-8000-000000000001',
+);
+
+void main() {
+  testWidgets('button is accessible and opens feedback for the exact preview', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      repository: _FakeRepository(),
+      child: const ContextualFeedbackButton(
+        target: target,
+        preview: 'Coffee ¹420 · Food & dining',
+      ),
+    );
+
+    expect(
+      find.bySemanticsLabel('Give feedback about Coffee ¹420'),
+      findsOneWidget,
+    );
+    final size = tester.getSize(find.byType(ContextualFeedbackButton));
+    expect(size.height, greaterThanOrEqualTo(44));
+    await tester.tap(find.byType(ContextualFeedbackButton));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Coffee ¹420 · Food & dining'), findsOneWidget);
+    expect(find.text('Tell us what should be different'), findsOneWidget);
+    expect(find.textContaining('model'), findsNothing);
+    expect(find.byType(TextField), findsOneWidget);
+    expect(
+      tester.widget<EditableText>(find.byType(EditableText)).focusNode.hasFocus,
+      isTrue,
+    );
+  });
+
+  testWidgets('requires 10 characters and shows a live count', (tester) async {
+    await _pumpSheet(tester, _FakeRepository());
+
+    await tester.enterText(find.byType(TextField), 'Too short');
+    await tester.pump();
+    expect(find.text('9 / 2000'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.widgetWithText(FilledButton, 'Send feedback'),
+          )
+          .onPressed,
+      isNull,
+    );
+
+    await tester.enterText(find.byType(TextField), 'Needs work');
+    await tester.pump();
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.widgetWithText(FilledButton, 'Send feedback'),
+          )
+          .onPressed,
+      isNotNull,
+    );
+  });
+
+  testWidgets('preserves text and retries the same failed submission', (
+    tester,
+  ) async {
+    final repository = _FakeRepository(failFirst: true);
+    await _pumpSheet(tester, repository);
+    await tester.enterText(
+      find.byType(TextField),
+      'This category should be groceries.',
+    );
+    await _tapAction(tester, 'Send feedback');
+    await tester.pumpAndSettle();
+
+    expect(repository.attempts, 1);
+    expect(find.text('Feedback could not be sent. Try again.'), findsOneWidget);
+    expect(find.text('Try again'), findsOneWidget);
+    expect(find.text('This category should be groceries.'), findsOneWidget);
+    await _tapAction(tester, 'Try again');
+    await tester.pumpAndSettle();
+
+    expect(find.text('Feedback sent'), findsOneWidget);
+    expect(repository.observedRequestIds, [
+      '10000000-0000-4000-8000-000000000001',
+      '10000000-0000-4000-8000-000000000001',
+    ]);
+  });
+
+  testWidgets('editing after failure creates a fresh submission id', (
+    tester,
+  ) async {
+    final repository = _FakeRepository(failFirst: true);
+    await _pumpSheet(tester, repository);
+    await tester.enterText(
+      find.byType(TextField),
+      'This category is incorrect.',
+    );
+    await _tapAction(tester, 'Send feedback');
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byType(TextField),
+      'This category should be fuel.',
+    );
+    await tester.pump();
+    await _tapAction(tester, 'Send feedback');
+    await tester.pumpAndSettle();
+
+    expect(repository.observedRequestIds, [
+      '10000000-0000-4000-8000-000000000001',
+      '10000000-0000-4000-8000-000000000002',
+    ]);
+  });
+
+  testWidgets('escape closes the sheet and mobile width does not overflow', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(780, 1688);
+    tester.view.devicePixelRatio = 2;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await _pumpSheet(tester, _FakeRepository());
+    expect(tester.takeException(), isNull);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byType(ContextualFeedbackSheet), findsNothing);
+  });
+}
+
+Future<void> _pumpSheet(
+  WidgetTester tester,
+  FeedbackRepository repository,
+) async {
+  await _pump(
+    tester,
+    repository: repository,
+    child: Builder(
+      builder: (context) => TextButton(
+        onPressed: () => showContextualFeedbackSheet(
+          context,
+          target: target,
+          preview: 'Coffee ¹420 · Food & dining',
+        ),
+        child: const Text('Open'),
+      ),
+    ),
+  );
+  await tester.tap(find.text('Open'));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _tapAction(WidgetTester tester, String label) async {
+  final action = find.widgetWithText(FilledButton, label);
+  await tester.ensureVisible(action);
+  await tester.pump();
+  await tester.tap(action);
+}
+
+Future<void> _pump(
+  WidgetTester tester, {
+  required FeedbackRepository repository,
+  required Widget child,
+}) => tester.pumpWidget(
+  FeedbackRepositoryScope(
+    repository: repository,
+    child: MaterialApp(
+      theme: AppTheme.work,
+      home: Scaffold(body: child),
+    ),
+  ),
+);
+
+class _FakeRepository extends FeedbackRepository {
+  _FakeRepository({this.failFirst = false})
+    : super(
+        _UnusedApi(),
+        requestIds: [
+          '10000000-0000-4000-8000-000000000001',
+          '10000000-0000-4000-8000-000000000002',
+        ].iterator,
+      );
+
+  final bool failFirst;
+  final List<String> observedRequestIds = [];
+  int attempts = 0;
+
+  @override
+  Future<FeedbackSubmitResult> submit(FeedbackSubmission submission) async {
+    observedRequestIds.add(submission.requestId);
+    attempts++;
+    if (failFirst && attempts == 1) {
+      throw const FeedbackFailed('request_failed');
+    }
+    return const FeedbackSubmitResult('feedback-id', 'awaiting_triage');
+  }
+}
+
+class _UnusedApi implements FeedbackApi {
+  @override
+  Future<FeedbackApiResponse> invoke(Map<String, Object?> body) =>
+      throw UnimplementedError();
+}

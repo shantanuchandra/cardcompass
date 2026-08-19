@@ -18,7 +18,7 @@ Ruling: Carry the Cutover final-fix adjudication into the Tasks 1–3 code-beari
 
 - Tasks 1–3: complete — private storage/RPCs and authenticated endpoint
 - Task 4: complete — asynchronous tool-free LLM triage
-- Task 5: pending — reusable Flutter feedback surface
+- Task 5: complete — reusable Flutter feedback surface
 - Task 6: pending — attach three product families
 - Task 7: pending — Admin2 review and Inbox integration
 - Task 8: pending — full verification
@@ -59,3 +59,14 @@ Ruling: Cap each proposed triage object at 8 KiB and the complete triage JSON at
 - Model-failure completion now gets one bounded recovery attempt using `triage_persistence_failed`. A stale claim conflict is ignored without overwrite, while two persistence failures leave the lease for the existing five-minute database recovery path.
 
 Ruling: Limit triage completion recovery to two total attempts and then rely on the database claim lease timeout. Cost if wrong: a transient second persistence failure delays retry until lease expiry, avoiding an unbounded Edge background loop.
+
+## Task 5 evidence
+
+- RED: focused Flutter tests first failed on the absent feedback feature, then caught missing whole-request bounds, malformed output references, keyboard focus competition, and off-screen mobile action interaction before the implementation was accepted.
+- GREEN: sealed transaction, statement, user-card, and recommendation-trace targets make feature/reference mismatches unrepresentable. The injected repository emits exact Edge payloads, validates UUIDs and the 32 KiB UTF-8 request boundary, maps strict responses to safe errors, creates server-issued recommendation traces, and never accepts client context/model metadata during feedback submission.
+- The reusable button and sheet bind feedback to a concise caller preview, require 10–2,000 characters, expose a live count and accessible 44 px action, autofocus the field, support Escape, preserve text and request identity on retry, allocate a new identity after edits, and render without overflow at 390 logical pixels / 2x.
+- Focused feedback tests pass 11/11 and scoped static analysis is clean.
+
+Ruling: Provide feedback transport through an explicit `FeedbackRepositoryScope` so product attachment points own their Supabase boundary and widget tests remain backend-free. Cost if wrong: each supported screen must install one small scope instead of reading a global client singleton.
+
+Ruling: Enforce a 32 KiB UTF-8 limit over the complete client request even though the Edge transport also carries independent nested-object bounds. Cost if wrong: a trace near the server's per-object maximum may be rejected client-side once envelope overhead is included, favoring a predictable transport ceiling.
