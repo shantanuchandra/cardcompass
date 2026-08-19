@@ -19,9 +19,11 @@ const relevantPath =
 const unsafePath =
   /(?:^|[/?=&_.-])(?:login|apply|application|track|support|help)(?:$|[/?=&_.-])/i;
 const anchorPattern =
-  /<a\b[^>]*\bhref\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))[^>]*>/gi;
+  /<a\b[^>]*\bhref\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a\s*>/gi;
 const requiredSourcePattern =
   /(?:^|[/?=&_.-])(?:terms?|conditions?|mitc|fees?|charges?)(?:$|[/?=&_.-])/i;
+const requiredAnchorPattern =
+  /\b(?:most\s+important\s+terms(?:\s+and\s+conditions)?|terms?(?:\s+and\s+conditions)?|conditions?|mitc|fees?|charges?)\b/i;
 
 const exactSupportingSources: Record<string, Record<string, string[]>> = {
   "SBI Card": {
@@ -81,11 +83,17 @@ function exactSupportingUrls(issuer: string, labels: string[]): string[] {
   return [...exactLabels].flatMap((label) => sources[label] ?? []);
 }
 
+type SourceCandidate = {
+  url: string;
+  anchorText: string;
+};
+
 function sourceRole(
-  url: string,
+  candidate: SourceCandidate,
   curated: boolean,
 ): "required_supporting" | "supporting" {
-  return curated || requiredSourcePattern.test(url)
+  return curated || requiredSourcePattern.test(candidate.url) ||
+      requiredAnchorPattern.test(candidate.anchorText)
     ? "required_supporting"
     : "supporting";
 }
@@ -96,8 +104,8 @@ function linkedUrls(
   html: string,
   labels: string[],
   primaryUrl: string,
-): string[] {
-  const urls: string[] = [];
+): SourceCandidate[] {
+  const candidates: SourceCandidate[] = [];
   const tokens = identityTokens(labels);
   const primaryPath = new URL(primaryUrl).pathname.replace(/\/$/, "");
   for (const match of html.matchAll(anchorPattern)) {
@@ -105,20 +113,38 @@ function linkedUrls(
       const raw = new URL(match[1] ?? match[2] ?? match[3] ?? "", baseUrl)
         .toString();
       const url = canonicalOfficialUrl(issuer, raw);
+      const anchorText = (match[4] ?? "").replace(/<[^>]*>/g, " ")
+        .replace(/&(?:amp|nbsp);/gi, " ").replace(/\s+/g, " ").trim()
+        .slice(0, 256);
       const candidatePath = new URL(url).pathname.toLowerCase();
       const sameProductPath = candidatePath === primaryPath.toLowerCase() ||
         candidatePath.startsWith(`${primaryPath.toLowerCase()}/`);
       const namesTargetProduct = tokens.length > 0 &&
         tokens.every((token) => candidatePath.includes(token));
       if (
-        relevantPath.test(url) && !unsafePath.test(url) &&
-        (sameProductPath || namesTargetProduct) && !urls.includes(url)
-      ) urls.push(url);
+        (relevantPath.test(url) || requiredAnchorPattern.test(anchorText)) &&
+        !unsafePath.test(url) && (sameProductPath || namesTargetProduct) &&
+        !candidates.some((candidate) => candidate.url === url)
+      ) candidates.push({ url, anchorText });
     } catch {
       // Only approved issuer URLs enter the supporting queue.
     }
   }
-  return urls;
+  return candidates;
+}
+
+async function logicalSourceKey(url: string): Promise<string> {
+  const canonical = new URL(url);
+  canonical.username = "";
+  canonical.password = "";
+  canonical.hash = "";
+  canonical.searchParams.sort();
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(canonical.toString()),
+  );
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 async function benefitDocument(
@@ -156,13 +182,47 @@ export async function collectSupportingBenefitDocuments(
       }),
     attemptedAt: input.primary.retrievedAt,
   }];
+  const recordRequiredOverflow = async (
+    url: string,
+    attemptedAt: string,
+  ): Promise<void> => {
+    if (
+      attempts.some((attempt) =>
+        attempt.role === "required_supporting" &&
+        attempt.errorCode === "required_source_overflow"
+      )
+    ) return;
+    if (attempts.length >= MAX_SUPPORTING_LINKS + 1) {
+      const removable = attempts.findLastIndex((attempt) =>
+        attempt.role === "supporting"
+      );
+      const index = removable >= 0 ? removable : attempts.length - 1;
+      const [removed] = attempts.splice(index, 1);
+      const removedUrl = boundedSourceUrl(removed.url);
+      const documentIndex = documents.findLastIndex((document) =>
+        document.sourceUrl === removedUrl
+      );
+      if (documentIndex >= 0) documents.splice(documentIndex, 1);
+    }
+    attempts.push({
+      url,
+      logicalSourceKey: await logicalSourceKey(url),
+      role: "required_supporting",
+      status: "failed",
+      errorCode: "required_source_overflow",
+      attemptedAt,
+    });
+  };
   const seen = new Set([input.primary.canonicalUrl]);
   const exactUrls = exactSupportingUrls(input.issuer, input.identityLabels);
   const exactSet = new Set(
     exactUrls.map((url) => canonicalOfficialUrl(input.issuer, url)),
   );
-  const initialUrls = [
-    ...exactSet,
+  const initialCandidates = [
+    ...[...exactSet].map((url) => ({
+      url,
+      anchorText: "curated exact source",
+    })),
     ...linkedUrls(
       input.issuer,
       input.primary.canonicalUrl,
@@ -171,19 +231,37 @@ export async function collectSupportingBenefitDocuments(
       input.primary.canonicalUrl,
     ),
   ];
-  const queue = [...new Set(initialUrls)].slice(0, MAX_SUPPORTING_LINKS).map((
-    url,
-  ) => ({
-    url: canonicalOfficialUrl(input.issuer, url),
+  const uniqueInitial = initialCandidates.filter((candidate, index, all) =>
+    all.findIndex((item) => item.url === candidate.url) === index
+  ).map((candidate) => ({
+    ...candidate,
+    url: canonicalOfficialUrl(input.issuer, candidate.url),
     depth: 1,
-    role: sourceRole(
-      url,
-      exactSet.has(canonicalOfficialUrl(input.issuer, url)),
-    ),
+    role: sourceRole(candidate, exactSet.has(candidate.url)),
   })).sort((left, right) =>
     Number(right.role === "required_supporting") -
     Number(left.role === "required_supporting")
   );
+  const initialRequired = uniqueInitial.filter((candidate) =>
+    candidate.role === "required_supporting"
+  );
+  const initialOverflow = initialRequired.length > MAX_SUPPORTING_LINKS;
+  const initialLimit = initialOverflow
+    ? MAX_SUPPORTING_LINKS - 1
+    : MAX_SUPPORTING_LINKS;
+  const queue = uniqueInitial.slice(0, initialLimit);
+  if (initialOverflow) {
+    await recordRequiredOverflow(
+      initialRequired[initialLimit].url,
+      new Date().toISOString(),
+    );
+  }
+  const scheduled = new Set(queue.map((candidate) => candidate.url));
+  const queueLimit = (): number =>
+    MAX_SUPPORTING_LINKS -
+    Number(attempts.some((attempt) =>
+      attempt.errorCode === "required_source_overflow"
+    ));
   let fetched = 0;
   for (let position = 0; position < queue.length; position++) {
     const current = queue[position];
@@ -193,6 +271,7 @@ export async function collectSupportingBenefitDocuments(
       if (current.role === "required_supporting") {
         attempts.push({
           url: current.url,
+          logicalSourceKey: await logicalSourceKey(current.url),
           role: current.role,
           status: "failed",
           errorCode: "fetch_budget_exhausted",
@@ -209,6 +288,7 @@ export async function collectSupportingBenefitDocuments(
       if (current.role === "required_supporting") {
         attempts.push({
           url: current.url,
+          logicalSourceKey: await logicalSourceKey(current.url),
           role: current.role,
           status: "failed",
           errorCode: "deadline_exceeded",
@@ -228,6 +308,7 @@ export async function collectSupportingBenefitDocuments(
     } catch (error) {
       attempts.push({
         url: current.url,
+        logicalSourceKey: await logicalSourceKey(current.url),
         role: current.role,
         status: "failed",
         errorCode: sanitizedSourceErrorCode(error),
@@ -240,6 +321,7 @@ export async function collectSupportingBenefitDocuments(
       documents.push(document);
       attempts.push({
         url: resource.canonicalUrl,
+        logicalSourceKey: await logicalSourceKey(current.url),
         role: current.role,
         status: "success",
         httpStatus: 200,
@@ -249,6 +331,7 @@ export async function collectSupportingBenefitDocuments(
     } else {
       attempts.push({
         url: resource.canonicalUrl,
+        logicalSourceKey: await logicalSourceKey(current.url),
         role: current.role,
         status: "failed",
         httpStatus: 200,
@@ -263,7 +346,7 @@ export async function collectSupportingBenefitDocuments(
       resource.contentType !== "application/pdf"
     ) {
       for (
-        const url of linkedUrls(
+        const candidate of linkedUrls(
           input.issuer,
           resource.canonicalUrl,
           resource.text,
@@ -271,22 +354,35 @@ export async function collectSupportingBenefitDocuments(
           input.primary.canonicalUrl,
         )
       ) {
-        if (!seen.has(url)) {
+        if (!seen.has(candidate.url) && !scheduled.has(candidate.url)) {
           const discovered = {
-            url,
+            ...candidate,
             depth: current.depth + 1,
-            role: sourceRole(url, false),
+            role: sourceRole(candidate, false),
           };
           if (
-            queue.length >= MAX_SUPPORTING_LINKS &&
+            queue.length >= queueLimit() &&
             discovered.role === "required_supporting"
           ) {
             const replaceable = queue.findLastIndex((item, index) =>
               index > position && item.role === "supporting"
             );
-            if (replaceable >= 0) queue.splice(replaceable, 1);
+            if (replaceable >= 0) {
+              scheduled.delete(queue[replaceable].url);
+              queue.splice(replaceable, 1);
+            } else {
+              if (position + 1 < queue.length) {
+                scheduled.delete(queue.at(-1)!.url);
+                queue.pop();
+              }
+              await recordRequiredOverflow(
+                discovered.url,
+                resource.retrievedAt,
+              );
+            }
           }
-          if (queue.length >= MAX_SUPPORTING_LINKS) continue;
+          if (queue.length >= queueLimit()) continue;
+          scheduled.add(discovered.url);
           if (discovered.role === "required_supporting") {
             queue.splice(position + 1, 0, discovered);
           } else {

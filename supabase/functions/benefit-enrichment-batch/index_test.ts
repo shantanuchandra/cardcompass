@@ -898,7 +898,7 @@ Deno.test("same-card v6 observation history is bounded and ignores other identif
   const history = await readCompleteAbsenceHistory(db, "card-1", [
     "card-benefit-v2:card-1:cashback",
     "legacy:cashback",
-  ]);
+  ], "2026-08-19T00:00:00.000Z");
 
   assert(filters.get("card_id") === "card-1", "history crossed cards");
   assert(
@@ -948,7 +948,10 @@ Deno.test("history is globally deduplicated and limited to the newest 24 valid o
     ...summaries[23].observations[23],
   });
 
-  const observations = newestValidCrawlObservations(summaries);
+  const observations = newestValidCrawlObservations(
+    summaries,
+    "2026-08-19T00:00:00.000Z",
+  );
   assert(observations.length === 24, "history exceeded the global bound");
   assert(
     observations[0].observed_at ===
@@ -961,9 +964,30 @@ Deno.test("history is globally deduplicated and limited to the newest 24 valid o
   );
 });
 
+Deno.test("future observations cannot crowd out valid retirement history", () => {
+  const observations = newestValidCrawlObservations([{
+    observations: [{
+      observed_at: "2026-08-18T00:00:00.000Z",
+      crawl_complete: true,
+      absent_benefit_ids: ["valid"],
+    }, {
+      observed_at: "9999-12-31T23:59:59.999Z",
+      crawl_complete: true,
+      absent_benefit_ids: ["future"],
+    }],
+  }], "2026-08-19T00:00:00.000Z");
+
+  assert(observations.length === 1, "future observation survived validation");
+  assert(
+    observations[0].observed_at === "2026-08-18T00:00:00.000Z",
+    "valid observation was crowded out",
+  );
+});
+
 Deno.test("crawl observation retains bounded attempts and both hashes without raw bodies", () => {
   const observation = buildCrawlObservation({
     observedAt: "2026-08-19T00:00:00.000Z",
+    assessmentTime: "2026-08-19T00:00:00.000Z",
     crawlComplete: true,
     crawlReason: "complete",
     sourceManifestHash: "a".repeat(64),
@@ -999,6 +1023,113 @@ Deno.test("crawl observation retains bounded attempts and both hashes without ra
   assert(
     !JSON.stringify(observation).includes("body"),
     "raw body field was persisted",
+  );
+});
+
+Deno.test("crawl observation compaction retains a decisive final required retry", () => {
+  const optional = Array.from({ length: 8 }, (_, index) => ({
+    url: `https://issuer.example/card/benefits-${index}`,
+    role: "supporting" as const,
+    status: "success" as const,
+    httpStatus: 200,
+    contentHash: String(index).padStart(64, "0"),
+    attemptedAt: `2026-08-19T00:0${index}:00.000Z`,
+  }));
+  const requiredUrl = "https://issuer.example/card/terms";
+  const observation = buildCrawlObservation({
+    observedAt: "2026-08-19T00:20:00.000Z",
+    assessmentTime: "2026-08-19T00:20:00.000Z",
+    crawlComplete: true,
+    crawlReason: "complete",
+    sourceManifestHash: "a".repeat(64),
+    canonicalBenefitHash: "b".repeat(64),
+    absentBenefitIds: [],
+    absentLegacyBenefitIds: [],
+    attempts: [
+      {
+        url: "https://issuer.example/card",
+        role: "primary",
+        status: "success",
+        httpStatus: 200,
+        contentHash: "c".repeat(64),
+        attemptedAt: "2026-08-19T00:00:00.000Z",
+      },
+      ...optional,
+      {
+        url: requiredUrl,
+        logicalSourceKey: "d".repeat(64),
+        role: "required_supporting",
+        status: "failed",
+        errorCode: "http_404",
+        attemptedAt: "2026-08-19T00:10:00.000Z",
+      },
+      {
+        url: `${requiredUrl}?retry=unconditional`,
+        logicalSourceKey: "d".repeat(64),
+        role: "required_supporting",
+        status: "success",
+        httpStatus: 200,
+        contentHash: "e".repeat(64),
+        attemptedAt: "2026-08-19T00:11:00.000Z",
+      },
+    ],
+  });
+
+  assert(observation.source_attempts.length <= 9, "attempt bound was exceeded");
+  assert(
+    observation.crawl_complete === true,
+    "compacted decisive evidence no longer reconstructed completeness",
+  );
+  assert(
+    observation.source_attempts.some((item) =>
+      item.role === "required_supporting" && item.status === "success" &&
+      item.attemptedAt === "2026-08-19T00:11:00.000Z"
+    ),
+    "decisive final required retry was compacted away",
+  );
+});
+
+Deno.test("too many decisive required sources force bounded incomplete evidence", () => {
+  const observation = buildCrawlObservation({
+    observedAt: "2026-08-19T00:20:00.000Z",
+    assessmentTime: "2026-08-19T00:20:00.000Z",
+    crawlComplete: true,
+    crawlReason: "complete",
+    sourceManifestHash: "a".repeat(64),
+    canonicalBenefitHash: "b".repeat(64),
+    absentBenefitIds: [],
+    absentLegacyBenefitIds: [],
+    attempts: [
+      {
+        url: "https://issuer.example/card",
+        role: "primary",
+        status: "success",
+        httpStatus: 200,
+        contentHash: "c".repeat(64),
+        attemptedAt: "2026-08-19T00:00:00.000Z",
+      },
+      ...Array.from({ length: 9 }, (_, index) => ({
+        url: `https://issuer.example/card/terms-${index}`,
+        logicalSourceKey: String(index).padStart(64, "0"),
+        role: "required_supporting" as const,
+        status: "success" as const,
+        httpStatus: 200,
+        contentHash: String(index + 1).padStart(64, "0"),
+        attemptedAt: `2026-08-19T00:${
+          String(index + 1).padStart(2, "0")
+        }:00.000Z`,
+      })),
+    ],
+  });
+
+  assert(observation.source_attempts.length === 9, "hard bound changed");
+  assert(
+    observation.crawl_complete === false,
+    "decisive overflow stayed complete",
+  );
+  assert(
+    observation.crawl_reason === "decisive_attempt_overflow",
+    "decisive overflow lacked an explicit bounded reason",
   );
 });
 
@@ -1230,6 +1361,80 @@ Deno.test("v6 separates domestic and international lounge offer subjects", async
 
   assert(diff.additions.length === 2, "lounge families were collapsed");
   assert(diff.conflicts.length === 0, "distinct lounge families conflicted");
+});
+
+Deno.test("equal-term domestic and international lounge offers retain durable identities", async () => {
+  const documents = [{
+    sourceUrl: "https://issuer.example/card",
+    text:
+      "Get 2 lounge visits per quarter at domestic airports. Get 2 lounge visits per quarter at international airports.",
+    contentHash: "a".repeat(64),
+  }];
+  const first = await extractGroundedBenefitsV6(
+    documents,
+    "benefits-v6",
+    "card-1",
+  );
+  const replay = await extractGroundedBenefitsV6(
+    documents,
+    "benefits-v6",
+    "card-1",
+  );
+
+  assert(first.length === 2, "equal commercial terms collapsed offer families");
+  assert(
+    new Set(first.map((item) => item.offerSubject)).size === 2,
+    "offer subjects did not distinguish lounge geography",
+  );
+  assert(
+    new Set(first.map((item) => item.benefitId)).size === 2,
+    "stable v6 identifiers omitted the offer subject",
+  );
+  assert(
+    first.every((item) => item.valueConfig.offer_subject === item.offerSubject),
+    "offer subject was not persisted in schema-preserving JSON",
+  );
+  assert(
+    first.map((item) => item.benefitId).sort().join(",") ===
+      replay.map((item) => item.benefitId).sort().join(","),
+    "offer identities changed on replay",
+  );
+  const reconstructed = first.map((item) =>
+    currentBenefitProposal({
+      dedupe_key: item.dedupeKey,
+      title: item.title,
+      description: "mutable approved description",
+      benefit_category: item.category,
+      benefit_type: item.valueType,
+      value_config: item.valueConfig,
+      exclusions: item.exclusions,
+      source_url: item.sourceUrl,
+    })
+  );
+  assert(
+    reconstructed.every((item, index) =>
+      item?.offerSubject === first[index].offerSubject
+    ),
+    "approved reconciliation reconstructed subject from mutable description",
+  );
+});
+
+Deno.test("legitimate same-source lounge tiers do not conflict", async () => {
+  const proposals = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text:
+        "Get 2 lounge visits per quarter at domestic airports. Get 4 lounge visits per year at domestic airports.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const diff = diffBenefits([], proposals);
+
+  assert(proposals.length === 2, "same-source tiers collapsed");
+  assert(diff.conflicts.length === 0, "same-source tiers falsely conflicted");
+  assert(diff.additions.length === 2, "same-source tiers were not additions");
 });
 
 Deno.test("v6 reviews changed terms within one domestic lounge subject", async () => {

@@ -8,7 +8,6 @@ import {
   diffBenefits,
   extractGroundedBenefits,
   extractGroundedBenefitsV6,
-  offerSubjectForProposal,
 } from "../_shared/benefit_enrichment.ts";
 import { cardScopedBenefitKey } from "../_shared/benefit_contract.ts";
 import {
@@ -45,7 +44,10 @@ import { collectSupportingBenefitDocuments } from "./supporting_documents.ts";
 import {
   assessCrawlCompleteness,
   boundedSourceUrl,
+  compactSourceAttempts,
+  MAX_EVIDENCE_CLOCK_SKEW_MS,
   retirementEligibility,
+  sanitizedSourceAttempt,
   sanitizedSourceErrorCode,
   type SourceAttempt,
   utcInstant,
@@ -231,8 +233,11 @@ export function currentBenefitProposal(
     evidence: {},
     warnings: [],
   };
-  if (proposal.benefitId) {
-    proposal.offerSubject = offerSubjectForProposal(proposal);
+  if (
+    proposal.benefitId && typeof config.offer_subject === "string" &&
+    config.offer_subject.trim()
+  ) {
+    proposal.offerSubject = config.offer_subject.trim().slice(0, 256);
   }
   return proposal;
 }
@@ -266,7 +271,8 @@ async function cardScopedIdentifier(
     description: benefit.description,
     category: benefit.category,
     benefitType: benefit.valueType,
-    semanticKey: `${benefit.category}:${benefit.valueType ?? "benefit"}`,
+    semanticKey: benefit.offerSubject ??
+      `${benefit.category}:${benefit.valueType ?? "benefit"}`,
     value: benefit.value,
     rate: benefit.rate,
     cap: benefit.cap,
@@ -308,7 +314,7 @@ async function sha256Text(value: string): Promise<string> {
 export async function computeSourceManifestHash(
   attempts: SourceAttempt[],
 ): Promise<string> {
-  const stableAttempts = assessCrawlCompleteness(attempts).attempts.map(({
+  const stableAttempts = attempts.map(sanitizedSourceAttempt).map(({
     attemptedAt: _attemptedAt,
     ...attempt
   }) => attempt).map((attempt) => JSON.stringify(attempt)).sort();
@@ -383,6 +389,7 @@ export function applyRemovalPolicy(input: {
 
 export function buildCrawlObservation(input: {
   observedAt: string;
+  assessmentTime: string;
   crawlComplete: boolean;
   crawlReason: string;
   sourceManifestHash: string;
@@ -391,10 +398,12 @@ export function buildCrawlObservation(input: {
   absentLegacyBenefitIds: string[];
   attempts: SourceAttempt[];
 }) {
+  const compacted = compactSourceAttempts(input.attempts, input.assessmentTime);
   return {
     observed_at: input.observedAt,
-    crawl_complete: input.crawlComplete,
-    crawl_reason: input.crawlReason.slice(0, 64),
+    crawl_complete: input.crawlComplete && compacted.complete,
+    crawl_reason: (compacted.complete ? input.crawlReason : compacted.reason)
+      .slice(0, 64),
     source_manifest_hash: input.sourceManifestHash.slice(0, 128),
     canonical_benefit_hash: input.canonicalBenefitHash.slice(0, 128),
     absent_benefit_ids: [...new Set(input.absentBenefitIds)].sort().slice(
@@ -403,10 +412,7 @@ export function buildCrawlObservation(input: {
     ),
     absent_legacy_benefit_ids: [...new Set(input.absentLegacyBenefitIds)].sort()
       .slice(0, 256),
-    source_attempts: assessCrawlCompleteness(input.attempts).attempts.slice(
-      0,
-      9,
-    ),
+    source_attempts: compacted.attempts,
   };
 }
 
@@ -430,13 +436,21 @@ function observationObjects(summary: unknown): Array<Record<string, unknown>> {
 
 export function newestValidCrawlObservations(
   summaries: unknown[],
+  assessmentTime: string,
 ): Array<Record<string, unknown>> {
+  const assessmentTimestamp = utcInstant(assessmentTime);
+  if (assessmentTimestamp === null) return [];
   const byTimestamp = new Map<string, Record<string, unknown>>();
   for (const observation of summaries.flatMap(observationObjects)) {
     const observedAt = typeof observation.observed_at === "string"
       ? observation.observed_at
       : "";
-    if (utcInstant(observedAt) === null || byTimestamp.has(observedAt)) {
+    const timestamp = utcInstant(observedAt);
+    if (
+      timestamp === null ||
+      timestamp > assessmentTimestamp + MAX_EVIDENCE_CLOCK_SKEW_MS ||
+      byTimestamp.has(observedAt)
+    ) {
       continue;
     }
     byTimestamp.set(observedAt, observation);
@@ -450,6 +464,7 @@ export async function readCompleteAbsenceHistory(
   db: UntypedSupabaseClient,
   cardId: string,
   identifiers: string[],
+  assessmentTime: string,
 ): Promise<Record<string, string[]>> {
   const requested = new Set(identifiers.filter(Boolean).slice(0, 512));
   if (requested.size === 0) return {};
@@ -498,7 +513,12 @@ export async function readCompleteAbsenceHistory(
       !corroboratedStagingIds.has(row.staging_id)
     )
   ).map((row: Record<string, unknown>) => row.result_summary);
-  for (const observation of newestValidCrawlObservations(eligibleSummaries)) {
+  for (
+    const observation of newestValidCrawlObservations(
+      eligibleSummaries,
+      assessmentTime,
+    )
+  ) {
     if (observation.crawl_complete !== true) continue;
     const observedAt = String(observation.observed_at);
     for (
@@ -606,6 +626,7 @@ async function incompleteObservationState(input: {
     : await sha256Text("[]");
   const observation = buildCrawlObservation({
     observedAt: input.observedAt,
+    assessmentTime: input.observedAt,
     crawlComplete: false,
     crawlReason: input.crawlReason,
     sourceManifestHash: input.sourceManifestHash,
@@ -878,7 +899,7 @@ async function processJob(
         errorCode,
         attemptedAt,
       }];
-      const crawl = assessCrawlCompleteness(attempts);
+      const crawl = assessCrawlCompleteness(attempts, attemptedAt);
       const sourceManifestHash = await computeSourceManifestHash(
         crawl.attempts,
       );
@@ -943,7 +964,8 @@ async function processJob(
       ],
     });
     const { documents } = collected;
-    const crawl = assessCrawlCompleteness(collected.attempts);
+    const assessmentTime = new Date().toISOString();
+    const crawl = assessCrawlCompleteness(collected.attempts, assessmentTime);
     const sourceManifestHash = await computeSourceManifestHash(crawl.attempts);
     contentHash = sourceManifestHash;
     const proposed: BenefitComparisonProposal[] = job.parser_version ===
@@ -982,7 +1004,12 @@ async function processJob(
       benefit.dedupeKey,
     ]).filter(Boolean);
     const completeAbsenceHistory = crawl.complete
-      ? await readCompleteAbsenceHistory(db, job.card_id, removalIdentifiers)
+      ? await readCompleteAbsenceHistory(
+        db,
+        job.card_id,
+        removalIdentifiers,
+        assessmentTime,
+      )
       : {};
     const removalPolicy = applyRemovalPolicy({
       possibleRemovals: removals,
@@ -1001,6 +1028,7 @@ async function processJob(
     });
     const observation = buildCrawlObservation({
       observedAt: page.retrievedAt,
+      assessmentTime,
       crawlComplete: crawl.complete,
       crawlReason: crawl.reason,
       sourceManifestHash,
@@ -1042,6 +1070,9 @@ async function processJob(
     const sourceEvidence = proposed.length > 0
       ? proposed.map((benefit) => ({
         dedupe_key: benefit.dedupeKey,
+        ...(benefit.offerSubject
+          ? { offer_subject: benefit.offerSubject.slice(0, 256) }
+          : {}),
         source_url: benefit.sourceUrl,
         source_excerpt: benefit.sourceExcerpt.slice(0, 500),
         content_hash: benefit.contentHash.slice(0, 128),

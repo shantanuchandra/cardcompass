@@ -117,6 +117,68 @@ Deno.test("supporting crawl fetches at most eight relevant links", async () => {
   assert(attempts.length === 9, "bounded successful attempts were omitted");
 });
 
+Deno.test("a required ninth initial link outranks eight optional links", async () => {
+  const product = "https://www.axis.bank.in/cards/credit-card/privilege";
+  const optional = Array.from(
+    { length: 8 },
+    (_, index) => `${product}/benefits-${index}`,
+  );
+  const required = `${product}/terms-and-conditions`;
+  const requested: string[] = [];
+  const { attempts } = await collectSupportingBenefitDocuments({
+    issuer: "Axis Bank",
+    identityLabels: ["Privilege"],
+    primary: resource(
+      product,
+      [...optional, required].map((url) => `<a href="${url}">Details</a>`)
+        .join(""),
+    ),
+    fetchOfficialIssuerResource: async (input) => {
+      requested.push(input.url);
+      return resource(input.url, "Official details");
+    },
+  });
+
+  assert(requested[0] === required, "required ninth link was not prioritized");
+  assert(requested.includes(required), "required ninth link was omitted");
+  assert(
+    attempts.some((item) =>
+      item.url === required && item.role === "required_supporting"
+    ),
+    "required ninth link lost its necessity classification",
+  );
+});
+
+Deno.test("opaque PDF anchor metadata can establish a required MITC source", async () => {
+  const product = "https://www.axis.bank.in/cards/credit-card/privilege";
+  const opaque = `${product}/documents/abc123.pdf`;
+  const requested: string[] = [];
+  const { attempts } = await collectSupportingBenefitDocuments({
+    issuer: "Axis Bank",
+    identityLabels: ["Privilege"],
+    primary: resource(
+      product,
+      `<a href="${opaque}">Most Important Terms and Conditions</a>`,
+    ),
+    fetchOfficialIssuerResource: async (input) => {
+      requested.push(input.url);
+      return resource(
+        input.url,
+        "%PDF-1.4\nstream\nBT (Official terms.) Tj ET\nendstream\n%%EOF",
+        "application/pdf",
+      );
+    },
+  });
+
+  assert(requested.join(",") === opaque, "opaque MITC source was not fetched");
+  assert(
+    attempts.some((item) =>
+      item.url === opaque && item.role === "required_supporting"
+    ),
+    "opaque MITC anchor was treated as optional",
+  );
+});
+
 Deno.test("required terms HTML outranks an optional PDF when one fetch remains", async () => {
   const product = "https://www.axis.bank.in/cards/credit-card/privilege";
   const optionalPdf = `${product}/benefits.pdf`;
@@ -229,6 +291,39 @@ Deno.test("depth-discovered required evidence displaces optional queue overflow"
   assert(attempts.length <= 9, "bounded source evidence overflowed");
 });
 
+Deno.test("required evidence discovered by the last optional page records overflow", async () => {
+  const product = "https://www.axis.bank.in/cards/credit-card/privilege";
+  const optional = Array.from(
+    { length: 8 },
+    (_, index) => `${product}/benefits-${index}`,
+  );
+  const required = `${product}/documents/late-terms`;
+  const { attempts } = await collectSupportingBenefitDocuments({
+    issuer: "Axis Bank",
+    identityLabels: ["Privilege"],
+    primary: resource(
+      product,
+      optional.map((url) => `<a href="${url}">Benefit</a>`).join(""),
+    ),
+    fetchOfficialIssuerResource: async (input) =>
+      resource(
+        input.url,
+        input.url === optional[7]
+          ? `<a href="${required}">Most Important Terms and Conditions</a>`
+          : "Optional details",
+      ),
+  });
+
+  assert(
+    attempts.some((item) =>
+      item.role === "required_supporting" &&
+      item.errorCode === "required_source_overflow"
+    ),
+    "last-page required discovery was silently dropped",
+  );
+  assert(attempts.length <= 9, "overflow evidence exceeded the hard bound");
+});
+
 Deno.test("supporting crawl records required work blocked by the invocation deadline", async () => {
   const product = "https://www.axis.bank.in/cards/credit-card/privilege";
   const pdf = `${product}/terms.pdf`;
@@ -276,12 +371,22 @@ Deno.test("supporting crawl rejects another card variant and counts failed attem
     },
   });
 
-  assert(requested.length === 8, "failed requests did not consume the budget");
+  assert(
+    requested.length === 7,
+    "overflow marker did not reserve bounded attempt evidence",
+  );
   assert(!requested.includes(other), "cross-card supporting link was fetched");
   assert(attempts.length === 9, "failed attempts were dropped");
   assert(
-    attempts.slice(1).every((attempt) =>
-      attempt.status === "failed" && attempt.errorCode === "unreachable"
+    attempts.some((attempt) =>
+      attempt.errorCode === "required_source_overflow"
+    ),
+    "initial required overflow was not recorded",
+  );
+  assert(
+    attempts.filter((attempt) => requested.includes(attempt.url)).every(
+      (attempt) =>
+        attempt.status === "failed" && attempt.errorCode === "unreachable",
     ),
     "failed attempts retained unsanitized thrown errors",
   );

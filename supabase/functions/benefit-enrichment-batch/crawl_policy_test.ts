@@ -26,7 +26,7 @@ function attempt(
 }
 
 Deno.test("a successful primary source is a complete crawl", () => {
-  const result = assessCrawlCompleteness([attempt()]);
+  const result = assessCrawlCompleteness([attempt()], OBSERVED_AT);
 
   assert(result.complete, "primary success was not complete");
   assert(result.attempts.length === 1, "primary attempt was not retained");
@@ -34,7 +34,10 @@ Deno.test("a successful primary source is a complete crawl", () => {
 
 Deno.test("a source with an invalid or local timestamp cannot establish completeness", () => {
   for (const attemptedAt of ["not-a-date", "2026-08-19T00:00:00"]) {
-    const result = assessCrawlCompleteness([attempt({ attemptedAt })]);
+    const result = assessCrawlCompleteness(
+      [attempt({ attemptedAt })],
+      OBSERVED_AT,
+    );
     assert(
       !result.complete,
       `unsafe attempt timestamp was accepted: ${attemptedAt}`,
@@ -48,12 +51,12 @@ Deno.test("a primary 304 is complete only with reusable same-parser cache eviden
     httpStatus: 304,
     contentHash: undefined,
     parserCacheReusable: false,
-  })]);
+  })], OBSERVED_AT);
   const withCache = assessCrawlCompleteness([attempt({
     status: "not_modified",
     httpStatus: 304,
     parserCacheReusable: true,
-  })]);
+  })], OBSERVED_AT);
 
   assert(!withoutCache.complete, "304 invented reusable parser state");
   assert(withCache.complete, "explicit reusable 304 cache was rejected");
@@ -69,7 +72,7 @@ Deno.test("latest successful retry completes one logical primary source", () => 
       attemptedAt: "2026-08-19T00:00:00.000Z",
     }),
     attempt({ attemptedAt: "2026-08-19T00:01:00.000Z" }),
-  ]);
+  ], "2026-08-19T00:02:00.000Z");
   assert(result.complete, "404 followed by 200 stayed incomplete");
   assert(result.attempts.length === 2, "retry evidence was discarded");
 });
@@ -83,7 +86,7 @@ Deno.test("latest failed retry keeps one logical primary source incomplete", () 
       errorCode: "timeout",
       attemptedAt: "2026-08-19T00:01:00.000Z",
     }),
-  ]);
+  ], "2026-08-19T00:02:00.000Z");
   assert(!result.complete, "200 followed by failure became complete");
 });
 
@@ -97,12 +100,13 @@ Deno.test("unusable 304 followed by unconditional 200 becomes complete", () => {
       attemptedAt: "2026-08-19T00:00:00.000Z",
     }),
     attempt({ attemptedAt: "2026-08-19T00:01:00.000Z" }),
-  ]);
+  ], "2026-08-19T00:02:00.000Z");
   assert(result.complete, "unconditional retry did not recover unusable 304");
 });
 
 Deno.test("required retries resolve by logical URL and latest result", () => {
   const required = `${PRIMARY}/terms`;
+  const logicalSourceKey = "c".repeat(64);
   const result = assessCrawlCompleteness([
     attempt(),
     attempt({
@@ -111,15 +115,16 @@ Deno.test("required retries resolve by logical URL and latest result", () => {
       status: "failed",
       contentHash: undefined,
       errorCode: "http_404",
+      logicalSourceKey,
       attemptedAt: "2026-08-19T00:01:00.000Z",
     }),
     attempt({
       url: `${required}?retry=1`,
-      logicalSourceKey: required,
+      logicalSourceKey,
       role: "required_supporting",
       attemptedAt: "2026-08-19T00:02:00.000Z",
     }),
-  ]);
+  ], "2026-08-19T00:03:00.000Z");
   assert(result.complete, "required source retry stayed incomplete");
 });
 
@@ -128,7 +133,7 @@ Deno.test("duplicate or malformed retry timestamps remain incomplete", () => {
     const result = assessCrawlCompleteness([
       attempt(),
       attempt({ attemptedAt, status: "failed", contentHash: undefined }),
-    ]);
+    ], "2026-08-19T00:02:00.000Z");
     assert(
       !result.complete,
       `unsafe retry timestamp was accepted: ${attemptedAt}`,
@@ -138,13 +143,13 @@ Deno.test("duplicate or malformed retry timestamps remain incomplete", () => {
 
 Deno.test("explicitly distinct logical primary sources remain incomplete", () => {
   const result = assessCrawlCompleteness([
-    attempt({ logicalSourceKey: "submitted" }),
+    attempt({ logicalSourceKey: "a".repeat(64) }),
     attempt({
       url: `${PRIMARY}/other`,
-      logicalSourceKey: "other",
+      logicalSourceKey: "b".repeat(64),
       attemptedAt: "2026-08-19T00:01:00.000Z",
     }),
-  ]);
+  ], "2026-08-19T00:02:00.000Z");
   assert(
     !result.complete,
     "distinct primary sources bypassed multiplicity guard",
@@ -168,7 +173,7 @@ Deno.test("a missing or corrupt required PDF makes the crawl incomplete", () => 
         contentHash: undefined,
         errorCode,
       }),
-    ]);
+    ], OBSERVED_AT);
     assert(
       !result.complete,
       `${errorCode} required PDF was treated as complete`,
@@ -188,7 +193,7 @@ Deno.test("an optional supporting failure is retained without making the crawl i
       contentHash: undefined,
       errorCode: "unreachable",
     }),
-  ]);
+  ], OBSERVED_AT);
 
   assert(result.complete, "optional failure blocked a complete primary crawl");
   assert(result.attempts.length === 2, "optional failed attempt was dropped");
@@ -218,7 +223,7 @@ for (
       httpStatus: fixture.httpStatus,
       contentHash: undefined,
       errorCode: fixture.errorCode,
-    })]);
+    })], OBSERVED_AT);
 
     assert(!result.complete, `${fixture.label} enabled absence decisions`);
   });
@@ -232,7 +237,7 @@ Deno.test("attempt evidence strips credentials and bounds unsanitized failure da
     contentHash: undefined,
     errorCode: "Authorization: Bearer secret-cookie-value",
     logicalSourceKey: "Authorization: Bearer secret-cookie-value",
-  })]);
+  })], OBSERVED_AT);
   const persisted = result.attempts[0];
 
   assert(
@@ -247,6 +252,107 @@ Deno.test("attempt evidence strips credentials and bounds unsanitized failure da
     !JSON.stringify(persisted).includes("secret"),
     "secret material survived bounded attempt evidence",
   );
+});
+
+Deno.test("distinct required query sources cannot mask one another", () => {
+  const result = assessCrawlCompleteness([
+    attempt(),
+    attempt({
+      url: `${PRIMARY}/terms?card=alpha`,
+      role: "required_supporting",
+      status: "failed",
+      contentHash: undefined,
+      errorCode: "http_404",
+      attemptedAt: "2026-08-19T00:01:00.000Z",
+    }),
+    attempt({
+      url: `${PRIMARY}/terms?card=beta`,
+      role: "required_supporting",
+      attemptedAt: "2026-08-19T00:02:00.000Z",
+    }),
+  ], "2026-08-19T00:03:00.000Z");
+
+  assert(!result.complete, "query-distinct required sources collided");
+  assert(
+    result.attempts.every((item) => !item.url.includes("?")),
+    "private query data survived persisted evidence",
+  );
+});
+
+Deno.test("known 32-bit opaque-key collisions cannot merge distinct sources", () => {
+  const result = assessCrawlCompleteness([
+    attempt(),
+    attempt({
+      url: `${PRIMARY}/documents/alpha`,
+      logicalSourceKey: "source-1dwsp5w-ogr",
+      role: "required_supporting",
+      status: "failed",
+      contentHash: undefined,
+      errorCode: "http_404",
+      attemptedAt: "2026-08-19T00:01:00.000Z",
+    }),
+    attempt({
+      url: `${PRIMARY}/documents/beta`,
+      logicalSourceKey: "source-1xm3hyf-13xs",
+      role: "required_supporting",
+      attemptedAt: "2026-08-19T00:02:00.000Z",
+    }),
+  ], "2026-08-19T00:03:00.000Z");
+
+  assert(!result.complete, "colliding opaque keys merged required sources");
+  assert(
+    result.attempts.every((item) => item.logicalSourceKey === undefined),
+    "non-cryptographic retry metadata was persisted as identity",
+  );
+});
+
+Deno.test("arbitrary retry labels cannot split one logical required source", () => {
+  const required = `${PRIMARY}/terms`;
+  const result = assessCrawlCompleteness([
+    attempt(),
+    attempt({
+      url: required,
+      logicalSourceKey: "submitted",
+      role: "required_supporting",
+      status: "failed",
+      contentHash: undefined,
+      errorCode: "http_404",
+      attemptedAt: "2026-08-19T00:01:00.000Z",
+    }),
+    attempt({
+      url: required,
+      logicalSourceKey: "unconditional",
+      role: "required_supporting",
+      attemptedAt: "2026-08-19T00:02:00.000Z",
+    }),
+  ], "2026-08-19T00:03:00.000Z");
+
+  assert(result.complete, "retry labels split one required source");
+});
+
+Deno.test("far-future terminal evidence is conservatively incomplete", () => {
+  const result = assessCrawlCompleteness([
+    attempt({
+      status: "failed",
+      contentHash: undefined,
+      errorCode: "timeout",
+      attemptedAt: "2026-08-19T00:01:00.000Z",
+    }),
+    attempt({ attemptedAt: "9999-12-31T23:59:59.999Z" }),
+  ], "2026-08-19T00:02:00.000Z");
+
+  assert(!result.complete, "far-future success dominated real failure");
+  assert(
+    result.reason === "primary_incomplete",
+    "wrong future evidence reason",
+  );
+});
+
+Deno.test("small explicit clock skew is accepted", () => {
+  const result = assessCrawlCompleteness([
+    attempt({ attemptedAt: "2026-08-19T00:04:59.999Z" }),
+  ], OBSERVED_AT);
+  assert(result.complete, "bounded clock skew was rejected");
 });
 
 Deno.test("two complete observations less than seven days apart are ineligible", () => {

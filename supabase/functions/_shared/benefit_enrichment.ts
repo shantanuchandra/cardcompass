@@ -688,7 +688,9 @@ function conflictSubjectKey(
   });
 }
 
-export function offerSubjectForProposal(benefit: BenefitProposal): string {
+export function offerSubjectForProposal(
+  benefit: Pick<BenefitProposal, "category" | "valueType" | "sourceExcerpt">,
+): string {
   const text = normalize(benefit.sourceExcerpt);
   const qualifier = benefit.valueType === "lounge_access"
     ? (/\bdomestic\b/.test(text)
@@ -735,11 +737,11 @@ function sorted<T extends { dedupeKey: string }>(benefits: T[]): T[] {
  * Extracts only terms that state a concrete benefit. This intentionally does not
  * turn headings or implied eligibility into values, caps, or merchant restrictions.
  */
-export function extractGroundedBenefits(
+function parsedGroundedBenefits(
   documents: BenefitDocument[],
   parserVersion: string,
-): BenefitProposal[] {
-  const parsed = documents.flatMap((source) => {
+): ParsedBenefit[] {
+  return documents.flatMap((source) => {
     const document = { ...source, text: readableText(source.text) };
     const lines = document.text
       .split(/(?:\r?\n|(?<=[!?])\s+|(?<=\.)\s+(?=[A-Z]))/)
@@ -789,6 +791,13 @@ export function extractGroundedBenefits(
       return assembled ? [assembled] : [];
     });
   });
+}
+
+export function extractGroundedBenefits(
+  documents: BenefitDocument[],
+  parserVersion: string,
+): BenefitProposal[] {
+  const parsed = parsedGroundedBenefits(documents, parserVersion);
   const byKey = new Map<string, ParsedBenefit[]>();
   for (const benefit of parsed) {
     const key = stableHash(conditionKey(benefit));
@@ -834,22 +843,50 @@ export async function extractGroundedBenefitsV6(
   parserVersion: "benefits-v6",
   cardId: string,
 ): Promise<BenefitProposalV6[]> {
-  const legacy = extractGroundedBenefits(documents, parserVersion);
-  const canonical = legacy.filter((benefit) =>
+  const parsed = parsedGroundedBenefits(documents, parserVersion);
+  const canonical = parsed.filter((benefit) =>
     !/\b(?:no\s+longer\s+available|discontinued)\b/i.test(
       benefit.sourceExcerpt,
     ) &&
     !/\bup\s+to\s+(?:₹|rs\.?|inr)\s*[0-9][0-9,]*(?:\.\d{1,2})?\s+cashback\b/i
       .test(benefit.sourceExcerpt)
   );
-  return await Promise.all(canonical.map(async (benefit) => {
-    const subject = offerSubjectForProposal(benefit);
+  const grouped = new Map<
+    string,
+    Array<ParsedBenefit & { offerSubject: string }>
+  >();
+  for (const benefit of canonical) {
+    const offerSubject = offerSubjectForProposal(benefit);
+    const key = `${offerSubject}:${stableHash(conditionKey(benefit))}`;
+    grouped.set(key, [
+      ...(grouped.get(key) ?? []),
+      { ...benefit, offerSubject },
+    ]);
+  }
+  const projected = [...grouped.values()].map((matches) => {
+    const representative = [...matches].sort((left, right) =>
+      left.sourceUrl.localeCompare(right.sourceUrl)
+    )[0];
+    const sourceUrls = [
+      ...new Set(matches.map((item) =>
+        item.sourceUrl
+      )),
+    ]
+      .sort();
+    return {
+      ...representative,
+      sourceUrl: sourceUrls[0],
+      sourceUrls,
+    };
+  });
+  return await Promise.all(projected.map(async (benefit) => {
+    const subject = benefit.offerSubject;
     const input: CanonicalBenefitInput = {
       title: benefit.title,
       description: benefit.description,
       category: benefit.category,
       benefitType: benefit.valueType ?? null,
-      semanticKey: `${benefit.category}:${benefit.valueType ?? "benefit"}`,
+      semanticKey: subject,
       value: benefit.value,
       rate: benefit.rate,
       cap: benefit.cap,
@@ -871,7 +908,10 @@ export async function extractGroundedBenefitsV6(
       benefitId: dedupeKey,
       dedupeKey,
       conditionHash,
-      valueConfig: canonicalValueConfig(input),
+      valueConfig: {
+        ...canonicalValueConfig(input),
+        offer_subject: subject,
+      },
       exclusions: canonicalExclusions(input.exclusions),
     };
   }));
@@ -930,7 +970,10 @@ export function diffBenefits(
   }
   const conflictedDedupeKeys = new Set<string>();
   for (const [key, candidates] of proposedBySemantic) {
-    if (new Set(candidates.map(conditionKey)).size < 2) continue;
+    if (
+      new Set(candidates.map(conditionKey)).size < 2 ||
+      new Set(candidates.map((benefit) => benefit.sourceUrl)).size < 2
+    ) continue;
     const currentMatches = current.filter((benefit) =>
       semanticKey(benefit) === key
     );
@@ -1068,7 +1111,10 @@ export function diffBenefits(
     const unmatched = sorted(
       benefits.filter((benefit) => proposedByKey.has(benefit.dedupeKey)),
     );
-    if (unmatched.length > 1) {
+    if (
+      unmatched.length > 1 &&
+      new Set(unmatched.map((benefit) => benefit.sourceUrl)).size > 1
+    ) {
       conflicts.push({
         code: "conflicting_proposed_terms",
         proposed: unmatched,
