@@ -10,6 +10,7 @@ import {
   boundedSourceUrl,
   sanitizedSourceErrorCode,
   type SourceAttempt,
+  sourceIdentityDigest,
 } from "./crawl_policy.ts";
 
 const MAX_SUPPORTING_LINKS = 8;
@@ -86,6 +87,7 @@ function exactSupportingUrls(issuer: string, labels: string[]): string[] {
 type SourceCandidate = {
   url: string;
   anchorText: string;
+  requiredHint: boolean;
 };
 
 function sourceRole(
@@ -93,7 +95,7 @@ function sourceRole(
   curated: boolean,
 ): "required_supporting" | "supporting" {
   return curated || requiredSourcePattern.test(candidate.url) ||
-      requiredAnchorPattern.test(candidate.anchorText)
+      candidate.requiredHint
     ? "required_supporting"
     : "supporting";
 }
@@ -105,7 +107,7 @@ function linkedUrls(
   labels: string[],
   primaryUrl: string,
 ): SourceCandidate[] {
-  const candidates: SourceCandidate[] = [];
+  const candidates = new Map<string, SourceCandidate>();
   const tokens = identityTokens(labels);
   const primaryPath = new URL(primaryUrl).pathname.replace(/\/$/, "");
   for (const match of html.matchAll(anchorPattern)) {
@@ -123,35 +125,38 @@ function linkedUrls(
         tokens.every((token) => candidatePath.includes(token));
       if (
         (relevantPath.test(url) || requiredAnchorPattern.test(anchorText)) &&
-        !unsafePath.test(url) && (sameProductPath || namesTargetProduct) &&
-        !candidates.some((candidate) => candidate.url === url)
-      ) candidates.push({ url, anchorText });
+        !unsafePath.test(url) && (sameProductPath || namesTargetProduct)
+      ) {
+        const existing = candidates.get(url);
+        const anchorTexts = [
+          ...new Set([
+            existing?.anchorText ?? "",
+            anchorText,
+          ].filter(Boolean)),
+        ].sort();
+        candidates.set(url, {
+          url,
+          anchorText: anchorTexts.join(" ").slice(0, 256),
+          requiredHint: existing?.requiredHint === true ||
+            requiredAnchorPattern.test(anchorText),
+        });
+      }
     } catch {
       // Only approved issuer URLs enter the supporting queue.
     }
   }
-  return candidates;
-}
-
-async function logicalSourceKey(url: string): Promise<string> {
-  const canonical = new URL(url);
-  canonical.username = "";
-  canonical.password = "";
-  canonical.hash = "";
-  canonical.searchParams.sort();
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(canonical.toString()),
+  return [...candidates.values()].sort((left, right) =>
+    left.url.localeCompare(right.url)
   );
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 async function benefitDocument(
   resource: OfficialFetchResult,
+  sourceIdentity = resource.canonicalUrl,
 ): Promise<BenefitDocument> {
   return {
     sourceUrl: boundedSourceUrl(resource.canonicalUrl),
+    sourceIdentity: sourceIdentityDigest(sourceIdentity),
     text: await officialResourceText(resource),
     contentHash: resource.contentHash,
   };
@@ -166,7 +171,10 @@ export async function collectSupportingBenefitDocuments(
     MAX_SUPPORTING_LINKS,
     Math.max(0, Math.trunc(input.maximumLinks ?? MAX_SUPPORTING_LINKS)),
   );
-  const primaryDocument = await benefitDocument(input.primary);
+  const primaryDocument = await benefitDocument(
+    input.primary,
+    input.primary.canonicalUrl,
+  );
   const documents = primaryDocument.text.trim() ? [primaryDocument] : [];
   const attempts: SourceAttempt[] = [{
     url: input.primary.canonicalUrl,
@@ -206,7 +214,7 @@ export async function collectSupportingBenefitDocuments(
     }
     attempts.push({
       url,
-      logicalSourceKey: await logicalSourceKey(url),
+      sourceIdentity: url,
       role: "required_supporting",
       status: "failed",
       errorCode: "required_source_overflow",
@@ -222,6 +230,7 @@ export async function collectSupportingBenefitDocuments(
     ...[...exactSet].map((url) => ({
       url,
       anchorText: "curated exact source",
+      requiredHint: true,
     })),
     ...linkedUrls(
       input.issuer,
@@ -271,7 +280,7 @@ export async function collectSupportingBenefitDocuments(
       if (current.role === "required_supporting") {
         attempts.push({
           url: current.url,
-          logicalSourceKey: await logicalSourceKey(current.url),
+          sourceIdentity: current.url,
           role: current.role,
           status: "failed",
           errorCode: "fetch_budget_exhausted",
@@ -288,7 +297,7 @@ export async function collectSupportingBenefitDocuments(
       if (current.role === "required_supporting") {
         attempts.push({
           url: current.url,
-          logicalSourceKey: await logicalSourceKey(current.url),
+          sourceIdentity: current.url,
           role: current.role,
           status: "failed",
           errorCode: "deadline_exceeded",
@@ -308,7 +317,7 @@ export async function collectSupportingBenefitDocuments(
     } catch (error) {
       attempts.push({
         url: current.url,
-        logicalSourceKey: await logicalSourceKey(current.url),
+        sourceIdentity: current.url,
         role: current.role,
         status: "failed",
         errorCode: sanitizedSourceErrorCode(error),
@@ -316,12 +325,12 @@ export async function collectSupportingBenefitDocuments(
       });
       continue;
     }
-    const document = await benefitDocument(resource);
+    const document = await benefitDocument(resource, current.url);
     if (document.text.trim()) {
       documents.push(document);
       attempts.push({
         url: resource.canonicalUrl,
-        logicalSourceKey: await logicalSourceKey(current.url),
+        sourceIdentity: current.url,
         role: current.role,
         status: "success",
         httpStatus: 200,
@@ -331,7 +340,7 @@ export async function collectSupportingBenefitDocuments(
     } else {
       attempts.push({
         url: resource.canonicalUrl,
-        logicalSourceKey: await logicalSourceKey(current.url),
+        sourceIdentity: current.url,
         role: current.role,
         status: "failed",
         httpStatus: 200,

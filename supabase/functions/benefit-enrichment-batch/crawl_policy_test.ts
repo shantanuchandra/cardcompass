@@ -106,7 +106,6 @@ Deno.test("unusable 304 followed by unconditional 200 becomes complete", () => {
 
 Deno.test("required retries resolve by logical URL and latest result", () => {
   const required = `${PRIMARY}/terms`;
-  const logicalSourceKey = "c".repeat(64);
   const result = assessCrawlCompleteness([
     attempt(),
     attempt({
@@ -115,12 +114,12 @@ Deno.test("required retries resolve by logical URL and latest result", () => {
       status: "failed",
       contentHash: undefined,
       errorCode: "http_404",
-      logicalSourceKey,
+      sourceIdentity: required,
       attemptedAt: "2026-08-19T00:01:00.000Z",
     }),
     attempt({
       url: `${required}?retry=1`,
-      logicalSourceKey,
+      sourceIdentity: required,
       role: "required_supporting",
       attemptedAt: "2026-08-19T00:02:00.000Z",
     }),
@@ -143,10 +142,10 @@ Deno.test("duplicate or malformed retry timestamps remain incomplete", () => {
 
 Deno.test("explicitly distinct logical primary sources remain incomplete", () => {
   const result = assessCrawlCompleteness([
-    attempt({ logicalSourceKey: "a".repeat(64) }),
+    attempt({ sourceIdentity: `${PRIMARY}?submitted=1` }),
     attempt({
       url: `${PRIMARY}/other`,
-      logicalSourceKey: "b".repeat(64),
+      sourceIdentity: `${PRIMARY}?submitted=2`,
       attemptedAt: "2026-08-19T00:01:00.000Z",
     }),
   ], "2026-08-19T00:02:00.000Z");
@@ -301,8 +300,9 @@ Deno.test("known 32-bit opaque-key collisions cannot merge distinct sources", ()
 
   assert(!result.complete, "colliding opaque keys merged required sources");
   assert(
-    result.attempts.every((item) => item.logicalSourceKey === undefined),
-    "non-cryptographic retry metadata was persisted as identity",
+    result.attempts[1].logicalSourceKey !==
+      result.attempts[2].logicalSourceKey,
+    "derived source identities inherited the caller collision",
   );
 });
 
@@ -328,6 +328,75 @@ Deno.test("arbitrary retry labels cannot split one logical required source", () 
   ], "2026-08-19T00:03:00.000Z");
 
   assert(result.complete, "retry labels split one required source");
+});
+
+Deno.test("a valid-looking digest cannot merge two different required URLs", () => {
+  const attackerChosenDigest = "f".repeat(64);
+  const result = assessCrawlCompleteness([
+    attempt(),
+    attempt({
+      url: `${PRIMARY}/terms?card=alpha`,
+      logicalSourceKey: attackerChosenDigest,
+      role: "required_supporting",
+      status: "failed",
+      contentHash: undefined,
+      errorCode: "http_404",
+      attemptedAt: "2026-08-19T00:01:00.000Z",
+    }),
+    attempt({
+      url: `${PRIMARY}/terms?card=beta`,
+      logicalSourceKey: attackerChosenDigest,
+      role: "required_supporting",
+      attemptedAt: "2026-08-19T00:02:00.000Z",
+    }),
+  ], "2026-08-19T00:03:00.000Z");
+
+  assert(!result.complete, "unproven digest masked a required-source failure");
+  assert(
+    result.attempts[1].logicalSourceKey !== attackerChosenDigest,
+    "caller-controlled digest survived as authoritative identity",
+  );
+});
+
+Deno.test("trusted full-source identity groups retry stages without persisting queries", () => {
+  const sourceIdentity = `${PRIMARY}/terms?card=alpha`;
+  const result = assessCrawlCompleteness([
+    attempt(),
+    {
+      ...({ sourceIdentity } as Record<string, unknown>),
+      ...attempt({
+        url: `${PRIMARY}/terms`,
+        role: "required_supporting",
+        status: "failed",
+        contentHash: undefined,
+        errorCode: "http_404",
+        attemptedAt: "2026-08-19T00:01:00.000Z",
+      }),
+    },
+    {
+      ...({ sourceIdentity } as Record<string, unknown>),
+      ...attempt({
+        url: `${PRIMARY}/terms?retry=unconditional`,
+        role: "required_supporting",
+        attemptedAt: "2026-08-19T00:02:00.000Z",
+      }),
+    },
+  ], "2026-08-19T00:03:00.000Z");
+
+  assert(result.complete, "trusted retry stages did not group");
+  const serialized = JSON.stringify(result.attempts);
+  assert(!serialized.includes("card=alpha"), "raw source identity persisted");
+  assert(!serialized.includes("retry="), "raw query persisted in display URL");
+  assert(
+    result.attempts[1].logicalSourceKey ===
+      result.attempts[2].logicalSourceKey,
+    "trusted retry identity did not produce one persisted digest",
+  );
+  assert(
+    result.attempts[1].logicalSourceKey ===
+      "b034e9f2fbc97510f3d28b27b262e23fa1a55bb1dba834da417f613fa4ecc310",
+    "persisted identity is not SHA-256 of the canonical full source",
+  );
 });
 
 Deno.test("far-future terminal evidence is conservatively incomplete", () => {

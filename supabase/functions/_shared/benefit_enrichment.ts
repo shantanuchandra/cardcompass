@@ -1,6 +1,7 @@
 import {
   canonicalBenefitHash,
   type CanonicalBenefitInput,
+  canonicalConditionObject,
   canonicalExclusions,
   canonicalValueConfig,
   cardScopedBenefitKey,
@@ -8,6 +9,7 @@ import {
 
 export type BenefitDocument = {
   sourceUrl: string;
+  sourceIdentity?: string;
   text: string;
   contentHash?: string;
 };
@@ -34,6 +36,8 @@ export type BenefitProposal = {
   effectiveTo?: string;
   sourceUrl: string;
   sourceUrls?: string[];
+  sourceIdentity?: string;
+  sourceIdentities?: string[];
   sourceExcerpt: string;
   contentHash: string;
   parserVersion: string;
@@ -79,6 +83,93 @@ export type BenefitDiff = {
   }>;
 };
 
+function safeSourceUrl(value: unknown): string {
+  if (!value) return "";
+  try {
+    const url = new URL(String(value ?? ""));
+    if (url.protocol !== "https:") return "https://invalid.invalid";
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/$/, "").slice(0, 2048);
+  } catch {
+    return "https://invalid.invalid";
+  }
+}
+
+export function currentBenefitProposal(
+  row: Record<string, any>,
+): BenefitProposal | null {
+  const benefit = row.benefit ?? row.benefits ?? row;
+  if (!benefit || typeof benefit !== "object" || !benefit.dedupe_key) {
+    return null;
+  }
+  const config =
+    benefit.value_config && typeof benefit.value_config === "object"
+      ? benefit.value_config
+      : {};
+  const canonicalExclusionTerms = benefit.exclusions &&
+      typeof benefit.exclusions === "object" &&
+      !Array.isArray(benefit.exclusions) && benefit.exclusions.additional &&
+      typeof benefit.exclusions.additional === "object" &&
+      Array.isArray(benefit.exclusions.additional.source_terms)
+    ? benefit.exclusions.additional.source_terms.map(String)
+    : [];
+  const proposal: BenefitProposal = {
+    ...(String(benefit.dedupe_key).startsWith("card-benefit-v2:")
+      ? { benefitId: String(benefit.dedupe_key) }
+      : {}),
+    dedupeKey: String(benefit.dedupe_key),
+    title: String(benefit.title ?? "Existing benefit"),
+    description: String(benefit.description ?? "").slice(0, 500),
+    category: String(benefit.benefit_category ?? "other"),
+    ...(benefit.benefit_type
+      ? { valueType: String(benefit.benefit_type) }
+      : {}),
+    ...(Number.isFinite(Number(config.value))
+      ? { value: Number(config.value) }
+      : {}),
+    ...(Number.isFinite(Number(config.rate))
+      ? { rate: Number(config.rate) }
+      : {}),
+    ...(Number.isFinite(Number(config.cap)) ? { cap: Number(config.cap) } : {}),
+    ...(Number.isFinite(Number(config.threshold))
+      ? { threshold: Number(config.threshold) }
+      : {}),
+    ...(config.frequency ? { frequency: String(config.frequency) } : {}),
+    ...(config.period ? { period: String(config.period) } : {}),
+    valueConfig: config,
+    ...(Array.isArray(benefit.partners) && benefit.partners.length > 0
+      ? { partners: benefit.partners.map(String) }
+      : {}),
+    restrictions: Array.isArray(config.restrictions)
+      ? config.restrictions.map(String).slice(0, 32)
+      : [],
+    exclusions: Array.isArray(benefit.exclusions)
+      ? benefit.exclusions.map(String)
+      : canonicalExclusionTerms,
+    ...(benefit.valid_from
+      ? { effectiveFrom: String(benefit.valid_from) }
+      : {}),
+    ...(benefit.valid_until
+      ? { effectiveTo: String(benefit.valid_until) }
+      : {}),
+    sourceUrl: safeSourceUrl(benefit.source_url),
+    sourceExcerpt: String(benefit.description ?? "").slice(0, 500),
+    contentHash: "current-approved-benefit",
+    parserVersion: "current-approved-benefit",
+    confidence: {},
+    evidence: {},
+    warnings: [],
+  };
+  if (
+    proposal.benefitId && typeof config.offer_subject === "string" &&
+    config.offer_subject.trim()
+  ) proposal.offerSubject = config.offer_subject.trim().slice(0, 256);
+  return proposal;
+}
+
 type ParsedFields = Pick<
   BenefitProposal,
   | "category"
@@ -101,6 +192,7 @@ type ParsedBenefit = ParsedFields & {
   title: string;
   description: string;
   sourceUrl: string;
+  sourceIdentity?: string;
   sourceExcerpt: string;
   contentHash: string;
   parserVersion: string;
@@ -588,7 +680,10 @@ function parseLine(
     ...fields,
     title,
     description: sourceExcerpt,
-    sourceUrl: document.sourceUrl,
+    sourceUrl: safeSourceUrl(document.sourceUrl),
+    ...(document.sourceIdentity
+      ? { sourceIdentity: document.sourceIdentity }
+      : {}),
     sourceExcerpt,
     contentHash: document.contentHash ?? stableHash(normalize(document.text)),
     parserVersion,
@@ -716,9 +811,42 @@ export function offerSubjectForProposal(
     : benefit.category === "entertainment"
     ? "movie_tickets"
     : "general";
+  const canonicalQualifier = ({
+    grocery: "grocery",
+    groceries: "grocery",
+    movie: "movie",
+    movies: "movie",
+  } as Record<string, string>)[qualifier] ?? qualifier;
   return `${normalize(benefit.category)}:${
     normalize(benefit.valueType ?? "benefit")
-  }:${qualifier}`;
+  }:${canonicalQualifier}`;
+}
+
+function sourceIdentity(benefit: BenefitComparisonProposal): string {
+  return /^[0-9a-f]{64}$/i.test(benefit.sourceIdentity ?? "")
+    ? benefit.sourceIdentity!.toLowerCase()
+    : benefit.sourceUrl;
+}
+
+function boundedTerms(values: unknown): string[] {
+  return (Array.isArray(values) ? values : values == null ? [] : [values])
+    .flatMap((value) => typeof value === "string" ? [normalize(value)] : [])
+    .filter(Boolean).slice(0, 32).map((value) => value.slice(0, 500));
+}
+
+function boundedCanonicalExclusions(value: unknown): Record<string, unknown> {
+  const canonical = canonicalExclusions(value);
+  const additional = canonical.additional as Record<string, unknown>;
+  return {
+    additional: {
+      source_terms: boundedTerms(additional.source_terms),
+    },
+    categories: boundedTerms(canonical.categories),
+    days: boundedTerms(canonical.days),
+    mcc_codes: boundedTerms(canonical.mcc_codes),
+    merchants: boundedTerms(canonical.merchants),
+    transaction_types: boundedTerms(canonical.transaction_types),
+  };
 }
 
 function isCanonicalV6Proposal(
@@ -873,14 +1001,29 @@ export async function extractGroundedBenefitsV6(
       )),
     ]
       .sort();
+    const sourceIdentities = [
+      ...new Set(matches.flatMap((item) =>
+        /^[0-9a-f]{64}$/i.test(item.sourceIdentity ?? "")
+          ? [item.sourceIdentity!.toLowerCase()]
+          : []
+      )),
+    ].sort();
     return {
       ...representative,
       sourceUrl: sourceUrls[0],
       sourceUrls,
+      ...(sourceIdentities.length > 0
+        ? {
+          sourceIdentity: sourceIdentities[0],
+          sourceIdentities,
+        }
+        : {}),
     };
   });
   return await Promise.all(projected.map(async (benefit) => {
     const subject = benefit.offerSubject;
+    const restrictions = boundedTerms(benefit.restrictions);
+    const exclusions = boundedTerms(benefit.exclusions);
     const input: CanonicalBenefitInput = {
       title: benefit.title,
       description: benefit.description,
@@ -894,8 +1037,8 @@ export async function extractGroundedBenefitsV6(
       frequency: benefit.frequency,
       period: benefit.period,
       valueConfig: benefit.valueConfig,
-      exclusions: benefit.exclusions,
-      restrictions: benefit.restrictions,
+      exclusions,
+      restrictions,
       partners: benefit.partners,
       validFrom: benefit.effectiveFrom,
       validUntil: benefit.effectiveTo,
@@ -911,8 +1054,10 @@ export async function extractGroundedBenefitsV6(
       valueConfig: {
         ...canonicalValueConfig(input),
         offer_subject: subject,
+        restrictions: canonicalConditionObject(input).restrictions,
       },
-      exclusions: canonicalExclusions(input.exclusions),
+      restrictions,
+      exclusions: boundedCanonicalExclusions(input.exclusions),
     };
   }));
 }
@@ -972,7 +1117,7 @@ export function diffBenefits(
   for (const [key, candidates] of proposedBySemantic) {
     if (
       new Set(candidates.map(conditionKey)).size < 2 ||
-      new Set(candidates.map((benefit) => benefit.sourceUrl)).size < 2
+      new Set(candidates.map(sourceIdentity)).size < 2
     ) continue;
     const currentMatches = current.filter((benefit) =>
       semanticKey(benefit) === key
@@ -1008,7 +1153,7 @@ export function diffBenefits(
   for (const [key, candidates] of proposedByConflictSubject) {
     if (
       new Set(candidates.map(semanticKey)).size < 2 ||
-      new Set(candidates.map((benefit) => benefit.sourceUrl)).size < 2
+      new Set(candidates.map(sourceIdentity)).size < 2
     ) continue;
     const currentMatches = current.filter((benefit) =>
       conflictSubjectKey(benefit) === key
@@ -1113,7 +1258,7 @@ export function diffBenefits(
     );
     if (
       unmatched.length > 1 &&
-      new Set(unmatched.map((benefit) => benefit.sourceUrl)).size > 1
+      new Set(unmatched.map(sourceIdentity)).size > 1
     ) {
       conflicts.push({
         code: "conflicting_proposed_terms",

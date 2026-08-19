@@ -1,3 +1,13 @@
+import {
+  handleBenefitAdminAction,
+  presentBenefitJob,
+} from "./benefit_admin.ts";
+import {
+  currentBenefitProposal,
+  diffBenefits,
+  extractGroundedBenefitsV6,
+} from "../_shared/benefit_enrichment.ts";
+
 type AdminHandler = (
   request: Request,
   db: Record<string, unknown>,
@@ -514,6 +524,195 @@ Deno.test("benefit approval accepts only matching pending enrichment staging and
       Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
     } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
   }
+});
+
+Deno.test("v6 admin presentation and approval preserve canonical replay identity", async () => {
+  const [proposal] = await extractGroundedBenefitsV6(
+    [{
+      ...({ sourceIdentity: "a".repeat(64) } as Record<string, unknown>),
+      sourceUrl: "https://issuer.example/card",
+      text:
+        "Get 10% cashback on dining spends, capped at ₹500 per statement month.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const presented = presentBenefitJob({
+    id: "job-1",
+    card_id: "card-1",
+    parser_version: "benefits-v6",
+    status: "staged",
+    run_mode: "manual",
+    card_benefits_staging: {
+      id: "staging-1",
+      card_id: "card-1",
+      request_type: "official_benefit_enrichment",
+      parser_version: "benefits-v6",
+      status: "pending",
+      extracted_data: {
+        request_type: "official_benefit_enrichment",
+        parser_version: "benefits-v6",
+        proposals: [{
+          ...proposal,
+          sourceUrl: `${proposal.sourceUrl}?selector=secret-query`,
+          sourceUrls: [`${proposal.sourceUrl}?selector=secret-query`],
+          client_secret: "must not escape",
+        }],
+        diff: { additions: [proposal] },
+      },
+    },
+  }) as Record<string, any>;
+  const presentedProposal = presented.staging.extracted_data.proposals[0];
+  assert(
+    presentedProposal.benefitId === proposal.benefitId &&
+      presentedProposal.offerSubject === proposal.offerSubject,
+    "admin presenter stripped v6 identity",
+  );
+  assert(
+    presentedProposal.valueConfig.offer_subject === proposal.offerSubject &&
+      presentedProposal.valueConfig.restrictions.join(",") === "dining spends",
+    "admin presenter stripped canonical identity terms",
+  );
+  assert(
+    !JSON.stringify(presented).includes("must not escape"),
+    "admin presenter opened an arbitrary proposal field",
+  );
+  assert(
+    !JSON.stringify(presented).includes("secret-query"),
+    "admin presenter exposed a raw source query",
+  );
+
+  let submitted: Record<string, any>[] = [];
+  const db = {
+    from(table: string) {
+      return {
+        select() {
+          return this;
+        },
+        neq() {
+          return this;
+        },
+        in() {
+          return this;
+        },
+        eq() {
+          return this;
+        },
+        async single() {
+          return table === "card_catalog_enrichment_jobs"
+            ? {
+              data: {
+                id: "job-1",
+                card_id: "card-1",
+                staging_id: "staging-1",
+                status: "staged",
+                parser_version: "benefits-v6",
+              },
+              error: null,
+            }
+            : {
+              data: {
+                id: "staging-1",
+                card_id: "card-1",
+                status: "pending",
+                request_type: "official_benefit_enrichment",
+              },
+              error: null,
+            };
+        },
+      };
+    },
+    async rpc(_name: string, args: Record<string, any>) {
+      submitted = args._decisions;
+      return {
+        data: [{ staging_id: "staging-1", resulting_status: "approved" }],
+        error: null,
+      };
+    },
+  };
+  await handleBenefitAdminAction(db, {
+    action: "benefit-approve",
+    job_id: "job-1",
+    staging_id: "staging-1",
+    decisions: [{
+      action: "approve",
+      benefit: { ...presentedProposal, client_secret: "must not escape" },
+    }],
+  }, { id: "admin-1" });
+  const approved = submitted[0].benefit;
+  assert(
+    approved.benefitId === proposal.benefitId,
+    "approval stripped benefit ID",
+  );
+  assert(
+    approved.offerSubject === proposal.offerSubject,
+    "approval stripped offer subject",
+  );
+  assert(
+    !JSON.stringify(submitted).includes("must not escape"),
+    "approval forwarded an arbitrary client field",
+  );
+
+  const current = currentBenefitProposal({
+    dedupe_key: approved.dedupeKey,
+    title: approved.title,
+    description: approved.description,
+    benefit_category: approved.category,
+    benefit_type: approved.valueType,
+    value_config: approved.valueConfig,
+    partners: approved.partners,
+    exclusions: approved.exclusions,
+    source_url: approved.sourceUrl,
+  });
+  assert(current != null, "approved v6 row was not reconstructed");
+  const replay = await extractGroundedBenefitsV6(
+    [{
+      ...({ sourceIdentity: "a".repeat(64) } as Record<string, unknown>),
+      sourceUrl: "https://issuer.example/card",
+      text:
+        "Get 10% cashback on dining spends, capped at ₹500 per statement month.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const diff = diffBenefits([current], replay);
+  assert(diff.unchanged.length === 1, "approved v6 offer changed on replay");
+  assert(
+    diff.conflicts.length === 0,
+    "approved v6 identity conflicted on replay",
+  );
+});
+
+Deno.test("v6 admin identity terms remain explicitly bounded", () => {
+  const terms = Array.from({ length: 40 }, (_, index) => `term-${index}`);
+  const presented = presentBenefitJob({
+    parser_version: "benefits-v6",
+    card_benefits_staging: {
+      parser_version: "benefits-v6",
+      extracted_data: {
+        parser_version: "benefits-v6",
+        proposals: [{
+          benefitId: `card-benefit-v2:card-1:${"a".repeat(64)}`,
+          dedupeKey: `card-benefit-v2:card-1:${"a".repeat(64)}`,
+          parserVersion: "benefits-v6",
+          valueConfig: { restrictions: terms },
+          exclusions: { additional: { source_terms: terms } },
+        }],
+      },
+    },
+  }) as Record<string, any>;
+  const proposal = presented.staging.extracted_data.proposals[0];
+
+  assert(
+    proposal.valueConfig.restrictions.length === 32,
+    "admin restrictions exceeded the v6 bound",
+  );
+  assert(
+    proposal.exclusions.additional.source_terms.length === 32,
+    "admin exclusions exceeded the v6 bound",
+  );
 });
 
 Deno.test("benefit quarantine state changes are explicit and a pilot uses the service-role pilot RPC", async () => {

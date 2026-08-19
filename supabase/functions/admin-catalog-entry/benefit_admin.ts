@@ -1,3 +1,5 @@
+import { canonicalExclusions } from "../_shared/benefit_contract.ts";
+
 export type UntypedSupabaseClient = any;
 
 export class BenefitAdminError extends Error {
@@ -107,6 +109,15 @@ const valueConfigFields = [
   "currency_unit",
   "platform",
 ] as const;
+const v6ValueConfigFields = [
+  "value",
+  "rate",
+  "cap",
+  "threshold",
+  "frequency",
+  "period",
+  "offer_subject",
+] as const;
 
 function asRecord(value: unknown): JsonRecord | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -132,22 +143,43 @@ function text(value: unknown, maximum = 8_000): string | null {
   return typeof value === "string" ? value.slice(0, maximum) : null;
 }
 
+function safeUrl(value: unknown): string | null {
+  const candidate = text(value);
+  if (!candidate) return null;
+  try {
+    const url = new URL(candidate);
+    if (url.protocol !== "https:") return null;
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/$/, "").slice(0, 2048);
+  } catch {
+    return null;
+  }
+}
+
 function number(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function textList(value: unknown): string[] {
+function textList(value: unknown, maximumItems = 64): string[] {
   return Array.isArray(value)
     ? value.flatMap((item) =>
       typeof item === "string" ? [item.slice(0, 500)] : []
-    )
+    ).slice(0, maximumItems)
     : [];
 }
 
-function valueConfig(value: unknown): JsonRecord {
+function valueConfig(value: unknown, v6 = false): JsonRecord {
   const row = asRecord(value) ?? {};
   const sanitized: JsonRecord = {};
-  for (const field of valueConfigFields) {
+  for (
+    const field of [
+      ...valueConfigFields,
+      ...(v6 ? v6ValueConfigFields : []),
+    ]
+  ) {
     const item = row[field];
     if (typeof item === "string") sanitized[field] = item.slice(0, 500);
     if (typeof item === "number" && Number.isFinite(item)) {
@@ -155,7 +187,28 @@ function valueConfig(value: unknown): JsonRecord {
     }
     if (typeof item === "boolean") sanitized[field] = item;
   }
+  if (v6) sanitized.restrictions = textList(row.restrictions, 32);
   return sanitized;
+}
+
+function digest(value: unknown): string | null {
+  const candidate = text(value, 64)?.toLowerCase() ?? "";
+  return /^[0-9a-f]{64}$/.test(candidate) ? candidate : null;
+}
+
+function boundedExclusions(value: unknown): JsonRecord {
+  const canonical = canonicalExclusions(value);
+  const additional = asRecord(canonical.additional) ?? {};
+  return {
+    additional: {
+      source_terms: textList(additional.source_terms, 32),
+    },
+    categories: textList(canonical.categories, 32),
+    days: textList(canonical.days, 32),
+    mcc_codes: textList(canonical.mcc_codes, 32),
+    merchants: textList(canonical.merchants, 32),
+    transaction_types: textList(canonical.transaction_types, 32),
+  };
 }
 
 function objectList(value: unknown): JsonRecord[] {
@@ -183,8 +236,12 @@ function fieldConfidence(value: unknown) {
   }));
 }
 
-function benefitForOutput(value: unknown) {
+function benefitForOutput(value: unknown, forceV6 = false) {
   const row = asRecord(value) ?? {};
+  const v6 = forceV6 || row.parserVersion === "benefits-v6" ||
+    String(row.benefitId ?? row.dedupeKey ?? "").startsWith(
+      "card-benefit-v2:",
+    );
   const scalar: JsonRecord = {};
   for (const field of benefitFields) {
     const value = row[field];
@@ -201,10 +258,31 @@ function benefitForOutput(value: unknown) {
   }
   return {
     ...scalar,
-    valueConfig: valueConfig(row.valueConfig ?? row.value_config),
+    ...(v6 && text(row.benefitId, 200)
+      ? { benefitId: text(row.benefitId, 200) }
+      : {}),
+    ...(v6 && text(row.offerSubject, 256)
+      ? { offerSubject: text(row.offerSubject, 256) }
+      : {}),
+    valueConfig: valueConfig(row.valueConfig ?? row.value_config, v6),
     partners: textList(row.partners),
-    sourceUrl: text(row.sourceUrl),
-    sourceUrls: textList(row.sourceUrls),
+    ...(v6 && !Array.isArray(row.exclusions)
+      ? { exclusions: boundedExclusions(row.exclusions) }
+      : {}),
+    sourceUrl: safeUrl(row.sourceUrl),
+    sourceUrls: textList(row.sourceUrls).flatMap((item) =>
+      safeUrl(item) ? [safeUrl(item)!] : []
+    ),
+    ...(v6 && digest(row.sourceIdentity)
+      ? { sourceIdentity: digest(row.sourceIdentity) }
+      : {}),
+    ...(v6
+      ? {
+        sourceIdentities: textList(row.sourceIdentities, 32).flatMap((item) =>
+          digest(item) ? [digest(item)!] : []
+        ),
+      }
+      : {}),
     sourceExcerpt: text(row.sourceExcerpt, 500),
     contentHash: text(row.contentHash, 200),
     parserVersion: text(row.parserVersion, 100),
@@ -214,31 +292,37 @@ function benefitForOutput(value: unknown) {
   };
 }
 
-function benefitDiff(value: unknown) {
+function benefitDiff(value: unknown, v6 = false) {
   const row = asRecord(value) ?? {};
   return {
-    additions: objectList(row.additions).map(benefitForOutput),
+    additions: objectList(row.additions).map((item) =>
+      benefitForOutput(item, v6)
+    ),
     modifications: objectList(row.modifications).map((item) => ({
-      current: benefitForOutput(item.current),
-      proposed: benefitForOutput(item.proposed),
+      current: benefitForOutput(item.current, v6),
+      proposed: benefitForOutput(item.proposed, v6),
     })),
     possibleRemovals: objectList(row.possibleRemovals).map((item) => ({
-      benefit: benefitForOutput(item.benefit),
+      benefit: benefitForOutput(item.benefit, v6),
       informational: item.informational === true,
     })),
     unchanged: objectList(row.unchanged).map((item) => ({
-      current: benefitForOutput(item.current),
-      proposed: benefitForOutput(item.proposed),
+      current: benefitForOutput(item.current, v6),
+      proposed: benefitForOutput(item.proposed, v6),
     })),
     conflicts: objectList(row.conflicts).map((item) => ({
       code: text(item.code, 100),
-      current: objectList(item.current).map(benefitForOutput),
-      proposed: objectList(item.proposed).map(benefitForOutput),
+      current: objectList(item.current).map((benefit) =>
+        benefitForOutput(benefit, v6)
+      ),
+      proposed: objectList(item.proposed).map((benefit) =>
+        benefitForOutput(benefit, v6)
+      ),
     })),
   };
 }
 
-function benefitDecision(value: unknown) {
+function benefitDecision(value: unknown, v6 = false) {
   const row = asRecord(value) ?? {};
   return {
     action: text(row.action, 40),
@@ -247,9 +331,12 @@ function benefitDecision(value: unknown) {
     dedupe_key: text(row.dedupe_key ?? row.dedupeKey, 200),
     display_priority: number(row.display_priority),
     is_primary: typeof row.is_primary === "boolean" ? row.is_primary : null,
-    benefit: benefitForOutput(row.benefit),
-    proposed: benefitForOutput(row.proposed),
-    edited_benefit: benefitForOutput(row.edited_benefit ?? row.editedBenefit),
+    benefit: benefitForOutput(row.benefit, v6),
+    proposed: benefitForOutput(row.proposed, v6),
+    edited_benefit: benefitForOutput(
+      row.edited_benefit ?? row.editedBenefit,
+      v6,
+    ),
   };
 }
 
@@ -260,7 +347,12 @@ function validationItems(value: unknown) {
 function sourceEvidence(value: unknown) {
   return objectList(value).map((item) => ({
     dedupe_key: text(item.dedupe_key, 200),
-    source_url: text(item.source_url),
+    offer_subject: text(item.offer_subject, 256),
+    source_identity: digest(item.source_identity),
+    source_identities: textList(item.source_identities, 32).flatMap((
+      identity,
+    ) => digest(identity) ? [digest(identity)!] : []),
+    source_url: safeUrl(item.source_url),
     source_excerpt: text(item.source_excerpt, 500),
     evidence: fieldEvidence(item.evidence),
   }));
@@ -268,13 +360,16 @@ function sourceEvidence(value: unknown) {
 
 function extractionForOutput(value: unknown) {
   const row = asRecord(value) ?? {};
+  const v6 = row.parser_version === "benefits-v6";
   return {
     request_type: text(row.request_type, 100),
     parser_version: text(row.parser_version, 100),
     content_hash: text(row.content_hash, 200),
     retrieved_at: text(row.retrieved_at, 100),
-    proposals: objectList(row.proposals).map(benefitForOutput),
-    diff: benefitDiff(row.diff),
+    proposals: objectList(row.proposals).map((item) =>
+      benefitForOutput(item, v6)
+    ),
+    diff: benefitDiff(row.diff, v6),
   };
 }
 
@@ -301,12 +396,13 @@ function stagingForOutput(value: unknown) {
   const staging = Array.isArray(value) ? value[0] : value;
   const row = asRecord(staging);
   if (!row) return null;
+  const v6 = row.parser_version === "benefits-v6";
   return {
     id: text(row.id, 100),
     card_id: text(row.card_id, 100),
     request_type: text(row.request_type, 100),
     parser_version: text(row.parser_version, 100),
-    source_url: text(row.source_url),
+    source_url: safeUrl(row.source_url),
     source_url_hash: text(row.source_url_hash, 200),
     content_hash: text(row.content_hash, 200),
     status: text(row.status, 50),
@@ -315,7 +411,9 @@ function stagingForOutput(value: unknown) {
     validation_warnings: validationItems(row.validation_warnings),
     source_evidence: sourceEvidence(row.source_evidence),
     extracted_data: extractionForOutput(row.extracted_data),
-    benefit_decisions: objectList(row.benefit_decisions).map(benefitDecision),
+    benefit_decisions: objectList(row.benefit_decisions).map((item) =>
+      benefitDecision(item, v6)
+    ),
     created_at: text(row.created_at, 100),
     reviewed_at: text(row.reviewed_at, 100),
   };
@@ -328,7 +426,7 @@ export function presentBenefitJob(value: unknown, crawlerDiscovered = false) {
     id: text(row.id, 100),
     card_id: text(row.card_id, 100),
     issuer: text(row.issuer, 200),
-    canonical_url: text(row.canonical_url),
+    canonical_url: safeUrl(row.canonical_url),
     parser_version: text(row.parser_version, 100),
     status: text(row.status, 50),
     run_mode: text(row.run_mode, 50),
@@ -460,6 +558,7 @@ async function readBenefitJobs(
 function allowedDecisions(
   value: unknown,
   acceptedActions: readonly string[],
+  parserVersion = "benefits-v5",
 ): JsonRecord[] {
   if (!Array.isArray(value) || value.length === 0) {
     throw new BenefitAdminError("benefit_decisions_are_required");
@@ -475,7 +574,43 @@ function allowedDecisions(
   ) {
     throw new BenefitAdminError("invalid_benefit_decision");
   }
-  return decisions as JsonRecord[];
+  if (parserVersion !== "benefits-v6") return decisions as JsonRecord[];
+  return (decisions as JsonRecord[]).map((decision) => ({
+    action: text(decision.action, 40),
+    ...(text(decision.reason, 500)
+      ? { reason: text(decision.reason, 500) }
+      : {}),
+    ...(text(decision.change_type ?? decision.changeType, 60)
+      ? {
+        change_type: text(decision.change_type ?? decision.changeType, 60),
+      }
+      : {}),
+    ...(text(decision.dedupe_key ?? decision.dedupeKey, 200)
+      ? {
+        dedupe_key: text(decision.dedupe_key ?? decision.dedupeKey, 200),
+      }
+      : {}),
+    ...(number(decision.display_priority) !== null
+      ? { display_priority: number(decision.display_priority) }
+      : {}),
+    ...(typeof decision.is_primary === "boolean"
+      ? { is_primary: decision.is_primary }
+      : {}),
+    ...(asRecord(decision.benefit)
+      ? { benefit: benefitForOutput(decision.benefit, true) }
+      : {}),
+    ...(asRecord(decision.proposed)
+      ? { proposed: benefitForOutput(decision.proposed, true) }
+      : {}),
+    ...(asRecord(decision.edited_benefit ?? decision.editedBenefit)
+      ? {
+        edited_benefit: benefitForOutput(
+          decision.edited_benefit ?? decision.editedBenefit,
+          true,
+        ),
+      }
+      : {}),
+  }));
 }
 
 async function approvalTarget(
@@ -486,7 +621,7 @@ async function approvalTarget(
   const stagingId = requiredId(body.staging_id, "staging_id");
   const { data: job, error: jobError } = await benefitLane(
     db.from("card_catalog_enrichment_jobs")
-      .select("id, card_id, staging_id, status"),
+      .select("id, card_id, staging_id, status, parser_version"),
   )
     .eq("id", jobId)
     .eq("staging_id", stagingId)
@@ -504,7 +639,11 @@ async function approvalTarget(
   if (stagingError || !staging || staging.status !== "pending") {
     throw new BenefitAdminError("invalid_benefit_job_staging", 409);
   }
-  return { jobId, stagingId };
+  return {
+    jobId,
+    stagingId,
+    parserVersion: String(job.parser_version ?? "benefits-v5"),
+  };
 }
 
 async function approve(
@@ -518,9 +657,13 @@ async function approve(
     : mode === "edit"
     ? ["edit", "keep_existing"]
     : ["reject"];
-  let decisions = allowedDecisions(body.decisions, accepted);
   const reason = mode === "reject" ? requiredReason(body.reason) : null;
   const target = await approvalTarget(db, body);
+  let decisions = allowedDecisions(
+    body.decisions,
+    accepted,
+    target.parserVersion,
+  );
   if (mode === "reject") {
     decisions = decisions.map((decision) => ({ ...decision, reason }));
   }

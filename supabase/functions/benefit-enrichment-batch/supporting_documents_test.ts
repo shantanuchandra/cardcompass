@@ -1,4 +1,5 @@
 import { collectSupportingBenefitDocuments } from "./supporting_documents.ts";
+import { assessCrawlCompleteness } from "./crawl_policy.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -176,6 +177,113 @@ Deno.test("opaque PDF anchor metadata can establish a required MITC source", asy
       item.url === opaque && item.role === "required_supporting"
     ),
     "opaque MITC anchor was treated as optional",
+  );
+});
+
+Deno.test("a later stronger duplicate anchor cannot downgrade required evidence", async () => {
+  const product = "https://www.axis.bank.in/cards/credit-card/privilege";
+  const opaque = `${product}/documents/abc123.pdf`;
+  for (
+    const anchors of [
+      [
+        `<a href="${opaque}">Benefits</a>`,
+        `<a href="${opaque}">Most Important Terms and Conditions</a>`,
+      ],
+      [
+        `<a href="${opaque}">Most Important Terms and Conditions</a>`,
+        `<a href="${opaque}">Benefits</a>`,
+      ],
+    ]
+  ) {
+    const { attempts } = await collectSupportingBenefitDocuments({
+      issuer: "Axis Bank",
+      identityLabels: ["Privilege"],
+      primary: resource(product, anchors.join("")),
+      fetchOfficialIssuerResource: async () => {
+        throw new Error("http_404");
+      },
+    });
+    const supporting = attempts.find((attempt) => attempt.url === opaque);
+    assert(
+      supporting?.role === "required_supporting",
+      "duplicate anchor order downgraded MITC necessity",
+    );
+    const assessment = assessCrawlCompleteness(
+      attempts,
+      "2026-08-20T00:00:00.000Z",
+    );
+    assert(
+      !assessment.complete,
+      "failed duplicate MITC source stayed complete",
+    );
+  }
+});
+
+Deno.test("duplicate anchor metadata is replay-stable", async () => {
+  const product = "https://www.axis.bank.in/cards/credit-card/privilege";
+  const opaque = `${product}/documents/abc123.pdf`;
+  const collect = (html: string) =>
+    collectSupportingBenefitDocuments({
+      issuer: "Axis Bank",
+      identityLabels: ["Privilege"],
+      primary: resource(product, html),
+      fetchOfficialIssuerResource: async () =>
+        resource(opaque, "Official MITC"),
+    });
+  const forward = await collect(
+    `<a href="${opaque}">Benefits</a>` +
+      `<a href="${opaque}">Most Important Terms and Conditions</a>`,
+  );
+  const reverse = await collect(
+    `<a href="${opaque}">Most Important Terms and Conditions</a>` +
+      `<a href="${opaque}">Benefits</a>`,
+  );
+  const stable = (attempts: typeof forward.attempts) =>
+    attempts.map(({ attemptedAt: _attemptedAt, ...attempt }) => attempt);
+  assert(
+    JSON.stringify(stable(forward.attempts)) ===
+      JSON.stringify(stable(reverse.attempts)),
+    "duplicate metadata order changed bounded attempt evidence",
+  );
+});
+
+Deno.test("collector separates query-selected sources without persisting queries", async () => {
+  const product = "https://www.axis.bank.in/cards/credit-card/privilege";
+  const alpha = `${product}/terms?card=alpha`;
+  const beta = `${product}/terms?card=beta`;
+  const { documents, attempts } = await collectSupportingBenefitDocuments({
+    issuer: "Axis Bank",
+    identityLabels: ["Privilege"],
+    primary: resource(
+      product,
+      `<a href="${alpha}">Terms</a><a href="${beta}">Terms</a>`,
+    ),
+    fetchOfficialIssuerResource: async (input) =>
+      resource(
+        input.url,
+        `Official ${new URL(input.url).searchParams.get("card")}`,
+      ),
+  });
+  const supporting = documents.slice(1);
+  assert(supporting.length === 2, "query-selected documents collapsed");
+  assert(
+    new Set(supporting.map((document) => document.sourceIdentity)).size === 2,
+    "collector did not preserve safe query-selected identities",
+  );
+  assert(
+    supporting.every((document) =>
+      /^[0-9a-f]{64}$/.test(document.sourceIdentity ?? "") &&
+      !document.sourceUrl.includes("?")
+    ),
+    "collector exposed a raw query instead of a safe identity",
+  );
+  const persisted = assessCrawlCompleteness(
+    attempts,
+    "2026-08-20T00:00:00.000Z",
+  ).attempts;
+  assert(
+    !JSON.stringify(persisted).includes("card="),
+    "attempt query persisted",
   );
 });
 

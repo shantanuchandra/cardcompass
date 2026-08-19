@@ -2,41 +2,327 @@
   {
     "name": "cashback cap",
     "text": "Get 10% cashback on dining spends, capped at ₹500 per statement month.",
-    "expected": [{"benefitId":"card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:3567ec7d041e9db31c9cf33930c66a34b3b0258cdfd2f110bcac2144b5157705","dedupeKey":"card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:3567ec7d041e9db31c9cf33930c66a34b3b0258cdfd2f110bcac2144b5157705","conditionHash":"3567ec7d041e9db31c9cf33930c66a34b3b0258cdfd2f110bcac2144b5157705","parserVersion":"benefits-v6","title":"10 % cashback","description":"Get 10% cashback on dining spends, capped at ₹500 per statement month.","category":"cashback","valueType":"cashback","value":null,"rate":10,"cap":500,"threshold":null,"valueConfig":{"cap":500,"period":"statement month","rate":10,"offer_subject":"cashback:cashback:dining"},"partners":[],"frequency":null,"period":"statement month","restrictions":["dining spends"],"exclusions":{"additional":{"source_terms":[]},"categories":[],"days":[],"mcc_codes":[],"merchants":[],"transaction_types":[]},"effectiveFrom":null,"effectiveTo":null,"warnings":[]}]
+    "expected": [
+      {
+        "benefitId": "card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:3567ec7d041e9db31c9cf33930c66a34b3b0258cdfd2f110bcac2144b5157705",
+        "dedupeKey": "card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:3567ec7d041e9db31c9cf33930c66a34b3b0258cdfd2f110bcac2144b5157705",
+        "conditionHash": "3567ec7d041e9db31c9cf33930c66a34b3b0258cdfd2f110bcac2144b5157705",
+        "parserVersion": "benefits-v6",
+        "title": "10 % cashback",
+        "description": "Get 10% cashback on dining spends, capped at ₹500 per statement month.",
+        "category": "cashback",
+        "valueType": "cashback",
+        "value": null,
+        "rate": 10,
+        "cap": 500,
+        "threshold": null,
+        "valueConfig": {
+          "cap": 500,
+          "period": "statement month",
+          "rate": 10,
+          "offer_subject": "cashback:cashback:dining",
+          "restrictions": ["dining spends"]
+        },
+        "partners": [],
+        "frequency": null,
+        "period": "statement month",
+        "restrictions": ["dining spends"],
+        "exclusions": {
+          "additional": { "source_terms": [] },
+          "categories": [],
+          "days": [],
+          "mcc_codes": [],
+          "merchants": [],
+          "transaction_types": []
+        },
+        "effectiveFrom": null,
+        "effectiveTo": null,
+        "warnings": []
+      }
+    ]
   },
   {
     "name": "lounge quota",
     "text": "Get 2 complimentary airport lounge visits per quarter.",
-    "expected": [{"benefitId":"card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:ab7145d940d1e6a23b552a14292b456f1f229c90c81359774eb583bc47712f13","dedupeKey":"card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:ab7145d940d1e6a23b552a14292b456f1f229c90c81359774eb583bc47712f13","conditionHash":"ab7145d940d1e6a23b552a14292b456f1f229c90c81359774eb583bc47712f13","parserVersion":"benefits-v6","title":"2 lounge visits","description":"Get 2 complimentary airport lounge visits per quarter.","category":"travel","valueType":"lounge_access","value":2,"rate":null,"cap":null,"threshold":null,"valueConfig":{"frequency":"2 visits","period":"quarter","value":2,"offer_subject":"travel:lounge_access:general"},"partners":[],"frequency":"2 visits","period":"quarter","restrictions":[],"exclusions":{"additional":{"source_terms":[]},"categories":[],"days":[],"mcc_codes":[],"merchants":[],"transaction_types":[]},"effectiveFrom":null,"effectiveTo":null,"warnings":[]}]
+    "expected": [
+      {
+        "benefitId": "card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:ab7145d940d1e6a23b552a14292b456f1f229c90c81359774eb583bc47712f13",
+        "dedupeKey": "card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:ab7145d940d1e6a23b552a14292b456f1f229c90c81359774eb583bc47712f13",
+        "conditionHash": "ab7145d940d1e6a23b552a14292b456f1f229c90c81359774eb583bc47712f13",
+        "parserVersion": "benefits-v6",
+        "title": "2 lounge visits",
+        "description": "Get 2 complimentary airport lounge visits per quarter.",
+        "category": "travel",
+        "valueType": "lounge_access",
+        "value": 2,
+        "rate": null,
+        "cap": null,
+        "threshold": null,
+        "valueConfig": {
+          "frequency": "2 visits",
+          "period": "quarter",
+          "value": 2,
+          "offer_subject": "travel:lounge_access:general",
+          "restrictions": []
+        },
+        "partners": [],
+        "frequency": "2 visits",
+        "period": "quarter",
+        "restrictions": [],
+        "exclusions": {
+          "additional": { "source_terms": [] },
+          "categories": [],
+          "days": [],
+          "mcc_codes": [],
+          "merchants": [],
+          "transaction_types": []
+        },
+        "effectiveFrom": null,
+        "effectiveTo": null,
+        "warnings": []
+      }
+    ]
   },
-  {"name":"fee waiver threshold","text":"Annual fee waiver on spends of ₹2 lakh in a year.","expected":[]},
+  {
+    "name": "fee waiver threshold",
+    "text": "Annual fee waiver on spends of ₹2 lakh in a year.",
+    "expected": []
+  },
   {
     "name": "points multiplier",
     "text": "Earn 5 reward points for every ₹150 spent on eligible purchases.",
-    "expected": [{"benefitId":"card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:df0de5ba46451104967f31a7d55f46b409f9570d30e9e6c8c74589405c7e2bee","dedupeKey":"card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:df0de5ba46451104967f31a7d55f46b409f9570d30e9e6c8c74589405c7e2bee","conditionHash":"df0de5ba46451104967f31a7d55f46b409f9570d30e9e6c8c74589405c7e2bee","parserVersion":"benefits-v6","title":"5 reward points","description":"Earn 5 reward points for every ₹150 spent on eligible purchases.","category":"rewards","valueType":"reward_points","value":5,"rate":null,"cap":null,"threshold":150,"valueConfig":{"threshold":150,"value":5,"offer_subject":"rewards:reward_points:general"},"partners":[],"frequency":null,"period":null,"restrictions":["eligible purchases"],"exclusions":{"additional":{"source_terms":[]},"categories":[],"days":[],"mcc_codes":[],"merchants":[],"transaction_types":[]},"effectiveFrom":null,"effectiveTo":null,"warnings":[]}]
+    "expected": [
+      {
+        "benefitId": "card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:df0de5ba46451104967f31a7d55f46b409f9570d30e9e6c8c74589405c7e2bee",
+        "dedupeKey": "card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:df0de5ba46451104967f31a7d55f46b409f9570d30e9e6c8c74589405c7e2bee",
+        "conditionHash": "df0de5ba46451104967f31a7d55f46b409f9570d30e9e6c8c74589405c7e2bee",
+        "parserVersion": "benefits-v6",
+        "title": "5 reward points",
+        "description": "Earn 5 reward points for every ₹150 spent on eligible purchases.",
+        "category": "rewards",
+        "valueType": "reward_points",
+        "value": 5,
+        "rate": null,
+        "cap": null,
+        "threshold": 150,
+        "valueConfig": {
+          "threshold": 150,
+          "value": 5,
+          "offer_subject": "rewards:reward_points:general",
+          "restrictions": ["eligible purchases"]
+        },
+        "partners": [],
+        "frequency": null,
+        "period": null,
+        "restrictions": ["eligible purchases"],
+        "exclusions": {
+          "additional": { "source_terms": [] },
+          "categories": [],
+          "days": [],
+          "mcc_codes": [],
+          "merchants": [],
+          "transaction_types": []
+        },
+        "effectiveFrom": null,
+        "effectiveTo": null,
+        "warnings": []
+      }
+    ]
   },
   {
     "name": "partner discount",
     "text": "Get 25% off movie tickets up to Rs. 100 per transaction on BookMyShow.",
-    "expected": [{"benefitId":"card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:c3c7a8ee0b1562cb4c36f629bcd4ade4e9388fb0f251153ff177089f868c4103","dedupeKey":"card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:c3c7a8ee0b1562cb4c36f629bcd4ade4e9388fb0f251153ff177089f868c4103","conditionHash":"c3c7a8ee0b1562cb4c36f629bcd4ade4e9388fb0f251153ff177089f868c4103","parserVersion":"benefits-v6","title":"25% off movie tickets","description":"Get 25% off movie tickets up to Rs. 100 per transaction on BookMyShow.","category":"entertainment","valueType":"percent_discount","value":null,"rate":25,"cap":null,"threshold":null,"valueConfig":{"category":"movie_tickets","discount_percent":25,"discount_type":"percent","max_discount_per_transaction":100,"rate":25,"offer_subject":"entertainment:percent_discount:movie_tickets"},"partners":["BookMyShow"],"frequency":null,"period":null,"restrictions":[],"exclusions":{"additional":{"source_terms":[]},"categories":[],"days":[],"mcc_codes":[],"merchants":[],"transaction_types":[]},"effectiveFrom":null,"effectiveTo":null,"warnings":[]}]
+    "expected": [
+      {
+        "benefitId": "card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:c3c7a8ee0b1562cb4c36f629bcd4ade4e9388fb0f251153ff177089f868c4103",
+        "dedupeKey": "card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:c3c7a8ee0b1562cb4c36f629bcd4ade4e9388fb0f251153ff177089f868c4103",
+        "conditionHash": "c3c7a8ee0b1562cb4c36f629bcd4ade4e9388fb0f251153ff177089f868c4103",
+        "parserVersion": "benefits-v6",
+        "title": "25% off movie tickets",
+        "description": "Get 25% off movie tickets up to Rs. 100 per transaction on BookMyShow.",
+        "category": "entertainment",
+        "valueType": "percent_discount",
+        "value": null,
+        "rate": 25,
+        "cap": null,
+        "threshold": null,
+        "valueConfig": {
+          "category": "movie_tickets",
+          "discount_percent": 25,
+          "discount_type": "percent",
+          "max_discount_per_transaction": 100,
+          "rate": 25,
+          "offer_subject": "entertainment:percent_discount:movie_tickets",
+          "restrictions": []
+        },
+        "partners": ["BookMyShow"],
+        "frequency": null,
+        "period": null,
+        "restrictions": [],
+        "exclusions": {
+          "additional": { "source_terms": [] },
+          "categories": [],
+          "days": [],
+          "mcc_codes": [],
+          "merchants": [],
+          "transaction_types": []
+        },
+        "effectiveFrom": null,
+        "effectiveTo": null,
+        "warnings": []
+      }
+    ]
   },
-  {"name":"fuel surcharge waiver","text":"Fuel surcharge waiver on fuel transactions up to ₹400 per month.","expected":[]},
-  {"name":"insurance exclusion","text":"Travel insurance cover of ₹5 lakh excluding pre-existing conditions.","expected":[]},
+  {
+    "name": "fuel surcharge waiver",
+    "text": "Fuel surcharge waiver on fuel transactions up to ₹400 per month.",
+    "expected": []
+  },
+  {
+    "name": "insurance exclusion",
+    "text": "Travel insurance cover of ₹5 lakh excluding pre-existing conditions.",
+    "expected": []
+  },
   {
     "name": "tiered milestone rewards",
     "text": "Get 1 PVR INOX Movie Ticket on every spend of Rs. 10,000 in a monthly billing cycle. Earn tickets worth Rs. 300 each for achieving every spends milestone of Rs. 10,000.",
-    "expected": [{"benefitId":"card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:fdbc36a1fbf66c14f1e7f545eaeef5cffebab0935c6c20ca363b4e8beb16e451","dedupeKey":"card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:fdbc36a1fbf66c14f1e7f545eaeef5cffebab0935c6c20ca363b4e8beb16e451","conditionHash":"fdbc36a1fbf66c14f1e7f545eaeef5cffebab0935c6c20ca363b4e8beb16e451","parserVersion":"benefits-v6","title":"₹300 movie ticket milestone","description":"Get 1 PVR INOX Movie Ticket on every spend of Rs. 10,000 in a monthly billing cycle. Earn tickets worth Rs. 300 each for achieving every spends milestone of Rs. 10,000.","category":"entertainment","valueType":"milestone","value":300,"rate":null,"cap":null,"threshold":10000,"valueConfig":{"category":"movie_tickets","milestone_type":"monthly","period":"month","reward_value":300,"threshold":10000,"threshold_amount":10000,"value":300,"offer_subject":"entertainment:milestone:movie_tickets"},"partners":["PVR","INOX"],"frequency":null,"period":"month","restrictions":[],"exclusions":{"additional":{"source_terms":[]},"categories":[],"days":[],"mcc_codes":[],"merchants":[],"transaction_types":[]},"effectiveFrom":null,"effectiveTo":null,"warnings":[]}]
+    "expected": [
+      {
+        "benefitId": "card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:fdbc36a1fbf66c14f1e7f545eaeef5cffebab0935c6c20ca363b4e8beb16e451",
+        "dedupeKey": "card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:fdbc36a1fbf66c14f1e7f545eaeef5cffebab0935c6c20ca363b4e8beb16e451",
+        "conditionHash": "fdbc36a1fbf66c14f1e7f545eaeef5cffebab0935c6c20ca363b4e8beb16e451",
+        "parserVersion": "benefits-v6",
+        "title": "₹300 movie ticket milestone",
+        "description": "Get 1 PVR INOX Movie Ticket on every spend of Rs. 10,000 in a monthly billing cycle. Earn tickets worth Rs. 300 each for achieving every spends milestone of Rs. 10,000.",
+        "category": "entertainment",
+        "valueType": "milestone",
+        "value": 300,
+        "rate": null,
+        "cap": null,
+        "threshold": 10000,
+        "valueConfig": {
+          "category": "movie_tickets",
+          "milestone_type": "monthly",
+          "period": "month",
+          "reward_value": 300,
+          "threshold": 10000,
+          "threshold_amount": 10000,
+          "value": 300,
+          "offer_subject": "entertainment:milestone:movie_tickets",
+          "restrictions": []
+        },
+        "partners": ["PVR", "INOX"],
+        "frequency": null,
+        "period": "month",
+        "restrictions": [],
+        "exclusions": {
+          "additional": { "source_terms": [] },
+          "categories": [],
+          "days": [],
+          "mcc_codes": [],
+          "merchants": [],
+          "transaction_types": []
+        },
+        "effectiveFrom": null,
+        "effectiveTo": null,
+        "warnings": []
+      }
+    ]
   },
   {
     "name": "per-transaction and monthly caps",
     "text": "Buy 1 movie ticket and get 1 free on BookMyShow, capped at Rs. 500 per booking, twice per month.",
-    "expected": [{"benefitId":"card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:866d7641d31c08ff5bb1d152523d3f7a18acaa5d1fa153107a0c6efc7580d457","dedupeKey":"card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:866d7641d31c08ff5bb1d152523d3f7a18acaa5d1fa153107a0c6efc7580d457","conditionHash":"866d7641d31c08ff5bb1d152523d3f7a18acaa5d1fa153107a0c6efc7580d457","parserVersion":"benefits-v6","title":"Buy 1 get 1 movie ticket","description":"Buy 1 movie ticket and get 1 free on BookMyShow, capped at Rs. 500 per booking, twice per month.","category":"entertainment","valueType":"bogo","value":500,"rate":null,"cap":null,"threshold":null,"valueConfig":{"category":"movie_tickets","discount_type":"bogo","frequency":"2 redemptions","max_discount_per_transaction":500,"max_usage_per_month":2,"period":"month","value":500,"offer_subject":"entertainment:bogo:movie_tickets"},"partners":["BookMyShow"],"frequency":"2 redemptions","period":"month","restrictions":[],"exclusions":{"additional":{"source_terms":[]},"categories":[],"days":[],"mcc_codes":[],"merchants":[],"transaction_types":[]},"effectiveFrom":null,"effectiveTo":null,"warnings":[]}]
+    "expected": [
+      {
+        "benefitId": "card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:866d7641d31c08ff5bb1d152523d3f7a18acaa5d1fa153107a0c6efc7580d457",
+        "dedupeKey": "card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:866d7641d31c08ff5bb1d152523d3f7a18acaa5d1fa153107a0c6efc7580d457",
+        "conditionHash": "866d7641d31c08ff5bb1d152523d3f7a18acaa5d1fa153107a0c6efc7580d457",
+        "parserVersion": "benefits-v6",
+        "title": "Buy 1 get 1 movie ticket",
+        "description": "Buy 1 movie ticket and get 1 free on BookMyShow, capped at Rs. 500 per booking, twice per month.",
+        "category": "entertainment",
+        "valueType": "bogo",
+        "value": 500,
+        "rate": null,
+        "cap": null,
+        "threshold": null,
+        "valueConfig": {
+          "category": "movie_tickets",
+          "discount_type": "bogo",
+          "frequency": "2 redemptions",
+          "max_discount_per_transaction": 500,
+          "max_usage_per_month": 2,
+          "period": "month",
+          "value": 500,
+          "offer_subject": "entertainment:bogo:movie_tickets",
+          "restrictions": []
+        },
+        "partners": ["BookMyShow"],
+        "frequency": "2 redemptions",
+        "period": "month",
+        "restrictions": [],
+        "exclusions": {
+          "additional": { "source_terms": [] },
+          "categories": [],
+          "days": [],
+          "mcc_codes": [],
+          "merchants": [],
+          "transaction_types": []
+        },
+        "effectiveFrom": null,
+        "effectiveTo": null,
+        "warnings": []
+      }
+    ]
   },
   {
     "name": "date-bounded offer",
     "text": "Get 5% cashback on online spends, valid until 31 December 2026.",
-    "expected": [{"benefitId":"card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:a24dce97719f3782f3798dd752f939a28e8e935ce098aa972ae953440f037b89","dedupeKey":"card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:a24dce97719f3782f3798dd752f939a28e8e935ce098aa972ae953440f037b89","conditionHash":"a24dce97719f3782f3798dd752f939a28e8e935ce098aa972ae953440f037b89","parserVersion":"benefits-v6","title":"5 % cashback","description":"Get 5% cashback on online spends, valid until 31 December 2026.","category":"cashback","valueType":"cashback","value":null,"rate":5,"cap":null,"threshold":null,"valueConfig":{"rate":5,"offer_subject":"cashback:cashback:online"},"partners":[],"frequency":null,"period":null,"restrictions":["online spends"],"exclusions":{"additional":{"source_terms":[]},"categories":[],"days":[],"mcc_codes":[],"merchants":[],"transaction_types":[]},"effectiveFrom":null,"effectiveTo":"2026-12-31","warnings":[]}]
+    "expected": [
+      {
+        "benefitId": "card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:a24dce97719f3782f3798dd752f939a28e8e935ce098aa972ae953440f037b89",
+        "dedupeKey": "card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:a24dce97719f3782f3798dd752f939a28e8e935ce098aa972ae953440f037b89",
+        "conditionHash": "a24dce97719f3782f3798dd752f939a28e8e935ce098aa972ae953440f037b89",
+        "parserVersion": "benefits-v6",
+        "title": "5 % cashback",
+        "description": "Get 5% cashback on online spends, valid until 31 December 2026.",
+        "category": "cashback",
+        "valueType": "cashback",
+        "value": null,
+        "rate": 5,
+        "cap": null,
+        "threshold": null,
+        "valueConfig": {
+          "rate": 5,
+          "offer_subject": "cashback:cashback:online",
+          "restrictions": ["online spends"]
+        },
+        "partners": [],
+        "frequency": null,
+        "period": null,
+        "restrictions": ["online spends"],
+        "exclusions": {
+          "additional": { "source_terms": [] },
+          "categories": [],
+          "days": [],
+          "mcc_codes": [],
+          "merchants": [],
+          "transaction_types": []
+        },
+        "effectiveFrom": null,
+        "effectiveTo": "2026-12-31",
+        "warnings": []
+      }
+    ]
   },
-  {"name":"ambiguous up to language","text":"Get up to ₹500 cashback on eligible spends.","expected":[]},
-  {"name":"no longer available wording","text":"This offer is no longer available: Get 5% cashback on online spends.","expected":[]}
+  {
+    "name": "ambiguous up to language",
+    "text": "Get up to ₹500 cashback on eligible spends.",
+    "expected": []
+  },
+  {
+    "name": "no longer available wording",
+    "text": "This offer is no longer available: Get 5% cashback on online spends.",
+    "expected": []
+  }
 ]

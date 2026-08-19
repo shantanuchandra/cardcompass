@@ -1057,7 +1057,7 @@ Deno.test("crawl observation compaction retains a decisive final required retry"
       ...optional,
       {
         url: requiredUrl,
-        logicalSourceKey: "d".repeat(64),
+        sourceIdentity: requiredUrl,
         role: "required_supporting",
         status: "failed",
         errorCode: "http_404",
@@ -1065,7 +1065,7 @@ Deno.test("crawl observation compaction retains a decisive final required retry"
       },
       {
         url: `${requiredUrl}?retry=unconditional`,
-        logicalSourceKey: "d".repeat(64),
+        sourceIdentity: requiredUrl,
         role: "required_supporting",
         status: "success",
         httpStatus: 200,
@@ -1149,7 +1149,7 @@ Deno.test("source manifest hash covers bounded success and failure outcomes", as
     attemptedAt: "2026-08-19T00:00:00.000Z",
   }]);
   const laterTimestamp = await computeSourceManifestHash([{
-    url: "https://issuer.example/card",
+    url: "https://issuer.example/card?credential=secret",
     role: "primary",
     status: "success",
     httpStatus: 200,
@@ -1343,6 +1343,32 @@ Deno.test("v6 treats partner changes within the same movie BOGO as a conflict", 
   assert(diff.conflicts.length === 1, "partner conflict was not reviewed");
 });
 
+Deno.test("query-selected official documents remain distinct conflict sources", async () => {
+  const proposals = await extractGroundedBenefitsV6(
+    [{
+      ...({ sourceIdentity: "a".repeat(64) } as Record<string, unknown>),
+      sourceUrl: "https://issuer.example/offers?partner=bookmyshow",
+      text:
+        "Buy 1 movie ticket and get the second ticket free on BookMyShow, capped at Rs. 500 once per month.",
+      contentHash: "a".repeat(64),
+    }, {
+      ...({ sourceIdentity: "b".repeat(64) } as Record<string, unknown>),
+      sourceUrl: "https://issuer.example/offers?partner=district",
+      text:
+        "Buy 1 movie ticket and get the second ticket free on District, capped at Rs. 500 once per month.",
+      contentHash: "b".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const diff = diffBenefits([], proposals);
+
+  assert(diff.conflicts.length === 1, "query-selected sources bypassed review");
+  assert(diff.additions.length === 0, "query conflict became additions");
+  const serialized = JSON.stringify(proposals);
+  assert(!serialized.includes("?"), "raw source query entered proposal JSON");
+});
+
 Deno.test("v6 separates domestic and international lounge offer subjects", async () => {
   const proposals = await extractGroundedBenefitsV6(
     [{
@@ -1436,6 +1462,75 @@ Deno.test("legitimate same-source lounge tiers do not conflict", async () => {
   assert(diff.conflicts.length === 0, "same-source tiers falsely conflicted");
   assert(diff.additions.length === 2, "same-source tiers were not additions");
 });
+
+Deno.test("approved dining restrictions reconstruct an unchanged v6 condition", async () => {
+  const [proposed] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text:
+        "Get 10% cashback on dining spends, capped at ₹500 per statement month.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const current = currentBenefitProposal({
+    dedupe_key: proposed.dedupeKey,
+    title: proposed.title,
+    description: proposed.description,
+    benefit_category: proposed.category,
+    benefit_type: proposed.valueType,
+    value_config: proposed.valueConfig,
+    partners: proposed.partners,
+    exclusions: proposed.exclusions,
+    source_url: proposed.sourceUrl,
+  });
+  assert(current != null, "approved proposal was not reconstructed");
+  const diff = diffBenefits([current], [proposed]);
+
+  assert(
+    diff.unchanged.length === 1,
+    "approved dining proposal changed on replay",
+  );
+  assert(diff.conflicts.length === 0, "approved restrictions mismatched");
+});
+
+for (
+  const fixture of [
+    { singular: "Grocery", plural: "Groceries" },
+    { singular: "Movie", plural: "Movies" },
+  ]
+) {
+  Deno.test(`v6 ${fixture.singular.toLowerCase()} editorial aliases keep one identity`, async () => {
+    const extract = (label: string) =>
+      extractGroundedBenefitsV6(
+        [{
+          sourceUrl: "https://issuer.example/card",
+          text: `${label} offer: Get 10% cashback on eligible spends.`,
+          contentHash: "a".repeat(64),
+        }],
+        "benefits-v6",
+        "card-1",
+      );
+    const [singular] = await extract(fixture.singular);
+    const [plural] = await extract(fixture.plural);
+
+    assert(
+      singular.offerSubject === plural.offerSubject,
+      "alias changed subject",
+    );
+    assert(singular.benefitId === plural.benefitId, "alias changed stable ID");
+    assert(
+      singular.conditionHash === plural.conditionHash,
+      "alias changed canonical hash",
+    );
+    const different = (await extract("Fuel"))[0];
+    assert(
+      different.offerSubject !== singular.offerSubject,
+      "different commercial subject was collapsed",
+    );
+  });
+}
 
 Deno.test("v6 reviews changed terms within one domestic lounge subject", async () => {
   const proposals = await extractGroundedBenefitsV6(

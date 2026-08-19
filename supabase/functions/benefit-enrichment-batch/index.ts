@@ -5,10 +5,12 @@ import {
   type BenefitComparisonProposal,
   type BenefitDiff,
   type BenefitProposal,
+  currentBenefitProposal,
   diffBenefits,
   extractGroundedBenefits,
   extractGroundedBenefitsV6,
 } from "../_shared/benefit_enrichment.ts";
+export { currentBenefitProposal } from "../_shared/benefit_enrichment.ts";
 import { cardScopedBenefitKey } from "../_shared/benefit_contract.ts";
 import {
   allowedOfficialUrl,
@@ -163,83 +165,6 @@ export async function readPilotStatus(
     .eq("parser_version", parserVersion);
   if (error) throw error;
   return evaluatePilotGate((data ?? []).map(pilotJob));
-}
-
-export function currentBenefitProposal(
-  row: Record<string, any>,
-): BenefitProposal | null {
-  const benefit = row.benefit ?? row.benefits ?? row;
-  if (!benefit || typeof benefit !== "object" || !benefit.dedupe_key) {
-    return null;
-  }
-  const config =
-    benefit.value_config && typeof benefit.value_config === "object"
-      ? benefit.value_config
-      : {};
-  const canonicalExclusionTerms = benefit.exclusions &&
-      typeof benefit.exclusions === "object" &&
-      !Array.isArray(benefit.exclusions) &&
-      benefit.exclusions.additional &&
-      typeof benefit.exclusions.additional === "object" &&
-      Array.isArray(benefit.exclusions.additional.source_terms)
-    ? benefit.exclusions.additional.source_terms.map(String)
-    : [];
-  const proposal: BenefitProposal = {
-    ...(String(benefit.dedupe_key).startsWith("card-benefit-v2:")
-      ? { benefitId: String(benefit.dedupe_key) }
-      : {}),
-    dedupeKey: String(benefit.dedupe_key),
-    title: String(benefit.title ?? "Existing benefit"),
-    description: String(benefit.description ?? "").slice(0, 500),
-    category: String(benefit.benefit_category ?? "other"),
-    ...(benefit.benefit_type
-      ? { valueType: String(benefit.benefit_type) }
-      : {}),
-    ...(Number.isFinite(Number(config.value))
-      ? { value: Number(config.value) }
-      : {}),
-    ...(Number.isFinite(Number(config.rate))
-      ? { rate: Number(config.rate) }
-      : {}),
-    ...(Number.isFinite(Number(config.cap)) ? { cap: Number(config.cap) } : {}),
-    ...(Number.isFinite(Number(config.threshold))
-      ? { threshold: Number(config.threshold) }
-      : {}),
-    ...(config.frequency ? { frequency: String(config.frequency) } : {}),
-    ...(config.period ? { period: String(config.period) } : {}),
-    valueConfig: config,
-    ...(Array.isArray(benefit.partners) && benefit.partners.length > 0
-      ? { partners: benefit.partners.map(String) }
-      : {}),
-    restrictions: Array.isArray(config.restrictions)
-      ? config.restrictions.map(String)
-      : [],
-    exclusions: Array.isArray(benefit.exclusions)
-      ? benefit.exclusions.map(String)
-      : canonicalExclusionTerms,
-    ...(benefit.valid_from
-      ? { effectiveFrom: String(benefit.valid_from) }
-      : {}),
-    ...(benefit.valid_until
-      ? { effectiveTo: String(benefit.valid_until) }
-      : {}),
-    sourceUrl: benefit.source_url
-      ? boundedSourceUrl(String(benefit.source_url))
-      : "",
-    sourceExcerpt: String(benefit.description ?? "").slice(0, 500),
-    contentHash: "current-approved-benefit",
-    parserVersion: "current-approved-benefit",
-    confidence: {},
-    evidence: {},
-    warnings: [],
-  };
-  if (
-    proposal.benefitId && typeof config.offer_subject === "string" &&
-    config.offer_subject.trim()
-  ) {
-    proposal.offerSubject = config.offer_subject.trim().slice(0, 256);
-  }
-  return proposal;
 }
 
 async function readCurrentBenefits(
@@ -1072,6 +997,12 @@ async function processJob(
         dedupe_key: benefit.dedupeKey,
         ...(benefit.offerSubject
           ? { offer_subject: benefit.offerSubject.slice(0, 256) }
+          : {}),
+        ...(benefit.sourceIdentity
+          ? { source_identity: benefit.sourceIdentity.slice(0, 64) }
+          : {}),
+        ...(benefit.sourceIdentities
+          ? { source_identities: benefit.sourceIdentities.slice(0, 32) }
           : {}),
         source_url: benefit.sourceUrl,
         source_excerpt: benefit.sourceExcerpt.slice(0, 500),
