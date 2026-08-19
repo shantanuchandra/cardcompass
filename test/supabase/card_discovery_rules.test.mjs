@@ -460,8 +460,10 @@ test('skips issuer service-portal metadata and falls back to a concrete product 
 
 test('card discovery emits parser-aware enrichment queue identity', async () => {
   const source = await readFile(cardDiscoveryEntrypoint, 'utf8');
-  assert.match(source, /enqueueBenefitEnrichmentJob\(db,/);
+  assert.match(source, /const\s+enqueuedCount\s*=\s*await\s+enqueueBenefitEnrichmentJob\(db,/);
   assert.match(source, /parserVersion:\s*["']benefits-v5["']/);
+  assert.match(source, /enqueuedCount\s*===\s*0[\s\S]*card_catalog_enrichment_jobs[\s\S]*job_key[\s\S]*maybeSingle/);
+  assert.match(source, /benefit_enqueue_incomplete[\s\S]*markResolved/);
   assert.doesNotMatch(source, /onConflict:\s*["']card_id,final_url_hash,content_hash["']/);
   assert.doesNotMatch(source, /functions\/v1\/catalog-enrichment/);
   assert.match(source, /exactOfficialPageIdentity\(/);
@@ -479,7 +481,7 @@ test('benefit enrichment keeps initialization and issuer discovery off unsafe pa
   assert.match(source, /const robotsCache\s*=\s*createOfficialRobotsCache\(\)/);
   assert.match(
     source,
-    /fetchOfficialIssuerObservation\(\{[\s\S]*?robotsCache[\s\S]*?collectSupportingBenefitDocuments\(\{[\s\S]*?robotsCache/,
+    /dependencies\.fetchObservation\s*\?\?\s*fetchOfficialIssuerObservation[\s\S]*?robotsCache[\s\S]*?collectSupportingBenefitDocuments\(\{[\s\S]*?robotsCache/,
   );
   assert.match(
     source,

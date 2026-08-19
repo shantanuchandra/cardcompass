@@ -1017,8 +1017,7 @@ export async function seedScheduledQueueIfAllowed(
         },
       });
     }
-    await enqueueBenefitEnrichmentJobs(db, queueInputs);
-    seeded += queueInputs.length;
+    seeded += await enqueueBenefitEnrichmentJobs(db, queueInputs);
     if (rows.length < boundedPageSize) return seeded;
     offset += boundedPageSize;
   }

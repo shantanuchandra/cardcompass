@@ -338,10 +338,12 @@ async function stableCanonicalProcessFixture(
       const requestedStatus = String(args._status);
       const requestedStaging = args._staging_id;
       if (requestedStatus === "staged" && requestedStaging !== null) {
-        if (stagingStatusAtFinalize === "rejected") {
-          return { data: null, error: new Error("invalid_enrichment_staging") };
-        }
-        effectiveFinalStatus = "staged";
+        effectiveFinalStatus = stagingStatusAtFinalize === "pending"
+          ? "staged"
+          : stagingStatusAtFinalize === "approved" ||
+              stagingStatusAtFinalize === "rejected"
+          ? "completed"
+          : "review_required";
       } else {
         effectiveFinalStatus = stagingStatusAtFinalize === "pending"
           ? "staged"
@@ -465,6 +467,30 @@ Deno.test("material canonical 200 delegates supersession to the ordered staging 
       summary.successful_no_change === false,
     "material update was collapsed into no-change",
   );
+});
+
+Deno.test("material finalization tolerates a sibling review completed after staging", async () => {
+  for (
+    const [statusAtFinalize, expectedEffectiveStatus] of [
+      ["pending", "staged"],
+      ["approved", "completed"],
+      ["rejected", "completed"],
+    ] as const
+  ) {
+    const fixture = await stableCanonicalProcessFixture(
+      statusAtFinalize,
+      true,
+    );
+    assert(
+      fixture.finalization._status === "staged" &&
+        fixture.finalization._staging_id === "stage-new",
+      `${statusAtFinalize} sibling review changed the material client contract`,
+    );
+    assert(
+      fixture.effectiveFinalStatus === expectedEffectiveStatus,
+      `${statusAtFinalize} sibling review marooned or reattached the lease`,
+    );
+  }
 });
 
 Deno.test("pilot API defaults to the current movie-capable parser lane", async () => {
@@ -1529,6 +1555,7 @@ function scheduledSeederDb(
   initialJobs: Record<string, unknown>[] = [],
   activeHeldCardIds: string[] = [],
   pendingIdentityReviews: Record<string, unknown>[] = [],
+  maximumInsertedPerRpc = Number.POSITIVE_INFINITY,
 ) {
   const jobs = new Map(
     initialJobs.map((job) => [String(job.job_key), { ...job }]),
@@ -1549,6 +1576,7 @@ function scheduledSeederDb(
       const rows = args._jobs as Record<string, unknown>[];
       let inserted = 0;
       for (const row of rows) {
+        if (inserted >= maximumInsertedPerRpc) break;
         const conflict = [...jobs.values()].some((existing) =>
           existing.card_id === row.card_id &&
           existing.parser_version === row.parser_version
@@ -1757,6 +1785,28 @@ Deno.test("passed scheduled orchestration seeds an empty queue across bounded ca
     }),
     "initial result summary was not safe",
   );
+});
+
+Deno.test("scheduled seeding reports the database insertion count instead of candidates", async () => {
+  const db = scheduledSeederDb(
+    [
+      validCatalogCard,
+      { ...validCatalogCard, id: "card-two" },
+      { ...validCatalogCard, id: "card-three" },
+    ],
+    [],
+    [],
+    [],
+    1,
+  );
+
+  const seeded = await seedScheduledQueueIfAllowed(db, "scheduled", true, 10);
+
+  assert(
+    seeded === 1,
+    "partial database insertion was silently counted as full",
+  );
+  assert(db.jobs.size === 1, "fixture did not exercise a partial insertion");
 });
 
 Deno.test("scheduled seeding keeps only held discontinued, credit, and safe catalog URLs", async () => {

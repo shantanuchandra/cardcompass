@@ -104,8 +104,16 @@ test('finalization preserves staging on 304, separates retry from recurrence, an
   const sanitizeObservation = functionBody(sql, 'sanitize_card_enrichment_observation');
 
   assert.match(finalize, /_status\s*=\s*'completed'\s+AND _staging_id IS NOT NULL/i);
-  assert.match(finalize, /SELECT job\.\*[\s\S]*FOR UPDATE/i);
-  assert.match(finalize, /resolved_staging_id\s*:=\s*CASE[\s\S]*WHEN _staging_id IS NOT NULL THEN _staging_id[\s\S]*WHEN has_pending_staging THEN job_row\.staging_id[\s\S]*ELSE NULL/i);
+  const unlockedIdentity = finalize.indexOf('SELECT candidate.card_id INTO job_card_id');
+  const reviewLock = finalize.indexOf('card_benefit_enrichment_review:');
+  const lockedJob = finalize.indexOf('SELECT candidate.* INTO job_row');
+  const lockedStaging = finalize.indexOf('SELECT staging.* INTO staging_row');
+  assert.ok(unlockedIdentity > 0 && reviewLock > unlockedIdentity, 'finalizer must resolve identity before review serialization');
+  assert.ok(lockedJob > reviewLock && lockedStaging > lockedJob, 'finalizer must take the shared advisory lock before canonical row locks');
+  assert.match(finalize, /candidate\.card_id\s*=\s*job_card_id/i);
+  assert.match(finalize, /staging\.card_id\s*=\s*job_row\.card_id[\s\S]*staging\.parser_version\s*=\s*job_row\.parser_version[\s\S]*FOR UPDATE/i);
+  assert.doesNotMatch(finalize, /card_enrichment_job_has_pending_staging/i);
+  assert.match(finalize, /card_enrichment_final_staging_state\(/i);
   assert.match(finalize, /staging_id\s*=\s*resolved_staging_id/i);
   assert.match(finalize, /content_hash\s*=\s*coalesce\(_content_hash, job_row\.content_hash\)/i);
   assert.match(finalize, /existing_observation_history\s*:=[\s\S]*job_row\.result_summary\s*->\s*'observations'/i);
@@ -116,7 +124,7 @@ test('finalization preserves staging on 304, separates retry from recurrence, an
   );
   assert.match(finalize, /ELSE _next_retry_at/i);
   assert.match(finalize, /next_run_at\s*=\s*NULL/i);
-  assert.match(finalize, /card_enrichment_effective_terminal_status\([\s\S]*has_pending_staging/i);
+  assert.match(finalize, /card_enrichment_final_staging_state\([\s\S]*locked_staging_status[\s\S]*locked_staging_valid/i);
   assert.match(finalize, /next_retry_at\s*=\s*CASE[\s\S]*has_pending_staging[\s\S]*THEN NULL/i);
   assert.match(finalize, /sanitize_card_enrichment_result_summary\(_result_summary/i);
   assert.doesNotMatch(finalize, /safe_summary\s*:=\s*\(_result_summary\s*-/i);
@@ -135,6 +143,7 @@ test('finalization preserves staging on 304, separates retry from recurrence, an
   assert.match(sanitizeSummary, /source_manifest_hash[\s\S]*\^\[0-9a-f\]\{64\}\$/i);
   assert.doesNotMatch(sanitizeSummary, /'body'|'html'|'raw_page'|'response_body'/i);
   assert.match(sql, /DO \$recurrence_policy_assertions\$[\s\S]*DO \$recurrence_history_assertions\$/i);
+  assert.match(sql, /DO \$finalizer_staging_state_assertions\$[\s\S]*pending_new[\s\S]*approved_returned[\s\S]*rejected_returned[\s\S]*approved_prior_304[\s\S]*obsolete_invalid/i);
   assert.match(sql, /REVOKE ALL ON FUNCTION public\.finalize_card_catalog_enrichment_job[\s\S]*TO service_role/i);
 });
 
@@ -206,7 +215,11 @@ test('pending review recurs through ordered supersession while obsolete approval
   const approve = functionBody(reviewSql, 'approve_card_benefit_enrichment');
 
   assert.match(effective, /_has_pending_staging[\s\S]*THEN 'staged'/i);
-  assert.match(finalize, /resolved_staging_id\s*:=\s*CASE[\s\S]*has_pending_staging[\s\S]*job_row\.staging_id[\s\S]*ELSE NULL/i);
+  const sharedReviewLock = /hashtextextended\(\s*'card_benefit_enrichment_review:'\s*\|\|\s*\w+::text,\s*0\s*\)/i;
+  assert.match(finalize, sharedReviewLock);
+  assert.match(stage, sharedReviewLock);
+  assert.match(approve, sharedReviewLock);
+  assert.match(finalize, /locked_staging_status[\s\S]*resolved_staging_id/i);
   assert.match(finalize, /existing_observation_history[\s\S]*observations/i);
   assert.match(stage, /superseded_by_newer_crawl/i);
   assert.match(stage, /SET staging_id = resolved_staging_id/i);
@@ -215,6 +228,31 @@ test('pending review recurs through ordered supersession while obsolete approval
     /WHERE job\.staging_id = staging_row\.id[\s\S]*job\.status = 'staged'[\s\S]*linked_job_count < 1[\s\S]*RAISE EXCEPTION 'linked_staged_job_not_found'/i,
   );
   assert.doesNotMatch(sql, /CREATE OR REPLACE FUNCTION public\.approve_card_benefit_enrichment/i);
+});
+
+test('v6 enqueue revalidates authoritative catalog eligibility and enforces future identity uniqueness', async () => {
+  const sql = await migrationSql();
+  const enqueue = functionBody(sql, 'enqueue_card_benefit_enrichment_jobs');
+  const eligible = functionBody(sql, 'card_enrichment_enqueue_catalog_eligible');
+  const identityTrigger = functionBody(sql, 'enforce_card_benefit_enrichment_identity');
+
+  assert.match(enqueue, /locked_enqueue_authority[\s\S]*FOR UPDATE OF card/i);
+  assert.match(eligible, /lower\(trim\(coalesce\(_card_type,[\s\S]*\)\)\)\s*=\s*'credit'/i);
+  assert.match(eligible, /_is_discontinued IS DISTINCT FROM true[\s\S]*_has_active_cardholder IS TRUE/i);
+  assert.match(eligible, /_input_issuer[\s\S]*_card_bank[\s\S]*_input_url[\s\S]*canonical_catalog_url/i);
+  assert.match(eligible, /_input_url_hash[\s\S]*extensions\.digest[\s\S]*_input_url/i);
+  assert.match(enqueue, /user_cards[\s\S]*is_active\s*=\s*true/i);
+  assert.match(enqueue, /card_catalog_review_queue AS review[\s\S]*review\.status = 'pending'[\s\S]*FOR SHARE OF review[\s\S]*card_has_unresolved_catalog_identity/i);
+  assert.match(enqueue, /card_has_unresolved_catalog_identity\(\s*candidate\.card_id,\s*candidate\.canonical_url\s*\)/i);
+  assert.match(enqueue, /RETURN inserted_count/i);
+  assert.match(identityTrigger, /card_benefit_enrichment_identity:[\s\S]*NEW\.card_id[\s\S]*benefits-v6/i);
+  assert.match(identityTrigger, /NEW\.card_id::text\s*\|\|\s*':benefits-v6'/i);
+  assert.match(identityTrigger, /existing_job\.job_key IS DISTINCT FROM NEW\.job_key[\s\S]*duplicate_v6_card_parser_identity/i);
+  assert.match(sql, /duplicate_v6_card_parser_preflight[\s\S]*GROUP BY[\s\S]*card_id, lower\(trim\(existing_job\.parser_version\)\)[\s\S]*HAVING count\(\*\) > 1/i);
+  assert.match(sql, /CREATE UNIQUE INDEX idx_card_catalog_enrichment_jobs_unique_v6_card_parser[\s\S]*card_id,[\s\S]*lower\(trim\(parser_version\)\)[\s\S]*WHERE lower\(trim\(parser_version\)\) = 'benefits-v6'/i);
+  assert.match(sql, /CREATE TRIGGER enforce_card_benefit_enrichment_identity[\s\S]*BEFORE INSERT OR UPDATE OF card_id, parser_version/i);
+  assert.match(sql, /REVOKE ALL ON FUNCTION public\.enforce_card_benefit_enrichment_identity\(\)[\s\S]*FROM PUBLIC, anon, authenticated/i);
+  assert.match(sql, /DO \$enqueue_authority_assertions\$[\s\S]*atomic_batch[\s\S]*zero_insert[\s\S]*partial_insert[\s\S]*catalog_race/i);
 });
 
 test('pilot qualification atomically promotes the existing exact five identities once', async () => {
@@ -291,10 +329,7 @@ test('pilot qualification atomically promotes the existing exact five identities
     enqueue,
     /ORDER BY[\s\S]*card_id[\s\S]*parser_version[\s\S]*pg_advisory_xact_lock/i,
   );
-  assert.match(
-    enqueue,
-    /NOT EXISTS[\s\S]*existing_job\.card_id = input\.card_id[\s\S]*existing_job\.parser_version = trim\(input\.parser_version\)/i,
-  );
+  assert.match(enqueue, /existing_job\.job_key IS DISTINCT FROM candidate\.job_key[\s\S]*duplicate_v6_card_parser_identity/i);
   assert.match(
     enqueue,
     /GROUP BY duplicate_input\.card_id,[\s\S]*HAVING count\(\*\) > 1[\s\S]*duplicate_card_parser_enqueue/i,
@@ -316,8 +351,9 @@ test('pilot qualification atomically promotes the existing exact five identities
   assert.match(sql, /missing_unsafe[\s\S]*null_unsafe[\s\S]*string_unsafe[\s\S]*negative_unsafe[\s\S]*noninteger_unsafe[\s\S]*missing_raw[\s\S]*null_raw[\s\S]*string_raw[\s\S]*true_raw/i);
   assert.match(qualify, /review_status'[\s\S]*IS DISTINCT FROM 'approved'/i);
   assert.match(qualify, /MAX_PILOT_REVIEW_COUNT/i);
+  assert.match(qualify, /::numeric[\s\S]*trunc\(/i);
   assert.match(qualify, /::bigint/i);
-  assert.match(sql, /missing_review_field[\s\S]*null_review_field[\s\S]*status_casing[\s\S]*ten_digit_count[\s\S]*overflow_count[\s\S]*negative_review_count[\s\S]*fractional_review_count[\s\S]*string_review_count[\s\S]*max_review_count/i);
+  assert.match(sql, /missing_review_field[\s\S]*null_review_field[\s\S]*status_casing[\s\S]*one_point_zero_count[\s\S]*ten_digit_count[\s\S]*overflow_count[\s\S]*negative_review_count[\s\S]*fractional_review_count[\s\S]*string_review_count[\s\S]*max_review_count/i);
 });
 
 test('canonical recurrence timestamps and history normalization have apply-time parity assertions', async () => {

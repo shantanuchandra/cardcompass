@@ -1,6 +1,7 @@
 import {
   buildJobKey,
   enqueueBenefitEnrichmentJob,
+  enqueueBenefitEnrichmentJobs,
   evaluatePilotGate,
   failureDisposition,
   findReusableStaging,
@@ -213,7 +214,7 @@ Deno.test("job identity is stable for the card, canonical URL hash, and parser",
   assert(first !== nextParser, "parser version was omitted from identity");
 });
 
-Deno.test("re-enqueueing a leased job preserves its processing state and lease", async () => {
+Deno.test("v6 enqueue reports the authoritative inserted count without overwriting a lease", async () => {
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const db = {
     from() {
@@ -225,13 +226,13 @@ Deno.test("re-enqueueing a leased job preserves its processing state and lease",
     },
   };
 
-  await enqueueBenefitEnrichmentJob(db, {
+  const inserted = await enqueueBenefitEnrichmentJob(db, {
     cardId: "card-a",
     issuer: "Axis Bank",
     canonicalUrl: "https://axis.example/card-a",
     finalUrlHash: "a".repeat(64),
     contentHash: "b".repeat(64),
-    parserVersion: "benefits-v1",
+    parserVersion: "benefits-v6",
   });
 
   assert(
@@ -242,8 +243,101 @@ Deno.test("re-enqueueing a leased job preserves its processing state and lease",
   const rows = calls[0].args._jobs as Record<string, unknown>[];
   assert(
     rows.length === 1 &&
-      rows[0].job_key === `card-a:${"a".repeat(64)}:benefits-v1`,
+      rows[0].job_key === `card-a:${"a".repeat(64)}:benefits-v6`,
     "atomic enqueue lost the stable job identity",
+  );
+  assert(inserted === 0, "v6 enqueue hid the authoritative inserted count");
+});
+
+Deno.test("v5 rollback enqueue keeps distinct source job keys on the legacy upsert path", async () => {
+  const writes: Record<string, unknown>[][] = [];
+  const db = {
+    rpc() {
+      throw new Error("v5_used_v6_identity_rpc");
+    },
+    from(table: string) {
+      assert(table === "card_catalog_enrichment_jobs", "wrong legacy table");
+      return {
+        upsert(
+          input: Record<string, unknown> | Record<string, unknown>[],
+          options: { onConflict: string; ignoreDuplicates: boolean },
+        ) {
+          assert(options.onConflict === "job_key", "v5 lost job-key identity");
+          assert(
+            options.ignoreDuplicates,
+            "v5 conflicts could overwrite leases",
+          );
+          const rows = Array.isArray(input) ? input : [input];
+          writes.push(rows);
+          return {
+            async select() {
+              return {
+                data: rows.map((row, index) => ({
+                  id: `${row.job_key}:${index}`,
+                })),
+                error: null,
+              };
+            },
+          };
+        },
+      };
+    },
+  };
+  const inserted = await enqueueBenefitEnrichmentJobs(db, [
+    {
+      cardId: "card-a",
+      issuer: "Axis Bank",
+      canonicalUrl: "https://axis.example/old",
+      finalUrlHash: "a".repeat(64),
+      contentHash: "c".repeat(64),
+      parserVersion: "benefits-v5",
+    },
+    {
+      cardId: "card-a",
+      issuer: "Axis Bank",
+      canonicalUrl: "https://axis.example/new",
+      finalUrlHash: "b".repeat(64),
+      contentHash: "d".repeat(64),
+      parserVersion: "benefits-v5",
+    },
+  ]);
+  assert(inserted === 2, "v5 did not report both inserted source identities");
+  assert(
+    writes.length === 1 && writes[0].length === 2,
+    "v5 source changed was suppressed",
+  );
+});
+
+Deno.test("v6 batch enqueue rejects impossible counts and reports a real partial count", async () => {
+  const inputs = ["a", "b"].map((key) => ({
+    cardId: `card-${key}`,
+    issuer: "Axis Bank",
+    canonicalUrl: `https://axis.example/${key}`,
+    finalUrlHash: key.repeat(64),
+    contentHash: null,
+    parserVersion: "benefits-v6",
+  }));
+  const partial = await enqueueBenefitEnrichmentJobs({
+    async rpc() {
+      return { data: 1, error: null };
+    },
+  }, inputs);
+  assert(partial === 1, "v6 partial insertion was silently reported as full");
+
+  let invalid: unknown;
+  try {
+    await enqueueBenefitEnrichmentJobs({
+      async rpc() {
+        return { data: 3, error: null };
+      },
+    }, inputs);
+  } catch (caught) {
+    invalid = caught;
+  }
+  assert(
+    invalid instanceof Error &&
+      invalid.message === "invalid_enrichment_enqueue_count",
+    "impossible v6 insertion count was accepted",
   );
 });
 

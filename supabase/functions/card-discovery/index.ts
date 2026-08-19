@@ -24,7 +24,10 @@ import {
   type OfficialRobotsCache,
   requireOfficialFetchBody,
 } from "../_shared/official_issuer_fetch.ts";
-import { enqueueBenefitEnrichmentJob } from "../benefit-enrichment-batch/batch_policy.ts";
+import {
+  buildJobKey,
+  enqueueBenefitEnrichmentJob,
+} from "../benefit-enrichment-batch/batch_policy.ts";
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 type UntypedSupabaseClient = any;
@@ -408,7 +411,7 @@ async function processSubmittedUrl(
     }, { onConflict: "card_id,source_url,content_hash" });
   if (provenanceError) throw provenanceError;
 
-  await enqueueBenefitEnrichmentJob(db, {
+  const enqueuedCount = await enqueueBenefitEnrichmentJob(db, {
     cardId,
     issuer: job.issuer,
     canonicalUrl: finalUrl,
@@ -416,6 +419,18 @@ async function processSubmittedUrl(
     contentHash: page.contentHash,
     parserVersion: "benefits-v5",
   });
+  if (enqueuedCount === 0) {
+    const expectedJobKey = buildJobKey(cardId, finalHash, "benefits-v5");
+    const { data: existingJob, error: existingJobError } = await db.from(
+      "card_catalog_enrichment_jobs",
+    ).select("id").eq("job_key", expectedJobKey).eq("card_id", cardId).eq(
+      "parser_version",
+      "benefits-v5",
+    ).maybeSingle();
+    if (existingJobError || !existingJob) {
+      throw existingJobError ?? new Error("benefit_enqueue_incomplete");
+    }
+  }
   return markResolved(db, job.id, cardId);
 }
 

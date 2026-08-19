@@ -189,6 +189,93 @@ linked Supabase command, migration apply/push/dry-run, external network,
 production data, or live write was used. Ordered Task 2–6 real PostgreSQL
 parse/apply/lint/transaction verification remains the explicit unresolved gate.
 
+## Review fix round 5/5 — 2026-08-20
+
+### Red proof
+
+- The new enqueue tests first failed TypeScript checking because both enqueue
+  helpers returned `void`; the scheduled-seed fixture then showed that
+  candidate count, rather than the RPC's inserted count, was being reported.
+- The discovery/v5 contract failed before the production caller captured the
+  legacy insert count and verified an exact pre-existing job on a zero insert.
+- The focused material-finalization interleaving case reported **0 passed / 1
+  failed** because a sibling approval remained staged and a sibling rejection
+  caused the simulated finalizer to error.
+- The recurrence/discovery static run reported **35 passed / 6 failed** before
+  the finalizer joined the Task 3/4 lock namespace, audit identity was separated
+  from terminal state, authoritative enqueue checks existed, numeric `1.0`
+  matched TypeScript, and future v6 identity uniqueness was enforced.
+- Three subsequent focused reds each reported **0 passed / 1 failed** before
+  pending identity-review rows were locked before revalidation, parser identity
+  locks were normalized, and a database unique-index backstop protected direct
+  concurrent service-role inserts.
+
+### Fixes
+
+- The finalizer now pre-reads only the immutable job/card identity, acquires the
+  exact `card_benefit_enrichment_review:<card-id>` transaction advisory lock,
+  then locks and revalidates the leased job followed by its exact card/parser
+  staging row. Staging status is derived once from that locked row; no unlocked
+  or cached `EXISTS` decision remains.
+- Final state and audit identity are separate. Pending authoritative staging
+  produces `staged`; approved or rejected returned staging produces `completed`
+  while retaining the audit link; completed/304 with a valid prior reviewed
+  staging keeps that link without reopening review. Invalid or obsolete staged
+  input becomes terminal `review_required`, clears its unsafe link, records an
+  explicit failure category, and releases the lease. Apply-time truth tables
+  and a real process-to-finalizer fixture cover pending, sibling approval,
+  sibling rejection, prior approved 304, and invalid obsolete staging.
+- Restored v5 rollback behavior in TypeScript: non-v6 enrichment uses the
+  legacy `job_key` conflict-ignore upsert and returns the actual inserted row
+  count, so a changed source/job key is not suppressed by v6 card/parser
+  uniqueness. Card discovery accepts a zero insert only after verifying the
+  exact existing v5 job before marking discovery resolved.
+- V6 enqueue is service-role-only through ACLs and returns the exact inserted
+  count. After deterministic shared card/parser locks it row-locks one
+  authoritative catalog snapshot, stabilizes active-holder and matching pending
+  identity-review rows, and revalidates credit type, current issuer/HTTPS URL
+  identity and digest, held-discontinued policy, and unresolved-review exclusion.
+  Changed-key conflicts fail the whole transaction; exact repeats return zero;
+  valid mixed existing/new batches return their explicit partial count. The
+  scheduled caller now reports the database count rather than candidate count.
+- A non-destructive migration preflight raises
+  `duplicate_v6_card_parser_preflight` if historical normalized v6 duplicates
+  exist. A shared-lock trigger protects every future direct identity mutation,
+  and a partial unique expression index on normalized v6 card/parser identity
+  is the concurrency backstop. No historical row is deleted or merged and no
+  business table or column was added.
+- SQL review counts now require JSON numbers and validate numeric integrality
+  and the exact `0..999,999,999` range before `bigint` conversion/summing.
+  Consequently `1.0` and exponent-equivalent integers match JavaScript, while
+  fractions, negatives, strings, ten-digit values, and overflows fail closed.
+
+### Green verification
+
+- Exact Task 6 Deno command — **101 passed, 0 failed**.
+- Exact Task 6 migration command — **29 passed, 0 failed**.
+- Expanded affected Task 4 migration command — **41 passed, 0 failed**.
+- Affected admin benefit suite — **40 passed, 0 failed**.
+- Card-discovery/v5 caller suite — **32 passed, 0 failed**.
+- Additional legacy v5 worker/migration/rules suites — **28 passed, 0 failed**.
+- Primary Task 6 total — **130 passed, 0 failed**; expanded affected total —
+  **242 passed, 0 failed**.
+- `deno check --node-modules-dir=auto` on all changed production TypeScript and
+  the v5 production caller — passed.
+- `deno fmt --check` on all changed TypeScript/test files — passed.
+- `git diff --check` — passed.
+
+Only the Task 6 migration changed in this round. Final pre-commit SHA-256 values:
+
+- Task 3 unchanged: `e294fd029a2aaf30ce98764b44ce41652b8e02d19783618111cb0d3754ea2876`
+- Task 4 unchanged: `ae8f21413add67fece38ae8e90e7a6ecfdbc1a526edfecec0ed95919b7e4f2ca`
+- Task 6: `6cda51f2d52454e1535353c737a2a69eb046fcdb13d9cbfebf58fb14c62b6a32`
+
+Live applied: **no**. No Docker, database/PostgreSQL/Supabase runtime, linked
+Supabase command, migration apply/push/dry-run, external network, production
+data, or live write was used. Ordered Task 2–6 real PostgreSQL
+parse/apply/lint/transaction and concurrent-lock verification remains the
+explicit unresolved gate.
+
 ## Review fix round 4/5 — 2026-08-20
 
 ### Red proof

@@ -627,6 +627,10 @@ DECLARE
   retained_count bigint;
   retired_count bigint;
   rejected_count bigint;
+  approved_numeric numeric;
+  retained_numeric numeric;
+  retired_numeric numeric;
+  rejected_numeric numeric;
   review_keys text[] := ARRAY[
     'review_status', 'approved_count', 'retained_count',
     'retired_count', 'rejected_count'
@@ -664,44 +668,163 @@ BEGIN
      OR jsonb_typeof(_summary->'approved_count') IS DISTINCT FROM 'number'
      OR jsonb_typeof(_summary->'retained_count') IS DISTINCT FROM 'number'
      OR jsonb_typeof(_summary->'retired_count') IS DISTINCT FROM 'number'
-     OR jsonb_typeof(_summary->'rejected_count') IS DISTINCT FROM 'number'
-     OR coalesce(_summary->>'approved_count', '') !~ '^(0|[1-9][0-9]{0,8})$'
-     OR coalesce(_summary->>'retained_count', '') !~ '^(0|[1-9][0-9]{0,8})$'
-     OR coalesce(_summary->>'retired_count', '') !~ '^(0|[1-9][0-9]{0,8})$'
-     OR coalesce(_summary->>'rejected_count', '') !~ '^(0|[1-9][0-9]{0,8})$' THEN
+     OR jsonb_typeof(_summary->'rejected_count') IS DISTINCT FROM 'number' THEN
     RETURN false;
   END IF;
-  approved_count := (_summary->>'approved_count')::bigint;
-  retained_count := (_summary->>'retained_count')::bigint;
-  retired_count := (_summary->>'retired_count')::bigint;
-  rejected_count := (_summary->>'rejected_count')::bigint;
-  IF approved_count > MAX_PILOT_REVIEW_COUNT
-     OR retained_count > MAX_PILOT_REVIEW_COUNT
-     OR retired_count > MAX_PILOT_REVIEW_COUNT
-     OR rejected_count > MAX_PILOT_REVIEW_COUNT THEN
+  approved_numeric := (_summary->>'approved_count')::numeric;
+  retained_numeric := (_summary->>'retained_count')::numeric;
+  retired_numeric := (_summary->>'retired_count')::numeric;
+  rejected_numeric := (_summary->>'rejected_count')::numeric;
+  IF approved_numeric <> trunc(approved_numeric)
+     OR retained_numeric <> trunc(retained_numeric)
+     OR retired_numeric <> trunc(retired_numeric)
+     OR rejected_numeric <> trunc(rejected_numeric)
+     OR approved_numeric NOT BETWEEN 0 AND MAX_PILOT_REVIEW_COUNT
+     OR retained_numeric NOT BETWEEN 0 AND MAX_PILOT_REVIEW_COUNT
+     OR retired_numeric NOT BETWEEN 0 AND MAX_PILOT_REVIEW_COUNT
+     OR rejected_numeric NOT BETWEEN 0 AND MAX_PILOT_REVIEW_COUNT THEN
     RETURN false;
   END IF;
+  approved_count := approved_numeric::bigint;
+  retained_count := retained_numeric::bigint;
+  retired_count := retired_numeric::bigint;
+  rejected_count := rejected_numeric::bigint;
   RETURN rejected_count = 0
     AND approved_count + retained_count + retired_count > 0;
 END;
 $$;
+
+CREATE OR REPLACE FUNCTION public.card_enrichment_enqueue_catalog_eligible(
+  _card_id uuid,
+  _input_issuer text,
+  _input_url text,
+  _input_url_hash text,
+  _card_bank text,
+  _card_url text,
+  _card_type text,
+  _is_discontinued boolean,
+  _has_active_cardholder boolean,
+  _has_unresolved_identity boolean
+) RETURNS boolean
+LANGUAGE plpgsql
+IMMUTABLE
+SECURITY INVOKER
+SET search_path = public, extensions, pg_temp
+AS $$
+DECLARE
+  canonical_catalog_url text;
+  canonical_input_url text;
+BEGIN
+  canonical_catalog_url := regexp_replace(
+    split_part(split_part(trim(coalesce(_card_url, '')), '#', 1), '?', 1),
+    '/+$', ''
+  );
+  canonical_input_url := regexp_replace(
+    split_part(split_part(trim(coalesce(_input_url, '')), '#', 1), '?', 1),
+    '/+$', ''
+  );
+  RETURN _card_id IS NOT NULL
+    AND length(trim(coalesce(_card_bank, ''))) BETWEEN 2 AND 120
+    AND lower(trim(coalesce(_input_issuer, ''))) = lower(trim(_card_bank))
+    AND lower(trim(coalesce(_card_type, ''))) = 'credit'
+    AND trim(coalesce(_input_url, '')) ~ '^https://[^/@?#]+'
+    AND canonical_input_url = canonical_catalog_url
+    AND lower(coalesce(_input_url_hash, '')) = encode(
+      extensions.digest(convert_to(trim(_input_url), 'UTF8'), 'sha256'), 'hex'
+    )
+    AND (
+      _is_discontinued IS DISTINCT FROM true
+      OR _has_active_cardholder IS TRUE
+    )
+    AND _has_unresolved_identity IS FALSE;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.card_enrichment_enqueue_count_is_valid(
+  _requested_count integer,
+  _inserted_count integer
+) RETURNS boolean
+LANGUAGE sql
+IMMUTABLE
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+  SELECT _requested_count BETWEEN 1 AND 200
+    AND _inserted_count BETWEEN 0 AND _requested_count;
+$$;
+
+DO $duplicate_v6_card_parser_preflight$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM public.card_catalog_enrichment_jobs AS existing_job
+    WHERE lower(trim(existing_job.parser_version)) = 'benefits-v6'
+    GROUP BY existing_job.card_id, lower(trim(existing_job.parser_version))
+    HAVING count(*) > 1
+  ) THEN
+    RAISE EXCEPTION 'duplicate_v6_card_parser_preflight';
+  END IF;
+END;
+$duplicate_v6_card_parser_preflight$;
+
+-- The preflight deliberately fails rather than rewriting historical jobs.
+-- This partial expression index is the final concurrency backstop even when a
+-- direct service-role INSERT starts before a competing transaction commits.
+CREATE UNIQUE INDEX idx_card_catalog_enrichment_jobs_unique_v6_card_parser
+  ON public.card_catalog_enrichment_jobs (
+    card_id, (lower(trim(parser_version)))
+  )
+  WHERE lower(trim(parser_version)) = 'benefits-v6';
+
+CREATE OR REPLACE FUNCTION public.enforce_card_benefit_enrichment_identity()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF lower(trim(NEW.parser_version)) = 'benefits-v6' THEN
+    PERFORM pg_advisory_xact_lock(hashtextextended(
+      'card_benefit_enrichment_identity:' || NEW.card_id::text ||
+        ':benefits-v6',
+      0
+    ));
+    IF EXISTS (
+      SELECT 1
+      FROM public.card_catalog_enrichment_jobs AS existing_job
+      WHERE existing_job.card_id = NEW.card_id
+        AND lower(trim(existing_job.parser_version)) = 'benefits-v6'
+        AND existing_job.id IS DISTINCT FROM NEW.id
+        AND existing_job.job_key IS DISTINCT FROM NEW.job_key
+    ) THEN
+      RAISE EXCEPTION 'duplicate_v6_card_parser_identity';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS enforce_card_benefit_enrichment_identity
+  ON public.card_catalog_enrichment_jobs;
+CREATE TRIGGER enforce_card_benefit_enrichment_identity
+BEFORE INSERT OR UPDATE OF card_id, parser_version
+ON public.card_catalog_enrichment_jobs
+FOR EACH ROW EXECUTE FUNCTION public.enforce_card_benefit_enrichment_identity();
 
 CREATE OR REPLACE FUNCTION public.enqueue_card_benefit_enrichment_jobs(
   _jobs jsonb
 ) RETURNS integer
 LANGUAGE plpgsql
 SECURITY INVOKER
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 DECLARE
   input_count integer;
   invalid_count integer;
   inserted_count integer;
   identity_row record;
+  locked_jobs jsonb;
 BEGIN
-  IF coalesce(auth.role(), '') <> 'service_role' THEN
-    RAISE EXCEPTION 'service_role_required';
-  END IF;
   IF _jobs IS NULL OR jsonb_typeof(_jobs) <> 'array'
      OR jsonb_array_length(_jobs) < 1 OR jsonb_array_length(_jobs) > 200 THEN
     RAISE EXCEPTION 'invalid_enrichment_enqueue';
@@ -716,13 +839,12 @@ BEGIN
   )
   SELECT count(*), count(*) FILTER (
     WHERE card_id IS NULL OR length(trim(coalesce(issuer, ''))) < 2
-      OR canonical_url !~ '^https://'
-      OR final_url_hash !~ '^[0-9a-f]{64}$'
+      OR canonical_url IS NULL OR canonical_url !~ '^https://'
+      OR final_url_hash IS NULL OR final_url_hash !~ '^[0-9a-f]{64}$'
       OR (content_hash IS NOT NULL AND content_hash !~ '^[0-9a-f]{64}$')
-      OR length(trim(coalesce(parser_version, ''))) < 3
-      OR lower(trim(parser_version)) = 'catalog-v1'
-      OR run_mode NOT IN ('pilot', 'scheduled', 'manual')
-      OR jsonb_typeof(result_summary) <> 'object'
+      OR trim(coalesce(parser_version, '')) <> 'benefits-v6'
+      OR run_mode IS NULL OR run_mode NOT IN ('pilot', 'scheduled', 'manual')
+      OR jsonb_typeof(result_summary) IS DISTINCT FROM 'object'
       OR job_key IS DISTINCT FROM (
         card_id::text || ':' || final_url_hash || ':' || trim(parser_version)
       )
@@ -743,8 +865,8 @@ BEGIN
     RAISE EXCEPTION 'duplicate_card_parser_enqueue';
   END IF;
 
-  -- Every local enqueue and pilot initialization takes these identities in
-  -- the same order before checking card/parser absence.
+  -- The trigger, this RPC, and pilot initialization share this exact ordered
+  -- identity namespace. The RPC then re-reads all mutable authority.
   FOR identity_row IN
     SELECT DISTINCT job.card_id, trim(job.parser_version) AS parser_version
     FROM jsonb_to_recordset(_jobs) AS job(
@@ -759,32 +881,142 @@ BEGIN
     ));
   END LOOP;
 
+  WITH input AS (
+    SELECT *
+    FROM jsonb_to_recordset(_jobs) AS job(
+      card_id uuid, issuer text, canonical_url text, final_url_hash text,
+      content_hash text, parser_version text, job_key text, run_mode text,
+      result_summary jsonb
+    )
+  ), locked_enqueue_authority AS MATERIALIZED (
+    SELECT input.*, card.bank, card.card_url, card.card_type,
+      card.is_discontinued
+    FROM input
+    JOIN public.card_catalog AS card ON card.id = input.card_id
+    ORDER BY card.id
+    FOR UPDATE OF card
+  )
+  SELECT coalesce(
+    jsonb_agg(to_jsonb(authority) ORDER BY authority.card_id),
+    '[]'::jsonb
+  )
+  INTO locked_jobs
+  FROM locked_enqueue_authority AS authority;
+
+  -- Stabilize existing active-holder evidence before the final eligibility
+  -- check. A new holder can only make a previously ineligible card safer.
+  PERFORM holder.id
+  FROM public.user_cards AS holder
+  WHERE holder.catalog_card_id IN (
+    SELECT candidate.card_id
+    FROM jsonb_to_recordset(locked_jobs) AS candidate(card_id uuid)
+  )
+    AND holder.is_active = true
+  ORDER BY holder.id
+  FOR SHARE;
+
+  -- Lock every currently matching unresolved identity review before the final
+  -- exclusion check. Review resolution and enqueue therefore cannot cross on
+  -- a stale row; a newly inserted review remains a later independent event.
+  PERFORM review.id
+  FROM public.card_catalog_review_queue AS review
+  LEFT JOIN LATERAL jsonb_array_elements(
+    CASE WHEN jsonb_typeof(review.existing_candidates) = 'array'
+      THEN review.existing_candidates ELSE '[]'::jsonb END
+  ) AS review_candidate(value) ON true
+  WHERE review.status = 'pending'
+    AND EXISTS (
+      SELECT 1
+      FROM jsonb_to_recordset(locked_jobs) AS candidate(
+        card_id uuid, canonical_url text
+      )
+      WHERE review_candidate.value->>'id' = candidate.card_id::text
+        OR review_candidate.value->>'card_id' = candidate.card_id::text
+        OR review_candidate.value->>'cardId' = candidate.card_id::text
+        OR review.proposed_fields->>'card_id' = candidate.card_id::text
+        OR review.proposed_fields->>'cardId' = candidate.card_id::text
+        OR review.proposed_fields->>'existing_card_id' = candidate.card_id::text
+        OR regexp_replace(split_part(split_part(coalesce(
+          review.proposed_fields->>'official_url',
+          review.proposed_fields->>'card_url',
+          review.proposed_fields->>'source_url',
+          review.source_evidence->>'official_url',
+          review.source_evidence->>'source_url',
+          ''
+        ), '#', 1), '?', 1), '/+$', '') =
+          regexp_replace(split_part(split_part(candidate.canonical_url, '#', 1), '?', 1), '/+$', '')
+    )
+  ORDER BY review.id
+  FOR SHARE OF review;
+
+  SELECT count(*) FILTER (
+    WHERE NOT public.card_enrichment_enqueue_catalog_eligible(
+      candidate.card_id,
+      candidate.issuer,
+      candidate.canonical_url,
+      candidate.final_url_hash,
+      candidate.bank,
+      candidate.card_url,
+      candidate.card_type,
+      candidate.is_discontinued,
+      EXISTS (
+        SELECT 1 FROM public.user_cards AS holder
+        WHERE holder.catalog_card_id = candidate.card_id
+          AND holder.is_active = true
+      ),
+      public.card_has_unresolved_catalog_identity(
+        candidate.card_id, candidate.canonical_url
+      )
+    )
+  )
+  INTO invalid_count
+  FROM jsonb_to_recordset(locked_jobs) AS candidate(
+    card_id uuid, issuer text, canonical_url text, final_url_hash text,
+    content_hash text, parser_version text, job_key text, run_mode text,
+    result_summary jsonb, bank text, card_url text, card_type text,
+    is_discontinued boolean
+  );
+  IF jsonb_array_length(locked_jobs) <> input_count OR invalid_count <> 0 THEN
+    RAISE EXCEPTION 'ineligible_enrichment_enqueue';
+  END IF;
+
+  -- A changed job key for an existing v6 card/parser is an identity conflict,
+  -- never a partial batch success. Exact repeats remain idempotent.
+  IF EXISTS (
+    SELECT 1
+    FROM jsonb_to_recordset(locked_jobs) AS candidate(
+      card_id uuid, parser_version text, job_key text
+    )
+    JOIN public.card_catalog_enrichment_jobs AS existing_job
+      ON existing_job.card_id = candidate.card_id
+     AND existing_job.parser_version = candidate.parser_version
+    WHERE existing_job.job_key IS DISTINCT FROM candidate.job_key
+  ) THEN
+    RAISE EXCEPTION 'duplicate_v6_card_parser_identity';
+  END IF;
+
   INSERT INTO public.card_catalog_enrichment_jobs (
     card_id, issuer, canonical_url, final_url_hash, content_hash,
     parser_version, status, run_mode, job_key, result_summary, updated_at
   )
-  SELECT input.card_id, trim(input.issuer), trim(input.canonical_url),
-    lower(input.final_url_hash), lower(input.content_hash),
-    trim(input.parser_version), 'queued', input.run_mode, input.job_key,
-    input.result_summary, statement_timestamp()
-  FROM jsonb_to_recordset(_jobs) AS input(
+  SELECT candidate.card_id, trim(candidate.issuer),
+    trim(candidate.canonical_url), lower(candidate.final_url_hash),
+    lower(candidate.content_hash), trim(candidate.parser_version), 'queued',
+    candidate.run_mode, candidate.job_key, candidate.result_summary,
+    statement_timestamp()
+  FROM jsonb_to_recordset(locked_jobs) AS candidate(
     card_id uuid, issuer text, canonical_url text, final_url_hash text,
     content_hash text, parser_version text, job_key text, run_mode text,
     result_summary jsonb
   )
-  WHERE EXISTS (
-    SELECT 1 FROM public.card_catalog AS card
-    WHERE card.id = input.card_id
-  )
-    AND NOT EXISTS (
-      SELECT 1
-      FROM public.card_catalog_enrichment_jobs AS existing_job
-      WHERE existing_job.card_id = input.card_id
-        AND existing_job.parser_version = trim(input.parser_version)
-    )
-  ORDER BY input.card_id, trim(input.parser_version)
+  ORDER BY candidate.card_id, trim(candidate.parser_version)
   ON CONFLICT (job_key) DO NOTHING;
   GET DIAGNOSTICS inserted_count = ROW_COUNT;
+  IF NOT public.card_enrichment_enqueue_count_is_valid(
+    input_count, inserted_count
+  ) THEN
+    RAISE EXCEPTION 'invalid_enrichment_enqueue_count';
+  END IF;
   RETURN inserted_count;
 END;
 $$;
@@ -1367,6 +1599,48 @@ AS $$
   END;
 $$;
 
+CREATE OR REPLACE FUNCTION public.card_enrichment_final_staging_state(
+  _requested_status text,
+  _requested_staging_id uuid,
+  _prior_staging_id uuid,
+  _locked_staging_id uuid,
+  _locked_staging_status text,
+  _locked_staging_valid boolean
+) RETURNS TABLE (
+  effective_status text,
+  audit_staging_id uuid,
+  has_pending_staging boolean
+)
+LANGUAGE plpgsql
+IMMUTABLE
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  candidate_staging_id uuid := coalesce(
+    _requested_staging_id, _prior_staging_id
+  );
+BEGIN
+  audit_staging_id := CASE
+    WHEN _locked_staging_valid IS TRUE
+      AND _locked_staging_id = candidate_staging_id
+      AND _locked_staging_status IN ('pending', 'approved', 'rejected')
+    THEN candidate_staging_id
+    ELSE NULL
+  END;
+  has_pending_staging := audit_staging_id IS NOT NULL
+    AND _locked_staging_status = 'pending';
+  effective_status := CASE
+    WHEN has_pending_staging THEN 'staged'
+    WHEN _requested_status = 'staged' AND audit_staging_id IS NOT NULL
+      THEN 'completed'
+    WHEN _requested_status = 'staged' THEN 'review_required'
+    ELSE _requested_status
+  END;
+  RETURN NEXT;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION public.finalize_card_catalog_enrichment_job(
   _job_id uuid,
   _lease_token uuid,
@@ -1385,6 +1659,9 @@ AS $$
 DECLARE
   affected_rows integer;
   job_row public.card_catalog_enrichment_jobs%ROWTYPE;
+  staging_row public.card_benefits_staging%ROWTYPE;
+  job_card_id uuid;
+  candidate_staging_id uuid;
   current_observation jsonb;
   existing_observation_history jsonb;
   observation_history jsonb;
@@ -1392,6 +1669,8 @@ DECLARE
   has_pending_staging boolean;
   effective_status text;
   resolved_staging_id uuid;
+  locked_staging_status text;
+  locked_staging_valid boolean := false;
 BEGIN
   IF _job_id IS NULL OR _lease_token IS NULL
      OR _status NOT IN ('staged', 'completed', 'quarantined', 'failed', 'review_required')
@@ -1403,39 +1682,53 @@ BEGIN
      OR (_status <> 'failed' AND _next_retry_at IS NOT NULL) THEN
     RAISE EXCEPTION 'invalid_enrichment_finalization';
   END IF;
-  SELECT job.* INTO job_row
-  FROM public.card_catalog_enrichment_jobs AS job
-  WHERE job.id = _job_id
-    AND job.status = 'processing'
-    AND job.lease_token = _lease_token
-    AND job.lease_expires_at > now()
+  -- Resolve only immutable identity before participating in the exact Task 3/4
+  -- review serialization protocol. No queue or staging decision is cached.
+  SELECT candidate.card_id INTO job_card_id
+  FROM public.card_catalog_enrichment_jobs AS candidate
+  WHERE candidate.id = _job_id;
+  IF job_card_id IS NULL THEN
+    RAISE EXCEPTION 'stale_enrichment_lease';
+  END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended(
+    'card_benefit_enrichment_review:' || job_card_id::text,
+    0
+  ));
+
+  SELECT candidate.* INTO job_row
+  FROM public.card_catalog_enrichment_jobs AS candidate
+  WHERE candidate.id = _job_id
+    AND candidate.card_id = job_card_id
+    AND candidate.status = 'processing'
+    AND candidate.lease_token = _lease_token
+    AND candidate.lease_expires_at > now()
   FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'stale_enrichment_lease'; END IF;
 
-  IF _status = 'staged' AND NOT EXISTS (
-    SELECT 1 FROM public.card_benefits_staging AS staging
-    WHERE staging.id = _staging_id
+  candidate_staging_id := coalesce(_staging_id, job_row.staging_id);
+  IF candidate_staging_id IS NOT NULL THEN
+    SELECT staging.* INTO staging_row
+    FROM public.card_benefits_staging AS staging
+    WHERE staging.id = candidate_staging_id
       AND staging.card_id = job_row.card_id
+      AND staging.parser_version = job_row.parser_version
       AND staging.request_type = 'official_benefit_enrichment'
-      AND staging.status IN ('pending', 'approved')
-      AND public.is_valid_official_source_evidence(staging.source_evidence)
-  ) THEN
-    RAISE EXCEPTION 'invalid_enrichment_staging_ownership';
+    FOR UPDATE;
+    IF FOUND THEN
+      locked_staging_status := staging_row.status;
+      locked_staging_valid := public.is_valid_official_source_evidence(
+        staging_row.source_evidence
+      );
+    END IF;
   END IF;
 
-  has_pending_staging := public.card_enrichment_job_has_pending_staging(
-    coalesce(_staging_id, job_row.staging_id),
-    job_row.card_id,
-    job_row.parser_version
-  );
-  effective_status := public.card_enrichment_effective_terminal_status(
-    _status, has_pending_staging
-  );
-  resolved_staging_id := CASE
-    WHEN _staging_id IS NOT NULL THEN _staging_id
-    WHEN has_pending_staging THEN job_row.staging_id
-    ELSE NULL
-  END;
+  SELECT state.effective_status, state.audit_staging_id,
+    state.has_pending_staging
+  INTO effective_status, resolved_staging_id, has_pending_staging
+  FROM public.card_enrichment_final_staging_state(
+    _status, _staging_id, job_row.staging_id, staging_row.id,
+    locked_staging_status, locked_staging_valid
+  ) AS state;
 
   current_observation := public.sanitize_card_enrichment_observation(
     _result_summary->'observation', statement_timestamp()
@@ -1471,7 +1764,11 @@ BEGIN
       content_hash = coalesce(_content_hash, job_row.content_hash),
       normalized_fields = coalesce(_normalized_fields, '{}'::jsonb),
       result_summary = safe_summary,
-      failure_category = _failure_category,
+      failure_category = CASE
+        WHEN _status = 'staged' AND resolved_staging_id IS NULL
+          THEN 'invalid_enrichment_staging'
+        ELSE _failure_category
+      END,
       next_retry_at = CASE
         WHEN has_pending_staging THEN NULL
         ELSE _next_retry_at
@@ -1537,6 +1834,20 @@ REVOKE ALL ON FUNCTION public.card_enrichment_pilot_job_is_qualified(text, text,
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.card_enrichment_pilot_job_is_qualified(text, text, jsonb)
   TO service_role;
+REVOKE ALL ON FUNCTION public.card_enrichment_enqueue_catalog_eligible(
+  uuid, text, text, text, text, text, text, boolean, boolean, boolean
+) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.card_enrichment_enqueue_catalog_eligible(
+  uuid, text, text, text, text, text, text, boolean, boolean, boolean
+) TO service_role;
+REVOKE ALL ON FUNCTION public.card_enrichment_enqueue_count_is_valid(integer, integer)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.card_enrichment_enqueue_count_is_valid(integer, integer)
+  TO service_role;
+REVOKE ALL ON FUNCTION public.enforce_card_benefit_enrichment_identity()
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.enforce_card_benefit_enrichment_identity()
+  TO service_role;
 REVOKE ALL ON FUNCTION public.enqueue_card_benefit_enrichment_jobs(jsonb)
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.enqueue_card_benefit_enrichment_jobs(jsonb)
@@ -1567,6 +1878,12 @@ REVOKE ALL ON FUNCTION public.card_enrichment_effective_terminal_status(text, bo
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.card_enrichment_effective_terminal_status(text, boolean)
   TO service_role;
+REVOKE ALL ON FUNCTION public.card_enrichment_final_staging_state(
+  text, uuid, uuid, uuid, text, boolean
+) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.card_enrichment_final_staging_state(
+  text, uuid, uuid, uuid, text, boolean
+) TO service_role;
 REVOKE ALL ON FUNCTION public.finalize_card_catalog_enrichment_job(
   uuid, uuid, text, uuid, text, jsonb, jsonb, text, timestamptz
 ) FROM PUBLIC, anon, authenticated;
@@ -1645,6 +1962,100 @@ BEGIN
 END;
 $recurrence_transition_assertions$;
 
+DO $enqueue_authority_assertions$
+DECLARE
+  atomic_batch boolean;
+  zero_insert boolean;
+  partial_insert boolean;
+  catalog_race boolean;
+  canonical_url text := 'https://issuer.example/card';
+  canonical_hash text;
+BEGIN
+  canonical_hash := encode(
+    extensions.digest(convert_to(canonical_url, 'UTF8'), 'sha256'), 'hex'
+  );
+  atomic_batch := public.card_enrichment_enqueue_count_is_valid(2, 2)
+    AND NOT public.card_enrichment_enqueue_count_is_valid(2, 3);
+  zero_insert := public.card_enrichment_enqueue_count_is_valid(2, 0);
+  partial_insert := public.card_enrichment_enqueue_count_is_valid(2, 1);
+  catalog_race := public.card_enrichment_enqueue_catalog_eligible(
+      '00000000-0000-4000-8000-000000000001', 'Issuer Bank',
+      canonical_url, canonical_hash, 'Issuer Bank',
+      canonical_url || '?campaign=old#top', ' Credit ', false, false, false
+    )
+    AND NOT public.card_enrichment_enqueue_catalog_eligible(
+      '00000000-0000-4000-8000-000000000001', 'Changed Bank',
+      canonical_url, canonical_hash, 'Issuer Bank', canonical_url,
+      'credit', false, false, false
+    )
+    AND NOT public.card_enrichment_enqueue_catalog_eligible(
+      '00000000-0000-4000-8000-000000000001', 'Issuer Bank',
+      canonical_url, canonical_hash, 'Issuer Bank', canonical_url,
+      'credit', true, false, false
+    )
+    AND NOT public.card_enrichment_enqueue_catalog_eligible(
+      '00000000-0000-4000-8000-000000000001', 'Issuer Bank',
+      canonical_url, canonical_hash, 'Issuer Bank', canonical_url,
+      'credit', false, false, true
+    );
+  IF NOT atomic_batch OR NOT zero_insert OR NOT partial_insert
+     OR NOT catalog_race THEN
+    RAISE EXCEPTION 'enqueue authority assertion failed';
+  END IF;
+END;
+$enqueue_authority_assertions$;
+
+DO $finalizer_staging_state_assertions$
+DECLARE
+  pending_new boolean;
+  approved_returned boolean;
+  rejected_returned boolean;
+  approved_prior_304 boolean;
+  obsolete_invalid boolean;
+  staging_id uuid := '00000000-0000-4000-8000-000000000010';
+BEGIN
+  SELECT state.effective_status = 'staged'
+      AND state.audit_staging_id = staging_id
+      AND state.has_pending_staging
+  INTO pending_new
+  FROM public.card_enrichment_final_staging_state(
+    'staged', staging_id, NULL, staging_id, 'pending', true
+  ) AS state;
+  SELECT state.effective_status = 'completed'
+      AND state.audit_staging_id = staging_id
+      AND NOT state.has_pending_staging
+  INTO approved_returned
+  FROM public.card_enrichment_final_staging_state(
+    'staged', staging_id, NULL, staging_id, 'approved', true
+  ) AS state;
+  SELECT state.effective_status = 'completed'
+      AND state.audit_staging_id = staging_id
+      AND NOT state.has_pending_staging
+  INTO rejected_returned
+  FROM public.card_enrichment_final_staging_state(
+    'staged', staging_id, NULL, staging_id, 'rejected', true
+  ) AS state;
+  SELECT state.effective_status = 'completed'
+      AND state.audit_staging_id = staging_id
+      AND NOT state.has_pending_staging
+  INTO approved_prior_304
+  FROM public.card_enrichment_final_staging_state(
+    'completed', NULL, staging_id, staging_id, 'approved', true
+  ) AS state;
+  SELECT state.effective_status = 'review_required'
+      AND state.audit_staging_id IS NULL
+      AND NOT state.has_pending_staging
+  INTO obsolete_invalid
+  FROM public.card_enrichment_final_staging_state(
+    'staged', staging_id, NULL, NULL, NULL, false
+  ) AS state;
+  IF NOT pending_new OR NOT approved_returned OR NOT rejected_returned
+     OR NOT approved_prior_304 OR NOT obsolete_invalid THEN
+    RAISE EXCEPTION 'finalizer staging state assertion failed';
+  END IF;
+END;
+$finalizer_staging_state_assertions$;
+
 DO $pilot_qualification_assertions$
 DECLARE
   safe_base jsonb := jsonb_build_object(
@@ -1669,6 +2080,7 @@ DECLARE
   missing_review_field jsonb;
   null_review_field jsonb;
   status_casing jsonb;
+  one_point_zero_count jsonb;
   ten_digit_count jsonb;
   overflow_count jsonb;
   negative_review_count jsonb;
@@ -1712,6 +2124,9 @@ BEGIN
   );
   status_casing := approved_review || jsonb_build_object(
     'review_status', 'Approved'
+  );
+  one_point_zero_count := approved_review || jsonb_build_object(
+    'approved_count', 1.0::numeric
   );
   ten_digit_count := approved_review || jsonb_build_object(
     'approved_count', 1000000000
@@ -1796,6 +2211,9 @@ BEGIN
      )
      OR public.card_enrichment_pilot_job_is_qualified(
        'completed', NULL, status_casing
+     )
+     OR NOT public.card_enrichment_pilot_job_is_qualified(
+       'completed', NULL, one_point_zero_count
      )
      OR public.card_enrichment_pilot_job_is_qualified(
        'completed', NULL, ten_digit_count

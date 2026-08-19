@@ -83,7 +83,19 @@ export type BenefitEnrichmentQueueInput = {
 };
 
 type EnrichmentQueueClient = {
-  rpc(
+  from?(table: string): {
+    upsert(
+      rows: Record<string, unknown> | Record<string, unknown>[],
+      options: { onConflict: string; ignoreDuplicates: boolean },
+    ): {
+      select(
+        columns: string,
+      ): PromiseLike<
+        { data: Array<Record<string, unknown>> | null; error: unknown }
+      >;
+    };
+  };
+  rpc?(
     name: string,
     args: Record<string, unknown>,
   ): PromiseLike<{ data?: unknown; error: unknown }>;
@@ -106,15 +118,15 @@ export function assertBenefitParserVersion(parserVersion: string): void {
 export async function enqueueBenefitEnrichmentJob(
   db: EnrichmentQueueClient,
   input: BenefitEnrichmentQueueInput,
-): Promise<void> {
-  await enqueueBenefitEnrichmentJobs(db, [input]);
+): Promise<number> {
+  return await enqueueBenefitEnrichmentJobs(db, [input]);
 }
 
 export async function enqueueBenefitEnrichmentJobs(
   db: EnrichmentQueueClient,
   inputs: readonly BenefitEnrichmentQueueInput[],
-): Promise<void> {
-  if (inputs.length === 0) return;
+): Promise<number> {
+  if (inputs.length === 0) return 0;
   const updatedAt = new Date().toISOString();
   const rows = inputs.map((input) => {
     assertBenefitParserVersion(input.parserVersion);
@@ -136,10 +148,35 @@ export async function enqueueBenefitEnrichmentJobs(
       updated_at: updatedAt,
     };
   });
-  const { error } = await db.rpc("enqueue_card_benefit_enrichment_jobs", {
+  const v6Count =
+    inputs.filter((input) =>
+      input.parserVersion.trim().toLowerCase() === "benefits-v6"
+    ).length;
+  if (v6Count !== 0 && v6Count !== inputs.length) {
+    throw new Error("mixed_enrichment_enqueue");
+  }
+  if (v6Count === 0) {
+    if (!db.from) throw new Error("legacy_enrichment_enqueue_unavailable");
+    const { data, error } = await db.from("card_catalog_enrichment_jobs")
+      .upsert(rows, { onConflict: "job_key", ignoreDuplicates: true })
+      .select("id");
+    if (error) throw error;
+    if (!Array.isArray(data) || data.length > inputs.length) {
+      throw new Error("invalid_enrichment_enqueue_count");
+    }
+    return data.length;
+  }
+  if (!db.rpc) throw new Error("v6_enrichment_enqueue_unavailable");
+  const { data, error } = await db.rpc("enqueue_card_benefit_enrichment_jobs", {
     _jobs: rows,
   });
   if (error) throw error;
+  if (
+    !Number.isInteger(data) || Number(data) < 0 || Number(data) > inputs.length
+  ) {
+    throw new Error("invalid_enrichment_enqueue_count");
+  }
+  return Number(data);
 }
 
 export async function runSequentially<T, R>(
