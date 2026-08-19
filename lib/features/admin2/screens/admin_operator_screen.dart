@@ -14,6 +14,8 @@ import '../customers/customers_section.dart';
 import '../inbox/action_inbox_section.dart';
 import '../inbox/inbox_models.dart';
 import '../inbox/inbox_repository.dart';
+import '../feedback/feedback_detail.dart';
+import '../feedback/feedback_repository.dart';
 import '../providers/admin_access_provider.dart';
 import '../system/system_models.dart';
 import '../system/system_repository.dart';
@@ -56,6 +58,7 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
   var _cardSelectionRevision = 0;
   String? _systemControlKey;
   var _systemSelectionRevision = 0;
+  String? _feedbackId;
 
   @override
   void initState() {
@@ -126,7 +129,8 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
           selected: _section,
           onSelected: (next) => setState(() => _section = next),
           child: switch (_section) {
-            AdminWorkspaceSection.inbox => _buildInbox(),
+            AdminWorkspaceSection.inbox =>
+              _feedbackId == null ? _buildInbox() : _buildFeedback(),
             AdminWorkspaceSection.cardData => _buildCardData(),
             AdminWorkspaceSection.system => _buildSystem(),
             AdminWorkspaceSection.customers => _buildCustomers(),
@@ -166,12 +170,48 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
           InboxRepository(ref.watch(adminOperatorRepositoryProvider)).load,
       onOpenCardTarget: _openCardTarget,
       onOpenSystemControl: _openSystemControl,
+      onOpenFeedback: (destination) =>
+          setState(() => _feedbackId = destination.feedbackId),
       onAuthenticationRequired:
           widget.onAuthenticationRequired ??
           () => ref.read(authNotifierProvider.notifier).signOut(),
       onAccessDenied: widget.onAccessDenied ?? () => context.go('/app'),
     ),
   );
+
+  Widget _buildFeedback() {
+    final repository = FeedbackAdminRepository(
+      ref.watch(adminOperatorRepositoryProvider),
+    );
+    return FutureBuilder(
+      future: repository.detail(_feedbackId!),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return BrandStateView(
+            title: 'Feedback could not be loaded.',
+            message: 'Return to the Inbox and retry.',
+            icon: Icons.cloud_off_outlined,
+            actionLabel: 'Back to Inbox',
+            onAction: () => setState(() => _feedbackId = null),
+          );
+        }
+        if (!snapshot.hasData) {
+          return const BrandLoadingSkeleton(
+            semanticLabel: 'Loading feedback detail',
+            minHeight: 280,
+          );
+        }
+        return FeedbackDetailView(
+          detail: snapshot.data!,
+          onAction: (action) async {
+            final receipt = await repository.act(action);
+            if (mounted) setState(() {});
+            return receipt;
+          },
+        );
+      },
+    );
+  }
 
   Widget _buildSystem() => KeyedSubtree(
     key: const Key('admin-section-content'),

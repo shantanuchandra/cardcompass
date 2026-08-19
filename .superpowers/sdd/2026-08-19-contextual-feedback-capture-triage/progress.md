@@ -20,7 +20,7 @@ Ruling: Carry the Cutover final-fix adjudication into the Tasks 1–3 code-beari
 - Task 4: complete — asynchronous tool-free LLM triage
 - Task 5: complete — reusable Flutter feedback surface
 - Task 6: complete — attach three product families
-- Task 7: pending — Admin2 review and Inbox integration
+- Task 7: complete — Admin2 review and Inbox integration
 - Task 8: pending — full verification
 
 ## Tasks 1–3 evidence
@@ -102,3 +102,14 @@ Ruling: Install the production feedback repository only beneath authenticated `/
 Ruling: Promote a successfully recreated recommendation trace to the sheet's effective target for the rest of that sheet session. Cost if wrong: later edited submissions intentionally stay attached to the refreshed output rather than attempting another server trace.
 
 Ruling: Bound feedback previews at the shared presentation boundary to 120 Unicode code points and 256 UTF-8 bytes. Cost if wrong: extremely long display metadata is truncated in the feedback sheet and semantic label, while the underlying product data remains unchanged.
+
+## Task 7 evidence
+
+- RED: new gateway and Flutter tests failed on the absent feedback registry, review handlers, typed models, detail surface, and feedback Inbox adapter.
+- GREEN: the frozen gateway now exposes exact feedback list/detail/review/retry and eval-case actions with bounded filters, deterministic pagination, safe DTOs, UUID request receipts, audit-before-detail reads, human-authored ground truth, observed-version lifecycle actions, and typed confirmations. Draft receipts are enriched with the authoritative case version needed for a separate approval.
+- Failed triage alone can be reset to `awaiting_triage`; the retry is audited, claim-token processing is scheduled with `waitUntil`, and a scheduling exception leaves the row in the retryable state.
+- Pending feedback is a distinct, fail-isolated Inbox source. Critical/high advisory severity affects rank only; review remains pending and deep-links by exact feedback ID.
+- Admin2 distinguishes user text, captured safe fixture, advisory LLM text, and operator ground truth. The proposal is editable, required human fields gate draft creation, approval requires a second typed confirmation, and reasoned data/product/dismiss routes remain explicit.
+- All 91 Admin gateway tests and all 154 Admin2 tests pass. Focused feedback/Inbox coverage passes 20 Deno and 19 Flutter tests; scoped analysis and `git diff --check` are clean.
+
+Ruling: Keep LLM triage strictly advisory and require a separately persisted operator draft plus typed `APPROVE` confirmation before dataset admission. Cost if wrong: the founder performs one additional confirmation step, but no model-authored proposal can become ground truth autonomously.

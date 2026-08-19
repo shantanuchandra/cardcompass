@@ -11,19 +11,23 @@ type SystemDestination = Readonly<{
   section: "system";
   control_key: "benefit_enrichment_scheduled";
 }>;
+type FeedbackDestination = Readonly<
+  { section: "feedback"; feedback_id: string }
+>;
 
 export type InboxItem = Readonly<{
   id: string;
   type:
     | "card_identity_review"
     | "benefit_enrichment_review"
-    | "paused_pipeline";
+    | "paused_pipeline"
+    | "feedback_review";
   severity: Severity;
   title: string;
   explanation: string;
   source_status: string;
   age_seconds: number;
-  destination: CardDestination | SystemDestination;
+  destination: CardDestination | SystemDestination | FeedbackDestination;
 }>;
 
 type JsonRecord = Record<string, unknown>;
@@ -306,6 +310,53 @@ export async function loadSystemInbox(
   }];
 }
 
+export function feedbackInboxItem(
+  value: unknown,
+  nowMs = Date.now(),
+): InboxItem | null {
+  const row = record(value);
+  const targetId = safeId(row?.id);
+  if (!row || targetId === null || row.review_status !== "pending") return null;
+  const triage = record(row.triage_result);
+  const severity =
+    triage?.severity === "critical" || triage?.severity === "high"
+      ? triage.severity
+      : "normal";
+  const feature = row.feature_key === "statement_processing"
+    ? "statement processing"
+    : row.feature_key === "card_data"
+    ? "card data"
+    : row.feature_key === "recommendation"
+    ? "recommendation"
+    : "AI output";
+  return {
+    id: `feedback:${targetId}`,
+    type: "feedback_review",
+    severity,
+    title: `Review ${feature} feedback`,
+    explanation: "User feedback is waiting for human review.",
+    source_status: "pending",
+    age_seconds: safeAge(row.created_at, nowMs),
+    destination: { section: "feedback", feedback_id: targetId },
+  };
+}
+
+export async function loadFeedbackInbox(
+  context: AdminActionContext,
+  requestedLimit = MAX_SOURCE_ITEMS,
+  nowMs = Date.now(),
+): Promise<InboxItem[]> {
+  const limit = boundedLimit(requestedLimit);
+  const result = await (context.db as any).from("ai_feedback").select(
+    "id,feature_key,triage_status,triage_result,review_status,created_at",
+  ).eq("review_status", "pending").order("created_at", { ascending: true })
+    .order("id", { ascending: true }).range(0, limit - 1);
+  if (result.error || !Array.isArray(result.data)) sourceFailure();
+  return result.data.slice(0, limit).map((row: unknown) =>
+    feedbackInboxItem(row, nowMs)
+  ).filter((item: InboxItem | null): item is InboxItem => item !== null);
+}
+
 export async function handleInboxList(
   body: JsonRecord,
   context: AdminActionContext,
@@ -329,6 +380,7 @@ export async function handleInboxList(
       nowMs,
     ),
     loadSystemInbox(context, nowMs),
+    loadFeedbackInbox(context, MAX_SOURCE_ITEMS, nowMs),
   ]);
   const items = results.flatMap((result) =>
     result.status === "fulfilled" ? result.value : []
@@ -344,7 +396,9 @@ export async function handleInboxList(
                 ? "card_identity"
                 : index < 3
                 ? "benefit_enrichment"
-                : "system_operations",
+                : index === 3
+                ? "system_operations"
+                : "feedback",
             ]
             : []
         ),

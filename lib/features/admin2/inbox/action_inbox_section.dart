@@ -14,6 +14,7 @@ class ActionInboxSection extends StatefulWidget {
     required this.loadInbox,
     required this.onOpenCardTarget,
     required this.onOpenSystemControl,
+    this.onOpenFeedback,
     this.onAuthenticationRequired,
     this.onAccessDenied,
   });
@@ -21,6 +22,7 @@ class ActionInboxSection extends StatefulWidget {
   final InboxLoader loadInbox;
   final ValueChanged<AdminInboxDestination> onOpenCardTarget;
   final ValueChanged<AdminInboxDestination> onOpenSystemControl;
+  final ValueChanged<AdminInboxDestination>? onOpenFeedback;
   final Future<void> Function()? onAuthenticationRequired;
   final VoidCallback? onAccessDenied;
 
@@ -168,9 +170,15 @@ class _ActionInboxSectionState extends State<ActionInboxSection> {
                                   .where((item) => item.severity == severity)
                                   .toList(growable: false),
                               onOpen: (destination) =>
-                                  destination.section == 'system'
-                                  ? widget.onOpenSystemControl(destination)
-                                  : widget.onOpenCardTarget(destination),
+                                  switch (destination.section) {
+                                    'system' => widget.onOpenSystemControl(
+                                      destination,
+                                    ),
+                                    'feedback' => widget.onOpenFeedback?.call(
+                                      destination,
+                                    ),
+                                    _ => widget.onOpenCardTarget(destination),
+                                  },
                             ),
                         ],
                       ),
@@ -302,6 +310,7 @@ String _partialFailureMessage(InboxSource source) => switch (source) {
     'Benefit enrichment is temporarily unavailable.',
   InboxSource.systemOperations =>
     'System operations are temporarily unavailable.',
+  InboxSource.feedback => 'Feedback review is temporarily unavailable.',
 };
 
 String _severityLabel(AdminInboxSeverity severity) => switch (severity) {
@@ -314,12 +323,14 @@ String _typeLabel(String type) => switch (type) {
   'card_identity_review' => 'Card identity review',
   'benefit_enrichment_review' => 'Benefit enrichment review',
   'paused_pipeline' => 'Paused pipeline',
+  'feedback_review' => 'Feedback review',
   _ => 'Operator action',
 };
 
 String _sectionLabel(String section) => switch (section) {
   'cardData' => 'Card Data',
   'system' => 'System',
+  'feedback' => 'Feedback',
   _ => 'Operator workspace',
 };
 

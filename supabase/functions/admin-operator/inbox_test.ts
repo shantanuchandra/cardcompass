@@ -1,5 +1,6 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import {
+  feedbackInboxItem,
   handleInboxList,
   type InboxItem,
   loadBenefitInbox,
@@ -7,6 +8,32 @@ import {
   loadSystemInbox,
   rankInboxItems,
 } from "./inbox.ts";
+
+Deno.test("pending high feedback becomes a high inbox item without auto-close", () => {
+  assertEquals(
+    feedbackInboxItem({
+      id: "20000000-0000-4000-8000-000000000001",
+      feature_key: "card_data",
+      triage_status: "triaged",
+      triage_result: { severity: "high" },
+      review_status: "pending",
+      created_at: "2026-08-19T11:00:00Z",
+    }, NOW),
+    {
+      id: "feedback:20000000-0000-4000-8000-000000000001",
+      type: "feedback_review",
+      severity: "high",
+      title: "Review card data feedback",
+      explanation: "User feedback is waiting for human review.",
+      source_status: "pending",
+      age_seconds: 3600,
+      destination: {
+        section: "feedback",
+        feedback_id: "20000000-0000-4000-8000-000000000001",
+      },
+    },
+  );
+});
 import { type AdminActionContext, AdminHttpError } from "./types.ts";
 import { actionHandlers } from "./router.ts";
 

@@ -17,6 +17,7 @@ final class InboxRepository {
           'card_identity' => InboxSource.cardIdentity,
           'benefit_enrichment' => InboxSource.benefitEnrichment,
           'system_operations' => InboxSource.systemOperations,
+          'feedback' => InboxSource.feedback,
           _ => throw const FormatException('Invalid partial failure'),
         };
       }).toList();
