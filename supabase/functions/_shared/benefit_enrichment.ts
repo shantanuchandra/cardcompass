@@ -22,6 +22,8 @@ export type BenefitDocument = {
 };
 
 export type BenefitProposal = {
+  /** Existing live benefits row UUID; never used as canonical proposal identity. */
+  liveBenefitId?: string;
   benefitId?: string;
   offerSubject?: string;
   dedupeKey: string;
@@ -148,6 +150,9 @@ export function currentBenefitProposal(
     )
     : [];
   const proposal = {
+    ...(benefit.benefit_id
+      ? { liveBenefitId: String(benefit.benefit_id) }
+      : {}),
     ...(canonicalV6 ? { benefitId: String(benefit.dedupe_key) } : {}),
     dedupeKey: String(benefit.dedupe_key),
     title: redactSensitiveUrlsInText(

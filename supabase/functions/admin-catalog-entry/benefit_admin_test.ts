@@ -1,6 +1,7 @@
 import {
   handleBenefitAdminAction,
   presentBenefitJob,
+  sanitizeAdminDto,
   validateV6ApprovalDecisions,
 } from "./benefit_admin.ts";
 import {
@@ -952,17 +953,22 @@ Deno.test("pure v6 decision validation rejects an unstaged canonical identity", 
     parser_version: "benefits-v6",
     proposals: [proposal],
   };
-  const valid = validateV6ApprovalDecisions(
+  const valid = await validateV6ApprovalDecisions(
     [{ action: "approve", benefit: proposal }],
     extraction,
+    "card-1",
   );
   assert(valid[0].benefit != null, "pure validator rejected exact proposal");
   let error: unknown;
   try {
-    validateV6ApprovalDecisions([{
-      action: "approve",
-      benefit: { ...proposal, restrictions: ["fuel spends"] },
-    }], extraction);
+    await validateV6ApprovalDecisions(
+      [{
+        action: "approve",
+        benefit: { ...proposal, restrictions: ["fuel spends"] },
+      }],
+      extraction,
+      "card-1",
+    );
   } catch (caught) {
     error = caught;
   }
@@ -1010,6 +1016,59 @@ Deno.test("v6 admin identity terms remain explicitly bounded", () => {
       proposal.valueConfig.exclusions.transaction_types.join(",") ===
         "wallet reload",
     "admin value_config stripped structured exclusion dimensions",
+  );
+});
+
+Deno.test("admin DTO privacy recursively redacts URL secrets in values and object keys", () => {
+  const secret =
+    "https://user:password@issuer.example/terms?token=private#fragment";
+  const sanitized = sanitizeAdminDto({
+    description: `Read ${secret}`,
+    partners: [`Partner ${secret}`],
+    nested: {
+      [`evidence-${secret}`]: {
+        list: [`See ${secret}`],
+      },
+    },
+  });
+  const serialized = JSON.stringify(sanitized);
+  for (const leaked of ["user:", "password", "token=", "#fragment"]) {
+    assert(!serialized.includes(leaked), `admin DTO leaked ${leaked}`);
+  }
+  assert(
+    serialized.includes("https://issuer.example/terms"),
+    "privacy boundary discarded safe issuer provenance",
+  );
+});
+
+Deno.test("v6 approval recomputes staged identity for the locked card", async () => {
+  const [foreignCardProposal] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback on dining spends.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-b",
+  );
+  let error: unknown;
+  try {
+    await validateV6ApprovalDecisions(
+      [{ action: "approve", benefit: foreignCardProposal }],
+      {
+        request_type: "official_benefit_enrichment",
+        parser_version: "benefits-v6",
+        proposals: [foreignCardProposal],
+      },
+      "card-a",
+    );
+  } catch (caught) {
+    error = caught;
+  }
+  assert(
+    error instanceof Error &&
+      (error as { code?: string }).code === "invalid_staged_benefit_identity",
+    "foreign-card staged identity was accepted",
   );
 });
 

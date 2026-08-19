@@ -157,6 +157,7 @@ Deno.test("approved movie config and partners survive the next enrichment compar
 Deno.test("approved v6 identifiers and canonical exclusion terms survive comparison", () => {
   const dedupeKey = "card-benefit-v2:card-1:cashback";
   const proposal = currentBenefitProposal({
+    benefit_id: "11111111-1111-4111-8111-111111111111",
     dedupe_key: dedupeKey,
     title: "10% cashback",
     exclusions: {
@@ -166,6 +167,10 @@ Deno.test("approved v6 identifiers and canonical exclusion terms survive compari
   });
 
   assert(proposal?.benefitId === dedupeKey, "card-scoped identifier was lost");
+  assert(
+    proposal?.liveBenefitId === "11111111-1111-4111-8111-111111111111",
+    "existing live benefit row ID was lost",
+  );
   assert(
     !Array.isArray(proposal?.exclusions) &&
       (proposal?.exclusions.additional as Record<string, string[]>).source_terms
