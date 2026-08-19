@@ -474,3 +474,12 @@ test('sanitizes visible, href, encoded, keyed, and nested discovery evidence URL
   assert.doesNotMatch(serialized, /user:pass|token|session|secret|private/i);
   assert.match(serialized, /Privilege Credit Card/);
 });
+
+test('card discovery gives every official fetch an invocation deadline', async () => {
+  const source = await readFile(cardDiscoveryEntrypoint, 'utf8');
+  const calls = [...source.matchAll(/fetchOfficialIssuerResource\(\{([\s\S]*?)\n\s*\}\)/g)];
+  assert.ok(calls.length >= 3, 'expected every discovery fetch caller');
+  for (const call of calls) {
+    assert.match(call[1], /deadlineAt(?:\s*:|\s*,)/);
+  }
+});

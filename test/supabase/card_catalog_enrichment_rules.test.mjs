@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import {readFile} from 'node:fs/promises';
 
 import {
   diffCatalogFields,
@@ -7,6 +8,8 @@ import {
   normalizeOfficialCatalogPage,
   requireCatalogPageIdentity,
 } from '../../supabase/functions/_shared/card_catalog_enrichment.ts';
+
+const catalogEntrypoint = new URL('../../supabase/functions/catalog-enrichment/index.ts', import.meta.url);
 
 test('normalizes explicit Indian fee and APR values', () => {
   assert.equal(normalizeMoney('₹ 1,500 + GST'), 1500);
@@ -116,4 +119,11 @@ test('catalog normalization remains bound to the exact target card after redirec
       /identity_mismatch/,
     );
   }
+});
+
+test('catalog enrichment passes an invocation deadline to its official fetch', async () => {
+  const source = await readFile(catalogEntrypoint, 'utf8');
+  const call = source.match(/fetchOfficialIssuerResource\(\{([\s\S]*?)\n\s*\}\)/);
+  assert.ok(call, 'catalog official fetch caller was not found');
+  assert.match(call[1], /deadlineAt(?:\s*:|\s*,)/);
 });

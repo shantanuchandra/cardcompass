@@ -1,5 +1,6 @@
 import {
   assessCrawlCompleteness,
+  compactSourceAttempts,
   retirementEligibility,
   type SourceAttemptInput,
 } from "./crawl_policy.ts";
@@ -37,6 +38,48 @@ Deno.test("a successful primary source is a complete crawl", () => {
 
   assert(result.complete, "primary success was not complete");
   assert(result.attempts.length === 1, "primary attempt was not retained");
+});
+
+Deno.test("attempt compaction is idempotent and preserves existing retry history", () => {
+  const attempts = [
+    attempt({
+      status: "failed",
+      httpStatus: 503,
+      errorCode: "http_5xx",
+      contentHash: undefined,
+      attemptedAt: "2026-08-19T00:00:00.000Z",
+    }),
+    attempt({
+      status: "failed",
+      httpStatus: 503,
+      errorCode: "http_5xx",
+      contentHash: undefined,
+      attemptedAt: "2026-08-19T00:00:01.000Z",
+    }),
+    attempt({ attemptedAt: "2026-08-19T00:00:02.000Z" }),
+  ].map((item) => ({
+    ...item,
+    url: item.requestedUrl,
+    logicalSourceKey: "f".repeat(64),
+  }));
+  const first = compactSourceAttempts(
+    attempts as never,
+    "2026-08-19T00:01:00.000Z",
+  );
+  const second = compactSourceAttempts(
+    first.attempts,
+    "2026-08-19T00:01:00.000Z",
+  );
+  assert(
+    first.attempts[0].attemptHistory?.map((entry) => entry.httpStatus).join(
+      ",",
+    ) === "503,503,200",
+    "initial compaction did not preserve the retry sequence",
+  );
+  assert(
+    JSON.stringify(second.attempts) === JSON.stringify(first.attempts),
+    "recompaction erased or duplicated existing history",
+  );
 });
 
 Deno.test("a source with an invalid or local timestamp cannot establish completeness", () => {

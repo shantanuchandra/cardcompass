@@ -2,6 +2,7 @@ import { type BenefitDocument } from "../_shared/benefit_enrichment.ts";
 import { redactSensitiveUrlsInText } from "../_shared/benefit_source_privacy.ts";
 import { canonicalOfficialUrl } from "../_shared/card_discovery.ts";
 import {
+  approvedStoredQueryParameters,
   fetchOfficialIssuerObservation,
   fetchOfficialIssuerResource as fetchOfficialIssuerResourceDefault,
   type OfficialFetchInput,
@@ -164,39 +165,32 @@ async function benefitDocument(
   const body = requireOfficialFetchBody(resource);
   return {
     sourceUrl: requestedUrl,
-    finalUrl: body.canonicalUrl,
+    finalUrl: boundedSourceUrl(body.canonicalUrl),
     text: redactSensitiveUrlsInText(await officialResourceText(body)),
     contentHash: body.contentHash,
   };
 }
 
 function supportingIdentityMatches(
-  resource: OfficialFetchResult,
   text: string,
   labels: string[],
-  primaryUrl: string,
-  exactCuratedIdentity = false,
+  contentType?: string,
 ): boolean {
-  if (exactCuratedIdentity) return true;
   const normalize = (value: string) =>
     value.toLowerCase().replace(/[^a-z0-9]+/g, "");
-  const normalizedText = normalize(text);
+  const visibleText = contentType === "application/pdf"
+    ? text
+    : text.replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ");
+  const normalizedText = normalize(visibleText);
   const normalizedLabels = labels.map(normalize).filter((label) =>
     label.length >= 4
   );
   if (normalizedLabels.some((label) => normalizedText.includes(label))) {
     return true;
   }
-  try {
-    const primaryPath = new URL(primaryUrl).pathname.replace(/\/$/, "");
-    const finalPath = new URL(resource.canonicalUrl).pathname.replace(
-      /\/$/,
-      "",
-    );
-    return finalPath === primaryPath || finalPath.startsWith(`${primaryPath}/`);
-  } catch {
-    return false;
-  }
+  return false;
 }
 
 export async function collectSupportingBenefitDocuments(
@@ -381,6 +375,8 @@ export async function collectSupportingBenefitDocuments(
           url: current.url,
           contentPurpose: "document",
           maxBytes: 1024 * 1024,
+          deadlineAt: input.requestDeadlineAt,
+          allowedQueryParameters: approvedStoredQueryParameters(current.url),
         });
       } else {
         const observation = await fetchOfficialIssuerObservation({
@@ -393,6 +389,7 @@ export async function collectSupportingBenefitDocuments(
           maxBackoffMs: 30_000,
           deadlineAt: input.requestDeadlineAt,
           enforceRobots: true,
+          allowedQueryParameters: approvedStoredQueryParameters(current.url),
         });
         for (const attempt of observation.attempts.slice(0, -1)) {
           attempts.push({
@@ -448,15 +445,25 @@ export async function collectSupportingBenefitDocuments(
       continue;
     }
     const resourceText = await officialResourceText(resource);
+    if (!resourceText.trim()) {
+      attempts.push({
+        requestedUrl: current.url,
+        finalUrl: resource.canonicalUrl,
+        role: current.role,
+        status: "failed",
+        httpStatus: resource.status,
+        errorCode: resource.contentType === "application/pdf"
+          ? "corrupt_pdf"
+          : "empty_document",
+        attemptedAt: resource.retrievedAt,
+      });
+      continue;
+    }
     if (
       !supportingIdentityMatches(
-        resource,
         resourceText,
         input.identityLabels,
-        input.primary.canonicalUrl,
-        exactSet.has(current.url) &&
-          boundedSourceUrl(resource.canonicalUrl) ===
-            boundedSourceUrl(current.url),
+        resource.contentType,
       )
     ) {
       attempts.push({

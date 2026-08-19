@@ -5,6 +5,7 @@ import {
   officialCardIdentityFromHtml,
 } from "./card_discovery.ts";
 import {
+  approvedStoredQueryParameters,
   fetchOfficialIssuerResource as fetchOfficialIssuerResourceDefault,
   type OfficialFetchInput,
   type OfficialFetchResult,
@@ -259,6 +260,26 @@ function redirectPreservesProductIdentity(
   const finalTokens = urlPathTokens(final, issuer);
   return requestedTokens.size > 0 &&
     [...requestedTokens].some((token) => finalTokens.has(token));
+}
+
+function responseMatchesRequestedProduct(
+  requestedUrl: string,
+  responseText: string,
+  issuer: string,
+): boolean {
+  const requestedTokens = urlPathTokens(requestedUrl, issuer);
+  if (requestedTokens.size === 0) return false;
+  const identity = officialCardIdentityFromHtml(responseText, issuer);
+  const evidenceTokens = identity
+    ? meaningfulTokens(
+      [identity.cardName, ...identity.aliases].join(" "),
+      issuer,
+    )
+    : /\bcredit\s+card\b/i.test(responseText)
+    ? meaningfulTokens(responseText.slice(0, 32_000), issuer)
+    : new Set<string>();
+  return evidenceTokens.size > 0 &&
+    [...requestedTokens].every((token) => evidenceTokens.has(token));
 }
 
 function hasSharedProductIdentityContext(
@@ -710,15 +731,24 @@ export async function discoverIssuerCardCandidates(
       }));
   let hasRequested = false;
   let anchorHost: string | null = null;
+  const now = input.now ?? Date.now;
 
   const request = async (
     url: string,
     contentPurpose: OfficialFetchInput["contentPurpose"],
   ) => {
-    if (hasRequested) await delay(input.delayMs ?? DEFAULT_CRAWL_DELAY_MS);
+    if (hasRequested) {
+      const intendedDelay = input.delayMs ?? DEFAULT_CRAWL_DELAY_MS;
+      if (
+        input.deadlineAt !== undefined &&
+        (now() >= input.deadlineAt ||
+          intendedDelay > input.deadlineAt - now())
+      ) throw new Error("deadline_exceeded");
+      await delay(intendedDelay);
+    }
     if (
       input.deadlineAt !== undefined &&
-      (input.now ?? Date.now)() >= input.deadlineAt
+      now() >= input.deadlineAt
     ) {
       throw new Error("deadline_exceeded");
     }
@@ -731,6 +761,7 @@ export async function discoverIssuerCardCandidates(
         deadlineAt: input.deadlineAt,
         now: input.now,
         enforceRobots: input.fetchOfficialIssuerResource === undefined,
+        allowedQueryParameters: approvedStoredQueryParameters(url),
       }),
     );
   };
@@ -864,6 +895,10 @@ export async function discoverIssuerCardCandidates(
         !redirectPreservesProductIdentity(
           url,
           response.canonicalUrl,
+          input.issuer,
+        ) || !responseMatchesRequestedProduct(
+          url,
+          response.text,
           input.issuer,
         )
       ) {

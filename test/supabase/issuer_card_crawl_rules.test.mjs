@@ -388,6 +388,66 @@ test('same-host candidate redirects stay bound to the discovered card identity',
   }
 });
 
+test('candidate body identity must match the requested product even when the URL is unchanged', async () => {
+  const privilege = 'https://www.axis.bank.in/cards/credit-card/privilege-credit-card';
+  const result = await discoverIssuerCardCandidates({
+    issuer,
+    sitemapUrl: rootSitemap,
+    fetchOfficialIssuerResource: async (input) =>
+      input.url === rootSitemap
+        ? resource(input.url, sitemap([privilege]), 'application/xml')
+        : resource(privilege, '<title>Regalia Credit Card | Axis Bank</title><h1>Regalia Credit Card</h1>'),
+    delay: async () => {},
+  });
+  assert.equal(result.candidates.length, 0);
+  assert.equal(
+    result.quarantined.some((item) => item.warnings.includes('redirect_identity_mismatch')),
+    true,
+  );
+});
+
+test('issuer crawl approves linked functional query names and enforces delay deadlines before sleep', async () => {
+  const terms = 'https://www.axis.bank.in/cards/credit-card/privilege/terms?document=mitc';
+  const received = [];
+  let now = 500;
+  let sleeps = 0;
+  const result = await discoverIssuerCardCandidates({
+    issuer,
+    sitemapUrl: rootSitemap,
+    deadlineAt: 1_000,
+    now: () => now,
+    delayMs: 1_000,
+    delay: async (milliseconds) => {
+      sleeps += 1;
+      now += milliseconds;
+    },
+    fetchOfficialIssuerResource: async (input) => {
+      received.push(input);
+      if (input.url === rootSitemap) {
+        return resource(input.url, sitemap([terms]), 'application/xml');
+      }
+      return resource(terms, '<h1>Privilege Credit Card Terms</h1>');
+    },
+  });
+  assert.equal(sleeps, 0);
+  assert.equal(received.length, 1);
+  assert.equal(result.candidates.length, 0);
+
+  const queryInputs = [];
+  await discoverIssuerCardCandidates({
+    issuer,
+    sitemapUrl: rootSitemap,
+    delay: async () => {},
+    fetchOfficialIssuerResource: async (input) => {
+      queryInputs.push(input);
+      return input.url === rootSitemap
+        ? resource(input.url, sitemap([terms]), 'application/xml')
+        : resource(terms, '<h1>Privilege Credit Card Terms</h1>');
+    },
+  });
+  assert.equal(queryInputs[1].allowedQueryParameters.includes('document'), true);
+});
+
 test('requires product-specific identity context before classifying generic listings or sitewide documents positively', () => {
   const genericListing = classifyIssuerPage({
     issuer,

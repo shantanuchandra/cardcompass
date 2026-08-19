@@ -1164,12 +1164,23 @@ Deno.test("conditional cache reuse requires prior complete canonical and content
     parser_version: "benefits-v6",
     etag: '"v1"',
     content_hash: "a".repeat(64),
+    submitted_identity_hash: "c".repeat(64),
+    final_resource_url: "https://issuer.example/card",
+    final_resource_identity_hash: "d".repeat(64),
+    card_identity_validated: true,
   }, {
     crawl_complete: true,
     canonical_benefit_hash: "b".repeat(64),
   }) as never);
   assert(complete?.reusableExtraction === true, "complete cache was rejected");
   assert(complete?.contentHash === "a".repeat(64), "content evidence was lost");
+  assert(
+    complete?.sourceIdentityHash === "c".repeat(64) &&
+      complete?.finalResourceIdentityHash === "d".repeat(64) &&
+      complete?.finalResourceUrl === "https://issuer.example/card" &&
+      complete?.cardIdentityValidated === true,
+    "resource/card identity cache binding was lost",
+  );
 
   for (
     const invalid of [
@@ -1182,6 +1193,15 @@ Deno.test("conditional cache reuse requires prior complete canonical and content
         etag: '"v1"',
         content_hash: "a".repeat(64),
       }, { crawl_complete: false, canonical_benefit_hash: "b".repeat(64) }),
+      job({
+        parser_version: "benefits-v6",
+        etag: '"v1"',
+        content_hash: "a".repeat(64),
+        submitted_identity_hash: "c".repeat(64),
+        final_resource_url: "https://issuer.example/card",
+        final_resource_identity_hash: "d".repeat(64),
+        card_identity_validated: false,
+      }, { crawl_complete: true, canonical_benefit_hash: "b".repeat(64) }),
     ]
   ) {
     assert(
@@ -1189,6 +1209,68 @@ Deno.test("conditional cache reuse requires prior complete canonical and content
       "incomplete cache sent conditional validators",
     );
   }
+});
+
+Deno.test("crawl observation preserves compacted retry history and manifest hashes ignore nested timestamps", async () => {
+  const base = {
+    url: "https://issuer.example/card",
+    logicalSourceKey: "f".repeat(64),
+    role: "primary" as const,
+    status: "success" as const,
+    httpStatus: 200,
+    contentHash: "a".repeat(64),
+    attemptedAt: "2026-08-19T00:00:02.000Z",
+    attemptHistory: [
+      {
+        status: "failed" as const,
+        httpStatus: 503,
+        errorCode: "http_5xx",
+        attemptedAt: "2026-08-19T00:00:00.000Z",
+      },
+      {
+        status: "failed" as const,
+        httpStatus: 503,
+        errorCode: "http_5xx",
+        attemptedAt: "2026-08-19T00:00:01.000Z",
+      },
+      {
+        status: "success" as const,
+        httpStatus: 200,
+        attemptedAt: "2026-08-19T00:00:02.000Z",
+      },
+    ],
+  };
+  const observation = buildCrawlObservation({
+    observedAt: "2026-08-19T00:01:00.000Z",
+    assessmentTime: "2026-08-19T00:01:00.000Z",
+    crawlComplete: true,
+    crawlReason: "complete",
+    sourceManifestHash: "b".repeat(64),
+    canonicalBenefitHash: "c".repeat(64),
+    absentBenefitIds: [],
+    absentLegacyBenefitIds: [],
+    attempts: [base],
+  });
+  assert(
+    observation.source_attempts[0].attemptHistory?.map((entry) =>
+      entry.httpStatus
+    ).join(",") === "503,503,200",
+    "buildCrawlObservation erased existing retry history",
+  );
+
+  const shifted = {
+    ...base,
+    attemptedAt: "2026-08-20T00:00:02.000Z",
+    attemptHistory: base.attemptHistory.map((entry, index) => ({
+      ...entry,
+      attemptedAt: `2026-08-20T00:00:0${index}.000Z`,
+    })),
+  };
+  assert(
+    await computeSourceManifestHash([base]) ===
+      await computeSourceManifestHash([shifted]),
+    "nested retry timestamps changed the stable manifest hash",
+  );
 });
 
 Deno.test("scheduled seeding skips pilot conflicts and preserves processing and terminal jobs on repeats", async () => {

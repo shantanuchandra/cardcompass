@@ -74,6 +74,8 @@ const SAFE_ERROR_CODES = new Set([
   "empty_shell",
   "unsupported_charset",
   "robots_disallowed",
+  "robots_invalid",
+  "unapproved_query",
   "identity_review",
   "identity_mismatch",
   "insufficient_evidence",
@@ -553,6 +555,21 @@ export function compactSourceAttempts(
   const grouped = groupedAttempts(persisted);
   const decisive: AttemptEntry[] = [];
   const optional: AttemptEntry[] = [];
+  const terminalHistory = (attempt: SourceAttempt): SourceAttemptHistory => ({
+    status: attempt.status,
+    ...(attempt.httpStatus !== undefined
+      ? { httpStatus: attempt.httpStatus }
+      : {}),
+    ...(attempt.errorCode ? { errorCode: attempt.errorCode } : {}),
+    attemptedAt: attempt.attemptedAt,
+  });
+  const sameHistory = (
+    left: SourceAttemptHistory,
+    right: SourceAttemptHistory,
+  ) =>
+    left.status === right.status && left.httpStatus === right.httpStatus &&
+    left.errorCode === right.errorCode &&
+    left.attemptedAt === right.attemptedAt;
   for (const entries of grouped.values()) {
     const terminal = terminalAttempt(entries, assessmentTimestamp);
     const role = entries[0].attempt.role;
@@ -560,22 +577,23 @@ export function compactSourceAttempts(
       ? decisive
       : optional;
     if (terminal) {
-      const history = entries.map(({ attempt }) => ({
-        status: attempt.status,
-        ...(attempt.httpStatus !== undefined
-          ? { httpStatus: attempt.httpStatus }
-          : {}),
-        ...(attempt.errorCode ? { errorCode: attempt.errorCode } : {}),
-        attemptedAt: attempt.attemptedAt,
-      }));
+      const history = entries.flatMap(({ attempt }) => {
+        const existing = attempt.attemptHistory ?? [];
+        const terminalEntry = terminalHistory(attempt);
+        return existing.length > 0 &&
+            sameHistory(existing.at(-1)!, terminalEntry)
+          ? existing
+          : [...existing, terminalEntry];
+      });
+      const historyOverflow = entries.some(({ attempt }) =>
+        attempt.attemptHistoryOverflow === true
+      ) || history.length > MAX_ATTEMPT_HISTORY;
       target.push({
         ...terminal,
         attempt: {
           ...terminal.attempt,
           attemptHistory: history.slice(-MAX_ATTEMPT_HISTORY),
-          ...(history.length > MAX_ATTEMPT_HISTORY
-            ? { attemptHistoryOverflow: true }
-            : {}),
+          ...(historyOverflow ? { attemptHistoryOverflow: true } : {}),
         },
       });
       continue;

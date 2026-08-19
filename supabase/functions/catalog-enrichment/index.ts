@@ -13,6 +13,7 @@ import {
 import { safeHttpsDisplayUrl } from "../_shared/benefit_source_privacy.ts";
 
 type UntypedSupabaseClient = any;
+const CATALOG_FETCH_DEADLINE_MS = 25_000;
 
 function json(body: unknown, status = 200): Response {
   return Response.json(body, { status });
@@ -67,6 +68,7 @@ async function finalizeOwnedCatalogJob(
 export async function processCatalogEnrichmentJob(
   db: UntypedSupabaseClient,
   jobId: string,
+  deadlineAt = Date.now() + CATALOG_FETCH_DEADLINE_MS,
 ) {
   const { data: current, error: readError } = await db
     .from("card_catalog_enrichment_jobs").select("*").eq("id", jobId).single();
@@ -106,6 +108,7 @@ export async function processCatalogEnrichmentJob(
         allowedQueryParameters: approvedStoredQueryParameters(
           claimed.canonical_url,
         ),
+        deadlineAt,
       }),
     );
     const { data: catalog, error: catalogError } = await db.from("card_catalog")

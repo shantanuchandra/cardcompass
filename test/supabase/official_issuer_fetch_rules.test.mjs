@@ -13,6 +13,26 @@ const issuer = 'Kotak Bank';
 const officialUrl = 'https://www.kotak.com/rd/white-reserve';
 const publicDns = async () => ['93.184.216.34'];
 
+async function digest(value) {
+  const bytes = new TextEncoder().encode(value);
+  const hash = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function reusablePrevious(submittedUrl, finalUrl = submittedUrl) {
+  return {
+    parserVersion: 'benefits-v6',
+    etag: '"cache-v1"',
+    reusableExtraction: true,
+    contentHash: 'a'.repeat(64),
+    canonicalBenefitHash: 'b'.repeat(64),
+    sourceIdentityHash: await digest(submittedUrl),
+    finalResourceUrl: finalUrl,
+    finalResourceIdentityHash: await digest(finalUrl),
+    cardIdentityValidated: true,
+  };
+}
+
 function response(body, options = {}) {
   return new Response(body, {
     status: options.status ?? 200,
@@ -293,7 +313,7 @@ test('cancels each redirect response body before following the approved location
   const redirect = streamingResponse({
     close: false,
     status: 302,
-    headers: {location: '/rd/white-reserve/terms?step=2'},
+    headers: {location: '/rd/white-reserve/terms'},
   });
   let calls = 0;
   await fetchOfficialIssuerResource({
@@ -326,7 +346,7 @@ test('uses one timeout deadline for stalled DNS and all redirect hops', async ()
     timeoutMs: 5,
     fetchImpl: async () => response('', {
       status: 302,
-      headers: {location: '/rd/white-reserve/terms?next=1'},
+      headers: {location: '/rd/white-reserve/terms'},
     }),
     resolveHost: async () => {
       resolutions += 1;
@@ -365,7 +385,7 @@ test('sanitizes transport and HTTP failures into the approved error codes', asyn
 test('returns canonical URLs, text, bytes, timestamp, and a SHA-256 body hash', async () => {
   const result = await fetchOfficialIssuerResource({
     issuer,
-    url: 'https://WWW.KOTAK.COM:443/rd//white-reserve/?b=2&a=1#ignored',
+    url: 'https://WWW.KOTAK.COM:443/rd//white-reserve/#ignored',
     fetchImpl: async (url) => {
       assert.equal(url, 'https://www.kotak.com/rd/white-reserve');
       return response('official body');
@@ -397,10 +417,11 @@ test('returns canonical URLs, text, bytes, timestamp, and a SHA-256 body hash', 
 });
 
 test('preserves status, bounded validators, and exact transient identity without persistable secrets', async () => {
-  const submitted = `${officialUrl}?session=secret&utm_source=mail#private`;
+  const submitted = `${officialUrl}?locale=en#private`;
   const result = await fetchOfficialIssuerResource({
     issuer,
     url: submitted,
+    allowedQueryParameters: ['locale'],
     now: () => Date.parse('2026-08-19T10:00:00.000Z'),
     fetchImpl: async () => response('official body', {headers: {
       'content-type': 'text/html; charset=utf-8',
@@ -426,11 +447,9 @@ test('sends validators only for a compatible parser cache and represents 304 wit
       url: officialUrl,
       parserVersion: 'benefits-v6',
       previous: {
+        ...await reusablePrevious(officialUrl),
         parserVersion: cachedParserVersion,
-        etag: '"cache-v1"',
         lastModified: 'Tue, 18 Aug 2026 00:00:00 GMT',
-        reusableExtraction: true,
-        contentHash: 'a'.repeat(64),
       },
       fetchImpl: async (_url, init) => {
         headers = new Headers(init.headers);
@@ -484,12 +503,7 @@ test('unusable 304 forces exactly one unconditional request while reusable 304 c
     issuer,
     url: officialUrl,
     parserVersion: 'benefits-v6',
-    previous: {
-      parserVersion: 'benefits-v6',
-      etag: '"cache-v1"',
-      reusableExtraction: true,
-      contentHash: 'a'.repeat(64),
-    },
+    previous: await reusablePrevious(officialUrl),
     fetchImpl: async () => {
       reusableCalls += 1;
       return response(null, {status: 304});
@@ -729,12 +743,12 @@ test('accepts only global-unicast DNS answers including normalized mapped IPv6',
 });
 
 test('never exposes query credentials in result URLs and sends only explicitly allowed query keys', async () => {
-  const requested = `${officialUrl}?session=secret&locale=en&utm_source=mail#private`;
+  const requested = `${officialUrl}?locale=en#private`;
   let target = '';
   const result = await fetchOfficialIssuerResource({
     issuer,
     url: requested,
-    allowedQueryParameters: ['locale', 'session', 'utm_source'],
+    allowedQueryParameters: ['locale'],
     fetchImpl: async (url) => {
       target = String(url);
       return response('issuer body');
@@ -754,7 +768,7 @@ test('never exposes query credentials in result URLs and sends only explicitly a
       if (calls === 1) {
         assert.equal(String(url), `${officialUrl}?locale=en`);
         return response('', {status: 302, headers: {
-          location: '/rd/white-reserve/terms?locale=hi&token=redirect-secret',
+          location: '/rd/white-reserve/terms?locale=hi',
         }});
       }
       assert.equal(String(url), `${officialUrl}/terms?locale=hi`);
@@ -767,6 +781,14 @@ test('never exposes query credentials in result URLs and sends only explicitly a
   assert.equal(redirected.canonicalUrl, `${officialUrl}/terms`);
   assert.match(redirected.sourceIdentityHash, /^[0-9a-f]{64}$/);
   assert.equal(JSON.stringify(redirected).includes('secret'), false);
+
+  await rejectsWith({
+    issuer,
+    url: `${officialUrl}?session=secret&locale=en&utm_source=mail#private`,
+    allowedQueryParameters: ['locale', 'session', 'utm_source'],
+    fetchImpl: async () => assert.fail('sensitive query must not fetch'),
+    resolveHost: publicDns,
+  }, 'unapproved_query');
 });
 
 test('conditional validators require reusable same-parser canonical content evidence', async () => {
@@ -798,9 +820,9 @@ test('reusable 304 carries prior content evidence into the terminal result', asy
     url: officialUrl,
     parserVersion: 'benefits-v6',
     previous: {
+      ...await reusablePrevious(officialUrl),
       parserVersion: 'benefits-v6',
       etag: '"v1"',
-      reusableExtraction: true,
       contentHash,
     },
     fetchImpl: async () => response(null, {status: 304}),
@@ -957,5 +979,306 @@ test('honors UTF BOMs when charset is absent', async () => {
       resolveHost: publicDns,
     });
     assert.equal(result.text, expected);
+  }
+});
+
+test('binds validators and 304 reuse to the prior submitted and final resource identities', async () => {
+  const league = 'https://www.kotak.com/rd/league-platinum';
+  const changedHopHeaders = [];
+  const changed = await fetchOfficialIssuerObservation({
+    issuer,
+    url: officialUrl,
+    parserVersion: 'benefits-v6',
+    previous: await reusablePrevious(officialUrl),
+    fetchImpl: async (url, init) => {
+      changedHopHeaders.push([String(url), new Headers(init.headers)]);
+      if (String(url) === officialUrl) {
+        return response('', {status: 301, headers: {location: league}});
+      }
+      return new Headers(init.headers).has('if-none-match')
+        ? response(null, {status: 304})
+        : response('<h1>League Platinum Credit Card</h1>');
+    },
+    resolveHost: publicDns,
+  });
+  assert.equal(changed.disposition, 'success');
+  assert.equal(changed.result.finalUrl, league);
+  assert.equal(changedHopHeaders[0][1].has('if-none-match'), true);
+  assert.equal(changedHopHeaders[1][1].has('if-none-match'), false);
+
+  const vanity = 'https://www.kotak.com/white-reserve';
+  const permanentHopHeaders = [];
+  const permanent = await fetchOfficialIssuerObservation({
+    issuer,
+    url: vanity,
+    parserVersion: 'benefits-v6',
+    previous: await reusablePrevious(vanity, officialUrl),
+    fetchImpl: async (url, init) => {
+      permanentHopHeaders.push([String(url), new Headers(init.headers)]);
+      return String(url) === vanity
+        ? response('', {status: 301, headers: {location: officialUrl}})
+        : response(null, {status: 304});
+    },
+    resolveHost: publicDns,
+  });
+  assert.equal(permanent.disposition, 'not_modified');
+  assert.equal(permanentHopHeaders[0][1].has('if-none-match'), false);
+  assert.equal(permanentHopHeaders[1][1].has('if-none-match'), true);
+  assert.equal(permanent.result.finalUrl, officialUrl);
+
+  let missingFinalHeaders;
+  await fetchOfficialIssuerResource({
+    issuer,
+    url: officialUrl,
+    parserVersion: 'benefits-v6',
+    previous: {
+      parserVersion: 'benefits-v6',
+      etag: '"cache-v1"',
+      reusableExtraction: true,
+      contentHash: 'a'.repeat(64),
+      canonicalBenefitHash: 'b'.repeat(64),
+      sourceIdentityHash: await digest(officialUrl),
+      cardIdentityValidated: true,
+    },
+    fetchImpl: async (_url, init) => {
+      missingFinalHeaders = new Headers(init.headers);
+      return response('fresh body');
+    },
+    resolveHost: publicDns,
+  });
+  assert.equal(missingFinalHeaders.has('if-none-match'), false);
+
+  const alpha = `${officialUrl}?variant=alpha`;
+  const beta = `${officialUrl}?variant=beta`;
+  let variedHeaders;
+  const varied = await fetchOfficialIssuerObservation({
+    issuer,
+    url: beta,
+    allowedQueryParameters: ['variant'],
+    parserVersion: 'benefits-v6',
+    previous: await reusablePrevious(alpha),
+    fetchImpl: async (_url, init) => {
+      variedHeaders = new Headers(init.headers);
+      return variedHeaders.has('if-none-match')
+        ? response(null, {status: 304})
+        : response('fresh beta body');
+    },
+    resolveHost: publicDns,
+  });
+  assert.equal(variedHeaders.has('if-none-match'), false);
+  assert.equal(varied.disposition, 'success');
+});
+
+test('robots uses selected-agent standard wildcard, terminal, and allow precedence rules', async () => {
+  const fixtures = [
+    ['/rd/public/card', true],
+    ['/rd/private/card', false],
+    ['/rd/private/public', true],
+    ['/private', false],
+    ['/private/more', true],
+    ['/star-only', true],
+    ['/encoded/~public', false],
+  ];
+  for (const [path, allowed] of fixtures) {
+    let targetRequests = 0;
+    const observation = await fetchOfficialIssuerObservation({
+      issuer,
+      url: `https://www.kotak.com${path}`,
+      parserVersion: 'benefits-v6',
+      enforceRobots: true,
+      fetchImpl: async (url) => {
+        if (String(url).endsWith('/robots.txt')) {
+          return response([
+            'User-agent: *',
+            'Disallow: /rd/*',
+            'Disallow: /star-only',
+            'Allow: /rd/public/*',
+            'User-agent: CardCompassCatalogBot',
+            'Disallow: /rd/*',
+            'Allow: /rd/public/*',
+            'Allow: /rd/private/public',
+            'Disallow: /rd/private/public',
+            'Disallow: /rd/private/*',
+            'Disallow: /private$',
+            'Disallow: /encoded/%7Epublic$',
+          ].join('\n'), {headers: {'content-type': 'text/plain; charset=utf-8'}});
+        }
+        targetRequests += 1;
+        return response('issuer body');
+      },
+      resolveHost: publicDns,
+    });
+    assert.equal(observation.disposition === 'success', allowed, path);
+    assert.equal(targetRequests, allowed ? 1 : 0, path);
+  }
+});
+
+test('robots rejects HTML and malformed 200 responses as review-required invalid policy', async () => {
+  for (const [body, contentType] of [
+    ['<html><body>not robots</body></html>', 'text/html'],
+    ['User-agent CardCompassCatalogBot\nDisallow: /', 'text/plain'],
+  ]) {
+    let targetRequests = 0;
+    const observation = await fetchOfficialIssuerObservation({
+      issuer,
+      url: officialUrl,
+      parserVersion: 'benefits-v6',
+      enforceRobots: true,
+      fetchImpl: async (url) => {
+        if (String(url).endsWith('/robots.txt')) {
+          return response(body, {headers: {'content-type': contentType}});
+        }
+        targetRequests += 1;
+        return response('must not fetch');
+      },
+      resolveHost: publicDns,
+    });
+    assert.equal(observation.disposition, 'review_required');
+    assert.equal(observation.reviewReason, 'robots_invalid');
+    assert.equal(targetRequests, 0);
+  }
+});
+
+test('classifies exact IPv4 and IPv6 CIDR boundaries without rejecting adjacent global space', async () => {
+  const rejected = [
+    '100.63.255.255',
+    '100.64.0.0',
+    '100.127.255.255',
+    '100.128.0.0',
+    '192.0.0.255',
+    '192.0.2.0',
+    '192.0.2.255',
+    '198.17.255.255',
+    '198.18.0.0',
+    '198.19.255.255',
+    '198.20.0.0',
+    '3fff::',
+    '3fff:0fff:ffff:ffff:ffff:ffff:ffff:ffff',
+    '2001:db8::',
+    '2001:db8:ffff:ffff:ffff:ffff:ffff:ffff',
+    '::ffff:c000:201',
+  ];
+  const expectedRejected = new Set([
+    '100.64.0.0',
+    '100.127.255.255',
+    '192.0.0.255',
+    '192.0.2.0',
+    '192.0.2.255',
+    '198.18.0.0',
+    '198.19.255.255',
+    '3fff::',
+    '3fff:0fff:ffff:ffff:ffff:ffff:ffff:ffff',
+    '2001:db8::',
+    '2001:db8:ffff:ffff:ffff:ffff:ffff:ffff',
+    '::ffff:c000:201',
+  ]);
+  for (const address of rejected) {
+    let fetched = false;
+    try {
+      await fetchOfficialIssuerResource({
+        issuer,
+        url: officialUrl,
+        fetchImpl: async () => {
+          fetched = true;
+          return response('issuer body');
+        },
+        resolveHost: async () => [address],
+      });
+      assert.equal(expectedRejected.has(address), false, address);
+      assert.equal(fetched, true, address);
+    } catch (error) {
+      assert.equal(expectedRejected.has(address), true, address);
+      assert.equal(error.message, 'private_address', address);
+    }
+  }
+  for (const address of [
+    '192.0.0.9',
+    '192.0.0.10',
+    '192.0.1.1',
+    '64:ff9b::808:808',
+    '2001:4860:4860::8888',
+    '3fff:1000::1',
+  ]) {
+    const result = await fetchOfficialIssuerResource({
+      issuer,
+      url: officialUrl,
+      fetchImpl: async () => response('issuer body'),
+      resolveHost: async () => [address],
+    });
+    assert.equal(result.status, 200, address);
+  }
+});
+
+test('preserves explicitly safe functional query resources and rejects unknown or sensitive keys', async () => {
+  const terms = 'https://www.kotak.com/rd/white-reserve/terms?document=mitc';
+  let requested;
+  const result = await fetchOfficialIssuerResource({
+    issuer,
+    url: terms,
+    allowedQueryParameters: ['document'],
+    fetchImpl: async (url) => {
+      requested = String(url);
+      return response('White Reserve terms');
+    },
+    resolveHost: publicDns,
+  });
+  assert.equal(requested, terms);
+  assert.equal(result.finalUrl, 'https://www.kotak.com/rd/white-reserve/terms');
+  for (const query of ['unknown=value', 'session=secret', 'token=secret']) {
+    await rejectsWith({
+      issuer,
+      url: `${officialUrl}?${query}`,
+      allowedQueryParameters: ['unknown', 'session', 'token'],
+      fetchImpl: async () => assert.fail('unapproved query must not fetch'),
+      resolveHost: publicDns,
+    }, 'unapproved_query');
+  }
+});
+
+test('does not sleep or start a retry when the intended delay exceeds the absolute deadline', async () => {
+  let now = 500;
+  let sleeps = 0;
+  let requests = 0;
+  const observation = await fetchOfficialIssuerObservation({
+    issuer,
+    url: officialUrl,
+    parserVersion: 'benefits-v6',
+    deadlineAt: 1_000,
+    now: () => now,
+    delay: async (milliseconds) => {
+      sleeps += 1;
+      now += milliseconds;
+    },
+    fetchImpl: async () => {
+      requests += 1;
+      return response('busy', {status: 503});
+    },
+    resolveHost: publicDns,
+  });
+  assert.equal(sleeps, 0);
+  assert.equal(requests, 1);
+  assert.equal(observation.reviewReason, 'deadline_exceeded');
+});
+
+test('valid Retry-After zero and zero max backoff retry immediately while time remains', async () => {
+  for (const deadlineAt of [undefined, 2_000]) {
+    let calls = 0;
+    const delays = [];
+    const observation = await fetchOfficialIssuerObservation({
+      issuer,
+      url: officialUrl,
+      parserVersion: 'benefits-v6',
+      ...(deadlineAt === undefined ? {} : {deadlineAt}),
+      now: () => 1_000,
+      maxBackoffMs: 0,
+      delay: async (milliseconds) => delays.push(milliseconds),
+      fetchImpl: async () => ++calls === 1
+        ? response('busy', {status: 429, headers: {'retry-after': '0'}})
+        : response('issuer body'),
+      resolveHost: publicDns,
+    });
+    assert.equal(observation.disposition, 'success');
+    assert.equal(calls, 2);
+    assert.deepEqual(delays, [0]);
   }
 });

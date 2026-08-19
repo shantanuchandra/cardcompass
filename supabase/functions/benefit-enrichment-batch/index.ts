@@ -155,6 +155,19 @@ export function sourceObservationSummary(input: {
         ...(bounded(result.contentHash, 128)
           ? { content_hash: bounded(result.contentHash, 128) }
           : {}),
+        ...(/^[0-9a-f]{64}$/i.test(result.sourceIdentityHash ?? "")
+          ? {
+            submitted_identity_hash: result.sourceIdentityHash!.toLowerCase(),
+          }
+          : {}),
+        ...(/^[0-9a-f]{64}$/i.test(result.finalResourceIdentityHash ?? "")
+          ? {
+            final_resource_url: boundedSourceUrl(result.finalUrl),
+            final_resource_identity_hash: result.finalResourceIdentityHash!
+              .toLowerCase(),
+          }
+          : {}),
+        card_identity_validated: input.disposition === "not_modified",
       }
       : {}),
     attempts: input.attempts.slice(-6).map((attempt) => ({
@@ -179,6 +192,7 @@ export function sourceObservationReviewSummary(
     terminal_disposition: "review_required",
     review_reason: reviewReason.slice(0, 64),
     crawl_complete: false,
+    card_identity_validated: false,
   };
 }
 
@@ -356,10 +370,21 @@ export async function stagingSourceMetadata(
 export async function computeSourceManifestHash(
   attempts: SourceAttempt[],
 ): Promise<string> {
-  const stableAttempts = attempts.map(({
-    attemptedAt: _attemptedAt,
-    ...attempt
-  }) => attempt).map((attempt) => JSON.stringify(attempt)).sort();
+  const stableValue = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(stableValue);
+    if (value && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>)
+          .filter(([key]) => key !== "attemptedAt")
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([key, nested]) => [key, stableValue(nested)]),
+      );
+    }
+    return value;
+  };
+  const stableAttempts = attempts.map((attempt) =>
+    JSON.stringify(stableValue(attempt))
+  ).sort();
   return await sha256Text(stableAttempts.join("\n"));
 }
 
@@ -934,6 +959,11 @@ export function previousFetchValidators(
   lastModified?: string;
   reusableExtraction: boolean;
   contentHash?: string;
+  canonicalBenefitHash?: string;
+  sourceIdentityHash?: string;
+  finalResourceUrl?: string;
+  finalResourceIdentityHash?: string;
+  cardIdentityValidated?: boolean;
 } | undefined {
   const previousObservation = observationObjects(job.result_summary).at(-1);
   const source = previousObservation?.source_observation;
@@ -954,14 +984,39 @@ export function previousFetchValidators(
     ? value.content_hash.toLowerCase()
     : undefined;
   const canonicalBenefitHash = previousObservation?.canonical_benefit_hash;
+  const sourceIdentityHash = typeof value.submitted_identity_hash ===
+        "string" && /^[0-9a-f]{64}$/i.test(value.submitted_identity_hash)
+    ? value.submitted_identity_hash.toLowerCase()
+    : undefined;
+  const finalResourceIdentityHash =
+    typeof value.final_resource_identity_hash ===
+        "string" && /^[0-9a-f]{64}$/i.test(value.final_resource_identity_hash)
+      ? value.final_resource_identity_hash.toLowerCase()
+      : undefined;
+  const finalResourceUrl = typeof value.final_resource_url === "string" &&
+      boundedSourceUrl(value.final_resource_url) !== "invalid-source"
+    ? boundedSourceUrl(value.final_resource_url)
+    : undefined;
+  const cardIdentityValidated = value.card_identity_validated === true;
+  const reusableExtraction = previousObservation?.crawl_complete === true &&
+    typeof canonicalBenefitHash === "string" &&
+    /^[0-9a-f]{64}$/i.test(canonicalBenefitHash) && Boolean(contentHash) &&
+    Boolean(sourceIdentityHash) && Boolean(finalResourceIdentityHash) &&
+    Boolean(finalResourceUrl) && cardIdentityValidated;
   return {
     parserVersion,
     ...(etag ? { etag } : {}),
     ...(lastModified ? { lastModified } : {}),
     ...(contentHash ? { contentHash } : {}),
-    reusableExtraction: previousObservation?.crawl_complete === true &&
-      typeof canonicalBenefitHash === "string" &&
-      /^[0-9a-f]{64}$/i.test(canonicalBenefitHash) && Boolean(contentHash),
+    ...(typeof canonicalBenefitHash === "string" &&
+        /^[0-9a-f]{64}$/i.test(canonicalBenefitHash)
+      ? { canonicalBenefitHash: canonicalBenefitHash.toLowerCase() }
+      : {}),
+    ...(sourceIdentityHash ? { sourceIdentityHash } : {}),
+    ...(finalResourceUrl ? { finalResourceUrl } : {}),
+    ...(finalResourceIdentityHash ? { finalResourceIdentityHash } : {}),
+    cardIdentityValidated,
+    reusableExtraction,
   };
 }
 
@@ -1219,6 +1274,7 @@ async function processJob(
       };
       throw error;
     }
+    fetchSummary.card_identity_validated = true;
     const collected = await collectSupportingBenefitDocuments({
       issuer: job.issuer,
       primary: page,

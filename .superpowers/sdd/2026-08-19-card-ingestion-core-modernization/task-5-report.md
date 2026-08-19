@@ -267,3 +267,97 @@ Supabase command, production data, external network request, migration command,
 or live write was used. The ordered Task 2–5 database/application verification
 and explicitly authorized live issuer behavior remain the unresolved integration
 gate.
+
+## Review fix round 2/5 — 2026-08-20
+
+### Red proof
+
+The eight second-round findings were reproduced against `c0c7d43` before
+production changes:
+
+- Official-fetch rules reported **38 passed / 7 failed**. The reds proved that a
+  White Reserve validator was forwarded to a redirected League Platinum
+  resource, robots used prefix-only matching and accepted invalid 200 HTML,
+  `3fff::/20` was treated as global, unknown queries were silently changed,
+  retry delay crossed an absolute deadline, and zero backoff terminated instead
+  of retrying.
+- Supporting/crawl/batch rules reported **123 passed / 5 failed**, plus four
+  compile-time failures for missing prior submitted/final/card identity fields.
+  The behavior reds covered nested/curated identity shortcuts, missing explicit
+  functional-query approval, recompaction erasing `[503,503,200]`, and nested
+  timestamps changing manifest evidence.
+- Discovery/catalog/issuer rules reported **53 passed / 4 failed** for a Regalia
+  body returned at a Privilege URL, a delay that slept beyond the remaining
+  budget, missing query-key derivation, and absent discovery/catalog invocation
+  deadlines.
+
+### Fixes
+
+- Conditional validators and 304 reuse now require the prior parser, reusable
+  extraction, source content and canonical-benefit hashes, canonical submitted
+  digest, validated queryless final resource, exact final-resource digest, and
+  successful card identity. Validators are calculated per hop, so a permanent
+  redirect can reuse the same final resource while a changed redirect target is
+  fetched unconditionally and revalidated.
+- Robots evaluation now selects the named user-agent group with `*` fallback,
+  implements `Allow`/`Disallow`, `*`, terminal `$`, normalized percent/path
+  matching, longest specificity, and Allow tie precedence. Robots responses are
+  bounded by bytes, lines, line length, UTF-8 text MIME, and grammar; invalid
+  200/HTML becomes `robots_invalid` review evidence. Only a real 404 permits a
+  missing policy; transport and other status failures remain documented
+  fail-closed outcomes.
+- Address validation now parses IPv4 and IPv6 into BigInt values and applies
+  exact CIDRs, including mapped IPv4, CGNAT, documentation, benchmark,
+  multicast, unspecified, `2001:db8::/32`, and `3fff::/20`. Adjacent global
+  ranges, `192.0.1.1`, the globally reachable `192.0.0.9/.10` exceptions, and
+  `64:ff9b::/96` remain usable.
+- Query-dependent resources are never silently rewritten. Only named functional
+  keys from the shared safe policy and the explicit caller-approved stored/link
+  resource are requested. Unknown and sensitive keys fail closed; exact values
+  remain transient for request/source digests while every display/provenance URL
+  remains queryless.
+- Supporting sources no longer pass through same-path or curated-URL shortcuts.
+  Visible HTML or extracted PDF text must prove the expected card identity;
+  opaque documents remain required but incomplete. Issuer discovery also binds
+  the requested product tokens to parsed response identity, while catalog
+  enrichment retains its exact target-card gate.
+- The fetch controller uses the smaller of its timeout and remaining invocation
+  budget. Deadline checks surround robots, DNS, hops, body reads, retry delays,
+  and requests. An intended delay larger than the remaining budget is not
+  started; valid zero-second retries remain immediate and bounded. Discovery
+  and catalog callers now propagate one invocation deadline.
+- Attempt compaction now flattens existing bounded histories, avoids duplicating
+  the terminal entry, retains overflow as incomplete, and is idempotent through
+  `buildCrawlObservation`. Manifest hashing removes timestamps recursively while
+  preserving ordered status, code, and HTTP semantics.
+
+No fetch, redirect, 304, robots, identity, query, timeout, or compaction outcome
+mutates acquisition discontinuation, benefits, or mappings.
+
+### Green verification
+
+- `node --test test/supabase/official_issuer_fetch_rules.test.mjs` — **45
+  passed, 0 failed**.
+- `deno test --node-modules-dir=auto --allow-env --frozen` for benefit batch,
+  supporting documents, and crawl policy — **128 passed, 0 failed**.
+- `node --test` for card discovery, issuer-card discovery, issuer crawl,
+  catalog enrichment, and benefit-enrichment rules — **91 passed, 0 failed**.
+- Direct issuer-crawl and catalog caller Deno tests — **4 passed, 0 failed**.
+- Admin privacy/integration regression gate — **40 passed, 0 failed**, with only
+  its unchanged loopback listener permission.
+- Total unique named behavioral/static tests: **308 passed, 0 failed**.
+- Whole official-fetch production-caller `deno check` — passed.
+- `deno fmt --check` on all 10 affected TypeScript source/test files — passed.
+- `git diff --check` — passed.
+
+### Scope and remaining gate
+
+This round changes only Task 5 shared fetch/crawl policy, benefit batch and
+supporting collection, discovery/catalog production callers, and their focused
+tests. No schema or migration changed.
+
+Live applied: **no**. No Docker, local database/PostgreSQL, local or linked
+Supabase command, production data, external network request, migration command,
+or live write was used. The ordered Task 2–5 database/application verification
+and explicitly authorized live issuer behavior remain the unresolved integration
+gate.

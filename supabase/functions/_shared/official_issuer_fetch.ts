@@ -18,6 +18,11 @@ export type OfficialFetchInput = {
     lastModified?: string;
     reusableExtraction: boolean;
     contentHash?: string;
+    canonicalBenefitHash?: string;
+    sourceIdentityHash?: string;
+    finalResourceUrl?: string;
+    finalResourceIdentityHash?: string;
+    cardIdentityValidated?: boolean;
   };
   forceUnconditional?: boolean;
   allowedQueryParameters?: string[];
@@ -42,6 +47,7 @@ export type OfficialFetchResult = {
   lastModified?: string;
   notModified: boolean;
   sourceIdentityHash?: string;
+  finalResourceIdentityHash?: string;
 };
 
 export type OfficialFetchBodyResult = OfficialFetchResult & {
@@ -219,6 +225,8 @@ type OfficialFetchCode =
   | "empty_shell"
   | "unsupported_charset"
   | "robots_disallowed"
+  | "robots_invalid"
+  | "unapproved_query"
   | "deadline_exceeded"
   | "identity_review";
 
@@ -263,18 +271,51 @@ function ipv4Octets(value: string): number[] | null {
   return octets.every((part) => part >= 0 && part <= 255) ? octets : null;
 }
 
+function ipv4Value(octets: number[]): bigint {
+  return octets.reduce((value, octet) => value << 8n | BigInt(octet), 0n);
+}
+
+function ipv6Value(words: number[]): bigint {
+  return words.reduce((value, word) => value << 16n | BigInt(word), 0n);
+}
+
+function inCidr(
+  value: bigint,
+  base: bigint,
+  prefix: number,
+  width: number,
+): boolean {
+  const shift = BigInt(width - prefix);
+  return value >> shift === base >> shift;
+}
+
+const NON_GLOBAL_IPV4: Array<[string, number]> = [
+  ["0.0.0.0", 8],
+  ["10.0.0.0", 8],
+  ["100.64.0.0", 10],
+  ["127.0.0.0", 8],
+  ["169.254.0.0", 16],
+  ["172.16.0.0", 12],
+  ["192.0.0.0", 24],
+  ["192.0.2.0", 24],
+  ["192.88.99.0", 24],
+  ["192.168.0.0", 16],
+  ["198.18.0.0", 15],
+  ["198.51.100.0", 24],
+  ["203.0.113.0", 24],
+  ["224.0.0.0", 4],
+  ["240.0.0.0", 4],
+];
+
 function globallyRoutableIpv4(octets: number[]): boolean {
-  const [first, second, third] = octets;
-  return !(first === 0 || first === 10 || first === 127 ||
-    (first === 100 && second >= 64 && second <= 127) ||
-    (first === 169 && second === 254) ||
-    (first === 172 && second >= 16 && second <= 31) ||
-    (first === 192 && second === 0) ||
-    (first === 192 && second === 168) ||
-    (first === 198 && (second === 18 || second === 19)) ||
-    (first === 198 && second === 51 && third === 100) ||
-    (first === 203 && second === 0 && third === 113) ||
-    first >= 224);
+  const value = ipv4Value(octets);
+  if (
+    value === ipv4Value([192, 0, 0, 9]) ||
+    value === ipv4Value([192, 0, 0, 10])
+  ) return true;
+  return !NON_GLOBAL_IPV4.some(([address, prefix]) =>
+    inCidr(value, ipv4Value(ipv4Octets(address)!), prefix, 32)
+  );
 }
 
 function ipv6Words(value: string): number[] | null {
@@ -323,10 +364,29 @@ function isPrivateAddress(address: string): boolean {
       words[7] & 0xff,
     ]);
   }
-  const first = words[0];
-  const documentation = first === 0x2001 && words[1] === 0x0db8;
-  const benchmark = first === 0x2001 && words[1] === 0x0002 && words[2] === 0;
-  return (first & 0xe000) !== 0x2000 || documentation || benchmark;
+  const value6 = ipv6Value(words);
+  const cidr6 = (address: string, prefix: number) =>
+    inCidr(value6, ipv6Value(ipv6Words(address)!), prefix, 128);
+  const nonGlobal = [
+    ["::", 128],
+    ["::1", 128],
+    ["64:ff9b:1::", 48],
+    ["100::", 64],
+    ["2001::", 32],
+    ["2001:2::", 48],
+    ["2001:10::", 28],
+    ["2001:20::", 28],
+    ["2001:db8::", 32],
+    ["2002::", 16],
+    ["3fff::", 20],
+    ["5f00::", 16],
+    ["fc00::", 7],
+    ["fe80::", 10],
+    ["ff00::", 8],
+  ] as Array<[string, number]>;
+  if (cidr6("64:ff9b::", 96)) return false;
+  return !cidr6("2000::", 3) ||
+    nonGlobal.some(([base, prefix]) => cidr6(base, prefix));
 }
 
 async function defaultResolveHost(host: string): Promise<string[]> {
@@ -466,16 +526,28 @@ async function sha256(bytes: Uint8Array): Promise<string> {
 
 const SENSITIVE_QUERY_KEY =
   /(?:token|session|secret|password|passwd|credential|auth|signature|sig|key|code|state|nonce|gclid|fbclid|^utm_)/i;
+const SAFE_FUNCTIONAL_QUERY_KEYS = new Set([
+  "document",
+  "doc",
+  "file",
+  "filename",
+  "lang",
+  "language",
+  "locale",
+  "version",
+  "variant",
+]);
 
 export function approvedStoredQueryParameters(value: string): string[] {
   try {
-    return [
-      ...new Set(
-        [...new URL(value).searchParams.keys()].filter((key) =>
-          key && !SENSITIVE_QUERY_KEY.test(key)
-        ),
-      ),
-    ].slice(0, 16);
+    const keys = [...new Set(new URL(value).searchParams.keys())];
+    return keys.length <= 16 &&
+        keys.every((key) =>
+          SAFE_FUNCTIONAL_QUERY_KEYS.has(key.toLowerCase()) &&
+          !SENSITIVE_QUERY_KEY.test(key)
+        )
+      ? keys
+      : [];
   } catch {
     return [];
   }
@@ -490,16 +562,25 @@ function approvedRequestUrl(
     const canonical = new URL(canonicalOfficialUrl(issuer, url));
     const allowed = new Set(
       allowedQueryParameters.map((key) => key.trim().toLowerCase()).filter(
-        (key) => key && !SENSITIVE_QUERY_KEY.test(key),
+        (key) =>
+          key && SAFE_FUNCTIONAL_QUERY_KEYS.has(key) &&
+          !SENSITIVE_QUERY_KEY.test(key),
       ),
     );
-    const kept = [...canonical.searchParams.entries()].filter(([key]) =>
-      allowed.has(key.toLowerCase()) && !SENSITIVE_QUERY_KEY.test(key)
-    );
+    const entries = [...canonical.searchParams.entries()];
+    if (
+      entries.some(([key]) =>
+        SENSITIVE_QUERY_KEY.test(key) ||
+        !SAFE_FUNCTIONAL_QUERY_KEYS.has(key.toLowerCase()) ||
+        !allowed.has(key.toLowerCase())
+      )
+    ) throw fetchError("unapproved_query");
+    const kept = entries;
     canonical.search = "";
     for (const [key, value] of kept) canonical.searchParams.append(key, value);
     return canonical.toString();
-  } catch {
+  } catch (error) {
+    if (error instanceof OfficialFetchError) throw error;
     throw fetchError("unapproved_domain");
   }
 }
@@ -523,6 +604,14 @@ function displayUrl(value: string): string {
   url.search = "";
   url.hash = "";
   return url.toString().replace(/\/$/, "");
+}
+
+function safeDisplayUrl(value: string | undefined): string | null {
+  try {
+    return value ? displayUrl(value) : null;
+  } catch {
+    return null;
+  }
 }
 
 function boundedHeader(value: string | null): string | undefined {
@@ -613,21 +702,47 @@ function statusError(response: Response): OfficialFetchError {
   });
 }
 
-function conditionalHeaders(input: OfficialFetchInput): Record<string, string> {
+function reusablePreviousBinding(
+  input: OfficialFetchInput,
+  sourceIdentityHash: string,
+): boolean {
+  const previous = input.previous;
   if (
-    input.forceUnconditional || !input.previous || !input.parserVersion ||
-    input.previous.parserVersion !== input.parserVersion ||
-    input.previous.reusableExtraction !== true ||
-    !/^[0-9a-f]{64}$/i.test(input.previous.contentHash ?? "")
+    input.forceUnconditional || !previous || !input.parserVersion ||
+    previous.parserVersion !== input.parserVersion ||
+    previous.reusableExtraction !== true ||
+    previous.cardIdentityValidated !== true ||
+    previous.sourceIdentityHash !== sourceIdentityHash ||
+    !/^[0-9a-f]{64}$/i.test(previous.contentHash ?? "") ||
+    !/^[0-9a-f]{64}$/i.test(previous.canonicalBenefitHash ?? "") ||
+    !/^[0-9a-f]{64}$/i.test(previous.finalResourceIdentityHash ?? "") ||
+    !safeDisplayUrl(previous.finalResourceUrl)
+  ) return false;
+  return true;
+}
+
+async function conditionalHeadersForHop(
+  input: OfficialFetchInput,
+  currentUrl: string,
+  sourceIdentityHash: string,
+): Promise<Record<string, string>> {
+  if (!reusablePreviousBinding(input, sourceIdentityHash)) return {};
+  const previous = input.previous!;
+  const currentIdentityHash = await sha256(
+    new TextEncoder().encode(currentUrl),
+  );
+  if (
+    displayUrl(currentUrl) !== safeDisplayUrl(previous.finalResourceUrl) ||
+    currentIdentityHash !== previous.finalResourceIdentityHash
   ) return {};
   return {
-    ...(boundedHeader(input.previous.etag ?? null)
-      ? { "If-None-Match": boundedHeader(input.previous.etag ?? null)! }
+    ...(boundedHeader(previous.etag ?? null)
+      ? { "If-None-Match": boundedHeader(previous.etag ?? null)! }
       : {}),
-    ...(boundedHeader(input.previous.lastModified ?? null)
+    ...(boundedHeader(previous.lastModified ?? null)
       ? {
         "If-Modified-Since": boundedHeader(
-          input.previous.lastModified ?? null,
+          previous.lastModified ?? null,
         )!,
       }
       : {}),
@@ -648,9 +763,46 @@ function ensureBeforeDeadline(input: OfficialFetchInput): void {
   ) throw fetchError("deadline_exceeded");
 }
 
-type RobotsRule = { allow: boolean; path: string };
+type RobotsRule = {
+  allow: boolean;
+  pattern: string;
+  specificity: number;
+};
+
+const ROBOTS_USER_AGENT = "cardcompasscatalogbot";
+const MAX_ROBOTS_BYTES = 256 * 1024;
+const MAX_ROBOTS_LINES = 10_000;
+
+function normalizeRobotsPattern(value: string): string {
+  let normalized = "";
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    const escaped = value.slice(index).match(/^%([0-9a-f]{2})/i);
+    if (escaped) {
+      const byte = Number.parseInt(escaped[1], 16);
+      const decoded = String.fromCharCode(byte);
+      normalized += /[A-Za-z0-9._~-]/.test(decoded)
+        ? decoded
+        : `%${escaped[1].toUpperCase()}`;
+      index += 2;
+      continue;
+    }
+    normalized += character.charCodeAt(0) > 0x7f
+      ? encodeURI(character)
+      : character;
+  }
+  return normalized;
+}
 
 function parseRobotsRules(text: string): RobotsRule[] {
+  if (/<(?:!doctype\s+html|html|head|body)\b/i.test(text.slice(0, 2_048))) {
+    throw fetchError("robots_invalid");
+  }
+  const rawLines = text.split(/\r?\n/);
+  if (
+    rawLines.length > MAX_ROBOTS_LINES ||
+    rawLines.some((line) => line.length > 2_048)
+  ) throw fetchError("robots_invalid");
   const groups: Array<{ agents: string[]; rules: RobotsRule[] }> = [];
   let agents: string[] = [];
   let rules: RobotsRule[] = [];
@@ -661,20 +813,31 @@ function parseRobotsRules(text: string): RobotsRule[] {
   };
   for (const rawLine of text.slice(0, 256 * 1024).split(/\r?\n/)) {
     const line = rawLine.replace(/#.*$/, "").trim();
+    if (!line) continue;
     const separator = line.indexOf(":");
-    if (separator < 0) continue;
+    if (separator <= 0) throw fetchError("robots_invalid");
     const field = line.slice(0, separator).trim().toLowerCase();
     const value = line.slice(separator + 1).trim();
     if (field === "user-agent") {
+      if (!value) throw fetchError("robots_invalid");
       if (rules.length > 0) flush();
       agents.push(value.toLowerCase());
     } else if ((field === "allow" || field === "disallow") && agents.length) {
-      if (value) rules.push({ allow: field === "allow", path: value });
+      if (value) {
+        const pattern = normalizeRobotsPattern(value);
+        rules.push({
+          allow: field === "allow",
+          pattern,
+          specificity: pattern.replace(/\*/g, "").replace(/\$$/, "").length,
+        });
+      }
+    } else if (field === "allow" || field === "disallow") {
+      throw fetchError("robots_invalid");
     }
   }
   flush();
   const exact = groups.filter((group) =>
-    group.agents.some((agent) => agent === "cardcompasscatalogbot")
+    group.agents.some((agent) => agent === ROBOTS_USER_AGENT)
   );
   const selected = exact.length > 0
     ? exact
@@ -683,10 +846,18 @@ function parseRobotsRules(text: string): RobotsRule[] {
 }
 
 function robotsPermit(rules: RobotsRule[], url: string): boolean {
-  const target = `${new URL(url).pathname}${new URL(url).search}`;
-  const matching = rules.filter((rule) => target.startsWith(rule.path))
+  const parsed = new URL(url);
+  const target = normalizeRobotsPattern(`${parsed.pathname}${parsed.search}`);
+  const matching = rules.filter((rule) => {
+    const terminal = rule.pattern.endsWith("$");
+    const source = (terminal ? rule.pattern.slice(0, -1) : rule.pattern)
+      .split("*")
+      .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join(".*");
+    return new RegExp(`^${source}${terminal ? "$" : ""}`).test(target);
+  })
     .sort((left, right) =>
-      right.path.length - left.path.length || Number(right.allow) -
+      right.specificity - left.specificity || Number(right.allow) -
         Number(left.allow)
     );
   return matching[0]?.allow ?? true;
@@ -695,6 +866,7 @@ function robotsPermit(rules: RobotsRule[], url: string): boolean {
 export async function fetchOfficialIssuerResource(
   input: OfficialFetchInput,
 ): Promise<OfficialFetchResult> {
+  ensureBeforeDeadline(input);
   const exactSubmittedUrl = input.url.trim();
   const submittedRequestUrl = approvedRequestUrl(
     input.issuer,
@@ -702,7 +874,15 @@ export async function fetchOfficialIssuerResource(
     input.allowedQueryParameters,
   );
   const maxBytes = input.maxBytes ?? DEFAULT_MAX_BYTES;
-  const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const now = input.now ?? Date.now;
+  const remainingAtStart = input.deadlineAt === undefined
+    ? Number.POSITIVE_INFINITY
+    : input.deadlineAt - now();
+  if (remainingAtStart <= 0) throw fetchError("deadline_exceeded");
+  const timeoutMs = Math.min(
+    input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    remainingAtStart,
+  );
   const fetchImpl = input.fetchImpl ?? fetch;
   const resolveHost = input.resolveHost ?? defaultResolveHost;
   const contentPolicy = CONTENT_POLICIES[input.contentPurpose ?? "document"];
@@ -712,7 +892,7 @@ export async function fetchOfficialIssuerResource(
   const visited = new Set<string>();
   const robotsByHost = input._robotsCache ?? new Map<string, RobotsRule[]>();
   const sourceIdentityHash = await sha256(
-    new TextEncoder().encode(exactSubmittedUrl),
+    new TextEncoder().encode(submittedRequestUrl),
   );
 
   const productionRobotsAllowed = async (targetUrl: string) => {
@@ -737,7 +917,14 @@ export async function fetchOfficialIssuerResource(
           controller.signal,
         );
       } catch {
+        if (input.deadlineAt !== undefined && now() >= input.deadlineAt) {
+          throw fetchError("deadline_exceeded");
+        }
         throw fetchError("robots_disallowed");
+      }
+      if (input.deadlineAt !== undefined && now() >= input.deadlineAt) {
+        cancelResponseBody(response);
+        throw fetchError("deadline_exceeded");
       }
       if (response.status === 404) {
         // A genuinely missing robots resource permits crawling. Transport,
@@ -750,17 +937,31 @@ export async function fetchOfficialIssuerResource(
       } else {
         let bytes: Uint8Array;
         try {
-          bytes = await readResponseBytes(response, 256 * 1024, controller);
+          const metadata = contentMetadata(
+            response.headers.get("content-type"),
+          );
+          if (
+            metadata.mime !== "text/plain" ||
+            (metadata.charset && metadata.charset !== "utf-8" &&
+              metadata.charset !== "utf8")
+          ) throw fetchError("robots_invalid");
+          bytes = await readResponseBytes(
+            response,
+            MAX_ROBOTS_BYTES,
+            controller,
+          );
         } catch {
-          throw fetchError("robots_disallowed");
+          throw fetchError("robots_invalid");
         }
         try {
           rules = parseRobotsRules(
             new TextDecoder("utf-8", { fatal: true }).decode(bytes),
           );
-        } catch {
-          throw fetchError("robots_disallowed");
+        } catch (error) {
+          if (error instanceof OfficialFetchError) throw error;
+          throw fetchError("robots_invalid");
         }
+        ensureBeforeDeadline(input);
       }
       robotsByHost.set(target.host, rules);
     }
@@ -790,6 +991,12 @@ export async function fetchOfficialIssuerResource(
       await ensurePublicHost(url, resolveHost, controller.signal);
       ensureBeforeDeadline(input);
       let response: Response;
+      const requestHeaders = await conditionalHeadersForHop(
+        input,
+        url,
+        sourceIdentityHash,
+      );
+      ensureBeforeDeadline(input);
       try {
         response = await raceWithDeadline(
           fetchImpl(url, {
@@ -797,13 +1004,16 @@ export async function fetchOfficialIssuerResource(
             headers: {
               "User-Agent": "CardCompassCatalogBot/1.0 (+catalog verification)",
               Accept: contentPolicy.accept,
-              ...conditionalHeaders(input),
+              ...requestHeaders,
             },
             signal: controller.signal,
           }),
           controller.signal,
         );
       } catch (error) {
+        if (input.deadlineAt !== undefined && now() >= input.deadlineAt) {
+          throw fetchError("deadline_exceeded");
+        }
         if (
           controller.signal.aborted ||
           (error instanceof DOMException && error.name === "TimeoutError") ||
@@ -813,10 +1023,17 @@ export async function fetchOfficialIssuerResource(
         }
         throw fetchError("unreachable");
       }
+      if (input.deadlineAt !== undefined && now() >= input.deadlineAt) {
+        cancelResponseBody(response);
+        throw fetchError("deadline_exceeded");
+      }
 
       const retrievedAt = new Date((input.now ?? Date.now)()).toISOString();
       if (response.status === 304) {
         cancelResponseBody(response);
+        const finalResourceIdentityHash = await sha256(
+          new TextEncoder().encode(url),
+        );
         return {
           status: 304,
           submittedUrl: displayUrl(submittedRequestUrl),
@@ -830,6 +1047,7 @@ export async function fetchOfficialIssuerResource(
             boundedHeader(input.previous?.lastModified ?? null),
           notModified: true,
           sourceIdentityHash,
+          finalResourceIdentityHash,
         };
       }
       if (response.status >= 300 && response.status < 400) {
@@ -874,11 +1092,15 @@ export async function fetchOfficialIssuerResource(
       }
 
       let bytes: Uint8Array;
+      ensureBeforeDeadline(input);
       try {
         bytes = await readResponseBytes(response, maxBytes, controller);
       } catch (error) {
         if (error instanceof Error && error.message === "oversized") {
           throw error;
+        }
+        if (input.deadlineAt !== undefined && now() >= input.deadlineAt) {
+          throw fetchError("deadline_exceeded");
         }
         if (
           controller.signal.aborted ||
@@ -889,6 +1111,7 @@ export async function fetchOfficialIssuerResource(
         }
         throw fetchError("unreachable");
       }
+      ensureBeforeDeadline(input);
 
       const result: OfficialFetchResult = {
         status: response.status,
@@ -906,6 +1129,9 @@ export async function fetchOfficialIssuerResource(
         lastModified: boundedHeader(response.headers.get("last-modified")),
         notModified: false,
         sourceIdentityHash,
+        finalResourceIdentityHash: await sha256(
+          new TextEncoder().encode(url),
+        ),
       };
       result.text = await officialResourceText(result);
       if (
@@ -953,6 +1179,25 @@ export async function fetchOfficialIssuerObservation(
   let forceUnconditional = input.forceUnconditional === true;
   let unusable304Fallback = false;
   const robotsCache = new Map<string, RobotsRule[]>();
+  const waitBeforeRetry = async (milliseconds: number): Promise<boolean> => {
+    if (input.deadlineAt !== undefined) {
+      const remaining = input.deadlineAt - now();
+      if (remaining <= 0 || milliseconds > remaining) return false;
+    }
+    await delay(milliseconds);
+    return input.deadlineAt === undefined || now() < input.deadlineAt;
+  };
+  const deadlineObservation = (): OfficialFetchObservation => {
+    attempts.push({
+      code: "deadline_exceeded",
+      attemptedAt: new Date(now()).toISOString(),
+    });
+    return {
+      disposition: "failed",
+      attempts,
+      reviewReason: "deadline_exceeded",
+    };
+  };
 
   for (let index = 0; index < maxAttempts; index += 1) {
     if (input.deadlineAt !== undefined && now() >= input.deadlineAt) {
@@ -972,10 +1217,15 @@ export async function fetchOfficialIssuerObservation(
       });
       attempts.push({ status: result.status, attemptedAt: result.retrievedAt });
       if (result.notModified) {
-        const reusable304 = input.previous?.reusableExtraction === true &&
-          input.previous.parserVersion === input.parserVersion &&
-          Boolean(input.previous.etag || input.previous.lastModified) &&
+        const reusable304 = reusablePreviousBinding(
+          input,
+          result.sourceIdentityHash ?? "",
+        ) &&
+          Boolean(input.previous?.etag || input.previous?.lastModified) &&
           Boolean(result.contentHash) &&
+          result.finalResourceIdentityHash ===
+            input.previous?.finalResourceIdentityHash &&
+          result.finalUrl === input.previous?.finalResourceUrl &&
           !forceUnconditional;
         if (reusable304) {
           return { disposition: "not_modified", result, attempts };
@@ -1034,7 +1284,8 @@ export async function fetchOfficialIssuerObservation(
           attempt.code === "soft_404"
         ).length;
         if (soft404Count < 2 && index + 1 < maxAttempts) {
-          await delay(Math.min(maxBackoffMs, 1000 * 2 ** index));
+          const backoff = Math.min(maxBackoffMs, 1000 * 2 ** index);
+          if (!await waitBeforeRetry(backoff)) return deadlineObservation();
           continue;
         }
         return {
@@ -1044,6 +1295,16 @@ export async function fetchOfficialIssuerObservation(
         };
       }
       if (failure.code === "identity_review") {
+        return {
+          disposition: "review_required",
+          attempts,
+          reviewReason: failure.code,
+        };
+      }
+      if (
+        failure.code === "robots_invalid" ||
+        failure.code === "unapproved_query"
+      ) {
         return {
           disposition: "review_required",
           attempts,
@@ -1070,32 +1331,7 @@ export async function fetchOfficialIssuerObservation(
         maxBackoffMs,
         1000 * 2 ** index,
       );
-      const remaining = input.deadlineAt === undefined
-        ? backoff
-        : Math.max(0, input.deadlineAt - now());
-      if (remaining <= 0) {
-        attempts.push({
-          code: "deadline_exceeded",
-          attemptedAt: new Date(now()).toISOString(),
-        });
-        return {
-          disposition: "failed",
-          attempts,
-          reviewReason: "deadline_exceeded",
-        };
-      }
-      await delay(Math.min(backoff, remaining));
-      if (input.deadlineAt !== undefined && now() >= input.deadlineAt) {
-        attempts.push({
-          code: "deadline_exceeded",
-          attemptedAt: new Date(now()).toISOString(),
-        });
-        return {
-          disposition: "failed",
-          attempts,
-          reviewReason: "deadline_exceeded",
-        };
-      }
+      if (!await waitBeforeRetry(backoff)) return deadlineObservation();
     }
   }
   return { disposition: "failed", attempts, reviewReason: "retry_exhausted" };

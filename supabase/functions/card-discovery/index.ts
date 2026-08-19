@@ -24,6 +24,7 @@ import { enqueueBenefitEnrichmentJob } from "../benefit-enrichment-batch/batch_p
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 type UntypedSupabaseClient = any;
+const DISCOVERY_FETCH_DEADLINE_MS = 25_000;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -202,6 +203,7 @@ async function processSubmittedUrl(
   db: UntypedSupabaseClient,
   job: Record<string, any>,
   rawUrl: string,
+  deadlineAt: number,
 ) {
   const evidence = job.evidence as SafeEvidence;
   const submittedUrl = canonicalOfficialUrl(job.issuer, rawUrl);
@@ -218,6 +220,7 @@ async function processSubmittedUrl(
       issuer: job.issuer,
       url: rawUrl,
       enforceRobots: true,
+      deadlineAt,
     }),
   );
   const submittedHash = page.sourceIdentityHash ?? exactSubmittedHash;
@@ -371,6 +374,7 @@ function htmlText(html: string): string {
 async function discoverOfficialUrl(
   issuer: string,
   product: string,
+  deadlineAt: number,
 ): Promise<string | null> {
   const normalized = normalizedProduct(product, issuer);
   const known = knownOfficialSources[issuer]?.[normalized];
@@ -386,6 +390,7 @@ async function discoverOfficialUrl(
             url: `https://${domain}${sitemapPath}`,
             contentPurpose: "sitemap",
             enforceRobots: true,
+            deadlineAt,
           }),
         );
         urls.push(
@@ -502,6 +507,7 @@ async function putInReview(
 async function processDiscoveryJob(
   db: UntypedSupabaseClient,
   jobId: string,
+  deadlineAt = Date.now() + DISCOVERY_FETCH_DEADLINE_MS,
 ) {
   const { data: rawJob, error } = await db.from("card_discovery_jobs")
     .select("*").eq("id", jobId).single();
@@ -564,6 +570,7 @@ async function processDiscoveryJob(
     const officialUrl = await discoverOfficialUrl(
       job.issuer,
       canonical.cardName,
+      deadlineAt,
     );
     if (!officialUrl) {
       await putInReview(db, job, canonical, { evidence }, [
@@ -576,6 +583,7 @@ async function processDiscoveryJob(
         issuer: job.issuer,
         url: officialUrl,
         enforceRobots: true,
+        deadlineAt,
       }),
     );
     if (page.contentType === "application/pdf") {
@@ -755,6 +763,7 @@ serve(async (request) => {
   }
 
   try {
+    const invocationDeadlineAt = Date.now() + DISCOVERY_FETCH_DEADLINE_MS;
     const body = await request.json();
     const action = body.action;
     if (action === "resolve_url") {
@@ -766,7 +775,12 @@ serve(async (request) => {
       }
       const job = await upsertDiscoveryJob(db, user.id, evidence);
       try {
-        const result = await processSubmittedUrl(db, job, body.source_url);
+        const result = await processSubmittedUrl(
+          db,
+          job,
+          body.source_url,
+          invocationDeadlineAt,
+        );
         return json(publicDiscoveryResult(result));
       } catch (error) {
         const reason = publicReasonCode(error);
@@ -815,7 +829,9 @@ serve(async (request) => {
         .select("id, status, resolved_card_id, next_retry_at")
         .single();
       if (error) throw error;
-      EdgeRuntime.waitUntil(processDiscoveryJob(db, job.id));
+      EdgeRuntime.waitUntil(
+        processDiscoveryJob(db, job.id, invocationDeadlineAt),
+      );
       return json({
         job_id: job.id,
         status: job.status,

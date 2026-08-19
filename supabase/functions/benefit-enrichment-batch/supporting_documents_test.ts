@@ -84,6 +84,83 @@ Deno.test("supporting redirects remain bound to the expected card identity", asy
   }
 });
 
+Deno.test("supporting documents require body identity even on nested or curated URLs", async () => {
+  const privilege = "https://www.axis.bank.in/cards/credit-card/privilege";
+  const nestedTerms = `${privilege}/terms`;
+  const nested = await collectSupportingBenefitDocuments({
+    issuer: "Axis Bank",
+    primary: resource(
+      privilege,
+      `<h1>Privilege Credit Card</h1><a href="${nestedTerms}">Terms</a>`,
+    ),
+    identityLabels: ["Privilege Credit Card"],
+    fetchOfficialIssuerResource: async () =>
+      resource(nestedTerms, "Generic credit card fees and terms"),
+  });
+  assert(
+    nested.attempts.some((attempt) =>
+      attempt.requestedUrl === nestedTerms &&
+      attempt.errorCode === "identity_mismatch"
+    ),
+    "nested path was accepted without document identity",
+  );
+
+  const elite = "https://www.sbicard.com/en/personal/credit-cards/elite";
+  const curated = await collectSupportingBenefitDocuments({
+    issuer: "SBI Card",
+    primary: resource(elite, "<h1>SBI Elite Credit Card</h1>"),
+    identityLabels: ["Elite"],
+    fetchOfficialIssuerResource: async (input) =>
+      resource(input.url, "Generic SBI campaign terms and fees"),
+  });
+  assert(
+    curated.attempts.some((attempt) =>
+      attempt.errorCode === "identity_mismatch"
+    ),
+    "curated unchanged URL was accepted without document identity",
+  );
+});
+
+Deno.test("supporting functional query keys are explicitly approved without persistence", async () => {
+  const privilege = "https://www.axis.bank.in/cards/credit-card/privilege";
+  const terms = `${privilege}/terms?document=mitc`;
+  let fetchInput: Record<string, unknown> | undefined;
+  const collected = await collectSupportingBenefitDocuments({
+    issuer: "Axis Bank",
+    primary: resource(
+      privilege,
+      `<h1>Privilege Credit Card</h1><a href="${terms}">MITC</a>`,
+    ),
+    identityLabels: ["Privilege Credit Card"],
+    fetchOfficialIssuerResource: async (input) => {
+      fetchInput = input as unknown as Record<string, unknown>;
+      return resource(terms, "Privilege Credit Card MITC and fees");
+    },
+  });
+  assert(
+    (fetchInput?.allowedQueryParameters as string[] | undefined)?.includes(
+      "document",
+    ) === true,
+    "linked functional query was not explicitly approved",
+  );
+  assert(
+    collected.documents.some((document) =>
+      document.finalUrl === `${privilege}/terms`
+    ),
+    "queryless display provenance was not retained",
+  );
+  assert(
+    !JSON.stringify({
+      finalUrls: collected.documents.map((document) => document.finalUrl),
+      attempts: assessCrawlCompleteness(
+        collected.attempts,
+        "2026-08-17T00:01:00.000Z",
+      ).attempts,
+    }).includes("document=mitc"),
+    "functional query value entered persisted supporting evidence",
+  );
+});
+
 Deno.test("supporting crawl follows relevant official links to depth two and retains PDF provenance", async () => {
   const product = "https://www.axis.bank.in/cards/credit-card/privilege";
   const benefits = `${product}/benefits`;
@@ -111,26 +188,26 @@ Deno.test("supporting crawl follows relevant official links to depth two and ret
       if (input.url === benefits) {
         return resource(
           benefits,
-          `<p>Get 10% cashback on dining.</p><a href="${pdf}">MITC</a>`,
+          `<h1>Privilege Credit Card Benefits</h1><p>Get 10% cashback on dining.</p><a href="${pdf}">MITC</a>`,
         );
       }
       if (input.url === terms) {
         return resource(
           terms,
-          `<p>Fee waiver on annual spend.</p><a href="${rewards}">Rewards</a>`,
+          `<h1>Privilege Credit Card Terms</h1><p>Fee waiver on annual spend.</p><a href="${rewards}">Rewards</a>`,
         );
       }
       if (input.url === pdf) {
         return resource(
           pdf,
-          "%PDF-1.4\nstream\nBT (Get 2 lounge visits per quarter.) Tj ET\nendstream\n%%EOF",
+          "%PDF-1.4\nstream\nBT (Privilege Credit Card MITC. Get 2 lounge visits per quarter.) Tj ET\nendstream\n%%EOF",
           "application/pdf",
         );
       }
       if (input.url === rewards) {
         return resource(
           rewards,
-          `<p>Earn 5 points.</p><a href="${depthThree}">More rewards</a>`,
+          `<h1>Privilege Credit Card Rewards</h1><p>Earn 5 points.</p><a href="${depthThree}">More rewards</a>`,
         );
       }
       if (input.url === depthThree) return resource(depthThree, "never");
@@ -178,7 +255,8 @@ Deno.test("primary logical identity uses submitted URL across redirects", async 
     "primary redirect target replaced submitted logical identity",
   );
   assert(
-    documents[0].finalUrl === final,
+    documents[0].finalUrl ===
+      "https://www.axis.bank.in/cards/credit-card/privilege/landing",
     "primary redirect provenance was not retained",
   );
   assert(
@@ -229,8 +307,8 @@ Deno.test("source extraction keeps anchor labels but never injects href secrets"
 
 Deno.test("supporting redirect identity follows requested candidate", async () => {
   const product = "https://www.axis.bank.in/cards/credit-card/privilege";
-  const alpha = `${product}/offers?partner=alpha`;
-  const beta = `${product}/offers?partner=beta`;
+  const alpha = `${product}/offers?variant=alpha`;
+  const beta = `${product}/offers?variant=beta`;
   const final = `${product}/offers/current?session=private`;
   const { documents, attempts } = await collectSupportingBenefitDocuments({
     issuer: "Axis Bank",
@@ -240,7 +318,7 @@ Deno.test("supporting redirect identity follows requested candidate", async () =
       `<a href="${alpha}">Benefits</a><a href="${beta}">Benefits</a>`,
     ),
     fetchOfficialIssuerResource: async (input) => ({
-      ...resource(final, "Get 10% cashback on dining."),
+      ...resource(final, "Privilege Credit Card: Get 10% cashback on dining."),
       submittedUrl: input.url,
       finalUrl: final,
       canonicalUrl: final,
@@ -275,7 +353,10 @@ Deno.test("supporting crawl fetches at most eight relevant links", async () => {
     ),
     fetchOfficialIssuerResource: async (input) => {
       fetches += 1;
-      return resource(input.url, `<p>Benefit ${fetches}</p>`);
+      return resource(
+        input.url,
+        `<h1>Privilege Credit Card Benefit</h1><p>Benefit ${fetches}</p>`,
+      );
     },
   });
 
@@ -316,7 +397,7 @@ Deno.test("a required ninth initial link outranks eight optional links", async (
   );
 });
 
-Deno.test("opaque PDF anchor metadata can establish a required MITC source", async () => {
+Deno.test("opaque PDF remains required but incomplete without body identity", async () => {
   const product = "https://www.axis.bank.in/cards/credit-card/privilege";
   const opaque = `${product}/documents/abc123.pdf`;
   const requested: string[] = [];
@@ -340,7 +421,8 @@ Deno.test("opaque PDF anchor metadata can establish a required MITC source", asy
   assert(requested.join(",") === opaque, "opaque MITC source was not fetched");
   assert(
     attempts.some((item) =>
-      item.requestedUrl === opaque && item.role === "required_supporting"
+      item.requestedUrl === opaque && item.role === "required_supporting" &&
+      item.status === "failed" && item.errorCode === "identity_mismatch"
     ),
     "opaque MITC anchor was treated as optional",
   );
@@ -431,12 +513,15 @@ Deno.test("cross-page MITC discovery upgrades queued and fetched failures", asyn
       fetchOfficialIssuerResource: async (input) => {
         if (input.url === document) throw new Error("http_404");
         if (input.url === pageA) {
-          return resource(pageA, `<a href="${document}">Benefits</a>`);
+          return resource(
+            pageA,
+            `<h1>Privilege Credit Card Benefits</h1><a href="${document}">Benefits</a>`,
+          );
         }
         if (input.url === pageB) {
           return resource(
             pageB,
-            `<a href="${document}">Most Important Terms and Conditions</a>`,
+            `<h1>Privilege Credit Card Rewards</h1><a href="${document}">Most Important Terms and Conditions</a>`,
           );
         }
         throw new Error(`unexpected URL ${input.url}`);
@@ -463,8 +548,8 @@ Deno.test("cross-page MITC discovery upgrades queued and fetched failures", asyn
 
 Deno.test("collector keeps transient requested URLs and v6 persists only identities", async () => {
   const product = "https://www.axis.bank.in/cards/credit-card/privilege";
-  const alpha = `${product}/terms?card=alpha`;
-  const beta = `${product}/terms?card=beta`;
+  const alpha = `${product}/terms?variant=alpha`;
+  const beta = `${product}/terms?variant=beta`;
   const { documents, attempts } = await collectSupportingBenefitDocuments({
     issuer: "Axis Bank",
     identityLabels: ["Privilege"],
@@ -475,8 +560,8 @@ Deno.test("collector keeps transient requested URLs and v6 persists only identit
     fetchOfficialIssuerResource: async (input) =>
       resource(
         input.url,
-        `Get ${
-          new URL(input.url).searchParams.get("card") === "alpha" ? 10 : 20
+        `Privilege Credit Card: Get ${
+          new URL(input.url).searchParams.get("variant") === "alpha" ? 10 : 20
         }% cashback on dining spends.`,
       ),
   });
@@ -579,7 +664,10 @@ Deno.test("a depth-discovered required source is retained after budget exhaustio
     primary: resource(product, `<a href="${benefits}">Benefits</a>`),
     maximumLinks: 1,
     fetchOfficialIssuerResource: async () =>
-      resource(benefits, `<a href="${required}">Terms</a>`),
+      resource(
+        benefits,
+        `<h1>Privilege Credit Card Benefits</h1><a href="${required}">Terms</a>`,
+      ),
   });
 
   assert(
@@ -607,7 +695,10 @@ Deno.test("depth-discovered required evidence displaces optional queue overflow"
     ),
     maximumLinks: 1,
     fetchOfficialIssuerResource: async () =>
-      resource(optional[0], `<a href="${required}">Fees</a>`),
+      resource(
+        optional[0],
+        `<h1>Privilege Credit Card Benefits</h1><a href="${required}">Fees</a>`,
+      ),
   });
 
   assert(
@@ -638,8 +729,8 @@ Deno.test("required evidence discovered by the last optional page records overfl
       resource(
         input.url,
         input.url === optional[7]
-          ? `<a href="${required}">Most Important Terms and Conditions</a>`
-          : "Optional details",
+          ? `<h1>Privilege Credit Card Benefits</h1><a href="${required}">Most Important Terms and Conditions</a>`
+          : "Privilege Credit Card optional details",
       ),
   });
 
@@ -741,7 +832,7 @@ Deno.test("SBI Card ELITE receives its exact official campaign terms before gene
       requested.push(input.url);
       return resource(
         input.url,
-        "Free movie tickets worth Rs. 6,000 every year. Maximum discount is Rs. 250 per ticket.",
+        "SBI Card ELITE: Free movie tickets worth Rs. 6,000 every year. Maximum discount is Rs. 250 per ticket.",
       );
     },
   });
