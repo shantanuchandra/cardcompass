@@ -17,7 +17,7 @@ Ruling: Include the foundation's final adjudication ledger update in Task 1's co
 ## Tasks
 
 - Task 1: implementation complete, pending review — atomic audited card-data mutation RPC
-- Task 2: pending — sanitized Card Data gateway actions
+- Task 2: implementation complete, pending review — sanitized Card Data gateway actions
 - Task 3: pending — derived ranked Action Inbox
 - Task 4: pending — typed Flutter repositories
 - Task 5: pending — Card Data review workspace
@@ -35,3 +35,17 @@ Ruling: Bind benefit approvals to the locked job's exact staging row and card, t
 - Task 1 review fix: replaced MD5-only replay comparison with direct canonical request JSONB equality. Added opt-in isolated PostgreSQL execution coverage that applies the real migration and verifies exact replay, changed-request collision, stale timestamps, staging ownership, audit-failure rollback, and concurrent identical calls. Local PostgreSQL: 4/4 passed; the disposable database and any temporary roles were removed.
 - Task 1 review fix follow-up: PostgreSQL credentials are now passed only through protected libpq environment variables, never process arguments; the disposable connection replaces only the database name on the same validated loopback server, cleanup revalidates the generated database name, and errors redact both the source URL and password. Connection unit/static plus isolated PostgreSQL tests: 5/5 passed with no database or role residue.
 - Task 1 review fix follow-up 2: the child process environment is now allowlisted, clearing inherited libpq host/address/port/database/user/password/service/SSL/options selectors before applying only validated URL-derived values. URL-less socket mode is pinned to `/tmp:5432`, password/service files are disabled, unsupported URL options are rejected, and hostile-inheritance plus socket regressions pass. Explicit TCP and socket opt-in PostgreSQL runs each passed 5/5 with no residue.
+
+## Task 2 evidence
+
+- RED 1: the focused Deno test failed type-checking because `card_data.ts` did not exist.
+- GREEN 1: 10/10 Card Data handler tests passed after adding lane-specific queries, bounded presenters, strict mutation validation, stable error mapping, and frozen router registration.
+- RED 2: two handler tests failed because identity proposal and benefit-decision payloads still accepted nested raw content and unsafe URLs.
+- GREEN 2: 10/10 handler tests passed after rejecting non-allowlisted identity fields, sensitive decision fields, unsafe URL schemes, excessive nesting/arrays/strings, and over-32-KiB UTF-8 payloads.
+- RED 3: the list validation test failed because syntactically safe but cross-lane statuses were accepted.
+- GREEN 3: 10/10 handler tests passed after adding exact lane-specific status sets.
+- Regression: 11/11 admin router tests and 15/15 legacy `admin-catalog-entry` tests passed.
+
+Ruling: Map the mutation RPC's `request_id_collision` to the public `state_conflict` code because the API contract does not expose a collision-specific code and the safe operator response is to refresh and issue a new request ID. Cost if wrong: clients cannot distinguish a stale transition from request-ID reuse without server-side logs.
+
+Ruling: Permit only HTTPS URLs without embedded credentials at the new Card Data boundary, while returning `null` for unsafe stored read URLs and rejecting unsafe mutation URLs. Cost if wrong: a legitimate issuer resource available only over HTTP would be hidden until upgraded or explicitly allowlisted.
