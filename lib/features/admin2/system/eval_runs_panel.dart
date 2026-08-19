@@ -124,20 +124,32 @@ class _EvalRunsPanelState extends State<EvalRunsPanel> {
   }
 
   Future<void> _select(EvalRun run) async {
+    final generation = ++_generation;
     setState(() {
       _selectedId = run.id;
       _resultPage = 1;
       _compactDetail = true;
       _acting = true;
+      _refreshing = false;
     });
     try {
       final d = await widget.source.detail(run.id, resultPage: 1);
-      if (mounted) setState(() => _detail = d);
+      if (!mounted || generation != _generation || _selectedId != run.id) {
+        return;
+      }
+      setState(() => _detail = d);
     } catch (e) {
+      if (!mounted || generation != _generation || _selectedId != run.id) {
+        return;
+      }
       await _effects(e);
-      if (mounted) setState(() => _error = e);
+      if (mounted && generation == _generation && _selectedId == run.id) {
+        setState(() => _error = e);
+      }
     } finally {
-      if (mounted) setState(() => _acting = false);
+      if (mounted && generation == _generation && _selectedId == run.id) {
+        setState(() => _acting = false);
+      }
     }
   }
 
@@ -644,7 +656,10 @@ class _EvalRunsPanelState extends State<EvalRunsPanel> {
     final id = _selectedId;
     if (id == null) return;
     final generation = ++_generation;
-    setState(() => _acting = true);
+    setState(() {
+      _acting = true;
+      _refreshing = false;
+    });
     try {
       final detail = await widget.source.detail(id, resultPage: page);
       if (!mounted || generation != _generation || _selectedId != id) return;
@@ -654,10 +669,15 @@ class _EvalRunsPanelState extends State<EvalRunsPanel> {
         _error = null;
       });
     } catch (e) {
+      if (!mounted || generation != _generation || _selectedId != id) return;
       await _effects(e);
-      if (mounted) setState(() => _error = e);
+      if (mounted && generation == _generation && _selectedId == id) {
+        setState(() => _error = e);
+      }
     } finally {
-      if (mounted) setState(() => _acting = false);
+      if (mounted && generation == _generation && _selectedId == id) {
+        setState(() => _acting = false);
+      }
     }
   }
 

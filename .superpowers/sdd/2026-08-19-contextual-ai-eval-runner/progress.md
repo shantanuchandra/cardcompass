@@ -284,3 +284,10 @@ Ruling: Page case results independently from run pages while retaining last-good
 Ruling: Bind result-page state to the resolved run ID and fence every detail request in the same generation sequence. Cost if wrong: changing runs always incurs a page-1 detail fetch, preventing stale high-page evidence from creating an empty or misleading detail state.
 
 Ruling: Resolve Start eligibility and dispatch from the same current catalog candidate. Cost if wrong: a catalog refresh may require one explicit reselection, but a removed configuration can never remain actionable.
+
+### Final selection-race correction
+
+- Explicit selection, refresh, and result paging now claim one monotonically increasing request generation. Detail, error, and busy-state commits require both the active generation and intended selected run ID.
+- Controlled out-of-order tests prove rapid A-to-B selection retains B after late A, an in-flight refresh cannot overwrite an explicit B selection, and stale completion cannot clear or strand the current request's busy state. Full Admin2 passes 178/178 and scoped analysis is clean.
+
+Ruling: Let only the newest generation and matching run ID commit evaluation detail or request state. Cost if wrong: superseded responses are discarded even if they succeeded, requiring the already-active newer request to remain authoritative.

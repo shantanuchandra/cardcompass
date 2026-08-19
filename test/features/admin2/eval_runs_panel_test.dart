@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cardcompass/core/theme/app_theme.dart';
 import 'package:cardcompass/features/admin2/data/admin_operator_repository.dart';
 import 'package:cardcompass/features/admin2/system/eval_models.dart';
@@ -70,6 +72,8 @@ final class EvalTestSource implements EvalDataSource {
   String currentRunId = runId;
   bool emptyCandidates = false;
   bool pageSpecificRuns = false;
+  bool twoRuns = false;
+  final controlledDetails = <String, Completer<EvalRunDetail>>{};
   @override
   Future<EvalConfigCatalog> configs() async => EvalConfigCatalog(
     datasetVersion: 12,
@@ -140,7 +144,10 @@ final class EvalTestSource implements EvalDataSource {
         ? '00000000-0000-4000-8000-${page.toString().padLeft(12, '0')}'
         : currentRunId;
     return EvalRunsPage(
-      items: [run(id: id)],
+      items: [
+        run(id: id),
+        if (twoRuns) run(id: '00000000-0000-4000-8000-000000000012'),
+      ],
       page: page,
       limit: limit,
       total: pageSpecificRuns ? 41 : 1,
@@ -154,6 +161,8 @@ final class EvalTestSource implements EvalDataSource {
     int resultLimit = 25,
   }) async {
     detailRequests.add((id, resultPage));
+    final controlled = controlledDetails[id];
+    if (controlled != null) return controlled.future;
     final base = runDetail();
     return EvalRunDetail(
       run: base.run,
@@ -374,6 +383,105 @@ void main() {
           )
           .onPressed,
       isNull,
+    );
+  });
+  testWidgets('rapid A then B selection retains B when A resolves last', (
+    tester,
+  ) async {
+    final source = EvalTestSource()..twoRuns = true;
+    await pump(tester, source);
+    final a = Completer<EvalRunDetail>();
+    final b = Completer<EvalRunDetail>();
+    source.controlledDetails[runId] = a;
+    source.controlledDetails['00000000-0000-4000-8000-000000000012'] = b;
+    await tester.tap(find.byType(ListTile).at(0));
+    await tester.tap(find.byType(ListTile).at(1));
+    b.complete(
+      EvalRunDetail(
+        run: run(id: '00000000-0000-4000-8000-000000000012'),
+        metrics: runDetail().metrics,
+        decision: runDetail().decision,
+        blockers: const ['b-detail'],
+        results: const [],
+        resultPage: 1,
+        resultLimit: 25,
+        resultTotal: 126,
+      ),
+    );
+    await tester.pump();
+    a.complete(
+      EvalRunDetail(
+        run: run(id: runId),
+        metrics: runDetail().metrics,
+        decision: runDetail().decision,
+        blockers: const ['stale-a'],
+        results: const [],
+        resultPage: 1,
+        resultLimit: 25,
+        resultTotal: 126,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('stale a'), findsNothing);
+    expect(find.textContaining('b-detail'), findsOneWidget);
+    expect(
+      source.detailRequests.last.$1,
+      '00000000-0000-4000-8000-000000000012',
+    );
+    expect(
+      tester
+          .widget<IconButton>(find.byKey(const Key('eval-refresh')))
+          .onPressed,
+      isNotNull,
+    );
+  });
+  testWidgets('explicit selection invalidates an older refresh detail', (
+    tester,
+  ) async {
+    final source = EvalTestSource()..twoRuns = true;
+    await pump(tester, source);
+    final refreshA = Completer<EvalRunDetail>();
+    final selectB = Completer<EvalRunDetail>();
+    source.controlledDetails[runId] = refreshA;
+    source.controlledDetails['00000000-0000-4000-8000-000000000012'] = selectB;
+    await tester.tap(find.byKey(const Key('eval-refresh')));
+    await tester.pump();
+    await tester.pump();
+    expect(source.detailRequests.last, (runId, 1));
+    await tester.tap(find.byType(ListTile).at(1));
+    selectB.complete(
+      EvalRunDetail(
+        run: run(id: '00000000-0000-4000-8000-000000000012'),
+        metrics: runDetail().metrics,
+        decision: runDetail().decision,
+        blockers: const ['selected-b'],
+        results: const [],
+        resultPage: 1,
+        resultLimit: 25,
+        resultTotal: 126,
+      ),
+    );
+    await tester.pump();
+    refreshA.complete(
+      EvalRunDetail(
+        run: run(),
+        metrics: runDetail().metrics,
+        decision: runDetail().decision,
+        blockers: const ['stale-refresh'],
+        results: const [],
+        resultPage: 1,
+        resultLimit: 25,
+        resultTotal: 126,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('selected-b'), findsOneWidget);
+    expect(find.textContaining('stale-refresh'), findsNothing);
+    expect(
+      tester
+          .widget<IconButton>(find.byKey(const Key('eval-refresh')))
+          .onPressed,
+      isNotNull,
     );
   });
   testWidgets(
