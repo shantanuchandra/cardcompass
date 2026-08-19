@@ -41,16 +41,28 @@ export async function requireAdmin(
   }
 
   const token = authorization.slice("Bearer ".length);
-  const { data: authData, error: authError } = await authDb.auth.getUser(token);
+  let authData: Readonly<{ user: AuthenticatedUser | null }>;
+  let authError: unknown;
+  try {
+    ({ data: authData, error: authError } = await authDb.auth.getUser(token));
+  } catch {
+    throw new AdminHttpError("request_failed", 500);
+  }
   if (authError || !authData.user) {
     throw new AdminHttpError("authentication_required", 401);
   }
 
-  const { data: profile, error: profileError } = await serviceDb
-    .from("users")
-    .select("id,is_active,is_admin")
-    .eq("id", authData.user.id)
-    .maybeSingle();
+  let profile: UserProfile | null;
+  let profileError: unknown;
+  try {
+    ({ data: profile, error: profileError } = await serviceDb
+      .from("users")
+      .select("id,is_active,is_admin")
+      .eq("id", authData.user.id)
+      .maybeSingle());
+  } catch {
+    throw new AdminHttpError("request_failed", 500);
+  }
   if (profileError) throw new AdminHttpError("request_failed", 500);
   if (!profile?.is_active || !profile.is_admin) {
     throw new AdminHttpError("administrator_access_required", 403);

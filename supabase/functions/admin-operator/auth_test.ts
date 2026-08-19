@@ -31,6 +31,16 @@ function profileDatabase(
   } as never;
 }
 
+async function assertRequestFailed(operation: () => Promise<unknown>) {
+  const error = await assertRejects(
+    operation,
+    AdminHttpError,
+    "request_failed",
+  );
+  assertEquals(error.code, "request_failed");
+  assertEquals(error.status, 500);
+}
+
 Deno.test("admin auth rejects a missing bearer token before database reads", async () => {
   let reads = 0;
 
@@ -84,6 +94,14 @@ Deno.test("admin auth rejects an authenticated non-admin user", async () => {
   );
 });
 
+Deno.test("admin auth rejects an authenticated user with no profile row", async () => {
+  await assertRejects(
+    () => requireAdmin(authorizedRequest(), authenticatedUser(), profileDatabase(null)),
+    AdminHttpError,
+    "administrator_access_required",
+  );
+});
+
 Deno.test("admin auth returns request_failed when database lookup errors", async () => {
   await assertRejects(
     () => requireAdmin(
@@ -94,6 +112,38 @@ Deno.test("admin auth returns request_failed when database lookup errors", async
     AdminHttpError,
     "request_failed",
   );
+});
+
+Deno.test("admin auth sanitizes rejected authentication calls", async () => {
+  await assertRequestFailed(() => requireAdmin(authorizedRequest(), {
+    auth: {
+      getUser: () => Promise.reject(new Error("authentication backend unavailable")),
+    },
+  } as never, profileDatabase(null)));
+});
+
+Deno.test("admin auth sanitizes rejected database client calls", async () => {
+  await assertRequestFailed(() => requireAdmin(
+    authorizedRequest(),
+    authenticatedUser(),
+    { from: () => { throw new Error("database connection refused"); } } as never,
+  ));
+});
+
+Deno.test("admin auth sanitizes rejected profile lookup calls", async () => {
+  await assertRequestFailed(() => requireAdmin(
+    authorizedRequest(),
+    authenticatedUser(),
+    {
+      from: () => ({
+        select: () => ({
+          eq: () => ({
+            maybeSingle: () => Promise.reject(new Error("profile query timed out")),
+          }),
+        }),
+      }),
+    } as never,
+  ));
 });
 
 Deno.test("admin auth reads active and admin flags by authenticated user id", async () => {
