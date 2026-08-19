@@ -4,8 +4,42 @@ import '../data/admin_operator_repository.dart';
 import 'feedback_models.dart';
 
 final class FeedbackAdminRepository {
-  const FeedbackAdminRepository(this._operator);
+  FeedbackAdminRepository(this._operator);
   final AdminOperatorRepository _operator;
+  Future<AdminFeedbackPage> list({
+    int page = 1,
+    int limit = 25,
+    String? reviewStatus,
+  }) async {
+    final body = <String, dynamic>{'page': page, 'limit': limit};
+    if (reviewStatus != null) {
+      body['review_status'] = reviewStatus;
+    }
+    final json = await _operator.invoke('feedback-list', body);
+    try {
+      final items = (json['items'] as List)
+          .map((value) {
+            final row = Map<String, dynamic>.from(value as Map);
+            return AdminFeedbackListItem(
+              id: row['id'] as String,
+              feature: row['feature'] as String,
+              reviewStatus: row['review_status'] as String,
+              triageStatus: row['triage_status'] as String,
+              severity: row['severity'] as String,
+              createdAt: DateTime.parse(row['created_at'] as String),
+            );
+          })
+          .toList(growable: false);
+      return AdminFeedbackPage(
+        items: items,
+        page: json['page'] as int,
+        limit: json['limit'] as int,
+        total: json['total'] as int,
+      );
+    } catch (_) {
+      throw const AdminRequestFailed('request_failed');
+    }
+  }
 
   Future<AdminFeedbackDetail> detail(String id) async {
     final json = await _operator.invoke('feedback-detail', {
@@ -19,6 +53,42 @@ final class FeedbackAdminRepository {
       final latest = cases.isEmpty
           ? null
           : Map<String, dynamic>.from(cases.first);
+      final evalCases = cases
+          .map((value) {
+            final item = Map<String, dynamic>.from(value);
+            return AdminEvalCase(
+              id: item['id'] as String,
+              status: item['status'] as String,
+              revision: item['revision'] as int,
+              updatedAt: DateTime.parse(item['updated_at'] as String),
+              inputFixture: Map<String, dynamic>.from(
+                item['input_fixture'] as Map,
+              ),
+              capturedOutput: Map<String, dynamic>.from(
+                item['captured_output'] as Map,
+              ),
+              expectedOutput: Map<String, dynamic>.from(
+                item['expected_output'] as Map,
+              ),
+              operatorFeedback: item['operator_feedback'] as String,
+              scoringRubric: Map<String, dynamic>.from(
+                item['scoring_rubric'] as Map,
+              ),
+              severeConditions: Map<String, dynamic>.from(
+                item['severe_failure_conditions'] as Map,
+              ),
+              approvedDatasetVersion:
+                  item['approved_in_dataset_version'] as int?,
+              retiredDatasetVersion: item['retired_in_dataset_version'] as int?,
+              approvedAt: item['approved_at'] == null
+                  ? null
+                  : DateTime.parse(item['approved_at'] as String),
+              retiredAt: item['retired_at'] == null
+                  ? null
+                  : DateTime.parse(item['retired_at'] as String),
+            );
+          })
+          .toList(growable: false);
       return AdminFeedbackDetail(
         id: row['id'] as String,
         feature: row['feature'] as String,
@@ -27,6 +97,9 @@ final class FeedbackAdminRepository {
           row['captured_output'] as Map,
         ),
         safeContext: Map<String, dynamic>.from(row['safe_context'] as Map),
+        authoritativeContext: Map<String, dynamic>.from(
+          row['authoritative_context'] as Map? ?? const {},
+        ),
         triageStatus: row['triage_status'] as String,
         reviewStatus: row['review_status'] as String,
         advisoryDiagnosis: triage['diagnosis'] as String? ?? '',
@@ -52,6 +125,24 @@ final class FeedbackAdminRepository {
         approvedAt: latest?['approved_at'] == null
             ? null
             : DateTime.parse(latest!['approved_at'] as String),
+        inputFixture: Map<String, dynamic>.from(
+          latest?['input_fixture'] as Map? ?? const {},
+        ),
+        expectedOutput: Map<String, dynamic>.from(
+          latest?['expected_output'] as Map? ?? const {},
+        ),
+        operatorFeedback: latest?['operator_feedback'] as String?,
+        scoringRubric: Map<String, dynamic>.from(
+          latest?['scoring_rubric'] as Map? ?? const {},
+        ),
+        severeFailureConditions: Map<String, dynamic>.from(
+          latest?['severe_failure_conditions'] as Map? ?? const {},
+        ),
+        routeDestination: Map<String, dynamic>.from(
+          row['route_destination'] as Map? ?? const {},
+        ),
+        reviewReason: row['review_reason'] as String?,
+        evalCases: evalCases,
       );
     } catch (_) {
       throw const AdminRequestFailed('request_failed');
@@ -59,7 +150,7 @@ final class FeedbackAdminRepository {
   }
 
   Future<AdminFeedbackReceipt> act(AdminFeedbackAction action) async {
-    final requestId = const Uuid().v4();
+    final requestId = action.requestId;
     final isCase = {
       AdminFeedbackActionKind.approve,
       AdminFeedbackActionKind.revise,
@@ -99,6 +190,12 @@ final class FeedbackAdminRepository {
       if (action.severeConditions != null)
         'severe_failure_conditions': action.severeConditions,
       if (action.reason != null) 'reason': action.reason,
+      if (action.kind == AdminFeedbackActionKind.dataIssue)
+        'destination': {
+          'lane': action.dataIssueLane,
+          if (action.dataIssueTargetId != null)
+            'target_id': action.dataIssueTargetId,
+        },
     };
     final result = await _operator.invoke(
       action.kind == AdminFeedbackActionKind.retryTriage
@@ -121,4 +218,12 @@ final class FeedbackAdminRepository {
       datasetVersion: result['dataset_version'] as int?,
     );
   }
+
+  Future<AdminFeedbackReceipt> retryTriage(FeedbackTriageRetry mutation) => act(
+    AdminFeedbackAction(
+      kind: AdminFeedbackActionKind.retryTriage,
+      feedbackId: mutation.feedbackId,
+      requestId: mutation.requestId,
+    ),
+  );
 }

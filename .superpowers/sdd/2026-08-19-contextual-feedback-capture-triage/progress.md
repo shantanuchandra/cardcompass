@@ -134,3 +134,32 @@ Ruling: Never seed an operator ground-truth editor from an LLM proposal; require
 - A live PostgREST stack was not available because the local Docker daemon was unavailable. The production PostgREST client was exercised directly and serialized the severity containment as `triage_result=cs.{\"severity\":\"high\"}` with deterministic dual ordering and range; database JSONB behavior is separately covered by disposable PostgreSQL, but a live HTTP/PostgREST round trip is Not Run.
 
 Ruling: Inject the Admin retry model, scheduler, and network transport at the handler boundary so unavailable-model recovery is deterministic with no environment permission or external request. Cost if wrong: the handler carries one optional internal dependency seam, but its registered two-argument production contract and default Gemini construction remain unchanged.
+
+## Final-review corrections
+
+- Recommendation traces now use one exact Movie Deals input/output schema at both client and Edge boundaries. Nested or unknown fields and client version spoofing are rejected; engine/model/prompt metadata is pinned by the server.
+- Accepted feedback replay is resolved from immutable original intent before mutable context lookup and always returns the original ID with the stable awaiting-triage receipt, even after triage or source expiry/change.
+- Admin2 now has a durable Feedback workspace across every review state. Feedback detail exposes authoritative context and complete persisted eval ground truth/lifecycle with Back navigation and linked Card Data routing.
+- Admin retry is one service-only transactional reset/idempotency/audit RPC. Its request identity survives transport retry, processing remains lease-recoverable, and every contiguous Gemini key is discovered through one shared helper.
+- Data-issue routing requires an exact `card_identity|benefit_enrichment` destination plus optional UUID target and renders a non-mutating Card Data deep link.
+- The shared feedback control and sheet independently enforce the 120-code-point/256-byte preview boundary for every caller.
+
+Ruling: Supersede client-supplied recommendation engine metadata with server-pinned `movie-deals-v2`, `deterministic-rule-engine`, and `movie-deals-v2` provenance after validating the exact rendered Movie Deals fixture. Cost if wrong: a new recommendation engine requires a deliberate server allowlist/version change instead of being self-declared by the app.
+
+Ruling: Supersede mutable-fixture replay equality with immutable accepted-intent equality `(user, request_id, feature, ref type, ref id, trimmed text)` and return the original stable awaiting-triage receipt. Cost if wrong: context that changes after acceptance remains historical evidence on the first row and cannot turn a safe transport replay into a new submission.
+
+Ruling: Add Feedback as a fifth Admin2 workspace because completed drafts and lifecycle records must remain discoverable after leaving the pending-only Action Inbox. Cost if wrong: the founder sees one additional navigation destination, while Inbox prioritization remains focused on pending work.
+
+Ruling: Represent data-issue linkage as a validated advisory destination and optional target UUID without mutating catalog data. Cost if wrong: the operator may need to select the exact Card Data record after following a lane-only link, preserving the no-auto-mutation boundary.
+
+Ruling: Queue admin triage retry atomically with a successful mutation receipt whose audit details explicitly record `execution_state: queued`; claim-token execution remains independently recoverable and records its eventual safe failure on the feedback row. Cost if wrong: audit success means durable queue acceptance, not synchronous model completion.
+
+### Final-review follow-up corrections
+
+- Feedback discovery is now a typed, server-paginated workspace with exact page/limit/total metadata, stable status filters, mobile-safe previous/next controls, and retained last-good content when a refresh fails. Exact Inbox deep links continue to load detail independently of the current list page.
+- Detail returns, strictly parses, and renders every available case revision in descending revision order, including the complete captured/input/expected/rubric/severe fixtures and approval/retirement lifecycle. The newest revision is explicitly marked current/actionable without hiding history.
+- Triage retry identity now belongs to an explicit `FeedbackTriageRetry` mutation created and retained by FeedbackDetail state. Repositories are stateless: repository recreation and parent rebuilds reuse the same mutation body after ambiguous response loss, and only an authoritative success clears it.
+
+Ruling: Page Feedback through deterministic server pages and retain the last successful page during refresh failure. Cost if wrong: operators use explicit Previous/Next controls instead of one unbounded list, keeping memory and gateway response sizes predictable beyond 100 records.
+
+Ruling: Make `FeedbackTriageRetry` the owner of retry request identity and keep it in the detail-state transaction until authoritative success. Cost if wrong: navigating away intentionally abandons the local retry affordance, while server-side receipt replay still prevents duplicate execution if the same mutation is retried by retained state.

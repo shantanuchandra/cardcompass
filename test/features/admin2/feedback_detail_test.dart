@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cardcompass/features/admin2/feedback/feedback_detail.dart';
 import 'package:cardcompass/features/admin2/feedback/feedback_models.dart';
+import 'package:cardcompass/features/admin2/data/admin_operator_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -199,5 +200,113 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(calls, 1);
+  });
+  testWidgets('retry identity survives a parent rebuild after response loss', (
+    tester,
+  ) async {
+    final retryIds = <String>[];
+    var attempts = 0;
+    final failed = AdminFeedbackDetail(
+      id: detail.id,
+      feature: detail.feature,
+      feedbackText: detail.feedbackText,
+      capturedOutput: detail.capturedOutput,
+      safeContext: detail.safeContext,
+      triageStatus: 'triage_failed',
+      reviewStatus: 'pending',
+      advisoryDiagnosis: '',
+      advisorySeverity: 'normal',
+      advisoryExpectedOutput: const {},
+      model: null,
+      promptVersion: null,
+      createdAt: detail.createdAt,
+    );
+    Widget build() => MaterialApp(
+      home: FeedbackDetailView(
+        detail: failed,
+        onAction: (_) async => throw const AdminRequestFailed('request_failed'),
+        onRetryTriage: (mutation) async {
+          retryIds.add(mutation.requestId);
+          if (++attempts == 1) throw const AdminRequestFailed('request_failed');
+          return const AdminFeedbackReceipt(
+            status: 'awaiting_triage',
+            caseId: null,
+            updatedAt: null,
+            datasetVersion: null,
+          );
+        },
+      ),
+    );
+    await tester.pumpWidget(build());
+    await tester.ensureVisible(find.text('Retry triage'));
+    await tester.tap(find.text('Retry triage'));
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(build());
+    await tester.ensureVisible(find.text('Retry triage'));
+    await tester.tap(find.text('Retry triage'));
+    await tester.pumpAndSettle();
+    expect(retryIds, hasLength(2));
+    expect(retryIds.first, retryIds.last);
+  });
+
+  testWidgets('detail renders every eval revision and marks the current one', (
+    tester,
+  ) async {
+    AdminEvalCase caseAt(int revision, String status) => AdminEvalCase(
+      id: '20000000-0000-4000-8000-00000000000$revision',
+      status: status,
+      revision: revision,
+      updatedAt: DateTime.utc(2026, 8, 19, revision),
+      inputFixture: {'revision': revision},
+      capturedOutput: {'captured': revision},
+      expectedOutput: {'expected': revision},
+      operatorFeedback: 'Human revision $revision',
+      scoringRubric: const {'exact': true},
+      severeConditions: const {'wrong': true},
+      approvedDatasetVersion: revision,
+      retiredDatasetVersion: status == 'retired' ? revision + 1 : null,
+      approvedAt: DateTime.utc(2026, 8, 19, revision),
+      retiredAt: status == 'retired' ? DateTime.utc(2026, 8, 20) : null,
+    );
+    final versioned = AdminFeedbackDetail(
+      id: detail.id,
+      feature: detail.feature,
+      feedbackText: detail.feedbackText,
+      capturedOutput: detail.capturedOutput,
+      safeContext: detail.safeContext,
+      triageStatus: detail.triageStatus,
+      reviewStatus: 'eval_created',
+      advisoryDiagnosis: '',
+      advisorySeverity: 'normal',
+      advisoryExpectedOutput: const {},
+      model: null,
+      promptVersion: null,
+      createdAt: detail.createdAt,
+      evalCases: [
+        caseAt(3, 'draft'),
+        caseAt(2, 'approved'),
+        caseAt(1, 'retired'),
+      ],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FeedbackDetailView(
+          detail: versioned,
+          onAction: (_) async => const AdminFeedbackReceipt(
+            status: 'ok',
+            caseId: null,
+            updatedAt: null,
+            datasetVersion: null,
+          ),
+        ),
+      ),
+    );
+    expect(
+      find.text('Eval revision 3 · current actionable revision'),
+      findsOneWidget,
+    );
+    expect(find.text('Eval revision 2'), findsOneWidget);
+    expect(find.text('Eval revision 1'), findsOneWidget);
+    expect(find.textContaining('Retired:'), findsWidgets);
   });
 }

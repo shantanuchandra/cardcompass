@@ -18,7 +18,7 @@ test('feedback storage and RPCs are private, bounded, idempotent, and audited', 
   assert.match(sql, /char_length\(feedback_text\) between 10 and 2000/);
   assert.match(sql, /create sequence public\.ai_eval_dataset_version_seq start with 1/);
   assert.match(sql, /unique \(source_feedback_id, revision\)/);
-  for (const fn of ['create_ai_output_trace', 'submit_ai_feedback', 'claim_ai_feedback_triage', 'complete_ai_feedback_triage', 'admin_review_ai_feedback', 'admin_ai_eval_case_action']) {
+  for (const fn of ['create_ai_output_trace', 'submit_ai_feedback', 'find_ai_feedback_receipt', 'claim_ai_feedback_triage', 'complete_ai_feedback_triage', 'admin_review_ai_feedback', 'admin_retry_ai_feedback_triage', 'admin_ai_eval_case_action']) {
     const start = sql.indexOf(`create or replace function public.${fn}`);
     assert.ok(start >= 0, `${fn} exists`);
     const body = sql.slice(start, sql.indexOf('\ncreate or replace function', start + 1) < 0 ? undefined : sql.indexOf('\ncreate or replace function', start + 1));
@@ -78,6 +78,12 @@ test('feedback RPCs compile and preserve replay, claims, human revisions, versio
         if claimed is null then raise exception 'failed retry not claimable'; end if;
         begin perform public.complete_ai_feedback_triage((first->>'id')::uuid,'aaaaaaaa-0000-4000-8000-000000000001',true,'{"classification":"stale"}',null); raise exception 'stale claim accepted'; exception when others then if sqlerrm<>'state_conflict' then raise; end if; end;
         perform public.complete_ai_feedback_triage((first->>'id')::uuid,(claimed->>'claim_token')::uuid,true,'{"classification":"model_error"}',null);
+        replay := public.submit_ai_feedback('10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001','recommendation','recommendation_trace',trace->>'id','This recommendation ignored my card','{"source":"changed after acceptance"}','{"expired":true}','{}');
+        if replay->>'id' <> first->>'id' or replay->>'triage_status' <> 'awaiting_triage' or (select count(*) from public.ai_feedback)<>1 then raise exception 'accepted replay was not stable'; end if;
+        if public.find_ai_feedback_receipt('10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001','recommendation','recommendation_trace',trace->>'id','This recommendation ignored my card')->>'id' <> first->>'id' then raise exception 'receipt lookup failed'; end if;
+        update public.ai_feedback set triage_status='triage_failed',triage_failure_category='model_unavailable' where id=(first->>'id')::uuid;
+        if public.admin_retry_ai_feedback_triage('10000000-0000-4000-8000-000000000002','22000000-0000-4000-8000-000000000001',(first->>'id')::uuid) is distinct from public.admin_retry_ai_feedback_triage('10000000-0000-4000-8000-000000000002','22000000-0000-4000-8000-000000000001',(first->>'id')::uuid) then raise exception 'retry replay failed'; end if;
+        if (select outcome from public.admin_audit_log where actor_id='10000000-0000-4000-8000-000000000002' and request_id='22000000-0000-4000-8000-000000000001')<>'succeeded' or (select details->>'execution_state' from public.admin_audit_log where actor_id='10000000-0000-4000-8000-000000000002' and request_id='22000000-0000-4000-8000-000000000001')<>'queued' then raise exception 'retry audit outcome'; end if;
         reviewed := public.admin_review_ai_feedback('10000000-0000-4000-8000-000000000002','20000000-0000-4000-8000-000000000002',(first->>'id')::uuid,'create_eval_draft','{"operator_feedback":"Use the current card identity","expected_output":{"card":"correct"},"scoring_rubric":{"exact":true},"severe_failure_conditions":{"wrong_card":true}}','approved fixture');
         if (select input_fixture->'authoritative_context'->'cards'->0->>'id' from public.ai_eval_cases where id=(reviewed->>'case_id')::uuid)<>'card-a' or (select source_engine_version from public.ai_eval_cases where id=(reviewed->>'case_id')::uuid)<>'engine-v1' then raise exception 'authoritative fixture not copied'; end if;
         begin perform public.admin_review_ai_feedback('10000000-0000-4000-8000-000000000002','20000000-0000-4000-8000-000000000002',(first->>'id')::uuid,'dismiss','{}','changed request'); raise exception 'admin collision accepted'; exception when others then if sqlerrm<>'request_id_collision' then raise; end if; end;

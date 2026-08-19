@@ -9,6 +9,7 @@ import {
   type StructuredTextModel,
   triageFeedback,
 } from "../_shared/feedback_triage.ts";
+import { configuredGeminiKeys } from "../_shared/gemini_generate.ts";
 
 type JsonRecord = Record<string, unknown>;
 const UUID =
@@ -193,6 +194,8 @@ function safeFeedback(rowValue: unknown, detail = false) {
       provider: safeString(row.provider, 100),
       parser_version: safeString(row.parser_version, 100),
       trace_id: safeString(row.trace_id, 100),
+      route_destination: safeJson(row.route_destination, 512),
+      review_reason: safeString(row.dismissal_reason, 1000),
     });
   }
   return base;
@@ -248,7 +251,7 @@ export async function handleFeedbackDetail(
   });
   if (audit.error) throw dbError(audit.error);
   const result = await (context.db as any).from("ai_feedback").select(
-    "id,feature_key,feedback_text,safe_input_context,output_snapshot,authoritative_context,triage_status,triage_result,review_status,provider,engine_version,model,prompt_version,parser_version,trace_id,created_at",
+    "id,feature_key,feedback_text,safe_input_context,output_snapshot,authoritative_context,triage_status,triage_result,review_status,provider,engine_version,model,prompt_version,parser_version,trace_id,route_destination,dismissal_reason,created_at",
   ).eq("id", feedbackId).range(0, 0);
   if (result.error) throw new AdminHttpError("request_failed", 500);
   if (!Array.isArray(result.data) || result.data.length === 0) {
@@ -256,15 +259,15 @@ export async function handleFeedbackDetail(
   }
   if (result.data.length !== 1) throw new AdminHttpError("request_failed", 500);
   const cases = await (context.db as any).from("ai_eval_cases").select(
-    "id,status,revision,updated_at,approved_in_dataset_version,retired_in_dataset_version,approved_at",
+    "id,status,revision,input_fixture,captured_output,expected_output,operator_feedback,scoring_rubric,severe_failure_conditions,updated_at,approved_in_dataset_version,retired_in_dataset_version,approved_at,retired_at",
   ).eq("source_feedback_id", feedbackId).order("revision", { ascending: false })
-    .range(0, 9);
+    .range(0, 999);
   if (cases.error || !Array.isArray(cases.data)) {
     throw new AdminHttpError("request_failed", 500);
   }
   return {
     feedback: safeFeedback(result.data[0], true),
-    eval_cases: cases.data.slice(0, 10).map((v: unknown) => safeJson(v, 4096)),
+    eval_cases: cases.data.map((v: unknown) => safeJson(v, 100_000)),
   };
 }
 
@@ -284,6 +287,7 @@ export async function handleFeedbackReview(
       "scoring_rubric",
       "severe_failure_conditions",
       "reason",
+      "destination",
       "request_id",
     ]),
   );
@@ -304,14 +308,26 @@ export async function handleFeedbackReview(
         16_000,
       ),
     };
-  } else {try {
+  } else {
+    try {
       reason = text(body.reason, 2, 1000);
     } catch (error) {
       if (error instanceof AdminHttpError) {
         throw new AdminHttpError("reason_required", 400);
       }
       throw error;
-    }}
+    }
+    if (action === "data_issue") {
+      const destination = object(body.destination, 512);
+      only(destination, new Set(["lane", "target_id"]));
+      if (
+        destination.lane !== "card_identity" &&
+        destination.lane !== "benefit_enrichment"
+      ) invalid();
+      if (destination.target_id != null) uuid(destination.target_id);
+      payload = { destination };
+    }
+  }
   const result = await rpc(context, "admin_review_ai_feedback", {
     _actor_id: context.actor.id,
     _request_id: requestId,
@@ -401,37 +417,13 @@ export async function handleFeedbackTriageRetry(
   only(body, new Set(["action", "feedback_id", "request_id"]));
   const id = uuid(body.feedback_id);
   const requestId = uuid(body.request_id);
-  const current = await (context.db as any).from("ai_feedback").select(
-    "id,triage_status",
-  ).eq("id", id).range(0, 0);
-  if (current.error) throw new AdminHttpError("request_failed", 500);
-  if (!Array.isArray(current.data) || current.data.length === 0) {
-    throw new AdminHttpError("not_found", 404);
-  }
-  if (record(current.data[0])?.triage_status !== "triage_failed") {
-    throw new AdminHttpError("state_conflict", 409);
-  }
-  const audit = await context.db.rpc("record_admin_read", {
+  const reset = await rpc(context, "admin_retry_ai_feedback_triage", {
     _actor_id: context.actor.id,
     _request_id: requestId,
-    _action: "feedback.triage_retry",
-    _target_type: "ai_feedback",
-    _target_id: id,
-    _details: {},
+    _feedback_id: id,
   });
-  if (audit.error) throw dbError(audit.error);
-  const reset = await (context.db as any).from("ai_feedback").update({
-    triage_status: "awaiting_triage",
-    triage_failure_category: null,
-  }).eq("id", id).eq("triage_status", "triage_failed").select("id").range(0, 0);
-  if (reset.error || !Array.isArray(reset.data) || reset.data.length !== 1) {
-    throw new AdminHttpError("state_conflict", 409);
-  }
   const model = provided?.model ?? createGeminiTriageModel({
-    apiKeys: [
-      Deno.env.get("GEMINI_API_KEY"),
-      Deno.env.get("GEMINI_API_KEY_2"),
-    ].filter((key): key is string => Boolean(key)),
+    apiKeys: configuredGeminiKeys(),
     fetch: provided?.fetch ?? fetch,
   });
   const task = triageFeedback(id, {
@@ -447,7 +439,7 @@ export async function handleFeedbackTriageRetry(
   } catch {
     task.catch(() => undefined);
   }
-  return { feedback_id: id, triage_status: "awaiting_triage" };
+  return reset;
 }
 
 export const feedbackActionHandlers: Readonly<

@@ -10,6 +10,7 @@ import 'package:cardcompass/features/admin2/data/admin_operator_repository.dart'
 import 'package:cardcompass/features/admin2/customers/customer_models.dart';
 import 'package:cardcompass/features/admin2/customers/customer_repository.dart';
 import 'package:cardcompass/features/admin2/models/admin_access.dart';
+import 'package:cardcompass/features/admin2/feedback/feedback_models.dart';
 import 'package:cardcompass/features/admin2/inbox/inbox_models.dart';
 import 'package:cardcompass/features/admin2/inbox/action_inbox_section.dart';
 import 'package:cardcompass/features/admin2/providers/admin_access_provider.dart';
@@ -139,6 +140,12 @@ Future<void> _pumpScreen(
   VoidCallback? onAccessDenied,
   List<Override> extraOverrides = const [],
   String? initialSectionQuery,
+  Future<AdminFeedbackPage> Function({
+    int page,
+    int limit,
+    String? reviewStatus,
+  })?
+  feedbackLoader,
 }) async {
   await tester.binding.setSurfaceSize(size);
   addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -161,6 +168,15 @@ Future<void> _pumpScreen(
               partialFailures: const [],
               refreshedAt: DateTime.utc(2026, 8, 19),
             ),
+            feedbackLoader:
+                feedbackLoader ??
+                ({int page = 1, int limit = 25, String? reviewStatus}) async =>
+                    AdminFeedbackPage(
+                      items: const [],
+                      page: page,
+                      limit: limit,
+                      total: 0,
+                    ),
           ),
         ),
       ),
@@ -496,6 +512,54 @@ void main() {
     }
   });
 
+  testWidgets(
+    'feedback workspace keeps completed records discoverable on mobile',
+    (tester) async {
+      final loadedPages = <int>[];
+      await _pumpScreen(
+        tester,
+        size: const Size(390, 900),
+        access: (_) async => const AdminAccess(isAdmin: true),
+        feedbackLoader:
+            ({int page = 1, int limit = 25, String? reviewStatus}) async {
+              loadedPages.add(page);
+              return AdminFeedbackPage(
+                items: [
+                  AdminFeedbackListItem(
+                    id: '10000000-0000-4000-8000-000000000001',
+                    feature: 'recommendation',
+                    reviewStatus: 'eval_created',
+                    triageStatus: 'triaged',
+                    severity: 'high',
+                    createdAt: DateTime.utc(2026, 8, 19),
+                  ),
+                ],
+                page: page,
+                limit: limit,
+                total: 101,
+              );
+            },
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('admin-section-feedback')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('feedback-workspace-list')), findsOneWidget);
+      expect(find.text('recommendation · eval_created'), findsOneWidget);
+      expect(find.text('Page 1 · 101 total'), findsOneWidget);
+      expect(
+        tester
+            .widget<OutlinedButton>(find.byKey(const Key('feedback-next-page')))
+            .onPressed,
+        isNotNull,
+      );
+      await tester.tap(find.byKey(const Key('feedback-next-page')));
+      await tester.pumpAndSettle();
+      expect(loadedPages, [1, 2]);
+      expect(find.text('Page 2 · 101 total'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('section controls are keyboard operable', (tester) async {
     await _pumpScreen(
       tester,
@@ -504,6 +568,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.tab);
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.tab);
@@ -546,7 +612,7 @@ void main() {
           .getSemantics(find.byKey(Key('admin-section-${section.name}')))
           .label;
     }).toSet();
-    expect(labels, hasLength(4));
+    expect(labels, hasLength(5));
     semantics.dispose();
   });
 

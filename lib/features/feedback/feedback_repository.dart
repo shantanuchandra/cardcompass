@@ -96,6 +96,7 @@ class FeedbackRepository {
   Future<RecommendationFeedbackTarget> createRecommendationTarget(
     RecommendationTraceInput input,
   ) async {
+    _validateRecommendation(input);
     final requestId = _nextRequestId();
     if (!_uuid.hasMatch(requestId)) throw FeedbackInvalidRequest();
     final body = <String, Object?>{
@@ -105,7 +106,6 @@ class FeedbackRepository {
       'output_snapshot': input.outputSnapshot,
       'card_ids': input.cardIds,
       'benefit_ids': input.benefitIds,
-      'engine_version': input.engineVersion,
       'request_id': requestId,
     };
     _ensureBounded(body);
@@ -120,6 +120,34 @@ class FeedbackRepository {
       throw const FeedbackFailed('request_failed');
     }
     return RecommendationFeedbackTarget(data['trace_id']! as String);
+  }
+
+  void _validateRecommendation(RecommendationTraceInput input) {
+    const inputKeys = {
+      'number_of_tickets',
+      'price_per_ticket',
+      'preferred_platform',
+      'preferred_cinema',
+    };
+    const requiredInput = {'number_of_tickets', 'price_per_ticket'};
+    const outputKeys = {
+      'selected_card_id',
+      'selected_benefit_id',
+      'savings',
+      'final_amount',
+    };
+    if (!input.safeInputContext.keys.toSet().containsAll(requiredInput) ||
+        input.safeInputContext.keys.any((key) => !inputKeys.contains(key)) ||
+        input.outputSnapshot.keys.toSet().length != outputKeys.length ||
+        !input.outputSnapshot.keys.toSet().containsAll(outputKeys) ||
+        input.safeInputContext['number_of_tickets'] is! int ||
+        input.safeInputContext['price_per_ticket'] is! num ||
+        input.outputSnapshot['savings'] is! num ||
+        input.outputSnapshot['final_amount'] is! num ||
+        input.outputSnapshot['selected_card_id'] is! String ||
+        input.outputSnapshot['selected_benefit_id'] is! String) {
+      throw FeedbackInvalidRequest();
+    }
   }
 
   Future<FeedbackApiResponse> _invoke(Map<String, Object?> body) async {

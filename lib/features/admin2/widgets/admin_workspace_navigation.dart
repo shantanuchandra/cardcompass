@@ -3,11 +3,12 @@ import 'package:flutter/material.dart';
 import '../../../core/theme/brand_components.dart';
 import '../../../core/theme/brand_tokens.dart';
 
-enum AdminWorkspaceSection { inbox, customers, cardData, system }
+enum AdminWorkspaceSection { inbox, feedback, customers, cardData, system }
 
 extension AdminWorkspaceSectionPresentation on AdminWorkspaceSection {
   String get label => switch (this) {
     AdminWorkspaceSection.inbox => 'Action Inbox',
+    AdminWorkspaceSection.feedback => 'Feedback',
     AdminWorkspaceSection.customers => 'Customers',
     AdminWorkspaceSection.cardData => 'Card Data',
     AdminWorkspaceSection.system => 'System',
@@ -15,6 +16,7 @@ extension AdminWorkspaceSectionPresentation on AdminWorkspaceSection {
 
   IconData get icon => switch (this) {
     AdminWorkspaceSection.inbox => Icons.inbox_outlined,
+    AdminWorkspaceSection.feedback => Icons.rate_review_outlined,
     AdminWorkspaceSection.customers => Icons.people_outline,
     AdminWorkspaceSection.cardData => Icons.credit_card_outlined,
     AdminWorkspaceSection.system => Icons.settings_outlined,

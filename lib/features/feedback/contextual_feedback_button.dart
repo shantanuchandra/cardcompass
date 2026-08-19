@@ -13,9 +13,12 @@ class ContextualFeedbackButton extends StatelessWidget {
   final FeedbackTarget target;
   final String preview;
 
+  String get _boundedPreview => boundedFeedbackPreview(preview);
   String get _previewLabel {
-    final separator = preview.indexOf(' · ');
-    return separator < 0 ? preview : preview.substring(0, separator);
+    final separator = _boundedPreview.indexOf(' · ');
+    return separator < 0
+        ? _boundedPreview
+        : _boundedPreview.substring(0, separator);
   }
 
   @override
@@ -28,7 +31,7 @@ class ContextualFeedbackButton extends StatelessWidget {
       onPressed: () => showContextualFeedbackSheet(
         context,
         target: target,
-        preview: preview,
+        preview: _boundedPreview,
       ),
       icon: const Icon(Icons.rate_review_outlined, size: 18),
       label: const Text('Give feedback'),

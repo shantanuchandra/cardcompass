@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:cardcompass/core/theme/app_theme.dart';
 import 'package:cardcompass/features/feedback/contextual_feedback_button.dart';
@@ -14,6 +15,39 @@ const target = TransactionFeedbackTarget(
 );
 
 void main() {
+  test('shared preview boundary caps code points and UTF-8 bytes', () {
+    final bounded = boundedFeedbackPreview(
+      '${List.filled(200, '₹').join()}transaction',
+    );
+    expect(bounded.runes.length, lessThanOrEqualTo(120));
+    expect(bounded.codeUnits.length, isPositive);
+    expect(
+      Uri.encodeComponent(bounded).replaceAll(RegExp(r'%..'), 'x').length,
+      isPositive,
+    );
+    expect(const Utf8Encoder().convert(bounded).length, lessThanOrEqualTo(256));
+  });
+
+  testWidgets('button and sheet apply the same shared preview boundary', (
+    tester,
+  ) async {
+    final raw = '${List.filled(200, '₹').join()} · transaction';
+    final bounded = boundedFeedbackPreview(raw);
+    await _pump(
+      tester,
+      repository: _FakeRepository(),
+      child: ContextualFeedbackButton(target: target, preview: raw),
+    );
+    expect(
+      find.bySemanticsLabel('Give feedback about $bounded'),
+      findsOneWidget,
+    );
+    await tester.tap(find.byType(ContextualFeedbackButton));
+    await tester.pumpAndSettle();
+    expect(find.text(bounded), findsOneWidget);
+    expect(find.text(raw), findsNothing);
+  });
+
   testWidgets('button is accessible and opens feedback for the exact preview', (
     tester,
   ) async {

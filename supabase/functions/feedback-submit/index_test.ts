@@ -53,6 +53,51 @@ Deno.test("strict validation enforces action, compatibility, UUID and bounded te
   }
 });
 
+Deno.test("recommendation traces accept only the closed Movie Deals fixture", () => {
+  const valid = {
+    action: "trace-create",
+    feature_key: "recommendation",
+    safe_input_context: { number_of_tickets: 2, price_per_ticket: 450 },
+    output_snapshot: {
+      selected_card_id: "10000000-0000-4000-8000-000000000001",
+      selected_benefit_id: "20000000-0000-4000-8000-000000000001",
+      savings: 300,
+      final_amount: 600,
+    },
+    card_ids: ["10000000-0000-4000-8000-000000000001"],
+    benefit_ids: ["20000000-0000-4000-8000-000000000001"],
+    request_id: "30000000-0000-4000-8000-000000000001",
+  };
+  assertEquals(parseFeedbackBody(valid).action, "trace-create");
+  for (
+    const poison of [
+      { ...valid, engine_version: "spoofed" },
+      {
+        ...valid,
+        safe_input_context: {
+          ...valid.safe_input_context,
+          raw_email: "secret",
+        },
+      },
+      { ...valid, output_snapshot: { ...valid.output_snapshot, history: [] } },
+      {
+        ...valid,
+        safe_input_context: {
+          ...valid.safe_input_context,
+          nested: { access_token: "secret" },
+        },
+      },
+    ]
+  ) {
+    try {
+      parseFeedbackBody(poison);
+      throw new Error("accepted");
+    } catch (error) {
+      assertEquals((error as Error).message, "invalid_request");
+    }
+  }
+});
+
 Deno.test("endpoint authenticates and checks active profile before service work", async () => {
   let serviceCalls = 0;
   const response = await handleFeedbackRequest(
@@ -119,7 +164,8 @@ Deno.test("accepted feedback returns before injected background triage", async (
         authoritativeContext: {},
         metadata: {},
       }),
-      rpc: async (_name, args) => {
+      rpc: async (name, args) => {
+        if (name === "find_ai_feedback_receipt") return null;
         submitted = args;
         return {
           id: "40000000-0000-4000-8000-000000000001",
@@ -139,4 +185,48 @@ Deno.test("accepted feedback returns before injected background triage", async (
   });
   assertEquals(background instanceof Promise, true);
   assertEquals(submitted?._metadata, { authoritative_context: {} });
+});
+
+Deno.test("accepted replay returns its stable receipt without resolving or rescheduling", async () => {
+  let privilegedWork = 0;
+  const response = await handleFeedbackRequest(
+    new Request("http://local", {
+      method: "POST",
+      headers: { authorization: "Bearer valid" },
+      body: JSON.stringify({
+        action: "feedback-submit",
+        feature_key: "card_data",
+        output_ref_type: "user_card",
+        output_ref_id: "10000000-0000-4000-8000-000000000001",
+        feedback_text: "This is the wrong card identity",
+        request_id: "20000000-0000-4000-8000-000000000001",
+      }),
+    }),
+    {
+      authenticate: async () => ({
+        id: "30000000-0000-4000-8000-000000000001",
+      }),
+      requireActive: async () => {},
+      resolveContext: async () => {
+        privilegedWork++;
+        return {} as never;
+      },
+      rpc: async (name) =>
+        name === "find_ai_feedback_receipt"
+          ? {
+            id: "40000000-0000-4000-8000-000000000001",
+            triage_status: "triaged",
+          }
+          : null,
+      waitUntil: () => {
+        privilegedWork++;
+      },
+    },
+  );
+  assertEquals(response.status, 202);
+  assertEquals(await response.json(), {
+    feedback_id: "40000000-0000-4000-8000-000000000001",
+    triage_status: "awaiting_triage",
+  });
+  assertEquals(privilegedWork, 0);
 });

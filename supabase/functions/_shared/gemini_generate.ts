@@ -25,6 +25,20 @@ export type GeminiDependencies = Readonly<{
   timeoutSignal?: (milliseconds: number) => AbortSignal;
 }>;
 
+export function configuredGeminiKeys(
+  get = (name: string) => Deno.env.get(name),
+): string[] {
+  const keys: string[] = [];
+  const first = get("GEMINI_API_KEY");
+  if (first) keys.push(first);
+  for (let index = 2;; index++) {
+    const key = get(`GEMINI_API_KEY_${index}`);
+    if (!key) break;
+    keys.push(key);
+  }
+  return keys;
+}
+
 const safeError = (
   code: "model_unavailable" | "invalid_model_output" | "provider_failed",
 ) => new Error(code);

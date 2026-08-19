@@ -77,14 +77,12 @@ class RecommendationTraceInput {
     required this.outputSnapshot,
     required this.cardIds,
     required this.benefitIds,
-    required this.engineVersion,
   });
 
   final Map<String, Object?> safeInputContext;
   final Map<String, Object?> outputSnapshot;
   final List<String> cardIds;
   final List<String> benefitIds;
-  final String engineVersion;
 }
 
 class FeedbackSubmission {

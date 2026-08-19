@@ -181,6 +181,41 @@ Deno.test("routing decisions require operator reasons", async () => {
   }
 });
 
+Deno.test("data issues require an allowlisted Card Data destination", async () => {
+  for (
+    const destination of [undefined, { lane: "customers" }, {
+      lane: "card_identity",
+      raw_email: "secret",
+    }]
+  ) {
+    await assertRejects(
+      () =>
+        handleFeedbackReview({
+          action: "feedback-review",
+          request_id: "30000000-0000-4000-8000-000000000001",
+          feedback_id: id,
+          review_action: "data_issue",
+          reason: "Catalog identity needs review",
+          destination,
+        }, rpcContext([])),
+      AdminHttpError,
+      "invalid_request",
+    );
+  }
+  const calls: Array<[string, Record<string, unknown> | undefined]> = [];
+  await handleFeedbackReview({
+    action: "feedback-review",
+    request_id: "30000000-0000-4000-8000-000000000001",
+    feedback_id: id,
+    review_action: "data_issue",
+    reason: "Catalog identity needs review",
+    destination: { lane: "card_identity", target_id: id },
+  }, rpcContext(calls, { feedback_id: id, review_status: "data_issue" }));
+  assertEquals(calls[0][1]?._payload, {
+    destination: { lane: "card_identity", target_id: id },
+  });
+});
+
 Deno.test("eval approval requires typed confirmation and observed version", async () => {
   await assertRejects(
     () =>
@@ -295,6 +330,12 @@ Deno.test({
             assertEquals(args?._succeeded, false);
             assertEquals(args?._failure_category, "model_unavailable");
           }
+          if (name === "admin_retry_ai_feedback_triage") {
+            return Promise.resolve({
+              data: { feedback_id: id, triage_status: "awaiting_triage" },
+              error: null,
+            });
+          }
           return Promise.resolve({ data: {}, error: null });
         },
         from: (table: string) => {
@@ -339,10 +380,7 @@ Deno.test({
     await background;
 
     assertEquals(events, [
-      "from:ai_feedback",
-      "rpc:record_admin_read",
-      "from:ai_feedback",
-      "update:awaiting_triage",
+      "rpc:admin_retry_ai_feedback_triage",
       "rpc:claim_ai_feedback_triage",
       "rpc:complete_ai_feedback_triage",
     ]);

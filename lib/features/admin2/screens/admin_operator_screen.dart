@@ -17,6 +17,7 @@ import '../inbox/inbox_repository.dart';
 import '../feedback/feedback_detail.dart';
 import '../feedback/feedback_repository.dart';
 import '../feedback/feedback_models.dart';
+import '../feedback/feedback_section.dart';
 import '../providers/admin_access_provider.dart';
 import '../system/system_models.dart';
 import '../system/system_repository.dart';
@@ -35,6 +36,7 @@ class AdminOperatorScreen extends ConsumerStatefulWidget {
     this.initialCardLane = CardReviewLane.identity,
     this.initialCardTargetId,
     this.initialSectionQuery,
+    this.feedbackLoader,
   });
 
   final Future<void> Function()? onAuthenticationRequired;
@@ -46,6 +48,12 @@ class AdminOperatorScreen extends ConsumerStatefulWidget {
   final CardReviewLane initialCardLane;
   final String? initialCardTargetId;
   final String? initialSectionQuery;
+  final Future<AdminFeedbackPage> Function({
+    int page,
+    int limit,
+    String? reviewStatus,
+  })?
+  feedbackLoader;
 
   @override
   ConsumerState<AdminOperatorScreen> createState() =>
@@ -135,6 +143,10 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
           child: switch (_section) {
             AdminWorkspaceSection.inbox =>
               _feedbackId == null ? _buildInbox() : _buildFeedback(),
+            AdminWorkspaceSection.feedback =>
+              _feedbackId == null
+                  ? _buildFeedbackWorkspace()
+                  : _buildFeedback(),
             AdminWorkspaceSection.cardData => _buildCardData(),
             AdminWorkspaceSection.system => _buildSystem(),
             AdminWorkspaceSection.customers => _buildCustomers(),
@@ -230,6 +242,23 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
             return receipt;
           },
           onRefresh: _reloadFeedback,
+          onRetryTriage: repository.retryTriage,
+          onBack: () => setState(() {
+            _feedbackId = null;
+            _feedbackFuture = null;
+          }),
+          onOpenCardData: (lane, targetId) {
+            setState(() {
+              _feedbackId = null;
+              _feedbackFuture = null;
+              _cardLane = lane == 'benefit_enrichment'
+                  ? CardReviewLane.benefit
+                  : CardReviewLane.identity;
+              _cardTargetId = targetId;
+              _cardSelectionRevision++;
+              _section = AdminWorkspaceSection.cardData;
+            });
+          },
           onAuthenticationRequired:
               widget.onAuthenticationRequired ??
               () => ref.read(authNotifierProvider.notifier).signOut(),
@@ -239,8 +268,28 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
     );
   }
 
+  Widget _buildFeedbackWorkspace() {
+    final loader =
+        widget.feedbackLoader ??
+        FeedbackAdminRepository(
+          ref.watch(adminOperatorRepositoryProvider),
+        ).list;
+    return KeyedSubtree(
+      key: const Key('admin-section-content'),
+      child: FeedbackSection(
+        load: loader,
+        onOpen: (id) => setState(() {
+          _feedbackId = id;
+          _feedbackFuture = null;
+          _feedbackGeneration++;
+        }),
+      ),
+    );
+  }
+
   void _openFeedback(AdminInboxDestination destination) {
     setState(() {
+      _section = AdminWorkspaceSection.feedback;
       _feedbackId = destination.feedbackId;
       _feedbackFuture = null;
       _feedbackGeneration++;

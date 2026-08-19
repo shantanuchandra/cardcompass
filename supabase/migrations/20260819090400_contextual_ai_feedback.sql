@@ -27,6 +27,7 @@ create table public.ai_feedback (
   triage_failure_category text check (triage_failure_category is null or triage_failure_category in ('model_unavailable','invalid_model_output','triage_persistence_failed')),
   review_status text not null default 'pending' check (review_status in ('pending','eval_created','data_issue','product_defect','dismissed')),
   reviewed_by uuid references auth.users(id), reviewed_at timestamptz, dismissal_reason text,
+  route_destination jsonb,
   created_at timestamptz not null default now(), updated_at timestamptz not null default now(), unique (user_id, request_id),
   check (jsonb_typeof(safe_input_context) = 'object' and octet_length(safe_input_context::text) <= 32768),
   check (jsonb_typeof(output_snapshot) = 'object' and octet_length(output_snapshot::text) <= 32768),
@@ -96,12 +97,19 @@ language plpgsql security definer set search_path = '' as $$ declare row public.
   perform pg_advisory_xact_lock(hashtextextended(_user_id::text || ':' || _request_id::text, 0));
   select * into row from public.ai_feedback where user_id=_user_id and request_id=_request_id;
   if found then
-    if row.feature_key is distinct from _feature_key or row.output_ref_type is distinct from _output_ref_type or row.output_ref_id is distinct from _output_ref_id or row.feedback_text is distinct from btrim(_feedback_text) or row.safe_input_context is distinct from _safe_input or row.output_snapshot is distinct from _output or row.authoritative_context is distinct from coalesce(_metadata->'authoritative_context','{}'::jsonb) or row.trace_id is distinct from (_metadata->>'trace_id')::uuid or row.provider is distinct from _metadata->>'provider' or row.engine_version is distinct from _metadata->>'engine_version' or row.model is distinct from _metadata->>'model' or row.prompt_version is distinct from _metadata->>'prompt_version' or row.parser_version is distinct from _metadata->>'parser_version' then raise exception 'request_id_collision'; end if;
-    return jsonb_build_object('id',row.id,'triage_status',row.triage_status);
+    if row.feature_key is distinct from _feature_key or row.output_ref_type is distinct from _output_ref_type or row.output_ref_id is distinct from _output_ref_id or row.feedback_text is distinct from btrim(_feedback_text) then raise exception 'request_id_collision'; end if;
+    return jsonb_build_object('id',row.id,'triage_status','awaiting_triage');
   end if;
   insert into public.ai_feedback(user_id,request_id,feature_key,output_ref_type,output_ref_id,feedback_text,safe_input_context,output_snapshot,authoritative_context,trace_id,provider,engine_version,model,prompt_version,parser_version)
   values(_user_id,_request_id,_feature_key,_output_ref_type,_output_ref_id,btrim(_feedback_text),_safe_input,_output,coalesce(_metadata->'authoritative_context','{}'::jsonb),(_metadata->>'trace_id')::uuid,_metadata->>'provider',_metadata->>'engine_version',_metadata->>'model',_metadata->>'prompt_version',_metadata->>'parser_version') returning * into row;
   return jsonb_build_object('id',row.id,'triage_status',row.triage_status); end $$;
+
+create or replace function public.find_ai_feedback_receipt(_user_id uuid, _request_id uuid, _feature_key text, _output_ref_type text, _output_ref_id text, _feedback_text text) returns jsonb
+language plpgsql security definer set search_path = '' as $$ declare row public.ai_feedback; begin
+  select * into row from public.ai_feedback where user_id=_user_id and request_id=_request_id;
+  if not found then return null; end if;
+  if row.feature_key is distinct from _feature_key or row.output_ref_type is distinct from _output_ref_type or row.output_ref_id is distinct from _output_ref_id or row.feedback_text is distinct from btrim(_feedback_text) then raise exception 'request_id_collision'; end if;
+  return jsonb_build_object('id',row.id,'triage_status','awaiting_triage'); end $$;
 
 create or replace function public.claim_ai_feedback_triage(_feedback_id uuid) returns jsonb
 language plpgsql security definer set search_path = '' as $$ declare row public.ai_feedback; begin
@@ -134,10 +142,25 @@ language plpgsql security definer set search_path = '' as $$ declare feedback pu
     result=jsonb_build_object('feedback_id',feedback.id,'review_status','eval_created','case_id',new_case.id,'revision',1);
   else
     if length(btrim(coalesce(_reason,'')))<2 then raise exception 'reason_required'; end if;
-    update public.ai_feedback set review_status=case when _action='dismiss' then 'dismissed' else _action end,reviewed_by=_actor_id,reviewed_at=now(),dismissal_reason=btrim(_reason),updated_at=now() where id=feedback.id;
-    result=jsonb_build_object('feedback_id',feedback.id,'review_status',case when _action='dismiss' then 'dismissed' else _action end);
+    if _action='data_issue' and (jsonb_typeof(_payload->'destination')<>'object' or exists(select 1 from jsonb_object_keys(_payload->'destination') as key where key not in ('lane','target_id')) or _payload->'destination'->>'lane' not in ('card_identity','benefit_enrichment') or ((_payload->'destination' ? 'target_id') and (_payload->'destination'->>'target_id')::uuid is null)) then raise exception 'invalid_request'; end if;
+    update public.ai_feedback set review_status=case when _action='dismiss' then 'dismissed' else _action end,reviewed_by=_actor_id,reviewed_at=now(),dismissal_reason=btrim(_reason),route_destination=case when _action='data_issue' then _payload->'destination' else null end,updated_at=now() where id=feedback.id;
+    result=jsonb_build_object('feedback_id',feedback.id,'review_status',case when _action='dismiss' then 'dismissed' else _action end,'destination',case when _action='data_issue' then _payload->'destination' else null end);
   end if;
   insert into public.admin_audit_log(actor_id,request_id,action,target_type,target_id,outcome,reason,details) values(_actor_id,_request_id,'feedback_'||_action,'ai_feedback',_feedback_id,'succeeded',nullif(btrim(coalesce(_reason,'')),''),jsonb_build_object('request',normalized_request,'result',result)); return result; end $$;
+
+create or replace function public.admin_retry_ai_feedback_triage(_actor_id uuid, _request_id uuid, _feedback_id uuid) returns jsonb
+language plpgsql security definer set search_path = '' as $$ declare feedback public.ai_feedback; prior jsonb; request jsonb; result jsonb; begin
+  perform pg_advisory_xact_lock(hashtextextended(_actor_id::text||':'||_request_id::text,0));
+  request=jsonb_build_object('feedback_id',_feedback_id);
+  select details into prior from public.admin_audit_log where actor_id=_actor_id and request_id=_request_id;
+  if found then if prior->'request' is distinct from request then raise exception 'request_id_collision'; end if; return prior->'result'; end if;
+  select * into feedback from public.ai_feedback where id=_feedback_id for update;
+  if not found then raise exception 'not_found'; end if;
+  if feedback.triage_status<>'triage_failed' then raise exception 'state_conflict'; end if;
+  update public.ai_feedback set triage_status='awaiting_triage',triage_failure_category=null,triage_claimed_at=null,triage_claim_token=null,updated_at=now() where id=_feedback_id;
+  result=jsonb_build_object('feedback_id',_feedback_id,'triage_status','awaiting_triage');
+  insert into public.admin_audit_log(actor_id,request_id,action,target_type,target_id,outcome,details) values(_actor_id,_request_id,'feedback_triage_retry','ai_feedback',_feedback_id,'succeeded',jsonb_build_object('request',request,'result',result,'execution_state','queued'));
+  return result; end $$;
 
 create or replace function public.admin_ai_eval_case_action(_actor_id uuid, _request_id uuid, _case_id uuid, _action text, _payload jsonb, _reason text, _observed_updated_at timestamptz) returns jsonb
 language plpgsql security definer set search_path = '' as $$ declare current_case public.ai_eval_cases; prior_details jsonb; normalized_request jsonb; result jsonb; version bigint; revised public.ai_eval_cases; begin
@@ -159,13 +182,17 @@ language plpgsql security definer set search_path = '' as $$ declare current_cas
 
 revoke all on function public.create_ai_output_trace(uuid,uuid,text,jsonb,jsonb,jsonb,jsonb) from public, anon, authenticated;
 revoke all on function public.submit_ai_feedback(uuid,uuid,text,text,text,text,jsonb,jsonb,jsonb) from public, anon, authenticated;
+revoke all on function public.find_ai_feedback_receipt(uuid,uuid,text,text,text,text) from public, anon, authenticated;
 revoke all on function public.claim_ai_feedback_triage(uuid) from public, anon, authenticated;
 revoke all on function public.complete_ai_feedback_triage(uuid,uuid,boolean,jsonb,text) from public, anon, authenticated;
 revoke all on function public.admin_review_ai_feedback(uuid,uuid,uuid,text,jsonb,text) from public, anon, authenticated;
+revoke all on function public.admin_retry_ai_feedback_triage(uuid,uuid,uuid) from public, anon, authenticated;
 revoke all on function public.admin_ai_eval_case_action(uuid,uuid,uuid,text,jsonb,text,timestamptz) from public, anon, authenticated;
 grant execute on function public.create_ai_output_trace(uuid,uuid,text,jsonb,jsonb,jsonb,jsonb) to service_role;
 grant execute on function public.submit_ai_feedback(uuid,uuid,text,text,text,text,jsonb,jsonb,jsonb) to service_role;
+grant execute on function public.find_ai_feedback_receipt(uuid,uuid,text,text,text,text) to service_role;
 grant execute on function public.claim_ai_feedback_triage(uuid) to service_role;
 grant execute on function public.complete_ai_feedback_triage(uuid,uuid,boolean,jsonb,text) to service_role;
 grant execute on function public.admin_review_ai_feedback(uuid,uuid,uuid,text,jsonb,text) to service_role;
+grant execute on function public.admin_retry_ai_feedback_triage(uuid,uuid,uuid) to service_role;
 grant execute on function public.admin_ai_eval_case_action(uuid,uuid,uuid,text,jsonb,text,timestamptz) to service_role;

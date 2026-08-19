@@ -13,6 +13,7 @@ import {
   createGeminiTriageModel,
   triageFeedback,
 } from "../_shared/feedback_triage.ts";
+import { configuredGeminiKeys } from "../_shared/gemini_generate.ts";
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 const cors = {
@@ -67,14 +68,7 @@ async function defaultDependencies(request: Request): Promise<Dependencies> {
     }
     return data;
   };
-  const apiKeys: string[] = [];
-  const firstKey = Deno.env.get("GEMINI_API_KEY");
-  if (firstKey) apiKeys.push(firstKey);
-  for (let index = 2;; index++) {
-    const key = Deno.env.get(`GEMINI_API_KEY_${index}`);
-    if (!key) break;
-    apiKeys.push(key);
-  }
+  const apiKeys = configuredGeminiKeys();
   const model = createGeminiTriageModel({ apiKeys, fetch });
   return {
     authenticate: async () => {
@@ -139,11 +133,26 @@ export async function handleFeedbackRequest(
         _output: { ...body.output_snapshot, provenance: "client_reported" },
         _authoritative: authoritative,
         _metadata: {
-          engine_version: body.engine_version,
-          prompt_version: body.engine_version,
+          engine_version: "movie-deals-v2",
+          model: "deterministic-rule-engine",
+          prompt_version: "movie-deals-v2",
         },
       });
       return json({ trace_id: result.id, expires_at: result.expires_at }, 201);
+    }
+    const replay = await deps.rpc("find_ai_feedback_receipt", {
+      _user_id: actor.id,
+      _request_id: body.request_id,
+      _feature_key: body.feature_key,
+      _output_ref_type: body.output_ref_type,
+      _output_ref_id: body.output_ref_id,
+      _feedback_text: body.feedback_text.trim(),
+    });
+    if (replay) {
+      return json(
+        { feedback_id: replay.id, triage_status: "awaiting_triage" },
+        202,
+      );
     }
     const context = await deps.resolveContext(
       actor.id,
@@ -169,7 +178,7 @@ export async function handleFeedbackRequest(
       (deps.triage ?? (async () => {}))(result.id).catch(() => undefined),
     );
     return json(
-      { feedback_id: result.id, triage_status: result.triage_status },
+      { feedback_id: result.id, triage_status: "awaiting_triage" },
       202,
     );
   } catch (error) {

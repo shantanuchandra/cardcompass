@@ -15,12 +15,19 @@ class FeedbackDetailView extends StatefulWidget {
     this.onRefresh,
     this.onAuthenticationRequired,
     this.onAccessDenied,
+    this.onBack,
+    this.onOpenCardData,
+    this.onRetryTriage,
   });
   final AdminFeedbackDetail detail;
   final FeedbackAdminAction onAction;
   final Future<void> Function()? onRefresh;
   final Future<void> Function()? onAuthenticationRequired;
   final VoidCallback? onAccessDenied;
+  final VoidCallback? onBack;
+  final void Function(String lane, String? targetId)? onOpenCardData;
+  final Future<AdminFeedbackReceipt> Function(FeedbackTriageRetry mutation)?
+  onRetryTriage;
   @override
   State<FeedbackDetailView> createState() => _FeedbackDetailViewState();
 }
@@ -33,6 +40,7 @@ class _FeedbackDetailViewState extends State<FeedbackDetailView> {
   String? message;
   bool busy = false;
   bool groundTruthConfirmed = false;
+  FeedbackTriageRetry? retryMutation;
   String? caseId;
   DateTime? caseUpdated;
   @override
@@ -138,14 +146,41 @@ class _FeedbackDetailViewState extends State<FeedbackDetailView> {
 
   Future<void> route(AdminFeedbackActionKind kind, String title) async {
     final controller = TextEditingController();
-    final reason = await showDialog<String>(
+    var lane = 'card_identity';
+    final result = await showDialog<(String, String?)>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text(title),
-        content: TextField(
-          controller: controller,
-          maxLength: 1000,
-          decoration: const InputDecoration(labelText: 'Operator reason'),
+        content: StatefulBuilder(
+          builder: (context, setDialogState) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (kind == AdminFeedbackActionKind.dataIssue)
+                DropdownButtonFormField<String>(
+                  key: const Key('data-issue-destination'),
+                  initialValue: lane,
+                  decoration: const InputDecoration(
+                    labelText: 'Card Data destination',
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'card_identity',
+                      child: Text('Card identity'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'benefit_enrichment',
+                      child: Text('Benefit enrichment'),
+                    ),
+                  ],
+                  onChanged: (value) => setDialogState(() => lane = value!),
+                ),
+              TextField(
+                controller: controller,
+                maxLength: 1000,
+                decoration: const InputDecoration(labelText: 'Operator reason'),
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(
@@ -153,19 +188,23 @@ class _FeedbackDetailViewState extends State<FeedbackDetailView> {
             child: const Text('Cancel'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            onPressed: () => Navigator.pop(context, (
+              controller.text.trim(),
+              kind == AdminFeedbackActionKind.dataIssue ? lane : null,
+            )),
             child: const Text('Confirm'),
           ),
         ],
       ),
     );
-    if (reason == null || reason.length < 2) return;
+    if (result == null || result.$1.length < 2) return;
     await _run(() async {
       await widget.onAction(
         AdminFeedbackAction(
           kind: kind,
           feedbackId: widget.detail.id,
-          reason: reason,
+          reason: result.$1,
+          dataIssueLane: result.$2,
         ),
       );
       if (mounted) setState(() => message = '$title recorded.');
@@ -219,6 +258,16 @@ class _FeedbackDetailViewState extends State<FeedbackDetailView> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (widget.onBack != null)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  key: const Key('feedback-back'),
+                  onPressed: widget.onBack,
+                  icon: const Icon(Icons.arrow_back),
+                  label: const Text('Back to feedback'),
+                ),
+              ),
             Text(
               'Feedback review',
               style: Theme.of(context).textTheme.headlineMedium,
@@ -235,6 +284,12 @@ class _FeedbackDetailViewState extends State<FeedbackDetailView> {
             _Panel(
               title: 'Safe context',
               child: SelectableText(jsonEncode(widget.detail.safeContext)),
+            ),
+            _Panel(
+              title: 'Authoritative context',
+              child: SelectableText(
+                jsonEncode(widget.detail.authoritativeContext),
+              ),
             ),
             _Panel(
               title: 'LLM proposal · advisory',
@@ -260,10 +315,36 @@ class _FeedbackDetailViewState extends State<FeedbackDetailView> {
             ),
             _Panel(
               title: 'Eval case',
-              child: Text(
-                'Status: ${widget.detail.caseStatus ?? 'Not created'}\nRevision: ${widget.detail.caseRevision?.toString() ?? 'Unknown'}\nApproved dataset: ${widget.detail.approvedDatasetVersion?.toString() ?? 'Not approved'}\nRetired dataset: ${widget.detail.retiredDatasetVersion?.toString() ?? 'Not retired'}\nApproved: ${widget.detail.approvedAt?.toIso8601String() ?? 'Not approved'}',
+              child: SelectableText(
+                'Status: ${widget.detail.caseStatus ?? 'Not created'}\nRevision: ${widget.detail.caseRevision?.toString() ?? 'Unknown'}\nApproved dataset: ${widget.detail.approvedDatasetVersion?.toString() ?? 'Not approved'}\nRetired dataset: ${widget.detail.retiredDatasetVersion?.toString() ?? 'Not retired'}\nApproved: ${widget.detail.approvedAt?.toIso8601String() ?? 'Not approved'}\nInput fixture: ${jsonEncode(widget.detail.inputFixture)}\nExpected output: ${jsonEncode(widget.detail.expectedOutput)}\nOperator feedback: ${widget.detail.operatorFeedback ?? 'Not authored'}\nRubric: ${jsonEncode(widget.detail.scoringRubric)}\nSevere conditions: ${jsonEncode(widget.detail.severeFailureConditions)}',
               ),
             ),
+            for (var index = 0; index < widget.detail.evalCases.length; index++)
+              _EvalCasePanel(
+                value: widget.detail.evalCases[index],
+                current: index == 0,
+              ),
+            if (widget.detail.routeDestination.isNotEmpty)
+              _Panel(
+                title: 'Linked Card Data workflow',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${widget.detail.routeDestination['lane']} · ${widget.detail.reviewReason ?? ''}',
+                    ),
+                    TextButton.icon(
+                      key: const Key('open-linked-card-data'),
+                      onPressed: () => widget.onOpenCardData?.call(
+                        widget.detail.routeDestination['lane'] as String,
+                        widget.detail.routeDestination['target_id'] as String?,
+                      ),
+                      icon: const Icon(Icons.open_in_new),
+                      label: const Text('Open Card Data'),
+                    ),
+                  ],
+                ),
+              ),
             _Panel(
               title: 'Operator ground truth',
               child: Column(
@@ -365,16 +446,26 @@ class _FeedbackDetailViewState extends State<FeedbackDetailView> {
                         ? null
                         : () async {
                             await _run(() async {
-                              await widget.onAction(
-                                AdminFeedbackAction(
-                                  kind: AdminFeedbackActionKind.retryTriage,
-                                  feedbackId: widget.detail.id,
-                                ),
+                              retryMutation ??= FeedbackTriageRetry.create(
+                                widget.detail.id,
                               );
-                              if (mounted) {
-                                setState(
-                                  () => message = 'Triage retry scheduled.',
+                              final mutation = retryMutation!;
+                              if (widget.onRetryTriage case final retry?) {
+                                await retry(mutation);
+                              } else {
+                                await widget.onAction(
+                                  AdminFeedbackAction(
+                                    kind: AdminFeedbackActionKind.retryTriage,
+                                    feedbackId: mutation.feedbackId,
+                                    requestId: mutation.requestId,
+                                  ),
                                 );
+                              }
+                              if (mounted) {
+                                setState(() {
+                                  retryMutation = null;
+                                  message = 'Triage retry scheduled.';
+                                });
                               }
                             });
                           },
@@ -385,6 +476,20 @@ class _FeedbackDetailViewState extends State<FeedbackDetailView> {
           ],
         ),
       ),
+    ),
+  );
+}
+
+class _EvalCasePanel extends StatelessWidget {
+  const _EvalCasePanel({required this.value, required this.current});
+  final AdminEvalCase value;
+  final bool current;
+  @override
+  Widget build(BuildContext context) => _Panel(
+    title:
+        'Eval revision ${value.revision}${current ? ' · current actionable revision' : ''}',
+    child: SelectableText(
+      'Status: ${value.status}\nCaptured output: ${jsonEncode(value.capturedOutput)}\nInput fixture: ${jsonEncode(value.inputFixture)}\nExpected output: ${jsonEncode(value.expectedOutput)}\nOperator feedback: ${value.operatorFeedback}\nRubric: ${jsonEncode(value.scoringRubric)}\nSevere conditions: ${jsonEncode(value.severeConditions)}\nApproved dataset: ${value.approvedDatasetVersion ?? 'Not approved'}\nRetired dataset: ${value.retiredDatasetVersion ?? 'Not retired'}\nApproved: ${value.approvedAt?.toIso8601String() ?? 'Not approved'}\nRetired: ${value.retiredAt?.toIso8601String() ?? 'Not retired'}',
     ),
   );
 }

@@ -86,11 +86,15 @@ void main() {
 
       final target = await repository.createRecommendationTarget(
         const RecommendationTraceInput(
-          safeInputContext: {'merchant': 'Cinema'},
-          outputSnapshot: {'winner': 'Card A'},
+          safeInputContext: {'number_of_tickets': 2, 'price_per_ticket': 400},
+          outputSnapshot: {
+            'selected_card_id': '30000000-0000-4000-8000-000000000001',
+            'selected_benefit_id': '40000000-0000-4000-8000-000000000001',
+            'savings': 200,
+            'final_amount': 600,
+          },
           cardIds: ['30000000-0000-4000-8000-000000000001'],
           benefitIds: ['40000000-0000-4000-8000-000000000001'],
-          engineVersion: 'movie-deals-v2',
         ),
       );
 
@@ -98,11 +102,15 @@ void main() {
       expect(api.requests.single, {
         'action': 'trace-create',
         'feature_key': 'recommendation',
-        'safe_input_context': {'merchant': 'Cinema'},
-        'output_snapshot': {'winner': 'Card A'},
+        'safe_input_context': {'number_of_tickets': 2, 'price_per_ticket': 400},
+        'output_snapshot': {
+          'selected_card_id': '30000000-0000-4000-8000-000000000001',
+          'selected_benefit_id': '40000000-0000-4000-8000-000000000001',
+          'savings': 200,
+          'final_amount': 600,
+        },
         'card_ids': ['30000000-0000-4000-8000-000000000001'],
         'benefit_ids': ['40000000-0000-4000-8000-000000000001'],
-        'engine_version': 'movie-deals-v2',
         'request_id': firstId,
       });
       expect(api.requests.single.keys, isNot(contains('model')));
@@ -124,7 +132,6 @@ void main() {
           outputSnapshot: {'explanation': List.filled(33000, 'x').join()},
           cardIds: const [],
           benefitIds: const [],
-          engineVersion: 'movie-deals-v2',
         ),
       ),
       throwsA(isA<FeedbackInvalidRequest>()),
@@ -203,11 +210,18 @@ void main() {
             )
           : repository.createRecommendationTarget(
               const RecommendationTraceInput(
-                safeInputContext: {},
-                outputSnapshot: {},
-                cardIds: [],
-                benefitIds: [],
-                engineVersion: 'movie-deals-v2',
+                safeInputContext: {
+                  'number_of_tickets': 2,
+                  'price_per_ticket': 400,
+                },
+                outputSnapshot: {
+                  'selected_card_id': '30000000-0000-4000-8000-000000000001',
+                  'selected_benefit_id': '40000000-0000-4000-8000-000000000001',
+                  'savings': 100,
+                  'final_amount': 700,
+                },
+                cardIds: ['30000000-0000-4000-8000-000000000001'],
+                benefitIds: ['40000000-0000-4000-8000-000000000001'],
               ),
             );
 

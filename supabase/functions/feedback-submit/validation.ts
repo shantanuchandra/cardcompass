@@ -25,6 +25,45 @@ function jsonBytes(value: unknown, max: number) {
   ) throw new Error("invalid_request");
 }
 
+function finite(value: unknown, min = 0): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= min;
+}
+
+function recommendationFixture(input: unknown, output: unknown) {
+  const safe = object(input);
+  const snapshot = object(output);
+  const safeKeys = ["number_of_tickets", "price_per_ticket"];
+  if (Object.hasOwn(safe, "preferred_platform")) {
+    safeKeys.push("preferred_platform");
+  }
+  if (Object.hasOwn(safe, "preferred_cinema")) {
+    safeKeys.push("preferred_cinema");
+  }
+  exact(safe, safeKeys);
+  exact(snapshot, [
+    "selected_card_id",
+    "selected_benefit_id",
+    "savings",
+    "final_amount",
+  ]);
+  if (
+    !Number.isInteger(safe.number_of_tickets) ||
+    !finite(safe.number_of_tickets, 1) ||
+    !finite(safe.price_per_ticket) ||
+    (Object.hasOwn(safe, "preferred_platform") &&
+      (typeof safe.preferred_platform !== "string" ||
+        [...safe.preferred_platform].length > 80)) ||
+    (Object.hasOwn(safe, "preferred_cinema") &&
+      (typeof safe.preferred_cinema !== "string" ||
+        [...safe.preferred_cinema].length > 80)) ||
+    typeof snapshot.selected_card_id !== "string" ||
+    !uuid.test(snapshot.selected_card_id) ||
+    typeof snapshot.selected_benefit_id !== "string" ||
+    !uuid.test(snapshot.selected_benefit_id) ||
+    !finite(snapshot.savings) || !finite(snapshot.final_amount)
+  ) throw new Error("invalid_request");
+}
+
 export type FeedbackBody =
   | {
     action: "feedback-submit";
@@ -41,7 +80,6 @@ export type FeedbackBody =
     output_snapshot: Record<string, unknown>;
     card_ids: string[];
     benefit_ids: string[];
-    engine_version: string;
     request_id: string;
   };
 
@@ -82,16 +120,14 @@ export function parseFeedbackBody(raw: unknown): FeedbackBody {
       "output_snapshot",
       "card_ids",
       "benefit_ids",
-      "engine_version",
       "request_id",
     ]);
     jsonBytes(value.safe_input_context, 16384);
     jsonBytes(value.output_snapshot, 32768);
+    recommendationFixture(value.safe_input_context, value.output_snapshot);
     if (
       value.feature_key !== "recommendation" ||
-      typeof value.request_id !== "string" || !uuid.test(value.request_id) ||
-      typeof value.engine_version !== "string" ||
-      value.engine_version.length < 1 || value.engine_version.length > 100
+      typeof value.request_id !== "string" || !uuid.test(value.request_id)
     ) throw new Error("invalid_request");
     for (const ids of [value.card_ids, value.benefit_ids]) {
       if (
@@ -99,6 +135,14 @@ export function parseFeedbackBody(raw: unknown): FeedbackBody {
         ids.some((id) => typeof id !== "string" || !uuid.test(id))
       ) throw new Error("invalid_request");
     }
+    const cardIds = value.card_ids as string[];
+    const benefitIds = value.benefit_ids as string[];
+    const snapshot = value.output_snapshot as Record<string, unknown>;
+    if (
+      cardIds.length !== 1 || benefitIds.length !== 1 ||
+      cardIds[0] !== snapshot.selected_card_id ||
+      benefitIds[0] !== snapshot.selected_benefit_id
+    ) throw new Error("invalid_request");
     return value as FeedbackBody;
   }
   throw new Error("invalid_request");

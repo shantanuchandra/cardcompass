@@ -1,10 +1,23 @@
 import { assertEquals, assertRejects } from "@std/assert";
-import { generateGemini } from "./gemini_generate.ts";
+import { configuredGeminiKeys, generateGemini } from "./gemini_generate.ts";
 
 const input = {
   model: "gemini-3.6-flash",
   payload: { contents: [{ parts: [{ text: "hello" }] }] },
 };
+
+Deno.test("Gemini key discovery loads every contiguous configured key", () => {
+  const values: Record<string, string> = {
+    GEMINI_API_KEY: "one",
+    GEMINI_API_KEY_2: "two",
+    GEMINI_API_KEY_3: "three",
+  };
+  assertEquals(configuredGeminiKeys((name) => values[name]), [
+    "one",
+    "two",
+    "three",
+  ]);
+});
 
 Deno.test("Gemini transport rotates keys on 429 and reports parsed usage", async () => {
   const urls: string[] = [];

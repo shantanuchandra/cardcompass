@@ -19,7 +19,7 @@ Future<void> showContextualFeedbackSheet(
     repository: FeedbackRepositoryScope.of(context),
     child: ContextualFeedbackSheet(
       target: target,
-      preview: preview,
+      preview: boundedFeedbackPreview(preview),
       recreateTarget: recreateTarget,
     ),
   ),

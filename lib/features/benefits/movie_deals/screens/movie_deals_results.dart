@@ -966,7 +966,6 @@ class _RecommendationFeedbackActionState
         },
         cardIds: [candidate.cardId],
         benefitIds: [candidate.benefitId],
-        engineVersion: 'movie-deals-v2',
       ),
     );
   }
