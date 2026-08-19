@@ -49,3 +49,17 @@ Ruling: Treat dashboard entry—not provider construction—as the queued-recove
 Ruling: Coalesce only concurrent initializations for the same opaque session key and clear the coalescing handle after completion; do not memoize an empty result across entries. Cost if wrong: rapid duplicate entry signals share one claim, while a later entry intentionally issues another bounded claim.
 
 Ruling: Derive the session key only from the live in-memory Supabase session object and user ID, never from a request row or persisted token, and suppress stale-generation UI writes after an identity change. Cost if wrong: a token refresh creates a new recovery generation and may issue one additional claim, but cannot reuse another user's captured provider token.
+
+## Tasks 1–3 lease fix
+
+- Added a ten-minute server lease and rotated opaque UUID claim token to each customer operation attempt.
+- The claim RPC atomically selects the oldest queued or owner-scoped expired claim with `FOR UPDATE SKIP LOCKED`; completion requires the current `auth.uid()`, request ID, current claim token, and claimed state, then clears the lease.
+- Owner completion remains valid just after expiry until a reclaim rotates the token. After reclaim, an older attempt cannot complete.
+- On a Flutter identity change during claim, no new-user completion is attempted and no stale token executes; the original owner can reclaim on a later Dashboard entry after expiry.
+- Disposable PostgreSQL passed 5/5 including cross-user completion denial, expiry/reclaim token rotation, stale-token denial, current-token completion, and concurrent single claiming. Focused Flutter lifecycle passed 31/31.
+
+Ruling: Use a ten-minute database lease plus a rotated UUID claim token as the attempt capability, returning only request ID, operation type, and that opaque token. Cost if wrong: an interrupted recovery waits up to ten minutes before the same user can reclaim it, while no provider credential or customer content is stored.
+
+Ruling: Allow the owning attempt to complete after nominal lease expiry only while its token remains current; reclaim atomically rotates the token and makes every older completion fail `state_conflict`. Cost if wrong: a just-finished long sync can commit without racing the clock, but the first reclaim decisively supersedes it.
+
+Ruling: If auth identity changes while claim is awaiting, suppress execution and do not attempt completion as the new user; leave the owner-scoped lease to expire. Cost if wrong: the original owner may wait one lease interval, but another identity cannot alter or execute that request.

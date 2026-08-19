@@ -64,10 +64,12 @@ test('customer operation tables are private and expose only narrow role-specific
     assert.doesNotMatch(sql, new RegExp(`grant [^;]+ on public\\.${table} to (?:anon|authenticated)`));
   }
   assert.match(sql, /operation_type text not null check \(operation_type in \('gmail_sync'\)\)/);
+  assert.match(sql, /claim_token uuid/);
+  assert.match(sql, /claim_expires_at timestamptz/);
   assert.match(sql, /create unique index[\s\S]*?where status in \('queued', 'claimed'\)/);
   assert.doesNotMatch(sql, /account_deletion_requests[\s\S]{0,300}on delete cascade/);
   assert.match(sql, /grant execute on function public\.claim_my_admin_operation_request\(text\) to authenticated/);
-  assert.match(sql, /grant execute on function public\.complete_my_admin_operation_request\(uuid, boolean, text\) to authenticated/);
+  assert.match(sql, /grant execute on function public\.complete_my_admin_operation_request\(uuid, uuid, boolean, text\) to authenticated/);
   assert.match(sql, /grant execute on function public\.admin_customer_action\([\s\S]*?timestamptz\s*\) to service_role/);
 });
 
@@ -78,10 +80,16 @@ test('user operation RPCs derive and enforce the current active owner', async ()
   assert.match(claim, /auth\.uid\(\)/);
   assert.match(claim, /public\.current_user_is_active\(\)/);
   assert.match(claim, /status = 'queued'/);
+  assert.match(claim, /status = 'claimed'[\s\S]*claim_expires_at <= now\(\)/);
   assert.match(claim, /for update skip locked/);
+  assert.match(claim, /new_claim_token uuid := gen_random_uuid\(\)/);
+  assert.match(claim, /claim_token = new_claim_token/);
+  assert.match(claim, /claim_expires_at = now\(\) \+ interval '10 minutes'/);
   assert.match(complete, /auth\.uid\(\)/);
   assert.match(complete, /public\.current_user_is_active\(\)/);
   assert.match(complete, /status = 'claimed'/);
+  assert.match(complete, /claim_token = _claim_token/);
+  assert.match(complete, /claim_token = null[\s\S]*claim_expires_at = null/);
   assert.match(complete, /reauthentication_required[\s\S]*gmail_unavailable[\s\S]*processing_failed/);
 });
 
@@ -242,11 +250,42 @@ test('inactive profile immediately blocks an unchanged authenticated database se
       select id from public.admin_customer_operation_requests
       where user_id = '${userId}';
     `);
+    const firstClaimToken = psql(disposableConnection, `
+      select claim_token from public.admin_customer_operation_requests
+      where id = '${operationId}';
+    `);
+    assert.throws(() => psql(disposableConnection, `
+      set role authenticated;
+      select set_config('request.jwt.claim.sub', '${newUserId}', false);
+      select public.complete_my_admin_operation_request(
+        '${operationId}', '${firstClaimToken}', false, 'gmail_unavailable'
+      );
+      reset role;
+    `), /state_conflict/);
+    psql(disposableConnection, `
+      update public.admin_customer_operation_requests
+      set claim_expires_at = now() - interval '1 second'
+      where id = '${operationId}';
+    `);
+    psql(disposableConnection, claimSql);
+    const currentClaimToken = psql(disposableConnection, `
+      select claim_token from public.admin_customer_operation_requests
+      where id = '${operationId}';
+    `);
+    assert.notEqual(currentClaimToken, firstClaimToken);
+    assert.throws(() => psql(disposableConnection, `
+      set role authenticated;
+      select set_config('request.jwt.claim.sub', '${userId}', false);
+      select public.complete_my_admin_operation_request(
+        '${operationId}', '${firstClaimToken}', false, 'gmail_unavailable'
+      );
+      reset role;
+    `), /state_conflict/);
     psql(disposableConnection, `
       set role authenticated;
       select set_config('request.jwt.claim.sub', '${userId}', false);
       select public.complete_my_admin_operation_request(
-        '${operationId}', false, 'gmail_unavailable'
+        '${operationId}', '${currentClaimToken}', false, 'gmail_unavailable'
       );
       reset role;
     `);

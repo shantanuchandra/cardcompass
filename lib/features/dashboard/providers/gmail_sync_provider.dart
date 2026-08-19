@@ -87,15 +87,21 @@ class GmailUnavailableException implements Exception {
 }
 
 class AdminOperationRequest {
-  const AdminOperationRequest({required this.id, required this.operationType});
+  const AdminOperationRequest({
+    required this.id,
+    required this.operationType,
+    required this.claimToken,
+  });
   final String id;
   final String operationType;
+  final String claimToken;
 }
 
 abstract interface class AdminOperationRequestRepository {
   Future<AdminOperationRequest?> claimNext();
   Future<void> complete({
     required String requestId,
+    required String claimToken,
     required bool succeeded,
     String? safeFailureCategory,
   });
@@ -115,18 +121,22 @@ class _SupabaseAdminOperationRequestRepository
     if (value == null) return null;
     if (value is! Map ||
         value['id'] is! String ||
-        value['operation_type'] != 'gmail_sync') {
+        value['operation_type'] != 'gmail_sync' ||
+        value['claim_token'] is! String ||
+        (value['claim_token'] as String).isEmpty) {
       throw const FormatException('Malformed operation request.');
     }
     return AdminOperationRequest(
       id: value['id'] as String,
       operationType: value['operation_type'] as String,
+      claimToken: value['claim_token'] as String,
     );
   }
 
   @override
   Future<void> complete({
     required String requestId,
+    required String claimToken,
     required bool succeeded,
     String? safeFailureCategory,
   }) async {
@@ -134,6 +144,7 @@ class _SupabaseAdminOperationRequestRepository
       'complete_my_admin_operation_request',
       params: {
         '_request_id': requestId,
+        '_claim_token': claimToken,
         '_succeeded': succeeded,
         '_safe_failure_category': safeFailureCategory,
       },
@@ -306,13 +317,9 @@ class GmailSyncNotifier extends AsyncNotifier<GmailSyncResult?> {
           .claimNext();
       if (request == null) return;
       if (!_isCurrent(session, generation)) {
-        await ref
-            .read(adminOperationRequestRepositoryProvider)
-            .complete(
-              requestId: request.id,
-              succeeded: false,
-              safeFailureCategory: 'reauthentication_required',
-            );
+        // The claim belongs to whichever authenticated owner the RPC saw.
+        // After an identity change, never complete it as the new user; its
+        // short server lease makes it safely reclaimable by the owner.
         return;
       }
       state = const AsyncValue.loading();
@@ -360,6 +367,7 @@ class GmailSyncNotifier extends AsyncNotifier<GmailSyncResult?> {
     } finally {
       await repository.complete(
         requestId: request.id,
+        claimToken: request.claimToken,
         succeeded: succeeded,
         safeFailureCategory: category,
       );

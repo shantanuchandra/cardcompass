@@ -79,6 +79,8 @@ create table public.admin_customer_operation_requests (
     'reauthentication_required', 'gmail_unavailable', 'processing_failed'
   )),
   claimed_at timestamptz,
+  claim_expires_at timestamptz,
+  claim_token uuid,
   completed_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -118,6 +120,7 @@ as $$
 declare
   current_user_id uuid := (select auth.uid());
   claimed public.admin_customer_operation_requests%rowtype;
+  new_claim_token uuid := gen_random_uuid();
 begin
   if current_user_id is null or _operation_type <> 'gmail_sync'
      or not public.current_user_is_active() then
@@ -127,23 +130,37 @@ begin
   from public.admin_customer_operation_requests as request
   where request.user_id = current_user_id
     and request.operation_type = _operation_type
-    and request.status = 'queued'
+    and (
+      request.status = 'queued'
+      or (request.status = 'claimed' and request.claim_expires_at <= now())
+    )
   order by request.created_at, request.id
   for update skip locked
   limit 1;
   if not found then return null; end if;
   update public.admin_customer_operation_requests
-  set status = 'claimed', claimed_at = now(), updated_at = now()
-  where id = claimed.id;
+  set status = 'claimed', claimed_at = now(),
+      claim_expires_at = now() + interval '10 minutes',
+      claim_token = new_claim_token, updated_at = now()
+  where id = claimed.id
+  returning * into claimed;
   return pg_catalog.jsonb_build_object(
     'id', claimed.id,
-    'operation_type', claimed.operation_type
+    'operation_type', claimed.operation_type,
+    'claim_token', claimed.claim_token
   );
 end;
 $$;
 
+-- Remove the pre-lease development signature if this migration is replayed
+-- against a local database that saw an earlier draft.
+drop function if exists public.complete_my_admin_operation_request(
+  uuid, boolean, text
+);
+
 create or replace function public.complete_my_admin_operation_request(
   _request_id uuid,
+  _claim_token uuid,
   _succeeded boolean,
   _safe_failure_category text default null
 ) returns void
@@ -154,7 +171,7 @@ as $$
 declare current_user_id uuid := (select auth.uid());
 begin
   if current_user_id is null or not public.current_user_is_active()
-     or _request_id is null or _succeeded is null then
+     or _request_id is null or _claim_token is null or _succeeded is null then
     raise exception 'access_denied';
   end if;
   if (_succeeded and _safe_failure_category is not null)
@@ -166,8 +183,10 @@ begin
   update public.admin_customer_operation_requests
   set status = case when _succeeded then 'completed' else 'failed' end,
       safe_failure_category = _safe_failure_category,
-      completed_at = now(), updated_at = now()
-  where id = _request_id and user_id = current_user_id and status = 'claimed';
+      completed_at = now(), claim_token = null, claim_expires_at = null,
+      updated_at = now()
+  where id = _request_id and user_id = current_user_id and status = 'claimed'
+    and claim_token = _claim_token;
   if not found then raise exception 'state_conflict'; end if;
 end;
 $$;
@@ -325,13 +344,13 @@ $$;
 
 revoke all on function public.claim_my_admin_operation_request(text)
   from public, anon, service_role;
-revoke all on function public.complete_my_admin_operation_request(uuid, boolean, text)
+revoke all on function public.complete_my_admin_operation_request(uuid, uuid, boolean, text)
   from public, anon, service_role;
 revoke all on function public.admin_customer_action(
   uuid, uuid, text, uuid, jsonb, text, timestamptz
 ) from public, anon, authenticated;
 grant execute on function public.claim_my_admin_operation_request(text) to authenticated;
-grant execute on function public.complete_my_admin_operation_request(uuid, boolean, text) to authenticated;
+grant execute on function public.complete_my_admin_operation_request(uuid, uuid, boolean, text) to authenticated;
 grant execute on function public.admin_customer_action(
   uuid, uuid, text, uuid, jsonb, text, timestamptz
 ) to service_role;

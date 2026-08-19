@@ -36,3 +36,10 @@
 - Same-session concurrent entry signals coalesce; completed empty claims are not cached, so a later visit can claim newly queued work.
 - Auth identity/session changes invalidate the active generation; stale operations cannot overwrite the new session's UI state or execute using a pre-change token after claim returns.
 - Sequential-user, sign-out/sign-in, later-queued, concurrent initialization, completion-category, and real Dashboard mount tests pass without polling or request-supplied identity/token data.
+
+## Review fix: reclaimable operation leases
+
+- `admin_customer_operation_requests` now holds a ten-minute `claim_expires_at` and opaque UUID `claim_token`; reclaim rotates the token under the row lock.
+- Completion remains owner-derived through `auth.uid()` and requires the current token. Cross-user, stale-token, and non-claimed completions fail closed; successful completion clears lease state.
+- The client carries only the opaque request/token pair. It never completes after identity changes and an ownership-aware fake proves the original user can re-enter and reclaim after expiry.
+- Live disposable PostgreSQL validates concurrency, cross-user denial, expiry, rotation, stale denial, and current completion without contacting any remote Supabase project.
