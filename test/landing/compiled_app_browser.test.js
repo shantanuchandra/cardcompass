@@ -45,8 +45,14 @@ async function connect(url) {
   await once(socket, 'open');
   let id = 0;
   const pending = new Map();
+  const listeners = new Map();
   socket.addEventListener('message', (event) => {
     const message = JSON.parse(event.data);
+    if (!message.id && message.method) {
+      for (const resolve of listeners.get(message.method) ?? []) resolve(message.params);
+      listeners.delete(message.method);
+      return;
+    }
     const request = pending.get(message.id);
     if (!request) return;
     pending.delete(message.id);
@@ -54,6 +60,13 @@ async function connect(url) {
   });
   return {
     close: () => socket.close(),
+    once(method) {
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`Missing CDP event: ${method}`)), 10_000);
+        const wrapped = (value) => { clearTimeout(timer); resolve(value); };
+        listeners.set(method, [...(listeners.get(method) ?? []), wrapped]);
+      });
+    },
     send(method, params = {}) {
       const requestId = ++id;
       return new Promise((resolve, reject) => {
@@ -68,18 +81,35 @@ async function evaluate(cdp, expression) {
   if (exceptionDetails) throw new Error(exceptionDetails.text);
   return result.value;
 }
-async function navigate(cdp, url, expectedPath) {
-  await cdp.send('Page.navigate', { url });
+async function navigate(cdp, url, expectedPath, expectedSemantic) {
+  const loaded = cdp.once('Page.loadEventFired');
+  const navigation = await cdp.send('Page.navigate', { url });
+  assert.ok(navigation.loaderId, `navigation must create a new document: ${url}`);
+  await loaded;
   let state;
+  let stable = 0;
   for (let i = 0; i < 200; i += 1) {
-    state = await evaluate(cdp, `({path: location.pathname, search: location.search, title: document.title, flutter: Boolean(document.querySelector('flutter-view, flt-glass-pane')), body: document.body?.innerText?.slice(0, 200)})`);
-    if (state.path === expectedPath && state.flutter && state.title === 'CardCompass') return state;
+    state = await evaluate(cdp, `({
+      path: location.pathname,
+      search: location.search,
+      title: document.title,
+      flutter: Boolean(document.querySelector('flutter-view, flt-glass-pane')),
+      semantics: [...document.querySelectorAll('[aria-label]')].map((node) => node.getAttribute('aria-label')).filter(Boolean).join(' | '),
+      body: document.body?.innerText?.slice(0, 500) ?? ''
+    })`);
+    const evidence = `${state.semantics} | ${state.body}`;
+    const settled = state.path === expectedPath && state.flutter &&
+      state.title === 'CardCompass' && evidence.includes(expectedSemantic) &&
+      evidence.includes('cardcompass-browser-fixture-only') &&
+      !/page not found|no routes for location/i.test(evidence);
+    stable = settled ? stable + 1 : 0;
+    if (stable >= 3) return state;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`Compiled Flutter app did not render ${expectedPath}: ${JSON.stringify(state)}`);
 }
 
-test('compiled PathUrlStrategy app renders direct base paths without a doubled prefix', { timeout: 60_000 }, async (t) => {
+test('compiled test bootstrap proves auth redirects and protected PathUrlStrategy destinations', { timeout: 60_000 }, async (t) => {
   if (typeof WebSocket === 'undefined') return t.skip('Node WebSocket support is required');
   const chrome = await firstExisting(chromeCandidates);
   if (!chrome) return t.skip('Chrome/Chromium is required');
@@ -103,12 +133,17 @@ test('compiled PathUrlStrategy app renders direct base paths without a doubled p
   await cdp.send('Runtime.enable');
 
   const origin = `http://127.0.0.1:${serverPort}`;
-  await navigate(cdp, `${origin}/app/login`, '/app/login');
-  const directAdmin = await navigate(cdp, `${origin}/app/admin2`, '/app/admin2');
+  await navigate(cdp, `${origin}/app/login`, '/app/login', 'Continue with Google');
+  for (const protectedPath of ['admin2', 'cards', 'settings']) {
+    const redirected = await navigate(cdp, `${origin}/app/${protectedPath}`, '/app/login', 'Continue with Google');
+    assert.equal(redirected.path.includes('/app/app'), false);
+  }
+
+  const directAdmin = await navigate(cdp, `${origin}/app/admin2?fixture_auth=true`, '/app/admin2', 'Action Inbox');
   assert.equal(directAdmin.path.includes('/app/app'), false);
-  await navigate(cdp, `${origin}/app/cards`, '/app/cards');
-  await navigate(cdp, `${origin}/app/settings`, '/app/settings');
-  const legacy = await navigate(cdp, `${origin}/app/admin/catalog-review`, '/app/admin2');
+  await navigate(cdp, `${origin}/app/cards?fixture_auth=true`, '/app/cards', 'My Cards');
+  await navigate(cdp, `${origin}/app/settings?fixture_auth=true`, '/app/settings', 'Settings');
+  const legacy = await navigate(cdp, `${origin}/app/admin/catalog-review?discarded=true`, '/app/admin2', 'Card Data');
   assert.equal(legacy.search, '?section=card-data');
   assert.equal((await fetch(`${origin}/app/admin2.js`)).status, 404);
   assert.equal((await fetch(`${origin}/app/missing.js`)).status, 404);

@@ -4,6 +4,7 @@ import 'core/theme/app_theme.dart';
 import 'core/router/app_router.dart';
 import 'core/providers/supabase_provider.dart';
 import 'features/feedback/feedback_repository.dart';
+import 'features/auth/providers/auth_provider.dart';
 
 /// Global navigator key so services (Gmail sync's password/DOB dialogs) can
 /// show a dialog mid-async-flow without a BuildContext being threaded
@@ -18,6 +19,7 @@ class CardCompassApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final router = ref.watch(routerProvider);
+    final auth = ref.watch(authNotifierProvider);
     return MaterialApp.router(
       title: 'CardCompass',
       debugShowCheckedModeBanner: false,
@@ -29,7 +31,9 @@ class CardCompassApp extends ConsumerWidget {
           final path = routeInformation.uri.path;
           final content = child ?? const SizedBox.shrink();
 
-          if (path != '/login') {
+          final marketingSurface =
+              path == '/login' || (path == '/' && auth.isLoading);
+          if (!marketingSurface) {
             return FeedbackRepositoryScope.lazy(
               repositoryFactory: () => FeedbackRepository(
                 SupabaseFeedbackApi(ref.read(supabaseClientProvider)),
