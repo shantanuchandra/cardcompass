@@ -47,12 +47,29 @@ const fixture = (
           url: "https://bank.example/card",
           snippet: "Regalia Gold by HDFC. Annual fee INR 2500.",
           facts: {
-            card_id: "card-1",
-            card_name: "Regalia Gold",
-            bank: "HDFC",
-            network: "Visa",
-            annual_fee: 2500,
-            joining_fee: 2500,
+            evaluation_mode: "catalog_identity_validation",
+            provenance_claims: {
+              issuer: "HDFC",
+              card_name: "Regalia Gold",
+              network: "Visa",
+              aliases: ["Regalia Gold"],
+            },
+            catalog_reference: {
+              id: "card-1",
+              name: "Regalia Gold",
+              bank: "HDFC",
+              network: "Visa",
+              annual_fee: 2500,
+              joining_fee: 2500,
+            },
+          },
+        }, {
+          id: "source-benefit-1",
+          url: "https://bank.example/benefit",
+          snippet: "Four lounge visits",
+          facts: {
+            evaluation_mode: "benefit_extraction",
+            catalog_reference_id: "card-1",
             benefits: [{
               id: "benefit-1",
               dedupe_key: "lounge",
@@ -251,7 +268,10 @@ Deno.test("candidate receives only deeply sanitized fixture inside a fixed, deli
         },
         sources: [{
           id: "source-1",
-          field_paths: ["facts.card_name", "facts.annual_fee"],
+          field_paths: [
+            "facts.provenance_claims.card_name",
+            "facts.catalog_reference.annual_fee",
+          ],
         }],
       });
     },
@@ -395,7 +415,10 @@ Deno.test("real captured-shape candidates succeed for every feature family", asy
         },
         sources: [{
           id: "source-1",
-          field_paths: ["facts.card_name", "facts.annual_fee"],
+          field_paths: [
+            "facts.provenance_claims.card_name",
+            "facts.catalog_reference.annual_fee",
+          ],
         }],
       }],
       [
@@ -493,7 +516,7 @@ Deno.test("grounded benefit extraction accepts the exact official benefit only",
     mode: "benefits",
     card_id: "card-1",
     benefits: [benefit],
-    sources: [{ id: "source-1", field_paths: ["facts.benefits"] }],
+    sources: [{ id: "source-benefit-1", field_paths: ["facts.benefits"] }],
   };
   assertEquals(
     (await executeEvalCase(

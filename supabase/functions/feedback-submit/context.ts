@@ -125,15 +125,36 @@ export async function resolveFeedbackContext(
         ) && source.extracted_fields &&
         typeof source.extracted_fields === "object"
       )
-      .slice(0, 20).map((source: Record<string, unknown>) => ({
-        id: source.id,
-        url: source.source_url,
-        snippet: boundedText(
-          JSON.stringify(source.source_evidence ?? {}),
-          2000,
-        ),
-        facts: source.extracted_fields,
-      }));
+      .slice(0, 20).map((source: Record<string, unknown>) => {
+        const extracted = source.extracted_fields as Record<string, unknown>;
+        return {
+          id: source.id,
+          url: source.source_url,
+          snippet: boundedText(
+            JSON.stringify(source.source_evidence ?? {}),
+            2000,
+          ),
+          facts: {
+            evaluation_mode: "catalog_identity_validation",
+            provenance_claims: {
+              issuer: extracted.issuer,
+              card_name: extracted.cardName,
+              network: extracted.network ?? null,
+              aliases: Array.isArray(extracted.aliases)
+                ? extracted.aliases.slice(0, 50)
+                : [],
+            },
+            catalog_reference: {
+              id: catalog.id,
+              name: catalog.card_name,
+              bank: catalog.bank,
+              network: catalog.network,
+              annual_fee: catalog.annual_fee,
+              joining_fee: catalog.joining_fee,
+            },
+          },
+        };
+      });
     for (const benefit of benefits as Record<string, unknown>[]) {
       if (
         typeof benefit.source_url === "string" &&
@@ -144,7 +165,8 @@ export async function resolveFeedbackContext(
           url: benefit.source_url,
           snippet: boundedText(benefit.description, 2000),
           facts: {
-            card_id: row.catalog_card_id,
+            evaluation_mode: "benefit_extraction",
+            catalog_reference_id: row.catalog_card_id,
             benefits: [benefitOutputFact(benefit)],
           },
         });

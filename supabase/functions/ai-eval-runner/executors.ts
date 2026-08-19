@@ -326,7 +326,12 @@ function validateCardData(
       )
     ) return false;
   }
-  const facts = official.map((source) => source.facts).find(isRecord);
+  const expectedMode = output.mode === "benefits"
+    ? "benefit_extraction"
+    : "catalog_identity_validation";
+  const facts = official.map((source) => source.facts).find((value) =>
+    isRecord(value) && value.evaluation_mode === expectedMode
+  ) as Record<string, unknown> | undefined;
   if (!facts) return false;
   if (output.mode === "identity") {
     if (
@@ -341,11 +346,18 @@ function validateCardData(
         "joining_fee",
       ])
     ) return false;
-    return output.card.id === facts.card_id &&
-      output.card.name === facts.card_name && output.card.bank === facts.bank &&
-      output.card.network === facts.network &&
-      output.card.annual_fee === facts.annual_fee &&
-      output.card.joining_fee === facts.joining_fee &&
+    if (
+      facts.evaluation_mode !== "catalog_identity_validation" ||
+      !isRecord(facts.provenance_claims) || !isRecord(facts.catalog_reference)
+    ) return false;
+    const claims = facts.provenance_claims, reference = facts.catalog_reference;
+    return output.card.id === reference.id &&
+      output.card.name === reference.name &&
+      output.card.bank === reference.bank &&
+      output.card.network === (claims.network ?? reference.network) &&
+      output.card.annual_fee === reference.annual_fee &&
+      output.card.joining_fee === reference.joining_fee &&
+      claims.card_name === reference.name && claims.issuer === reference.bank &&
       finiteMoney(output.card.annual_fee) &&
       finiteMoney(output.card.joining_fee);
   }
@@ -353,7 +365,9 @@ function validateCardData(
     output.mode !== "benefits" ||
     !exactKeys(output, ["mode", "card_id", "benefits", "sources"]) ||
     !Array.isArray(output.benefits) || output.benefits.length === 0 ||
-    output.benefits.length > 50 || output.card_id !== facts.card_id
+    output.benefits.length > 50 ||
+    facts.evaluation_mode !== "benefit_extraction" ||
+    output.card_id !== facts.catalog_reference_id
   ) return false;
   const sourceBenefits = Array.isArray(facts.benefits)
     ? facts.benefits.filter(isRecord)

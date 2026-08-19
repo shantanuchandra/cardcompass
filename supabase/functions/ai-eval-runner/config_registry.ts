@@ -41,7 +41,7 @@ const configs: Readonly<Record<EvalConfigKey, EvalConfig>> = Object.freeze({
     provider: "gemini",
     model: "gemini-3.6-flash",
     promptVersion: "card-data-v1",
-    taskScope: "card_identity_and_benefit_extraction",
+    taskScope: "card_catalog_identity_validation_and_benefit_extraction",
     maxInputTokens: 8192,
     maxOutputTokens: 4096,
     estimatedMaximumCostUsd: 0.02,

@@ -98,3 +98,11 @@ Ruling: A card case is runnable from stored feedback only when an HTTPS official
 Ruling: Preserve production Movie Deals platform/cinema semantics in evals: platform mismatch changes confidence and cinema is informational, not an eligibility cutoff. Cost if wrong: stricter platform/cinema evaluation requires a separately reviewed product-behavior change rather than silently changing the evaluator oracle.
 
 Ruling: Publish recommendation scope as fixed-selection explanation and arithmetic, never ranking. Cost if wrong: Task 7 must label these results accordingly and cannot claim recommendation-selection improvement from this configuration.
+
+### Task 4 production-provenance correction
+
+- Card provenance now parses the production discovery schema exactly: `issuer`, `cardName`, `network`, and bounded `aliases`. It never assumes provenance contains catalog IDs or fees.
+- Runnable identity evidence explicitly separates `provenance_claims` from a server-selected `catalog_reference`. Its mode and config scope are catalog identity validation, not catalog selection.
+- Benefit evidence remains separately discriminated and official-source grounded. The query-shaped integration test uses the exact card-discovery `extracted_fields` payload and validates resolver-to-executor behavior.
+
+Ruling: Card identity eval scope validates an already selected catalog reference against official provenance; it does not measure catalog selection. Cost if wrong: selection quality requires a future fixture with a bounded candidate set and a distinct configuration scope.
