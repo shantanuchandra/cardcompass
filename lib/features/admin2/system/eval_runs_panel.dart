@@ -93,15 +93,21 @@ class _EvalRunsPanelState extends State<EvalRunsPanel> {
       var id = _selectedId;
       if (id != null && !page.items.any((r) => r.id == id)) id = null;
       id ??= page.items.firstOrNull?.id;
+      final selectionChanged = id != _selectedId;
+      final resultPage = selectionChanged ? 1 : _resultPage;
       final detail = id == null
           ? null
-          : await widget.source.detail(id, resultPage: _resultPage);
+          : await widget.source.detail(id, resultPage: resultPage);
       if (!mounted || generation != _generation) return;
       setState(() {
         _configs = values[0] as EvalConfigCatalog;
         _runs = page;
         _selectedId = id;
+        _resultPage = resultPage;
         _detail = detail;
+        if (_selectedCandidate(values[0] as EvalConfigCatalog) == null) {
+          _candidateKey = null;
+        }
         _loading = false;
         _refreshing = false;
       });
@@ -138,9 +144,7 @@ class _EvalRunsPanelState extends State<EvalRunsPanel> {
   Future<void> _start() async {
     final catalog = _configs;
     if (catalog == null || catalog.candidates.isEmpty) return;
-    final candidate = catalog.candidates
-        .where((value) => value.key == _candidateKey)
-        .firstOrNull;
+    final candidate = _selectedCandidate(catalog);
     if (candidate == null) return;
     final max = _maximumCases, latency = _latencyCeilingMs;
     final cost =
@@ -289,7 +293,7 @@ class _EvalRunsPanelState extends State<EvalRunsPanel> {
                   onPressed:
                       _acting ||
                           (_configs?.datasetVersion ?? 0) < 1 ||
-                          _candidateKey == null
+                          _selectedCandidate(_configs) == null
                       ? null
                       : _start,
                   icon: const Icon(Icons.play_arrow),
@@ -340,9 +344,7 @@ class _EvalRunsPanelState extends State<EvalRunsPanel> {
   Widget _startControls() {
     final catalog = _configs;
     final candidates = catalog?.candidates ?? const <EvalConfig>[];
-    final selected = candidates
-        .where((c) => c.key == _candidateKey)
-        .firstOrNull;
+    final selected = _selectedCandidate(catalog);
     final perCase = selected == null
         ? 0.0
         : selected.estimatedMaximumCostUsd +
@@ -641,10 +643,11 @@ class _EvalRunsPanelState extends State<EvalRunsPanel> {
   Future<void> _loadResultPage(int page) async {
     final id = _selectedId;
     if (id == null) return;
+    final generation = ++_generation;
     setState(() => _acting = true);
     try {
       final detail = await widget.source.detail(id, resultPage: page);
-      if (!mounted || _selectedId != id) return;
+      if (!mounted || generation != _generation || _selectedId != id) return;
       setState(() {
         _detail = detail;
         _resultPage = page;
@@ -657,6 +660,11 @@ class _EvalRunsPanelState extends State<EvalRunsPanel> {
       if (mounted) setState(() => _acting = false);
     }
   }
+
+  EvalConfig? _selectedCandidate(EvalConfigCatalog? catalog) => catalog
+      ?.candidates
+      .where((candidate) => candidate.key == _candidateKey)
+      .firstOrNull;
 }
 
 class _DecisionChip extends StatelessWidget {

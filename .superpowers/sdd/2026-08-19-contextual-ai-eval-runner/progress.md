@@ -275,3 +275,12 @@ Ruling: Require the end user to select the Card Data evaluation mode at capture 
 Ruling: Start evaluations only from an explicitly selected server-advertised candidate and show the full reviewed preflight contract before confirmation. Cost if wrong: the operator performs one selection per run, preventing an accidental first-config or wrong-family run.
 
 Ruling: Page case results independently from run pages while retaining last-good detail on failure. Cost if wrong: one additional detail request is made per 25 results, but evidence beyond the first page remains inspectable without unbounded responses.
+
+### Whole-plan re-review correction
+
+- Any implicit run change caused by run pagination, filtering, refresh, or removal now resets case evidence to page 1 before fetching detail. One shared generation fence covers list/detail refresh and result-page requests, so an older page response cannot overwrite a newer selection.
+- Candidate selection resolves against the latest catalog for both button eligibility and mutation dispatch. A removed or empty candidate list clears stale selection and fails closed.
+
+Ruling: Bind result-page state to the resolved run ID and fence every detail request in the same generation sequence. Cost if wrong: changing runs always incurs a page-1 detail fetch, preventing stale high-page evidence from creating an empty or misleading detail state.
+
+Ruling: Resolve Start eligibility and dispatch from the same current catalog candidate. Cost if wrong: a catalog refresh may require one explicit reselection, but a removed configuration can never remain actionable.

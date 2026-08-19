@@ -17,8 +17,8 @@ EvalConfig config() => const EvalConfig(
   estimatedMaximumCostUsd: .03,
   scopeNote: 'Does not evaluate ranking.',
 );
-EvalRun run({String status = 'completed'}) => EvalRun(
-  id: runId,
+EvalRun run({String status = 'completed', String id = runId}) => EvalRun(
+  id: id,
   datasetVersion: 12,
   feature: EvalFeature.recommendation,
   taskScope: 'fixed_selection_explanation_and_arithmetic',
@@ -67,6 +67,9 @@ final class EvalTestSource implements EvalDataSource {
   String? lastStatus;
   Object? nextError;
   final detailRequests = <(String, int)>[];
+  String currentRunId = runId;
+  bool emptyCandidates = false;
+  bool pageSpecificRuns = false;
   @override
   Future<EvalConfigCatalog> configs() async => EvalConfigCatalog(
     datasetVersion: 12,
@@ -92,31 +95,33 @@ final class EvalTestSource implements EvalDataSource {
       estimatedMaximumCostUsd: .01,
       scopeNote: null,
     ),
-    candidates: [
-      const EvalConfig(
-        key: 'gemini-statement',
-        role: EvalConfigRole.candidate,
-        feature: EvalFeature.statementProcessing,
-        provider: 'gemini',
-        model: 'flash',
-        promptVersion: 's1',
-        taskScope: 'statement_classification',
-        estimatedMaximumCostUsd: .01,
-        scopeNote: null,
-      ),
-      const EvalConfig(
-        key: 'gemini-card',
-        role: EvalConfigRole.candidate,
-        feature: EvalFeature.cardData,
-        provider: 'gemini',
-        model: 'flash',
-        promptVersion: 'c1',
-        taskScope: 'catalog_identity_and_benefit_extraction',
-        estimatedMaximumCostUsd: .02,
-        scopeNote: null,
-      ),
-      config(),
-    ],
+    candidates: emptyCandidates
+        ? []
+        : [
+            const EvalConfig(
+              key: 'gemini-statement',
+              role: EvalConfigRole.candidate,
+              feature: EvalFeature.statementProcessing,
+              provider: 'gemini',
+              model: 'flash',
+              promptVersion: 's1',
+              taskScope: 'statement_classification',
+              estimatedMaximumCostUsd: .01,
+              scopeNote: null,
+            ),
+            const EvalConfig(
+              key: 'gemini-card',
+              role: EvalConfigRole.candidate,
+              feature: EvalFeature.cardData,
+              provider: 'gemini',
+              model: 'flash',
+              promptVersion: 'c1',
+              taskScope: 'catalog_identity_and_benefit_extraction',
+              estimatedMaximumCostUsd: .02,
+              scopeNote: null,
+            ),
+            config(),
+          ],
   );
   @override
   Future<EvalRunsPage> runs({
@@ -131,7 +136,15 @@ final class EvalTestSource implements EvalDataSource {
       nextError = null;
       throw e;
     }
-    return EvalRunsPage(items: [run()], page: page, limit: limit, total: 1);
+    final id = pageSpecificRuns
+        ? '00000000-0000-4000-8000-${page.toString().padLeft(12, '0')}'
+        : currentRunId;
+    return EvalRunsPage(
+      items: [run(id: id)],
+      page: page,
+      limit: limit,
+      total: pageSpecificRuns ? 41 : 1,
+    );
   }
 
   @override
@@ -302,6 +315,66 @@ void main() {
     await tester.pumpAndSettle();
     expect(source.detailRequests.last, (runId, 2));
     expect(find.text('Results 26–50 of 126'), findsOneWidget);
+  });
+  testWidgets('implicit run replacement resets case evidence to page one', (
+    tester,
+  ) async {
+    final source = EvalTestSource();
+    await pump(tester, source);
+    await tester.tap(find.byKey(const Key('eval-results-next')));
+    await tester.pumpAndSettle();
+    source.currentRunId = '00000000-0000-4000-8000-000000000011';
+    await tester.tap(find.byKey(const Key('eval-status-filter')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Queued').last);
+    await tester.pumpAndSettle();
+    expect(source.detailRequests.last, (source.currentRunId, 1));
+    expect(find.text('Results 1–25 of 126'), findsOneWidget);
+  });
+  testWidgets('run-list pagination selects new run at result page one', (
+    tester,
+  ) async {
+    final source = EvalTestSource()..pageSpecificRuns = true;
+    await pump(tester, source);
+    await tester.tap(find.byKey(const Key('eval-results-next')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Next evaluation runs'));
+    await tester.pumpAndSettle();
+    expect(source.detailRequests.last, (
+      '00000000-0000-4000-8000-000000000002',
+      1,
+    ));
+    await tester.tap(find.byTooltip('Previous evaluation runs'));
+    await tester.pumpAndSettle();
+    expect(source.detailRequests.last, (
+      '00000000-0000-4000-8000-000000000001',
+      1,
+    ));
+  });
+  testWidgets('catalog removal clears stale candidate and disables start', (
+    tester,
+  ) async {
+    final source = EvalTestSource();
+    await pump(tester, source);
+    await tester.tap(find.byKey(const Key('eval-config-select')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Card data').last);
+    await tester.pumpAndSettle();
+    source.emptyCandidates = true;
+    await tester.tap(find.byKey(const Key('eval-refresh')));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Select an available candidate to preflight the run.'),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.widgetWithText(FilledButton, 'Start evaluation'),
+          )
+          .onPressed,
+      isNull,
+    );
   });
   testWidgets(
     'stale refresh retains loaded run and auth effects are forwarded',
