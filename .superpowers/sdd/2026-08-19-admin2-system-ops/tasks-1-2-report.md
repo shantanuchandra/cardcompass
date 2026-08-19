@@ -13,7 +13,8 @@
 - GREEN: migration/foundation contracts 4/4 passed.
 - GREEN: focused benefit-enrichment tests 20/20 passed, including paused ordering, safe fail-closed behavior, strict boolean parsing, and pilot/manual exclusion.
 
-## Risks and follow-up
+## Review fix
 
-- The isolated PostgreSQL harness remains opt-in in the adjacent Card Data contract; this slice statically verifies the same hardened serialization/canonical-replay pattern but does not add a second duplicated harness.
+- Extracted reusable credential-safe PostgreSQL process primitives and added an opt-in disposable-database behavior suite for the runtime RPC.
+- Live local socket execution passed exact replay, collision, stale/missing version, monotonic timestamp, concurrent one-receipt serialization, browser denial, and audit-failure rollback checks. It also caught and fixed a PL/pgSQL `CASE` parsing defect before deployment.
 - Service-role reads rely on Supabase's `service_role` bypass-RLS role, while browser roles have neither grants nor policies.

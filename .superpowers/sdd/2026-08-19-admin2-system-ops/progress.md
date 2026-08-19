@@ -35,3 +35,11 @@ Ruling: Require a non-null observed timestamp even for idempotent state assignme
 Ruling: Check the named control after request authorization and run-mode parsing but before pilot status, catalog inventory, queue seeding, job counts, or claims; missing, errored, and malformed reads return the single safe `503 runtime_control_unavailable`. Cost if wrong: a transient control-store read failure pauses scheduled throughput until the next invocation rather than risking uncontrolled work.
 
 Ruling: Keep pilot and manual modes outside the runtime-control query entirely, preserving explicit recovery during a scheduled pause. Cost if wrong: recovery traffic can still consume provider capacity during an outage and remains an intentional operator action rather than an automatic scheduler action.
+
+## Tasks 1–2 review fix
+
+- Added a shared, loopback-only PostgreSQL harness that starts from an environment allowlist, carries credentials only through libpq environment variables, rejects unsupported URL options, supports TCP and local socket connections, and cleans an exact generated database plus only roles it created.
+- The opt-in disposable PostgreSQL run applies the foundation and runtime-control migrations and verifies exact replay, changed-request collision, missing/stale observed versions, monotonic timestamps, concurrent serialization to one receipt, browser denial, and rollback when audit insertion is forced to fail.
+- Live local socket execution passed 4/4 and removed the disposable database and temporary roles. The live compile check exposed and fixed required parentheses around the replay action's PL/pgSQL `CASE` expression.
+
+Ruling: Share the hardened PostgreSQL connection/process primitives while keeping each migration's schema fixtures and behavioral assertions local to its contract test. Cost if wrong: future harness hardening must preserve the shared helper API or update both integration suites together.

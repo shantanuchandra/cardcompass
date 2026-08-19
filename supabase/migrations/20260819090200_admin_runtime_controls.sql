@@ -64,8 +64,9 @@ begin
   from public.admin_audit_log as audit
   where audit.actor_id = _actor_id and audit.request_id = _request_id;
   if found then
-    if prior_action is distinct from
+    if prior_action is distinct from (
          case when _is_paused then 'system.control.pause' else 'system.control.resume' end
+       )
        or prior_target_type is distinct from 'runtime_control'
        or prior_target_id is distinct from _control_key
        or prior_details -> 'request' is distinct from normalized_request then
