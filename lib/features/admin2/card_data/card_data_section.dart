@@ -187,7 +187,15 @@ class _CardDataSectionState extends ConsumerState<CardDataSection> {
           operation: operation,
           targetId: item.id,
           observedUpdatedAt: item.updatedAt.toIso8601String(),
-          stagingId: item.stagingId,
+          stagingId:
+              item.lane == CardReviewLane.benefit &&
+                  {
+                    CardReviewOperation.approve,
+                    CardReviewOperation.editApprove,
+                    CardReviewOperation.reject,
+                  }.contains(operation)
+              ? item.stagingId
+              : null,
           reason: (reasonRequired || suppliedReason != null)
               ? reason.trim()
               : null,

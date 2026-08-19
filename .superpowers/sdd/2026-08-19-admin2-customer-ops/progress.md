@@ -192,3 +192,8 @@ Ruling: Fence each leased Auth-ban attempt with a newly rotated claim token, a f
 Ruling: Attribute every retry attempt and final audit to the operator and request UUID that actually claimed it, preserving the original disable identity only as provenance. Cost if wrong: the initial disable uses the durable ban-row UUID as its internal attempt request identity, while exact replay is safe and cross-target reuse fails closed.
 
 Ruling: Derive privileged-path inventories from repository state instead of hand-maintained function lists. Cost if wrong: unconventional future SQL or gateway syntax may require extending the deliberately conservative analyzer, but a new exposed definer or ungated user gateway fails review by default.
+
+## Final adjudication
+
+- The single final-fix owner resolved all whole-plan findings in `090441a`; the scoped re-review's four valid residuals were resolved by the same owner in `2599974`.
+- Controller verification passed repository-wide privileged-boundary inventories (9 passed, 1 opt-in skip) and 14 focused Customer gateway tests, including token-fenced ban replay attribution. No unresolved Customer Ops finding remains; the plan is approved to continue.
