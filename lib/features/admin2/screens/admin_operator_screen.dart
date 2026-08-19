@@ -9,6 +9,8 @@ import '../card_data/card_data_models.dart';
 import '../card_data/card_data_repository.dart';
 import '../card_data/card_data_section.dart';
 import '../data/admin_operator_repository.dart';
+import '../customers/customer_repository.dart';
+import '../customers/customers_section.dart';
 import '../inbox/action_inbox_section.dart';
 import '../inbox/inbox_models.dart';
 import '../inbox/inbox_repository.dart';
@@ -26,6 +28,7 @@ class AdminOperatorScreen extends ConsumerStatefulWidget {
     this.cardDataSource,
     this.inboxLoader,
     this.systemSource,
+    this.customerSource,
     this.initialCardLane = CardReviewLane.identity,
     this.initialCardTargetId,
   });
@@ -35,6 +38,7 @@ class AdminOperatorScreen extends ConsumerStatefulWidget {
   final CardDataSource? cardDataSource;
   final InboxLoader? inboxLoader;
   final SystemDataSource? systemSource;
+  final CustomerDataSource? customerSource;
   final CardReviewLane initialCardLane;
   final String? initialCardTargetId;
 
@@ -121,7 +125,7 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
             AdminWorkspaceSection.inbox => _buildInbox(),
             AdminWorkspaceSection.cardData => _buildCardData(),
             AdminWorkspaceSection.system => _buildSystem(),
-            _ => AdminSectionPlaceholder(title: _section.label),
+            AdminWorkspaceSection.customers => _buildCustomers(),
           },
         );
       },
@@ -181,6 +185,19 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
         onAccessDenied: widget.onAccessDenied ?? () => context.go('/app'),
         initialControlKey: _systemControlKey,
       ),
+    ),
+  );
+
+  Widget _buildCustomers() => KeyedSubtree(
+    key: const Key('admin-section-content'),
+    child: CustomersSection(
+      repository:
+          widget.customerSource ??
+          CustomerRepository(ref.watch(adminOperatorRepositoryProvider)),
+      onAuthenticationRequired:
+          widget.onAuthenticationRequired ??
+          () => ref.read(authNotifierProvider.notifier).signOut(),
+      onAccessDenied: widget.onAccessDenied ?? () => context.go('/app'),
     ),
   );
 

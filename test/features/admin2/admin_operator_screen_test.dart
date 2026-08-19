@@ -7,6 +7,8 @@ import 'package:cardcompass/features/admin2/data/admin_operator_api.dart';
 import 'package:cardcompass/features/admin2/card_data/card_data_models.dart';
 import 'package:cardcompass/features/admin2/card_data/card_data_section.dart';
 import 'package:cardcompass/features/admin2/data/admin_operator_repository.dart';
+import 'package:cardcompass/features/admin2/customers/customer_models.dart';
+import 'package:cardcompass/features/admin2/customers/customer_repository.dart';
 import 'package:cardcompass/features/admin2/models/admin_access.dart';
 import 'package:cardcompass/features/admin2/inbox/inbox_models.dart';
 import 'package:cardcompass/features/admin2/providers/admin_access_provider.dart';
@@ -81,6 +83,16 @@ final class _ShellSystemSource implements SystemDataSource {
   );
 }
 
+final class _ShellCustomerSource implements CustomerDataSource {
+  @override
+  Future<CustomerDetail> detail(String targetId) => throw UnimplementedError();
+  @override
+  Future<CustomerReceipt> mutate(CustomerMutation mutation) =>
+      throw UnimplementedError();
+  @override
+  Future<List<CustomerSummary>> search(String query) async => const [];
+}
+
 Future<void> _pumpScreen(
   WidgetTester tester, {
   required FutureOr<AdminAccess> Function(Ref ref) access,
@@ -104,6 +116,7 @@ Future<void> _pumpScreen(
             onAccessDenied: onAccessDenied,
             cardDataSource: _ShellCardSource(),
             systemSource: _ShellSystemSource(),
+            customerSource: _ShellCustomerSource(),
             inboxLoader: () async => InboxSnapshot(
               items: const [],
               partialFailures: const [],

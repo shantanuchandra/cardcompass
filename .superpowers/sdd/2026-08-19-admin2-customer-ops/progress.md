@@ -18,7 +18,7 @@ Ruling: Carry the System plan's final adjudication ledger update into the Tasks 
 
 - Tasks 1–3: implementation complete, pending review — RLS containment, operation records, active profile gate, queued Gmail recovery
 - Task 4: implementation complete, pending review — sanitized customer gateway
-- Task 5: pending — Customers workspace
+- Task 5: complete — typed, responsive Customers workspace
 - Task 6: pending — end-to-end verification
 
 ## Tasks 1–3 evidence
@@ -108,3 +108,17 @@ Ruling: Reinvoke the idempotent database RPC on disable replay to validate the o
 - Direct handler and full HTTP-router regressions cover absent, null, mismatched, and valid exact confirmation. The complete `admin-operator` suite passes 84/84.
 
 Ruling: Require the same exact typed target UUID confirmation for deletion-progress transitions as for account disablement, validate it before any RPC, and discard the redundant confirmation after validation. Cost if wrong: clients must type the full user UUID for each deletion status change, but a stale or mistargeted confirmation cannot create an audited transition and redundant sensitive identifiers do not enter the audit payload.
+
+## Task 5 evidence
+
+- RED: the focused Flutter suites failed to compile because the Customer DTO, repository, and workspace files did not exist.
+- GREEN: Customer repository and widget coverage passes 13/13; the full Admin2 suite passes 139/139; scoped analysis has no warnings or errors.
+- The repository accepts only an exact UUID or normalized three-character email fragment, generates request UUIDs, bounds the complete encoded request to 32 KiB, strictly decodes exact safe response shapes, and validates canonical mutation receipts.
+- Wide layouts provide search/list/detail at 1024 logical pixels and above. Compact layouts provide a 390-pixel drill-in. Results remain visible during refresh, and generation fencing prevents older search or detail responses from replacing newer operator intent.
+- Gmail recovery explicitly states that execution is queued for the customer's next authenticated session. Account disablement and deletion progress require a reason and exact typed target UUID. Actions are server-confirmed, double submission is disabled, conflicts refresh the latest state, and `auth_ban_pending` distinguishes immediate database containment from the outstanding Auth ban.
+
+Ruling: Preserve `auth_ban_pending` in the shared operator repository's stable-code allowlist because the Customer UI must communicate partial containment accurately instead of collapsing it to a generic request failure. Cost if wrong: one additional server code crosses the typed boundary, but it contains no raw provider detail and is covered by an exact regression.
+
+Ruling: Fence Customer search and detail loads with a monotonically increasing generation while retaining the last successful list during refresh. Cost if wrong: an obsolete response is discarded and the operator must repeat that search, rather than letting stale identity or activity metadata replace the latest request.
+
+Ruling: Use the profile `last_activity_at` and deletion `updated_at` values returned by the audited detail as the exact observed versions for profile and deletion mutations. Cost if wrong: concurrent state changes return `state_conflict` and force one refresh instead of applying against stale support context.

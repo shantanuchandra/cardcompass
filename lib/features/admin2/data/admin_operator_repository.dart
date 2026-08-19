@@ -52,6 +52,7 @@ class AdminOperatorRepository {
         'not_found',
         'operation_in_progress',
         'reason_required',
+        'auth_ban_pending',
         'request_failed',
       };
       throw AdminRequestFailed(
