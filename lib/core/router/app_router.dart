@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -5,6 +7,7 @@ import '../../features/auth/providers/auth_provider.dart';
 import '../../features/auth/screens/login_screen.dart';
 import '../../features/auth/screens/splash_screen.dart';
 import '../../features/dashboard/screens/dashboard_screen.dart';
+import '../../features/dashboard/providers/gmail_sync_provider.dart';
 import '../../features/cards/screens/cards_screen.dart';
 import '../../features/cards/screens/add_card_screen.dart';
 import '../../features/cards/screens/card_detail_screen.dart';
@@ -158,6 +161,11 @@ class _AppShell extends ConsumerWidget {
       valueListenable: _tabIndexNotifier,
       builder: (context, tabIndex, _) {
         void onTap(int i) {
+          if (i == 0) {
+            unawaited(
+              ref.read(gmailSyncProvider.notifier).initializeQueuedRecovery(),
+            );
+          }
           _tabIndexNotifier.value = i;
           context.go(_kTabPaths[i]);
         }

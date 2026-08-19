@@ -109,6 +109,18 @@ class CompletingGmailSyncNotifier extends GmailSyncNotifier {
   }
 }
 
+class _RecordingInitializationNotifier extends GmailSyncNotifier {
+  var initializationCount = 0;
+
+  @override
+  Future<GmailSyncResult?> build() async => null;
+
+  @override
+  Future<void> initializeQueuedRecovery() async {
+    initializationCount++;
+  }
+}
+
 Future<void> _pumpDashboard(
   WidgetTester tester, {
   required ValueNotifier<AppTab> selectedAppTab,
@@ -129,6 +141,13 @@ Future<void> _pumpDashboard(
     ProviderScope(
       overrides: [
         currentUserProvider.overrideWithValue(null),
+        gmailSessionSnapshotProvider.overrideWithValue(
+          const GmailSessionSnapshot(
+            userId: null,
+            sessionKey: null,
+            providerToken: null,
+          ),
+        ),
         pendingCardAssignmentsProvider.overrideWith(
           (ref) async => pendingAssignments,
         ),
@@ -221,6 +240,20 @@ Future<void> _startPendingAssignment(
 }
 
 void main() {
+  testWidgets('dashboard entry deliberately initializes queued recovery', (
+    tester,
+  ) async {
+    final selectedAppTab = ValueNotifier(AppTab.dashboard);
+    final notifier = _RecordingInitializationNotifier();
+    addTearDown(selectedAppTab.dispose);
+    await _pumpDashboard(
+      tester,
+      selectedAppTab: selectedAppTab,
+      gmailSyncNotifier: notifier,
+    );
+    expect(notifier.initializationCount, 1);
+  });
+
   testWidgets('successful sync refreshes every imported-data projection once', (
     tester,
   ) async {

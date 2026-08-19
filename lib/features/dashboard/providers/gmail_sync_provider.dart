@@ -144,9 +144,11 @@ class _SupabaseAdminOperationRequestRepository
 class GmailSessionSnapshot {
   const GmailSessionSnapshot({
     required this.userId,
+    required this.sessionKey,
     required this.providerToken,
   });
   final String? userId;
+  final String? sessionKey;
   final String? providerToken;
 }
 
@@ -164,9 +166,13 @@ final adminOperationRequestRepositoryProvider =
     );
 
 final gmailSessionSnapshotProvider = Provider<GmailSessionSnapshot>((ref) {
+  ref.watch(authStateProvider);
   final session = ref.watch(supabaseClientProvider).auth.currentSession;
   return GmailSessionSnapshot(
     userId: session?.user.id,
+    sessionKey: session == null
+        ? null
+        : '${session.user.id}:${identityHashCode(session)}',
     providerToken: session?.providerToken,
   );
 });
@@ -235,21 +241,106 @@ Future<GmailSyncResult> _executeGmailSync({
 }
 
 class GmailSyncNotifier extends AsyncNotifier<GmailSyncResult?> {
+  Future<void>? _queuedInitialization;
+  String? _initializingSessionKey;
+  String? _activeSessionKey;
+  var _generation = 0;
+
   @override
   Future<GmailSyncResult?> build() async {
-    final request = await ref
-        .read(adminOperationRequestRepositoryProvider)
-        .claimNext();
-    if (request == null) return null;
-    return _runQueued(request);
+    ref.listen<GmailSessionSnapshot>(gmailSessionSnapshotProvider, (
+      previous,
+      next,
+    ) {
+      if (previous?.sessionKey != next.sessionKey ||
+          previous?.userId != next.userId) {
+        _resetForSession(next);
+      }
+    });
+    return null;
   }
 
-  Future<GmailSyncResult?> _runQueued(AdminOperationRequest request) async {
+  void _resetForSession(GmailSessionSnapshot session) {
+    _generation++;
+    _activeSessionKey = session.sessionKey;
+    _queuedInitialization = null;
+    _initializingSessionKey = null;
+    state = const AsyncValue.data(null);
+  }
+
+  Future<void> initializeQueuedRecovery() {
+    final session = ref.read(gmailSessionSnapshotProvider);
+    if (session.userId == null || session.sessionKey == null) {
+      if (_activeSessionKey != null) _resetForSession(session);
+      return Future.value();
+    }
+    if (_activeSessionKey != session.sessionKey) {
+      _resetForSession(session);
+    }
+    final existing = _queuedInitialization;
+    if (existing != null && _initializingSessionKey == session.sessionKey) {
+      return existing;
+    }
+
+    final generation = _generation;
+    late final Future<void> initialization;
+    initialization = _initializeQueuedRecovery(session, generation)
+        .whenComplete(() {
+          if (identical(_queuedInitialization, initialization)) {
+            _queuedInitialization = null;
+            _initializingSessionKey = null;
+          }
+        });
+    _initializingSessionKey = session.sessionKey;
+    _queuedInitialization = initialization;
+    return initialization;
+  }
+
+  Future<void> _initializeQueuedRecovery(
+    GmailSessionSnapshot session,
+    int generation,
+  ) async {
+    try {
+      final request = await ref
+          .read(adminOperationRequestRepositoryProvider)
+          .claimNext();
+      if (request == null) return;
+      if (!_isCurrent(session, generation)) {
+        await ref
+            .read(adminOperationRequestRepositoryProvider)
+            .complete(
+              requestId: request.id,
+              succeeded: false,
+              safeFailureCategory: 'reauthentication_required',
+            );
+        return;
+      }
+      state = const AsyncValue.loading();
+      final result = await _runQueued(request, session);
+      if (_isCurrent(session, generation)) {
+        state = AsyncValue.data(result);
+      }
+    } catch (error, stackTrace) {
+      if (_isCurrent(session, generation)) {
+        state = AsyncValue.error(error, stackTrace);
+      }
+    }
+  }
+
+  bool _isCurrent(GmailSessionSnapshot session, int generation) {
+    return generation == _generation &&
+        session.sessionKey == _activeSessionKey &&
+        ref.read(gmailSessionSnapshotProvider).sessionKey == session.sessionKey;
+  }
+
+  Future<GmailSyncResult?> _runQueued(
+    AdminOperationRequest request,
+    GmailSessionSnapshot session,
+  ) async {
     final repository = ref.read(adminOperationRequestRepositoryProvider);
     var succeeded = false;
     String? category;
     try {
-      final session = ref.read(gmailSessionSnapshotProvider);
       if (session.userId == null || session.providerToken == null) {
         category = 'reauthentication_required';
         return null;

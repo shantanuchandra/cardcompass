@@ -104,11 +104,27 @@ final cardUrlResolverProvider = Provider<CardUrlResolver>((ref) {
   };
 });
 
-class DashboardScreen extends ConsumerWidget {
+class DashboardScreen extends ConsumerStatefulWidget {
   const DashboardScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<DashboardScreen> createState() => _DashboardScreenState();
+}
+
+class _DashboardScreenState extends ConsumerState<DashboardScreen> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(
+        ref.read(gmailSyncProvider.notifier).initializeQueuedRecovery(),
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final dashAsync = ref.watch(dashboardProvider);
     final user = ref.watch(currentUserProvider);
 

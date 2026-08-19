@@ -35,3 +35,17 @@ Ruling: Serialize each admin request key before receipt lookup, compare the comp
 Ruling: Keep queued Gmail requests credential-free and user-free beyond their server-owned target; the authenticated dashboard supplies only its current in-memory session user and provider token to the existing sync executor, then completes the request with one closed safe category. Cost if wrong: recovery waits for the customer's next authenticated dashboard session and cannot be executed centrally by an operator.
 
 Ruling: Treat absent or malformed profile state as an authentication error, but sign out only a definite inactive boolean to avoid an error-driven sign-out loop during transient database failure. Cost if wrong: a transient profile outage blocks app entry until retry without destroying the local session.
+
+## Tasks 1–3 review fix
+
+- Removed the cached one-time claim from `GmailSyncNotifier.build`; queued recovery now starts only through an explicit dashboard-entry API.
+- The Dashboard mount invokes initialization, and every navigation back to the persistent Dashboard tab invokes it again. There is no timer or background polling.
+- Initialization is keyed to an opaque in-memory session identity, coalesces duplicate concurrent calls for the same session, resets stale UI generations on auth identity/session changes, and captures the current snapshot before claim/execution.
+- A new dashboard entry retries after an earlier empty claim, while sequential users and sign-out/sign-in sessions in one provider container execute only with their own current in-memory tokens.
+- Focused provider and dashboard lifecycle coverage passed 30/30, including an identity change during the claim await that cannot execute with the stale token.
+
+Ruling: Treat dashboard entry—not provider construction—as the queued-recovery trigger, because the app shell retains Dashboard in an `IndexedStack` and a provider build can outlive many visits. Cost if wrong: each deliberate Dashboard entry performs one cheap claim RPC even when no request exists.
+
+Ruling: Coalesce only concurrent initializations for the same opaque session key and clear the coalescing handle after completion; do not memoize an empty result across entries. Cost if wrong: rapid duplicate entry signals share one claim, while a later entry intentionally issues another bounded claim.
+
+Ruling: Derive the session key only from the live in-memory Supabase session object and user ID, never from a request row or persisted token, and suppress stale-generation UI writes after an identity change. Cost if wrong: a token refresh creates a new recovery generation and may issue one additional claim, but cannot reuse another user's captured provider token.

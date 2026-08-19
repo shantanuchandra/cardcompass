@@ -29,3 +29,10 @@
 - Actual Supabase Auth banning belongs to Task 4's injected Admin client; this slice establishes the immediate database containment path only.
 - The local behavioral test uses a disposable PostgreSQL auth fixture rather than a remote Supabase project, intentionally avoiding any production mutation.
 - A customer without a valid current Google provider token receives `reauthentication_required`; recovery waits for a later operator request after the customer reauthenticates.
+
+## Review fix: dashboard/session lifecycle
+
+- Replaced provider-build claiming with `initializeQueuedRecovery()`, called on Dashboard mount and every Dashboard tab entry despite the persistent `IndexedStack`.
+- Same-session concurrent entry signals coalesce; completed empty claims are not cached, so a later visit can claim newly queued work.
+- Auth identity/session changes invalidate the active generation; stale operations cannot overwrite the new session's UI state or execute using a pre-change token after claim returns.
+- Sequential-user, sign-out/sign-in, later-queued, concurrent initialization, completion-category, and real Dashboard mount tests pass without polling or request-supplied identity/token data.
