@@ -23,7 +23,10 @@ test('eval run schema exposes bounded service-only lifecycle contracts', async (
   assert.match(sql, /per_case_max_cost_usd > 0/);
   assert.match(sql, /insufficient_fixture/);
   assert.match(sql, /failure_categories/);
-  for (const rpc of ['admin_create_ai_eval_run', 'admin_ai_eval_run_action', 'claim_ai_eval_run_batch', 'record_ai_eval_result', 'finish_ai_eval_run']) {
+  assert.match(sql, /retry_generation integer not null default 0/);
+  assert.match(sql, /attempt_generation integer not null default 0/);
+  assert.match(sql, /continuation_required/);
+  for (const rpc of ['admin_create_ai_eval_run', 'admin_ai_eval_run_action', 'claim_ai_eval_run_batch', 'record_ai_eval_result', 'finish_ai_eval_run', 'yield_ai_eval_run']) {
     assert.match(sql, new RegExp(`function public\\.${rpc}`));
     assert.match(sql, new RegExp(`grant execute on function public\\.${rpc}[^;]+ to service_role`));
   }
@@ -89,15 +92,34 @@ test('eval lifecycle is idempotent, fenced, bounded, resumable and immutable in 
     assert.equal(psql(disposable, `select execution_status||':'||attempt_count||':'||estimated_cost_usd from public.ai_eval_results where run_id='${versionTwo.run_id}' and case_id='${retryCase.case_id}';`), 'succeeded:2:0.020000');
     assert.throws(() => psql(disposable, `select public.admin_create_ai_eval_run('10000000-0000-4000-8000-000000000001',gen_random_uuid(),2,'captured-production-v1','unknown','gemini-3.6-flash-blind-judge-v1',100,1.0,25000);`), /invalid_request/);
 
+    const untouched = JSON.parse(psql(disposable, `select public.admin_create_ai_eval_run('10000000-0000-4000-8000-000000000001','60000000-0000-4000-8000-000000000077',2,'captured-production-v1','gemini-3.6-flash-card-data-v1','gemini-3.6-flash-blind-judge-v1',100,1.0,25000);`));
+    const failedBatch = JSON.parse(psql(disposable, `select public.claim_ai_eval_run_batch('${untouched.run_id}',5);`));
+    for (const item of failedBatch.cases) {
+      const payload = JSON.stringify({ feature_key: item.feature_key, baseline_output: {}, candidate_output: {}, deterministic_assertions: [], judge_verdict: {}, regression: false, severe_regression: false, estimated_cost_usd: 0, execution_status: 'failed', safe_failure_category: 'insufficient_fixture' });
+      psql(disposable, `select public.record_ai_eval_result('${untouched.run_id}','${failedBatch.lease_token}','${item.case_id}',${item.revision},'${payload}');`);
+    }
+    const yielded = JSON.parse(psql(disposable, `select public.yield_ai_eval_run('${untouched.run_id}','${failedBatch.lease_token}');`));
+    assert.equal(yielded.continuation_required, true);
+    const untouchedBatch = JSON.parse(psql(disposable, `select public.claim_ai_eval_run_batch('${untouched.run_id}',5);`));
+    assert.equal(untouchedBatch.cases.length, 2);
+    assert.equal(untouchedBatch.cases.some((item) => failedBatch.cases.some((failed) => failed.case_id === item.case_id)), false);
+
     const incomplete = JSON.parse(psql(disposable, `select public.admin_create_ai_eval_run('10000000-0000-4000-8000-000000000001','60000000-0000-4000-8000-000000000088',2,'captured-production-v1','gemini-3.6-flash-card-data-v1','gemini-3.6-flash-blind-judge-v1',100,1.0,25000);`));
     const incompleteClaim = JSON.parse(psql(disposable, `select public.claim_ai_eval_run_batch('${incomplete.run_id}',5);`));
     for (const item of incompleteClaim.cases) {
       const payload = JSON.stringify({ feature_key: item.feature_key, baseline_output: {}, candidate_output: {}, deterministic_assertions: [], judge_verdict: {}, regression: false, severe_regression: false, estimated_cost_usd: 0, execution_status: 'failed', safe_failure_category: 'insufficient_fixture' });
       psql(disposable, `select public.record_ai_eval_result('${incomplete.run_id}','${incompleteClaim.lease_token}','${item.case_id}',${item.revision},'${payload}');`);
     }
-    assert.equal(JSON.parse(psql(disposable, `select public.finish_ai_eval_run('${incomplete.run_id}','${incompleteClaim.lease_token}');`)).status, 'completed_with_failures');
+    assert.equal(JSON.parse(psql(disposable, `select public.yield_ai_eval_run('${incomplete.run_id}','${incompleteClaim.lease_token}');`)).continuation_required, true);
+    const incompleteTail = JSON.parse(psql(disposable, `select public.claim_ai_eval_run_batch('${incomplete.run_id}',5);`));
+    for (const item of incompleteTail.cases) {
+      const payload = JSON.stringify({ feature_key: item.feature_key, baseline_output: {}, candidate_output: {}, deterministic_assertions: [], judge_verdict: {}, regression: false, severe_regression: false, estimated_cost_usd: 0, execution_status: 'failed', safe_failure_category: 'insufficient_fixture' });
+      psql(disposable, `select public.record_ai_eval_result('${incomplete.run_id}','${incompleteTail.lease_token}','${item.case_id}',${item.revision},'${payload}');`);
+    }
+    assert.equal(JSON.parse(psql(disposable, `select public.yield_ai_eval_run('${incomplete.run_id}','${incompleteTail.lease_token}');`)).continuation_required, false);
+    assert.equal(JSON.parse(psql(disposable, `select public.finish_ai_eval_run('${incomplete.run_id}','${incompleteTail.lease_token}');`)).status, 'completed_with_failures');
     assert.equal(psql(disposable, `select safe_failure_category from public.ai_eval_runs where id='${incomplete.run_id}';`), 'insufficient_fixture');
-    assert.equal(JSON.parse(psql(disposable, `select aggregate_metrics from public.ai_eval_runs where id='${incomplete.run_id}';`)).failure_categories.insufficient_fixture, incompleteClaim.cases.length);
+    assert.equal(JSON.parse(psql(disposable, `select aggregate_metrics from public.ai_eval_runs where id='${incomplete.run_id}';`)).failure_categories.insufficient_fixture, incompleteClaim.cases.length + incompleteTail.cases.length);
     const cancelRequest = '60000000-0000-4000-8000-000000000003';
     psql(disposable, `select public.admin_ai_eval_run_action('10000000-0000-4000-8000-000000000001','${cancelRequest}','${versionTwo.run_id}','cancel'); select public.admin_ai_eval_run_action('10000000-0000-4000-8000-000000000001','${cancelRequest}','${versionTwo.run_id}','cancel');`);
     assert.equal(psql(disposable, `select count(*) from public.admin_audit_log where request_id='${cancelRequest}';`), '1');
@@ -117,5 +139,19 @@ test('eval lifecycle is idempotent, fenced, bounded, resumable and immutable in 
     psql(disposable, `select public.admin_ai_eval_run_action('10000000-0000-4000-8000-000000000001','${resumeRequest}','${resumable.run_id}','resume_failed');`);
     assert.equal(psql(disposable, `select status from public.ai_eval_runs where id='${resumable.run_id}';`), 'queued');
     assert.equal(psql(disposable, `select count(*) from public.ai_eval_results where run_id='${resumable.run_id}' and execution_status='succeeded';`), '1');
+
+    const failedOnly = JSON.parse(psql(disposable, `select public.admin_create_ai_eval_run('10000000-0000-4000-8000-000000000001','60000000-0000-4000-8000-000000000066',2,'captured-production-v1','gemini-3.6-flash-card-data-v1','gemini-3.6-flash-blind-judge-v1',1,1.0,25000);`));
+    const failedOnlyClaim = JSON.parse(psql(disposable, `select public.claim_ai_eval_run_batch('${failedOnly.run_id}',5);`));
+    const failedOnlyCase = failedOnlyClaim.cases[0];
+    const failedOnlyPayload = JSON.stringify({ feature_key: failedOnlyCase.feature_key, baseline_output: {}, candidate_output: {}, deterministic_assertions: [], judge_verdict: {}, regression: false, severe_regression: false, estimated_cost_usd: 0, execution_status: 'failed', safe_failure_category: 'insufficient_fixture' });
+    psql(disposable, `select public.record_ai_eval_result('${failedOnly.run_id}','${failedOnlyClaim.lease_token}','${failedOnlyCase.case_id}',${failedOnlyCase.revision},'${failedOnlyPayload}');`);
+    assert.equal(JSON.parse(psql(disposable, `select public.yield_ai_eval_run('${failedOnly.run_id}','${failedOnlyClaim.lease_token}');`)).continuation_required, false);
+    psql(disposable, `select public.finish_ai_eval_run('${failedOnly.run_id}','${failedOnlyClaim.lease_token}');`);
+    const explicitRetryRequest = '60000000-0000-4000-8000-000000000067';
+    psql(disposable, `select public.admin_ai_eval_run_action('10000000-0000-4000-8000-000000000001','${explicitRetryRequest}','${failedOnly.run_id}','resume_failed');`);
+    const explicitRetry = JSON.parse(psql(disposable, `select public.claim_ai_eval_run_batch('${failedOnly.run_id}',5);`));
+    assert.equal(explicitRetry.cases.length, 1);
+    assert.equal(explicitRetry.cases[0].case_id, failedOnlyCase.case_id);
+    assert.equal(psql(disposable, `select retry_generation from public.ai_eval_runs where id='${failedOnly.run_id}';`), '1');
   } finally { dropDisposableDatabase(admin, databaseName, createdRoles); }
 });

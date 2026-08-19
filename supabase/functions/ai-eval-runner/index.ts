@@ -262,18 +262,17 @@ export async function handleAiEvalRunnerRequest(
       });
       processed++;
     }
-    if (parsed.cases.length === 5) {
-      await deps.rpc("yield_ai_eval_run", {
-        _run_id: runId,
-        _lease_token: parsed.leaseToken,
-      });
-      let continuationAccepted = false;
+    const yielded = await deps.rpc("yield_ai_eval_run", {
+      _run_id: runId,
+      _lease_token: parsed.leaseToken,
+    });
+    const continuationRequired = parseContinuation(yielded, runId);
+    if (continuationRequired) {
       try {
         const continuation = Promise.resolve().then(() =>
           deps.scheduleContinuation(runId)
         ).catch(() => undefined);
         deps.waitUntil(continuation);
-        continuationAccepted = true;
       } catch {
         // The lease has already been yielded, so a later invocation can resume safely.
       }
@@ -281,7 +280,7 @@ export async function handleAiEvalRunnerRequest(
         run_id: runId,
         status: "running",
         processed,
-        continuation_scheduled: continuationAccepted,
+        continuation_required: true,
       }, 202);
     }
     const finished = await deps.rpc("finish_ai_eval_run", {
@@ -309,6 +308,18 @@ export async function handleAiEvalRunnerRequest(
         : 503,
     );
   }
+}
+
+function parseContinuation(value: unknown, runId: string): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("persistence_failed");
+  }
+  const receipt = value as Record<string, unknown>;
+  if (
+    receipt.run_id !== runId || receipt.status !== "running" ||
+    typeof receipt.continuation_required !== "boolean"
+  ) throw new Error("persistence_failed");
+  return receipt.continuation_required;
 }
 
 function safeFailedExecution(): EvalExecutionResult {

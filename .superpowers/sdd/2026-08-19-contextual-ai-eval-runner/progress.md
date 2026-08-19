@@ -191,3 +191,17 @@ Ruling: Yield a full-batch lease before scheduling continuation while keeping th
 Ruling: Aggregate blind-judge usage into the candidate token, latency, and cost fields and reserve its reviewed $0.01 ceiling for recommendation cases. Cost if wrong: the schema does not distinguish judge usage from candidate usage, but total metering and ceiling enforcement remain conservative and auditable.
 
 Ruling: Treat unexpected executor or scorer exceptions as a persisted `provider_failed` case with any metering accumulated before failure. Cost if wrong: configuration defects appear as safe reviewed failures rather than leaking internals or abandoning the entire resumable run.
+
+### Task 6 review corrections
+
+- Run and result storage now carry a server-owned retry generation. A result attempted in the current generation, whether succeeded or failed, is no longer eligible for automatic continuation; untouched cases remain eligible and cannot be starved by failed cases.
+- `resume_failed` atomically advances the retry generation. This makes prior failed results eligible only after the existing explicit audited operator action, while successful results remain immutable and cumulative attempt metering is preserved on failed-result upsert.
+- The fenced yield RPC computes `continuation_required` from authoritative manifest/result state. It releases the lease only when eligible untouched/retry-generation work remains; otherwise the worker retains its lease and finishes. Exactly five successes and five zero-cost failures therefore terminate without a false continuation.
+- Worker receipts expose only `continuation_required`, not a claim that asynchronous scheduling succeeded. Promise or background-registration failures leave the database in the authoritative `running`, unleased, resumable state.
+- Disposable PostgreSQL lifecycle coverage passed 2/2 against the local server, including first-batch failures followed by untouched cases and explicit failed retry. The frozen Edge suite passed 247/247; migration source suites passed 38 with 5 unrelated opt-in integrations skipped.
+
+Ruling: Use a monotonically increasing retry generation to distinguish untouched work from a terminal failed attempt. Cost if wrong: each explicit retry adds one integer generation and cumulative result update, but automatic continuation cannot loop on failures or starve later cases.
+
+Ruling: Let the fenced database yield receipt be the sole authority for `continuation_required`; never infer remaining work from a five-case batch. Cost if wrong: every processed invocation performs one additional lightweight locked eligibility query before either continuation or finish.
+
+Ruling: Report `continuation_required` rather than asynchronous scheduling success. Cost if wrong: an operator may need to observe/reinvoke a resumable running job after infrastructure failure, but the receipt never overstates delivery.

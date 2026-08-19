@@ -130,6 +130,13 @@ function dependencies(count = 1) {
       if (name === "finish_ai_eval_run") {
         return Promise.resolve({ run_id: runId, status: "completed" });
       }
+      if (name === "yield_ai_eval_run") {
+        return Promise.resolve({
+          run_id: runId,
+          status: "running",
+          continuation_required: false,
+        });
+      }
       return Promise.resolve({ status: "running" });
     },
     loadCase: (id, revision) =>
@@ -189,8 +196,13 @@ Deno.test("request body is an exact run_id object", async () => {
   }
 });
 
-Deno.test("claims at most five and records cases sequentially with metering", async () => {
+Deno.test("exactly five completed cases finish without a false continuation", async () => {
   const { deps, calls, recorded } = dependencies(5);
+  let schedules = 0;
+  deps.scheduleContinuation = () => {
+    schedules++;
+    return Promise.resolve();
+  };
   let active = 0;
   let peak = 0;
   const originalGenerate = deps.generate;
@@ -205,7 +217,7 @@ Deno.test("claims at most five and records cases sequentially with metering", as
     request({ run_id: runId }),
     deps,
   );
-  assertEquals(response.status, 202);
+  assertEquals(response.status, 200);
   assertEquals(peak, 1);
   assertEquals(calls[0], {
     name: "claim_ai_eval_run_batch",
@@ -220,6 +232,29 @@ Deno.test("claims at most five and records cases sequentially with metering", as
     candidate_output_tokens: 3,
     candidate_latency_ms: 11,
   });
+  assertEquals(schedules, 0);
+  assertEquals(calls.some((call) => call.name === "finish_ai_eval_run"), true);
+});
+
+Deno.test("five zero-cost failures become terminal and are not automatically reclaimed", async () => {
+  const { deps, calls, recorded } = dependencies(5);
+  let schedules = 0;
+  deps.generate = () => Promise.reject(new Error("provider_down"));
+  deps.scheduleContinuation = () => {
+    schedules++;
+    return Promise.resolve();
+  };
+  const response = await handleAiEvalRunnerRequest(
+    request({ run_id: runId }),
+    deps,
+  );
+  assertEquals(response.status, 200);
+  assertEquals(
+    recorded.every((value) => value.execution_status === "failed"),
+    true,
+  );
+  assertEquals(schedules, 0);
+  assertEquals(calls.some((call) => call.name === "finish_ai_eval_run"), true);
 });
 
 Deno.test("cancellation between cases stops without recording or finishing another case", async () => {
@@ -268,6 +303,16 @@ Deno.test("database cost stop is returned safely without provider work", async (
 
 Deno.test("a full batch yields its lease and schedules exactly one continuation", async () => {
   const { deps, calls } = dependencies(5);
+  const originalRpc = deps.rpc;
+  deps.rpc = (name, args) =>
+    name === "yield_ai_eval_run"
+      ? (calls.push({ name, args }),
+        Promise.resolve({
+          run_id: runId,
+          status: "running",
+          continuation_required: true,
+        }))
+      : originalRpc(name, args);
   let schedules = 0;
   let background: Promise<unknown> | undefined;
   deps.scheduleContinuation = (id) => {
@@ -281,6 +326,10 @@ Deno.test("a full batch yields its lease and schedules exactly one continuation"
     deps,
   );
   assertEquals(response.status, 202);
+  assertObjectMatch(await response.clone().json(), {
+    status: "running",
+    continuation_required: true,
+  });
   await background;
   assertEquals(schedules, 1);
   assertEquals(
@@ -292,6 +341,16 @@ Deno.test("a full batch yields its lease and schedules exactly one continuation"
 
 Deno.test("continuation scheduling failure leaves the yielded run resumable", async () => {
   const { deps, calls } = dependencies(5);
+  const originalRpc = deps.rpc;
+  deps.rpc = (name, args) =>
+    name === "yield_ai_eval_run"
+      ? (calls.push({ name, args }),
+        Promise.resolve({
+          run_id: runId,
+          status: "running",
+          continuation_required: true,
+        }))
+      : originalRpc(name, args);
   let background: Promise<unknown> | undefined;
   deps.scheduleContinuation = () => Promise.reject(new Error("scheduler_down"));
   deps.waitUntil = (promise) => background = promise;
@@ -300,6 +359,10 @@ Deno.test("continuation scheduling failure leaves the yielded run resumable", as
     deps,
   );
   assertEquals(response.status, 202);
+  assertEquals(
+    (await response.clone().json()).continuation_scheduled,
+    undefined,
+  );
   await background;
   assertEquals(
     calls.filter((call) => call.name === "yield_ai_eval_run").length,
@@ -309,6 +372,16 @@ Deno.test("continuation scheduling failure leaves the yielded run resumable", as
 
 Deno.test("background scheduler registration failure still returns a resumable receipt", async () => {
   const { deps, calls } = dependencies(5);
+  const originalRpc = deps.rpc;
+  deps.rpc = (name, args) =>
+    name === "yield_ai_eval_run"
+      ? (calls.push({ name, args }),
+        Promise.resolve({
+          run_id: runId,
+          status: "running",
+          continuation_required: true,
+        }))
+      : originalRpc(name, args);
   deps.waitUntil = () => {
     throw new Error("runtime_rejected_background_task");
   };
@@ -321,6 +394,7 @@ Deno.test("background scheduler registration failure still returns a resumable r
     run_id: runId,
     status: "running",
     processed: 5,
+    continuation_required: true,
   });
   assertEquals(
     calls.filter((call) => call.name === "yield_ai_eval_run").length,
