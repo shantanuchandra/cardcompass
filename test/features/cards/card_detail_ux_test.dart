@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:cardcompass/core/theme/app_theme.dart';
 import 'package:cardcompass/core/providers/supabase_provider.dart';
@@ -76,6 +77,7 @@ Future<void> pumpDetail(
   List<Transaction> transactions = const [],
   double currentMonthSpend = 0,
   FeedbackRepository? feedbackRepository,
+  UserCard? card,
 }) async {
   tester.view.physicalSize = const Size(390, 1200);
   tester.view.devicePixelRatio = 1;
@@ -85,7 +87,7 @@ Future<void> pumpDetail(
     ProviderScope(
       overrides: [
         currentUserProvider.overrideWithValue(null),
-        cardDetailProvider('card-1').overrideWith((ref) async => _card),
+        cardDetailProvider('card-1').overrideWith((ref) async => card ?? _card),
         cardTransactionsProvider(
           'card-1',
         ).overrideWith((ref) async => transactions),
@@ -139,6 +141,32 @@ void main() {
     expect(api.body?['output_ref_id'], _card.id);
     expect(api.body?['output_ref_type'], 'user_card');
     expect(api.body.toString(), isNot(contains('catalog-1')));
+  });
+
+  testWidgets('card feedback bounds the complete preview including bank', (
+    tester,
+  ) async {
+    final longCard = UserCard(
+      id: '40000000-0000-4000-8000-000000000002',
+      userId: 'user-1',
+      catalogCardId: 'catalog-long',
+      cardName: 'Travel Rewards',
+      bank: List.filled(80, 'International Bank शाखा').join(),
+      createdAt: DateTime(2026),
+    );
+    await pumpDetail(tester, card: longCard);
+    while (tester.takeException() != null) {}
+    await tester.tap(
+      find.bySemanticsLabel(RegExp(r'^Give feedback about Travel')),
+    );
+    await tester.pumpAndSettle();
+
+    final preview = tester
+        .widget<Text>(find.byKey(const Key('feedback-output-preview')))
+        .data!;
+    expect(preview.characters.length, lessThanOrEqualTo(120));
+    expect(utf8.encode(preview).length, lessThanOrEqualTo(256));
+    expect(tester.takeException(), isNull);
   });
   testWidgets('statement chips switch the bill and exact transaction set', (
     tester,

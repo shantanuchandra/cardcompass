@@ -169,10 +169,9 @@ class FeedbackRepositoryScope extends InheritedWidget {
 
   const FeedbackRepositoryScope.lazy({
     super.key,
-    required FeedbackRepository Function() repositoryFactory,
+    required this.repositoryFactory,
     required super.child,
-  }) : repository = null,
-       repositoryFactory = repositoryFactory;
+  }) : repository = null;
 
   final FeedbackRepository? repository;
   final FeedbackRepository Function()? repositoryFactory;

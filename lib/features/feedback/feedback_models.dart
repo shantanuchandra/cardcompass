@@ -1,3 +1,27 @@
+import 'dart:convert';
+
+/// Bounds caller-rendered feedback previews to 120 Unicode code points and
+/// 256 UTF-8 bytes. It truncates only at a code-point boundary, so both the
+/// visible sheet content and its derived semantic label share one safe value.
+String boundedFeedbackPreview(
+  String value, {
+  int maxCodePoints = 120,
+  int maxUtf8Bytes = 256,
+}) {
+  final codePoints = <int>[];
+  var bytes = 0;
+  for (final codePoint in value.runes) {
+    final encodedLength = utf8.encode(String.fromCharCode(codePoint)).length;
+    if (codePoints.length == maxCodePoints ||
+        bytes + encodedLength > maxUtf8Bytes) {
+      break;
+    }
+    codePoints.add(codePoint);
+    bytes += encodedLength;
+  }
+  return String.fromCharCodes(codePoints);
+}
+
 sealed class FeedbackTarget {
   const FeedbackTarget(this.outputRefId);
 

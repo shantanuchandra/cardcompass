@@ -258,8 +258,9 @@ class _CardDetailBody extends ConsumerWidget {
                 ),
                 ContextualFeedbackButton(
                   target: UserCardFeedbackTarget(card.id),
-                  preview:
-                      '${card.displayName.characters.take(80).toString()} · ${card.bank ?? 'Card details'}',
+                  preview: boundedFeedbackPreview(
+                    '${card.displayName} · ${card.bank ?? 'Card details'}',
+                  ),
                 ),
                 const SizedBox(height: BrandSpacing.md),
                 _DetailStatsRow(

@@ -92,3 +92,13 @@ Ruling: Treat an in-flight feedback submission as an immutable UI transaction: f
 Ruling: Create recommendation traces per selected rendered candidate, only when its feedback control opens, and capture only that candidate's card/benefit IDs and displayed monetary result. Cost if wrong: cross-candidate comparison context is intentionally unavailable to eval triage, preventing unrelated catalog/history leakage.
 
 Ruling: Install the production feedback repository only beneath authenticated `/app` routes while keeping `FeedbackRepositoryScope` as the explicit widget-test override seam. Cost if wrong: a future non-`/app` authenticated route must opt into the scope before showing contextual feedback.
+
+### Task 6 review corrections
+
+- A recreated recommendation trace is now promoted to the sheet's effective target. If submission against the refreshed trace fails and the user edits, the new request ID remains bound to the refreshed trace; the expired ID is never reused and recreation remains limited to one automatic attempt.
+- Card Detail now bounds the complete composed preview, including bank text, to 120 Unicode code points and 256 UTF-8 bytes before the same value reaches visible content and derived semantics. A long multilingual-bank regression covers both ceilings.
+- Focused attachment, feedback, and Admin2 suites pass 245/245 after the corrections. Repository analysis is back to the 12 unrelated pre-existing informational diagnostics.
+
+Ruling: Promote a successfully recreated recommendation trace to the sheet's effective target for the rest of that sheet session. Cost if wrong: later edited submissions intentionally stay attached to the refreshed output rather than attempting another server trace.
+
+Ruling: Bound feedback previews at the shared presentation boundary to 120 Unicode code points and 256 UTF-8 bytes. Cost if wrong: extremely long display metadata is truncated in the feedback sheet and semantic label, while the underlying product data remains unchanged.

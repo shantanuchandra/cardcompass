@@ -50,9 +50,16 @@ class _ContextualFeedbackSheetState extends State<ContextualFeedbackSheet> {
   FeedbackSubmission? _failedSubmission;
   FeedbackSubmission? _activeSubmission;
   bool _recreatedExpiredTarget = false;
+  late FeedbackTarget _effectiveTarget;
 
   String get _trimmed => _controller.text.trim();
   bool get _valid => _trimmed.length >= 10 && _trimmed.length <= 2000;
+
+  @override
+  void initState() {
+    super.initState();
+    _effectiveTarget = widget.target;
+  }
 
   @override
   void dispose() {
@@ -84,7 +91,7 @@ class _ContextualFeedbackSheetState extends State<ContextualFeedbackSheet> {
     final repository = FeedbackRepositoryScope.of(context);
     final submission =
         _failedSubmission ??
-        repository.newSubmission(widget.target, _controller.text);
+        repository.newSubmission(_effectiveTarget, _controller.text);
     _activeSubmission = submission;
     _controller.value = TextEditingValue(
       text: submission.text,
@@ -107,6 +114,7 @@ class _ContextualFeedbackSheetState extends State<ContextualFeedbackSheet> {
         _recreatedExpiredTarget = true;
         try {
           final refreshedTarget = await widget.recreateTarget!();
+          _effectiveTarget = refreshedTarget;
           final refreshed = repository.newSubmission(
             refreshedTarget,
             submission.text,
@@ -213,6 +221,7 @@ class _ContextualFeedbackSheetState extends State<ContextualFeedbackSheet> {
                       ),
                       child: Text(
                         widget.preview,
+                        key: const Key('feedback-output-preview'),
                         maxLines: 3,
                         overflow: TextOverflow.ellipsis,
                       ),

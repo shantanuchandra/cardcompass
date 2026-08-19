@@ -140,6 +140,62 @@ void main() {
     expect(find.text('Feedback sent'), findsOneWidget);
   });
 
+  testWidgets(
+    'editing after refreshed trace failure never returns to the expired trace',
+    (tester) async {
+      final repository = _RefreshedTraceRetryRepository();
+      await _pump(
+        tester,
+        repository: repository,
+        child: Builder(
+          builder: (context) => TextButton(
+            onPressed: () => showContextualFeedbackSheet(
+              context,
+              target: const RecommendationFeedbackTarget(
+                '70000000-0000-4000-8000-000000000001',
+              ),
+              preview: 'Movie offer · Save ₹150',
+              recreateTarget: repository.recreate,
+            ),
+            child: const Text('Open'),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byType(TextField),
+        'This recommendation selected the wrong card.',
+      );
+      await _tapAction(tester, 'Send feedback');
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Feedback could not be sent. Try again.'),
+        findsOneWidget,
+      );
+
+      await tester.enterText(
+        find.byType(TextField),
+        'This recommendation selected the wrong benefit.',
+      );
+      await tester.pump();
+      await _tapAction(tester, 'Send feedback');
+      await tester.pumpAndSettle();
+
+      expect(repository.recreateCalls, 1);
+      expect(repository.submissions.map((s) => s.target.outputRefId), [
+        '70000000-0000-4000-8000-000000000001',
+        '70000000-0000-4000-8000-000000000002',
+        '70000000-0000-4000-8000-000000000002',
+      ]);
+      expect(
+        repository.submissions[1].requestId,
+        isNot(repository.submissions[2].requestId),
+      );
+      expect(find.text('Feedback sent'), findsOneWidget);
+    },
+  );
+
   testWidgets('editing after failure creates a fresh submission id', (
     tester,
   ) async {
@@ -334,6 +390,36 @@ class _ExpiredTraceRepository extends FeedbackRepository {
   Future<FeedbackSubmitResult> submit(FeedbackSubmission submission) async {
     submissions.add(submission);
     if (submissions.length == 1) throw const FeedbackFailed('not_found');
+    return const FeedbackSubmitResult('feedback-id', 'awaiting_triage');
+  }
+}
+
+class _RefreshedTraceRetryRepository extends FeedbackRepository {
+  _RefreshedTraceRetryRepository()
+    : super(
+        _UnusedApi(),
+        requestIds: [
+          '80000000-0000-4000-8000-000000000001',
+          '80000000-0000-4000-8000-000000000002',
+          '80000000-0000-4000-8000-000000000003',
+        ].iterator,
+      );
+
+  final submissions = <FeedbackSubmission>[];
+  int recreateCalls = 0;
+
+  Future<FeedbackTarget> recreate() async {
+    recreateCalls++;
+    return const RecommendationFeedbackTarget(
+      '70000000-0000-4000-8000-000000000002',
+    );
+  }
+
+  @override
+  Future<FeedbackSubmitResult> submit(FeedbackSubmission submission) async {
+    submissions.add(submission);
+    if (submissions.length == 1) throw const FeedbackFailed('not_found');
+    if (submissions.length == 2) throw const FeedbackFailed('request_failed');
     return const FeedbackSubmitResult('feedback-id', 'awaiting_triage');
   }
 }
