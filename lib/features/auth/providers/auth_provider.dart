@@ -4,11 +4,62 @@ import '../../../core/providers/supabase_provider.dart';
 
 enum AuthStatus { loading, authenticated, unauthenticated }
 
+class InactiveAccountException implements Exception {
+  const InactiveAccountException();
+
+  @override
+  String toString() => 'This account is inactive.';
+}
+
+abstract interface class UserAccessProfileReader {
+  Future<bool> isActive(String userId);
+}
+
+abstract interface class AuthSessionAccess {
+  String? get currentUserId;
+  Future<void> signOut();
+}
+
+class _SupabaseUserAccessProfileReader implements UserAccessProfileReader {
+  const _SupabaseUserAccessProfileReader(this._client);
+  final SupabaseClient _client;
+
+  @override
+  Future<bool> isActive(String userId) async {
+    final value = await _client.rpc('current_user_is_active');
+    if (value is! bool) {
+      throw StateError('The current account profile is unavailable.');
+    }
+    return value;
+  }
+}
+
+class _SupabaseAuthSessionAccess implements AuthSessionAccess {
+  const _SupabaseAuthSessionAccess(this._client);
+  final SupabaseClient _client;
+
+  @override
+  String? get currentUserId => _client.auth.currentUser?.id;
+
+  @override
+  Future<void> signOut() => _client.auth.signOut();
+}
+
+final authSessionAccessProvider = Provider<AuthSessionAccess>((ref) {
+  ref.watch(authStateProvider);
+  return _SupabaseAuthSessionAccess(ref.watch(supabaseClientProvider));
+});
+
+final userAccessProfileReaderProvider = Provider<UserAccessProfileReader>(
+  (ref) => _SupabaseUserAccessProfileReader(ref.watch(supabaseClientProvider)),
+);
+
 /// Supabase must redirect back to the deployed Flutter base, not the public
 /// landing root. The origin itself remains subject to Supabase's redirect URL
 /// allow-list in every environment.
 Uri oauthRedirectUri(Uri current) {
-  final production = current.scheme == 'https' &&
+  final production =
+      current.scheme == 'https' &&
       (current.host == 'cardcompass.in' ||
           current.host == 'www.cardcompass.in');
   final local =
@@ -30,9 +81,17 @@ Uri oauthRedirectUri(Uri current) {
 class AuthNotifier extends AsyncNotifier<AuthStatus> {
   @override
   Future<AuthStatus> build() async {
-    ref.watch(authStateProvider);
-    final user = ref.read(supabaseClientProvider).auth.currentUser;
-    return user != null ? AuthStatus.authenticated : AuthStatus.unauthenticated;
+    final session = ref.watch(authSessionAccessProvider);
+    final userId = session.currentUserId;
+    if (userId == null) return AuthStatus.unauthenticated;
+    final isActive = await ref
+        .read(userAccessProfileReaderProvider)
+        .isActive(userId);
+    if (!isActive) {
+      await session.signOut();
+      throw const InactiveAccountException();
+    }
+    return AuthStatus.authenticated;
   }
 
   // Uses Supabase's own redirect-based OAuth rather than the google_sign_in
@@ -61,7 +120,7 @@ class AuthNotifier extends AsyncNotifier<AuthStatus> {
   }
 
   Future<void> signOut() async {
-    await ref.read(supabaseClientProvider).auth.signOut();
+    await ref.read(authSessionAccessProvider).signOut();
     state = const AsyncValue.data(AuthStatus.unauthenticated);
   }
 }

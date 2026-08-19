@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/providers/supabase_provider.dart';
 import '../../../core/providers/repository_providers.dart';
 import '../../../core/repositories/email_repository.dart';
@@ -81,71 +82,212 @@ class NoGmailTokenException implements Exception {
   String toString() => message;
 }
 
+class GmailUnavailableException implements Exception {
+  const GmailUnavailableException();
+}
+
+class AdminOperationRequest {
+  const AdminOperationRequest({required this.id, required this.operationType});
+  final String id;
+  final String operationType;
+}
+
+abstract interface class AdminOperationRequestRepository {
+  Future<AdminOperationRequest?> claimNext();
+  Future<void> complete({
+    required String requestId,
+    required bool succeeded,
+    String? safeFailureCategory,
+  });
+}
+
+class _SupabaseAdminOperationRequestRepository
+    implements AdminOperationRequestRepository {
+  const _SupabaseAdminOperationRequestRepository(this._client);
+  final SupabaseClient _client;
+
+  @override
+  Future<AdminOperationRequest?> claimNext() async {
+    final value = await _client.rpc(
+      'claim_my_admin_operation_request',
+      params: const {'_operation_type': 'gmail_sync'},
+    );
+    if (value == null) return null;
+    if (value is! Map ||
+        value['id'] is! String ||
+        value['operation_type'] != 'gmail_sync') {
+      throw const FormatException('Malformed operation request.');
+    }
+    return AdminOperationRequest(
+      id: value['id'] as String,
+      operationType: value['operation_type'] as String,
+    );
+  }
+
+  @override
+  Future<void> complete({
+    required String requestId,
+    required bool succeeded,
+    String? safeFailureCategory,
+  }) async {
+    await _client.rpc(
+      'complete_my_admin_operation_request',
+      params: {
+        '_request_id': requestId,
+        '_succeeded': succeeded,
+        '_safe_failure_category': safeFailureCategory,
+      },
+    );
+  }
+}
+
+class GmailSessionSnapshot {
+  const GmailSessionSnapshot({
+    required this.userId,
+    required this.providerToken,
+  });
+  final String? userId;
+  final String? providerToken;
+}
+
+typedef GmailSyncExecutor =
+    Future<GmailSyncResult> Function(
+      GmailSessionSnapshot session,
+      int lookbackDays,
+    );
+
+final adminOperationRequestRepositoryProvider =
+    Provider<AdminOperationRequestRepository>(
+      (ref) => _SupabaseAdminOperationRequestRepository(
+        ref.watch(supabaseClientProvider),
+      ),
+    );
+
+final gmailSessionSnapshotProvider = Provider<GmailSessionSnapshot>((ref) {
+  final session = ref.watch(supabaseClientProvider).auth.currentSession;
+  return GmailSessionSnapshot(
+    userId: session?.user.id,
+    providerToken: session?.providerToken,
+  );
+});
+
+final gmailSyncExecutorProvider = Provider<GmailSyncExecutor>((ref) {
+  final client = ref.watch(supabaseClientProvider);
+  return (session, lookbackDays) => _executeGmailSync(
+    client: client,
+    session: session,
+    lookbackDays: lookbackDays,
+  );
+});
+
+Future<GmailSyncResult> _executeGmailSync({
+  required SupabaseClient client,
+  required GmailSessionSnapshot session,
+  required int lookbackDays,
+}) async {
+  final accessToken = session.providerToken;
+  final userId = session.userId;
+  if (accessToken == null || userId == null) {
+    throw const NoGmailTokenException(
+      'No Google session token found. Please sign out and sign back in '
+      'to enable Gmail sync.',
+    );
+  }
+
+  final gmailService = GmailSyncService(accessToken);
+  final emailRepo = EmailRepository();
+  try {
+    final after = DateTime.now().subtract(Duration(days: lookbackDays));
+    final results = await gmailService.searchStatementEmails(after: after);
+    final persistence = await EmailDiscoveryPersister(
+      emailRepo,
+    ).persist(userId: userId, results: results);
+    final authSession = client.auth.currentSession;
+    final userName =
+        authSession?.user.userMetadata?['full_name'] as String? ?? 'there';
+    final processingService = StatementProcessingService(
+      gmailService: gmailService,
+      supabaseClient: client,
+      userId: userId,
+      userEmail: authSession?.user.email ?? '',
+      userName: userName,
+    );
+    final processingResult = await processingService.processUnprocessedEmails(
+      allowedEmailIds: results.map((result) => result.messageId).toSet(),
+    );
+    return GmailSyncResult(
+      foundCount: results.length,
+      newlyStoredCount: persistence.newlyStoredCount,
+      repairedCount: persistence.repairedCount,
+      skippedCount: persistence.skippedCount,
+      failedCount: persistence.failedCount,
+      processedAttempted: processingResult.totalAttempted,
+      processedSucceeded: processingResult.succeeded,
+      processedNeedsPassword: processingResult.needsPassword,
+      processedNeedsCardAssignment: processingResult.needsCardAssignment,
+      processedCardDiscoveryQueued: processingResult.discoveryQueued,
+      processedFailed: processingResult.failed,
+      issues: processingResult.issues,
+    );
+  } finally {
+    gmailService.dispose();
+  }
+}
+
 class GmailSyncNotifier extends AsyncNotifier<GmailSyncResult?> {
   @override
-  Future<GmailSyncResult?> build() async => null;
+  Future<GmailSyncResult?> build() async {
+    final request = await ref
+        .read(adminOperationRequestRepositoryProvider)
+        .claimNext();
+    if (request == null) return null;
+    return _runQueued(request);
+  }
+
+  Future<GmailSyncResult?> _runQueued(AdminOperationRequest request) async {
+    final repository = ref.read(adminOperationRequestRepositoryProvider);
+    var succeeded = false;
+    String? category;
+    try {
+      final session = ref.read(gmailSessionSnapshotProvider);
+      if (session.userId == null || session.providerToken == null) {
+        category = 'reauthentication_required';
+        return null;
+      }
+      final result = await ref.read(gmailSyncExecutorProvider)(session, 30);
+      succeeded = true;
+      return result;
+    } on GmailUnavailableException {
+      category = 'gmail_unavailable';
+      return null;
+    } on GmailAuthException {
+      category = 'reauthentication_required';
+      return null;
+    } catch (_) {
+      category = 'processing_failed';
+      rethrow;
+    } finally {
+      await repository.complete(
+        requestId: request.id,
+        succeeded: succeeded,
+        safeFailureCategory: category,
+      );
+    }
+  }
 
   Future<void> syncGmail({int lookbackDays = 30}) async {
     state = const AsyncValue.loading();
     try {
-      final session = ref.read(supabaseClientProvider).auth.currentSession;
-      final accessToken = session?.providerToken;
-      final userId = session?.user.id;
-
-      if (accessToken == null || userId == null) {
+      final session = ref.read(gmailSessionSnapshotProvider);
+      if (session.providerToken == null || session.userId == null) {
         throw const NoGmailTokenException(
           'No Google session token found. Please sign out and sign back in '
           'to enable Gmail sync.',
         );
       }
-
-      final gmailService = GmailSyncService(accessToken);
-      final emailRepo = EmailRepository();
-
-      try {
-        final after = DateTime.now().subtract(Duration(days: lookbackDays));
-        final results = await gmailService.searchStatementEmails(after: after);
-
-        final persistence = await EmailDiscoveryPersister(
-          emailRepo,
-        ).persist(userId: userId, results: results);
-
-        final userName =
-            session!.user.userMetadata?['full_name'] as String? ?? 'there';
-
-        final processingService = StatementProcessingService(
-          gmailService: gmailService,
-          supabaseClient: ref.read(supabaseClientProvider),
-          userId: userId,
-          userEmail: session.user.email ?? '',
-          userName: userName,
-        );
-        final processingResult = await processingService
-            .processUnprocessedEmails(
-              allowedEmailIds: results
-                  .map((result) => result.messageId)
-                  .toSet(),
-            );
-
-        state = AsyncValue.data(
-          GmailSyncResult(
-            foundCount: results.length,
-            newlyStoredCount: persistence.newlyStoredCount,
-            repairedCount: persistence.repairedCount,
-            skippedCount: persistence.skippedCount,
-            failedCount: persistence.failedCount,
-            processedAttempted: processingResult.totalAttempted,
-            processedSucceeded: processingResult.succeeded,
-            processedNeedsPassword: processingResult.needsPassword,
-            processedNeedsCardAssignment: processingResult.needsCardAssignment,
-            processedCardDiscoveryQueued: processingResult.discoveryQueued,
-            processedFailed: processingResult.failed,
-            issues: processingResult.issues,
-          ),
-        );
-      } finally {
-        gmailService.dispose();
-      }
+      state = AsyncValue.data(
+        await ref.read(gmailSyncExecutorProvider)(session, lookbackDays),
+      );
     } catch (e, st) {
       debugPrint('Gmail sync failed: $e');
       state = AsyncValue.error(e, st);

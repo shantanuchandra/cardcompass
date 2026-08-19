@@ -162,3 +162,8 @@ Ruling: Treat the exported benefit batch and card-discovery reason lists as the 
 Ruling: Apply request currency checks before any irreversible authentication or authorization effect, and again after an awaited effect before committing local error state. Cost if wrong: an auth failure superseded by newer operator navigation is ignored, while a current auth effect that itself triggers navigation cannot subsequently write stale local UI state.
 
 Ruling: Define retry's operation discriminator as structurally absent, not nullish, using an own-property check at the gateway boundary. Cost if wrong: serializers that emit `operation: null` must remove the key rather than relying on null equivalence.
+
+## Final adjudication
+
+- The single final-fix owner resolved all whole-phase findings in `611d30d`; the scoped re-review's three valid residuals were resolved by the same owner in `c226598`.
+- Controller verification passed 14 focused System gateway tests and 15 focused System widget tests, including producer-vocabulary parity, strict absent retry discriminator, and stale 401/403 race suppression. No unresolved System Ops finding remains; the plan is approved to continue.
