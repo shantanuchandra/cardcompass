@@ -15,7 +15,31 @@
       "rewrite": "/app/index.html"
     },
     {
-      "route": "/app/admin2*",
+      "route": "/app/admin2",
+      "rewrite": "/app/index.html"
+    },
+    {
+      "route": "/app/admin2/*",
+      "rewrite": "/app/index.html"
+    },
+    {
+      "route": "/app/cards",
+      "rewrite": "/app/index.html"
+    },
+    {
+      "route": "/app/cards/*",
+      "rewrite": "/app/index.html"
+    },
+    {
+      "route": "/app/transactions",
+      "rewrite": "/app/index.html"
+    },
+    {
+      "route": "/app/movie-deals",
+      "rewrite": "/app/index.html"
+    },
+    {
+      "route": "/app/settings",
       "rewrite": "/app/index.html"
     },
     {

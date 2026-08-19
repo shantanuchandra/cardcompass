@@ -98,12 +98,12 @@ Future<GoRouter> _pumpJourney(
 }) async {
   repository ??= _MemoryCardsRepository(initial);
   final router = GoRouter(
-    initialLocation: '/app/cards',
+    initialLocation: '/cards',
     routes: [
-      GoRoute(path: '/app/cards', builder: (_, _) => const CardsScreen()),
-      GoRoute(path: '/app/cards/add', builder: (_, _) => const AddCardScreen()),
+      GoRoute(path: '/cards', builder: (_, _) => const CardsScreen()),
+      GoRoute(path: '/cards/add', builder: (_, _) => const AddCardScreen()),
       GoRoute(
-        path: '/app/cards/:cardId',
+        path: '/cards/:cardId',
         builder: (_, state) =>
             CardDetailScreen(cardId: state.pathParameters['cardId']!),
       ),
@@ -157,11 +157,11 @@ void main() {
 
     await tester.tap(find.text('Existing card'));
     await tester.pumpAndSettle();
-    expect(router.state.uri.path, '/app/cards/card-existing');
+    expect(router.state.uri.path, '/cards/card-existing');
 
     await tester.binding.handlePopRoute();
     await tester.pumpAndSettle();
-    expect(router.state.uri.path, '/app/cards');
+    expect(router.state.uri.path, '/cards');
     expect(find.text('Existing card'), findsOneWidget);
   });
 
@@ -180,7 +180,7 @@ void main() {
         await tester.tap(find.byIcon(Icons.arrow_back_rounded));
         await tester.pumpAndSettle();
 
-        expect(router.state.uri.path, '/app/cards');
+        expect(router.state.uri.path, '/cards');
         expect(
           find.text(startsEmpty ? 'No cards yet' : 'Existing card'),
           findsOneWidget,
@@ -196,7 +196,7 @@ void main() {
 
         await _saveCard(tester);
 
-        expect(router.state.uri.path, '/app/cards');
+        expect(router.state.uri.path, '/cards');
         expect(find.text('Astra Travel Preferred'), findsOneWidget);
         if (!startsEmpty) expect(find.text('Existing card'), findsOneWidget);
       },
@@ -219,7 +219,7 @@ void main() {
       await tester.tap(find.byIcon(Icons.arrow_back_rounded));
       await tester.pumpAndSettle();
 
-      expect(router.state.uri.path, '/app/cards');
+      expect(router.state.uri.path, '/cards');
       expect(find.text('No cards yet'), findsOneWidget);
       expect(repository.saveCount, 1);
       expect(repository.loadCount, 1);
@@ -250,7 +250,7 @@ void main() {
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
 
-      expect(router.state.uri.path, '/app/cards');
+      expect(router.state.uri.path, '/cards');
       expect(find.text('No cards yet'), findsOneWidget);
       expect(repository.saveCount, 1);
       expect(repository.loadCount, 1);

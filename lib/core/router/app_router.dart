@@ -22,21 +22,21 @@ import '../../app.dart' show navigatorKey;
 import 'app_tab_selection.dart';
 
 const _kTabPaths = [
-  '/app',
-  '/app/cards',
-  '/app/transactions',
-  '/app/movie-deals',
-  '/app/settings',
+  '/',
+  '/cards',
+  '/transactions',
+  '/movie-deals',
+  '/settings',
 ];
 
-const legacyCatalogReviewDestination = '/app/admin2?section=card-data';
-const appLoginPath = '/app/login';
+const legacyCatalogReviewDestination = '/admin2?section=card-data';
+const appLoginPath = '/login';
 
 int _tabIndexFor(String loc) {
-  if (loc.startsWith('/app/cards')) return 1;
-  if (loc.startsWith('/app/transactions')) return 2;
-  if (loc.startsWith('/app/movie-deals')) return 3;
-  if (loc.startsWith('/app/settings')) return 4;
+  if (loc.startsWith('/cards')) return 1;
+  if (loc.startsWith('/transactions')) return 2;
+  if (loc.startsWith('/movie-deals')) return 3;
+  if (loc.startsWith('/settings')) return 4;
   return 0;
 }
 
@@ -84,30 +84,25 @@ final routerProvider = Provider<GoRouter>((ref) {
       final isAuthed = authState.valueOrNull == AuthStatus.authenticated;
       final loc = state.matchedLocation;
       if (Uri.base.fragment.contains('access_token')) return null;
-      if (!isAuthed && loc.startsWith('/app') && loc != appLoginPath) {
+      if (!isAuthed && loc != appLoginPath) {
         return appLoginPath;
       }
-      if (isAuthed && loc.startsWith('/app')) {
+      if (isAuthed) {
         _tabIndexNotifier.value = _tabIndexFor(loc);
       }
-      if (isAuthed && (loc == appLoginPath || loc == '/login' || loc == '/')) {
-        // Restore tab from URL on initial load
-        final fragment = Uri.base.fragment;
-        _tabIndexNotifier.value = _tabIndexFor(
-          fragment.isEmpty ? '/app' : '/$fragment',
-        );
-        return '/app';
-      }
-      if (loc == '/' && !isAuthed) return appLoginPath;
+      if (isAuthed && loc == appLoginPath) return '/';
       return null;
     },
     routes: [
-      GoRoute(path: '/', builder: (_, s) => const SplashScreen()),
-      GoRoute(path: '/login', builder: (_, s) => const LoginScreen()),
       GoRoute(path: appLoginPath, builder: (_, s) => const LoginScreen()),
-      GoRoute(path: '/app', pageBuilder: (_, s) => _appShellPage()),
       GoRoute(
-        path: '/app/cards',
+        path: '/',
+        pageBuilder: (_, s) => ref.read(authNotifierProvider).isLoading
+            ? const NoTransitionPage(child: SplashScreen())
+            : _appShellPage(),
+      ),
+      GoRoute(
+        path: '/cards',
         pageBuilder: (_, s) => _appShellPage(),
         routes: [
           // A nested page preserves the app shell beneath Add Card. Cards uses
@@ -126,14 +121,11 @@ final routerProvider = Provider<GoRouter>((ref) {
           ),
         ],
       ),
+      GoRoute(path: '/transactions', pageBuilder: (_, s) => _appShellPage()),
+      GoRoute(path: '/movie-deals', pageBuilder: (_, s) => _appShellPage()),
+      GoRoute(path: '/settings', pageBuilder: (_, s) => _appShellPage()),
       GoRoute(
-        path: '/app/transactions',
-        pageBuilder: (_, s) => _appShellPage(),
-      ),
-      GoRoute(path: '/app/movie-deals', pageBuilder: (_, s) => _appShellPage()),
-      GoRoute(path: '/app/settings', pageBuilder: (_, s) => _appShellPage()),
-      GoRoute(
-        path: '/app/admin2',
+        path: '/admin2',
         pageBuilder: (_, state) => NoTransitionPage(
           child: AdminOperatorScreen(
             initialSectionQuery: state.uri.queryParameters['section'],
@@ -141,7 +133,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         ),
       ),
       GoRoute(
-        path: '/app/admin/catalog-review',
+        path: '/admin/catalog-review',
         redirect: (_, _) => legacyCatalogReviewDestination,
       ),
     ],
@@ -191,7 +183,7 @@ class _AppShell extends ConsumerWidget {
                       selectedIndex: tabIndex,
                       onTap: onTap,
                       showAdmin: showAdmin,
-                      onAdminTap: () => context.go('/app/admin2'),
+                      onAdminTap: () => context.go('/admin2'),
                     ),
                     Expanded(
                       child: IndexedStack(index: tabIndex, children: _bodies),

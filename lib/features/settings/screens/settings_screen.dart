@@ -35,7 +35,7 @@ class SettingsScreen extends ConsumerWidget {
           const SizedBox(height: BrandSpacing.lg),
           SettingsActionList(
             showAdmin: showAdmin,
-            onOpenAdmin: () => context.go('/app/admin2'),
+            onOpenAdmin: () => context.go('/admin2'),
             onDeleteAllData: () async {
               final refreshImportedData = ref.read(importedDataRefreshProvider);
               final providerContainer = ProviderScope.containerOf(

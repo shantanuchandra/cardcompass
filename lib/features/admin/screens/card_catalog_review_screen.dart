@@ -62,7 +62,7 @@ class _CardCatalogReviewScreenState extends State<CardCatalogReviewScreen> {
     clearSession: () =>
         Supabase.instance.client.auth.signOut(scope: SignOutScope.local),
     showLogin: () {
-      if (mounted) context.go('/app/login');
+      if (mounted) context.go('/login');
     },
   );
 
@@ -232,7 +232,7 @@ class _CardCatalogReviewScreenState extends State<CardCatalogReviewScreen> {
           title: const Text('Catalog review'),
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
-            onPressed: () => context.go('/app/settings'),
+            onPressed: () => context.go('/settings'),
           ),
           bottom: const AdminCatalogReviewTabs(),
         ),

@@ -46,8 +46,8 @@ test('server supports real Flutter path URLs without masking files or unsafe pat
   assert.equal(legacy.headers.get('location'), '/app/admin2?section=card-data');
   assert.equal((await request('/app/main.dart.js')).status, 200);
   assert.equal((await request('/app/missing.js')).status, 404);
+  assert.equal((await request('/app/admin2.js')).status, 404);
   assert.equal((await request('/app/api/missing')).status, 404);
   assert.equal((await request('/app/%2e%2e/server.js')).status, 403);
   assert.equal((await request('/app/%2e%2e%2fserver.js')).status, 403);
-  assert.equal((await request('/app/#/admin2')).status, 200);
 });

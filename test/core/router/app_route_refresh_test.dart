@@ -23,13 +23,13 @@ void main() {
     final router = container.read(routerProvider);
 
     for (final path in const [
-      '/app',
-      '/app/cards',
-      '/app/cards/add',
-      '/app/cards/card-123',
-      '/app/transactions',
-      '/app/movie-deals',
-      '/app/settings',
+      '/',
+      '/cards',
+      '/cards/add',
+      '/cards/card-123',
+      '/transactions',
+      '/movie-deals',
+      '/settings',
     ]) {
       final match = router.configuration.findMatch(Uri.parse(path));
       expect(match.error, isNull, reason: '$path must survive refresh');
@@ -47,10 +47,10 @@ void main() {
 
     await container.read(authNotifierProvider.future);
     final router = container.read(routerProvider);
-    final match = router.configuration.findMatch(Uri.parse('/app/admin2'));
+    final match = router.configuration.findMatch(Uri.parse('/admin2'));
 
     expect(match.error, isNull);
-    expect(match.uri.path, '/app/admin2');
+    expect(match.uri.path, '/admin2');
   });
 
   testWidgets('pushed card routes update the browser-visible location', (
@@ -66,12 +66,12 @@ void main() {
     container.read(routerProvider);
 
     final router = GoRouter(
-      initialLocation: '/app/cards',
+      initialLocation: '/cards',
       routes: [
         GoRoute(
-          path: '/app/cards',
+          path: '/cards',
           builder: (context, _) => TextButton(
-            onPressed: () => context.push('/app/cards/add'),
+            onPressed: () => context.push('/cards/add'),
             child: const Text('Add card'),
           ),
           routes: [
@@ -89,6 +89,6 @@ void main() {
     await tester.tap(find.text('Add card'));
     await tester.pumpAndSettle();
 
-    expect(router.routeInformationProvider.value.uri.path, '/app/cards/add');
+    expect(router.routeInformationProvider.value.uri.path, '/cards/add');
   });
 }

@@ -53,7 +53,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
       callback();
       return;
     }
-    context.go('/app/login');
+    context.go('/login');
   }
 
   @override

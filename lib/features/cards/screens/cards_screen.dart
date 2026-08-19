@@ -13,7 +13,7 @@ class CardsScreen extends ConsumerWidget {
   const CardsScreen({super.key});
 
   Future<void> _openAddCard(BuildContext context) async {
-    await context.push<bool>('/app/cards/add');
+    await context.push<bool>('/cards/add');
   }
 
   @override
@@ -106,7 +106,7 @@ class _CardListTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return InkWell(
-      onTap: () => context.push('/app/cards/${Uri.encodeComponent(card.id)}'),
+      onTap: () => context.push('/cards/${Uri.encodeComponent(card.id)}'),
       borderRadius: BorderRadius.circular(BrandRadius.overlay),
       child: Container(
         padding: const EdgeInsets.all(BrandSpacing.md),

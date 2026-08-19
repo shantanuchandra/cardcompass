@@ -395,7 +395,7 @@ void main() {
     addTearDown(container.dispose);
     await container.read(authNotifierProvider.future);
     final router = container.read(routerProvider);
-    router.go('/app/admin2');
+    router.go('/admin2');
 
     await tester.pumpWidget(
       UncontrolledProviderScope(
@@ -414,11 +414,11 @@ void main() {
   ) async {
     final auth = _RecordingAuthNotifier();
     final router = GoRouter(
-      initialLocation: '/app/admin2',
+      initialLocation: '/admin2',
       routes: [
-        GoRoute(path: '/app', builder: (_, _) => const Text('Ordinary app')),
+        GoRoute(path: '/', builder: (_, _) => const Text('Ordinary app')),
         GoRoute(
-          path: '/app/admin2',
+          path: '/admin2',
           builder: (_, _) => const AdminOperatorScreen(),
         ),
       ],

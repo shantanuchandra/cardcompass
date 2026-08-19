@@ -71,14 +71,14 @@ void main() {
   ) async {
     final (container, router) = await _pumpRouter(
       tester,
-      '/app/admin/catalog-review',
+      '/admin/catalog-review',
     );
     addTearDown(router.dispose);
     addTearDown(container.dispose);
 
     expect(
       router.routeInformationProvider.value.uri.toString(),
-      '/app/admin2?section=card-data',
+      '/admin2?section=card-data',
     );
     expect(find.byType(CardDataSection), findsOneWidget);
     expect(
@@ -91,11 +91,11 @@ void main() {
   });
 
   testWidgets('direct admin2 route defaults to Action Inbox', (tester) async {
-    final (container, router) = await _pumpRouter(tester, '/app/admin2');
+    final (container, router) = await _pumpRouter(tester, '/admin2');
     addTearDown(router.dispose);
     addTearDown(container.dispose);
 
-    expect(router.routeInformationProvider.value.uri.toString(), '/app/admin2');
+    expect(router.routeInformationProvider.value.uri.toString(), '/admin2');
     expect(find.byType(ActionInboxSection), findsOneWidget);
     expect(
       find.descendant(

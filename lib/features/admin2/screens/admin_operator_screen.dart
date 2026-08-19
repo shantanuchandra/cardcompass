@@ -115,7 +115,7 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
         if (handler != null) {
           handler();
         } else if (mounted) {
-          context.go('/app');
+          context.go('/');
         }
       }
     });
@@ -177,7 +177,7 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
           onAuthenticationRequired:
               widget.onAuthenticationRequired ??
               () => ref.read(authNotifierProvider.notifier).signOut(),
-          onAccessDenied: widget.onAccessDenied ?? () => context.go('/app'),
+          onAccessDenied: widget.onAccessDenied ?? () => context.go('/'),
         ),
       ),
     );
@@ -195,7 +195,7 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
       onAuthenticationRequired:
           widget.onAuthenticationRequired ??
           () => ref.read(authNotifierProvider.notifier).signOut(),
-      onAccessDenied: widget.onAccessDenied ?? () => context.go('/app'),
+      onAccessDenied: widget.onAccessDenied ?? () => context.go('/'),
     ),
   );
 
@@ -267,7 +267,7 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
           onAuthenticationRequired:
               widget.onAuthenticationRequired ??
               () => ref.read(authNotifierProvider.notifier).signOut(),
-          onAccessDenied: widget.onAccessDenied ?? () => context.go('/app'),
+          onAccessDenied: widget.onAccessDenied ?? () => context.go('/'),
         );
       },
     );
@@ -328,7 +328,7 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
         onAuthenticationRequired:
             widget.onAuthenticationRequired ??
             () => ref.read(authNotifierProvider.notifier).signOut(),
-        onAccessDenied: widget.onAccessDenied ?? () => context.go('/app'),
+        onAccessDenied: widget.onAccessDenied ?? () => context.go('/'),
         initialControlKey: _systemControlKey,
         evalSource:
             widget.evalSource ??
@@ -350,7 +350,7 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
       onAuthenticationRequired:
           widget.onAuthenticationRequired ??
           () => ref.read(authNotifierProvider.notifier).signOut(),
-      onAccessDenied: widget.onAccessDenied ?? () => context.go('/app'),
+      onAccessDenied: widget.onAccessDenied ?? () => context.go('/'),
     ),
   );
 

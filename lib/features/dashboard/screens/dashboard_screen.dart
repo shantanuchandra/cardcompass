@@ -1429,14 +1429,14 @@ class _CardsCarouselState extends ConsumerState<_CardsCarousel> {
                                 'Open ${widget.cards[i].displayName} card details',
                             button: true,
                             onTap: () => context.push(
-                              '/app/cards/${Uri.encodeComponent(widget.cards[i].id)}',
+                              '/cards/${Uri.encodeComponent(widget.cards[i].id)}',
                             ),
                             child: ExcludeSemantics(
                               child: Material(
                                 color: Colors.transparent,
                                 child: InkWell(
                                   onTap: () => context.push(
-                                    '/app/cards/${Uri.encodeComponent(widget.cards[i].id)}',
+                                    '/cards/${Uri.encodeComponent(widget.cards[i].id)}',
                                   ),
                                   borderRadius: BorderRadius.circular(
                                     BrandRadius.overlay,

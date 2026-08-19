@@ -29,7 +29,7 @@ class CardCompassApp extends ConsumerWidget {
           final path = routeInformation.uri.path;
           final content = child ?? const SizedBox.shrink();
 
-          if (path.startsWith('/app')) {
+          if (path != '/login') {
             return FeedbackRepositoryScope.lazy(
               repositoryFactory: () => FeedbackRepository(
                 SupabaseFeedbackApi(ref.read(supabaseClientProvider)),
@@ -37,10 +37,6 @@ class CardCompassApp extends ConsumerWidget {
               child: content,
             );
           }
-          if (path != '/' && path != '/login' && path != appLoginPath) {
-            return content;
-          }
-
           return Theme(data: AppTheme.marketing, child: content);
         },
       ),
