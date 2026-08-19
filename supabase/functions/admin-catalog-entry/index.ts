@@ -1,6 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.95.0";
-import { isAdminEmail } from "../_shared/card_discovery.ts";
+import {
+  AdminAccessError,
+  resolveAdminActor,
+} from "../_shared/admin_access.ts";
 import {
   BenefitAdminError,
   handleBenefitAdminAction,
@@ -85,8 +88,7 @@ export async function handleAdminCatalogEntry(
     return json({ error: "Authentication required" }, 401);
   }
   let db: UntypedSupabaseClient;
-  let user: Record<string, any> | null = null;
-  let authError: unknown = null;
+  let actor: { id: string };
   try {
     db = providedDb ?? createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
@@ -97,22 +99,17 @@ export async function handleAdminCatalogEntry(
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_ANON_KEY") ?? "",
     );
-    const authResult = await authDb.auth.getUser(
-      authorization.slice("Bearer ".length),
-    );
-    user = authResult.data.user;
-    authError = authResult.error;
+    actor = await resolveAdminActor(request, authDb as never, db as never);
   } catch (error) {
-    authError = error;
-  }
-  if (authError || !user) {
-    return json({ error: "Authentication required" }, 401);
-  }
-  if (
-    !user.email_confirmed_at ||
-    !isAdminEmail(user.email, Deno.env.get("CARD_CATALOG_ADMIN_EMAILS"))
-  ) {
-    return json({ error: "Administrator access required" }, 403);
+    if (error instanceof AdminAccessError) {
+      const message = error.code === "authentication_required"
+        ? "Authentication required"
+        : error.code === "administrator_access_required"
+        ? "Administrator access required"
+        : "Request failed";
+      return json({ error: message }, error.status);
+    }
+    return json({ error: "Request failed" }, 500);
   }
 
   try {
@@ -128,7 +125,7 @@ export async function handleAdminCatalogEntry(
     }
 
     if (isBenefitAdminAction(action)) {
-      return json(await handleBenefitAdminAction(db, body, { id: user.id }));
+      return json(await handleBenefitAdminAction(db, body, actor));
     }
 
     if (action === "list") {
@@ -163,7 +160,7 @@ export async function handleAdminCatalogEntry(
     }
     const { data, error } = await db.rpc("review_card_catalog_discovery", {
       _review_item_id: body.review_item_id,
-      _actor_id: user.id,
+      _actor_id: actor.id,
       _action: action,
       _proposed_fields: body.proposed_fields ?? null,
       _merge_card_id: body.merge_card_id ?? null,
@@ -180,4 +177,4 @@ export async function handleAdminCatalogEntry(
   }
 }
 
-serve((request) => handleAdminCatalogEntry(request));
+if (import.meta.main) serve((request) => handleAdminCatalogEntry(request));

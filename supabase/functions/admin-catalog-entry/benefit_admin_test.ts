@@ -77,13 +77,34 @@ function authenticatedDb(
   };
 }
 
-function withAuthenticatedUser(db: Record<string, unknown>) {
+function withAdminProfile(
+  db: Record<string, unknown>,
+  profile = { id: "admin-1", is_active: true, is_admin: true },
+) {
+  const originalFrom = db.from as ((table: string) => unknown) | undefined;
   return {
     ...db,
+    from(table: string) {
+      if (table !== "users") {
+        if (!originalFrom) throw new Error(`unexpected table: ${table}`);
+        return originalFrom.call(db, table);
+      }
+      return {
+        select: () => ({
+          eq: () => ({
+            maybeSingle: () => Promise.resolve({ data: profile, error: null }),
+          }),
+        }),
+      };
+    },
+  };
+}
+
+function withAuthenticatedUser(db: Record<string, unknown>) {
+  return {
+    ...withAdminProfile(db),
     auth: authenticatedDb({
       id: "admin-1",
-      email: "admin@example.com",
-      email_confirmed_at: "2026-08-17T00:00:00.000Z",
     }).auth,
   };
 }
@@ -139,7 +160,7 @@ Deno.test("protected admin handler returns 401 for missing or expired credential
   const handle = await handler();
   let queueReads = 0;
   const expiredDb = {
-    ...authenticatedDb(null, new Error("JWT expired")),
+    ...authenticatedDb(null, { code: "session_expired", status: 401 }),
     from() {
       queueReads += 1;
       throw new Error("queue access must not occur for expired auth");
@@ -157,102 +178,133 @@ Deno.test("protected admin handler returns 401 for missing or expired credential
   assert(queueReads === 0, "expired auth reached a benefit queue operation");
 });
 
-Deno.test("protected admin handler requires a verified allowlisted email", async () => {
+Deno.test("protected admin handler authorizes an active database admin regardless of email", async () => {
   const handle = await handler();
-  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
-  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
-  try {
-    const unverified = await handle(
-      request({ action: "benefit-list" }),
-      authenticatedDb({
-        id: "admin-1",
-        email: "admin@example.com",
-        email_confirmed_at: null,
-      }),
-    );
-    const nonAllowlisted = await handle(
-      request({ action: "benefit-list" }),
-      authenticatedDb({
-        id: "admin-1",
-        email: "other@example.com",
-        email_confirmed_at: "2026-08-17T00:00:00.000Z",
-      }),
-    );
-    const allowlisted = await handle(
-      request({ action: "access" }),
-      authenticatedDb({
-        id: "admin-1",
-        email: "admin@example.com",
-        email_confirmed_at: "2026-08-17T00:00:00.000Z",
-      }),
-    );
+  const serviceDb = {
+    from(table: string) {
+      assert(table === "users", "authorization read an unexpected table");
+      return {
+        select() {
+          return {
+            eq(column: string, value: unknown) {
+              assert(
+                column === "id" && value === "admin-1",
+                "profile lookup did not use the authenticated id",
+              );
+              return {
+                maybeSingle: () =>
+                  Promise.resolve({
+                    data: { id: "admin-1", is_active: true, is_admin: true },
+                    error: null,
+                  }),
+              };
+            },
+          };
+        },
+      };
+    },
+  };
+  const authDb = authenticatedDb({
+    id: "admin-1",
+    email: "not-allowlisted@example.test",
+    email_confirmed_at: null,
+    user_metadata: { is_admin: false },
+  });
 
-    assert(unverified.status === 403, "unverified email received admin access");
-    assert(
-      nonAllowlisted.status === 403,
-      "non-allowlisted email received admin access",
-    );
-    assert(
-      allowlisted.status === 200,
-      "verified allowlisted email was rejected",
-    );
-  } finally {
-    if (originalAllowlist === undefined) {
-      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
-    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
-  }
+  const response = await handle(
+    request({ action: "access" }),
+    serviceDb,
+    authDb,
+  );
+
+  assert(
+    response.status === 200,
+    "database admin was rejected because of identity attributes",
+  );
+  assert(
+    (await response.json()).is_admin === true,
+    "access response compatibility changed",
+  );
+});
+
+Deno.test("protected admin handler rejects a verified founder email without the database admin flag", async () => {
+  const handle = await handler();
+  const serviceDb = {
+    from() {
+      return {
+        select: () => ({
+          eq: () => ({
+            maybeSingle: () =>
+              Promise.resolve({
+                data: { id: "founder-1", is_active: true, is_admin: false },
+                error: null,
+              }),
+          }),
+        }),
+      };
+    },
+  };
+  const authDb = authenticatedDb({
+    id: "founder-1",
+    email: "admin@example.com",
+    email_confirmed_at: "2026-08-17T00:00:00.000Z",
+    user_metadata: { is_admin: true },
+  });
+
+  const response = await handle(
+    request({ action: "access" }),
+    serviceDb,
+    authDb,
+  );
+
+  assert(
+    response.status === 403,
+    "email or metadata bypassed the database admin flag",
+  );
 });
 
 Deno.test("protected admin handler authenticates with a request-scoped client", async () => {
   const handle = await handler();
-  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
-  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
-  try {
-    const serviceDb = authenticatedDb(null, new Error("service auth rejected"));
-    const requestAuthDb = {
-      auth: {
-        async getUser(token: unknown) {
-          if (token !== "valid-token") {
-            return {
-              data: { user: null },
-              error: new Error("request JWT was not provided"),
-            };
-          }
+  const serviceDb = withAdminProfile(
+    authenticatedDb(null, new Error("service auth rejected")),
+  );
+  const requestAuthDb = {
+    auth: {
+      async getUser(token: unknown) {
+        if (token !== "valid-token") {
           return {
-            data: {
-              user: {
-                id: "admin-1",
-                email: "admin@example.com",
-                email_confirmed_at: "2026-08-17T00:00:00.000Z",
-              },
-            },
-            error: null,
+            data: { user: null },
+            error: new Error("request JWT was not provided"),
           };
-        },
+        }
+        return {
+          data: {
+            user: {
+              id: "admin-1",
+              email: "admin@example.com",
+              email_confirmed_at: "2026-08-17T00:00:00.000Z",
+            },
+          },
+          error: null,
+        };
       },
-    };
+    },
+  };
 
-    const response = await handle(
-      request({ action: "access" }),
-      serviceDb,
-      requestAuthDb,
-    );
+  const response = await handle(
+    request({ action: "access" }),
+    serviceDb,
+    requestAuthDb,
+  );
 
-    assert(
-      response.status === 200,
-      "service-role auth client was used instead of request-scoped auth",
-    );
-  } finally {
-    if (originalAllowlist === undefined) {
-      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
-    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
-  }
+  assert(
+    response.status === 200,
+    "service-role auth client was used instead of request-scoped auth",
+  );
 });
 
 Deno.test("admin cleanup removes only pending calculator issuer-crawl jobs", async () => {
   const handle = await handler();
-  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
-  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
   const deletedJobIds: string[] = [];
   const serviceDb = {
     from(table: string) {
@@ -312,28 +364,18 @@ Deno.test("admin cleanup removes only pending calculator issuer-crawl jobs", asy
       return query;
     },
   };
-  try {
-    const response = await handle(
-      request({ action: "purge-calculator-reviews" }),
-      serviceDb,
-      authenticatedDb({
-        id: "admin-1",
-        email: "admin@example.com",
-        email_confirmed_at: "2026-08-17T00:00:00.000Z",
-      }),
-    );
-    const body = await response.json();
-    assert(response.status === 200, "calculator cleanup was rejected");
-    assert(body.removed === 1, "cleanup returned the wrong removal count");
-    assert(
-      deletedJobIds.length === 1 && deletedJobIds[0] === "job-calculator",
-      "cleanup deleted a non-calculator job",
-    );
-  } finally {
-    if (originalAllowlist === undefined) {
-      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
-    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
-  }
+  const response = await handle(
+    request({ action: "purge-calculator-reviews" }),
+    withAdminProfile(serviceDb),
+    authenticatedDb({ id: "admin-1" }),
+  );
+  const body = await response.json();
+  assert(response.status === 200, "calculator cleanup was rejected");
+  assert(body.removed === 1, "cleanup returned the wrong removal count");
+  assert(
+    deletedJobIds.length === 1 && deletedJobIds[0] === "job-calculator",
+    "cleanup deleted a non-calculator job",
+  );
 });
 
 Deno.test("benefit list returns evidence and confidence without page bodies or secrets", async () => {
@@ -410,32 +452,24 @@ Deno.test("benefit list returns evidence and confidence without page bodies or s
       };
     },
   });
-  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
-  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
-  try {
-    const response = await handle(request({ action: "benefit-list" }), db);
-    const body = await response.json();
-    const serialized = JSON.stringify(body);
-    assert(response.status === 200, "benefit list was rejected");
-    assert(
-      serialized.includes("₹500 dining credit"),
-      "safe evidence was omitted",
-    );
-    assert(serialized.includes("0.94"), "confidence was omitted");
-    assert(
-      body.items[0].crawler_discovered_without_statement_signal === true,
-      "linked issuer crawl was omitted",
-    );
-    assert(
-      !serialized.includes("private issuer html"),
-      "raw page body was exposed",
-    );
-    assert(!serialized.includes("secret-token"), "secret was exposed");
-  } finally {
-    if (originalAllowlist === undefined) {
-      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
-    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
-  }
+  const response = await handle(request({ action: "benefit-list" }), db);
+  const body = await response.json();
+  const serialized = JSON.stringify(body);
+  assert(response.status === 200, "benefit list was rejected");
+  assert(
+    serialized.includes("₹500 dining credit"),
+    "safe evidence was omitted",
+  );
+  assert(serialized.includes("0.94"), "confidence was omitted");
+  assert(
+    body.items[0].crawler_discovered_without_statement_signal === true,
+    "linked issuer crawl was omitted",
+  );
+  assert(
+    !serialized.includes("private issuer html"),
+    "raw page body was exposed",
+  );
+  assert(!serialized.includes("secret-token"), "secret was exposed");
 });
 
 Deno.test("benefit approval accepts only matching pending enrichment staging and approved decision actions", async () => {
@@ -496,58 +530,50 @@ Deno.test("benefit approval accepts only matching pending enrichment staging and
       };
     },
   });
-  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
-  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
-  try {
-    const invalid = await handle(
-      request({
-        action: "benefit-approve",
-        job_id: "job-1",
-        staging_id: "staging-1",
-        decisions: [{ action: "remove" }],
-      }),
-      db,
-    );
-    const approved = await handle(
-      request({
-        action: "benefit-approve",
-        job_id: "job-1",
-        staging_id: "staging-1",
-        decisions: [{ action: "approve", benefit: { title: "Dining credit" } }],
-      }),
-      db,
-    );
-    const edited = await handle(
-      request({
-        action: "benefit-edit-approve",
-        job_id: "job-1",
-        staging_id: "staging-1",
-        decisions: [{
-          action: "edit",
-          edited_benefit: { title: "Edited dining credit" },
-        }],
-      }),
-      db,
-    );
+  const invalid = await handle(
+    request({
+      action: "benefit-approve",
+      job_id: "job-1",
+      staging_id: "staging-1",
+      decisions: [{ action: "remove" }],
+    }),
+    db,
+  );
+  const approved = await handle(
+    request({
+      action: "benefit-approve",
+      job_id: "job-1",
+      staging_id: "staging-1",
+      decisions: [{ action: "approve", benefit: { title: "Dining credit" } }],
+    }),
+    db,
+  );
+  const edited = await handle(
+    request({
+      action: "benefit-edit-approve",
+      job_id: "job-1",
+      staging_id: "staging-1",
+      decisions: [{
+        action: "edit",
+        edited_benefit: { title: "Edited dining credit" },
+      }],
+    }),
+    db,
+  );
 
-    assert(
-      invalid.status === 400,
-      "unsupported approval decision was accepted",
-    );
-    assert(
-      approved.status === 200,
-      "matching pending staging was not approved",
-    );
-    assert(
-      edited.status === 200,
-      "matching pending staging was not edit-approved",
-    );
-    assert(rpcCalls === 2, "invalid decision reached the approval RPC");
-  } finally {
-    if (originalAllowlist === undefined) {
-      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
-    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
-  }
+  assert(
+    invalid.status === 400,
+    "unsupported approval decision was accepted",
+  );
+  assert(
+    approved.status === 200,
+    "matching pending staging was not approved",
+  );
+  assert(
+    edited.status === 200,
+    "matching pending staging was not edit-approved",
+  );
+  assert(rpcCalls === 2, "invalid decision reached the approval RPC");
 });
 
 Deno.test("benefit quarantine state changes are explicit and a pilot uses the service-role pilot RPC", async () => {
@@ -621,67 +647,59 @@ Deno.test("benefit quarantine state changes are explicit and a pilot uses the se
     "known_invalid",
     "additional_valid",
   ].map((profile, index) => ({ card_id: `card-${index}`, profile }));
-  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
-  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
-  try {
-    const quarantined = await handle(
-      request({
-        action: "benefit-quarantine",
-        job_id: "job-1",
-        reason: "known invalid issuer page",
-      }),
-      db,
-    );
-    const statusAfterQuarantine = String(jobs.status);
-    const unquarantined = await handle(
-      request({ action: "benefit-unquarantine", job_id: "job-1" }),
-      db,
-    );
-    const invalidPilot = await handle(
-      request({
-        action: "benefit-start-pilot",
-        parser_version: "catalog-v1",
-        candidates,
-      }),
-      db,
-    );
-    const stalePilot = await handle(
-      request({
-        action: "benefit-start-pilot",
-        parser_version: "benefits-v4",
-        candidates,
-      }),
-      db,
-    );
-    const startedPilot = await handle(
-      request({ action: "benefit-start-pilot", candidates }),
-      db,
-    );
+  const quarantined = await handle(
+    request({
+      action: "benefit-quarantine",
+      job_id: "job-1",
+      reason: "known invalid issuer page",
+    }),
+    db,
+  );
+  const statusAfterQuarantine = String(jobs.status);
+  const unquarantined = await handle(
+    request({ action: "benefit-unquarantine", job_id: "job-1" }),
+    db,
+  );
+  const invalidPilot = await handle(
+    request({
+      action: "benefit-start-pilot",
+      parser_version: "catalog-v1",
+      candidates,
+    }),
+    db,
+  );
+  const stalePilot = await handle(
+    request({
+      action: "benefit-start-pilot",
+      parser_version: "benefits-v4",
+      candidates,
+    }),
+    db,
+  );
+  const startedPilot = await handle(
+    request({ action: "benefit-start-pilot", candidates }),
+    db,
+  );
 
-    assert(
-      quarantined.status === 200 && statusAfterQuarantine === "quarantined",
-      "job was not quarantined",
-    );
-    assert(
-      unquarantined.status === 200 && String(jobs.status) === "queued",
-      "quarantined job was not queued",
-    );
-    assert(invalidPilot.status === 400, "reserved parser started a pilot");
-    assert(stalePilot.status === 400, "stale parser started a pilot");
-    assert(startedPilot.status === 200, "valid pilot was not initialized");
-    assert(
-      pilotParserVersion === "benefits-v5",
-      "admin pilot defaulted to the stale parser lane",
-    );
-    assert(
-      pilotCalls === 1,
-      "invalid pilot input reached the initialization RPC",
-    );
-  } finally {
-    if (originalAllowlist === undefined) {
-      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
-    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
-  }
+  assert(
+    quarantined.status === 200 && statusAfterQuarantine === "quarantined",
+    "job was not quarantined",
+  );
+  assert(
+    unquarantined.status === 200 && String(jobs.status) === "queued",
+    "quarantined job was not queued",
+  );
+  assert(invalidPilot.status === 400, "reserved parser started a pilot");
+  assert(stalePilot.status === 400, "stale parser started a pilot");
+  assert(startedPilot.status === 200, "valid pilot was not initialized");
+  assert(
+    pilotParserVersion === "benefits-v5",
+    "admin pilot defaulted to the stale parser lane",
+  );
+  assert(
+    pilotCalls === 1,
+    "invalid pilot input reached the initialization RPC",
+  );
 });
 
 Deno.test("benefit rejection requires a reason and retry resets only retryable job state", async () => {
@@ -735,38 +753,30 @@ Deno.test("benefit rejection requires a reason and retry resets only retryable j
       );
     },
   });
-  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
-  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
-  try {
-    const rejected = await handle(
-      request({
-        action: "benefit-reject",
-        job_id: "job-1",
-        staging_id: "staging-1",
-        decisions: [{ action: "reject" }],
-        reason: "",
-      }),
-      db,
-    );
-    const retried = await handle(
-      request({ action: "benefit-retry", job_id: "job-1" }),
-      db,
-    );
+  const rejected = await handle(
+    request({
+      action: "benefit-reject",
+      job_id: "job-1",
+      staging_id: "staging-1",
+      decisions: [{ action: "reject" }],
+      reason: "",
+    }),
+    db,
+  );
+  const retried = await handle(
+    request({ action: "benefit-retry", job_id: "job-1" }),
+    db,
+  );
 
-    assert(rejected.status === 400, "reasonless rejection was accepted");
-    assert(retried.status === 200, "failed job was not reset for retry");
-    assert(job.status === "queued", "retry did not queue the failed job");
-    assert(job.attempt_count === 2, "retry reset the attempt history");
-    assert(job.run_mode === "scheduled", "retry changed the ownership lane");
-    assert(
-      job.result_summary.run_id === "run-1",
-      "retry overwrote run history",
-    );
-  } finally {
-    if (originalAllowlist === undefined) {
-      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
-    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
-  }
+  assert(rejected.status === 400, "reasonless rejection was accepted");
+  assert(retried.status === 200, "failed job was not reset for retry");
+  assert(job.status === "queued", "retry did not queue the failed job");
+  assert(job.attempt_count === 2, "retry reset the attempt history");
+  assert(job.run_mode === "scheduled", "retry changed the ownership lane");
+  assert(
+    job.result_summary.run_id === "run-1",
+    "retry overwrote run history",
+  );
 });
 
 Deno.test("benefit reads exclude legacy catalog jobs in the query and response", async () => {
@@ -830,97 +840,81 @@ Deno.test("benefit reads exclude legacy catalog jobs in the query and response",
       };
     },
   });
-  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
-  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
-  try {
-    const response = await handle(request({ action: "benefit-list" }), db);
-    const body = await response.json();
-    assert(response.status === 200, "benefit list was rejected");
-    assert(
-      body.items.length === 1,
-      "legacy catalog job appeared in benefit list",
-    );
-    assert(
-      body.items[0].id === "benefit-job",
-      "benefit list returned the wrong lane",
-    );
-  } finally {
-    if (originalAllowlist === undefined) {
-      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
-    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
-  }
+  const response = await handle(request({ action: "benefit-list" }), db);
+  const body = await response.json();
+  assert(response.status === 200, "benefit list was rejected");
+  assert(
+    body.items.length === 1,
+    "legacy catalog job appeared in benefit list",
+  );
+  assert(
+    body.items[0].id === "benefit-job",
+    "benefit list returned the wrong lane",
+  );
 });
 
 Deno.test("benefit mutations cannot update catalog-v1 jobs", async () => {
   const handle = await handler();
-  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
-  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
-  try {
-    for (
-      const [action, status] of [
-        ["benefit-retry", "failed"],
-        ["benefit-quarantine", "failed"],
-        ["benefit-unquarantine", "quarantined"],
-      ]
-    ) {
-      const job = {
-        id: "catalog-job",
-        parser_version: "catalog-v1",
-        run_mode: "manual",
-        status,
-      };
-      const db = withAuthenticatedUser({
-        from(table: string) {
-          assert(
-            table === "card_catalog_enrichment_jobs",
-            "mutation used an unexpected table",
-          );
-          let patch: Record<string, unknown> | null = null;
-          let benefitLaneOnly = false;
-          let approvedRunModes: string[] = [];
-          return {
-            update(next: Record<string, unknown>) {
-              patch = next;
-              return this;
-            },
-            eq() {
-              return this;
-            },
-            neq(column: string, value: string) {
-              if (column === "parser_version" && value === "catalog-v1") {
-                benefitLaneOnly = true;
-              }
-              return this;
-            },
-            in(column: string, values: string[]) {
-              if (column === "run_mode") approvedRunModes = values;
-              return this;
-            },
-            select() {
-              return this;
-            },
-            async single() {
-              const eligible =
-                (!benefitLaneOnly || job.parser_version !== "catalog-v1") &&
-                (approvedRunModes.length === 0 ||
-                  approvedRunModes.includes(job.run_mode));
-              if (eligible && patch) Object.assign(job, patch);
-              return { data: eligible ? job : null, error: null };
-            },
-          };
-        },
-      });
-      const response = await handle(
-        request({ action, job_id: "catalog-job", reason: "legacy lane" }),
-        db,
-      );
-      assert(response.status === 409, `${action} mutated a catalog-v1 job`);
-      assert(job.status === status, `${action} changed a catalog-v1 job state`);
-    }
-  } finally {
-    if (originalAllowlist === undefined) {
-      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
-    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  for (
+    const [action, status] of [
+      ["benefit-retry", "failed"],
+      ["benefit-quarantine", "failed"],
+      ["benefit-unquarantine", "quarantined"],
+    ]
+  ) {
+    const job = {
+      id: "catalog-job",
+      parser_version: "catalog-v1",
+      run_mode: "manual",
+      status,
+    };
+    const db = withAuthenticatedUser({
+      from(table: string) {
+        assert(
+          table === "card_catalog_enrichment_jobs",
+          "mutation used an unexpected table",
+        );
+        let patch: Record<string, unknown> | null = null;
+        let benefitLaneOnly = false;
+        let approvedRunModes: string[] = [];
+        return {
+          update(next: Record<string, unknown>) {
+            patch = next;
+            return this;
+          },
+          eq() {
+            return this;
+          },
+          neq(column: string, value: string) {
+            if (column === "parser_version" && value === "catalog-v1") {
+              benefitLaneOnly = true;
+            }
+            return this;
+          },
+          in(column: string, values: string[]) {
+            if (column === "run_mode") approvedRunModes = values;
+            return this;
+          },
+          select() {
+            return this;
+          },
+          async single() {
+            const eligible =
+              (!benefitLaneOnly || job.parser_version !== "catalog-v1") &&
+              (approvedRunModes.length === 0 ||
+                approvedRunModes.includes(job.run_mode));
+            if (eligible && patch) Object.assign(job, patch);
+            return { data: eligible ? job : null, error: null };
+          },
+        };
+      },
+    });
+    const response = await handle(
+      request({ action, job_id: "catalog-job", reason: "legacy lane" }),
+      db,
+    );
+    assert(response.status === 409, `${action} mutated a catalog-v1 job`);
+    assert(job.status === status, `${action} changed a catalog-v1 job state`);
   }
 });
 
@@ -1046,48 +1040,40 @@ Deno.test("benefit DTOs allow only documented nested output fields", async () =>
       };
     },
   });
-  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
-  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
-  try {
-    const response = await handle(request({ action: "benefit-list" }), db);
-    const serialized = JSON.stringify(await response.json());
-    assert(response.status === 200, "benefit DTO response was rejected");
-    for (
-      const prohibited of [
-        "must not escape",
-        "unknown field",
-        "unknown_nested",
-        "debug_trace",
-        "clientSecret",
-        "accessToken",
-        "responseBody",
-        "authorizationHeader",
-      ]
-    ) {
-      assert(!serialized.includes(prohibited), `DTO exposed ${prohibited}`);
-    }
-    assert(
-      serialized.includes("₹500 dining credit"),
-      "allowlisted evidence was omitted",
-    );
-    assert(
-      serialized.includes("low_confidence"),
-      "allowlisted warning was omitted",
-    );
-    assert(
-      serialized.includes("max_discount_per_transaction") &&
-        serialized.includes("BookMyShow"),
-      "movie value config or partners were omitted from review",
-    );
-    assert(
-      !serialized.includes("internal_note"),
-      "unknown value-config fields escaped the review DTO",
-    );
-  } finally {
-    if (originalAllowlist === undefined) {
-      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
-    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  const response = await handle(request({ action: "benefit-list" }), db);
+  const serialized = JSON.stringify(await response.json());
+  assert(response.status === 200, "benefit DTO response was rejected");
+  for (
+    const prohibited of [
+      "must not escape",
+      "unknown field",
+      "unknown_nested",
+      "debug_trace",
+      "clientSecret",
+      "accessToken",
+      "responseBody",
+      "authorizationHeader",
+    ]
+  ) {
+    assert(!serialized.includes(prohibited), `DTO exposed ${prohibited}`);
   }
+  assert(
+    serialized.includes("₹500 dining credit"),
+    "allowlisted evidence was omitted",
+  );
+  assert(
+    serialized.includes("low_confidence"),
+    "allowlisted warning was omitted",
+  );
+  assert(
+    serialized.includes("max_discount_per_transaction") &&
+      serialized.includes("BookMyShow"),
+    "movie value config or partners were omitted from review",
+  );
+  assert(
+    !serialized.includes("internal_note"),
+    "unknown value-config fields escaped the review DTO",
+  );
 });
 
 Deno.test("benefit counts remain complete while list and history use explicit pages", async () => {
@@ -1165,41 +1151,33 @@ Deno.test("benefit counts remain complete while list and history use explicit pa
       };
     },
   });
-  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
-  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
-  try {
-    const response = await handle(
-      request({ action: "benefit-status", page: 2, limit: 25 }),
-      db,
-    );
-    const body = await response.json();
-    assert(response.status === 200, "paginated benefit status was rejected");
-    assert(body.items.length === 25, "status page did not honor its limit");
-    assert(
-      body.items[0].id === "benefit-26",
-      "status page did not honor its offset",
-    );
-    assert(
-      body.page === 2 && body.limit === 25 && body.has_more === true,
-      "page metadata was missing",
-    );
-    assert(
-      body.run_counts.total === 130,
-      "run counts were derived from the page",
-    );
-    assert(
-      countQueries > 0,
-      "run counts did not use an independent aggregate query",
-    );
-    assert(
-      body.movie_mapping_health[2].value === 41,
-      "movie mapping health was omitted from admin status",
-    );
-  } finally {
-    if (originalAllowlist === undefined) {
-      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
-    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
-  }
+  const response = await handle(
+    request({ action: "benefit-status", page: 2, limit: 25 }),
+    db,
+  );
+  const body = await response.json();
+  assert(response.status === 200, "paginated benefit status was rejected");
+  assert(body.items.length === 25, "status page did not honor its limit");
+  assert(
+    body.items[0].id === "benefit-26",
+    "status page did not honor its offset",
+  );
+  assert(
+    body.page === 2 && body.limit === 25 && body.has_more === true,
+    "page metadata was missing",
+  );
+  assert(
+    body.run_counts.total === 130,
+    "run counts were derived from the page",
+  );
+  assert(
+    countQueries > 0,
+    "run counts did not use an independent aggregate query",
+  );
+  assert(
+    body.movie_mapping_health[2].value === 41,
+    "movie mapping health was omitted from admin status",
+  );
 });
 
 function quarantineStateDb(
@@ -1276,52 +1254,44 @@ Deno.test("manual quarantine preserves safety history and records a justified te
       idempotency_passed: false,
     },
   };
-  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
-  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
-  try {
-    const response = await handle(
-      request({
-        action: "benefit-quarantine",
-        job_id: "pilot-job-1",
-        reason: "identity mismatch confirmed",
-      }),
-      quarantineStateDb(job),
-    );
-    const summary = job.result_summary as Record<string, unknown>;
-    assert(
-      response.status === 200,
-      "review-required pilot job was not quarantined",
-    );
-    assert(
-      job.status === "quarantined",
-      "quarantine did not reach a terminal state",
-    );
-    assert(summary.run_id === "run-1", "quarantine erased run history");
-    assert(
-      summary.unsafe_mutation_count === 2,
-      "quarantine falsified unsafe mutation history",
-    );
-    assert(
-      summary.raw_body_stored === true,
-      "quarantine falsified raw-body history",
-    );
-    assert(
-      summary.evidence_passed === false,
-      "quarantine falsified evidence history",
-    );
-    assert(
-      summary.quarantine_reason === "identity mismatch confirmed",
-      "quarantine reason was not recorded",
-    );
-    assert(
-      summary.idempotency_passed === true,
-      "justified quarantine was not marked idempotent",
-    );
-  } finally {
-    if (originalAllowlist === undefined) {
-      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
-    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
-  }
+  const response = await handle(
+    request({
+      action: "benefit-quarantine",
+      job_id: "pilot-job-1",
+      reason: "identity mismatch confirmed",
+    }),
+    quarantineStateDb(job),
+  );
+  const summary = job.result_summary as Record<string, unknown>;
+  assert(
+    response.status === 200,
+    "review-required pilot job was not quarantined",
+  );
+  assert(
+    job.status === "quarantined",
+    "quarantine did not reach a terminal state",
+  );
+  assert(summary.run_id === "run-1", "quarantine erased run history");
+  assert(
+    summary.unsafe_mutation_count === 2,
+    "quarantine falsified unsafe mutation history",
+  );
+  assert(
+    summary.raw_body_stored === true,
+    "quarantine falsified raw-body history",
+  );
+  assert(
+    summary.evidence_passed === false,
+    "quarantine falsified evidence history",
+  );
+  assert(
+    summary.quarantine_reason === "identity mismatch confirmed",
+    "quarantine reason was not recorded",
+  );
+  assert(
+    summary.idempotency_passed === true,
+    "justified quarantine was not marked idempotent",
+  );
 });
 
 Deno.test("manual quarantine loses an optimistic race instead of overwriting newer job state", async () => {
@@ -1339,34 +1309,26 @@ Deno.test("manual quarantine loses an optimistic race instead of overwriting new
       evidence_passed: true,
     },
   };
-  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
-  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
-  try {
-    const response = await handle(
-      request({
-        action: "benefit-quarantine",
-        job_id: "pilot-job-race",
-        reason: "issuer page confirmed invalid",
-      }),
-      quarantineStateDb(job, true),
-    );
-    assert(
-      response.status === 409,
-      "stale quarantine overwrote newer job state",
-    );
-    assert(
-      job.status === "review_required",
-      "stale quarantine changed the job status",
-    );
-    assert(
-      (job.result_summary as Record<string, unknown>).quarantine_reason ===
-        undefined,
-      "stale quarantine changed the result summary",
-    );
-  } finally {
-    if (originalAllowlist === undefined) {
-      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
-    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
-  }
+  const response = await handle(
+    request({
+      action: "benefit-quarantine",
+      job_id: "pilot-job-race",
+      reason: "issuer page confirmed invalid",
+    }),
+    quarantineStateDb(job, true),
+  );
+  assert(
+    response.status === 409,
+    "stale quarantine overwrote newer job state",
+  );
+  assert(
+    job.status === "review_required",
+    "stale quarantine changed the job status",
+  );
+  assert(
+    (job.result_summary as Record<string, unknown>).quarantine_reason ===
+      undefined,
+    "stale quarantine changed the result summary",
+  );
 });
 import { presentBenefitJob } from "./benefit_admin.ts";

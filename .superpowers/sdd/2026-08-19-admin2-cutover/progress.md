@@ -17,7 +17,7 @@ Ruling: Carry the Customer plan's final adjudication ledger update into Task 1's
 ## Tasks
 
 - Task 1: complete — executable Card Data parity
-- Task 2: pending — shared database-backed legacy authorization
+- Task 2: complete — shared database-backed legacy authorization
 - Task 3: pending — legacy redirect and conditional navigation entry
 - Task 4: pending — cutover checklist and full verification
 - Task 5: pending — stop at deployment boundary
@@ -32,3 +32,13 @@ Ruling: Carry the Customer plan's final adjudication ledger update into Task 1's
 - The complete Admin2 Flutter suite passes 149/149, scoped Admin2 analysis reports no issues, and `git diff --check` is clean.
 
 Ruling: Attach `staging_id` only to benefit approve, edit-and-approve, and reject decisions; recovery operations target the review item itself and must omit staging identity to satisfy the existing typed and server contracts. Cost if wrong: a future recovery endpoint that requires a staging version would need an explicit contract revision instead of inheriting it accidentally from the selected row.
+
+## Task 2 evidence
+
+- RED: the legacy endpoint rejected an active database admin whose identity email was not allowlisted, and the shared access module did not exist. A later malformed-response test also caught the initial extraction classifying malformed Auth data as a credential failure instead of a retryable dependency failure.
+- GREEN: `_shared/admin_access.ts` owns caller-token authentication, stable credential/transient classification, and a fresh service-role `users(id,is_active,is_admin)` lookup for every request.
+- Both `admin-operator` and `admin-catalog-entry` delegate to that module. The legacy endpoint preserves its existing human-readable authorization responses and action payloads while returning a sanitized retryable `500` for dependency failures.
+- Tests prove any-email active admins succeed, verified founder-email and metadata claims cannot bypass `is_admin = false`, an immediate database flag change blocks the next request, malformed/transient dependencies are sanitized, and inherited action names remain rejected by the operator gateway.
+- Focused authorization and legacy coverage passes 37/37; the complete Admin Operator plus legacy suite passes 103/103; all Supabase Function Deno tests pass 156/156; `deno check` passes for both entrypoints and the shared module; no runtime or test references to the removed email allowlist remain.
+
+Ruling: Keep each endpoint's established public error vocabulary while sharing only the authorization decision: Admin Operator emits stable machine codes, and the compatibility endpoint retains its human-readable authorization strings. Cost if wrong: legacy clients expecting machine codes would continue receiving the same pre-cutover strings until the compatibility endpoint is retired.
