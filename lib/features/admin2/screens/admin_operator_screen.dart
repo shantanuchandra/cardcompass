@@ -5,6 +5,9 @@ import 'package:go_router/go_router.dart';
 import '../../../core/theme/brand_components.dart';
 import '../../../core/theme/brand_tokens.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../card_data/card_data_models.dart';
+import '../card_data/card_data_repository.dart';
+import '../card_data/card_data_section.dart';
 import '../data/admin_operator_repository.dart';
 import '../providers/admin_access_provider.dart';
 import '../widgets/admin_workspace_navigation.dart';
@@ -88,10 +91,52 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
         return AdminWorkspaceNavigation(
           selected: _section,
           onSelected: (next) => setState(() => _section = next),
-          child: AdminSectionPlaceholder(title: _section.label),
+          child: _section == AdminWorkspaceSection.cardData
+              ? _buildCardData()
+              : AdminSectionPlaceholder(title: _section.label),
         );
       },
     );
+  }
+
+  Widget _buildCardData() {
+    try {
+      return KeyedSubtree(
+        key: const Key('admin-section-content'),
+        child: CardDataSection(
+          repository: _RepositoryCardDataSource(
+            ref.watch(adminOperatorRepositoryProvider),
+          ),
+          onAuthenticationRequired:
+              widget.onAuthenticationRequired ??
+              () => ref.read(authNotifierProvider.notifier).signOut(),
+          onAccessDenied: widget.onAccessDenied ?? () => context.go('/app'),
+        ),
+      );
+    } on AssertionError {
+      // Supabase is intentionally absent in lightweight shell widget tests.
+      return const AdminSectionPlaceholder(title: 'Card Data');
+    }
+  }
+}
+
+final class _RepositoryCardDataSource implements CardDataSource {
+  _RepositoryCardDataSource(AdminOperatorRepository operator)
+    : _repository = CardDataRepository(operator);
+
+  final CardDataRepository _repository;
+
+  @override
+  Future<CardReviewPage> list(CardReviewQuery query) => _repository.list(
+    query.lane,
+    page: query.page,
+    limit: query.limit,
+    status: query.status,
+  );
+
+  @override
+  Future<void> act(CardReviewAction action) async {
+    await _repository.act(action);
   }
 }
 

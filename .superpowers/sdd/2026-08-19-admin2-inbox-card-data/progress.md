@@ -20,7 +20,7 @@ Ruling: Include the foundation's final adjudication ledger update in Task 1's co
 - Task 2: implementation complete, pending review — sanitized Card Data gateway actions
 - Task 3: implementation complete, pending review — derived ranked Action Inbox
 - Task 4: implementation complete, pending review — typed Flutter repositories
-- Task 5: pending — Card Data review workspace
+- Task 5: implementation complete, pending review — Card Data review workspace
 - Task 6: pending — Action Inbox and deep-linking
 
 ## Task 1 evidence
@@ -89,3 +89,17 @@ Ruling: Recursively copy and freeze JSON-like action and DTO collections, reject
 - Task 4 boundary follow-up GREEN: 32,767- and 32,768-byte payloads pass, 32,769 bytes fail before invocation, normalized reject payload growth is included, timestamps over 100 characters fail even when parseable, and identity text/reason limits match the Edge validator. Focused repositories passed 41/41, the full Admin2 suite passed 68/68, and targeted analysis reported no issues.
 
 Ruling: Measure both the submitted mutation payload and its operation-normalized safe form with `utf8.encode(jsonEncode(...))`, enforcing the gateway's inclusive 32,768-byte ceiling before allocating a request ID. Cost if wrong: JSON encoder escaping differences across runtimes could require a shared canonical byte-count fixture, though ASCII and multibyte boundary tests currently match the Edge contract.
+
+## Task 5 evidence
+
+- RED 1: the focused widget suite failed to compile because `CardDataSection`, `CardDataSource`, and `CardReviewQuery` did not exist.
+- GREEN 1: the new queue/detail surface passed identity and benefit lanes, exact initial selection, pagination, reason-gated server-confirmed rejection, conflict reload, 401/403 effects, and the 390-pixel/2.0-text drill-in.
+- RED 2: the refresh-failure test retained the stale item but could not find a visible stale-data warning.
+- GREEN 2: refresh failure now keeps the prior queue visible and announces “Refresh failed. Showing the last loaded queue.”
+- Regression: focused Card Data, admin shell, and typography-floor coverage passed 24/24; targeted analysis is clean after formatting.
+
+Ruling: Use an operations-ledger hierarchy with the queue as the index, evidence as the decision record, and one compact state rail that binds lane, current state, freshness, confidence, and parser provenance. Cost if wrong: the detail view spends a small amount of vertical space on repeated state context in exchange for safer single-item decisions.
+
+Ruling: Keep the prior page on refresh failures and mutations until the server confirms success; surface stale-state and refresh notices as live regions rather than clearing useful review context. Cost if wrong: an operator may briefly see an older row alongside an explicit warning instead of an empty error state.
+
+Ruling: Adapt the existing `CardDataRepository` behind the view-owned `CardDataSource` boundary so Task 4's reviewed transport contract remains untouched and widget tests remain deterministic. Cost if wrong: a later shared provider may move this small adapter into the Card Data module without changing behavior.
