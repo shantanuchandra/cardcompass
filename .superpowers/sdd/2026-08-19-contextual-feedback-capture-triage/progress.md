@@ -163,3 +163,8 @@ Ruling: Queue admin triage retry atomically with a successful mutation receipt w
 Ruling: Page Feedback through deterministic server pages and retain the last successful page during refresh failure. Cost if wrong: operators use explicit Previous/Next controls instead of one unbounded list, keeping memory and gateway response sizes predictable beyond 100 records.
 
 Ruling: Make `FeedbackTriageRetry` the owner of retry request identity and keep it in the detail-state transaction until authoritative success. Cost if wrong: navigating away intentionally abandons the local retry affordance, while server-side receipt replay still prevents duplicate execution if the same mutation is retried by retained state.
+
+## Final adjudication
+
+- The single final-fix owner resolved all whole-plan findings in `939ea8c`; the scoped re-review's two valid durability residuals were resolved by the same owner in `7527ee1`.
+- Controller verification passed five focused Feedback detail tests and seven focused Admin gateway tests, including rebuild-stable retry identity and complete revision history. No unresolved capture/triage finding remains; the plan is approved to continue to the eval runner.

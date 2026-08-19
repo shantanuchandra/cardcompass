@@ -40,6 +40,10 @@ Deno.test("proxy preserves validation, 100 KB cap, and upstream response contrac
         Promise.resolve({
           status: 418,
           body: '{"upstream":true}',
+          model: "gemini-3.6-flash",
+          response: { upstream: true },
+          inputTokens: 0,
+          outputTokens: 0,
           selectedModel: "gemini-3.6-flash",
           parsedJson: { upstream: true },
           latencyMs: 1,

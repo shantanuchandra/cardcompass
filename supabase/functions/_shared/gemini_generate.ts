@@ -9,14 +9,24 @@ export type GeminiInput = Readonly<{
   payload: Record<string, unknown>;
 }>;
 
-export type GeminiResult = Readonly<{
-  status: number;
-  body: string;
-  parsedJson?: unknown;
-  selectedModel: string;
+export type GeminiGenerationResult = Readonly<{
+  model: string;
+  response: Record<string, unknown>;
+  inputTokens: number;
+  outputTokens: number;
   latencyMs: number;
-  usageTokens?: number;
 }>;
+
+// Raw fields remain for the public proxy's backwards-compatible passthrough.
+export type GeminiResult =
+  & GeminiGenerationResult
+  & Readonly<{
+    status: number;
+    body: string;
+    parsedJson?: unknown;
+    selectedModel: string;
+    usageTokens?: number;
+  }>;
 
 export type GeminiDependencies = Readonly<{
   apiKeys: readonly string[];
@@ -107,7 +117,24 @@ function resultFrom(
   const total = usage && typeof usage === "object"
     ? (usage as Record<string, unknown>).totalTokenCount
     : undefined;
+  const input = usage && typeof usage === "object"
+    ? (usage as Record<string, unknown>).promptTokenCount
+    : undefined;
+  const output = usage && typeof usage === "object"
+    ? (usage as Record<string, unknown>).candidatesTokenCount
+    : undefined;
   return {
+    model: value.model,
+    response:
+      parsedJson && typeof parsedJson === "object" && !Array.isArray(parsedJson)
+        ? parsedJson as Record<string, unknown>
+        : {},
+    inputTokens: typeof input === "number" && Number.isFinite(input)
+      ? input
+      : 0,
+    outputTokens: typeof output === "number" && Number.isFinite(output)
+      ? output
+      : 0,
     status: value.status,
     body: value.body,
     parsedJson,

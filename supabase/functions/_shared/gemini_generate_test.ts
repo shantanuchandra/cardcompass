@@ -29,7 +29,7 @@ Deno.test("Gemini transport rotates keys on 429 and reports parsed usage", async
         urls.length === 1
           ? new Response('{"error":"quota"}', { status: 429 })
           : new Response(
-            '{"candidates":[],"usageMetadata":{"totalTokenCount":17}}',
+            '{"candidates":[],"usageMetadata":{"promptTokenCount":11,"candidatesTokenCount":6,"totalTokenCount":17}}',
             { status: 200 },
           ),
       );
@@ -43,8 +43,9 @@ Deno.test("Gemini transport rotates keys on 429 and reports parsed usage", async
   assertEquals(urls[0].includes("key=first"), true);
   assertEquals(urls[1].includes("key=second"), true);
   assertEquals(result.status, 200);
-  assertEquals(result.selectedModel, "gemini-3.6-flash");
-  assertEquals(result.usageTokens, 17);
+  assertEquals(result.model, "gemini-3.6-flash");
+  assertEquals(result.inputTokens, 11);
+  assertEquals(result.outputTokens, 6);
   assertEquals(result.latencyMs, 5);
 });
 
@@ -62,7 +63,7 @@ Deno.test("Gemini transport falls forward only for unavailable models", async ()
     },
   });
   assertEquals(urls.length, 2);
-  assertEquals(result.selectedModel, "gemini-3.5-flash");
+  assertEquals(result.model, "gemini-3.5-flash");
 });
 
 Deno.test("Gemini transport exhausts keys for one unavailable model before advancing", async () => {
@@ -88,7 +89,7 @@ Deno.test("Gemini transport exhausts keys for one unavailable model before advan
     "gemini-3.6-flash:generateContent:second",
     "gemini-3.5-flash:generateContent:first",
   ]);
-  assertEquals(result.selectedModel, "gemini-3.5-flash");
+  assertEquals(result.model, "gemini-3.5-flash");
 });
 
 Deno.test("Gemini transport tries the next supported model after every key is rate limited", async () => {
@@ -140,5 +141,21 @@ Deno.test("Gemini transport preserves an ordinary upstream status and body", asy
   assertEquals({ status: result.status, body: result.body }, {
     status: 400,
     body: "upstream detail",
+  });
+});
+
+Deno.test("Gemini transport normalizes absent and malformed usage counts", async () => {
+  const result = await generateGemini(input, {
+    apiKeys: ["key"],
+    fetch: () =>
+      Promise.resolve(
+        new Response(
+          '{"candidates":[],"usageMetadata":{"promptTokenCount":"secret","candidatesTokenCount":null}}',
+        ),
+      ),
+  });
+  assertEquals({ input: result.inputTokens, output: result.outputTokens }, {
+    input: 0,
+    output: 0,
   });
 });
