@@ -11,6 +11,8 @@ import 'package:cardcompass/features/admin2/models/admin_access.dart';
 import 'package:cardcompass/features/admin2/inbox/inbox_models.dart';
 import 'package:cardcompass/features/admin2/providers/admin_access_provider.dart';
 import 'package:cardcompass/features/admin2/screens/admin_operator_screen.dart';
+import 'package:cardcompass/features/admin2/system/system_models.dart';
+import 'package:cardcompass/features/admin2/system/system_section.dart';
 import 'package:cardcompass/features/admin2/widgets/admin_workspace_navigation.dart';
 import 'package:cardcompass/features/auth/providers/auth_provider.dart';
 import 'package:flutter/material.dart';
@@ -57,6 +59,28 @@ final class _ShellCardSource implements CardDataSource {
   );
 }
 
+final class _ShellSystemSource implements SystemDataSource {
+  @override
+  Future<SystemJobsPage> jobs(
+    SystemJobFamily family, {
+    int page = 1,
+    int limit = 25,
+    String? status,
+  }) async =>
+      SystemJobsPage(items: const [], page: page, limit: limit, hasMore: false);
+
+  @override
+  Future<void> mutate(SystemMutation mutation) async {}
+
+  @override
+  Future<SystemStatusSnapshot> status() async => SystemStatusSnapshot(
+    pipelines: const [],
+    controls: const [],
+    controlSourceError: SystemSourceError.sourceUnavailable,
+    refreshedAt: DateTime.utc(2026, 8, 19),
+  );
+}
+
 Future<void> _pumpScreen(
   WidgetTester tester, {
   required FutureOr<AdminAccess> Function(Ref ref) access,
@@ -79,6 +103,7 @@ Future<void> _pumpScreen(
             onAuthenticationRequired: onAuthenticationRequired,
             onAccessDenied: onAccessDenied,
             cardDataSource: _ShellCardSource(),
+            systemSource: _ShellSystemSource(),
             inboxLoader: () async => InboxSnapshot(
               items: const [],
               partialFailures: const [],

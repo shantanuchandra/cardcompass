@@ -13,6 +13,9 @@ import '../inbox/action_inbox_section.dart';
 import '../inbox/inbox_models.dart';
 import '../inbox/inbox_repository.dart';
 import '../providers/admin_access_provider.dart';
+import '../system/system_models.dart';
+import '../system/system_repository.dart';
+import '../system/system_section.dart';
 import '../widgets/admin_workspace_navigation.dart';
 
 class AdminOperatorScreen extends ConsumerStatefulWidget {
@@ -22,6 +25,7 @@ class AdminOperatorScreen extends ConsumerStatefulWidget {
     this.onAccessDenied,
     this.cardDataSource,
     this.inboxLoader,
+    this.systemSource,
     this.initialCardLane = CardReviewLane.identity,
     this.initialCardTargetId,
   });
@@ -30,6 +34,7 @@ class AdminOperatorScreen extends ConsumerStatefulWidget {
   final VoidCallback? onAccessDenied;
   final CardDataSource? cardDataSource;
   final InboxLoader? inboxLoader;
+  final SystemDataSource? systemSource;
   final CardReviewLane initialCardLane;
   final String? initialCardTargetId;
 
@@ -113,6 +118,7 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
           child: switch (_section) {
             AdminWorkspaceSection.inbox => _buildInbox(),
             AdminWorkspaceSection.cardData => _buildCardData(),
+            AdminWorkspaceSection.system => _buildSystem(),
             _ => AdminSectionPlaceholder(title: _section.label),
           },
         );
@@ -156,6 +162,21 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
     ),
   );
 
+  Widget _buildSystem() => KeyedSubtree(
+    key: const Key('admin-section-content'),
+    child: SystemSection(
+      repository:
+          widget.systemSource ??
+          _RepositorySystemDataSource(
+            ref.watch(adminOperatorRepositoryProvider),
+          ),
+      onAuthenticationRequired:
+          widget.onAuthenticationRequired ??
+          () => ref.read(authNotifierProvider.notifier).signOut(),
+      onAccessDenied: widget.onAccessDenied ?? () => context.go('/app'),
+    ),
+  );
+
   void _openCardTarget(AdminInboxDestination destination) {
     setState(() {
       _cardLane = destination.lane;
@@ -164,6 +185,27 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
       _section = AdminWorkspaceSection.cardData;
     });
   }
+}
+
+final class _RepositorySystemDataSource implements SystemDataSource {
+  _RepositorySystemDataSource(AdminOperatorRepository operator)
+    : _repository = SystemRepository(operator);
+
+  final SystemRepository _repository;
+
+  @override
+  Future<SystemJobsPage> jobs(
+    SystemJobFamily family, {
+    int page = 1,
+    int limit = 25,
+    String? status,
+  }) => _repository.jobs(family, page: page, limit: limit, status: status);
+
+  @override
+  Future<void> mutate(SystemMutation mutation) => _repository.mutate(mutation);
+
+  @override
+  Future<SystemStatusSnapshot> status() => _repository.status();
 }
 
 final class _RepositoryCardDataSource implements CardDataSource {
