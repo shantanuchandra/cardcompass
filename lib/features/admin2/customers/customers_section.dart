@@ -42,7 +42,6 @@ class _CustomersSectionState extends State<CustomersSection> {
       _message = null;
       _detail = null;
       _selectedId = null;
-      _pendingAuthBan = null;
     });
     try {
       final results = await widget.repository.search(_search.text);
@@ -74,6 +73,7 @@ class _CustomersSectionState extends State<CustomersSection> {
     CustomerSummary customer, {
     int? generation,
     bool compact = true,
+    bool explicitSelection = false,
   }) async {
     final active = generation ?? ++_generation;
     setState(() {
@@ -81,7 +81,9 @@ class _CustomersSectionState extends State<CustomersSection> {
       _compactDetail = compact;
       _error = null;
       _detail = null;
-      if (_pendingAuthBan?.targetId != customer.id) _pendingAuthBan = null;
+      if (explicitSelection && _pendingAuthBan?.targetId != customer.id) {
+        _pendingAuthBan = null;
+      }
     });
     try {
       final detail = await widget.repository.detail(customer.id);
@@ -307,6 +309,41 @@ class _CustomersSectionState extends State<CustomersSection> {
               padding: const EdgeInsets.symmetric(horizontal: BrandSpacing.lg),
               child: Semantics(liveRegion: true, child: Text(message)),
             ),
+          if (_pendingAuthBan case final pending?
+              when _detail?.summary.id != pending.targetId)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                BrandSpacing.lg,
+                BrandSpacing.sm,
+                BrandSpacing.lg,
+                0,
+              ),
+              child: Material(
+                color: Theme.of(context).colorScheme.errorContainer,
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: const EdgeInsets.all(BrandSpacing.md),
+                  child: Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: BrandSpacing.md,
+                    runSpacing: BrandSpacing.sm,
+                    children: [
+                      Text(
+                        'Auth ban still needs retry for ${pending.targetId}. Database access is already blocked.',
+                      ),
+                      FilledButton.icon(
+                        key: const Key('customer-auth-ban-retry'),
+                        onPressed: _submitting
+                            ? null
+                            : () => _mutate(pending, 'Auth ban confirmed.'),
+                        icon: const Icon(Icons.lock_reset),
+                        label: const Text('Retry Auth ban'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           if (_error != null && _results == null)
             const Padding(
               padding: EdgeInsets.all(24),
@@ -353,7 +390,9 @@ class _CustomersSectionState extends State<CustomersSection> {
         selected: item.id == _selectedId,
         title: Text(item.email),
         subtitle: Text('${item.isActive ? 'Active' : 'Disabled'} · ${item.id}'),
-        onTap: _submitting ? null : () => _select(item),
+        onTap: _submitting
+            ? null
+            : () => _select(item, explicitSelection: true),
       );
     },
   );

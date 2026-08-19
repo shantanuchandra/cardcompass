@@ -236,6 +236,11 @@ void main() {
     expect(find.textContaining('Auth ban needs retry'), findsOneWidget);
     expect(find.text('Disabled'), findsOneWidget);
     expect(find.byKey(const Key('customer-auth-ban-retry')), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const Key('customer-search-submit')));
+    await tester.tap(find.byKey(const Key('customer-search-submit')));
+    await tester.pumpAndSettle();
+    expect(find.text('Disabled'), findsOneWidget);
+    expect(find.byKey(const Key('customer-auth-ban-retry')), findsOneWidget);
     await tester.ensureVisible(
       find.byKey(const Key('customer-auth-ban-retry')),
     );
@@ -247,6 +252,65 @@ void main() {
     expect(source.mutations[1].requestId, source.mutations[0].requestId);
     expect(find.byKey(const Key('customer-auth-ban-retry')), findsNothing);
   });
+
+  testWidgets(
+    'explicitly selecting another customer clears pending Auth ban recovery',
+    (tester) async {
+      final source = _Source()
+        ..mutationError = const AdminRequestFailed('auth_ban_pending');
+      final summaryB = CustomerSummary(
+        id: userB,
+        email: 'second@example.com',
+        createdAt: DateTime.utc(2026),
+        lastActivityAt: DateTime.utc(2026),
+        isActive: true,
+      );
+      source.results = [summary, summaryB];
+      source.detailCompleters[userB] = Completer<CustomerDetail>()
+        ..complete(
+          CustomerDetail(
+            summary: summaryB,
+            gmailConnected: true,
+            gmailStatus: CustomerOperationStatus.failed,
+            gmailFailure: CustomerFailure.processingFailed,
+            gmailUpdatedAt: DateTime.utc(2026),
+            ownedCardCount: 0,
+            statementCount: 0,
+            processedStatementCount: 0,
+            emailCount: 0,
+            processedEmailCount: 0,
+            latestStatementAt: null,
+            latestEmailAt: null,
+            deletionStatus: null,
+            deletionUpdatedAt: null,
+          ),
+        );
+      await _pump(tester, source);
+      await tester.enterText(
+        find.byKey(const Key('customer-search-field')),
+        'user',
+      );
+      await tester.tap(find.byKey(const Key('customer-search-submit')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('customer-disable')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('customer-confirm-reason')),
+        'suspected abuse',
+      );
+      await tester.enterText(
+        find.byKey(const Key('customer-confirm-target')),
+        user,
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('customer-confirm-submit')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('customer-auth-ban-retry')), findsOneWidget);
+      await tester.tap(find.text('second@example.com'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('customer-auth-ban-retry')), findsNothing);
+    },
+  );
 
   testWidgets(
     'new selection disables stale detail actions until matching detail arrives',

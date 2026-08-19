@@ -138,3 +138,12 @@ Ruling: Make request identity part of the immutable Customer operation before in
 Ruling: Treat `auth_ban_pending` as successful database containment plus an incomplete Auth side effect, refresh server detail immediately, and expose only an exact-request Auth-ban retry. Cost if wrong: the operator must explicitly retry the ban, but the console never misstates database access as active or generates a conflicting disable request.
 
 Ruling: Permit queued Gmail recovery only when the latest operation is failed and carries one allowlisted safe failure category, in addition to an active profile and connected Gmail identity. Cost if wrong: ambiguous null or completed states require fresh diagnosis rather than enqueueing an unnecessary customer-session operation.
+
+## Task 5 residual review fix
+
+- Pending Auth-ban recovery now survives refresh, a same-query search that returns the same target, detail reload, and transient read failures without changing its immutable request ID or body.
+- When search results temporarily omit the contained customer, a dedicated banner names the exact target, states that database access is already blocked, and retains the exact-request retry action.
+- An explicit tap on a different customer intentionally clears pending recovery before loading that customer's detail, so a retry can never cross customer context. Automatic search selection does not silently discard it.
+- Regression coverage proves the same operation object and request ID survive same-target search/refresh and clear only after canonical replay success; focused Customer passes 18/18, full Admin2 passes 144/144, and scoped analysis is clean.
+
+Ruling: Preserve a pending Auth-ban operation across automatic refresh/search/detail state changes and surface it independently when its target is absent; clear it only after confirmed replay success or an explicit operator selection of another customer. Cost if wrong: the operator may see a persistent recovery banner during unrelated automatic results, but the exact incomplete side effect cannot be silently orphaned or replayed against the wrong target.
