@@ -1,6 +1,7 @@
 import {
   handleBenefitAdminAction,
   presentBenefitJob,
+  validateV6ApprovalDecisions,
 } from "./benefit_admin.ts";
 import {
   currentBenefitProposal,
@@ -617,6 +618,12 @@ Deno.test("v6 admin presentation and approval preserve canonical replay identity
                 card_id: "card-1",
                 status: "pending",
                 request_type: "official_benefit_enrichment",
+                parser_version: "benefits-v6",
+                extracted_data: {
+                  request_type: "official_benefit_enrichment",
+                  parser_version: "benefits-v6",
+                  proposals: [proposal],
+                },
               },
               error: null,
             };
@@ -648,6 +655,10 @@ Deno.test("v6 admin presentation and approval preserve canonical replay identity
   assert(
     approved.offerSubject === proposal.offerSubject,
     "approval stripped offer subject",
+  );
+  assert(
+    approved.conditionHash === proposal.conditionHash,
+    "approval stripped canonical condition hash",
   );
   assert(
     !JSON.stringify(submitted).includes("must not escape"),
@@ -685,8 +696,212 @@ Deno.test("v6 admin presentation and approval preserve canonical replay identity
   );
 });
 
+Deno.test("v6 approval is bound to exact server-staged canonical proposals", async () => {
+  const [proposal] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card?variant=official",
+      text:
+        "Get 10% cashback on dining spends, capped at ₹500 per statement month, excluding cash advances.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const call = async (decisions: Record<string, unknown>[]) => {
+    let rpcCalls = 0;
+    let submitted: Record<string, any>[] = [];
+    const db = {
+      from(table: string) {
+        return {
+          select() {
+            return this;
+          },
+          neq() {
+            return this;
+          },
+          in() {
+            return this;
+          },
+          eq() {
+            return this;
+          },
+          async single() {
+            return table === "card_catalog_enrichment_jobs"
+              ? {
+                data: {
+                  id: "job-1",
+                  card_id: "card-1",
+                  staging_id: "staging-1",
+                  status: "staged",
+                  parser_version: "benefits-v6",
+                },
+                error: null,
+              }
+              : {
+                data: {
+                  id: "staging-1",
+                  card_id: "card-1",
+                  status: "pending",
+                  request_type: "official_benefit_enrichment",
+                  parser_version: "benefits-v6",
+                  extracted_data: {
+                    request_type: "official_benefit_enrichment",
+                    parser_version: "benefits-v6",
+                    proposals: [proposal],
+                  },
+                },
+                error: null,
+              };
+          },
+        };
+      },
+      async rpc(_name: string, args: Record<string, any>) {
+        rpcCalls += 1;
+        submitted = args._decisions;
+        return {
+          data: [{ staging_id: "staging-1", resulting_status: "approved" }],
+          error: null,
+        };
+      },
+    };
+    let error: unknown;
+    try {
+      await handleBenefitAdminAction(db, {
+        action: decisions[0]?.action === "edit"
+          ? "benefit-edit-approve"
+          : "benefit-approve",
+        job_id: "job-1",
+        staging_id: "staging-1",
+        decisions,
+      }, { id: "admin-1" });
+    } catch (caught) {
+      error = caught;
+    }
+    return { error, rpcCalls, submitted };
+  };
+  const exact = { action: "approve", benefit: proposal };
+  const tampered = [
+    {
+      label: "benefit ID",
+      decisions: [{
+        action: "approve",
+        benefit: { ...proposal, benefitId: `${proposal.benefitId}:tampered` },
+      }],
+    },
+    {
+      label: "offer subject",
+      decisions: [{
+        action: "approve",
+        benefit: { ...proposal, offerSubject: "cashback:cashback:fuel" },
+      }],
+    },
+    {
+      label: "restrictions",
+      decisions: [{
+        action: "approve",
+        benefit: { ...proposal, restrictions: ["fuel spends"] },
+      }],
+    },
+    {
+      label: "exclusions",
+      decisions: [{
+        action: "approve",
+        benefit: {
+          ...proposal,
+          exclusions: { additional: { source_terms: ["wallet reloads"] } },
+        },
+      }],
+    },
+    {
+      label: "source identity",
+      decisions: [{
+        action: "approve",
+        benefit: { ...proposal, sourceIdentity: "f".repeat(64) },
+      }],
+    },
+    {
+      label: "unknown proposal",
+      decisions: [{
+        action: "approve",
+        benefit: {
+          ...proposal,
+          benefitId: `card-benefit-v2:card-1:${"f".repeat(64)}`,
+          dedupeKey: `card-benefit-v2:card-1:${"f".repeat(64)}`,
+          conditionHash: "f".repeat(64),
+        },
+      }],
+    },
+    { label: "duplicate proposal", decisions: [exact, exact] },
+  ];
+  for (const fixture of tampered) {
+    const result = await call(fixture.decisions);
+    assert(result.error instanceof Error, `${fixture.label} was accepted`);
+    assert(result.rpcCalls === 0, `${fixture.label} reached approval RPC`);
+  }
+
+  const valid = await call([exact]);
+  assert(!valid.error, "exact staged proposal was rejected");
+  assert(valid.rpcCalls === 1, "exact staged proposal missed approval RPC");
+  assert(
+    valid.submitted[0].benefit.conditionHash === proposal.conditionHash,
+    "server canonical identity was not submitted",
+  );
+
+  const edited = await call([{
+    action: "edit",
+    edited_benefit: { ...proposal, title: "Reviewed dining cashback" },
+  }]);
+  assert(!edited.error, "presentation-only v6 edit was rejected");
+  assert(
+    edited.submitted[0].edited_benefit.title === "Reviewed dining cashback" &&
+      edited.submitted[0].edited_benefit.conditionHash ===
+        proposal.conditionHash,
+    "v6 edit did not retain server canonical identity",
+  );
+});
+
+Deno.test("pure v6 decision validation rejects an unstaged canonical identity", async () => {
+  const [proposal] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback on dining spends.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const extraction = {
+    request_type: "official_benefit_enrichment",
+    parser_version: "benefits-v6",
+    proposals: [proposal],
+  };
+  const valid = validateV6ApprovalDecisions(
+    [{ action: "approve", benefit: proposal }],
+    extraction,
+  );
+  assert(valid[0].benefit != null, "pure validator rejected exact proposal");
+  let error: unknown;
+  try {
+    validateV6ApprovalDecisions([{
+      action: "approve",
+      benefit: { ...proposal, restrictions: ["fuel spends"] },
+    }], extraction);
+  } catch (caught) {
+    error = caught;
+  }
+  assert(error instanceof Error, "pure validator accepted identity smuggling");
+});
+
 Deno.test("v6 admin identity terms remain explicitly bounded", () => {
   const terms = Array.from({ length: 40 }, (_, index) => `term-${index}`);
+  const structured = {
+    additional: { source_terms: terms },
+    categories: ["fuel"],
+    days: ["sunday"],
+    mcc_codes: ["5541"],
+    merchants: ["example merchant"],
+    transaction_types: ["wallet reload"],
+  };
   const presented = presentBenefitJob({
     parser_version: "benefits-v6",
     card_benefits_staging: {
@@ -697,8 +912,8 @@ Deno.test("v6 admin identity terms remain explicitly bounded", () => {
           benefitId: `card-benefit-v2:card-1:${"a".repeat(64)}`,
           dedupeKey: `card-benefit-v2:card-1:${"a".repeat(64)}`,
           parserVersion: "benefits-v6",
-          valueConfig: { restrictions: terms },
-          exclusions: { additional: { source_terms: terms } },
+          valueConfig: { restrictions: terms, exclusions: structured },
+          exclusions: structured,
         }],
       },
     },
@@ -712,6 +927,12 @@ Deno.test("v6 admin identity terms remain explicitly bounded", () => {
   assert(
     proposal.exclusions.additional.source_terms.length === 32,
     "admin exclusions exceeded the v6 bound",
+  );
+  assert(
+    proposal.valueConfig.exclusions.mcc_codes.join(",") === "5541" &&
+      proposal.valueConfig.exclusions.transaction_types.join(",") ===
+        "wallet reload",
+    "admin value_config stripped structured exclusion dimensions",
   );
 });
 

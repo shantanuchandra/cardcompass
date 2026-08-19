@@ -21,7 +21,15 @@
           "period": "statement month",
           "rate": 10,
           "offer_subject": "cashback:cashback:dining",
-          "restrictions": ["dining spends"]
+          "restrictions": ["dining spends"],
+          "exclusions": {
+            "additional": { "source_terms": [] },
+            "categories": [],
+            "days": [],
+            "mcc_codes": [],
+            "merchants": [],
+            "transaction_types": []
+          }
         },
         "partners": [],
         "frequency": null,
@@ -63,7 +71,15 @@
           "period": "quarter",
           "value": 2,
           "offer_subject": "travel:lounge_access:general",
-          "restrictions": []
+          "restrictions": [],
+          "exclusions": {
+            "additional": { "source_terms": [] },
+            "categories": [],
+            "days": [],
+            "mcc_codes": [],
+            "merchants": [],
+            "transaction_types": []
+          }
         },
         "partners": [],
         "frequency": "2 visits",
@@ -109,7 +125,15 @@
           "threshold": 150,
           "value": 5,
           "offer_subject": "rewards:reward_points:general",
-          "restrictions": ["eligible purchases"]
+          "restrictions": ["eligible purchases"],
+          "exclusions": {
+            "additional": { "source_terms": [] },
+            "categories": [],
+            "days": [],
+            "mcc_codes": [],
+            "merchants": [],
+            "transaction_types": []
+          }
         },
         "partners": [],
         "frequency": null,
@@ -153,7 +177,15 @@
           "max_discount_per_transaction": 100,
           "rate": 25,
           "offer_subject": "entertainment:percent_discount:movie_tickets",
-          "restrictions": []
+          "restrictions": [],
+          "exclusions": {
+            "additional": { "source_terms": [] },
+            "categories": [],
+            "days": [],
+            "mcc_codes": [],
+            "merchants": [],
+            "transaction_types": []
+          }
         },
         "partners": ["BookMyShow"],
         "frequency": null,
@@ -209,7 +241,15 @@
           "threshold_amount": 10000,
           "value": 300,
           "offer_subject": "entertainment:milestone:movie_tickets",
-          "restrictions": []
+          "restrictions": [],
+          "exclusions": {
+            "additional": { "source_terms": [] },
+            "categories": [],
+            "days": [],
+            "mcc_codes": [],
+            "merchants": [],
+            "transaction_types": []
+          }
         },
         "partners": ["PVR", "INOX"],
         "frequency": null,
@@ -255,7 +295,15 @@
           "period": "month",
           "value": 500,
           "offer_subject": "entertainment:bogo:movie_tickets",
-          "restrictions": []
+          "restrictions": [],
+          "exclusions": {
+            "additional": { "source_terms": [] },
+            "categories": [],
+            "days": [],
+            "mcc_codes": [],
+            "merchants": [],
+            "transaction_types": []
+          }
         },
         "partners": ["BookMyShow"],
         "frequency": "2 redemptions",
@@ -295,7 +343,15 @@
         "valueConfig": {
           "rate": 5,
           "offer_subject": "cashback:cashback:online",
-          "restrictions": ["online spends"]
+          "restrictions": ["online spends"],
+          "exclusions": {
+            "additional": { "source_terms": [] },
+            "categories": [],
+            "days": [],
+            "mcc_codes": [],
+            "merchants": [],
+            "transaction_types": []
+          }
         },
         "partners": [],
         "frequency": null,

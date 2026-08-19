@@ -4,7 +4,6 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4?bundle
 import {
   type BenefitComparisonProposal,
   type BenefitDiff,
-  type BenefitProposal,
   currentBenefitProposal,
   diffBenefits,
   extractGroundedBenefits,
@@ -49,9 +48,9 @@ import {
   compactSourceAttempts,
   MAX_EVIDENCE_CLOCK_SKEW_MS,
   retirementEligibility,
-  sanitizedSourceAttempt,
   sanitizedSourceErrorCode,
   type SourceAttempt,
+  type SourceAttemptInput,
   utcInstant,
 } from "./crawl_policy.ts";
 
@@ -170,15 +169,15 @@ export async function readPilotStatus(
 async function readCurrentBenefits(
   db: UntypedSupabaseClient,
   cardId: string,
-): Promise<BenefitProposal[]> {
+): Promise<BenefitComparisonProposal[]> {
   const { data, error } = await db.from("card_benefit_mapping")
     .select("benefit:benefits(*)")
     .eq("card_id", cardId);
   if (error) throw error;
   return (data ?? []).map(currentBenefitProposal)
-    .filter((benefit: BenefitProposal | null): benefit is BenefitProposal =>
-      benefit !== null
-    );
+    .filter((
+      benefit: BenefitComparisonProposal | null,
+    ): benefit is BenefitComparisonProposal => benefit !== null);
 }
 
 async function cardScopedIdentifier(
@@ -239,7 +238,7 @@ async function sha256Text(value: string): Promise<string> {
 export async function computeSourceManifestHash(
   attempts: SourceAttempt[],
 ): Promise<string> {
-  const stableAttempts = attempts.map(sanitizedSourceAttempt).map(({
+  const stableAttempts = attempts.map(({
     attemptedAt: _attemptedAt,
     ...attempt
   }) => attempt).map((attempt) => JSON.stringify(attempt)).sort();
@@ -486,9 +485,14 @@ export function crawlProposalDisposition(input: {
 
 export function observationValidatedAt(
   retrievedAt: string,
-  _completionTime?: string,
+  assessmentTime: string,
 ): string {
-  if (utcInstant(retrievedAt) === null) {
+  const retrieved = utcInstant(retrievedAt);
+  const assessment = utcInstant(assessmentTime);
+  if (
+    retrieved === null || assessment === null ||
+    retrieved > assessment + MAX_EVIDENCE_CLOCK_SKEW_MS
+  ) {
     throw new Error("invalid_observation_timestamp");
   }
   return retrievedAt;
@@ -506,7 +510,7 @@ export async function stagingContentHashForObservation(input: {
   );
   return await sha256Text(JSON.stringify({
     source_manifest_hash: input.sourceManifestHash,
-    observed_at: observationValidatedAt(input.observedAt),
+    observed_at: observationValidatedAt(input.observedAt, input.observedAt),
     removals,
   }));
 }
@@ -521,7 +525,7 @@ export function rawOnlyNextRunAt(observedAt: string): string {
 
 async function incompleteObservationState(input: {
   job: EnrichmentJob;
-  current: BenefitProposal[];
+  current: BenefitComparisonProposal[];
   runId: string;
   attempts: SourceAttempt[];
   observedAt: string;
@@ -817,8 +821,8 @@ async function processJob(
     } catch (error) {
       const attemptedAt = new Date().toISOString();
       const errorCode = sanitizedSourceErrorCode(error);
-      const attempts: SourceAttempt[] = [{
-        url: job.canonical_url,
+      const attempts: SourceAttemptInput[] = [{
+        requestedUrl: job.canonical_url,
         role: "primary",
         status: "failed",
         errorCode,
@@ -843,6 +847,7 @@ async function processJob(
       throw error;
     }
     contentHash = page.contentHash;
+    observationValidatedAt(page.retrievedAt, new Date().toISOString());
     try {
       requireMatchingIdentity(
         job,
@@ -853,8 +858,9 @@ async function processJob(
       );
     } catch (error) {
       const errorCode = sanitizedSourceErrorCode(error);
-      const attempts: SourceAttempt[] = [{
-        url: page.canonicalUrl,
+      const attempts: SourceAttemptInput[] = [{
+        requestedUrl: job.canonical_url,
+        finalUrl: page.canonicalUrl,
         role: "primary",
         status: "failed",
         httpStatus: 200,
@@ -862,12 +868,18 @@ async function processJob(
         errorCode,
         attemptedAt: page.retrievedAt,
       }];
-      const sourceManifestHash = await computeSourceManifestHash(attempts);
+      const crawl = assessCrawlCompleteness(
+        attempts,
+        new Date().toISOString(),
+      );
+      const sourceManifestHash = await computeSourceManifestHash(
+        crawl.attempts,
+      );
       const incomplete = await incompleteObservationState({
         job,
         current,
         runId,
-        attempts,
+        attempts: crawl.attempts,
         observedAt: page.retrievedAt,
         crawlReason: errorCode,
         sourceManifestHash,
@@ -890,6 +902,10 @@ async function processJob(
     });
     const { documents } = collected;
     const assessmentTime = new Date().toISOString();
+    const validatedAt = observationValidatedAt(
+      page.retrievedAt,
+      assessmentTime,
+    );
     const crawl = assessCrawlCompleteness(collected.attempts, assessmentTime);
     const sourceManifestHash = await computeSourceManifestHash(crawl.attempts);
     contentHash = sourceManifestHash;
@@ -903,7 +919,7 @@ async function processJob(
         current,
         runId,
         attempts: crawl.attempts,
-        observedAt: page.retrievedAt,
+        observedAt: validatedAt,
         crawlReason: "insufficient_evidence",
         sourceManifestHash,
         sourceDocumentCount: documents.length,
@@ -939,7 +955,7 @@ async function processJob(
     const removalPolicy = applyRemovalPolicy({
       possibleRemovals: removals,
       crawlComplete: crawl.complete,
-      observedAt: page.retrievedAt,
+      observedAt: validatedAt,
       completeAbsenceHistory,
     });
     const compared = {
@@ -952,7 +968,7 @@ async function processJob(
       proposedCount: proposed.length,
     });
     const observation = buildCrawlObservation({
-      observedAt: page.retrievedAt,
+      observedAt: validatedAt,
       assessmentTime,
       crawlComplete: crawl.complete,
       crawlReason: crawl.reason,
@@ -965,7 +981,7 @@ async function processJob(
     const stagingContentHash = await stagingContentHashForObservation({
       disposition: proposalDisposition,
       sourceManifestHash,
-      observedAt: page.retrievedAt,
+      observedAt: validatedAt,
       removals: compared.possibleRemovals.map((removal) => ({
         benefitId: removal.benefit.benefitId ?? removal.benefit.dedupeKey,
         retirementEligible: removal.retirementEligible,
@@ -983,10 +999,10 @@ async function processJob(
       content_hash: stagingContentHash,
       source_manifest_hash: sourceManifestHash,
       canonical_benefit_hash: canonicalBenefitHash,
-      retrieved_at: page.retrievedAt,
+      retrieved_at: validatedAt,
       crawl_observation: observation,
       source_documents: documents.map((document) => ({
-        source_url: document.sourceUrl,
+        source_url: boundedSourceUrl(document.finalUrl ?? document.sourceUrl),
         content_hash: document.contentHash ?? null,
       })),
       proposals: proposed,
@@ -1050,7 +1066,7 @@ async function processJob(
           _validation_warnings: proposed.flatMap((benefit) => benefit.warnings)
             .map((code) => ({ code: String(code).slice(0, 64) })),
           _source_evidence: sourceEvidence,
-          _validated_at: observationValidatedAt(page.retrievedAt),
+          _validated_at: validatedAt,
         },
       );
       const staged = Array.isArray(stagedRows) ? stagedRows[0] : stagedRows;
@@ -1064,7 +1080,7 @@ async function processJob(
         ? null
         : String(job.staging_id);
       reusedStaging = proposalDisposition !== "no_change";
-      rawOnlyDueAt = rawOnlyNextRunAt(page.retrievedAt);
+      rawOnlyDueAt = rawOnlyNextRunAt(validatedAt);
       const { error: dueDateError } = await db
         .from("card_catalog_enrichment_jobs")
         .update({ next_run_at: rawOnlyDueAt })

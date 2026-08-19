@@ -1,7 +1,7 @@
 import {
   assessCrawlCompleteness,
   retirementEligibility,
-  type SourceAttempt,
+  type SourceAttemptInput,
 } from "./crawl_policy.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -12,10 +12,10 @@ const PRIMARY = "https://issuer.example/cards/aurora";
 const OBSERVED_AT = "2026-08-19T00:00:00.000Z";
 
 function attempt(
-  overrides: Partial<SourceAttempt> = {},
-): SourceAttempt {
+  overrides: Partial<SourceAttemptInput> = {},
+): SourceAttemptInput {
   return {
-    url: PRIMARY,
+    requestedUrl: PRIMARY,
     role: "primary",
     status: "success",
     httpStatus: 200,
@@ -23,6 +23,13 @@ function attempt(
     attemptedAt: OBSERVED_AT,
     ...overrides,
   };
+}
+
+function attemptWithUntrusted(
+  overrides: Partial<SourceAttemptInput>,
+  untrusted: Record<string, unknown>,
+): SourceAttemptInput {
+  return { ...attempt(overrides), ...untrusted } as SourceAttemptInput;
 }
 
 Deno.test("a successful primary source is a complete crawl", () => {
@@ -109,17 +116,16 @@ Deno.test("required retries resolve by logical URL and latest result", () => {
   const result = assessCrawlCompleteness([
     attempt(),
     attempt({
-      url: required,
+      requestedUrl: required,
       role: "required_supporting",
       status: "failed",
       contentHash: undefined,
       errorCode: "http_404",
-      sourceIdentity: required,
       attemptedAt: "2026-08-19T00:01:00.000Z",
     }),
     attempt({
-      url: `${required}?retry=1`,
-      sourceIdentity: required,
+      requestedUrl: required,
+      finalUrl: `${required}?retry=1`,
       role: "required_supporting",
       attemptedAt: "2026-08-19T00:02:00.000Z",
     }),
@@ -142,10 +148,10 @@ Deno.test("duplicate or malformed retry timestamps remain incomplete", () => {
 
 Deno.test("explicitly distinct logical primary sources remain incomplete", () => {
   const result = assessCrawlCompleteness([
-    attempt({ sourceIdentity: `${PRIMARY}?submitted=1` }),
+    attempt({ requestedUrl: `${PRIMARY}?submitted=1` }),
     attempt({
-      url: `${PRIMARY}/other`,
-      sourceIdentity: `${PRIMARY}?submitted=2`,
+      requestedUrl: `${PRIMARY}?submitted=2`,
+      finalUrl: `${PRIMARY}/other`,
       attemptedAt: "2026-08-19T00:01:00.000Z",
     }),
   ], "2026-08-19T00:02:00.000Z");
@@ -165,7 +171,7 @@ Deno.test("a missing or corrupt required PDF makes the crawl incomplete", () => 
     const result = assessCrawlCompleteness([
       attempt(),
       attempt({
-        url: `${PRIMARY}/terms.pdf`,
+        requestedUrl: `${PRIMARY}/terms.pdf`,
         role: "required_supporting",
         status: "failed",
         httpStatus,
@@ -185,7 +191,7 @@ Deno.test("an optional supporting failure is retained without making the crawl i
   const result = assessCrawlCompleteness([
     attempt(),
     attempt({
-      url: `${PRIMARY}/optional-benefits`,
+      requestedUrl: `${PRIMARY}/optional-benefits`,
       role: "supporting",
       status: "failed",
       httpStatus: 503,
@@ -229,22 +235,24 @@ for (
 }
 
 Deno.test("attempt evidence strips credentials and bounds unsanitized failure data", () => {
-  const result = assessCrawlCompleteness([attempt({
-    url:
-      "https://user:secret@issuer.example/cards/aurora?session=cookie#private",
-    status: "failed",
-    contentHash: undefined,
-    errorCode: "Authorization: Bearer secret-cookie-value",
-    logicalSourceKey: "Authorization: Bearer secret-cookie-value",
-  })], OBSERVED_AT);
+  const result = assessCrawlCompleteness(
+    [attemptWithUntrusted({
+      requestedUrl:
+        "https://user:secret@issuer.example/cards/aurora?session=cookie#private",
+      status: "failed",
+      contentHash: undefined,
+      errorCode: "Authorization: Bearer secret-cookie-value",
+    }, { logicalSourceKey: "Authorization: Bearer secret-cookie-value" })],
+    OBSERVED_AT,
+  );
   const persisted = result.attempts[0];
 
   assert(
-    persisted.url === "https://issuer.example/cards/aurora",
-    "credentials or query secrets survived URL sanitization",
+    persisted.url === "invalid-source",
+    "credential-bearing source was represented as valid evidence",
   );
   assert(
-    persisted.errorCode === "unreachable",
+    persisted.errorCode === "invalid_source_url",
     "unsanitized error text survived as an error code",
   );
   assert(
@@ -253,11 +261,39 @@ Deno.test("attempt evidence strips credentials and bounds unsanitized failure da
   );
 });
 
+Deno.test("invalid successful primary URLs cannot establish completeness", () => {
+  for (
+    const url of [
+      "%%%",
+      "http://issuer.example/cards/aurora",
+      "https://user:secret@issuer.example/cards/aurora",
+    ]
+  ) {
+    const result = assessCrawlCompleteness(
+      [attempt({ requestedUrl: url })],
+      OBSERVED_AT,
+    );
+    assert(!result.complete, `invalid primary source was accepted: ${url}`);
+    assert(
+      result.attempts[0].url === "invalid-source",
+      "invalid source was mapped to a shared valid placeholder",
+    );
+    assert(
+      !JSON.stringify(result.attempts[0]).includes("secret"),
+      "invalid source evidence retained credentials",
+    );
+  }
+  assert(
+    assessCrawlCompleteness([attempt()], OBSERVED_AT).complete,
+    "valid HTTPS primary source stopped establishing completeness",
+  );
+});
+
 Deno.test("distinct required query sources cannot mask one another", () => {
   const result = assessCrawlCompleteness([
     attempt(),
     attempt({
-      url: `${PRIMARY}/terms?card=alpha`,
+      requestedUrl: `${PRIMARY}/terms?card=alpha`,
       role: "required_supporting",
       status: "failed",
       contentHash: undefined,
@@ -265,7 +301,7 @@ Deno.test("distinct required query sources cannot mask one another", () => {
       attemptedAt: "2026-08-19T00:01:00.000Z",
     }),
     attempt({
-      url: `${PRIMARY}/terms?card=beta`,
+      requestedUrl: `${PRIMARY}/terms?card=beta`,
       role: "required_supporting",
       attemptedAt: "2026-08-19T00:02:00.000Z",
     }),
@@ -281,21 +317,19 @@ Deno.test("distinct required query sources cannot mask one another", () => {
 Deno.test("known 32-bit opaque-key collisions cannot merge distinct sources", () => {
   const result = assessCrawlCompleteness([
     attempt(),
-    attempt({
-      url: `${PRIMARY}/documents/alpha`,
-      logicalSourceKey: "source-1dwsp5w-ogr",
+    attemptWithUntrusted({
+      requestedUrl: `${PRIMARY}/documents/alpha`,
       role: "required_supporting",
       status: "failed",
       contentHash: undefined,
       errorCode: "http_404",
       attemptedAt: "2026-08-19T00:01:00.000Z",
-    }),
-    attempt({
-      url: `${PRIMARY}/documents/beta`,
-      logicalSourceKey: "source-1xm3hyf-13xs",
+    }, { logicalSourceKey: "source-1dwsp5w-ogr" }),
+    attemptWithUntrusted({
+      requestedUrl: `${PRIMARY}/documents/beta`,
       role: "required_supporting",
       attemptedAt: "2026-08-19T00:02:00.000Z",
-    }),
+    }, { logicalSourceKey: "source-1xm3hyf-13xs" }),
   ], "2026-08-19T00:03:00.000Z");
 
   assert(!result.complete, "colliding opaque keys merged required sources");
@@ -310,21 +344,19 @@ Deno.test("arbitrary retry labels cannot split one logical required source", () 
   const required = `${PRIMARY}/terms`;
   const result = assessCrawlCompleteness([
     attempt(),
-    attempt({
-      url: required,
-      logicalSourceKey: "submitted",
+    attemptWithUntrusted({
+      requestedUrl: required,
       role: "required_supporting",
       status: "failed",
       contentHash: undefined,
       errorCode: "http_404",
       attemptedAt: "2026-08-19T00:01:00.000Z",
-    }),
-    attempt({
-      url: required,
-      logicalSourceKey: "unconditional",
+    }, { logicalSourceKey: "submitted" }),
+    attemptWithUntrusted({
+      requestedUrl: required,
       role: "required_supporting",
       attemptedAt: "2026-08-19T00:02:00.000Z",
-    }),
+    }, { logicalSourceKey: "unconditional" }),
   ], "2026-08-19T00:03:00.000Z");
 
   assert(result.complete, "retry labels split one required source");
@@ -334,21 +366,19 @@ Deno.test("a valid-looking digest cannot merge two different required URLs", () 
   const attackerChosenDigest = "f".repeat(64);
   const result = assessCrawlCompleteness([
     attempt(),
-    attempt({
-      url: `${PRIMARY}/terms?card=alpha`,
-      logicalSourceKey: attackerChosenDigest,
+    attemptWithUntrusted({
+      requestedUrl: `${PRIMARY}/terms?card=alpha`,
       role: "required_supporting",
       status: "failed",
       contentHash: undefined,
       errorCode: "http_404",
       attemptedAt: "2026-08-19T00:01:00.000Z",
-    }),
-    attempt({
-      url: `${PRIMARY}/terms?card=beta`,
-      logicalSourceKey: attackerChosenDigest,
+    }, { logicalSourceKey: attackerChosenDigest }),
+    attemptWithUntrusted({
+      requestedUrl: `${PRIMARY}/terms?card=beta`,
       role: "required_supporting",
       attemptedAt: "2026-08-19T00:02:00.000Z",
-    }),
+    }, { logicalSourceKey: attackerChosenDigest }),
   ], "2026-08-19T00:03:00.000Z");
 
   assert(!result.complete, "unproven digest masked a required-source failure");
@@ -358,14 +388,44 @@ Deno.test("a valid-looking digest cannot merge two different required URLs", () 
   );
 });
 
-Deno.test("trusted full-source identity groups retry stages without persisting queries", () => {
-  const sourceIdentity = `${PRIMARY}/terms?card=alpha`;
+Deno.test("caller source identity cannot merge distinct required URLs", () => {
+  const attackerChosenIdentity = `${PRIMARY}/terms?card=alpha`;
+  const result = assessCrawlCompleteness([
+    attempt(),
+    attemptWithUntrusted({
+      requestedUrl: `${PRIMARY}/terms?card=alpha`,
+      role: "required_supporting",
+      status: "failed",
+      contentHash: undefined,
+      errorCode: "http_404",
+      attemptedAt: "2026-08-19T00:01:00.000Z",
+    }, { sourceIdentity: attackerChosenIdentity }),
+    attemptWithUntrusted({
+      requestedUrl: `${PRIMARY}/terms?card=beta`,
+      role: "required_supporting",
+      attemptedAt: "2026-08-19T00:02:00.000Z",
+    }, { sourceIdentity: attackerChosenIdentity }),
+  ], "2026-08-19T00:03:00.000Z");
+
+  assert(
+    !result.complete,
+    "caller-controlled source identity masked a required failure",
+  );
+  assert(
+    result.attempts[1].logicalSourceKey !==
+      result.attempts[2].logicalSourceKey,
+    "distinct requested URLs inherited caller grouping",
+  );
+});
+
+Deno.test("trusted requested URL groups redirects without persisting queries", () => {
+  const requestedUrl = `${PRIMARY}/terms?card=alpha`;
   const result = assessCrawlCompleteness([
     attempt(),
     {
-      ...({ sourceIdentity } as Record<string, unknown>),
       ...attempt({
-        url: `${PRIMARY}/terms`,
+        requestedUrl,
+        finalUrl: `${PRIMARY}/terms`,
         role: "required_supporting",
         status: "failed",
         contentHash: undefined,
@@ -374,9 +434,9 @@ Deno.test("trusted full-source identity groups retry stages without persisting q
       }),
     },
     {
-      ...({ sourceIdentity } as Record<string, unknown>),
       ...attempt({
-        url: `${PRIMARY}/terms?retry=unconditional`,
+        requestedUrl,
+        finalUrl: `${PRIMARY}/terms?retry=unconditional`,
         role: "required_supporting",
         attemptedAt: "2026-08-19T00:02:00.000Z",
       }),

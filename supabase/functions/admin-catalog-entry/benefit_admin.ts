@@ -1,4 +1,7 @@
-import { canonicalExclusions } from "../_shared/benefit_contract.ts";
+import {
+  canonicalConditionObject,
+  canonicalExclusions,
+} from "../_shared/benefit_contract.ts";
 
 export type UntypedSupabaseClient = any;
 
@@ -188,6 +191,7 @@ function valueConfig(value: unknown, v6 = false): JsonRecord {
     if (typeof item === "boolean") sanitized[field] = item;
   }
   if (v6) sanitized.restrictions = textList(row.restrictions, 32);
+  if (v6) sanitized.exclusions = boundedExclusions(row.exclusions);
   return sanitized;
 }
 
@@ -263,6 +267,9 @@ function benefitForOutput(value: unknown, forceV6 = false) {
       : {}),
     ...(v6 && text(row.offerSubject, 256)
       ? { offerSubject: text(row.offerSubject, 256) }
+      : {}),
+    ...(v6 && digest(row.conditionHash)
+      ? { conditionHash: digest(row.conditionHash) }
       : {}),
     valueConfig: valueConfig(row.valueConfig ?? row.value_config, v6),
     partners: textList(row.partners),
@@ -559,6 +566,7 @@ function allowedDecisions(
   value: unknown,
   acceptedActions: readonly string[],
   parserVersion = "benefits-v5",
+  stagedExtraction?: unknown,
 ): JsonRecord[] {
   if (!Array.isArray(value) || value.length === 0) {
     throw new BenefitAdminError("benefit_decisions_are_required");
@@ -575,42 +583,117 @@ function allowedDecisions(
     throw new BenefitAdminError("invalid_benefit_decision");
   }
   if (parserVersion !== "benefits-v6") return decisions as JsonRecord[];
-  return (decisions as JsonRecord[]).map((decision) => ({
-    action: text(decision.action, 40),
-    ...(text(decision.reason, 500)
-      ? { reason: text(decision.reason, 500) }
-      : {}),
-    ...(text(decision.change_type ?? decision.changeType, 60)
-      ? {
-        change_type: text(decision.change_type ?? decision.changeType, 60),
-      }
-      : {}),
-    ...(text(decision.dedupe_key ?? decision.dedupeKey, 200)
-      ? {
-        dedupe_key: text(decision.dedupe_key ?? decision.dedupeKey, 200),
-      }
-      : {}),
-    ...(number(decision.display_priority) !== null
-      ? { display_priority: number(decision.display_priority) }
-      : {}),
-    ...(typeof decision.is_primary === "boolean"
-      ? { is_primary: decision.is_primary }
-      : {}),
-    ...(asRecord(decision.benefit)
-      ? { benefit: benefitForOutput(decision.benefit, true) }
-      : {}),
-    ...(asRecord(decision.proposed)
-      ? { proposed: benefitForOutput(decision.proposed, true) }
-      : {}),
-    ...(asRecord(decision.edited_benefit ?? decision.editedBenefit)
-      ? {
-        edited_benefit: benefitForOutput(
-          decision.edited_benefit ?? decision.editedBenefit,
-          true,
-        ),
-      }
-      : {}),
-  }));
+  return validateV6ApprovalDecisions(
+    decisions as JsonRecord[],
+    stagedExtraction,
+  );
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return "{" + Object.entries(value as JsonRecord).sort(([left], [right]) =>
+      left.localeCompare(right)
+    ).map(([key, item]) =>
+      `${JSON.stringify(key)}:${stableJson(item)}`
+    ).join(",") + "}";
+  }
+  return JSON.stringify(value);
+}
+
+function canonicalApprovalIdentity(value: unknown): string {
+  const proposal = benefitForOutput(value, true) as JsonRecord;
+  const config = asRecord(proposal.valueConfig) ?? {};
+  return stableJson({
+    benefit_id: text(proposal.benefitId, 200),
+    dedupe_key: text(proposal.dedupeKey, 200),
+    condition_hash: digest(proposal.conditionHash),
+    offer_subject: text(proposal.offerSubject, 256),
+    condition: canonicalConditionObject({
+      title: String(proposal.title ?? ""),
+      category: text(proposal.category, 200),
+      benefitType: text(proposal.valueType, 200),
+      semanticKey: text(proposal.offerSubject, 256),
+      valueConfig: config,
+      exclusions: proposal.exclusions,
+      restrictions: textList(proposal.restrictions, 32),
+      partners: textList(proposal.partners, 64),
+      validFrom: text(proposal.effectiveFrom, 100),
+      validUntil: text(proposal.effectiveTo, 100),
+    }),
+    source_identity: digest(proposal.sourceIdentity),
+    source_identities: textList(proposal.sourceIdentities, 32).flatMap((item) =>
+      digest(item) ? [digest(item)!] : []
+    ).sort(),
+  });
+}
+
+export function validateV6ApprovalDecisions(
+  decisions: JsonRecord[],
+  stagedExtraction: unknown,
+): JsonRecord[] {
+  const extraction = asRecord(stagedExtraction);
+  if (
+    !extraction || extraction.parser_version !== "benefits-v6" ||
+    extraction.request_type !== "official_benefit_enrichment"
+  ) throw new BenefitAdminError("invalid_benefit_job_staging", 409);
+  const staged = objectList(extraction.proposals).map((proposal) =>
+    benefitForOutput(proposal, true) as JsonRecord
+  );
+  const stagedByKey = new Map<string, JsonRecord>();
+  for (const proposal of staged) {
+    const key = text(proposal.benefitId ?? proposal.dedupeKey, 200);
+    if (!key || stagedByKey.has(key)) {
+      throw new BenefitAdminError("invalid_staged_benefit_identity", 409);
+    }
+    stagedByKey.set(key, proposal);
+  }
+  const selected = new Set<string>();
+  return decisions.map((decision) => {
+    const action = String(decision.action ?? "").toLowerCase();
+    const base: JsonRecord = {
+      action,
+      ...(text(decision.reason, 500)
+        ? { reason: text(decision.reason, 500) }
+        : {}),
+      ...(text(decision.change_type ?? decision.changeType, 60)
+        ? {
+          change_type: text(decision.change_type ?? decision.changeType, 60),
+        }
+        : {}),
+      ...(number(decision.display_priority) !== null
+        ? { display_priority: number(decision.display_priority) }
+        : {}),
+      ...(typeof decision.is_primary === "boolean"
+        ? { is_primary: decision.is_primary }
+        : {}),
+    };
+    if (action !== "approve" && action !== "edit") return base;
+    const submitted = asRecord(
+      action === "edit"
+        ? decision.edited_benefit ?? decision.editedBenefit ?? decision.benefit
+        : decision.benefit ?? decision.proposed,
+    );
+    if (!submitted) throw new BenefitAdminError("invalid_benefit_decision");
+    const key = text(submitted.benefitId ?? submitted.dedupeKey, 200);
+    const server = key ? stagedByKey.get(key) : undefined;
+    if (
+      !server || selected.has(key!) ||
+      canonicalApprovalIdentity(submitted) !== canonicalApprovalIdentity(server)
+    ) throw new BenefitAdminError("benefit_decision_identity_mismatch", 409);
+    selected.add(key!);
+    if (action === "approve") return { ...base, benefit: server };
+    const edited = {
+      ...server,
+      ...(text(submitted.title, 2_000)
+        ? { title: text(submitted.title, 2_000) }
+        : {}),
+      ...(text(submitted.description, 2_000)
+        ? { description: text(submitted.description, 2_000) }
+        : {}),
+    };
+    return { ...base, edited_benefit: edited };
+  });
 }
 
 async function approvalTarget(
@@ -631,18 +714,23 @@ async function approvalTarget(
   }
   const { data: staging, error: stagingError } = await db
     .from("card_benefits_staging")
-    .select("id, card_id, status, request_type")
+    .select("id, card_id, status, request_type, parser_version, extracted_data")
     .eq("id", stagingId)
     .eq("card_id", job.card_id)
     .eq("request_type", "official_benefit_enrichment")
     .single();
-  if (stagingError || !staging || staging.status !== "pending") {
+  if (
+    stagingError || !staging || staging.status !== "pending" ||
+    (job.parser_version === "benefits-v6" &&
+      staging.parser_version !== job.parser_version)
+  ) {
     throw new BenefitAdminError("invalid_benefit_job_staging", 409);
   }
   return {
     jobId,
     stagingId,
     parserVersion: String(job.parser_version ?? "benefits-v5"),
+    stagedExtraction: staging.extracted_data,
   };
 }
 
@@ -663,6 +751,7 @@ async function approve(
     body.decisions,
     accepted,
     target.parserVersion,
+    target.stagedExtraction,
   );
   if (mode === "reject") {
     decisions = decisions.map((decision) => ({ ...decision, reason }));

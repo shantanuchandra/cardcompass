@@ -203,6 +203,13 @@ test('new v6 staging atomically rejects and audits older pending observations wi
   assert.match(stage, /pg_advisory_xact_lock\s*\([\s\S]*hashtextextended\s*\([\s\S]*job\.card_id::text/i);
   assert.match(stage, /SELECT staging\.id[\s\S]*ORDER BY staging\.id[\s\S]*FOR UPDATE/i);
   assert.match(stage, /_validated_at IS NULL[\s\S]*invalid_benefit_staging/i);
+  assert.match(stage, /_validated_at\s*>\s*statement_timestamp\(\)\s*\+\s*interval\s*'5 minutes'[\s\S]*invalid_benefit_staging/i);
+  assert.match(stage, /validated_at\s*>\s*statement_timestamp\(\)\s*\+\s*interval\s*'5 minutes'[\s\S]*invalid_future_observation_timestamp[\s\S]*status\s*=\s*'rejected'/i);
+  assert.ok(
+    stage.indexOf('invalid_future_observation_timestamp') <
+      stage.indexOf('INTO newest_pending_id'),
+    'far-future pending rows must be repaired before newest observation ordering',
+  );
   assert.match(stage, /staging\.validated_at IS NOT NULL[\s\S]*staging\.validated_at\s*<\s*_validated_at/i);
   assert.match(stage, /newest_pending_validated_at IS NULL\s+OR _validated_at\s*<=\s*newest_pending_validated_at/i);
   assert.ok(
@@ -212,7 +219,7 @@ test('new v6 staging atomically rejects and audits older pending observations wi
   );
   assert.match(stage, /_parser_version\s*=\s*'benefits-v6'[\s\S]*status\s*=\s*'pending'[\s\S]*FOR UPDATE/i);
   const supersessionBlock = stage.slice(
-    stage.indexOf('UPDATE public.card_benefits_staging AS staging'),
+    stage.lastIndexOf('UPDATE public.card_benefits_staging AS staging'),
     stage.indexOf('IF reused_staging THEN'),
   );
   assert.doesNotMatch(

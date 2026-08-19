@@ -1,5 +1,6 @@
 import { collectSupportingBenefitDocuments } from "./supporting_documents.ts";
 import { assessCrawlCompleteness } from "./crawl_policy.ts";
+import { extractGroundedBenefitsV6 } from "../_shared/benefit_enrichment.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -144,7 +145,7 @@ Deno.test("a required ninth initial link outranks eight optional links", async (
   assert(requested.includes(required), "required ninth link was omitted");
   assert(
     attempts.some((item) =>
-      item.url === required && item.role === "required_supporting"
+      item.requestedUrl === required && item.role === "required_supporting"
     ),
     "required ninth link lost its necessity classification",
   );
@@ -174,7 +175,7 @@ Deno.test("opaque PDF anchor metadata can establish a required MITC source", asy
   assert(requested.join(",") === opaque, "opaque MITC source was not fetched");
   assert(
     attempts.some((item) =>
-      item.url === opaque && item.role === "required_supporting"
+      item.requestedUrl === opaque && item.role === "required_supporting"
     ),
     "opaque MITC anchor was treated as optional",
   );
@@ -203,7 +204,9 @@ Deno.test("a later stronger duplicate anchor cannot downgrade required evidence"
         throw new Error("http_404");
       },
     });
-    const supporting = attempts.find((attempt) => attempt.url === opaque);
+    const supporting = attempts.find((attempt) =>
+      attempt.requestedUrl === opaque
+    );
     assert(
       supporting?.role === "required_supporting",
       "duplicate anchor order downgraded MITC necessity",
@@ -247,7 +250,53 @@ Deno.test("duplicate anchor metadata is replay-stable", async () => {
   );
 });
 
-Deno.test("collector separates query-selected sources without persisting queries", async () => {
+Deno.test("cross-page MITC discovery upgrades queued and fetched failures", async () => {
+  const product = "https://www.axis.bank.in/cards/credit-card/privilege";
+  const pageA = `${product}/benefits/a`;
+  const pageB = `${product}/rewards/z`;
+  const document = `${product}/benefits/abc123.pdf`;
+  for (const alreadyFetched of [false, true]) {
+    const primaryLinks = alreadyFetched
+      ? `<a href="${document}">Benefits</a><a href="${pageB}">Rewards</a>`
+      : `<a href="${pageA}">Benefits</a><a href="${pageB}">Rewards</a>`;
+    const { attempts } = await collectSupportingBenefitDocuments({
+      issuer: "Axis Bank",
+      identityLabels: ["Privilege"],
+      primary: resource(product, primaryLinks),
+      fetchOfficialIssuerResource: async (input) => {
+        if (input.url === document) throw new Error("http_404");
+        if (input.url === pageA) {
+          return resource(pageA, `<a href="${document}">Benefits</a>`);
+        }
+        if (input.url === pageB) {
+          return resource(
+            pageB,
+            `<a href="${document}">Most Important Terms and Conditions</a>`,
+          );
+        }
+        throw new Error(`unexpected URL ${input.url}`);
+      },
+    });
+    const documentAttempt = attempts.find((attempt) =>
+      attempt.requestedUrl === document
+    );
+    assert(
+      documentAttempt?.role === "required_supporting",
+      `cross-page MITC did not upgrade ${
+        alreadyFetched ? "fetched" : "queued"
+      } evidence`,
+    );
+    assert(
+      !assessCrawlCompleteness(
+        attempts,
+        "2026-08-20T00:00:00.000Z",
+      ).complete,
+      "upgraded failed MITC evidence left crawl complete",
+    );
+  }
+});
+
+Deno.test("collector keeps transient requested URLs and v6 persists only identities", async () => {
   const product = "https://www.axis.bank.in/cards/credit-card/privilege";
   const alpha = `${product}/terms?card=alpha`;
   const beta = `${product}/terms?card=beta`;
@@ -261,21 +310,28 @@ Deno.test("collector separates query-selected sources without persisting queries
     fetchOfficialIssuerResource: async (input) =>
       resource(
         input.url,
-        `Official ${new URL(input.url).searchParams.get("card")}`,
+        `Get ${
+          new URL(input.url).searchParams.get("card") === "alpha" ? 10 : 20
+        }% cashback on dining spends.`,
       ),
   });
   const supporting = documents.slice(1);
   assert(supporting.length === 2, "query-selected documents collapsed");
   assert(
-    new Set(supporting.map((document) => document.sourceIdentity)).size === 2,
-    "collector did not preserve safe query-selected identities",
+    new Set(supporting.map((document) => document.sourceUrl)).size === 2,
+    "collector collapsed transient requested URLs",
+  );
+  const proposals = await extractGroundedBenefitsV6(
+    supporting,
+    "benefits-v6",
+    "card-1",
   );
   assert(
-    supporting.every((document) =>
-      /^[0-9a-f]{64}$/.test(document.sourceIdentity ?? "") &&
-      !document.sourceUrl.includes("?")
+    proposals.every((proposal) =>
+      /^[0-9a-f]{64}$/.test(proposal.sourceIdentity ?? "") &&
+      !proposal.sourceUrl.includes("?")
     ),
-    "collector exposed a raw query instead of a safe identity",
+    "v6 proposal exposed a query or omitted derived identity",
   );
   const persisted = assessCrawlCompleteness(
     attempts,
@@ -312,13 +368,13 @@ Deno.test("required terms HTML outranks an optional PDF when one fetch remains",
   );
   assert(
     attempts.some((item) =>
-      item.url === requiredHtml && item.role === "required_supporting"
+      item.requestedUrl === requiredHtml && item.role === "required_supporting"
     ),
     "terms HTML was not classified required",
   );
   assert(
     !attempts.some((item) =>
-      item.url === optionalPdf && item.role === "required_supporting"
+      item.requestedUrl === optionalPdf && item.role === "required_supporting"
     ),
     "benefits PDF was incorrectly required",
   );
@@ -340,7 +396,7 @@ Deno.test("budget exhaustion records every discovered required source", async ()
   for (const url of required) {
     assert(
       attempts.some((item) =>
-        item.url === url && item.role === "required_supporting" &&
+        item.requestedUrl === url && item.role === "required_supporting" &&
         item.errorCode === "fetch_budget_exhausted"
       ),
       `budget omission was not retained for ${url}`,
@@ -363,7 +419,7 @@ Deno.test("a depth-discovered required source is retained after budget exhaustio
 
   assert(
     attempts.some((item) =>
-      item.url === required && item.role === "required_supporting" &&
+      item.requestedUrl === required && item.role === "required_supporting" &&
       item.errorCode === "fetch_budget_exhausted"
     ),
     "depth-discovered required source disappeared at the budget boundary",
@@ -391,7 +447,7 @@ Deno.test("depth-discovered required evidence displaces optional queue overflow"
 
   assert(
     attempts.some((item) =>
-      item.url === required && item.role === "required_supporting" &&
+      item.requestedUrl === required && item.role === "required_supporting" &&
       item.errorCode === "fetch_budget_exhausted"
     ),
     "required depth evidence was crowded out by optional links",
@@ -450,7 +506,7 @@ Deno.test("supporting crawl records required work blocked by the invocation dead
   assert(fetches === 0, "supporting request started after the deadline");
   assert(
     attempts.some((attempt) =>
-      attempt.url === pdf && attempt.role === "required_supporting" &&
+      attempt.requestedUrl === pdf && attempt.role === "required_supporting" &&
       attempt.errorCode === "deadline_exceeded"
     ),
     "deadline-blocked required source was not retained",
@@ -492,10 +548,11 @@ Deno.test("supporting crawl rejects another card variant and counts failed attem
     "initial required overflow was not recorded",
   );
   assert(
-    attempts.filter((attempt) => requested.includes(attempt.url)).every(
-      (attempt) =>
-        attempt.status === "failed" && attempt.errorCode === "unreachable",
-    ),
+    attempts.filter((attempt) => requested.includes(attempt.requestedUrl))
+      .every(
+        (attempt) =>
+          attempt.status === "failed" && attempt.errorCode === "unreachable",
+      ),
     "failed attempts retained unsanitized thrown errors",
   );
 });

@@ -8,8 +8,10 @@ import {
 } from "./benefit_contract.ts";
 
 export type BenefitDocument = {
+  /** Full canonical URL requested by trusted fetch code; never persisted. */
   sourceUrl: string;
-  sourceIdentity?: string;
+  /** Redirect-resolved canonical URL used only for redacted presentation. */
+  finalUrl?: string;
   text: string;
   contentHash?: string;
 };
@@ -87,20 +89,47 @@ function safeSourceUrl(value: unknown): string {
   if (!value) return "";
   try {
     const url = new URL(String(value ?? ""));
-    if (url.protocol !== "https:") return "https://invalid.invalid";
+    if (
+      url.protocol !== "https:" || !url.hostname || url.username ||
+      url.password || url.hash
+    ) return "invalid-source";
     url.username = "";
     url.password = "";
     url.search = "";
     url.hash = "";
     return url.toString().replace(/\/$/, "").slice(0, 2048);
   } catch {
-    return "https://invalid.invalid";
+    return "invalid-source";
   }
+}
+
+function canonicalRequestedSourceUrl(value: unknown): string | null {
+  try {
+    const url = new URL(String(value ?? ""));
+    if (
+      url.protocol !== "https:" || !url.hostname || url.username ||
+      url.password || url.hash
+    ) return null;
+    url.searchParams.sort();
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
+
+async function sha256SourceIdentity(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  );
+  return [...new Uint8Array(digest)].map((byte) =>
+    byte.toString(16).padStart(2, "0")
+  ).join("");
 }
 
 export function currentBenefitProposal(
   row: Record<string, any>,
-): BenefitProposal | null {
+): BenefitComparisonProposal | null {
   const benefit = row.benefit ?? row.benefits ?? row;
   if (!benefit || typeof benefit !== "object" || !benefit.dedupe_key) {
     return null;
@@ -109,17 +138,25 @@ export function currentBenefitProposal(
     benefit.value_config && typeof benefit.value_config === "object"
       ? benefit.value_config
       : {};
-  const canonicalExclusionTerms = benefit.exclusions &&
-      typeof benefit.exclusions === "object" &&
-      !Array.isArray(benefit.exclusions) && benefit.exclusions.additional &&
-      typeof benefit.exclusions.additional === "object" &&
-      Array.isArray(benefit.exclusions.additional.source_terms)
-    ? benefit.exclusions.additional.source_terms.map(String)
+  const canonicalV6 = String(benefit.dedupe_key).startsWith(
+    "card-benefit-v2:",
+  );
+  const persistedExclusions = config.exclusions ?? benefit.exclusions;
+  const canonicalExclusionTerms = persistedExclusions &&
+      typeof persistedExclusions === "object" &&
+      !Array.isArray(persistedExclusions) &&
+      (persistedExclusions as Record<string, any>).additional &&
+      typeof (persistedExclusions as Record<string, any>).additional ===
+        "object" &&
+      Array.isArray(
+        (persistedExclusions as Record<string, any>).additional.source_terms,
+      )
+    ? (persistedExclusions as Record<string, any>).additional.source_terms.map(
+      String,
+    )
     : [];
-  const proposal: BenefitProposal = {
-    ...(String(benefit.dedupe_key).startsWith("card-benefit-v2:")
-      ? { benefitId: String(benefit.dedupe_key) }
-      : {}),
+  const proposal = {
+    ...(canonicalV6 ? { benefitId: String(benefit.dedupe_key) } : {}),
     dedupeKey: String(benefit.dedupe_key),
     title: String(benefit.title ?? "Existing benefit"),
     description: String(benefit.description ?? "").slice(0, 500),
@@ -146,9 +183,13 @@ export function currentBenefitProposal(
     restrictions: Array.isArray(config.restrictions)
       ? config.restrictions.map(String).slice(0, 32)
       : [],
-    exclusions: Array.isArray(benefit.exclusions)
-      ? benefit.exclusions.map(String)
-      : canonicalExclusionTerms,
+    exclusions: !canonicalV6 && Array.isArray(persistedExclusions)
+      ? persistedExclusions.map(String)
+      : !canonicalV6
+      ? canonicalExclusionTerms
+      : boundedCanonicalExclusions(
+        persistedExclusions ?? canonicalExclusionTerms,
+      ),
     ...(benefit.valid_from
       ? { effectiveFrom: String(benefit.valid_from) }
       : {}),
@@ -162,7 +203,7 @@ export function currentBenefitProposal(
     confidence: {},
     evidence: {},
     warnings: [],
-  };
+  } as BenefitComparisonProposal;
   if (
     proposal.benefitId && typeof config.offer_subject === "string" &&
     config.offer_subject.trim()
@@ -200,6 +241,8 @@ type ParsedBenefit = ParsedFields & {
   evidence: Record<string, string>;
   warnings: string[];
 };
+
+type TrustedBenefitDocument = BenefitDocument & { sourceIdentity?: string };
 
 function normalize(value: string): string {
   return value.toLowerCase().replace(/\s+/g, " ").trim();
@@ -651,7 +694,7 @@ function parseLounge(text: string): ParsedFields | null {
 
 function parseLine(
   text: string,
-  document: BenefitDocument,
+  document: TrustedBenefitDocument,
   parserVersion: string,
 ): ParsedBenefit | null {
   const fields = parseMovieBenefit(text) ?? parseCashback(text) ??
@@ -680,7 +723,7 @@ function parseLine(
     ...fields,
     title,
     description: sourceExcerpt,
-    sourceUrl: safeSourceUrl(document.sourceUrl),
+    sourceUrl: safeSourceUrl(document.finalUrl ?? document.sourceUrl),
     ...(document.sourceIdentity
       ? { sourceIdentity: document.sourceIdentity }
       : {}),
@@ -866,7 +909,7 @@ function sorted<T extends { dedupeKey: string }>(benefits: T[]): T[] {
  * turn headings or implied eligibility into values, caps, or merchant restrictions.
  */
 function parsedGroundedBenefits(
-  documents: BenefitDocument[],
+  documents: TrustedBenefitDocument[],
   parserVersion: string,
 ): ParsedBenefit[] {
   return documents.flatMap((source) => {
@@ -971,7 +1014,25 @@ export async function extractGroundedBenefitsV6(
   parserVersion: "benefits-v6",
   cardId: string,
 ): Promise<BenefitProposalV6[]> {
-  const parsed = parsedGroundedBenefits(documents, parserVersion);
+  const trustedDocuments = (await Promise.all(documents.map(
+    async (document): Promise<TrustedBenefitDocument | null> => {
+      const requestedUrl = canonicalRequestedSourceUrl(document.sourceUrl);
+      const finalUrl = canonicalRequestedSourceUrl(
+        document.finalUrl ?? document.sourceUrl,
+      );
+      if (!requestedUrl || !finalUrl) return null;
+      return {
+        sourceUrl: requestedUrl,
+        finalUrl,
+        text: document.text,
+        contentHash: document.contentHash,
+        sourceIdentity: await sha256SourceIdentity(requestedUrl),
+      };
+    },
+  ))).filter((document): document is TrustedBenefitDocument =>
+    document !== null
+  );
+  const parsed = parsedGroundedBenefits(trustedDocuments, parserVersion);
   const canonical = parsed.filter((benefit) =>
     !/\b(?:no\s+longer\s+available|discontinued)\b/i.test(
       benefit.sourceExcerpt,
@@ -1055,6 +1116,7 @@ export async function extractGroundedBenefitsV6(
         ...canonicalValueConfig(input),
         offer_subject: subject,
         restrictions: canonicalConditionObject(input).restrictions,
+        exclusions: boundedCanonicalExclusions(input.exclusions),
       },
       restrictions,
       exclusions: boundedCanonicalExclusions(input.exclusions),

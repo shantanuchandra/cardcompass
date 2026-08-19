@@ -166,7 +166,9 @@ Deno.test("approved v6 identifiers and canonical exclusion terms survive compari
 
   assert(proposal?.benefitId === dedupeKey, "card-scoped identifier was lost");
   assert(
-    proposal?.exclusions.join(",") === "fuel,wallet reloads",
+    !Array.isArray(proposal?.exclusions) &&
+      (proposal?.exclusions.additional as Record<string, string[]>).source_terms
+          .join(",") === "fuel,wallet reloads",
     "canonical exclusion source terms were lost",
   );
 });
@@ -1057,15 +1059,15 @@ Deno.test("crawl observation compaction retains a decisive final required retry"
       ...optional,
       {
         url: requiredUrl,
-        sourceIdentity: requiredUrl,
+        logicalSourceKey: "d".repeat(64),
         role: "required_supporting",
         status: "failed",
         errorCode: "http_404",
         attemptedAt: "2026-08-19T00:10:00.000Z",
       },
       {
-        url: `${requiredUrl}?retry=unconditional`,
-        sourceIdentity: requiredUrl,
+        url: requiredUrl,
+        logicalSourceKey: "d".repeat(64),
         role: "required_supporting",
         status: "success",
         httpStatus: 200,
@@ -1369,6 +1371,35 @@ Deno.test("query-selected official documents remain distinct conflict sources", 
   assert(!serialized.includes("?"), "raw source query entered proposal JSON");
 });
 
+Deno.test("v6 ignores a caller digest when deriving conflict source identity", async () => {
+  const attackerDigest = "f".repeat(64);
+  const proposals = await extractGroundedBenefitsV6(
+    [{
+      ...({ sourceIdentity: attackerDigest } as Record<string, unknown>),
+      sourceUrl: "https://issuer.example/offers?partner=bookmyshow",
+      text:
+        "Buy 1 movie ticket and get the second ticket free on BookMyShow, capped at Rs. 500 once per month.",
+      contentHash: "a".repeat(64),
+    }, {
+      ...({ sourceIdentity: attackerDigest } as Record<string, unknown>),
+      sourceUrl: "https://issuer.example/offers?partner=district",
+      text:
+        "Buy 1 movie ticket and get the second ticket free on District, capped at Rs. 500 once per month.",
+      contentHash: "b".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const diff = diffBenefits([], proposals);
+
+  assert(diff.conflicts.length === 1, "caller digest merged distinct sources");
+  assert(
+    proposals.every((proposal) => proposal.sourceIdentity !== attackerDigest),
+    "caller digest survived internal source derivation",
+  );
+  assert(!JSON.stringify(proposals).includes("partner="), "query persisted");
+});
+
 Deno.test("v6 separates domestic and international lounge offer subjects", async () => {
   const proposals = await extractGroundedBenefitsV6(
     [{
@@ -1493,6 +1524,88 @@ Deno.test("approved dining restrictions reconstruct an unchanged v6 condition", 
     "approved dining proposal changed on replay",
   );
   assert(diff.conflicts.length === 0, "approved restrictions mismatched");
+});
+
+Deno.test("v6 persists and reconstructs every structured exclusion dimension", async () => {
+  const structured = {
+    additional: { source_terms: ["cash advances"] },
+    categories: ["fuel"],
+    days: ["sunday"],
+    mcc_codes: ["5541"],
+    merchants: ["example merchant"],
+    transaction_types: ["wallet reload"],
+  };
+  const [parsed] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback on dining spends excluding cash advances.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  assert(
+    JSON.stringify(parsed.valueConfig.exclusions) ===
+      JSON.stringify(parsed.exclusions),
+    "exclusions were not persisted in canonical value_config",
+  );
+  const proposal = {
+    ...parsed,
+    valueConfig: { ...parsed.valueConfig, exclusions: structured },
+    exclusions: structured,
+  };
+  const current = currentBenefitProposal({
+    dedupe_key: proposal.dedupeKey,
+    title: proposal.title,
+    description: proposal.description,
+    benefit_category: proposal.category,
+    benefit_type: proposal.valueType,
+    value_config: proposal.valueConfig,
+    partners: proposal.partners,
+    exclusions: {},
+    source_url: proposal.sourceUrl,
+  });
+  assert(current != null, "structured current proposal was not reconstructed");
+  const replay = diffBenefits([current], [proposal]);
+  assert(
+    replay.unchanged.length === 1,
+    "structured exclusions changed on replay",
+  );
+  const changed = diffBenefits([current], [{
+    ...proposal,
+    exclusions: { ...structured, merchants: ["different merchant"] },
+    valueConfig: {
+      ...proposal.valueConfig,
+      exclusions: { ...structured, merchants: ["different merchant"] },
+    },
+  }]);
+  assert(
+    changed.conflicts.length === 1 || changed.modifications.length === 1,
+    "real structured exclusion change was ignored",
+  );
+});
+
+Deno.test("observation timestamps beyond the evidence skew are rejected", () => {
+  let error: unknown;
+  try {
+    observationValidatedAt(
+      "2026-08-19T00:05:00.001Z",
+      "2026-08-19T00:00:00.000Z",
+    );
+  } catch (caught) {
+    error = caught;
+  }
+  assert(
+    error instanceof Error && error.message === "invalid_observation_timestamp",
+    "future observation timestamp reached staging projection",
+  );
+  assert(
+    observationValidatedAt(
+      "2026-08-19T00:04:59.999Z",
+      "2026-08-19T00:00:00.000Z",
+    ) === "2026-08-19T00:04:59.999Z",
+    "allowed clock skew was rejected",
+  );
 });
 
 for (

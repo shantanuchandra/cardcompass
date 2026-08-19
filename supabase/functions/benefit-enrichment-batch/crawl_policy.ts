@@ -1,6 +1,22 @@
 export type SourceRole = "primary" | "required_supporting" | "supporting";
 export type SourceAttemptStatus = "success" | "not_modified" | "failed";
 
+export type SourceAttemptInput = {
+  /** Exact canonical URL passed to the trusted fetcher. Never persisted. */
+  requestedUrl: string;
+  /** Redirect-resolved URL used only for the sanitized display URL. */
+  finalUrl?: string;
+  role: SourceRole;
+  status: SourceAttemptStatus;
+  httpStatus?: number;
+  contentHash?: string;
+  etag?: string;
+  lastModified?: string;
+  errorCode?: string;
+  attemptedAt: string;
+  parserCacheReusable?: boolean;
+};
+
 export type SourceAttempt = {
   url: string;
   role: SourceRole;
@@ -12,9 +28,7 @@ export type SourceAttempt = {
   errorCode?: string;
   attemptedAt: string;
   parserCacheReusable?: boolean;
-  /** Full canonical logical source used transiently and never persisted. */
-  sourceIdentity?: string;
-  /** Sanitized SHA-256 identity emitted by this policy; caller input is ignored. */
+  /** Internally derived SHA-256 of the full canonical requested URL. */
   logicalSourceKey?: string;
 };
 
@@ -32,6 +46,7 @@ const SAFE_ERROR_CODES = new Set([
   "required_source_overflow",
   "decisive_attempt_overflow",
   "invalid_attempt_history",
+  "invalid_source_url",
   "http_403",
   "http_404",
   "http_410",
@@ -59,14 +74,17 @@ export function sanitizedSourceErrorCode(error: unknown): string {
 export function boundedSourceUrl(value: string): string {
   try {
     const url = new URL(value);
-    if (url.protocol !== "https:") return "https://invalid.invalid/";
+    if (
+      url.protocol !== "https:" || !url.hostname || url.username ||
+      url.password || url.hash
+    ) return "invalid-source";
     url.username = "";
     url.password = "";
     url.search = "";
     url.hash = "";
     return url.toString().replace(/\/$/, "").slice(0, 2048);
   } catch {
-    return "https://invalid.invalid/";
+    return "invalid-source";
   }
 }
 
@@ -206,18 +224,30 @@ function sha256(value: string): string {
     .join("");
 }
 
-export function sanitizedSourceAttempt(attempt: SourceAttempt): SourceAttempt {
+export function sanitizedSourceAttempt(
+  attempt: SourceAttemptInput,
+): SourceAttempt {
   const errorCode = attempt.errorCode && SAFE_ERROR_CODES.has(attempt.errorCode)
     ? attempt.errorCode
     : attempt.status === "failed"
     ? "unreachable"
     : undefined;
   const contentHash = bounded(attempt.contentHash, 128);
-  const sourceIdentity = canonicalLogicalSourceUrl(
-    attempt.sourceIdentity ?? attempt.url,
+  const requestedUrl = canonicalLogicalSourceUrl(attempt.requestedUrl);
+  const finalUrl = canonicalLogicalSourceUrl(
+    attempt.finalUrl ?? attempt.requestedUrl,
   );
+  if (!requestedUrl || !finalUrl) {
+    return {
+      url: "invalid-source",
+      role: attempt.role,
+      status: "failed",
+      errorCode: "invalid_source_url",
+      attemptedAt: bounded(attempt.attemptedAt, 64) ?? "",
+    };
+  }
   return {
-    url: boundedSourceUrl(attempt.url),
+    url: boundedSourceUrl(finalUrl),
     role: attempt.role,
     status: attempt.status,
     ...(Number.isInteger(attempt.httpStatus) &&
@@ -236,26 +266,28 @@ export function sanitizedSourceAttempt(attempt: SourceAttempt): SourceAttempt {
     ...(attempt.parserCacheReusable === true
       ? { parserCacheReusable: true }
       : {}),
-    logicalSourceKey: sourceIdentityDigest(sourceIdentity),
+    logicalSourceKey: sourceIdentityDigest(requestedUrl),
   };
 }
 
-function canonicalLogicalSourceUrl(value: string): string {
+function canonicalLogicalSourceUrl(value: string): string | null {
   try {
     const url = new URL(value);
-    if (url.protocol !== "https:") return "https://invalid.invalid/";
-    url.username = "";
-    url.password = "";
-    url.hash = "";
+    if (
+      url.protocol !== "https:" || !url.hostname || url.username ||
+      url.password || url.hash
+    ) return null;
     url.searchParams.sort();
     return url.toString().replace(/\/$/, "");
   } catch {
-    return "https://invalid.invalid/";
+    return null;
   }
 }
 
 export function sourceIdentityDigest(value: string): string {
-  return sha256(canonicalLogicalSourceUrl(value));
+  const canonical = canonicalLogicalSourceUrl(value);
+  if (!canonical) throw new Error("invalid_source_url");
+  return sha256(canonical);
 }
 
 type AttemptEntry = { attempt: SourceAttempt; index: number };
@@ -303,7 +335,7 @@ function successful(attempt: SourceAttempt): boolean {
 }
 
 export function assessCrawlCompleteness(
-  attempts: SourceAttempt[],
+  attempts: SourceAttemptInput[],
   assessmentTime: string,
 ): CrawlAssessment {
   const persisted = attempts.map(sanitizedSourceAttempt);
@@ -369,7 +401,7 @@ export function compactSourceAttempts(
   maximum = 9,
 ): CrawlAssessment {
   const limit = Math.max(1, Math.trunc(maximum));
-  const persisted = attempts.map(sanitizedSourceAttempt);
+  const persisted = attempts;
   const assessmentTimestamp = utcInstant(assessmentTime);
   if (assessmentTimestamp === null) {
     return {
@@ -416,7 +448,7 @@ export function compactSourceAttempts(
   if (decisive.length > limit) {
     const retained = decisive.slice(0, limit - 1).map((entry) => entry.attempt);
     retained.push({
-      url: "https://invalid.invalid/required-source-overflow",
+      url: "invalid-source",
       role: "required_supporting",
       status: "failed",
       errorCode: "decisive_attempt_overflow",

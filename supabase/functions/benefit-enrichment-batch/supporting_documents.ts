@@ -9,8 +9,7 @@ import {
 import {
   boundedSourceUrl,
   sanitizedSourceErrorCode,
-  type SourceAttempt,
-  sourceIdentityDigest,
+  type SourceAttemptInput,
 } from "./crawl_policy.ts";
 
 const MAX_SUPPORTING_LINKS = 8;
@@ -25,6 +24,8 @@ const requiredSourcePattern =
   /(?:^|[/?=&_.-])(?:terms?|conditions?|mitc|fees?|charges?)(?:$|[/?=&_.-])/i;
 const requiredAnchorPattern =
   /\b(?:most\s+important\s+terms(?:\s+and\s+conditions)?|terms?(?:\s+and\s+conditions)?|conditions?|mitc|fees?|charges?)\b/i;
+const relevantAnchorPattern =
+  /\b(?:benefits?|rewards?|supporting\s+(?:material|document))\b/i;
 
 const exactSupportingSources: Record<string, Record<string, string[]>> = {
   "SBI Card": {
@@ -47,7 +48,7 @@ export type SupportingDocumentInput = {
 
 export type CollectedSources = {
   documents: BenefitDocument[];
-  attempts: SourceAttempt[];
+  attempts: SourceAttemptInput[];
 };
 
 const genericIdentityTokens = new Set([
@@ -124,7 +125,8 @@ function linkedUrls(
       const namesTargetProduct = tokens.length > 0 &&
         tokens.every((token) => candidatePath.includes(token));
       if (
-        (relevantPath.test(url) || requiredAnchorPattern.test(anchorText)) &&
+        (relevantPath.test(url) || requiredAnchorPattern.test(anchorText) ||
+          relevantAnchorPattern.test(anchorText)) &&
         !unsafePath.test(url) && (sameProductPath || namesTargetProduct)
       ) {
         const existing = candidates.get(url);
@@ -152,11 +154,11 @@ function linkedUrls(
 
 async function benefitDocument(
   resource: OfficialFetchResult,
-  sourceIdentity = resource.canonicalUrl,
+  requestedUrl = resource.canonicalUrl,
 ): Promise<BenefitDocument> {
   return {
-    sourceUrl: boundedSourceUrl(resource.canonicalUrl),
-    sourceIdentity: sourceIdentityDigest(sourceIdentity),
+    sourceUrl: requestedUrl,
+    finalUrl: resource.canonicalUrl,
     text: await officialResourceText(resource),
     contentHash: resource.contentHash,
   };
@@ -176,8 +178,9 @@ export async function collectSupportingBenefitDocuments(
     input.primary.canonicalUrl,
   );
   const documents = primaryDocument.text.trim() ? [primaryDocument] : [];
-  const attempts: SourceAttempt[] = [{
-    url: input.primary.canonicalUrl,
+  const attempts: SourceAttemptInput[] = [{
+    requestedUrl: input.primary.canonicalUrl,
+    finalUrl: input.primary.canonicalUrl,
     role: "primary",
     status: primaryDocument.text.trim() ? "success" : "failed",
     httpStatus: 200,
@@ -206,15 +209,16 @@ export async function collectSupportingBenefitDocuments(
       );
       const index = removable >= 0 ? removable : attempts.length - 1;
       const [removed] = attempts.splice(index, 1);
-      const removedUrl = boundedSourceUrl(removed.url);
+      const removedUrl = boundedSourceUrl(
+        removed.finalUrl ?? removed.requestedUrl,
+      );
       const documentIndex = documents.findLastIndex((document) =>
-        document.sourceUrl === removedUrl
+        boundedSourceUrl(document.finalUrl ?? document.sourceUrl) === removedUrl
       );
       if (documentIndex >= 0) documents.splice(documentIndex, 1);
     }
     attempts.push({
-      url,
-      sourceIdentity: url,
+      requestedUrl: url,
       role: "required_supporting",
       status: "failed",
       errorCode: "required_source_overflow",
@@ -272,6 +276,30 @@ export async function collectSupportingBenefitDocuments(
       attempt.errorCode === "required_source_overflow"
     ));
   let fetched = 0;
+  const upgradeRequired = async (
+    url: string,
+    attemptedAt: string,
+    position: number,
+  ): Promise<void> => {
+    let represented = false;
+    for (const attempt of attempts) {
+      if (attempt.requestedUrl !== url) continue;
+      attempt.role = "required_supporting";
+      represented = true;
+    }
+    const queuedIndex = queue.findIndex((candidate) => candidate.url === url);
+    if (queuedIndex >= 0) {
+      queue[queuedIndex].role = "required_supporting";
+      represented = true;
+      if (queuedIndex > position + 1) {
+        const [upgraded] = queue.splice(queuedIndex, 1);
+        queue.splice(position + 1, 0, upgraded);
+      }
+    }
+    if (!represented && seen.has(url)) {
+      await recordRequiredOverflow(url, attemptedAt);
+    }
+  };
   for (let position = 0; position < queue.length; position++) {
     const current = queue[position];
     if (seen.has(current.url)) continue;
@@ -279,8 +307,7 @@ export async function collectSupportingBenefitDocuments(
     if (fetched >= budget) {
       if (current.role === "required_supporting") {
         attempts.push({
-          url: current.url,
-          sourceIdentity: current.url,
+          requestedUrl: current.url,
           role: current.role,
           status: "failed",
           errorCode: "fetch_budget_exhausted",
@@ -296,8 +323,7 @@ export async function collectSupportingBenefitDocuments(
     ) {
       if (current.role === "required_supporting") {
         attempts.push({
-          url: current.url,
-          sourceIdentity: current.url,
+          requestedUrl: current.url,
           role: current.role,
           status: "failed",
           errorCode: "deadline_exceeded",
@@ -316,8 +342,7 @@ export async function collectSupportingBenefitDocuments(
       });
     } catch (error) {
       attempts.push({
-        url: current.url,
-        sourceIdentity: current.url,
+        requestedUrl: current.url,
         role: current.role,
         status: "failed",
         errorCode: sanitizedSourceErrorCode(error),
@@ -329,8 +354,8 @@ export async function collectSupportingBenefitDocuments(
     if (document.text.trim()) {
       documents.push(document);
       attempts.push({
-        url: resource.canonicalUrl,
-        sourceIdentity: current.url,
+        requestedUrl: current.url,
+        finalUrl: resource.canonicalUrl,
         role: current.role,
         status: "success",
         httpStatus: 200,
@@ -339,8 +364,8 @@ export async function collectSupportingBenefitDocuments(
       });
     } else {
       attempts.push({
-        url: resource.canonicalUrl,
-        sourceIdentity: current.url,
+        requestedUrl: current.url,
+        finalUrl: resource.canonicalUrl,
         role: current.role,
         status: "failed",
         httpStatus: 200,
@@ -363,12 +388,19 @@ export async function collectSupportingBenefitDocuments(
           input.primary.canonicalUrl,
         )
       ) {
+        const discovered = {
+          ...candidate,
+          depth: current.depth + 1,
+          role: sourceRole(candidate, false),
+        };
+        if (discovered.role === "required_supporting") {
+          await upgradeRequired(
+            discovered.url,
+            resource.retrievedAt,
+            position,
+          );
+        }
         if (!seen.has(candidate.url) && !scheduled.has(candidate.url)) {
-          const discovered = {
-            ...candidate,
-            depth: current.depth + 1,
-            role: sourceRole(candidate, false),
-          };
           if (
             queue.length >= queueLimit() &&
             discovered.role === "required_supporting"

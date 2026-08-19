@@ -36,6 +36,8 @@ BEGIN
      OR _extracted_data->>'parser_version' <> _parser_version
      OR _extracted_data->>'content_hash' <> _content_hash
      OR _validated_at IS NULL
+     -- Keep the database guard aligned with MAX_EVIDENCE_CLOCK_SKEW_MS.
+     OR _validated_at > statement_timestamp() + interval '5 minutes'
      OR NOT public.is_valid_official_source_evidence(_source_evidence) THEN
     RAISE EXCEPTION 'invalid_benefit_staging';
   END IF;
@@ -74,6 +76,34 @@ BEGIN
       ORDER BY staging.id
       FOR UPDATE
     ) AS locked;
+
+    -- A corrupt future row must not indefinitely win newest-observation order.
+    UPDATE public.card_benefits_staging AS staging
+    SET benefit_decisions = (
+          CASE
+            WHEN jsonb_typeof(staging.benefit_decisions) = 'array'
+              THEN staging.benefit_decisions
+            WHEN staging.benefit_decisions IS NULL
+              OR staging.benefit_decisions = 'null'::jsonb
+              THEN '[]'::jsonb
+            ELSE jsonb_build_array(jsonb_build_object(
+              'action', 'preserve_legacy',
+              'reason', 'legacy_malformed_benefit_decisions',
+              'legacy_value', staging.benefit_decisions
+            ))
+          END
+        ) || jsonb_build_array(jsonb_build_object(
+          'action', 'reject',
+          'reason', 'invalid_future_observation_timestamp',
+          'rejected_at', timezone('UTC', statement_timestamp())
+        )),
+        status = 'rejected',
+        updated_at = statement_timestamp()
+    WHERE staging.card_id = job.card_id
+      AND staging.parser_version = _parser_version
+      AND staging.request_type = 'official_benefit_enrichment'
+      AND staging.status = 'pending'
+      AND staging.validated_at > statement_timestamp() + interval '5 minutes';
 
     SELECT staging.id, staging.validated_at
     INTO newest_pending_id, newest_pending_validated_at
