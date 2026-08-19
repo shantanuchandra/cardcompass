@@ -74,6 +74,7 @@ export type BenefitDiff = {
   modifications: Array<{
     current: BenefitComparisonProposal;
     proposed: BenefitComparisonProposal;
+    changeType?: "identity_migration";
   }>;
   possibleRemovals: Array<{
     benefit: BenefitComparisonProposal;
@@ -197,7 +198,8 @@ export function currentBenefitProposal(
       : [],
     exclusions: !canonicalV6 && Array.isArray(persistedExclusions)
       ? persistedExclusions.map(String)
-      : !canonicalV6
+      : !canonicalV6 &&
+          (!persistedExclusions || typeof persistedExclusions !== "object")
       ? canonicalExclusionTerms
       : boundedCanonicalExclusions(
         persistedExclusions ?? canonicalExclusionTerms,
@@ -219,9 +221,17 @@ export function currentBenefitProposal(
     warnings: [],
   } as BenefitComparisonProposal;
   if (
-    proposal.benefitId && typeof config.offer_subject === "string" &&
+    canonicalV6 && typeof config.offer_subject === "string" &&
     config.offer_subject.trim()
-  ) proposal.offerSubject = config.offer_subject.trim().slice(0, 256);
+  ) {
+    proposal.offerSubject = config.offer_subject.trim().slice(0, 256);
+  } else if (!canonicalV6) {
+    proposal.offerSubject = offerSubjectForProposal({
+      category: proposal.category,
+      valueType: proposal.valueType,
+      sourceExcerpt: proposal.sourceExcerpt,
+    });
+  }
   return proposal;
 }
 
@@ -831,6 +841,7 @@ function semanticKey(
     | "restrictions"
     | "exclusions"
     | "offerSubject"
+    | "sourceExcerpt"
   >,
 ): string {
   if (benefit.offerSubject) {
@@ -865,13 +876,16 @@ export function offerSubjectForProposal(
   benefit: Pick<BenefitProposal, "category" | "valueType" | "sourceExcerpt">,
 ): string {
   const text = normalize(benefit.sourceExcerpt);
+  const category = canonicalBenefitCategory(benefit.category) ??
+    normalize(benefit.category);
+  const subjectCategory = category === "points" ? "rewards" : category;
   const qualifier = benefit.valueType === "lounge_access"
     ? (/\bdomestic\b/.test(text)
       ? "domestic"
       : /\binternational\b/.test(text)
       ? "international"
       : "general")
-    : benefit.category === "cashback" || benefit.category === "rewards"
+    : category === "cashback" || category === "points"
     ? [
       "dining",
       "fuel",
@@ -886,7 +900,7 @@ export function offerSubjectForProposal(
     ].map((term) => ({ term, index: text.search(new RegExp(`\\b${term}\\b`)) }))
       .filter((candidate) => candidate.index >= 0)
       .sort((left, right) => left.index - right.index)[0]?.term ?? "general"
-    : benefit.category === "entertainment"
+    : category === "entertainment"
     ? "movie_tickets"
     : "general";
   const canonicalQualifier = ({
@@ -895,7 +909,7 @@ export function offerSubjectForProposal(
     movie: "movie",
     movies: "movie",
   } as Record<string, string>)[qualifier] ?? qualifier;
-  return `${normalize(benefit.category)}:${
+  return `${subjectCategory}:${
     normalize(benefit.valueType ?? "benefit")
   }:${canonicalQualifier}`;
 }
@@ -1327,6 +1341,58 @@ export function diffBenefits(
   }
 
   const modifications: BenefitDiff["modifications"] = [];
+  // V5 rollback proposals intentionally retain legacy proposal identifiers and
+  // do not carry offerSubject. Match a legacy current row only when the shared
+  // explicit subject vocabulary and every condition term agree one-to-one.
+  const legacyCurrent = [...currentByKey.values()].flat().filter((benefit) =>
+    !benefit.dedupeKey.startsWith("card-benefit-v2:")
+  );
+  const publishableProposed = [...proposedByKey.values()].flat().filter((
+    benefit,
+  ) =>
+    isCanonicalV6Proposal(benefit) || benefit.parserVersion === "benefits-v5"
+  );
+  for (const currentBenefit of legacyCurrent) {
+    const candidates = publishableProposed.filter((proposedBenefit) =>
+      offerSubjectForProposal({
+          category: proposedBenefit.category,
+          valueType: proposedBenefit.valueType,
+          sourceExcerpt: proposedBenefit.sourceExcerpt,
+        }) === currentBenefit.offerSubject &&
+      comparisonConditionKey(proposedBenefit) ===
+        comparisonConditionKey(currentBenefit)
+    );
+    if (candidates.length !== 1) continue;
+    const proposedBenefit = candidates[0];
+    const competingCurrent = legacyCurrent.filter((candidate) =>
+      candidate.offerSubject === currentBenefit.offerSubject &&
+      comparisonConditionKey(candidate) ===
+        comparisonConditionKey(currentBenefit)
+    );
+    if (competingCurrent.length !== 1) continue;
+    modifications.push({
+      current: currentBenefit,
+      proposed: proposedBenefit,
+      changeType: "identity_migration",
+    });
+    currentByKey.delete(currentBenefit.dedupeKey);
+    proposedByKey.delete(proposedBenefit.dedupeKey);
+    const currentSemantic = semanticKey(currentBenefit);
+    const remainingCurrent = currentBySemantic.get(currentSemantic);
+    remainingCurrent?.splice(remainingCurrent.indexOf(currentBenefit), 1);
+    if (remainingCurrent?.length === 0) {
+      currentBySemantic.delete(currentSemantic);
+    }
+    const proposedSemantic = semanticKey(proposedBenefit);
+    const remainingProposed = unmatchedProposedBySemantic.get(proposedSemantic);
+    remainingProposed?.splice(
+      remainingProposed.indexOf(proposedBenefit),
+      1,
+    );
+    if (remainingProposed?.length === 0) {
+      unmatchedProposedBySemantic.delete(proposedSemantic);
+    }
+  }
   for (
     const key of [...currentBySemantic.keys()].filter((key) =>
       unmatchedProposedBySemantic.has(key)
@@ -1335,9 +1401,11 @@ export function diffBenefits(
     const currentMatches = sorted(currentBySemantic.get(key)!);
     const proposedMatches = sorted(unmatchedProposedBySemantic.get(key)!);
     if (currentMatches.length === 1 && proposedMatches.length === 1) {
+      const currentMatch = currentMatches[0];
+      const proposedMatch = proposedMatches[0];
       modifications.push({
-        current: currentMatches[0],
-        proposed: proposedMatches[0],
+        current: currentMatch,
+        proposed: proposedMatch,
       });
       currentByKey.delete(currentMatches[0].dedupeKey);
       proposedByKey.delete(proposedMatches[0].dedupeKey);

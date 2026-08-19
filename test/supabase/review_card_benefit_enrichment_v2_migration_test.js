@@ -36,14 +36,22 @@ test('v2 approval keeps the existing schema and a service-role-only invoker boun
 });
 
 test('locked staging card and exact proposal set govern canonical publication', async () => {
-  const approval = functionBody(await migrationSql(), 'approve_card_benefit_enrichment');
+  const sql = await migrationSql();
+  const approval = functionBody(sql, 'approve_card_benefit_enrichment');
+  const proposals = functionBody(sql, 'validate_locked_benefit_proposals');
   assert.match(approval, /FROM public\.card_benefits_staging[\s\S]*FOR UPDATE/i);
   assert.match(approval, /parser_version NOT IN \('benefits-v5', 'benefits-v6'\)/i);
-  assert.match(approval, /jsonb_typeof\(staging_row\.extracted_data->'proposals'\)\s*<>\s*'array'/i);
   assert.match(approval, /decision_proposal_index\s*:=\s*\(decision->>'proposal_index'\)::integer[\s\S]*staging_row\.extracted_data->'proposals'->decision_proposal_index/i);
   assert.match(approval, /validate_benefit_publication_envelope\([\s\S]*staging_row\.card_id[\s\S]*staged_proposal/i);
   assert.match(approval, /decision_proposal_index[\s\S]*seen_decision_identities[\s\S]*duplicate_benefit_decision/i);
   assert.match(approval, /superseded_by_newer_crawl|superseded_staging/i);
+  assert.match(approval, /validate_locked_benefit_proposals\(\s*staging_row\.extracted_data->'proposals',\s*staging_row\.parser_version\s*\)/i);
+  assert.match(proposals, /octet_length[\s\S]*MAX_STAGED_PROPOSALS_BYTES/i);
+  assert.match(proposals, /canonical_json_shape_is_bounded[\s\S]*MAX_CANONICAL_KEY_CHARS/i);
+  assert.match(proposals, /jsonb_object_keys[\s\S]*unknown_staged_proposal_key/i);
+  assert.match(proposals, /canonical_json_numbers_are_safe/i);
+  assert.match(proposals, /GROUP BY[\s\S]*(?:dedupeKey|dedupe_key)[\s\S]*HAVING count\(\*\)\s*>\s*1/i);
+  assert.match(sql, /locked_proposal_v2_assertions[\s\S]*oversized_unselected[\s\S]*unknown_unselected[\s\S]*duplicate_unselected[\s\S]*deep_unselected[\s\S]*wide_unselected[\s\S]*valid_multi/i);
 });
 
 test('publication inserts immutable canonical rows and scopes every lifecycle mutation to one mapping', async () => {
@@ -63,6 +71,21 @@ test('publication inserts immutable canonical rows and scopes every lifecycle mu
   }
   assert.match(approval, /canonical_benefit->>'valid_from'[\s\S]*AT TIME ZONE 'UTC'[\s\S]*retired_at/i);
   assert.match(approval, /SET retired_at\s*=\s*coalesce\(retired_at, statement_timestamp\(\)\)/i);
+  assert.match(approval, /staged_change_type[\s\S]*identity_migration[\s\S]*existing_mapping_not_found/i);
+  assert.match(approval, /audit_decision[\s\S]*identity_migration/i);
+});
+
+test('legacy replacement identity is derived from locked diff and never from client change type', async () => {
+  const approval = functionBody(await migrationSql(), 'approve_card_benefit_enrichment');
+  assert.match(approval, /SELECT modification\.value->>'changeType'[\s\S]*INTO staged_change_type/i);
+  assert.match(approval, /modification\.value->'current'->>'liveBenefitId'/i);
+  assert.match(approval, /modification\.value->'proposed'[\s\S]*staged_proposal/i);
+  assert.match(approval, /decision->>'change_type'[\s\S]*client_publication_authority_rejected/i);
+  assert.match(approval, /staged_change_type\s*=\s*'identity_migration'[\s\S]*identity_migration_must_be_explicit/i);
+  assert.ok(
+    approval.indexOf('staged_change_type') < approval.indexOf('INSERT INTO public.benefits'),
+    'identity migration must bind before mutation',
+  );
 });
 
 test('retirement, audit append, replay, and linked-job completion fail closed', async () => {
@@ -167,7 +190,10 @@ test('Edge and SQL publication limits have one exact named boundary contract', a
     MAX_SOURCE_EVIDENCE_BYTES: 32768,
     MAX_CANONICAL_DEPTH: 8,
     MAX_CANONICAL_KEYS: 256,
+    MAX_CANONICAL_KEY_CHARS: 500,
     MAX_STAGED_PROPOSALS: 64,
+    MAX_STAGED_PROPOSALS_BYTES: 131072,
+    MAX_STAGED_STRING_CHARS: 8000,
   };
   for (const [name, value] of Object.entries(expected)) {
     assert.match(limitsSource, new RegExp(`${name}:\\s*${value}\\b`));

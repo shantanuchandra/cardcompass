@@ -5,11 +5,13 @@ import {
   sanitizeAdminDto,
   validateCanonicalPublicationEnvelope,
   validateRetirementDecisionEvidence,
+  validateV5ApprovalDecisions,
   validateV6ApprovalDecisions,
 } from "./benefit_admin.ts";
 import {
   currentBenefitProposal,
   diffBenefits,
+  extractGroundedBenefits,
   extractGroundedBenefitsV6,
 } from "../_shared/benefit_enrichment.ts";
 import {
@@ -521,6 +523,7 @@ Deno.test("benefit approval accepts only matching pending enrichment staging and
                   rate: 10,
                   restrictions: [],
                   exclusions: [],
+                  parserVersion: "benefits-v5",
                 }],
               },
             },
@@ -650,7 +653,6 @@ Deno.test("v6 admin presentation and approval preserve canonical replay identity
           ...proposal,
           sourceUrl: `${proposal.sourceUrl}?selector=secret-query`,
           sourceUrls: [`${proposal.sourceUrl}?selector=secret-query`],
-          client_secret: "must not escape",
         }],
         diff: { additions: [proposal] },
       },
@@ -666,10 +668,6 @@ Deno.test("v6 admin presentation and approval preserve canonical replay identity
     presentedProposal.valueConfig.offer_subject === proposal.offerSubject &&
       presentedProposal.valueConfig.restrictions.join(",") === "dining spends",
     "admin presenter stripped canonical identity terms",
-  );
-  assert(
-    !JSON.stringify(presented).includes("must not escape"),
-    "admin presenter opened an arbitrary proposal field",
   );
   assert(
     !JSON.stringify(presented).includes("secret-query"),
@@ -1484,6 +1482,12 @@ Deno.test("v6 admin identity terms remain explicitly bounded", () => {
         proposals: [{
           benefitId: `card-benefit-v2:card-1:${"a".repeat(64)}`,
           dedupeKey: `card-benefit-v2:card-1:${"a".repeat(64)}`,
+          conditionHash: "a".repeat(64),
+          offerSubject: "cashback:cashback:dining",
+          sourceIdentity: "b".repeat(64),
+          title: "Dining cashback",
+          category: "cashback",
+          valueType: "cashback",
           parserVersion: "benefits-v6",
           valueConfig: { restrictions: terms, exclusions: structured },
           exclusions: structured,
@@ -1630,6 +1634,45 @@ Deno.test("real benefit presentation strips structured userinfo without treating
   );
 });
 
+Deno.test("admin privacy strips no-tail credentials but preserves ordinary percent and email prose", () => {
+  const secrets = [
+    "alice:secret@issuer.example",
+    "alice@issuer.example:8443",
+    "alice:secret@192.0.2.1",
+    "alice@[2001:db8::1]",
+    "alice@localhost",
+    "alice@internal",
+    "alice%3Asecret%40issuer.example",
+    "alice&#x3a;secret%40%5b2001:db8::1%5d",
+  ];
+  for (const secret of secrets) {
+    const value = sanitizeAdminDto({ [secret]: secret }) as Record<
+      string,
+      unknown
+    >;
+    const rendered = JSON.stringify(value);
+    assert(!rendered.includes("alice"), `userinfo leaked for ${secret}`);
+  }
+  for (
+    const ordinary of [
+      "alice@issuer.example",
+      "100% of ₹500 is ₹500",
+      "modulo 10%40 remains ordinary text",
+      "encoded math 25%2F5 is prose",
+    ]
+  ) {
+    assert(
+      sanitizeAdminDto({ value: ordinary }).value === ordinary,
+      `ordinary text changed: ${ordinary}`,
+    );
+  }
+  const encodedSecret = "https%3A%2F%2Fissuer.example%2Fcard%3Ftoken%3Dsecret";
+  assert(
+    !String(sanitizeAdminDto({ value: encodedSecret }).value).includes("token"),
+    "encoded URL secret survived structural probing",
+  );
+});
+
 Deno.test("admin presentation rejects oversized or cyclic input before traversing a displayed subset", () => {
   const oversizedLanes = [
     {
@@ -1745,6 +1788,223 @@ Deno.test("canonical envelope limits reject Edge-SQL drift boundaries before has
     }
     assert(error instanceof Error, "out-of-domain Edge envelope was accepted");
   }
+});
+
+Deno.test("canonical publication parity requires nonempty terms and bounded recursive keys", async () => {
+  const base = {
+    title: "Dining cashback",
+    category: "cashback",
+    valueType: "cashback",
+    offerSubject: "cashback:cashback:dining",
+    rate: 10,
+    restrictions: [],
+    exclusions: [],
+    partners: [],
+  };
+  await buildCanonicalPublicationEnvelope("card-1", {
+    ...base,
+    valueConfig: { ["k".repeat(500)]: "value" },
+  });
+  for (
+    const invalid of [
+      { ...base, title: "" },
+      { ...base, valueType: "" },
+      Object.fromEntries(
+        Object.entries(base).filter(([key]) => key !== "title"),
+      ),
+      Object.fromEntries(
+        Object.entries(base).filter(([key]) => key !== "valueType"),
+      ),
+      { ...base, valueConfig: { ["k".repeat(501)]: "value" } },
+    ]
+  ) {
+    let error: unknown;
+    try {
+      await buildCanonicalPublicationEnvelope("card-1", invalid);
+    } catch (caught) {
+      error = caught;
+    }
+    assert(error instanceof Error, "Edge accepted a SQL-invalid envelope");
+  }
+});
+
+Deno.test("every locked proposal is bounded and shaped before subset approval", async () => {
+  const proposals = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text:
+        "Get 10% cashback on dining spends. Get 5% cashback on fuel spends.",
+      contentHash: "a".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  assert(proposals.length === 2, "multi-proposal fixture did not extract");
+  const extraction = (items: unknown[]) => ({
+    request_type: "official_benefit_enrichment",
+    parser_version: "benefits-v6",
+    proposals: items,
+  });
+  const valid = await validateV6ApprovalDecisions(
+    [{ action: "approve", benefit: proposals[0] }],
+    extraction(proposals),
+    "card-1",
+  );
+  assert(valid.length === 1, "valid multi-proposal staging was rejected");
+
+  let deep: unknown = "leaf";
+  for (let index = 0; index < 9; index += 1) deep = { next: deep };
+  const corrupt = [
+    { ...proposals[1], unknown: "x".repeat(200_000) },
+    { ...proposals[1], unknown: "small" },
+    proposals[0],
+    { ...proposals[1], valueConfig: { deep } },
+    {
+      ...proposals[1],
+      valueConfig: Object.fromEntries(
+        Array.from({ length: 257 }, (_, index) => [`key_${index}`, index]),
+      ),
+    },
+  ];
+  for (const item of corrupt) {
+    let error: unknown;
+    try {
+      await validateV6ApprovalDecisions(
+        [{ action: "approve", benefit: proposals[0] }],
+        extraction([proposals[0], item]),
+        "card-1",
+      );
+    } catch (caught) {
+      error = caught;
+    }
+    assert(error instanceof Error, "corrupt unselected proposal was accepted");
+    const presented = presentBenefitJob({
+      card_benefits_staging: [{
+        extracted_data: extraction([proposals[0], item]),
+      }],
+    }) as Record<string, unknown>;
+    assert(
+      presented.presentation_invalid === true,
+      "corrupt unselected proposal was presented as approvable",
+    );
+  }
+});
+
+Deno.test("legacy identity migration is server-derived and client change type is rejected", async () => {
+  const [proposal] = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text: "Get 10% cashback on dining spends.",
+      contentHash: "b".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  const liveBenefitId = "11111111-1111-4111-8111-111111111111";
+  const current = currentBenefitProposal({
+    benefit_id: liveBenefitId,
+    dedupe_key: "legacy:dining",
+    title: proposal.title,
+    description: proposal.description,
+    benefit_category: "CASHBACK",
+    benefit_type: proposal.valueType,
+    value_config: proposal.valueConfig,
+    exclusions: proposal.exclusions,
+    source_url: proposal.sourceUrl,
+  });
+  assert(current != null, "legacy approval fixture did not reconstruct");
+  const diff = diffBenefits([current], [proposal]);
+  const staged = {
+    request_type: "official_benefit_enrichment",
+    parser_version: "benefits-v6",
+    proposals: [proposal],
+    diff,
+  };
+  const validated = await validateV6ApprovalDecisions(
+    [{ action: "approve", benefit: proposal }],
+    staged,
+    "card-1",
+  );
+  assert(
+    validated[0].change_type === "identity_migration" &&
+      validated[0].existing_benefit_id === liveBenefitId,
+    "server did not bind the exact legacy replacement",
+  );
+  const replay = await validateV6ApprovalDecisions(
+    [{ action: "approve", benefit: proposal }],
+    staged,
+    "card-1",
+  );
+  assert(
+    stableCanonicalJson(replay) === stableCanonicalJson(validated),
+    "legacy identity migration replay changed its publication decision",
+  );
+  for (const change_type of ["identity_migration", "term_change"]) {
+    let error: unknown;
+    try {
+      await validateV6ApprovalDecisions(
+        [{ action: "approve", benefit: proposal, change_type }],
+        staged,
+        "card-1",
+      );
+    } catch (caught) {
+      error = caught;
+    }
+    assert(error instanceof Error, "client change_type became authoritative");
+  }
+});
+
+Deno.test("pending v5 rollback approval uses the locked legacy identity migration", async () => {
+  const [proposal] = extractGroundedBenefits([{
+    sourceUrl: "https://issuer.example/card",
+    text: "Get 10% cashback on dining spends.",
+    contentHash: "c".repeat(64),
+  }], "benefits-v5");
+  assert(proposal != null, "v5 rollback approval fixture did not extract");
+  const liveBenefitId = "22222222-2222-4222-8222-222222222222";
+  const current = currentBenefitProposal({
+    benefit_id: liveBenefitId,
+    dedupe_key: "legacy:approved:dining",
+    title: proposal.title,
+    description: proposal.description,
+    benefit_category: "CASHBACK",
+    benefit_type: proposal.valueType,
+    value_config: {
+      ...proposal.valueConfig,
+      rate: proposal.rate,
+      restrictions: proposal.restrictions,
+    },
+    exclusions: proposal.exclusions,
+    source_url: proposal.sourceUrl,
+  });
+  assert(current != null, "v5 rollback current row did not reconstruct");
+  const staged = {
+    request_type: "official_benefit_enrichment",
+    parser_version: "benefits-v5",
+    proposals: [proposal],
+    diff: diffBenefits([current], [proposal]),
+  };
+  const validated = await validateV5ApprovalDecisions(
+    [{ action: "approve", benefit: proposal }],
+    staged,
+    "card-1",
+  );
+  assert(
+    validated[0].change_type === "identity_migration" &&
+      validated[0].existing_benefit_id === liveBenefitId,
+    "v5 approval did not bind the locked legacy replacement",
+  );
+  let error: unknown;
+  try {
+    await validateV5ApprovalDecisions(
+      [{ action: "approve", benefit: proposal, change_type: "term_change" }],
+      staged,
+      "card-1",
+    );
+  } catch (caught) {
+    error = caught;
+  }
+  assert(error instanceof Error, "v5 client change_type became authoritative");
 });
 
 Deno.test("oversized locked proposal sets cannot approve a displayed subset", async () => {

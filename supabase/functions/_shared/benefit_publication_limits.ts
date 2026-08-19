@@ -11,7 +11,10 @@ export const BENEFIT_PUBLICATION_LIMITS = Object.freeze({
   MAX_SOURCE_EVIDENCE_BYTES: 32768,
   MAX_CANONICAL_DEPTH: 8,
   MAX_CANONICAL_KEYS: 256,
+  MAX_CANONICAL_KEY_CHARS: 500,
   MAX_STAGED_PROPOSALS: 64,
+  MAX_STAGED_PROPOSALS_BYTES: 131072,
+  MAX_STAGED_STRING_CHARS: 8000,
 });
 
 /** Presentation-only work bounds; overflow returns an explicit invalid marker. */

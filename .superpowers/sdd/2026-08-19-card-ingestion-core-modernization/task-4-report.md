@@ -172,3 +172,39 @@ The new review contracts were first exercised against `d1e039677eff58dad4ca34cfc
 Migration remains `supabase/migrations/20260819163046_review_card_benefit_enrichment_v2.sql`; fix-round-3 SHA-256 before commit: `562113c472106a9a8058fe8df50e3252f07dca84019efd2189639a80c8fb3bb0`.
 
 Live applied: **no**. No Docker, local PostgreSQL/Supabase, external network, production data, linked Supabase command, migration apply/push/dry-run, reset, or repair was used. Real PostgreSQL parse/apply plus transactional fixtures for concurrent review, Card B byte-for-byte immutability, UTC lifecycle boundaries, linked-job fan-out, exact replay, and ordered Task 2/3/4 integration remain the explicit unresolved live gate; static/pure tests do not claim database-boundary coverage.
+
+## Review fix round 4/5 — 2026-08-19
+
+### Red proof
+
+The review contracts were first exercised against `7c448949e924612e4f68de1d67fa6a5586ab64b7`:
+
+- `benefit-enrichment-batch/index_test.ts` failed type checking because diff modifications had no `changeType`. The exact-one assertion later exposed a residual empty semantic-map conflict after a migration match.
+- `benefit_admin_test.ts` reported **33 passed / 4 failed** for no-tail userinfo disclosure, Edge/SQL title/type/key mismatch, corrupt unselected proposals, and missing server-derived legacy replacement binding.
+- `review_card_benefit_enrichment_v2_migration_test.js` reported **7 passed / 4 failed** because there was no locked-array validator, service-path proposal-bound contract, shared new limits, or locked-diff migration binding.
+- The focused pending-V5 approval fixture failed type checking until the pure V5 decision validator was made testable and routed through the same server-derived migration contract.
+
+### Fixes
+
+- Legacy current rows now derive offer subjects with the parser's existing finite qualifier vocabulary while ignoring persisted legacy `offer_subject` text. Canonical category aliases preserve reward subject compatibility. Exact semantic+condition matches from a legacy key to a V2-publishing V6 or rollback V5 proposal produce one `identity_migration` modification containing the live UUID, with no add/remove/conflict tail; genuine term changes remain ordinary modifications.
+- Admin presentation exposes the server-derived modification type, while both V5 and V6 approval reject client `change_type`, bind the locked modification/current UUID, and send only an internal decision type. SQL independently rebinds the exact locked proposed JSON, verifies `existing_benefit_id` and `change_type`, publishes the card-scoped row, maps it, and retires only that card's legacy mapping at the existing immediate/future replacement boundary. Replacement retirement does not use disappearance evidence; explicit disappearance retirement still does.
+- Added complete locked-proposal validation before presentation, Edge approval, and under the SQL row lock: 64 proposals, 128 KiB total, depth 8, 256 keys, 64 array items, 500-character keys, 8,000-character staged strings, safe numeric domain, exact proposal-field allowlist, required V5/V6 fields, parser binding, and duplicate legacy/V2 identities. A corrupt unselected proposal invalidates the whole review.
+- Extended no-tail privacy handling: password-bearing userinfo redacts for plausible hosts; username-only redacts for explicit port, IP, bracketed IPv6, localhost, or single-label hosts. Ordinary dotted-host email prose remains unchanged. Structural percent/entity decoding is now a detection probe and returns the original bytes unless it finds a URL/userinfo secret.
+- Aligned Edge and SQL on nonempty two-character-minimum titles, nonempty benefit types, and recursive 500-character key limits. Migration-time assertions cover exact key/string/array/depth/count boundaries and valid/oversized/unknown/malformed/duplicate/deep/wide multi-proposal arrays.
+- Added only invoker/service-role helper functions; no business table or column changed.
+
+### Green verification
+
+- `node --test test/supabase/review_card_benefit_enrichment_v2_migration_test.js` — 11 passed, 0 failed.
+- `deno test --allow-env --allow-read --allow-net=0.0.0.0:8000 --node-modules-dir=auto supabase/functions/admin-catalog-entry/benefit_admin_test.ts` — 38 passed, 0 failed.
+- `deno test --allow-env --allow-read --node-modules-dir=auto supabase/functions/benefit-enrichment-batch/index_test.ts` — 60 passed, 0 failed.
+- `deno test --allow-env --allow-read --node-modules-dir=auto supabase/functions/_shared/benefit_contract_test.ts` — 7 passed, 0 failed.
+- `node --test test/supabase/benefit_enrichment_rules.test.mjs test/supabase/automated_benefit_enrichment_migration_test.js` — 29 passed, 0 failed, including unchanged V5/V6 goldens.
+- Total named behavioral/static tests: **145 passed, 0 failed**.
+- `deno check --node-modules-dir=auto` on all six changed TypeScript/test files — passed.
+- `deno fmt --check` on all six changed TypeScript/test files — passed.
+- `git diff --check` — passed.
+
+Migration remains `supabase/migrations/20260819163046_review_card_benefit_enrichment_v2.sql`; fix-round-4 SHA-256 before commit: `4c308c0154ef407d7b3da84d327c094954bcb5af77df16dbfccd96b93d9dcfc4`.
+
+Live applied: **no**. No Docker, local PostgreSQL/Supabase, external network, production data, linked Supabase command, migration apply/push/dry-run, reset, or repair was used. Real PostgreSQL parse/apply plus transactional fixtures for concurrent review, Card B byte-for-byte immutability, UTC replacement boundaries, locked-row replay, linked-job fan-out, and ordered Task 2/3/4 integration remain the explicit unresolved live gate; static/pure tests do not claim database execution.

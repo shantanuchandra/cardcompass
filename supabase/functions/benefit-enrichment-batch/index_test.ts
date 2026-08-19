@@ -401,6 +401,101 @@ Deno.test("legacy v5 DB category codes replay semantically without changing lega
   }
 });
 
+Deno.test("legacy live rows become one explicit card-scoped identity migration", async () => {
+  const fixtures = [
+    {
+      text: "Get 10% cashback on dining spends.",
+      category: "CASHBACK",
+    },
+    {
+      text: "Earn 5 reward points for every Rs. 150 spent on dining.",
+      category: "POINTS",
+    },
+  ];
+  for (const [index, fixture] of fixtures.entries()) {
+    const [proposed] = await extractGroundedBenefitsV6(
+      [{
+        sourceUrl: "https://issuer.example/card",
+        text: fixture.text,
+        contentHash: String(index + 6).repeat(64),
+      }],
+      "benefits-v6",
+      "card-1",
+    );
+    assert(proposed != null, "v6 migration fixture did not extract");
+    const liveBenefitId = `${index + 6}`.repeat(8) +
+      "-1111-4111-8111-111111111111";
+    const current = currentBenefitProposal({
+      benefit_id: liveBenefitId,
+      dedupe_key: `legacy:${index}:offer`,
+      title: proposed.title,
+      description: proposed.description,
+      benefit_category: fixture.category,
+      benefit_type: proposed.valueType,
+      value_config: proposed.valueConfig,
+      partners: proposed.partners,
+      exclusions: proposed.exclusions,
+      source_url: proposed.sourceUrl,
+    });
+    assert(current != null, "legacy live row did not reconstruct");
+    const diff = diffBenefits([current], [proposed]);
+    assert(
+      diff.modifications.length === 1 &&
+        diff.modifications[0].changeType === "identity_migration",
+      `${fixture.category} was not classified as identity migration`,
+    );
+    assert(
+      diff.modifications[0].current.liveBenefitId === liveBenefitId &&
+        diff.additions.length === 0 && diff.possibleRemovals.length === 0 &&
+        diff.conflicts.length === 0,
+      "legacy migration lost the live UUID or emitted add/remove tails",
+    );
+    const changed = diffBenefits([current], [{
+      ...proposed,
+      rate: (proposed.rate ?? 0) + 1,
+      valueConfig: {
+        ...proposed.valueConfig,
+        rate: (proposed.rate ?? 0) + 1,
+      },
+    }]);
+    assert(
+      changed.modifications.length === 1 &&
+        changed.modifications[0].changeType === undefined,
+      "real commercial term change was mislabeled as identity migration",
+    );
+  }
+
+  const [legacyProposal] = extractGroundedBenefits([{
+    sourceUrl: "https://issuer.example/card",
+    text: "Get 10% cashback on dining spends.",
+    contentHash: "8".repeat(64),
+  }], "benefits-v5");
+  assert(legacyProposal != null, "v5 rollback fixture did not extract");
+  const current = currentBenefitProposal({
+    benefit_id: "88888888-1111-4111-8111-111111111111",
+    dedupe_key: "legacy:approved:dining",
+    title: legacyProposal.title,
+    description: legacyProposal.description,
+    benefit_category: "CASHBACK",
+    benefit_type: legacyProposal.valueType,
+    value_config: {
+      ...legacyProposal.valueConfig,
+      rate: legacyProposal.rate,
+      restrictions: legacyProposal.restrictions,
+    },
+    exclusions: legacyProposal.exclusions,
+    source_url: legacyProposal.sourceUrl,
+  });
+  assert(current != null, "v5 current migration fixture did not reconstruct");
+  const rollback = diffBenefits([current], [legacyProposal]);
+  assert(
+    rollback.modifications.length === 1 &&
+      rollback.modifications[0].changeType === "identity_migration" &&
+      rollback.additions.length === 0 && rollback.possibleRemovals.length === 0,
+    "v5 rollback proposal did not retain the explicit legacy migration path",
+  );
+});
+
 for (
   const fixture of [
     {

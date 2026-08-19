@@ -90,6 +90,7 @@ CREATE OR REPLACE FUNCTION public.canonical_json_shape_is_bounded(
   _max_depth integer,
   _max_keys integer,
   _max_array_items integer,
+  _max_key_chars integer,
   _max_string_chars integer
 ) RETURNS boolean
 LANGUAGE sql
@@ -122,6 +123,10 @@ AS $$
       coalesce(sum(CASE WHEN jsonb_typeof(value) = 'object' THEN (
         SELECT count(*) FROM jsonb_object_keys(value)
       ) ELSE 0 END), 0) AS key_count,
+      coalesce(max(CASE WHEN jsonb_typeof(value) = 'object' THEN (
+        SELECT coalesce(max(length(item.key)), 0)
+        FROM jsonb_object_keys(value) AS item(key)
+      ) ELSE 0 END), 0) AS maximum_key_chars,
       coalesce(max(CASE WHEN jsonb_typeof(value) = 'array'
         THEN jsonb_array_length(value) ELSE 0 END), 0) AS maximum_array_items,
       coalesce(max(CASE WHEN jsonb_typeof(value) = 'string'
@@ -131,8 +136,88 @@ AS $$
   SELECT maximum_depth <= _max_depth
     AND key_count <= _max_keys
     AND maximum_array_items <= _max_array_items
+    AND maximum_key_chars <= _max_key_chars
     AND maximum_string_chars <= _max_string_chars
   FROM measurements;
+$$;
+
+CREATE OR REPLACE FUNCTION public.validate_locked_benefit_proposals(
+  _proposals jsonb,
+  _parser_version text
+) RETURNS boolean
+LANGUAGE plpgsql
+IMMUTABLE
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  MAX_CANONICAL_ARRAY_ITEMS constant integer := 64;
+  MAX_CANONICAL_DEPTH constant integer := 8;
+  MAX_CANONICAL_KEYS constant integer := 256;
+  MAX_CANONICAL_KEY_CHARS constant integer := 500;
+  MAX_STAGED_PROPOSALS constant integer := 64;
+  MAX_STAGED_PROPOSALS_BYTES constant integer := 131072;
+  MAX_STAGED_STRING_CHARS constant integer := 8000;
+BEGIN
+  IF _parser_version NOT IN ('benefits-v5', 'benefits-v6')
+     OR jsonb_typeof(_proposals) <> 'array'
+     OR jsonb_array_length(_proposals) > MAX_STAGED_PROPOSALS
+     OR octet_length(public.canonical_json_text(_proposals)) >
+        MAX_STAGED_PROPOSALS_BYTES
+     OR NOT public.canonical_json_shape_is_bounded(
+       _proposals, MAX_CANONICAL_DEPTH, MAX_CANONICAL_KEYS,
+       MAX_CANONICAL_ARRAY_ITEMS, MAX_CANONICAL_KEY_CHARS,
+       MAX_STAGED_STRING_CHARS
+     )
+     OR NOT public.canonical_json_numbers_are_safe(_proposals) THEN
+    RAISE EXCEPTION 'invalid_staged_presentation_bounds';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM jsonb_array_elements(_proposals) AS proposal(value)
+    WHERE jsonb_typeof(proposal.value) <> 'object'
+       OR length(trim(coalesce(proposal.value->>'title', ''))) NOT BETWEEN 2 AND 500
+       OR length(trim(coalesce(proposal.value->>'valueType', ''))) NOT BETWEEN 1 AND 200
+       OR length(trim(coalesce(proposal.value->>'category', ''))) NOT BETWEEN 1 AND 500
+       OR length(trim(coalesce(proposal.value->>'dedupeKey', ''))) NOT BETWEEN 1 AND 500
+       OR proposal.value->>'parserVersion' IS DISTINCT FROM _parser_version
+       OR (_parser_version = 'benefits-v6' AND (
+         length(trim(coalesce(proposal.value->>'benefitId', ''))) NOT BETWEEN 1 AND 500
+         OR proposal.value->>'benefitId' IS DISTINCT FROM proposal.value->>'dedupeKey'
+         OR length(trim(coalesce(proposal.value->>'offerSubject', ''))) NOT BETWEEN 1 AND 500
+         OR coalesce(proposal.value->>'conditionHash', '') !~ '^[0-9a-fA-F]{64}$'
+         OR coalesce(proposal.value->>'sourceIdentity', '') !~ '^[0-9a-fA-F]{64}$'
+       ))
+       OR EXISTS (
+         SELECT 1 FROM jsonb_object_keys(
+           CASE WHEN jsonb_typeof(proposal.value) = 'object'
+             THEN proposal.value ELSE '{}'::jsonb END
+         ) AS key(value)
+         WHERE key.value NOT IN (
+           'liveBenefitId', 'benefitId', 'offerSubject', 'dedupeKey',
+           'conditionHash', 'title', 'description', 'category', 'valueType',
+           'value', 'rate', 'cap', 'threshold', 'valueConfig', 'partners',
+           'frequency', 'period', 'restrictions', 'exclusions', 'regions',
+           'effectiveFrom', 'effectiveTo', 'sourceUrl', 'sourceUrls',
+           'sourceIdentity', 'sourceIdentities', 'sourceExcerpt', 'contentHash',
+           'parserVersion', 'confidence', 'evidence', 'warnings'
+         )
+       )
+  ) THEN RAISE EXCEPTION 'unknown_staged_proposal_key'; END IF;
+  IF EXISTS (
+    SELECT proposal.value->>'dedupeKey'
+    FROM jsonb_array_elements(_proposals) AS proposal(value)
+    GROUP BY proposal.value->>'dedupeKey'
+    HAVING count(*) > 1
+  ) THEN RAISE EXCEPTION 'duplicate_staged_proposal'; END IF;
+  IF _parser_version = 'benefits-v6' AND EXISTS (
+    SELECT proposal.value->>'benefitId'
+    FROM jsonb_array_elements(_proposals) AS proposal(value)
+    GROUP BY proposal.value->>'benefitId'
+    HAVING count(*) > 1
+  ) THEN RAISE EXCEPTION 'duplicate_staged_proposal'; END IF;
+  RETURN true;
+END;
 $$;
 
 CREATE OR REPLACE FUNCTION public.canonical_benefit_condition_hash(
@@ -192,7 +277,10 @@ DECLARE
   MAX_SOURCE_EVIDENCE_BYTES constant integer := 32768;
   MAX_CANONICAL_DEPTH constant integer := 8;
   MAX_CANONICAL_KEYS constant integer := 256;
+  MAX_CANONICAL_KEY_CHARS constant integer := 500;
   MAX_STAGED_PROPOSALS constant integer := 64;
+  MAX_STAGED_PROPOSALS_BYTES constant integer := 131072;
+  MAX_STAGED_STRING_CHARS constant integer := 8000;
   condition_value jsonb;
   benefit_value jsonb;
   expected_staged_hash text;
@@ -343,14 +431,17 @@ BEGIN
   END IF;
   IF NOT public.canonical_json_shape_is_bounded(
        condition_value, MAX_CANONICAL_DEPTH, MAX_CANONICAL_KEYS,
-       MAX_CANONICAL_ARRAY_ITEMS, MAX_CANONICAL_STRING_CHARS
+       MAX_CANONICAL_ARRAY_ITEMS, MAX_CANONICAL_KEY_CHARS,
+       MAX_CANONICAL_STRING_CHARS
      ) OR NOT public.canonical_json_shape_is_bounded(
        jsonb_set(benefit_value, '{description}', '""'::jsonb),
        MAX_CANONICAL_DEPTH, MAX_CANONICAL_KEYS,
-       MAX_CANONICAL_ARRAY_ITEMS, MAX_CANONICAL_STRING_CHARS
+       MAX_CANONICAL_ARRAY_ITEMS, MAX_CANONICAL_KEY_CHARS,
+       MAX_CANONICAL_STRING_CHARS
      ) OR NOT public.canonical_json_shape_is_bounded(
        _staged_proposal, MAX_CANONICAL_DEPTH, MAX_CANONICAL_KEYS,
-       MAX_CANONICAL_ARRAY_ITEMS, 8000
+       MAX_CANONICAL_ARRAY_ITEMS, MAX_CANONICAL_KEY_CHARS,
+       MAX_STAGED_STRING_CHARS
      ) THEN
     RAISE EXCEPTION 'canonical_shape_limit';
   END IF;
@@ -601,7 +692,13 @@ DECLARE
   MAX_REVIEW_BYTES constant integer := 262144;
   MAX_SOURCE_EVIDENCE_ITEMS constant integer := 32;
   MAX_SOURCE_EVIDENCE_BYTES constant integer := 32768;
+  MAX_CANONICAL_ARRAY_ITEMS constant integer := 64;
+  MAX_CANONICAL_DEPTH constant integer := 8;
+  MAX_CANONICAL_KEYS constant integer := 256;
+  MAX_CANONICAL_KEY_CHARS constant integer := 500;
   MAX_STAGED_PROPOSALS constant integer := 64;
+  MAX_STAGED_PROPOSALS_BYTES constant integer := 131072;
+  MAX_STAGED_STRING_CHARS constant integer := 8000;
   staging_row public.card_benefits_staging%ROWTYPE;
   staged_proposal jsonb;
   canonical_envelope jsonb;
@@ -613,6 +710,7 @@ DECLARE
   seen_decision_identities text[] := ARRAY[]::text[];
   existing_benefit_id uuid;
   staged_existing_benefit_id uuid;
+  staged_change_type text;
   resolved_benefit_id uuid;
   retirement_candidate jsonb;
   retirement_at timestamptz;
@@ -678,11 +776,8 @@ BEGIN
      OR jsonb_typeof(staging_row.extracted_data) <> 'object'
      OR staging_row.extracted_data->>'request_type' <> 'official_benefit_enrichment'
      OR staging_row.extracted_data->>'parser_version' <> staging_row.parser_version
-     OR jsonb_typeof(staging_row.extracted_data->'proposals') <> 'array'
-     OR jsonb_array_length(staging_row.extracted_data->'proposals') > MAX_STAGED_PROPOSALS
-     OR EXISTS (
-       SELECT 1 FROM jsonb_array_elements(staging_row.extracted_data->'proposals') AS proposal(value)
-       WHERE jsonb_typeof(proposal.value) <> 'object'
+     OR NOT public.validate_locked_benefit_proposals(
+       staging_row.extracted_data->'proposals', staging_row.parser_version
      ) THEN
     RAISE EXCEPTION 'invalid_staged_authority';
   END IF;
@@ -717,12 +812,43 @@ BEGIN
       canonical_envelope := public.validate_benefit_publication_envelope(
         decision->'canonical_envelope', staging_row.card_id, staged_proposal
       );
+      IF (
+        SELECT count(*) FROM jsonb_array_elements(coalesce(
+          staging_row.extracted_data->'diff'->'modifications', '[]'::jsonb
+        )) AS modification(value)
+        WHERE public.canonical_json_text(modification.value->'proposed') =
+          public.canonical_json_text(staged_proposal)
+      ) > 1 THEN RAISE EXCEPTION 'ambiguous_staged_modification'; END IF;
+      SELECT modification.value->>'changeType',
+             nullif(modification.value->'current'->>'liveBenefitId', '')::uuid
+      INTO staged_change_type, staged_existing_benefit_id
+      FROM jsonb_array_elements(coalesce(
+        staging_row.extracted_data->'diff'->'modifications', '[]'::jsonb
+      )) AS modification(value)
+      WHERE public.canonical_json_text(modification.value->'proposed') =
+        public.canonical_json_text(staged_proposal)
+      LIMIT 1;
+      BEGIN
+        existing_benefit_id := nullif(decision->>'existing_benefit_id', '')::uuid;
+      EXCEPTION WHEN invalid_text_representation THEN
+        RAISE EXCEPTION 'invalid_existing_benefit_id';
+      END;
+      IF existing_benefit_id IS DISTINCT FROM staged_existing_benefit_id THEN
+        RAISE EXCEPTION 'client_publication_authority_rejected';
+      END IF;
       IF canonical_envelope ? 'identity_migration' THEN
         IF decision->>'change_type' <> 'category_alias_identity_migration' THEN
           RAISE EXCEPTION 'identity_migration_must_be_explicit';
         END IF;
-      ELSIF decision->>'change_type' = 'category_alias_identity_migration' THEN
-        RAISE EXCEPTION 'invalid_identity_migration';
+      ELSIF staged_change_type = 'identity_migration' THEN
+        IF staged_existing_benefit_id IS NULL OR
+           decision->>'change_type' <> 'identity_migration' THEN
+          RAISE EXCEPTION 'identity_migration_must_be_explicit';
+        END IF;
+      ELSIF staged_change_type IS NOT NULL THEN
+        RAISE EXCEPTION 'invalid_staged_change_type';
+      ELSIF decision->>'change_type' IS NOT NULL THEN
+        RAISE EXCEPTION 'client_publication_authority_rejected';
       END IF;
       decision_identity := 'proposal:' || decision_proposal_index::text;
     ELSIF decision_action IN ('retire', 'keep_existing') THEN
@@ -839,17 +965,17 @@ BEGIN
         IF resolved_benefit_id IS NULL THEN RAISE EXCEPTION 'canonical_benefit_collision'; END IF;
       END IF;
 
-      SELECT nullif(modification.value->'current'->>'liveBenefitId', '')::uuid
-      INTO staged_existing_benefit_id
+      SELECT modification.value->>'changeType',
+             nullif(modification.value->'current'->>'liveBenefitId', '')::uuid
+      INTO staged_change_type, staged_existing_benefit_id
       FROM jsonb_array_elements(coalesce(
         staging_row.extracted_data->'diff'->'modifications', '[]'::jsonb
       )) AS modification(value)
       WHERE public.canonical_json_text(modification.value->'proposed') =
         public.canonical_json_text(staged_proposal)
       LIMIT 1;
-      IF staging_row.parser_version = 'benefits-v5'
-         AND staged_existing_benefit_id IS NOT NULL
-         AND lower(coalesce(decision->>'change_type', '')) <> 'identity_migration' THEN
+      IF staged_change_type = 'identity_migration'
+         AND staged_existing_benefit_id IS NULL THEN
         RAISE EXCEPTION 'identity_migration_must_be_explicit';
       END IF;
       INSERT INTO public.card_benefit_mapping (
@@ -1044,6 +1170,87 @@ BEGIN
 END;
 $retirement_v2_assertions$;
 
+DO $locked_proposal_v2_assertions$
+DECLARE
+  valid_proposal jsonb := '{
+    "title":"Dining cashback","category":"cashback",
+    "valueType":"cashback",
+    "benefitId":"card-benefit-v2:card:one",
+    "dedupeKey":"card-benefit-v2:card:one",
+    "offerSubject":"cashback:cashback:dining",
+    "conditionHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "sourceIdentity":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "parserVersion":"benefits-v6"
+  }'::jsonb;
+  second_proposal jsonb;
+  nested_value jsonb := '"leaf"'::jsonb;
+  wide_value jsonb;
+  depth_index integer;
+  valid_multi boolean := false;
+  oversized_unselected boolean := false;
+  unknown_unselected boolean := false;
+  malformed_unselected boolean := false;
+  duplicate_unselected boolean := false;
+  deep_unselected boolean := false;
+  wide_unselected boolean := false;
+BEGIN
+  second_proposal := valid_proposal || jsonb_build_object(
+    'title', 'Fuel cashback',
+    'benefitId', 'card-benefit-v2:card:two',
+    'dedupeKey', 'card-benefit-v2:card:two'
+  );
+  PERFORM public.validate_locked_benefit_proposals(
+    jsonb_build_array(valid_proposal, second_proposal), 'benefits-v6'
+  );
+  valid_multi := true;
+  BEGIN
+    PERFORM public.validate_locked_benefit_proposals(jsonb_build_array(
+      valid_proposal, second_proposal || jsonb_build_object(
+        'unknown', repeat('x', 200000)
+      )
+    ), 'benefits-v6');
+  EXCEPTION WHEN raise_exception THEN oversized_unselected := true; END;
+  BEGIN
+    PERFORM public.validate_locked_benefit_proposals(jsonb_build_array(
+      valid_proposal, second_proposal || '{"unknown":"small"}'::jsonb
+    ), 'benefits-v6');
+  EXCEPTION WHEN raise_exception THEN unknown_unselected := true; END;
+  BEGIN
+    PERFORM public.validate_locked_benefit_proposals(
+      jsonb_build_array(valid_proposal, '"malformed"'::jsonb), 'benefits-v6'
+    );
+  EXCEPTION WHEN raise_exception THEN malformed_unselected := true; END;
+  BEGIN
+    PERFORM public.validate_locked_benefit_proposals(
+      jsonb_build_array(valid_proposal, valid_proposal), 'benefits-v6'
+    );
+  EXCEPTION WHEN raise_exception THEN duplicate_unselected := true; END;
+  FOR depth_index IN 1..9 LOOP
+    nested_value := jsonb_build_object('next', nested_value);
+  END LOOP;
+  BEGIN
+    PERFORM public.validate_locked_benefit_proposals(jsonb_build_array(
+      valid_proposal,
+      second_proposal || jsonb_build_object('valueConfig', nested_value)
+    ), 'benefits-v6');
+  EXCEPTION WHEN raise_exception THEN deep_unselected := true; END;
+  SELECT jsonb_object_agg('key_' || value::text, value)
+  INTO wide_value FROM generate_series(1, 257) AS item(value);
+  BEGIN
+    PERFORM public.validate_locked_benefit_proposals(jsonb_build_array(
+      valid_proposal,
+      second_proposal || jsonb_build_object('valueConfig', wide_value)
+    ), 'benefits-v6');
+  EXCEPTION WHEN raise_exception THEN wide_unselected := true; END;
+  IF NOT valid_multi OR NOT oversized_unselected OR NOT unknown_unselected
+     OR NOT malformed_unselected
+     OR NOT duplicate_unselected OR NOT deep_unselected
+     OR NOT wide_unselected THEN
+    RAISE EXCEPTION 'locked proposal assertion failed';
+  END IF;
+END;
+$locked_proposal_v2_assertions$;
+
 DO $publication_envelope_v2_assertions$
 DECLARE
   card_a uuid := 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'::uuid;
@@ -1082,38 +1289,45 @@ DECLARE
   depth_index integer;
 BEGIN
   IF NOT public.canonical_json_shape_is_bounded(
-       jsonb_build_object('value', repeat('x', 500)), 8, 256, 64, 500
+       jsonb_build_object(repeat('k', 500), 'value'), 8, 256, 64, 500, 500
      ) OR public.canonical_json_shape_is_bounded(
-       jsonb_build_object('value', repeat('x', 501)), 8, 256, 64, 500
+       jsonb_build_object(repeat('k', 501), 'value'), 8, 256, 64, 500, 500
+     ) THEN
+    RAISE EXCEPTION 'canonical key length boundary assertion failed';
+  END IF;
+  IF NOT public.canonical_json_shape_is_bounded(
+       jsonb_build_object('value', repeat('x', 500)), 8, 256, 64, 500, 500
+     ) OR public.canonical_json_shape_is_bounded(
+       jsonb_build_object('value', repeat('x', 501)), 8, 256, 64, 500, 500
      ) OR NOT public.canonical_json_shape_is_bounded(
        to_jsonb(ARRAY(SELECT value FROM generate_series(1, 64))),
-       8, 256, 64, 500
+       8, 256, 64, 500, 500
      ) OR public.canonical_json_shape_is_bounded(
        to_jsonb(ARRAY(SELECT value FROM generate_series(1, 65))),
-       8, 256, 64, 500
+       8, 256, 64, 500, 500
      ) THEN
     RAISE EXCEPTION 'canonical shape boundary assertion failed';
   END IF;
   SELECT jsonb_object_agg('key_' || value::text, value)
   INTO boundary_value FROM generate_series(1, 256) AS item(value);
   IF NOT public.canonical_json_shape_is_bounded(
-    boundary_value, 8, 256, 64, 500
+    boundary_value, 8, 256, 64, 500, 500
   ) THEN RAISE EXCEPTION 'canonical key boundary assertion failed'; END IF;
   SELECT jsonb_object_agg('key_' || value::text, value)
   INTO boundary_value FROM generate_series(1, 257) AS item(value);
   IF public.canonical_json_shape_is_bounded(
-    boundary_value, 8, 256, 64, 500
+    boundary_value, 8, 256, 64, 500, 500
   ) THEN RAISE EXCEPTION 'canonical key overflow assertion failed'; END IF;
   boundary_value := '"leaf"'::jsonb;
   FOR depth_index IN 1..8 LOOP
     boundary_value := jsonb_build_object('next', boundary_value);
   END LOOP;
   IF NOT public.canonical_json_shape_is_bounded(
-    boundary_value, 8, 256, 64, 500
+    boundary_value, 8, 256, 64, 500, 500
   ) THEN RAISE EXCEPTION 'canonical depth boundary assertion failed'; END IF;
   boundary_value := jsonb_build_object('next', boundary_value);
   IF public.canonical_json_shape_is_bounded(
-    boundary_value, 8, 256, 64, 500
+    boundary_value, 8, 256, 64, 500, 500
   ) THEN RAISE EXCEPTION 'canonical depth overflow assertion failed'; END IF;
   shape_boundary_assertion := true;
   staged_hash := encode(
@@ -1222,7 +1436,8 @@ $publication_envelope_v2_assertions$;
 
 REVOKE ALL ON FUNCTION public.canonical_json_text(jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.canonical_json_numbers_are_safe(jsonb) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.canonical_json_shape_is_bounded(jsonb, integer, integer, integer, integer) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.canonical_json_shape_is_bounded(jsonb, integer, integer, integer, integer, integer) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.validate_locked_benefit_proposals(jsonb, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.canonical_benefit_condition_hash(jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.card_scoped_benefit_key(uuid, jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.validate_benefit_publication_envelope(jsonb, uuid, jsonb) FROM PUBLIC, anon, authenticated;
@@ -1231,7 +1446,8 @@ REVOKE ALL ON FUNCTION public.approve_card_benefit_enrichment(uuid, uuid, jsonb)
 
 GRANT EXECUTE ON FUNCTION public.canonical_json_text(jsonb) TO service_role;
 GRANT EXECUTE ON FUNCTION public.canonical_json_numbers_are_safe(jsonb) TO service_role;
-GRANT EXECUTE ON FUNCTION public.canonical_json_shape_is_bounded(jsonb, integer, integer, integer, integer) TO service_role;
+GRANT EXECUTE ON FUNCTION public.canonical_json_shape_is_bounded(jsonb, integer, integer, integer, integer, integer) TO service_role;
+GRANT EXECUTE ON FUNCTION public.validate_locked_benefit_proposals(jsonb, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.canonical_benefit_condition_hash(jsonb) TO service_role;
 GRANT EXECUTE ON FUNCTION public.card_scoped_benefit_key(uuid, jsonb) TO service_role;
 GRANT EXECUTE ON FUNCTION public.validate_benefit_publication_envelope(jsonb, uuid, jsonb) TO service_role;
@@ -1251,7 +1467,8 @@ BEGIN
   FOREACH protected_oid IN ARRAY ARRAY[
     'public.canonical_json_text(jsonb)'::regprocedure,
     'public.canonical_json_numbers_are_safe(jsonb)'::regprocedure,
-    'public.canonical_json_shape_is_bounded(jsonb,integer,integer,integer,integer)'::regprocedure,
+    'public.canonical_json_shape_is_bounded(jsonb,integer,integer,integer,integer,integer)'::regprocedure,
+    'public.validate_locked_benefit_proposals(jsonb,text)'::regprocedure,
     'public.canonical_benefit_condition_hash(jsonb)'::regprocedure,
     'public.card_scoped_benefit_key(uuid,jsonb)'::regprocedure,
     'public.validate_benefit_publication_envelope(jsonb,uuid,jsonb)'::regprocedure,

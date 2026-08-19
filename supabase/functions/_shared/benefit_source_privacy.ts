@@ -5,7 +5,7 @@ const structuralEncoding =
 const secretBearingReference =
   /(?:https?:\/\/|\/\/|(?:[a-z0-9-]+\.)+[a-z]{2,}(?=[:/]))[^\s<>"']*|\/(?:[^\s<>"']*)?[?#][^\s<>"']*|[?#](?:[^\s<>"']+)/gi;
 const structuredUserInfo =
-  /(^|[\s("'`])[^\s@/?#:<>'"]+(?::[^\s@/?#<>'"]*)?@(\[[0-9a-f:.]+\]|(?:\d{1,3}\.){3}\d{1,3}|(?:[a-z0-9-]+\.)+[a-z0-9-]+|localhost|[a-z0-9-]+)((?::\d+)?(?:\/[^\s<>"']*|[?#][^\s<>"']*))/gi;
+  /(^|[\s("'`])([^\s@/?#:<>'"]+)(?::([^\s@/?#<>'"]*))?@(\[[0-9a-f:.]+\]|(?:\d{1,3}\.){3}\d{1,3}|(?:[a-z0-9-]+\.)+[a-z0-9-]+|localhost|[a-z0-9-]+)((?::\d+)?(?:\/[^\s<>"']*|[?#][^\s<>"']*)?)(?=$|[\s),;'"`])/gi;
 
 const MAX_PRESENTATION_INPUT = 16_384;
 const MAX_STRUCTURAL_DECODE_PASSES = 4;
@@ -86,7 +86,8 @@ function safeHrefValue(value: string): string {
 
 /** Redacts URL secrets before source text can enter parser or admin payloads. */
 export function redactSensitiveUrlsInText(value: string): string {
-  return decodeStructuralEncoding(value)
+  const decoded = decodeStructuralEncoding(value);
+  const redacted = decoded
     .replace(
       hrefAttribute,
       (_match, prefix: string, quote: string, href: string) =>
@@ -98,8 +99,21 @@ export function redactSensitiveUrlsInText(value: string): string {
     )
     .replace(
       structuredUserInfo,
-      (_candidate, prefix: string, safeHost: string, structuredTail: string) =>
-        `${prefix}${safeHost}${structuredTail}`,
+      (
+        candidate,
+        prefix: string,
+        _username: string,
+        password: string | undefined,
+        safeHost: string,
+        structuredTail: string,
+      ) => {
+        const hostIsExplicit = safeHost.startsWith("[") ||
+          /^(?:\d{1,3}\.){3}\d{1,3}$/i.test(safeHost) ||
+          safeHost.toLowerCase() === "localhost" || !safeHost.includes(".");
+        const urlLike = password !== undefined || structuredTail.length > 0 ||
+          hostIsExplicit;
+        return urlLike ? `${prefix}${safeHost}${structuredTail}` : candidate;
+      },
     )
     .replace(secretBearingReference, (candidate) => {
       const boundary = candidate.search(/[?#]/);
@@ -116,6 +130,10 @@ export function redactSensitiveUrlsInText(value: string): string {
       }
       return base || "[redacted-url]";
     });
+  // Structural decoding is a bounded detection probe. Preserve ordinary
+  // percent/entity prose byte-for-byte unless it revealed a URL credential or
+  // secret-bearing reference that was actually redacted.
+  return redacted === decoded ? value : redacted;
 }
 
 export function redactSensitiveUrlsInValue(value: unknown): unknown {

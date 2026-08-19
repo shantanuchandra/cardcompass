@@ -204,6 +204,40 @@ const identityMigrationKeys = new Set([
   "legacy_condition_hash",
   "legacy_dedupe_key",
 ]);
+const stagedProposalKeys = new Set([
+  "liveBenefitId",
+  "benefitId",
+  "offerSubject",
+  "dedupeKey",
+  "conditionHash",
+  "title",
+  "description",
+  "category",
+  "valueType",
+  "value",
+  "rate",
+  "cap",
+  "threshold",
+  "valueConfig",
+  "partners",
+  "frequency",
+  "period",
+  "restrictions",
+  "exclusions",
+  "regions",
+  "effectiveFrom",
+  "effectiveTo",
+  "sourceUrl",
+  "sourceUrls",
+  "sourceIdentity",
+  "sourceIdentities",
+  "sourceExcerpt",
+  "contentHash",
+  "parserVersion",
+  "confidence",
+  "evidence",
+  "warnings",
+]);
 
 function exactKeys(value: JsonRecord, allowed: Set<string>, code: string) {
   if (Object.keys(value).some((key) => !allowed.has(key))) {
@@ -280,10 +314,69 @@ function validateBoundedJsonTree(
     throw new BenefitAdminError("canonical_key_limit", 409);
   }
   for (const [key, item] of entries) {
-    if (key.length > limits.MAX_CANONICAL_STRING_CHARS) {
+    if (key.length > limits.MAX_CANONICAL_KEY_CHARS) {
       throw new BenefitAdminError("canonical_string_limit", 409);
     }
     validateBoundedJsonTree(item, maximumStringChars, depth + 1, state);
+  }
+}
+
+export function validateLockedBenefitProposals(
+  value: unknown,
+  parserVersion: unknown,
+): asserts value is JsonRecord[] {
+  const limits = BENEFIT_PUBLICATION_LIMITS;
+  if (
+    !Array.isArray(value) ||
+    !["benefits-v5", "benefits-v6"].includes(String(parserVersion)) ||
+    value.length > limits.MAX_STAGED_PROPOSALS ||
+    jsonBytes(value) > limits.MAX_STAGED_PROPOSALS_BYTES
+  ) throw new BenefitAdminError("invalid_staged_presentation_bounds", 409);
+  validateBoundedJsonTree(value, limits.MAX_STAGED_STRING_CHARS);
+  validateCanonicalNumbers(value);
+  const identities = new Set<string>();
+  const canonicalIdentities = new Set<string>();
+  for (const item of value) {
+    const proposal = asRecord(item);
+    if (!proposal) {
+      throw new BenefitAdminError("invalid_staged_benefit_identity", 409);
+    }
+    exactKeys(proposal, stagedProposalKeys, "unknown_staged_proposal_key");
+    const title = typeof proposal.title === "string"
+      ? proposal.title.trim()
+      : "";
+    const benefitType = typeof proposal.valueType === "string"
+      ? proposal.valueType.trim()
+      : "";
+    const category = typeof proposal.category === "string"
+      ? proposal.category.trim()
+      : "";
+    const dedupeKey = typeof proposal.dedupeKey === "string"
+      ? proposal.dedupeKey.trim()
+      : "";
+    const benefitId = typeof proposal.benefitId === "string"
+      ? proposal.benefitId.trim()
+      : "";
+    const v6 = parserVersion === "benefits-v6";
+    if (
+      title.length < 2 || title.length > limits.MAX_CANONICAL_STRING_CHARS ||
+      !benefitType || benefitType.length > 200 || !category ||
+      category.length > limits.MAX_CANONICAL_STRING_CHARS || !dedupeKey ||
+      dedupeKey.length > limits.MAX_CANONICAL_STRING_CHARS ||
+      identities.has(dedupeKey) || proposal.parserVersion !== parserVersion ||
+      (v6 && (
+        !benefitId || benefitId.length > limits.MAX_CANONICAL_STRING_CHARS ||
+        benefitId !== dedupeKey ||
+        typeof proposal.offerSubject !== "string" ||
+        !proposal.offerSubject.trim() ||
+        proposal.offerSubject.length > limits.MAX_CANONICAL_STRING_CHARS ||
+        !digest(proposal.conditionHash) ||
+        !digest(proposal.sourceIdentity) ||
+        canonicalIdentities.has(benefitId)
+      ))
+    ) throw new BenefitAdminError("invalid_staged_benefit_identity", 409);
+    identities.add(dedupeKey);
+    if (benefitId) canonicalIdentities.add(benefitId);
   }
 }
 
@@ -385,6 +478,13 @@ export function validateCanonicalPublicationEnvelope(value: unknown): void {
   const benefit = asRecord(envelope.benefit);
   if (!benefit) throw new BenefitAdminError("invalid_canonical_benefit", 409);
   exactKeys(benefit, canonicalBenefitKeys, "unknown_canonical_benefit_key");
+  if (
+    typeof benefit.title !== "string" || benefit.title.trim().length < 2 ||
+    benefit.title.length >
+      BENEFIT_PUBLICATION_LIMITS.MAX_CANONICAL_STRING_CHARS ||
+    typeof benefit.benefit_type !== "string" || !benefit.benefit_type.trim() ||
+    benefit.benefit_type.length > 200
+  ) throw new BenefitAdminError("invalid_canonical_benefit", 409);
   const benefitConfig = asRecord(benefit.value_config);
   if (!benefitConfig) {
     throw new BenefitAdminError("invalid_canonical_value_config", 409);
@@ -563,7 +663,7 @@ function benefitPresentationFits(value: unknown): boolean {
   );
   if (!staging) return true;
   const extraction = asRecord(staging.extracted_data);
-  return !(
+  if (
     (Array.isArray(staging.source_evidence) &&
       staging.source_evidence.length >
         BENEFIT_PUBLICATION_LIMITS.MAX_SOURCE_EVIDENCE_ITEMS) ||
@@ -573,7 +673,18 @@ function benefitPresentationFits(value: unknown): boolean {
     (Array.isArray(extraction?.proposals) &&
       extraction.proposals.length >
         BENEFIT_PUBLICATION_LIMITS.MAX_STAGED_PROPOSALS)
-  );
+  ) return false;
+  if (Array.isArray(extraction?.proposals)) {
+    try {
+      validateLockedBenefitProposals(
+        extraction.proposals,
+        extraction.parser_version ?? staging.parser_version,
+      );
+    } catch {
+      return false;
+    }
+  }
+  return true;
 }
 
 function sanitizeAdminDtoUnchecked<T>(value: T): T {
@@ -735,6 +846,9 @@ function benefitDiff(value: unknown, v6 = false) {
     modifications: objectList(row.modifications).map((item) => ({
       current: benefitForOutput(item.current, v6),
       proposed: benefitForOutput(item.proposed, v6),
+      changeType: item.changeType === "identity_migration"
+        ? "identity_migration"
+        : null,
     })),
     possibleRemovals: objectList(row.possibleRemovals).map((item) => ({
       benefit: benefitForOutput(item.benefit, v6),
@@ -1050,7 +1164,7 @@ async function allowedDecisions(
   return validated;
 }
 
-async function validateV5ApprovalDecisions(
+export async function validateV5ApprovalDecisions(
   decisions: JsonRecord[],
   stagedExtraction: unknown,
   cardId: string,
@@ -1064,13 +1178,7 @@ async function validateV5ApprovalDecisions(
     extraction.parser_version !== "benefits-v5" ||
     !Array.isArray(extraction.proposals)
   ) throw new BenefitAdminError("invalid_benefit_job_staging", 409);
-  if (
-    extraction.proposals.length >
-      BENEFIT_PUBLICATION_LIMITS.MAX_STAGED_PROPOSALS
-  ) throw new BenefitAdminError("invalid_staged_presentation_bounds", 409);
-  if (extraction.proposals.some((proposal) => !asRecord(proposal))) {
-    throw new BenefitAdminError("invalid_benefit_job_staging", 409);
-  }
+  validateLockedBenefitProposals(extraction.proposals, "benefits-v5");
   const proposals = extraction.proposals as JsonRecord[];
   const byKey = new Map<string, { proposal: JsonRecord; index: number }>();
   proposals.forEach((proposal, index) => {
@@ -1109,10 +1217,10 @@ async function validateV5ApprovalDecisions(
       ...(text(decision.reason, 500)
         ? { reason: text(decision.reason, 500) }
         : {}),
-      ...(text(decision.change_type ?? decision.changeType, 60)
-        ? { change_type: text(decision.change_type ?? decision.changeType, 60) }
-        : {}),
     };
+    if ("change_type" in decision || "changeType" in decision) {
+      throw new BenefitAdminError("client_publication_authority_rejected", 409);
+    }
     if (action !== "approve" && action !== "edit") {
       const submitted = asRecord(decision.benefit ?? decision.current);
       const liveBenefitId = text(
@@ -1172,6 +1280,21 @@ async function validateV5ApprovalDecisions(
     }
     seen.add(`proposal:${key}`);
     const server = benefitForOutput(staged.proposal, false) as JsonRecord;
+    const modification = objectList(diff.modifications).find((candidate) => {
+      const proposed = asRecord(candidate.proposed);
+      return text(proposed?.dedupeKey ?? proposed?.dedupe_key, 200) === key;
+    });
+    const modificationChangeType = modification?.changeType ===
+        "identity_migration"
+      ? "identity_migration"
+      : null;
+    const existingBenefitId = text(
+      asRecord(modification?.current)?.liveBenefitId,
+      100,
+    );
+    if (modificationChangeType && !existingBenefitId) {
+      throw new BenefitAdminError("invalid_staged_benefit_identity", 409);
+    }
     let effective = server;
     if (action === "edit") {
       if (
@@ -1214,7 +1337,11 @@ async function validateV5ApprovalDecisions(
     }
     return {
       ...base,
+      ...(modificationChangeType
+        ? { change_type: modificationChangeType }
+        : {}),
       proposal_index: staged.index,
+      ...(existingBenefitId ? { existing_benefit_id: existingBenefitId } : {}),
       canonical_envelope: envelope,
       ...(action === "edit"
         ? { edited_benefit: effective }
@@ -1329,6 +1456,17 @@ export async function buildCanonicalPublicationEnvelope(
   if (!staged || !effective) {
     throw new BenefitAdminError("invalid_benefit_proposal");
   }
+  const effectiveTitle = typeof effective.title === "string"
+    ? effective.title.trim()
+    : "";
+  const effectiveBenefitType =
+    typeof (effective.valueType ?? effective.benefit_type) ===
+        "string"
+      ? String(effective.valueType ?? effective.benefit_type).trim()
+      : "";
+  if (effectiveTitle.length < 2 || !effectiveBenefitType) {
+    throw new BenefitAdminError("invalid_canonical_benefit", 409);
+  }
   validateBoundedJsonTree(
     {
       category: effective.category,
@@ -1386,10 +1524,10 @@ export async function buildCanonicalPublicationEnvelope(
     condition_hash: conditionHash,
     dedupe_key: dedupeKey,
     benefit: {
-      title: String(effective.title ?? "").trim().slice(0, 500),
+      title: effectiveTitle.slice(0, 500),
       description: text(effective.description, 8_000),
       benefit_category: category,
-      benefit_type: text(effective.valueType ?? effective.benefit_type, 200),
+      benefit_type: effectiveBenefitType.slice(0, 200),
       value_config: {
         ...canonicalValueConfig(input),
         offer_subject: input.semanticKey,
@@ -1494,15 +1632,7 @@ export async function validateV6ApprovalDecisions(
     !Array.isArray(extraction.proposals) || !Array.isArray(decisions) ||
     decisions.length === 0 || decisions.some((decision) => !asRecord(decision))
   ) throw new BenefitAdminError("invalid_benefit_job_staging", 409);
-  if (
-    extraction.proposals.length >
-      BENEFIT_PUBLICATION_LIMITS.MAX_STAGED_PROPOSALS
-  ) {
-    throw new BenefitAdminError("invalid_staged_presentation_bounds", 409);
-  }
-  if (extraction.proposals.some((proposal) => !asRecord(proposal))) {
-    throw new BenefitAdminError("invalid_staged_benefit_identity", 409);
-  }
+  validateLockedBenefitProposals(extraction.proposals, "benefits-v6");
   const rawStaged = extraction.proposals as JsonRecord[];
   const staged = rawStaged.map((proposal) =>
     benefitForOutput(proposal, true) as JsonRecord
@@ -1573,7 +1703,8 @@ export async function validateV6ApprovalDecisions(
     const action = String(decision.action ?? "").toLowerCase();
     if (
       "canonical_envelope" in decision || "proposal_index" in decision ||
-      "existing_benefit_id" in decision
+      "existing_benefit_id" in decision || "change_type" in decision ||
+      "changeType" in decision
     ) throw new BenefitAdminError("client_publication_authority_rejected", 409);
     if (
       !["approve", "edit", "reject", "keep_existing", "retire"].includes(
@@ -1584,11 +1715,6 @@ export async function validateV6ApprovalDecisions(
       action,
       ...(text(decision.reason, 500)
         ? { reason: text(decision.reason, 500) }
-        : {}),
-      ...(text(decision.change_type ?? decision.changeType, 60)
-        ? {
-          change_type: text(decision.change_type ?? decision.changeType, 60),
-        }
         : {}),
       ...(number(decision.display_priority) !== null
         ? { display_priority: number(decision.display_priority) }
@@ -1685,6 +1811,13 @@ export async function validateV6ApprovalDecisions(
       asRecord(modification?.current)?.liveBenefitId,
       100,
     );
+    const modificationChangeType = modification?.changeType ===
+        "identity_migration"
+      ? "identity_migration"
+      : null;
+    if (modificationChangeType && !existingBenefitId) {
+      throw new BenefitAdminError("invalid_staged_benefit_identity", 409);
+    }
     const identityMigration = asRecord(server.identityMigration);
     if (action === "approve") {
       if (
@@ -1705,6 +1838,8 @@ export async function validateV6ApprovalDecisions(
         ...base,
         ...(identityMigration
           ? { change_type: "category_alias_identity_migration" }
+          : modificationChangeType
+          ? { change_type: modificationChangeType }
           : {}),
         proposal_index: proposalIndex,
         ...(existingBenefitId
@@ -1761,6 +1896,8 @@ export async function validateV6ApprovalDecisions(
       ...base,
       ...(identityMigration
         ? { change_type: "category_alias_identity_migration" }
+        : modificationChangeType
+        ? { change_type: modificationChangeType }
         : {}),
       proposal_index: proposalIndex,
       ...(existingBenefitId ? { existing_benefit_id: existingBenefitId } : {}),
