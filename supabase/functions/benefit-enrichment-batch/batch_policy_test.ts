@@ -214,36 +214,14 @@ Deno.test("job identity is stable for the card, canonical URL hash, and parser",
 });
 
 Deno.test("re-enqueueing a leased job preserves its processing state and lease", async () => {
-  const original = {
-    id: "job-1",
-    job_key: `card-a:${"a".repeat(64)}:benefits-v1`,
-    status: "processing",
-    lease_token: "lease-1",
-    lease_expires_at: "2026-08-17T12:15:00.000Z",
-    attempt_count: 2,
-  };
-  let stored = { ...original };
-  let upserts = 0;
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const db = {
-    from(table: string) {
-      assert(
-        table === "card_catalog_enrichment_jobs",
-        "enqueue targeted the wrong table",
-      );
-      return {
-        async upsert(
-          input: Record<string, unknown> | Record<string, unknown>[],
-          options: { onConflict?: string; ignoreDuplicates?: boolean },
-        ) {
-          upserts += 1;
-          const [row] = Array.isArray(input) ? input : [input];
-          const conflicts = row.job_key === stored.job_key;
-          if (!conflicts || !options.ignoreDuplicates) {
-            stored = { ...stored, ...row } as typeof stored;
-          }
-          return { error: null };
-        },
-      };
+    from() {
+      throw new Error("non_atomic_enqueue");
+    },
+    async rpc(name: string, args: Record<string, unknown>) {
+      calls.push({ name, args });
+      return { data: 0, error: null };
     },
   };
 
@@ -257,22 +235,24 @@ Deno.test("re-enqueueing a leased job preserves its processing state and lease",
   });
 
   assert(
-    JSON.stringify(stored) === JSON.stringify(original),
-    "duplicate enqueue rewound or mutated an active lease",
+    calls.length === 1 &&
+      calls[0].name === "enqueue_card_benefit_enrichment_jobs",
+    "enqueue bypassed the serialized database boundary",
   );
-  assert(upserts === 1, "enqueue skipped its database boundary");
+  const rows = calls[0].args._jobs as Record<string, unknown>[];
+  assert(
+    rows.length === 1 &&
+      rows[0].job_key === `card-a:${"a".repeat(64)}:benefits-v1`,
+    "atomic enqueue lost the stable job identity",
+  );
 });
 
 Deno.test("benefit enqueue refuses the reserved catalog-v1 parser", async () => {
   let writes = 0;
   const db = {
-    from() {
+    async rpc() {
       writes += 1;
-      return {
-        async upsert() {
-          return { error: null };
-        },
-      };
+      return { data: 0, error: null };
     },
   };
   let error: unknown;

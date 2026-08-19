@@ -1,6 +1,7 @@
 export const MAX_BATCH_SIZE = 1;
 export const LEASE_SECONDS = 5 * 60;
 export const RETRY_SCHEDULE_MINUTES = [15, 60, 240] as const;
+export const MAX_PILOT_REVIEW_COUNT = 999_999_999;
 
 export type RunMode = "pilot" | "scheduled" | "manual";
 export type PilotStatus = "not_started" | "running" | "blocked" | "passed";
@@ -82,12 +83,10 @@ export type BenefitEnrichmentQueueInput = {
 };
 
 type EnrichmentQueueClient = {
-  from(table: string): {
-    upsert(
-      row: Record<string, unknown> | Record<string, unknown>[],
-      options: { onConflict: string; ignoreDuplicates: boolean },
-    ): PromiseLike<{ error: unknown }>;
-  };
+  rpc(
+    name: string,
+    args: Record<string, unknown>,
+  ): PromiseLike<{ data?: unknown; error: unknown }>;
 };
 
 export function buildJobKey(
@@ -137,10 +136,9 @@ export async function enqueueBenefitEnrichmentJobs(
       updated_at: updatedAt,
     };
   });
-  const { error } = await db.from("card_catalog_enrichment_jobs").upsert(
-    rows,
-    { onConflict: "job_key", ignoreDuplicates: true },
-  );
+  const { error } = await db.rpc("enqueue_card_benefit_enrichment_jobs", {
+    _jobs: rows,
+  });
   if (error) throw error;
 }
 
@@ -313,13 +311,15 @@ function completedPilotReviewBlocker(job: PilotJob): string | null {
     job.rejectedCount,
   ];
   const hasValidCounts = reviewCounts.every((count) =>
-    Number.isInteger(count) && Number(count) >= 0
+    Number.isInteger(count) && Number(count) >= 0 &&
+    Number(count) <= MAX_PILOT_REVIEW_COUNT
   );
   const positiveReviewActions = Number(job.approvedCount) +
     Number(job.retainedCount) + Number(job.retiredCount);
   if (job.successfulNoChange && !job.reviewMetadataPresent) return null;
   if (
-    job.reviewMetadataMalformed || !hasValidCounts || job.reviewStatus === null
+    job.reviewMetadataMalformed || !hasValidCounts ||
+    !Number.isSafeInteger(positiveReviewActions) || job.reviewStatus === null
   ) {
     return "pilot_review_metadata_invalid";
   }

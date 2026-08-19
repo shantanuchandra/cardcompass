@@ -213,7 +213,7 @@ Deno.test("failed primary observations reach the finalizer with bounded retry an
 });
 
 async function stableCanonicalProcessFixture(
-  stagingStatus: "pending" | "approved" | "rejected" | null,
+  stagingStatusAtFinalize: "pending" | "approved" | "rejected" | null,
   materialChange = false,
 ) {
   const cardId = "00000000-0000-4000-8000-000000000001";
@@ -268,16 +268,18 @@ async function stableCanonicalProcessFixture(
   }];
   const finalizations: Record<string, unknown>[] = [];
   const stageCalls: Record<string, unknown>[] = [];
+  let stagingReads = 0;
+  let effectiveFinalStatus: string | null = null;
   const tableRows: Record<string, Record<string, unknown>[]> = {
     card_catalog: [card],
     card_catalog_aliases: [],
     active_card_benefits: active,
-    card_benefits_staging: stagingStatus === null ? [] : [{
+    card_benefits_staging: stagingStatusAtFinalize === null ? [] : [{
       id: "stage-old",
       card_id: cardId,
       parser_version: "benefits-v6",
       request_type: "official_benefit_enrichment",
-      status: stagingStatus,
+      status: "pending",
     }],
   };
   const db = {
@@ -301,6 +303,7 @@ async function stableCanonicalProcessFixture(
           return { data: card, error: null };
         },
         async maybeSingle() {
+          if (table === "card_benefits_staging") stagingReads += 1;
           const rows = (tableRows[table] ?? []).filter((row) =>
             [...filters].every(([column, value]) => row[column] === value)
           );
@@ -332,6 +335,18 @@ async function stableCanonicalProcessFixture(
         `unexpected RPC ${name}`,
       );
       finalizations.push(args);
+      const requestedStatus = String(args._status);
+      const requestedStaging = args._staging_id;
+      if (requestedStatus === "staged" && requestedStaging !== null) {
+        if (stagingStatusAtFinalize === "rejected") {
+          return { data: null, error: new Error("invalid_enrichment_staging") };
+        }
+        effectiveFinalStatus = "staged";
+      } else {
+        effectiveFinalStatus = stagingStatusAtFinalize === "pending"
+          ? "staged"
+          : requestedStatus;
+      }
       return { data: "job-1", error: null };
     },
   };
@@ -347,7 +362,7 @@ async function stableCanonicalProcessFixture(
       attempt_count: 1,
       run_mode: "scheduled",
       lease_token: "lease-1",
-      staging_id: stagingStatus === null ? null : "stage-old",
+      staging_id: stagingStatusAtFinalize === null ? null : "stage-old",
       result_summary: {
         observation: {
           observed_at: "2026-08-19T00:00:00.000Z",
@@ -381,30 +396,43 @@ async function stableCanonicalProcessFixture(
       }),
     },
   );
-  return { result, finalization: finalizations[0], stageCalls };
+  return {
+    result,
+    finalization: finalizations[0],
+    stageCalls,
+    stagingReads,
+    effectiveFinalStatus,
+  };
 }
 
-Deno.test("stable canonical 200 derives reviewability from authoritative staging status", async () => {
+Deno.test("stable canonical 200 delegates pending reviewability to the locked finalizer", async () => {
   for (
-    const [status, expectedOutcome, expectedStaging] of [
-      ["pending", "staged", "stage-old"],
-      ["approved", "completed", null],
-      ["rejected", "completed", null],
-      [null, "completed", null],
+    const [statusAtFinalize, expectedEffectiveStatus] of [
+      ["pending", "staged"],
+      ["approved", "completed"],
+      ["rejected", "completed"],
+      [null, "completed"],
     ] as const
   ) {
-    const fixture = await stableCanonicalProcessFixture(status);
+    const label = statusAtFinalize ?? "no-link";
+    const fixture = await stableCanonicalProcessFixture(statusAtFinalize);
     assert(
-      fixture.result.outcome === expectedOutcome,
-      `${status ?? "no-link"} stable observation got ${fixture.result.outcome}`,
+      fixture.result.outcome === "completed",
+      label + " was decided before finalization",
     );
     assert(
-      fixture.finalization._staging_id === expectedStaging,
-      `${status ?? "no-link"} reused a non-authoritative staging link`,
+      fixture.finalization._status === "completed" &&
+        fixture.finalization._staging_id === null,
+      label + " client-side requested old staging",
+    );
+    assert(fixture.stagingReads === 0, label + " used a racy staging pre-read");
+    assert(
+      fixture.effectiveFinalStatus === expectedEffectiveStatus,
+      label + " locked finalizer decision was lost",
     );
     assert(
       fixture.stageCalls.length === 0,
-      `${status ?? "no-link"} raw-only update created a new proposal`,
+      label + " raw-only update created a new proposal",
     );
     const summary = fixture.finalization._result_summary as Record<
       string,
@@ -414,9 +442,7 @@ Deno.test("stable canonical 200 derives reviewability from authoritative staging
       summary.material_proposal === false &&
         summary.proposal_disposition === "no_change" &&
         summary.successful_no_change === true,
-      `${
-        status ?? "no-link"
-      } stable observation was not finalized as no-change`,
+      label + " stable observation was not finalized as no-change",
     );
   }
 });
@@ -1147,6 +1173,85 @@ Deno.test("pilot projection conservatively carries Task 4 review evidence", asyn
   );
 });
 
+Deno.test("pilot review projection enforces exact bounded metadata parity", async () => {
+  const baseReview: Record<string, unknown> = {
+    unsafe_mutation_count: 0,
+    idempotency_passed: true,
+    evidence_passed: true,
+    raw_body_stored: false,
+    successful_no_change: false,
+    review_status: "approved",
+    approved_count: 1,
+    retained_count: 0,
+    retired_count: 0,
+    rejected_count: 0,
+  };
+  const gateFor = async (summary: Record<string, unknown>) => {
+    const rows = Array.from({ length: 5 }, (_, index) => ({
+      id: "pilot-" + index,
+      run_mode: "pilot",
+      parser_version: "benefits-v6",
+      status: index === 0 ? "completed" : "staged",
+      failure_category: null,
+      result_summary: index === 0 ? summary : {
+        unsafe_mutation_count: 0,
+        idempotency_passed: true,
+        evidence_passed: true,
+        raw_body_stored: false,
+      },
+    }));
+    const query = {
+      select() {
+        return this;
+      },
+      eq() {
+        return this;
+      },
+      or() {
+        return this;
+      },
+      then<TResult1 = unknown>(
+        onfulfilled?:
+          | ((value: unknown) => TResult1 | PromiseLike<TResult1>)
+          | null,
+      ) {
+        return Promise.resolve({ data: rows, error: null }).then(onfulfilled);
+      },
+    };
+    return await readPilotStatus({ from: () => query });
+  };
+  const invalidCases: Array<[
+    string,
+    (summary: Record<string, unknown>) => void,
+  ]> = [
+    ["missing", (summary) => delete summary.retained_count],
+    ["missing status", (summary) => delete summary.review_status],
+    ["null", (summary) => summary.review_status = null],
+    ["status casing", (summary) => summary.review_status = "Approved"],
+    ["ten digit", (summary) => summary.approved_count = 1_000_000_000],
+    ["overflow", (summary) => summary.approved_count = Number.MAX_SAFE_INTEGER],
+    ["negative", (summary) => summary.approved_count = -1],
+    ["fractional", (summary) => summary.approved_count = 0.5],
+    ["string", (summary) => summary.approved_count = "1"],
+  ];
+  for (const [label, mutate] of invalidCases) {
+    const summary = { ...baseReview };
+    mutate(summary);
+    const gate = await gateFor(summary);
+    assert(
+      gate.blockers.includes("pilot_review_metadata_invalid"),
+      label + " review metadata unlocked rollout",
+    );
+  }
+  const boundary = await gateFor({
+    ...baseReview,
+    approved_count: 999_999_999,
+    retained_count: 999_999_999,
+    retired_count: 999_999_999,
+  });
+  assert(boundary.status === "passed", "bounded safe review sum was rejected");
+});
+
 Deno.test("pilot projection fails closed on missing or malformed safety metadata", async () => {
   const invalidSummaries: Array<Record<string, unknown>> = [
     { raw_body_stored: false },
@@ -1435,6 +1540,24 @@ function scheduledSeederDb(
     catalogFilters,
     get catalogReads() {
       return catalogReads;
+    },
+    async rpc(name: string, args: Record<string, unknown>) {
+      assert(
+        name === "enqueue_card_benefit_enrichment_jobs",
+        "seeder bypassed the atomic enqueue RPC",
+      );
+      const rows = args._jobs as Record<string, unknown>[];
+      let inserted = 0;
+      for (const row of rows) {
+        const conflict = [...jobs.values()].some((existing) =>
+          existing.card_id === row.card_id &&
+          existing.parser_version === row.parser_version
+        );
+        if (conflict) continue;
+        jobs.set(String(row.job_key), { ...row });
+        inserted += 1;
+      }
+      return { data: inserted, error: null };
     },
     from(table: string) {
       if (table === "card_catalog_review_queue") {

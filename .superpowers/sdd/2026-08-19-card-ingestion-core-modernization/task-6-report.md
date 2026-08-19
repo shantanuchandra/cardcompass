@@ -189,6 +189,73 @@ linked Supabase command, migration apply/push/dry-run, external network,
 production data, or live write was used. Ordered Task 2–6 real PostgreSQL
 parse/apply/lint/transaction verification remains the explicit unresolved gate.
 
+## Review fix round 4/5 — 2026-08-20
+
+### Red proof
+
+- The focused stable-HTTP-200 process fixture reported **0 passed / 1 failed**
+  while the worker read pending staging before finalization and sent that stale
+  staging identity back to SQL.
+- The focused enqueue contract reported **0 passed / 1 failed** while scheduled
+  seeding still used a direct job-key upsert with no atomic card/parser
+  exclusion shared with pilot initialization.
+- The focused pilot projection contract reported **0 passed / 1 failed** while
+  ten-digit review counts could unlock rollout.
+- The recurrence migration suite reported **7 passed / 1 failed** before the
+  initializer locked one authoritative catalog snapshot, local enqueue paths
+  shared its identity serialization, and SQL enforced the exact review boundary.
+
+### Fixes
+
+- Stable canonical HTTP 200 now follows the established 304 contract: the
+  worker always finalizes it as `completed` with a null staging argument and
+  performs no pre-finalizer staging-status read. Under the locked job row, the
+  finalizer alone preserves a link that is actually pending at that instant;
+  approved, rejected, absent, or mismatched links are cleared. This closes the
+  read-to-finalize race without changing Task 3 material supersession.
+- Added one service-role-only, security-invoker enqueue RPC used by both local
+  production enqueue callers. It validates and deterministically advisory-locks
+  every card/parser identity before checking absence, so concurrent different-
+  job-key inserts cannot create a second identity while pilot initialization is
+  selecting the same card.
+- Pilot initialization acquires those same identity locks, row-locks the exact
+  five catalog candidates, and captures profile, issuer, URL, availability, and
+  card type in one materialized authoritative snapshot. Eligibility, issuer
+  diversity, absence, and insertion all derive from that snapshot; a concurrent
+  catalog or enqueue change either precedes the locked snapshot or blocks until
+  the transaction finishes and then fails closed. No table, business column, or
+  index was added.
+- TypeScript and SQL now require the same complete review metadata shape and an
+  explicit `approved` status. Each decision count is a JSON number integer in
+  `0..999,999,999`; missing, null, wrong-case, ten-digit, overflow, negative,
+  fractional, and string values fail closed. TypeScript verifies safe-integer
+  addition and SQL casts only the bounded values to `bigint` before summing.
+  Migration-time assertions cover every boundary and the maximum accepted sum.
+
+### Green verification
+
+- Exact Task 6 Deno command — **97 passed, 0 failed**.
+- Exact Task 6 migration command — **28 passed, 0 failed**.
+- Expanded affected Task 4 migration command — **40 passed, 0 failed**.
+- Affected admin benefit suite — **40 passed, 0 failed**.
+- Primary Task 6 total — **125 passed, 0 failed**; expanded affected total —
+  **177 passed, 0 failed**.
+- `deno check --node-modules-dir=auto` passed for both changed production files
+  and the `card-discovery` production caller.
+- `deno fmt --check` on all changed TypeScript/test files — passed.
+- `git diff --check` — passed.
+
+Only the Task 6 migration changed in this round:
+`supabase/migrations/20260819205037_recur_card_enrichment_jobs.sql`.
+Final pre-commit SHA-256:
+`b53c2c56c0bf6caa805aa442e03b7214fd73d841b450b7aa64ffdb39c4ea8232`.
+
+Live applied: **no**. No Docker, database/PostgreSQL/Supabase runtime, linked
+Supabase command, migration apply/push/dry-run, external network, production
+data, or live write was used. Ordered Task 2–6 real PostgreSQL
+parse/apply/lint/transaction and concurrent-lock verification remains the
+explicit unresolved gate.
+
 ## Review fix round 3/5 — 2026-08-20
 
 ### Red proof

@@ -105,7 +105,8 @@ test('finalization preserves staging on 304, separates retry from recurrence, an
 
   assert.match(finalize, /_status\s*=\s*'completed'\s+AND _staging_id IS NOT NULL/i);
   assert.match(finalize, /SELECT job\.\*[\s\S]*FOR UPDATE/i);
-  assert.match(finalize, /staging_id\s*=\s*coalesce\(_staging_id, job_row\.staging_id\)/i);
+  assert.match(finalize, /resolved_staging_id\s*:=\s*CASE[\s\S]*WHEN _staging_id IS NOT NULL THEN _staging_id[\s\S]*WHEN has_pending_staging THEN job_row\.staging_id[\s\S]*ELSE NULL/i);
+  assert.match(finalize, /staging_id\s*=\s*resolved_staging_id/i);
   assert.match(finalize, /content_hash\s*=\s*coalesce\(_content_hash, job_row\.content_hash\)/i);
   assert.match(finalize, /existing_observation_history\s*:=[\s\S]*job_row\.result_summary\s*->\s*'observations'/i);
   assert.match(finalize, /normalize_card_enrichment_observation_history\([\s\S]*existing_observation_history[\s\S]*_result_summary\s*->\s*'observation'/i);
@@ -205,7 +206,7 @@ test('pending review recurs through ordered supersession while obsolete approval
   const approve = functionBody(reviewSql, 'approve_card_benefit_enrichment');
 
   assert.match(effective, /_has_pending_staging[\s\S]*THEN 'staged'/i);
-  assert.match(finalize, /staging_id\s*=\s*coalesce\(_staging_id, job_row\.staging_id\)/i);
+  assert.match(finalize, /resolved_staging_id\s*:=\s*CASE[\s\S]*has_pending_staging[\s\S]*job_row\.staging_id[\s\S]*ELSE NULL/i);
   assert.match(finalize, /existing_observation_history[\s\S]*observations/i);
   assert.match(stage, /superseded_by_newer_crawl/i);
   assert.match(stage, /SET staging_id = resolved_staging_id/i);
@@ -222,6 +223,7 @@ test('pilot qualification atomically promotes the existing exact five identities
   const promote = functionBody(sql, 'promote_qualified_card_benefit_enrichment_pilot');
   const initialize = functionBody(sql, 'initialize_card_benefit_enrichment_pilot');
   const cohortAction = functionBody(sql, 'card_enrichment_pilot_cohort_action');
+  const enqueue = functionBody(sql, 'enqueue_card_benefit_enrichment_jobs');
 
   assert.match(qualify, /successful_no_change/i);
   assert.match(qualify, /review_status/i);
@@ -260,6 +262,43 @@ test('pilot qualification atomically promotes the existing exact five identities
   const sharedPilotLock = /hashtextextended\('card_benefit_enrichment_pilot:'\s*\|\|\s*selected_parser,\s*0\)/i;
   assert.match(promote, sharedPilotLock);
   assert.match(initialize, sharedPilotLock);
+  const sharedIdentityLock = /card_benefit_enrichment_identity:[\s\S]*card_id[\s\S]*parser_version/i;
+  assert.match(initialize, sharedIdentityLock);
+  assert.match(enqueue, sharedIdentityLock);
+  assert.match(initialize, /locked_candidate_authority[\s\S]*FOR UPDATE OF card/i);
+  assert.match(
+    initialize,
+    /jsonb_to_recordset\(locked_candidates\)[\s\S]*is_discontinued[\s\S]*card_type[\s\S]*card_url/i,
+  );
+  assert.match(
+    initialize,
+    /INSERT INTO public\.card_catalog_enrichment_jobs[\s\S]*FROM jsonb_to_recordset\(locked_candidates\)/i,
+  );
+  const candidateInsert = initialize.slice(
+    initialize.indexOf('INSERT INTO public.card_catalog_enrichment_jobs'),
+    initialize.indexOf('GET DIAGNOSTICS inserted_count'),
+  );
+  assert.doesNotMatch(
+    candidateInsert,
+    /JOIN public\.card_catalog/i,
+    'insert must not weakly reread catalog after candidate validation',
+  );
+  assert.match(
+    candidateInsert,
+    /NOT EXISTS[\s\S]*existing_job\.card_id = candidate\.card_id[\s\S]*existing_job\.parser_version = selected_parser/i,
+  );
+  assert.match(
+    enqueue,
+    /ORDER BY[\s\S]*card_id[\s\S]*parser_version[\s\S]*pg_advisory_xact_lock/i,
+  );
+  assert.match(
+    enqueue,
+    /NOT EXISTS[\s\S]*existing_job\.card_id = input\.card_id[\s\S]*existing_job\.parser_version = trim\(input\.parser_version\)/i,
+  );
+  assert.match(
+    enqueue,
+    /GROUP BY duplicate_input\.card_id,[\s\S]*HAVING count\(\*\) > 1[\s\S]*duplicate_card_parser_enqueue/i,
+  );
   assert.match(initialize, /card_enrichment_pilot_cohort_action\(/i);
   assert.match(initialize, /'return_promoted'[\s\S]*pilot_qualified[\s\S]*RETURN;/i);
   assert.match(initialize, /'return_pilot'[\s\S]*run_mode\s*=\s*'pilot'[\s\S]*RETURN;/i);
@@ -271,9 +310,14 @@ test('pilot qualification atomically promotes the existing exact five identities
   assert.doesNotMatch(initialize, /pilot_count\s*=\s*5[\s\S]*promoted_count\s*=\s*5[\s\S]*INSERT INTO/i);
   assert.match(sql, /REVOKE ALL ON FUNCTION public\.promote_qualified_card_benefit_enrichment_pilot\(text\)[\s\S]*TO service_role/i);
   assert.match(sql, /REVOKE ALL ON FUNCTION public\.initialize_card_benefit_enrichment_pilot\(jsonb, text\)[\s\S]*TO service_role/i);
+  assert.match(sql, /REVOKE ALL ON FUNCTION public\.enqueue_card_benefit_enrichment_jobs\(jsonb\)[\s\S]*TO service_role/i);
   assert.match(sql, /DO \$pilot_qualification_assertions\$[\s\S]*fully_rejected[\s\S]*partially_rejected[\s\S]*successful_no_change/i);
   assert.match(sql, /DO \$pilot_cohort_assertions\$[\s\S]*return_promoted[\s\S]*partial[\s\S]*five_plus_five[\s\S]*duplicate/i);
   assert.match(sql, /missing_unsafe[\s\S]*null_unsafe[\s\S]*string_unsafe[\s\S]*negative_unsafe[\s\S]*noninteger_unsafe[\s\S]*missing_raw[\s\S]*null_raw[\s\S]*string_raw[\s\S]*true_raw/i);
+  assert.match(qualify, /review_status'[\s\S]*IS DISTINCT FROM 'approved'/i);
+  assert.match(qualify, /MAX_PILOT_REVIEW_COUNT/i);
+  assert.match(qualify, /::bigint/i);
+  assert.match(sql, /missing_review_field[\s\S]*null_review_field[\s\S]*status_casing[\s\S]*ten_digit_count[\s\S]*overflow_count[\s\S]*negative_review_count[\s\S]*fractional_review_count[\s\S]*string_review_count[\s\S]*max_review_count/i);
 });
 
 test('canonical recurrence timestamps and history normalization have apply-time parity assertions', async () => {

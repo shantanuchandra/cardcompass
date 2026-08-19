@@ -38,6 +38,7 @@ import {
   evaluatePilotGate,
   failureDisposition,
   LEASE_SECONDS,
+  MAX_PILOT_REVIEW_COUNT,
   type PilotCandidate,
   type PilotJob,
   type RunMode,
@@ -263,7 +264,8 @@ function pilotJob(row: Record<string, any>): PilotJob {
     ? row.result_summary
     : {};
   const count = (value: unknown): number | null =>
-    typeof value === "number" && Number.isInteger(value) && value >= 0
+    typeof value === "number" && Number.isInteger(value) && value >= 0 &&
+      value <= MAX_PILOT_REVIEW_COUNT
       ? value
       : null;
   const reviewStatus = summary.review_status === "approved" ||
@@ -277,11 +279,13 @@ function pilotJob(row: Record<string, any>): PilotJob {
     "rejected_count",
   ] as const;
   const hasOwn = (key: string) => Object.hasOwn(summary, key);
-  const reviewMetadataPresent = hasOwn("review_status") ||
-    reviewCountKeys.some(hasOwn);
-  const reviewMetadataMalformed =
-    (hasOwn("review_status") && reviewStatus === null) ||
-    reviewCountKeys.some((key) => hasOwn(key) && count(summary[key]) === null);
+  const reviewFields = ["review_status", ...reviewCountKeys] as const;
+  const reviewMetadataPresent = reviewFields.some(hasOwn);
+  const reviewMetadataMalformed = reviewMetadataPresent &&
+    (
+      !reviewFields.every(hasOwn) || reviewStatus === null ||
+      reviewCountKeys.some((key) => count(summary[key]) === null)
+    );
   const unsafeMutationCount = count(summary.unsafe_mutation_count);
   const safetyMetadataValid = hasOwn("unsafe_mutation_count") &&
     typeof summary.unsafe_mutation_count === "number" &&
@@ -726,25 +730,6 @@ export function shouldStageMaterialProposal(
   _previousStagingId: string | null | undefined,
 ): boolean {
   return !previousCanonicalHash || previousCanonicalHash !== canonicalHash;
-}
-
-export async function readAuthoritativeStagingStatus(
-  db: UntypedSupabaseClient,
-  job: EnrichmentJob,
-): Promise<"pending" | "approved" | "rejected" | null> {
-  if (!job.staging_id) return null;
-  const { data, error } = await db.from("card_benefits_staging")
-    .select("status")
-    .eq("id", job.staging_id)
-    .eq("card_id", job.card_id)
-    .eq("parser_version", job.parser_version)
-    .eq("request_type", "official_benefit_enrichment")
-    .maybeSingle();
-  if (error) throw error;
-  return data?.status === "pending" || data?.status === "approved" ||
-      data?.status === "rejected"
-    ? data.status
-    : null;
 }
 
 export function crawlProposalDisposition(input: {
@@ -1655,9 +1640,6 @@ export async function processJob(
         canonicalBenefitHash,
         job.staging_id,
       ));
-    const authoritativeStagingStatus = materialProposal
-      ? null
-      : await readAuthoritativeStagingStatus(db, job);
     const effectiveProposalDisposition = materialProposal
       ? proposalDisposition
       : "no_change";
@@ -1692,14 +1674,13 @@ export async function processJob(
       stagingId = String(staged.staging_id);
       reusedStaging = staged.reused === true;
     } else {
-      stagingId = authoritativeStagingStatus === "pending"
-        ? String(job.staging_id)
-        : null;
-      reusedStaging = authoritativeStagingStatus === "pending";
+      // Match the 304 path: the worker never makes a racy staging decision.
+      // The finalizer locks the job and preserves only a link still pending at
+      // that instant, converting the effective database status to staged.
+      stagingId = null;
+      reusedStaging = false;
     }
-    outcome = materialProposal || authoritativeStagingStatus === "pending"
-      ? "staged"
-      : "completed";
+    outcome = materialProposal ? "staged" : "completed";
     normalizedFields = {
       proposed_count: proposed.length,
       source_document_count: documents.length,
