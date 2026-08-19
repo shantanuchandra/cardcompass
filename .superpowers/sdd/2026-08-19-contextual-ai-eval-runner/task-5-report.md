@@ -50,3 +50,9 @@ Candidate citation-completeness correction:
 - Candidate citations must exactly cover every official source applicable to the selected evaluation mode; citing only a favorable subset is invalid model output.
 - All applicable sources then pass the same identity/benefit/card-link consensus checks used by captured normalization. Other-mode sources remain ignored by discriminant.
 - Explicit tests reject identity and benefit candidates that omit conflicting applicable evidence while citing a valid source.
+
+Canonical citation-path correction:
+
+- One shared helper now supplies exact mode-specific field paths to captured normalization and candidate validation, and the fixed prompt publishes those same paths.
+- Identity citations cover catalog ID/fees and provenance name/issuer/network. Benefit citations cover catalog linkage and official benefit facts.
+- Generic resolving paths (`url`, a provenance object, or unrelated facts), partial arrays, and reordered arrays are invalid rather than accepted as grounding.

@@ -155,7 +155,7 @@ function promptPayload(
   const schema = feature === "statement_processing"
     ? "For kind=transaction return {id,user_card_id,statement_id,amount,currency,merchant_name,category,transaction_type,transaction_date}; copy evidence fields exactly and predict only category/type"
     : feature === "card_data"
-    ? "Identity: {mode:'identity',card:{id,name,bank,network,annual_fee,joining_fee},sources:[{id,field_paths:[path]}]}; benefits: {mode:'benefits',card_id,benefits:[{id,dedupe_key,title,type,category,value_config,limit,period,eligibility}],sources:[...]}"
+    ? "Identity: {mode:'identity',card:{id,name,bank,network,annual_fee,joining_fee},sources:[{id,field_paths:['facts.catalog_reference.id','facts.provenance_claims.card_name','facts.provenance_claims.issuer','facts.provenance_claims.network','facts.catalog_reference.annual_fee','facts.catalog_reference.joining_fee']}]}; benefits: {mode:'benefits',card_id,benefits:[{id,dedupe_key,title,type,category,value_config,limit,period,eligibility}],sources:[{id,field_paths:['facts.catalog_reference_id','facts.benefits']}]}"
     : "{selected_card_id,selected_benefit_id,savings:number,final_amount:number,explanation<=1000 chars}";
   return {
     systemInstruction: {
@@ -344,6 +344,12 @@ function validateCardData(
   const expectedMode = output.mode === "benefits"
     ? "benefit_extraction"
     : "catalog_identity_validation";
+  const groundingPaths = canonicalGroundingPaths(expectedMode);
+  if (
+    !(output.sources as Record<string, unknown>[]).every((citation) =>
+      deepStructuralEqual(citation.field_paths, groundingPaths)
+    )
+  ) return false;
   const applicableSources = official.filter((source) =>
     isRecord(source.facts) && source.facts.evaluation_mode === expectedMode
   );
@@ -466,7 +472,7 @@ function normalizeCapturedCard(
       card: answer,
       sources: grounding.map((source) => ({
         id: source.id,
-        field_paths: ["facts.catalog_reference"],
+        field_paths: canonicalGroundingPaths("catalog_identity_validation"),
       })),
     };
   }
@@ -499,7 +505,7 @@ function normalizeCapturedCard(
     benefits,
     sources: grounding.map((source) => ({
       id: source.id,
-      field_paths: ["facts.benefits"],
+      field_paths: canonicalGroundingPaths("benefit_extraction"),
     })),
   };
 }
@@ -523,6 +529,21 @@ function identitySourceSupports(
     card.annual_fee === reference.annual_fee &&
     card.joining_fee === reference.joining_fee &&
     claims.card_name === card.name && claims.issuer === card.bank;
+}
+
+function canonicalGroundingPaths(
+  mode: "catalog_identity_validation" | "benefit_extraction",
+): readonly string[] {
+  return mode === "catalog_identity_validation"
+    ? [
+      "facts.catalog_reference.id",
+      "facts.provenance_claims.card_name",
+      "facts.provenance_claims.issuer",
+      "facts.provenance_claims.network",
+      "facts.catalog_reference.annual_fee",
+      "facts.catalog_reference.joining_fee",
+    ]
+    : ["facts.catalog_reference_id", "facts.benefits"];
 }
 
 function benefitSourceSupports(

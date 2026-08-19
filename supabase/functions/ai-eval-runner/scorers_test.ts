@@ -3,6 +3,19 @@ import { executeEvalCase } from "./executors.ts";
 import { scoreRecommendationCase, scoreStructuredCase } from "./scorers.ts";
 import type { EvalCaseFixture, EvalExecutionResult } from "./types.ts";
 
+const identityGroundingPaths = [
+  "facts.catalog_reference.id",
+  "facts.provenance_claims.card_name",
+  "facts.provenance_claims.issuer",
+  "facts.provenance_claims.network",
+  "facts.catalog_reference.annual_fee",
+  "facts.catalog_reference.joining_fee",
+];
+const benefitGroundingPaths = [
+  "facts.catalog_reference_id",
+  "facts.benefits",
+];
+
 const succeeded = (output: Record<string, unknown>): EvalExecutionResult => ({
   executionStatus: "succeeded",
   output,
@@ -242,7 +255,7 @@ Deno.test("card identity and benefit structure validate IDs, value, limit, perio
     }],
     sources: [{
       id: "source-benefit-1",
-      field_paths: ["facts.benefits"],
+      field_paths: benefitGroundingPaths,
     }],
   });
   const candidate = succeeded({
@@ -259,7 +272,7 @@ Deno.test("card identity and benefit structure validate IDs, value, limit, perio
       period: "year",
       eligibility: "primary cardholder",
     }],
-    sources: [{ id: "source-benefit-1", field_paths: ["facts.benefits"] }],
+    sources: [{ id: "source-benefit-1", field_paths: benefitGroundingPaths }],
   });
 
   const score = scoreStructuredCase(item, baseline, candidate);
@@ -303,7 +316,7 @@ Deno.test("must-not paths and claims are severe only when the approved condition
         annual_fee: 2500,
         joining_fee: 2500,
       },
-      sources: [{ id: "source-1", field_paths: ["facts.catalog_reference"] }],
+      sources: [{ id: "source-1", field_paths: identityGroundingPaths }],
     }),
     succeeded({
       mode: "identity",
@@ -315,7 +328,7 @@ Deno.test("must-not paths and claims are severe only when the approved condition
         annual_fee: 2500,
         joining_fee: 2500,
       },
-      sources: [{ id: "source-1", field_paths: ["facts.catalog_reference"] }],
+      sources: [{ id: "source-1", field_paths: identityGroundingPaths }],
       debug: true,
     }),
   );
@@ -395,7 +408,7 @@ Deno.test("normalized captured card baseline lets the scorer expose a candidate 
       annual_fee: 2500,
       joining_fee: 2500,
     },
-    sources: [{ id: "source-1", field_paths: ["facts.catalog_reference"] }],
+    sources: [{ id: "source-1", field_paths: identityGroundingPaths }],
   });
   const score = scoreStructuredCase(item, baseline, candidate);
   assertEquals(score.assertions[0].baselinePassed, true);

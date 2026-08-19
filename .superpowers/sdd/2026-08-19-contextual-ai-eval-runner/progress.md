@@ -160,3 +160,11 @@ Ruling: Require unanimous support from every official source applicable to the e
 - Explicit regressions cover an identity candidate cherry-picking one agreeing source while omitting a second conflicting source, and a benefit candidate omitting applicable evidence linked to another card.
 
 Ruling: Require candidate Card Data citations to equal the full applicable same-mode fixture source set, then validate every source. Cost if wrong: redundant applicable sources must all be cited, trading payload brevity for complete and non-cherry-picked provenance.
+
+### Task 5 canonical citation-path correction
+
+- Captured normalization and candidate validation now share one canonical mode-specific grounding-path helper. Identity citations bind catalog ID and fees plus provenance name, issuer, and network; benefit citations bind both catalog card linkage and the complete official benefit facts.
+- Merely resolvable paths are insufficient. Candidate citations using `url`, a generic provenance object, an unrelated fact, reordered paths, or partial support return `invalid_model_output`.
+- The fixed candidate prompt publishes the same exact canonical arrays, preventing a hidden validator-only convention. Positive identity/benefit cases and normalized captured baselines use the identical path contract.
+
+Ruling: Require exact ordered canonical grounding paths per Card Data mode, shared by prompts, captured normalization, and candidate validation. Cost if wrong: adding a newly scored card field requires an explicit reviewed path-contract update, preventing generic citations from masquerading as field support.

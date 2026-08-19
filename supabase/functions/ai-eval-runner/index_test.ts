@@ -11,6 +11,19 @@ import evalMigration from "../../migrations/20260819090500_contextual_ai_eval_ru
   type: "text",
 };
 
+const identityGroundingPaths = [
+  "facts.catalog_reference.id",
+  "facts.provenance_claims.card_name",
+  "facts.provenance_claims.issuer",
+  "facts.provenance_claims.network",
+  "facts.catalog_reference.annual_fee",
+  "facts.catalog_reference.joining_fee",
+];
+const benefitGroundingPaths = [
+  "facts.catalog_reference_id",
+  "facts.benefits",
+];
+
 const fixture = (
   featureKey: EvalCaseFixture["featureKey"],
 ): EvalCaseFixture => ({
@@ -268,7 +281,7 @@ Deno.test("captured card identity baseline normalizes persisted DTOs into the ex
       annual_fee: 2500,
       joining_fee: 2500,
     },
-    sources: [{ id: "source-1", field_paths: ["facts.catalog_reference"] }],
+    sources: [{ id: "source-1", field_paths: identityGroundingPaths }],
   });
 });
 
@@ -340,7 +353,7 @@ Deno.test("captured benefit baseline uses persisted values and official groundin
     }],
     sources: [{
       id: "source-benefit-1",
-      field_paths: ["facts.benefits"],
+      field_paths: benefitGroundingPaths,
     }],
   });
 });
@@ -538,7 +551,7 @@ Deno.test("identity candidate cannot omit a conflicting applicable source", asyn
           },
           sources: [{
             id: "source-1",
-            field_paths: ["facts.catalog_reference"],
+            field_paths: identityGroundingPaths,
           }],
         }),
     },
@@ -581,7 +594,62 @@ Deno.test("benefit candidate cannot omit applicable evidence linked to another c
           benefits: (official[1].facts as Record<string, unknown>).benefits,
           sources: [{
             id: "source-benefit-1",
-            field_paths: ["facts.benefits"],
+            field_paths: benefitGroundingPaths,
+          }],
+        }),
+    },
+  );
+  assertEquals(result.safeFailureCategory, "invalid_model_output");
+});
+
+Deno.test("card candidates reject resolving but non-canonical grounding paths", async () => {
+  const identity = {
+    mode: "identity",
+    card: {
+      id: "card-1",
+      name: "Regalia Gold",
+      bank: "HDFC",
+      network: "Visa",
+      annual_fee: 2500,
+      joining_fee: 2500,
+    },
+  };
+  for (const fieldPaths of [["url"], ["facts.provenance_claims"]]) {
+    const result = await executeEvalCase(
+      fixture("card_data"),
+      "gemini-3.6-flash-card-data-v1",
+      {
+        generate: async () =>
+          fakeGeneration({
+            ...identity,
+            sources: [{ id: "source-1", field_paths: fieldPaths }],
+          }),
+      },
+    );
+    assertEquals(result.safeFailureCategory, "invalid_model_output");
+  }
+
+  const base = fixture("card_data");
+  const safe = base.inputFixture.safe_input_context as Record<string, unknown>;
+  const official = safe.official_sources as Record<string, unknown>[];
+  const result = await executeEvalCase(
+    {
+      ...base,
+      inputFixture: {
+        ...base.inputFixture,
+        safe_input_context: { ...safe, evaluation_mode: "benefit_extraction" },
+      },
+    },
+    "gemini-3.6-flash-card-data-v1",
+    {
+      generate: async () =>
+        fakeGeneration({
+          mode: "benefits",
+          card_id: "card-1",
+          benefits: (official[1].facts as Record<string, unknown>).benefits,
+          sources: [{
+            id: "source-benefit-1",
+            field_paths: ["facts.evaluation_mode"],
           }],
         }),
     },
@@ -607,10 +675,7 @@ Deno.test("candidate receives only deeply sanitized fixture inside a fixed, deli
         },
         sources: [{
           id: "source-1",
-          field_paths: [
-            "facts.provenance_claims.card_name",
-            "facts.catalog_reference.annual_fee",
-          ],
+          field_paths: identityGroundingPaths,
         }],
       });
     },
@@ -754,10 +819,7 @@ Deno.test("real captured-shape candidates succeed for every feature family", asy
         },
         sources: [{
           id: "source-1",
-          field_paths: [
-            "facts.provenance_claims.card_name",
-            "facts.catalog_reference.annual_fee",
-          ],
+          field_paths: identityGroundingPaths,
         }],
       }],
       [
@@ -864,7 +926,7 @@ Deno.test("grounded benefit extraction accepts the exact official benefit only",
     mode: "benefits",
     card_id: "card-1",
     benefits: [benefit],
-    sources: [{ id: "source-benefit-1", field_paths: ["facts.benefits"] }],
+    sources: [{ id: "source-benefit-1", field_paths: benefitGroundingPaths }],
   };
   assertEquals(
     (await executeEvalCase(
