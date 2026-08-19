@@ -4,6 +4,8 @@ import 'package:cardcompass/app.dart';
 import 'package:cardcompass/core/router/app_router.dart';
 import 'package:cardcompass/core/theme/app_theme.dart';
 import 'package:cardcompass/features/admin2/data/admin_operator_api.dart';
+import 'package:cardcompass/features/admin2/card_data/card_data_models.dart';
+import 'package:cardcompass/features/admin2/card_data/card_data_section.dart';
 import 'package:cardcompass/features/admin2/data/admin_operator_repository.dart';
 import 'package:cardcompass/features/admin2/models/admin_access.dart';
 import 'package:cardcompass/features/admin2/providers/admin_access_provider.dart';
@@ -39,6 +41,21 @@ class _AccessApi implements AdminOperatorApi {
   }
 }
 
+final class _ShellCardSource implements CardDataSource {
+  @override
+  Future<void> act(CardReviewAction action) async {}
+
+  @override
+  Future<CardReviewPage> list(CardReviewQuery query) async => CardReviewPage(
+    lane: query.lane,
+    items: const [],
+    page: 1,
+    limit: 25,
+    hasMore: false,
+    refreshedAt: DateTime.utc(2026, 8, 19),
+  );
+}
+
 Future<void> _pumpScreen(
   WidgetTester tester, {
   required FutureOr<AdminAccess> Function(Ref ref) access,
@@ -60,6 +77,7 @@ Future<void> _pumpScreen(
           child: AdminOperatorScreen(
             onAuthenticationRequired: onAuthenticationRequired,
             onAccessDenied: onAccessDenied,
+            cardDataSource: _ShellCardSource(),
           ),
         ),
       ),
@@ -140,7 +158,7 @@ void main() {
       ('Action Inbox', AdminWorkspaceSection.inbox),
     ]) {
       await tester.tap(find.byKey(Key('admin-section-${entry.$2.name}')));
-      await tester.pump();
+      await tester.pumpAndSettle();
       expect(
         find.descendant(
           of: find.byKey(const Key('admin-section-content')),

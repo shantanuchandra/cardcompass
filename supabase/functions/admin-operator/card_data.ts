@@ -54,7 +54,14 @@ const commonActionKeys = new Set([
   "merge_card_id",
   "decisions",
 ]);
-const listKeys = new Set(["action", "lane", "page", "limit", "status"]);
+const listKeys = new Set([
+  "action",
+  "lane",
+  "page",
+  "limit",
+  "status",
+  "target_id",
+]);
 const proposedFieldNames = [
   "id",
   "bank",
@@ -321,11 +328,15 @@ export async function handleCardReviewList(
   onlyKeys(body, listKeys);
   const lane = requiredLane(body.lane);
   const status = statusFilter(body.status);
+  const targetId = body.target_id == null ? null : requiredUuid(body.target_id);
   if (
     status !== null &&
     !(lane === "identity" ? identityStatuses : benefitStatuses).has(status)
   ) invalidRequest();
-  const { page, limit, offset } = pageRequest(body);
+  const requested = pageRequest(body);
+  const { page, limit, offset } = targetId === null
+    ? requested
+    : { page: 1, limit: 1, offset: 0 };
   let query: any;
   if (lane === "identity") {
     query = (context.db as any).from("card_catalog_review_queue").select(`
@@ -354,7 +365,11 @@ export async function handleCardReviewList(
       .order("created_at", { ascending: false });
   }
   if (status !== null) query = query.eq("status", status);
-  const { data, error } = await query.range(offset, offset + limit);
+  if (targetId !== null) query = query.eq("id", targetId);
+  const { data, error } = await query.range(
+    offset,
+    targetId === null ? offset + limit : 0,
+  );
   if (error) throw mapDatabaseError(error);
   const rows = Array.isArray(data) ? data : [];
   return {
@@ -366,7 +381,7 @@ export async function handleCardReviewList(
     ),
     page,
     limit,
-    has_more: rows.length > limit,
+    has_more: targetId === null && rows.length > limit,
   };
 }
 
@@ -458,7 +473,7 @@ function safeActionPayload(
       const accepted = operation === "approve"
         ? new Set(["approve", "keep_existing"])
         : operation === "edit_approve"
-        ? new Set(["edit", "keep_existing"])
+        ? new Set(["approve", "edit", "reject", "keep_existing"])
         : new Set(["reject"]);
       payload = {
         decisions: decisionPayload(

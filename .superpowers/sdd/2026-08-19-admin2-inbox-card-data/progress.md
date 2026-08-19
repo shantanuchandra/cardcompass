@@ -103,3 +103,18 @@ Ruling: Use an operations-ledger hierarchy with the queue as the index, evidence
 Ruling: Keep the prior page on refresh failures and mutations until the server confirms success; surface stale-state and refresh notices as live regions rather than clearing useful review context. Cost if wrong: an operator may briefly see an older row alongside an explicit warning instead of an empty error state.
 
 Ruling: Adapt the existing `CardDataRepository` behind the view-owned `CardDataSource` boundary so Task 4's reviewed transport contract remains untouched and widget tests remain deterministic. Cost if wrong: a later shared provider may move this small adapter into the Card Data module without changing behavior.
+
+## Task 5 review fixes
+
+- Replaced first-page deep-link fallback with a validated, lane-scoped `target_id` gateway query; target requests are fixed to one row, and invalid target IDs fail before client invocation.
+- Added typed identity candidates and benefit diff proposals, current-versus-proposed editing, safe actionable evidence links, extraction/evidence freshness, complete per-proposal decisions, and staging-level action derivation.
+- Actions now derive from exact lane and status: pending identity review; staged/review-required benefit decisions only with complete staging data; failed/review-required recovery; quarantined unquarantine; terminal and in-flight states have no mutations.
+- Conflicts reload the exact target. A disappeared target retains the prior detail and shows an explicit gone/latest-state message instead of selecting another row.
+- Removed the broad `AssertionError` catch. `AdminOperatorScreen` now accepts an explicit `CardDataSource` for tests and deep-link inputs carry both lane and target ID; production resolves the reviewed repository provider normally.
+- Verification: combined Admin2, legacy admin, and typography suite passed 95/95; complete admin-operator Deno suite passed 47/47; targeted analysis reported no issues.
+
+Ruling: Model benefit review inputs from the server's sanitized staging diff and submit exactly one keyed decision per surfaced proposal; proposals without a stable dedupe key are not made actionable, and removal/unchanged choices exclude database-invalid approvals. Cost if wrong: malformed upstream proposals are visible only through warnings/evidence and must be retried or quarantined instead of being repaired through an incomplete client-generated decision.
+
+Ruling: Represent mixed benefit outcomes as `edit_approve`, while all-approve/keep-existing maps to `approve` and all-reject maps to `reject`; the Edge and Flutter allowlists accept the full four-action decision vocabulary only for the mixed/edit path. Cost if wrong: a future server operation dedicated to mixed decisions would require renaming this transport operation while retaining the same audited decision array.
+
+Ruling: Resolve deep links with the pair `(lane, target_id)` using a server-side exact-ID filter, and retain the prior selected DTO if a conflict refresh no longer finds that target. Cost if wrong: one targeted read is spent per deep-link refresh, and removed records remain visible as explicitly stale context until the operator leaves the target.

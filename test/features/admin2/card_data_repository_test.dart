@@ -47,6 +47,84 @@ void main() {
   const stagingId = '33333333-3333-4333-8333-333333333333';
   const observed = '2026-08-19T09:00:00Z';
 
+  test('maps decision-critical identity candidates and benefit diffs', () {
+    final identity = CardReviewItem.fromJson(CardReviewLane.identity, {
+      'id': identityId,
+      'status': 'pending',
+      'updated_at': observed,
+      'proposed_fields': {'card_name': 'New name'},
+      'source_evidence': {},
+      'existing_candidates': [
+        {'id': identityId, 'bank': 'Issuer', 'card_name': 'Current name'},
+      ],
+    });
+    expect(identity.identityCandidates.single.cardName, 'Current name');
+
+    final benefit = CardReviewItem.fromJson(CardReviewLane.benefit, {
+      'id': identityId,
+      'status': 'review_required',
+      'updated_at': observed,
+      'staging_id': stagingId,
+      'card': {'bank': 'Issuer', 'card_name': 'Premier'},
+      'staging': {
+        'id': stagingId,
+        'source_evidence': [],
+        'extracted_data': {
+          'retrieved_at': observed,
+          'diff': {
+            'additions': [
+              {'dedupeKey': 'lounge', 'title': 'Lounge access'},
+            ],
+            'modifications': [
+              {
+                'current': {'dedupeKey': 'dining', 'rate': 5},
+                'proposed': {'dedupeKey': 'dining', 'rate': 10},
+              },
+            ],
+            'possibleRemovals': [],
+            'unchanged': [],
+            'conflicts': [],
+          },
+        },
+      },
+    });
+    expect(benefit.benefitProposals, hasLength(2));
+    expect(benefit.benefitProposals.last.current['rate'], 5);
+    expect(benefit.benefitProposals.last.proposed['rate'], 10);
+    expect(benefit.retrievedAt, DateTime.parse(observed));
+  });
+
+  test('exact target list request is deterministic', () async {
+    final api = RecordingAdminOperatorApi(
+      const AdminOperatorResponse(200, {
+        'lane': 'identity',
+        'items': [],
+        'page': 1,
+        'limit': 1,
+        'has_more': false,
+      }),
+    );
+    await CardDataRepository(
+      AdminOperatorRepository(api),
+    ).list(CardReviewLane.identity, targetId: identityId);
+    expect(api.bodies.single['target_id'], identityId);
+    expect(api.bodies.single['page'], 1);
+    expect(api.bodies.single['limit'], 1);
+  });
+
+  test('invalid exact target is rejected before invocation', () async {
+    final api = RecordingAdminOperatorApi(
+      const AdminOperatorResponse(200, {'unused': true}),
+    );
+    await expectLater(
+      CardDataRepository(
+        AdminOperatorRepository(api),
+      ).list(CardReviewLane.identity, targetId: 'not-an-id'),
+      throwsA(isA<AdminRequestFailed>()),
+    );
+    expect(api.bodies, isEmpty);
+  });
+
   test(
     'maps identity and benefit pages with safe evidence and pagination',
     () async {

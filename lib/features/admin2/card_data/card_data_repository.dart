@@ -25,13 +25,18 @@ final class CardDataRepository {
     int page = 1,
     int limit = 25,
     String? status,
+    String? targetId,
   }) async {
     try {
+      if (targetId != null && !_uuid.hasMatch(targetId)) {
+        throw const FormatException('Invalid target');
+      }
       final body = <String, dynamic>{
         'lane': lane.wireValue,
-        'page': page,
-        'limit': limit,
+        'page': targetId == null ? page : 1,
+        'limit': targetId == null ? limit : 1,
         'status': ?status,
+        'target_id': ?targetId,
       };
       final json = await _operator.invoke('card-review-list', body);
       final responseLane = CardReviewLane.parse(json['lane']);
@@ -193,7 +198,12 @@ void _validateAction(CardReviewAction action) {
       }
       final accepted = switch (action.operation) {
         CardReviewOperation.approve => {'approve', 'keep_existing'},
-        CardReviewOperation.editApprove => {'edit', 'keep_existing'},
+        CardReviewOperation.editApprove => {
+          'approve',
+          'edit',
+          'reject',
+          'keep_existing',
+        },
         CardReviewOperation.reject => {'reject'},
         _ => const <String>{},
       };

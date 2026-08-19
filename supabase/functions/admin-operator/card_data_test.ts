@@ -173,6 +173,22 @@ Deno.test("identity pagination clamps the page and detects one lookahead row", a
   assertEquals(fake.calls.at(-1), { method: "range", args: [19_998, 20_000] });
 });
 
+Deno.test("exact target lookup is lane-scoped and bypasses pagination", async () => {
+  const fake = fakeContext({ rows: [{ id: IDENTITY_ID, status: "pending" }] });
+  const output = await handleCardReviewList(
+    { lane: "identity", target_id: IDENTITY_ID, page: 99, limit: 50 },
+    fake.context,
+  );
+  assertEquals(output.page, 1);
+  assertEquals(output.limit, 1);
+  assertEquals(output.has_more, false);
+  assertEquals(
+    fake.calls.some((call) => call.method === "eq" && call.args[0] === "id" && call.args[1] === IDENTITY_ID),
+    true,
+  );
+  assertEquals(fake.calls.at(-1), { method: "range", args: [0, 0] });
+});
+
 Deno.test("benefit list reuses the locked presenter and bounds unsafe URLs and arrays", async () => {
   const fake = fakeContext({
     rows: [{
@@ -320,7 +336,12 @@ Deno.test("benefit decisions enforce operation-specific actions and reject reaso
     {
       operation: "edit_approve",
       staging_id: STAGING_ID,
-      decisions: [{ action: "edit" }],
+      decisions: [
+        { action: "approve", dedupe_key: "new" },
+        { action: "edit", dedupe_key: "changed" },
+        { action: "reject", dedupe_key: "unsupported" },
+        { action: "keep_existing", dedupe_key: "stable" },
+      ],
     },
     {
       operation: "reject",
@@ -371,11 +392,6 @@ Deno.test("benefit decisions enforce operation-specific actions and reject reaso
         action: "approve",
         benefit: { title: "Dining", source_url: "javascript:alert(1)" },
       }],
-    },
-    {
-      operation: "edit_approve",
-      staging_id: STAGING_ID,
-      decisions: [{ action: "approve" }],
     },
     {
       operation: "reject",

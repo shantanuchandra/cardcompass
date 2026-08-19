@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/theme/brand_components.dart';
 import '../../../core/theme/brand_tokens.dart';
@@ -12,12 +13,14 @@ final class CardReviewQuery {
     this.page = 1,
     this.limit = 25,
     this.status,
+    this.targetId,
   });
 
   final CardReviewLane lane;
   final int page;
   final int limit;
   final String? status;
+  final String? targetId;
 }
 
 abstract interface class CardDataSource {
@@ -30,12 +33,16 @@ class CardDataSection extends ConsumerStatefulWidget {
     super.key,
     required this.repository,
     this.initialTargetId,
+    this.initialLane = CardReviewLane.identity,
+    this.openExternalUrl,
     this.onAuthenticationRequired,
     this.onAccessDenied,
   });
 
   final CardDataSource repository;
   final String? initialTargetId;
+  final CardReviewLane initialLane;
+  final Future<bool> Function(Uri url)? openExternalUrl;
   final Future<void> Function()? onAuthenticationRequired;
   final VoidCallback? onAccessDenied;
 
@@ -44,7 +51,8 @@ class CardDataSection extends ConsumerStatefulWidget {
 }
 
 class _CardDataSectionState extends ConsumerState<CardDataSection> {
-  CardReviewLane _lane = CardReviewLane.identity;
+  late CardReviewLane _lane;
+  String? _targetId;
   CardReviewPage? _page;
   CardReviewItem? _selected;
   String? _status;
@@ -58,10 +66,16 @@ class _CardDataSectionState extends ConsumerState<CardDataSection> {
   @override
   void initState() {
     super.initState();
+    _lane = widget.initialLane;
+    _targetId = widget.initialTargetId;
     _load(initial: true);
   }
 
-  Future<void> _load({bool initial = false, int? page}) async {
+  Future<void> _load({
+    bool initial = false,
+    int? page,
+    bool retainMissingTarget = false,
+  }) async {
     if (mounted) {
       setState(() {
         if (initial && _page == null) _loading = true;
@@ -75,15 +89,28 @@ class _CardDataSectionState extends ConsumerState<CardDataSection> {
           lane: _lane,
           page: page ?? _page?.page ?? 1,
           status: _status,
+          targetId: _targetId,
         ),
       );
       if (!mounted) return;
-      final target = initial ? widget.initialTargetId : _selected?.id;
+      final target = _targetId ?? _selected?.id;
       setState(() {
+        final exact = next.items.where((item) => item.id == target).firstOrNull;
+        if (retainMissingTarget && _targetId != null && exact == null) {
+          _notice =
+              'This review changed and is no longer available. The prior review context was not replaced.';
+          _loading = false;
+          _refreshing = false;
+          return;
+        }
         _page = next;
-        _selected =
-            next.items.where((item) => item.id == target).firstOrNull ??
-            next.items.firstOrNull;
+        _selected = exact;
+        if (_selected == null && _targetId == null && target == null) {
+          _selected = next.items.firstOrNull;
+        }
+        if (_targetId != null && _selected == null) {
+          _notice = 'This review is no longer available in the latest state.';
+        }
         _loading = false;
         _refreshing = false;
       });
@@ -110,47 +137,38 @@ class _CardDataSectionState extends ConsumerState<CardDataSection> {
       _page = null;
       _selected = null;
       _status = null;
+      _targetId = null;
       _compactDetail = false;
     });
     await _load(initial: true, page: 1);
   }
 
-  Future<void> _confirm(CardReviewOperation operation) async {
+  Future<void> _confirm(
+    CardReviewOperation operation, {
+    Map<String, dynamic> payload = const {},
+    String? suppliedReason,
+  }) async {
     final item = _selected;
     if (item == null || _submitting) return;
     final reasonRequired =
         operation == CardReviewOperation.reject ||
         operation == CardReviewOperation.quarantine;
-    final reason = await showDialog<String>(
-      context: context,
-      builder: (context) => _ConfirmationDialog(
-        operation: operation,
-        reasonRequired: reasonRequired,
-      ),
-    );
+    final reason =
+        suppliedReason ??
+        await showDialog<String>(
+          context: context,
+          builder: (context) => _ConfirmationDialog(
+            operation: operation,
+            reasonRequired: reasonRequired,
+          ),
+        );
     if (reason == null) return;
-    final payload = <String, dynamic>{};
-    if (item.lane == CardReviewLane.benefit &&
-        {
-          CardReviewOperation.approve,
-          CardReviewOperation.editApprove,
-          CardReviewOperation.reject,
-        }.contains(operation)) {
-      payload['decisions'] = [
-        {
-          'action': switch (operation) {
-            CardReviewOperation.approve => 'approve',
-            CardReviewOperation.editApprove => 'edit',
-            _ => 'reject',
-          },
-        },
-      ];
-    }
+    final actionPayload = <String, dynamic>{...payload};
     if (item.lane == CardReviewLane.identity &&
         operation == CardReviewOperation.merge) {
       // Merge target selection is intentionally explicit rather than inferred.
       final mergeId = reason.trim();
-      payload['merge_card_id'] = mergeId;
+      actionPayload['merge_card_id'] = mergeId;
     }
     setState(() {
       _submitting = true;
@@ -164,8 +182,10 @@ class _CardDataSectionState extends ConsumerState<CardDataSection> {
           targetId: item.id,
           observedUpdatedAt: item.updatedAt.toIso8601String(),
           stagingId: item.stagingId,
-          reason: reasonRequired ? reason.trim() : null,
-          payload: payload,
+          reason: (reasonRequired || suppliedReason != null)
+              ? reason.trim()
+              : null,
+          payload: actionPayload,
         ),
       );
       if (!mounted) return;
@@ -174,7 +194,7 @@ class _CardDataSectionState extends ConsumerState<CardDataSection> {
     } on AdminStateConflict {
       if (!mounted) return;
       setState(() => _notice = 'This review changed. Check the latest state.');
-      await _load();
+      await _load(retainMissingTarget: true);
     } catch (error) {
       if (error is AdminAuthenticationRequired) {
         await widget.onAuthenticationRequired?.call();
@@ -222,6 +242,7 @@ class _CardDataSectionState extends ConsumerState<CardDataSection> {
                 onStatus: (value) {
                   setState(() {
                     _status = value;
+                    _targetId = null;
                     _page = null;
                     _selected = null;
                   });
@@ -318,6 +339,9 @@ class _CardDataSectionState extends ConsumerState<CardDataSection> {
     compact: compact,
     onBack: compact ? () => setState(() => _compactDetail = false) : null,
     onOperation: _confirm,
+    onOpenUrl:
+        widget.openExternalUrl ??
+        (url) => launchUrl(url, mode: LaunchMode.externalApplication),
   );
 }
 
@@ -491,50 +515,168 @@ class _Queue extends StatelessWidget {
   );
 }
 
-class _ReviewDetail extends StatelessWidget {
+typedef _ReviewAction =
+    Future<void> Function(
+      CardReviewOperation operation, {
+      Map<String, dynamic> payload,
+      String? suppliedReason,
+    });
+
+class _ReviewDetail extends StatefulWidget {
   const _ReviewDetail({
     required this.item,
     required this.submitting,
     required this.compact,
     required this.onBack,
     required this.onOperation,
+    required this.onOpenUrl,
   });
   final CardReviewItem? item;
   final bool submitting;
   final bool compact;
   final VoidCallback? onBack;
-  final ValueChanged<CardReviewOperation> onOperation;
+  final _ReviewAction onOperation;
+  final Future<bool> Function(Uri url) onOpenUrl;
+
+  @override
+  State<_ReviewDetail> createState() => _ReviewDetailState();
+}
+
+class _ReviewDetailState extends State<_ReviewDetail> {
+  final _identityControllers = <String, TextEditingController>{};
+  final _decisions = <String, String>{};
+  final _benefitTitleControllers = <String, TextEditingController>{};
+  final _benefitReasonControllers = <String, TextEditingController>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _resetFor(widget.item);
+  }
+
+  @override
+  void didUpdateWidget(covariant _ReviewDetail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.item?.id != widget.item?.id) _resetFor(widget.item);
+  }
+
+  void _resetFor(CardReviewItem? item) {
+    for (final controller in _identityControllers.values) {
+      controller.dispose();
+    }
+    _identityControllers.clear();
+    for (final controller in [
+      ..._benefitTitleControllers.values,
+      ..._benefitReasonControllers.values,
+    ]) {
+      controller.dispose();
+    }
+    _benefitTitleControllers.clear();
+    _benefitReasonControllers.clear();
+    _decisions.clear();
+    if (item == null) return;
+    for (final entry in item.proposedFields.entries) {
+      _identityControllers[entry.key] = TextEditingController(
+        text: entry.value.toString(),
+      );
+    }
+    for (final proposal in item.benefitProposals) {
+      _decisions[proposal.key] = switch (proposal.kind) {
+        BenefitProposalKind.removal ||
+        BenefitProposalKind.unchanged => 'keep_existing',
+        _ when !proposal.canApprove => 'reject',
+        _ => 'approve',
+      };
+      _benefitTitleControllers[proposal.key] = TextEditingController(
+        text: proposal.proposed['title']?.toString() ?? proposal.title,
+      );
+      _benefitReasonControllers[proposal.key] = TextEditingController();
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final controller in _identityControllers.values) {
+      controller.dispose();
+    }
+    for (final controller in [
+      ..._benefitTitleControllers.values,
+      ..._benefitReasonControllers.values,
+    ]) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  Map<String, dynamic> _editedIdentityPayload(CardReviewItem item) {
+    final edited = <String, dynamic>{};
+    for (final entry in _identityControllers.entries) {
+      final original = item.proposedFields[entry.key];
+      final text = entry.value.text.trim();
+      edited[entry.key] = original is num ? num.tryParse(text) ?? text : text;
+    }
+    return {'proposed_fields': edited};
+  }
+
+  List<Map<String, dynamic>> _benefitDecisions(CardReviewItem item) =>
+      item.benefitProposals.map((proposal) {
+        final action = _decisions[proposal.key]!;
+        final decision = proposal.decision(
+          action,
+          edited: {
+            ...proposal.proposed,
+            'title': _benefitTitleControllers[proposal.key]!.text.trim(),
+          },
+        );
+        if (action == 'reject') {
+          final reason = _benefitReasonControllers[proposal.key]!.text.trim();
+          if (reason.isNotEmpty) decision['reason'] = reason;
+        }
+        return decision;
+      }).toList();
+
+  Future<void> _submitBenefit(CardReviewItem item) async {
+    final decisions = _benefitDecisions(item);
+    if (decisions.isEmpty) return;
+    final actions = decisions.map((value) => value['action']).toSet();
+    final operation = actions.difference({'approve', 'keep_existing'}).isEmpty
+        ? CardReviewOperation.approve
+        : actions.length == 1 && actions.single == 'reject'
+        ? CardReviewOperation.reject
+        : CardReviewOperation.editApprove;
+    if (operation == CardReviewOperation.editApprove &&
+        decisions.any(
+          (value) =>
+              value['action'] == 'reject' &&
+              (value['reason'] as String? ?? '').trim().length < 2,
+        )) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Add a reason for each rejected benefit.'),
+        ),
+      );
+      return;
+    }
+    await widget.onOperation(operation, payload: {'decisions': decisions});
+  }
 
   @override
   Widget build(BuildContext context) {
-    final value = item;
+    final value = widget.item;
     if (value == null) {
       return const Center(child: Text('Select a review item.'));
     }
-    final operations = value.lane == CardReviewLane.identity
-        ? const [
-            CardReviewOperation.approve,
-            CardReviewOperation.merge,
-            CardReviewOperation.reject,
-            CardReviewOperation.retry,
-          ]
-        : const [
-            CardReviewOperation.approve,
-            CardReviewOperation.reject,
-            CardReviewOperation.retry,
-            CardReviewOperation.quarantine,
-          ];
     return Stack(
       children: [
         FocusTraversalGroup(
           child: ListView(
             padding: const EdgeInsets.all(BrandSpacing.lg),
             children: [
-              if (compact)
+              if (widget.compact)
                 Align(
                   alignment: Alignment.centerLeft,
                   child: TextButton.icon(
-                    onPressed: onBack,
+                    onPressed: widget.onBack,
                     icon: const Icon(Icons.arrow_back),
                     label: const Text('Back to review queue'),
                   ),
@@ -550,21 +692,10 @@ class _ReviewDetail extends StatelessWidget {
               const SizedBox(height: BrandSpacing.xs),
               SelectableText(value.id),
               const SizedBox(height: BrandSpacing.lg),
-              const Text(
-                'Proposed fields',
-                style: TextStyle(fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: BrandSpacing.sm),
-              if (value.proposedFields.isEmpty)
-                const Text('No field changes supplied.')
+              if (value.lane == CardReviewLane.identity)
+                _identityComparison(value)
               else
-                for (final entry in value.proposedFields.entries)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: BrandSpacing.sm),
-                    child: Text(
-                      '${entry.key.replaceAll('_', ' ')}: ${entry.value}',
-                    ),
-                  ),
+                _benefitComparison(value),
               if (value.warningCodes.isNotEmpty) ...[
                 const SizedBox(height: BrandSpacing.md),
                 Text('Checks: ${value.warningCodes.join(', ')}'),
@@ -582,47 +713,231 @@ class _ReviewDetail extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       if (evidence.excerpt case final excerpt?) Text(excerpt),
-                      if (evidence.officialUrl case final url?) ...[
+                      if ((evidence.officialUrl ?? evidence.sourceUrl)
+                          case final url?) ...[
                         const SizedBox(height: BrandSpacing.sm),
-                        SelectableText(url),
+                        TextButton.icon(
+                          onPressed: () => widget.onOpenUrl(Uri.parse(url)),
+                          icon: const Icon(Icons.open_in_new, size: 18),
+                          label: Text(url),
+                        ),
                       ],
+                      if (evidence.retrievedAt case final retrieved?)
+                        Text('Retrieved ${_shortUtc(retrieved)}'),
                     ],
                   ),
                 ),
               const SizedBox(height: BrandSpacing.lg),
-              Wrap(
-                spacing: BrandSpacing.sm,
-                runSpacing: BrandSpacing.sm,
-                children: [
-                  for (final operation in operations)
-                    SizedBox(
-                      height: 48,
-                      child: operation == CardReviewOperation.approve
-                          ? FilledButton(
-                              onPressed: submitting
-                                  ? null
-                                  : () => onOperation(operation),
-                              child: Text(_operationLabel(operation)),
-                            )
-                          : OutlinedButton(
-                              onPressed: submitting
-                                  ? null
-                                  : () => onOperation(operation),
-                              child: Text(_operationLabel(operation)),
-                            ),
-                    ),
-                ],
-              ),
+              _actions(value),
             ],
           ),
         ),
-        if (submitting)
+        if (widget.submitting)
           const Positioned.fill(
             child: IgnorePointer(
               child: Center(child: CircularProgressIndicator()),
             ),
           ),
       ],
+    );
+  }
+
+  Widget _identityComparison(CardReviewItem item) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const Text(
+        'Current vs proposed',
+        style: TextStyle(fontWeight: FontWeight.w700),
+      ),
+      const SizedBox(height: BrandSpacing.sm),
+      if (item.identityCandidates.isEmpty)
+        const Text('No current catalog match. This will create a new identity.')
+      else
+        for (final candidate in item.identityCandidates)
+          Text(
+            'Current: ${candidate.bank ?? candidate.issuer ?? 'Unknown issuer'} · ${candidate.cardName ?? candidate.id}',
+          ),
+      const SizedBox(height: BrandSpacing.md),
+      for (final entry in _identityControllers.entries)
+        Padding(
+          padding: const EdgeInsets.only(bottom: BrandSpacing.sm),
+          child: TextField(
+            controller: entry.value,
+            enabled: !widget.submitting && item.status == 'pending',
+            decoration: InputDecoration(
+              labelText: 'Proposed ${entry.key.replaceAll('_', ' ')}',
+            ),
+          ),
+        ),
+    ],
+  );
+
+  Widget _benefitComparison(CardReviewItem item) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const Text(
+        'Benefit decisions',
+        style: TextStyle(fontWeight: FontWeight.w700),
+      ),
+      if (item.retrievedAt case final retrieved?)
+        Text('Extraction retrieved ${_shortUtc(retrieved)}'),
+      const SizedBox(height: BrandSpacing.sm),
+      if (item.benefitProposals.isEmpty)
+        const Text('No complete staged benefit proposal is available.')
+      else
+        for (final proposal in item.benefitProposals)
+          BrandSurface(
+            padding: const EdgeInsets.all(BrandSpacing.md),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  proposal.title,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                Text(
+                  'Current: ${proposal.current.isEmpty ? 'None' : proposal.current}',
+                ),
+                Text(
+                  'Proposed: ${proposal.proposed.isEmpty ? 'None' : proposal.proposed}',
+                ),
+                DropdownButton<String>(
+                  value: _decisions[proposal.key],
+                  onChanged: widget.submitting
+                      ? null
+                      : (value) =>
+                            setState(() => _decisions[proposal.key] = value!),
+                  items: [
+                    for (final action in _allowedDecisionActions(proposal))
+                      DropdownMenuItem(
+                        value: action,
+                        child: Text(switch (action) {
+                          'approve' => 'Approve proposal',
+                          'edit' => 'Edit proposal',
+                          'reject' => 'Reject proposal',
+                          _ => 'Keep existing',
+                        }),
+                      ),
+                  ],
+                ),
+                if (_decisions[proposal.key] == 'edit')
+                  TextField(
+                    controller: _benefitTitleControllers[proposal.key],
+                    decoration: const InputDecoration(
+                      labelText: 'Edited benefit title',
+                    ),
+                  ),
+                if (_decisions[proposal.key] == 'reject')
+                  TextField(
+                    controller: _benefitReasonControllers[proposal.key],
+                    decoration: const InputDecoration(
+                      labelText: 'Benefit rejection reason',
+                    ),
+                  ),
+              ],
+            ),
+          ),
+      if (item.benefitConflictCodes.isNotEmpty) ...[
+        const SizedBox(height: BrandSpacing.sm),
+        Text(
+          'Unresolved conflicts: ${item.benefitConflictCodes.join(', ')}. Refresh or quarantine this extraction before deciding.',
+        ),
+      ],
+    ],
+  );
+
+  List<String> _allowedDecisionActions(BenefitReviewProposal proposal) {
+    if (!proposal.canApprove) {
+      return proposal.current.isEmpty
+          ? const ['reject']
+          : const ['reject', 'keep_existing'];
+    }
+    return switch (proposal.kind) {
+      BenefitProposalKind.addition => const ['approve', 'edit', 'reject'],
+      BenefitProposalKind.modification => const [
+        'approve',
+        'edit',
+        'reject',
+        'keep_existing',
+      ],
+      BenefitProposalKind.removal => const ['reject', 'keep_existing'],
+      BenefitProposalKind.unchanged => const ['keep_existing'],
+    };
+  }
+
+  Widget _actions(CardReviewItem item) {
+    final controls = <Widget>[];
+    void add(
+      String label,
+      CardReviewOperation operation, {
+      Map<String, dynamic> payload = const {},
+    }) {
+      controls.add(
+        SizedBox(
+          height: 48,
+          child: operation == CardReviewOperation.approve
+              ? FilledButton(
+                  onPressed: widget.submitting
+                      ? null
+                      : () => widget.onOperation(operation, payload: payload),
+                  child: Text(label),
+                )
+              : OutlinedButton(
+                  onPressed: widget.submitting
+                      ? null
+                      : () => widget.onOperation(operation, payload: payload),
+                  child: Text(label),
+                ),
+        ),
+      );
+    }
+
+    if (item.lane == CardReviewLane.identity && item.status == 'pending') {
+      add('Approve', CardReviewOperation.approve);
+      controls.add(
+        SizedBox(
+          height: 48,
+          child: OutlinedButton(
+            onPressed: widget.submitting
+                ? null
+                : () => widget.onOperation(
+                    CardReviewOperation.editApprove,
+                    payload: _editedIdentityPayload(item),
+                  ),
+            child: const Text('Edit & approve'),
+          ),
+        ),
+      );
+      add('Merge', CardReviewOperation.merge);
+      add('Reject', CardReviewOperation.reject);
+    } else if (item.lane == CardReviewLane.benefit) {
+      if ({'staged', 'review_required'}.contains(item.status) &&
+          item.stagingId != null &&
+          item.benefitProposals.isNotEmpty &&
+          item.benefitConflictCodes.isEmpty) {
+        controls.add(
+          SizedBox(
+            height: 48,
+            child: FilledButton(
+              onPressed: widget.submitting ? null : () => _submitBenefit(item),
+              child: const Text('Submit benefit decisions'),
+            ),
+          ),
+        );
+      } else if ({'failed', 'review_required'}.contains(item.status)) {
+        add('Retry', CardReviewOperation.retry);
+        add('Quarantine', CardReviewOperation.quarantine);
+      } else if (item.status == 'quarantined') {
+        add('Unquarantine', CardReviewOperation.unquarantine);
+      }
+    }
+    if (controls.isEmpty) {
+      return const Text('No actions are available for this state.');
+    }
+    return Wrap(
+      spacing: BrandSpacing.sm,
+      runSpacing: BrandSpacing.sm,
+      children: controls,
     );
   }
 }

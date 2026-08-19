@@ -50,6 +50,77 @@ final class CardEvidence {
   }
 }
 
+final class CardIdentityCandidate {
+  CardIdentityCandidate({
+    required this.id,
+    this.bank,
+    this.issuer,
+    this.cardName,
+    this.network,
+    this.confidence,
+  });
+
+  final String id;
+  final String? bank;
+  final String? issuer;
+  final String? cardName;
+  final String? network;
+  final double? confidence;
+
+  factory CardIdentityCandidate.fromJson(Map<String, dynamic> json) =>
+      CardIdentityCandidate(
+        id: _requiredString(json['id']),
+        bank: _optionalString(json['bank']),
+        issuer: _optionalString(json['issuer']),
+        cardName: _optionalString(json['card_name']),
+        network: _optionalString(json['network']),
+        confidence: _optionalNumber(json['confidence']),
+      );
+}
+
+enum BenefitProposalKind { addition, modification, removal, unchanged }
+
+final class BenefitReviewProposal {
+  BenefitReviewProposal({
+    required this.key,
+    required this.kind,
+    required Map<String, dynamic> current,
+    required Map<String, dynamic> proposed,
+  }) : current = _deepFreezeMap(current),
+       proposed = _deepFreezeMap(proposed);
+
+  final String key;
+  final BenefitProposalKind kind;
+  final Map<String, dynamic> current;
+  final Map<String, dynamic> proposed;
+
+  String get title =>
+      _optionalString(proposed['title']) ??
+      _optionalString(current['title']) ??
+      key;
+
+  bool get canApprove {
+    final category = proposed['category'] ?? proposed['benefit_category'];
+    return key.trim().length >= 3 &&
+        (proposed['title']?.toString().trim().length ?? 0) >= 2 &&
+        (category?.toString().trim().length ?? 0) >= 2;
+  }
+
+  Map<String, dynamic> decision(String action, {Map<String, dynamic>? edited}) {
+    final result = <String, dynamic>{
+      'action': action,
+      'change_type': kind.name,
+      'dedupe_key': key,
+    };
+    if (action == 'approve' && proposed.isNotEmpty) {
+      result['proposed'] = proposed;
+    }
+    if (action == 'reject' && current.isNotEmpty) result['benefit'] = current;
+    if (action == 'edit') result['edited_benefit'] = edited ?? proposed;
+    return result;
+  }
+}
+
 final class CardReviewItem {
   CardReviewItem({
     required this.id,
@@ -59,14 +130,21 @@ final class CardReviewItem {
     required List<CardEvidence> evidence,
     required List<String> warningCodes,
     required Map<String, dynamic> proposedFields,
+    List<CardIdentityCandidate> identityCandidates = const [],
+    List<BenefitReviewProposal> benefitProposals = const [],
+    List<String> benefitConflictCodes = const [],
     this.confidence,
     this.stagingId,
     this.parserVersion,
     this.bank,
     this.cardName,
+    this.retrievedAt,
   }) : evidence = List.unmodifiable(evidence),
        warningCodes = List.unmodifiable(warningCodes),
-       proposedFields = _deepFreezeMap(proposedFields);
+       proposedFields = _deepFreezeMap(proposedFields),
+       identityCandidates = List.unmodifiable(identityCandidates),
+       benefitProposals = List.unmodifiable(benefitProposals),
+       benefitConflictCodes = List.unmodifiable(benefitConflictCodes);
 
   final String id;
   final CardReviewLane lane;
@@ -75,11 +153,15 @@ final class CardReviewItem {
   final List<CardEvidence> evidence;
   final List<String> warningCodes;
   final Map<String, dynamic> proposedFields;
+  final List<CardIdentityCandidate> identityCandidates;
+  final List<BenefitReviewProposal> benefitProposals;
+  final List<String> benefitConflictCodes;
   final double? confidence;
   final String? stagingId;
   final String? parserVersion;
   final String? bank;
   final String? cardName;
+  final DateTime? retrievedAt;
 
   factory CardReviewItem.fromJson(
     CardReviewLane lane,
@@ -113,6 +195,35 @@ final class CardReviewItem {
             warnings,
           ).map(_map).map((item) => _requiredString(item['code'])).toList();
     final card = _nullableMap(json['card']);
+    final candidates = json['existing_candidates'];
+    if (candidates != null && candidates is! List) {
+      throw const FormatException('Invalid identity candidates');
+    }
+    final identityCandidates = candidates is List
+        ? candidates
+              .map((value) => CardIdentityCandidate.fromJson(_map(value)))
+              .toList()
+        : <CardIdentityCandidate>[];
+    final staging = lane == CardReviewLane.benefit
+        ? _nullableMap(json['staging'])
+        : null;
+    final extracted = _nullableMap(staging?['extracted_data']);
+    final diff = _nullableMap(extracted?['diff']);
+    final benefitProposals = diff == null
+        ? <BenefitReviewProposal>[]
+        : _parseBenefitProposals(diff);
+    if (benefitProposals.map((value) => value.key).toSet().length !=
+        benefitProposals.length) {
+      throw const FormatException('Duplicate benefit proposal key');
+    }
+    final conflicts = diff?['conflicts'];
+    final benefitConflictCodes = conflicts == null
+        ? <String>[]
+        : _list(conflicts)
+              .map(_map)
+              .map((value) => _optionalString(value['code']))
+              .whereType<String>()
+              .toList();
     final confidence = json['confidence'];
     if (confidence != null && confidence is! num) {
       throw const FormatException('Invalid confidence');
@@ -127,14 +238,85 @@ final class CardReviewItem {
       proposedFields: json['proposed_fields'] == null
           ? const {}
           : _map(json['proposed_fields']),
+      identityCandidates: identityCandidates,
+      benefitProposals: benefitProposals,
+      benefitConflictCodes: benefitConflictCodes,
       confidence: (confidence as num?)?.toDouble(),
       stagingId: _optionalString(json['staging_id']),
       parserVersion: _optionalString(json['parser_version']),
       bank: _optionalString(card?['bank']),
       cardName: _optionalString(card?['card_name']),
+      retrievedAt: _optionalDate(extracted?['retrieved_at']),
     );
   }
 }
+
+List<BenefitReviewProposal> _parseBenefitProposals(Map<String, dynamic> diff) {
+  final proposals = <BenefitReviewProposal>[];
+  void addSimple(String field, BenefitProposalKind kind) {
+    final values = diff[field];
+    if (values == null) return;
+    for (final value in _list(values)) {
+      final row = _map(value);
+      final benefit = kind == BenefitProposalKind.removal
+          ? _map(row['benefit'])
+          : row;
+      final key = _benefitKey(benefit);
+      if (key == null) continue;
+      proposals.add(
+        BenefitReviewProposal(
+          key: key,
+          kind: kind,
+          current: kind == BenefitProposalKind.removal ? benefit : const {},
+          proposed: kind == BenefitProposalKind.addition ? benefit : const {},
+        ),
+      );
+    }
+  }
+
+  addSimple('additions', BenefitProposalKind.addition);
+  final modifications = diff['modifications'];
+  if (modifications != null) {
+    for (final value in _list(modifications)) {
+      final row = _map(value);
+      final current = _map(row['current']);
+      final proposed = _map(row['proposed']);
+      final key = _benefitKey(proposed) ?? _benefitKey(current);
+      if (key == null) continue;
+      proposals.add(
+        BenefitReviewProposal(
+          key: key,
+          kind: BenefitProposalKind.modification,
+          current: current,
+          proposed: proposed,
+        ),
+      );
+    }
+  }
+  addSimple('possibleRemovals', BenefitProposalKind.removal);
+  final unchanged = diff['unchanged'];
+  if (unchanged != null) {
+    for (final value in _list(unchanged)) {
+      final row = _map(value);
+      final current = _map(row['current']);
+      final proposed = _map(row['proposed']);
+      final key = _benefitKey(proposed) ?? _benefitKey(current);
+      if (key == null) continue;
+      proposals.add(
+        BenefitReviewProposal(
+          key: key,
+          kind: BenefitProposalKind.unchanged,
+          current: current,
+          proposed: proposed,
+        ),
+      );
+    }
+  }
+  return proposals;
+}
+
+String? _benefitKey(Map<String, dynamic> benefit) =>
+    _optionalString(benefit['dedupeKey'] ?? benefit['dedupe_key']);
 
 final class CardReviewPage {
   CardReviewPage({
@@ -235,3 +417,11 @@ DateTime _requiredDate(Object? value) {
 
 DateTime? _optionalDate(Object? value) =>
     value == null ? null : _requiredDate(value);
+
+double? _optionalNumber(Object? value) {
+  if (value == null) return null;
+  if (value is! num || !value.isFinite) {
+    throw const FormatException('Expected finite number');
+  }
+  return value.toDouble();
+}

@@ -17,10 +17,16 @@ class AdminOperatorScreen extends ConsumerStatefulWidget {
     super.key,
     this.onAuthenticationRequired,
     this.onAccessDenied,
+    this.cardDataSource,
+    this.initialCardLane = CardReviewLane.identity,
+    this.initialCardTargetId,
   });
 
   final Future<void> Function()? onAuthenticationRequired;
   final VoidCallback? onAccessDenied;
+  final CardDataSource? cardDataSource;
+  final CardReviewLane initialCardLane;
+  final String? initialCardTargetId;
 
   @override
   ConsumerState<AdminOperatorScreen> createState() =>
@@ -28,11 +34,14 @@ class AdminOperatorScreen extends ConsumerStatefulWidget {
 }
 
 class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
-  var _section = AdminWorkspaceSection.inbox;
+  late AdminWorkspaceSection _section;
 
   @override
   void initState() {
     super.initState();
+    _section = widget.initialCardTargetId == null
+        ? AdminWorkspaceSection.inbox
+        : AdminWorkspaceSection.cardData;
     ref.listenManual(adminAccessProvider, (_, next) {
       final error = next.error;
       if (error is AdminAuthenticationRequired) {
@@ -100,23 +109,22 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
   }
 
   Widget _buildCardData() {
-    try {
-      return KeyedSubtree(
-        key: const Key('admin-section-content'),
-        child: CardDataSection(
-          repository: _RepositoryCardDataSource(
-            ref.watch(adminOperatorRepositoryProvider),
-          ),
-          onAuthenticationRequired:
-              widget.onAuthenticationRequired ??
-              () => ref.read(authNotifierProvider.notifier).signOut(),
-          onAccessDenied: widget.onAccessDenied ?? () => context.go('/app'),
-        ),
-      );
-    } on AssertionError {
-      // Supabase is intentionally absent in lightweight shell widget tests.
-      return const AdminSectionPlaceholder(title: 'Card Data');
-    }
+    return KeyedSubtree(
+      key: const Key('admin-section-content'),
+      child: CardDataSection(
+        repository:
+            widget.cardDataSource ??
+            _RepositoryCardDataSource(
+              ref.watch(adminOperatorRepositoryProvider),
+            ),
+        initialLane: widget.initialCardLane,
+        initialTargetId: widget.initialCardTargetId,
+        onAuthenticationRequired:
+            widget.onAuthenticationRequired ??
+            () => ref.read(authNotifierProvider.notifier).signOut(),
+        onAccessDenied: widget.onAccessDenied ?? () => context.go('/app'),
+      ),
+    );
   }
 }
 
@@ -132,6 +140,7 @@ final class _RepositoryCardDataSource implements CardDataSource {
     page: query.page,
     limit: query.limit,
     status: query.status,
+    targetId: query.targetId,
   );
 
   @override

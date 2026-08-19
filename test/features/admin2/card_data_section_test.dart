@@ -13,6 +13,7 @@ final class _FakeSource implements CardDataSource {
 
   final List<CardReviewPage> pages;
   final actions = <CardReviewAction>[];
+  final queries = <CardReviewQuery>[];
   Completer<void>? actionCompletion;
   Object? listError;
   Object? actionError;
@@ -20,6 +21,7 @@ final class _FakeSource implements CardDataSource {
 
   @override
   Future<CardReviewPage> list(CardReviewQuery query) async {
+    queries.add(query);
     calls++;
     if (listError case final error?) throw error;
     return pages[(calls - 1).clamp(0, pages.length - 1)];
@@ -84,6 +86,8 @@ Future<void> _pump(
   Size size = const Size(1280, 900),
   double textScale = 1,
   String? initialTargetId,
+  CardReviewLane initialLane = CardReviewLane.identity,
+  Future<bool> Function(Uri)? openExternalUrl,
   Future<void> Function()? onAuthenticationRequired,
   VoidCallback? onAccessDenied,
 }) async {
@@ -99,6 +103,8 @@ Future<void> _pump(
             body: CardDataSection(
               repository: source,
               initialTargetId: initialTargetId,
+              initialLane: initialLane,
+              openExternalUrl: openExternalUrl,
               onAuthenticationRequired: onAuthenticationRequired,
               onAccessDenied: onAccessDenied,
             ),
@@ -121,8 +127,169 @@ void main() {
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
     await tester.pumpAndSettle();
     expect(find.text(second.id), findsOneWidget);
+    expect(source.queries.single.targetId, second.id);
     expect(find.byKey(const Key('card-data-wide-layout')), findsOneWidget);
     expect(find.text('Refreshed 19 Aug 2026, 09:05 UTC'), findsOneWidget);
+  });
+
+  testWidgets('missing exact target never falls back to an unrelated row', (
+    tester,
+  ) async {
+    final source = _FakeSource([_page(items: const [])]);
+    await _pump(
+      tester,
+      source,
+      initialTargetId: '33333333-3333-4333-8333-333333333333',
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.text('This review is no longer available in the latest state.'),
+      findsOneWidget,
+    );
+    expect(find.text('Compass Rewards'), findsNothing);
+  });
+
+  testWidgets('terminal and active statuses expose only eligible actions', (
+    tester,
+  ) async {
+    final completed = _item(status: 'approved');
+    final source = _FakeSource([
+      _page(items: [completed]),
+    ]);
+    await _pump(tester, source);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('No actions are available for this state.'),
+      findsOneWidget,
+    );
+    expect(find.text('Approve'), findsNothing);
+  });
+
+  testWidgets('failed and quarantined benefits expose only recovery actions', (
+    tester,
+  ) async {
+    final failed = _item(lane: CardReviewLane.benefit, status: 'failed');
+    final quarantined = _item(
+      id: '33333333-3333-4333-8333-333333333333',
+      lane: CardReviewLane.benefit,
+      status: 'quarantined',
+    );
+    final source = _FakeSource([
+      _page(lane: CardReviewLane.benefit, items: [failed, quarantined]),
+    ]);
+    await _pump(tester, source, initialLane: CardReviewLane.benefit);
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(ListView).last, const Offset(0, -500));
+    await tester.pumpAndSettle();
+    expect(find.text('Retry'), findsOneWidget);
+    expect(find.text('Quarantine'), findsOneWidget);
+    expect(find.text('Approve'), findsNothing);
+    await tester.tap(find.widgetWithText(ListTile, 'Compass Rewards').last);
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(ListView).last, const Offset(0, -500));
+    await tester.pumpAndSettle();
+    expect(find.text('Unquarantine'), findsOneWidget);
+    expect(find.text('Retry'), findsNothing);
+  });
+
+  testWidgets('identity edit approval submits all visible edited fields', (
+    tester,
+  ) async {
+    final source = _FakeSource([_page(), _page()]);
+    await _pump(tester, source);
+    await tester.pumpAndSettle();
+    final cardName = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField &&
+          widget.decoration?.labelText == 'Proposed card name',
+    );
+    await tester.enterText(cardName, 'Compass Rewards Plus');
+    await tester.drag(find.byType(ListView).last, const Offset(0, -500));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Edit & approve'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Confirm edits'));
+    await tester.pumpAndSettle();
+    expect(source.actions.single.operation, CardReviewOperation.editApprove);
+    expect(
+      (source.actions.single.payload['proposed_fields'] as Map)['card_name'],
+      'Compass Rewards Plus',
+    );
+  });
+
+  testWidgets('benefit decisions submit one complete decision per proposal', (
+    tester,
+  ) async {
+    final benefit = CardReviewItem(
+      id: '11111111-1111-4111-8111-111111111111',
+      lane: CardReviewLane.benefit,
+      status: 'staged',
+      updatedAt: DateTime.utc(2026, 8, 19, 9),
+      evidence: const [],
+      warningCodes: const [],
+      proposedFields: const {},
+      stagingId: '22222222-2222-4222-8222-222222222222',
+      benefitProposals: [
+        BenefitReviewProposal(
+          key: 'lounge',
+          kind: BenefitProposalKind.addition,
+          current: const {},
+          proposed: const {
+            'dedupeKey': 'lounge',
+            'title': 'Lounge access',
+            'category': 'travel',
+          },
+        ),
+        BenefitReviewProposal(
+          key: 'dining',
+          kind: BenefitProposalKind.modification,
+          current: const {'dedupeKey': 'dining', 'rate': 5},
+          proposed: const {
+            'dedupeKey': 'dining',
+            'title': 'Dining rewards',
+            'category': 'dining',
+            'rate': 10,
+          },
+        ),
+      ],
+    );
+    final source = _FakeSource([
+      _page(lane: CardReviewLane.benefit, items: [benefit]),
+      _page(lane: CardReviewLane.benefit, items: [benefit]),
+    ]);
+    await _pump(tester, source, initialLane: CardReviewLane.benefit);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Submit benefit decisions'));
+    await tester.tap(find.text('Submit benefit decisions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Confirm approval'));
+    await tester.pumpAndSettle();
+    final decisions = source.actions.single.payload['decisions'] as List;
+    expect(decisions, hasLength(2));
+    expect(
+      decisions.every((value) => (value as Map).containsKey('dedupe_key')),
+      isTrue,
+    );
+  });
+
+  testWidgets('safe evidence URL is actionable and shows retrieval freshness', (
+    tester,
+  ) async {
+    Uri? opened;
+    final source = _FakeSource([_page()]);
+    await _pump(
+      tester,
+      source,
+      openExternalUrl: (url) async {
+        opened = url;
+        return true;
+      },
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('https://issuer.example/card'));
+    await tester.tap(find.text('https://issuer.example/card'));
+    expect(opened, Uri.parse('https://issuer.example/card'));
+    expect(find.textContaining('Retrieved 19 Aug 08:30 UTC'), findsOneWidget);
   });
 
   testWidgets('switches lanes and paginates through typed queries', (
@@ -149,6 +316,8 @@ void main() {
     final source = _FakeSource([_page()])..actionCompletion = Completer<void>();
     await _pump(tester, source);
     await tester.pumpAndSettle();
+    await tester.drag(find.byType(ListView).last, const Offset(0, -500));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Reject'));
     await tester.pumpAndSettle();
     expect(find.text('Reason'), findsOneWidget);
@@ -156,7 +325,10 @@ void main() {
     await tester.pump();
     expect(find.text('Add a reason to continue.'), findsOneWidget);
     await tester.enterText(
-      find.byType(TextField),
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField && widget.decoration?.labelText == 'Reason',
+      ),
       'Official page is not a card product',
     );
     await tester.tap(find.text('Confirm rejection'));
@@ -176,6 +348,8 @@ void main() {
       ..actionError = AdminStateConflict();
     await _pump(tester, source);
     await tester.pumpAndSettle();
+    await tester.drag(find.byType(ListView).last, const Offset(0, -500));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Approve'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Confirm approval'));
@@ -185,6 +359,32 @@ void main() {
       findsOneWidget,
     );
     expect(source.calls, 2);
+  });
+
+  testWidgets('conflict disappearance retains target context without fallback', (
+    tester,
+  ) async {
+    final target = _item();
+    final source = _FakeSource([
+      _page(items: [target]),
+      _page(items: const []),
+    ])..actionError = AdminStateConflict();
+    await _pump(tester, source, initialTargetId: target.id);
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(ListView).last, const Offset(0, -500));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Approve'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Confirm approval'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text(
+        'This review changed and is no longer available. The prior review context was not replaced.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text(target.id), findsOneWidget);
+    expect(source.queries.last.targetId, target.id);
   });
 
   testWidgets('failed refresh retains stale queue and offers retry', (
