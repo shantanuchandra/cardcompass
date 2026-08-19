@@ -158,6 +158,38 @@ drop function if exists public.complete_my_admin_operation_request(
   uuid, boolean, text
 );
 
+create or replace function public.renew_my_admin_operation_request(
+  _request_id uuid,
+  _claim_token uuid
+) returns timestamptz
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  current_user_id uuid := (select auth.uid());
+  claimed public.admin_customer_operation_requests%rowtype;
+  renewed_until timestamptz;
+begin
+  if current_user_id is null or not public.current_user_is_active()
+     or _request_id is null or _claim_token is null then
+    raise exception 'access_denied';
+  end if;
+  select request.* into claimed
+  from public.admin_customer_operation_requests as request
+  where request.id = _request_id and request.user_id = current_user_id
+    and request.operation_type = 'gmail_sync'
+    and request.status = 'claimed' and request.claim_token = _claim_token
+  for update;
+  if not found then raise exception 'state_conflict'; end if;
+  update public.admin_customer_operation_requests
+  set claim_expires_at = now() + interval '10 minutes', updated_at = now()
+  where id = claimed.id and status = 'claimed' and claim_token = _claim_token
+  returning claim_expires_at into renewed_until;
+  return renewed_until;
+end;
+$$;
+
 create or replace function public.complete_my_admin_operation_request(
   _request_id uuid,
   _claim_token uuid,
@@ -346,11 +378,14 @@ revoke all on function public.claim_my_admin_operation_request(text)
   from public, anon, service_role;
 revoke all on function public.complete_my_admin_operation_request(uuid, uuid, boolean, text)
   from public, anon, service_role;
+revoke all on function public.renew_my_admin_operation_request(uuid, uuid)
+  from public, anon, service_role;
 revoke all on function public.admin_customer_action(
   uuid, uuid, text, uuid, jsonb, text, timestamptz
 ) from public, anon, authenticated;
 grant execute on function public.claim_my_admin_operation_request(text) to authenticated;
 grant execute on function public.complete_my_admin_operation_request(uuid, uuid, boolean, text) to authenticated;
+grant execute on function public.renew_my_admin_operation_request(uuid, uuid) to authenticated;
 grant execute on function public.admin_customer_action(
   uuid, uuid, text, uuid, jsonb, text, timestamptz
 ) to service_role;

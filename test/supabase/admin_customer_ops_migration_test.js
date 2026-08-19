@@ -70,6 +70,7 @@ test('customer operation tables are private and expose only narrow role-specific
   assert.doesNotMatch(sql, /account_deletion_requests[\s\S]{0,300}on delete cascade/);
   assert.match(sql, /grant execute on function public\.claim_my_admin_operation_request\(text\) to authenticated/);
   assert.match(sql, /grant execute on function public\.complete_my_admin_operation_request\(uuid, uuid, boolean, text\) to authenticated/);
+  assert.match(sql, /grant execute on function public\.renew_my_admin_operation_request\(uuid, uuid\) to authenticated/);
   assert.match(sql, /grant execute on function public\.admin_customer_action\([\s\S]*?timestamptz\s*\) to service_role/);
 });
 
@@ -77,6 +78,7 @@ test('user operation RPCs derive and enforce the current active owner', async ()
   const sql = await migrationSql();
   const claim = functionBody(sql, 'claim_my_admin_operation_request');
   const complete = functionBody(sql, 'complete_my_admin_operation_request');
+  const renew = functionBody(sql, 'renew_my_admin_operation_request');
   assert.match(claim, /auth\.uid\(\)/);
   assert.match(claim, /public\.current_user_is_active\(\)/);
   assert.match(claim, /status = 'queued'/);
@@ -90,6 +92,11 @@ test('user operation RPCs derive and enforce the current active owner', async ()
   assert.match(complete, /status = 'claimed'/);
   assert.match(complete, /claim_token = _claim_token/);
   assert.match(complete, /claim_token = null[\s\S]*claim_expires_at = null/);
+  assert.match(renew, /auth\.uid\(\)/);
+  assert.match(renew, /for update/);
+  assert.match(renew, /status = 'claimed'/);
+  assert.match(renew, /claim_token = _claim_token/);
+  assert.match(renew, /claim_expires_at = now\(\) \+ interval '10 minutes'/);
   assert.match(complete, /reauthentication_required[\s\S]*gmail_unavailable[\s\S]*processing_failed/);
 });
 
@@ -254,6 +261,28 @@ test('inactive profile immediately blocks an unchanged authenticated database se
       select claim_token from public.admin_customer_operation_requests
       where id = '${operationId}';
     `);
+    const renewedUntil = psql(disposableConnection, `
+      set role authenticated;
+      select set_config('request.jwt.claim.sub', '${userId}', false);
+      select public.renew_my_admin_operation_request(
+        '${operationId}', '${firstClaimToken}'
+      ) > now() + interval '9 minutes';
+      reset role;
+    `);
+    assert.ok(renewedUntil.includes('t'));
+    psql(disposableConnection, claimSql);
+    assert.equal(psql(disposableConnection, `
+      select claim_token from public.admin_customer_operation_requests
+      where id = '${operationId}';
+    `), firstClaimToken, 'an actively renewed claim cannot be reclaimed');
+    assert.throws(() => psql(disposableConnection, `
+      set role authenticated;
+      select set_config('request.jwt.claim.sub', '${newUserId}', false);
+      select public.renew_my_admin_operation_request(
+        '${operationId}', '${firstClaimToken}'
+      );
+      reset role;
+    `), /state_conflict/);
     assert.throws(() => psql(disposableConnection, `
       set role authenticated;
       select set_config('request.jwt.claim.sub', '${newUserId}', false);
@@ -276,6 +305,14 @@ test('inactive profile immediately blocks an unchanged authenticated database se
     assert.throws(() => psql(disposableConnection, `
       set role authenticated;
       select set_config('request.jwt.claim.sub', '${userId}', false);
+      select public.renew_my_admin_operation_request(
+        '${operationId}', '${firstClaimToken}'
+      );
+      reset role;
+    `), /state_conflict/);
+    assert.throws(() => psql(disposableConnection, `
+      set role authenticated;
+      select set_config('request.jwt.claim.sub', '${userId}', false);
       select public.complete_my_admin_operation_request(
         '${operationId}', '${firstClaimToken}', false, 'gmail_unavailable'
       );
@@ -284,6 +321,9 @@ test('inactive profile immediately blocks an unchanged authenticated database se
     psql(disposableConnection, `
       set role authenticated;
       select set_config('request.jwt.claim.sub', '${userId}', false);
+      select public.renew_my_admin_operation_request(
+        '${operationId}', '${currentClaimToken}'
+      );
       select public.complete_my_admin_operation_request(
         '${operationId}', '${currentClaimToken}', false, 'gmail_unavailable'
       );

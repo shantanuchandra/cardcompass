@@ -43,3 +43,12 @@
 - Completion remains owner-derived through `auth.uid()` and requires the current token. Cross-user, stale-token, and non-claimed completions fail closed; successful completion clears lease state.
 - The client carries only the opaque request/token pair. It never completes after identity changes and an ownership-aware fake proves the original user can re-enter and reclaim after expiry.
 - Live disposable PostgreSQL validates concurrency, cross-user denial, expiry, rotation, stale denial, and current completion without contacting any remote Supabase project.
+
+## Review fix: live-execution lease fencing
+
+- The authenticated renew RPC is owner- and token-bound, row-locks the current claimed Gmail request, and extends only its short lease. It exposes no provider credential or customer content.
+- Flutter schedules a two-minute heartbeat only for active claimed work, cancels it in `finally`, dispose, and session changes, and coalesces duplicate dashboard initialization around the same execution.
+- Gmail execution checks the lease before discovery, persistence, processing, after processing, and again before completion. Renewal loss prevents later phases and suppresses completion rather than falsely reporting success.
+- Fake-clock lifecycle coverage runs beyond the ten-minute lease with one sync, exercises renewal loss and session replacement, and proves an empty dashboard creates no polling. The disposable local PostgreSQL suite proves renewal/reclaim and stale-token fencing end to end.
+
+Residual boundary: persistence and statement processing are existing indivisible phases. A lease lost during one phase is detected immediately afterward; no subsequent phase or success completion proceeds. Making every individual row write cancellable would require a separate transaction-bound service refactor.

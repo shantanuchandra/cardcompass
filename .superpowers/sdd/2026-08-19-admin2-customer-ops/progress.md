@@ -63,3 +63,14 @@ Ruling: Use a ten-minute database lease plus a rotated UUID claim token as the a
 Ruling: Allow the owning attempt to complete after nominal lease expiry only while its token remains current; reclaim atomically rotates the token and makes every older completion fail `state_conflict`. Cost if wrong: a just-finished long sync can commit without racing the clock, but the first reclaim decisively supersedes it.
 
 Ruling: If auth identity changes while claim is awaiting, suppress execution and do not attempt completion as the new user; leave the owner-scoped lease to expire. Cost if wrong: the original owner may wait one lease interval, but another identity cannot alter or execute that request.
+
+## Tasks 1–3 lease-fencing fix
+
+- Added the narrow authenticated `renew_my_admin_operation_request` RPC. It derives the active owner from `auth.uid()`, locks the claimed Gmail row, requires its current opaque claim token, and extends the ten-minute lease.
+- A queued recovery starts a two-minute heartbeat only after a successful claim. It renews at each Gmail discovery/persistence/processing boundary and once more immediately before success completion.
+- Renewal/token loss fences the next processing boundary, suppresses success and all stale completion writes, and cannot escape as an unhandled timer error. Dispose or auth-session change cancels the heartbeat immediately.
+- Deterministic Flutter coverage simulates more than one lease duration, duplicate dashboard initialization, renewal loss, session replacement, and idle dashboards. Disposable PostgreSQL proves active renewal blocks reclaim and stale/cross-user tokens cannot renew or complete.
+
+Ruling: Renew every two minutes against a ten-minute lease and at meaningful write-phase boundaries, then require a final renewal before reporting success. Cost if wrong: a transient renewal failure abandons the current attempt conservatively; the same owner can reclaim after expiry instead of risking two live writers.
+
+Ruling: Do not poll when there is no claimed request, and swallow only the heartbeat callback's expected lease-loss signal while retaining the shared fence. Cost if wrong: recovery has no background database cost while idle, and a lost lease may finish its current indivisible phase but cannot enter the next phase or report success.

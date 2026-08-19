@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cardcompass/features/dashboard/providers/gmail_sync_provider.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -15,6 +17,8 @@ class _Requests implements AdminOperationRequestRepository {
   int claims = 0;
   final completions =
       <({String id, String token, bool succeeded, String? category})>[];
+  final renewals = <({String id, String token})>[];
+  Object? renewError;
   @override
   Future<AdminOperationRequest?> claimNext() async {
     claims++;
@@ -36,6 +40,15 @@ class _Requests implements AdminOperationRequestRepository {
       category: safeFailureCategory,
     ));
   }
+
+  @override
+  Future<void> renew({
+    required String requestId,
+    required String claimToken,
+  }) async {
+    renewals.add((id: requestId, token: claimToken));
+    if (renewError case final error?) throw error;
+  }
 }
 
 class _LeasedRequests implements AdminOperationRequestRepository {
@@ -50,6 +63,7 @@ class _LeasedRequests implements AdminOperationRequestRepository {
   var claims = 0;
   var _attempt = 0;
   String? currentToken;
+  var renewals = 0;
 
   @override
   Future<AdminOperationRequest?> claimNext() async {
@@ -87,6 +101,57 @@ class _LeasedRequests implements AdminOperationRequestRepository {
   }
 
   void expire() => expired = true;
+
+  @override
+  Future<void> renew({
+    required String requestId,
+    required String claimToken,
+  }) async {
+    if (currentUserId() != 'user-a' ||
+        requestId != 'leased-request' ||
+        !claimed ||
+        expired ||
+        claimToken != currentToken) {
+      throw StateError('state_conflict');
+    }
+    renewals++;
+    expired = false;
+  }
+}
+
+class _FakeHeartbeatHandle implements LeaseHeartbeatHandle {
+  _FakeHeartbeatHandle(this.onCancel);
+  final void Function() onCancel;
+  var active = true;
+
+  @override
+  void cancel() {
+    if (!active) return;
+    active = false;
+    onCancel();
+  }
+}
+
+class _FakeHeartbeatScheduler implements LeaseHeartbeatScheduler {
+  Future<void> Function()? callback;
+  _FakeHeartbeatHandle? handle;
+  var schedules = 0;
+  var cancellations = 0;
+
+  @override
+  LeaseHeartbeatHandle periodic(
+    Duration interval,
+    Future<void> Function() callback,
+  ) {
+    expect(interval, const Duration(minutes: 2));
+    schedules++;
+    this.callback = callback;
+    return handle = _FakeHeartbeatHandle(() => cancellations++);
+  }
+
+  Future<void> tick() async {
+    if (handle?.active ?? false) await callback?.call();
+  }
 }
 
 const _result = GmailSyncResult(
@@ -118,7 +183,11 @@ void main() {
         overrides: [
           adminOperationRequestRepositoryProvider.overrideWithValue(requests),
           gmailSessionSnapshotProvider.overrideWithValue(_session),
-          gmailSyncExecutorProvider.overrideWithValue((session, _) async {
+          gmailSyncExecutorProvider.overrideWithValue((
+            session,
+            _,
+            guard,
+          ) async {
             calls.add(session);
             return _result;
           }),
@@ -162,7 +231,7 @@ void main() {
               providerToken: null,
             ),
           ),
-          gmailSyncExecutorProvider.overrideWithValue((_, _) async {
+          gmailSyncExecutorProvider.overrideWithValue((_, _, guard) async {
             executions++;
             return _result;
           }),
@@ -207,7 +276,7 @@ void main() {
           adminOperationRequestRepositoryProvider.overrideWithValue(requests),
           gmailSessionSnapshotProvider.overrideWithValue(_session),
           gmailSyncExecutorProvider.overrideWithValue(
-            (_, _) async => throw const GmailUnavailableException(),
+            (_, _, guard) async => throw const GmailUnavailableException(),
           ),
         ],
       );
@@ -239,7 +308,7 @@ void main() {
           adminOperationRequestRepositoryProvider.overrideWithValue(requests),
           gmailSessionSnapshotProvider.overrideWithValue(_session),
           gmailSyncExecutorProvider.overrideWithValue(
-            (_, _) async => throw StateError('raw provider detail'),
+            (_, _, guard) async => throw StateError('raw provider detail'),
           ),
         ],
       );
@@ -266,7 +335,7 @@ void main() {
         overrides: [
           adminOperationRequestRepositoryProvider.overrideWithValue(requests),
           gmailSessionSnapshotProvider.overrideWithValue(_session),
-          gmailSyncExecutorProvider.overrideWithValue((_, _) async {
+          gmailSyncExecutorProvider.overrideWithValue((_, _, guard) async {
             executions++;
             return _result;
           }),
@@ -304,7 +373,7 @@ void main() {
         overrides: [
           adminOperationRequestRepositoryProvider.overrideWithValue(requests),
           gmailSessionSnapshotProvider.overrideWith((_) => snapshot),
-          gmailSyncExecutorProvider.overrideWithValue((value, _) async {
+          gmailSyncExecutorProvider.overrideWithValue((value, _, guard) async {
             calls.add(value);
             return _result;
           }),
@@ -343,7 +412,9 @@ void main() {
         overrides: [
           adminOperationRequestRepositoryProvider.overrideWithValue(requests),
           gmailSessionSnapshotProvider.overrideWith((_) => snapshot),
-          gmailSyncExecutorProvider.overrideWithValue((_, _) async => _result),
+          gmailSyncExecutorProvider.overrideWithValue(
+            (_, _, guard) async => _result,
+          ),
         ],
       );
       addTearDown(container.dispose);
@@ -400,7 +471,7 @@ void main() {
         overrides: [
           adminOperationRequestRepositoryProvider.overrideWithValue(requests),
           gmailSessionSnapshotProvider.overrideWith((_) => snapshot),
-          gmailSyncExecutorProvider.overrideWithValue((_, _) async {
+          gmailSyncExecutorProvider.overrideWithValue((_, _, guard) async {
             executions++;
             return _result;
           }),
@@ -439,7 +510,7 @@ void main() {
       overrides: [
         adminOperationRequestRepositoryProvider.overrideWithValue(requests),
         gmailSessionSnapshotProvider.overrideWith((_) => snapshot),
-        gmailSyncExecutorProvider.overrideWithValue((session, _) async {
+        gmailSyncExecutorProvider.overrideWithValue((session, _, guard) async {
           executions.add(session);
           return _result;
         }),
@@ -466,4 +537,160 @@ void main() {
     expect(requests.completed, isTrue);
     expect(requests.currentToken, isNull);
   });
+
+  test('an empty dashboard entry starts no heartbeat polling', () async {
+    final requests = _Requests();
+    final scheduler = _FakeHeartbeatScheduler();
+    final container = ProviderContainer(
+      overrides: [
+        adminOperationRequestRepositoryProvider.overrideWithValue(requests),
+        gmailSessionSnapshotProvider.overrideWithValue(_session),
+        leaseHeartbeatSchedulerProvider.overrideWithValue(scheduler),
+        gmailSyncExecutorProvider.overrideWithValue(
+          (_, _, guard) async => _result,
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await container.read(gmailSyncProvider.notifier).initializeQueuedRecovery();
+
+    expect(requests.claims, 1);
+    expect(scheduler.schedules, 0);
+  });
+
+  test(
+    'heartbeat keeps one long recovery fenced across duplicate initialization',
+    () async {
+      final requests = _Requests(
+        const AdminOperationRequest(
+          id: 'long-running',
+          operationType: 'gmail_sync',
+          claimToken: 'long-token',
+        ),
+      );
+      final scheduler = _FakeHeartbeatScheduler();
+      final started = Completer<void>();
+      final release = Completer<void>();
+      var executions = 0;
+      final container = ProviderContainer(
+        overrides: [
+          adminOperationRequestRepositoryProvider.overrideWithValue(requests),
+          gmailSessionSnapshotProvider.overrideWithValue(_session),
+          leaseHeartbeatSchedulerProvider.overrideWithValue(scheduler),
+          gmailSyncExecutorProvider.overrideWithValue((_, _, guard) async {
+            executions++;
+            started.complete();
+            await release.future;
+            await guard();
+            return _result;
+          }),
+        ],
+      );
+      addTearDown(container.dispose);
+      final notifier = container.read(gmailSyncProvider.notifier);
+      final first = notifier.initializeQueuedRecovery();
+      await started.future;
+
+      for (var elapsedMinutes = 2; elapsedMinutes <= 12; elapsedMinutes += 2) {
+        await scheduler.tick();
+      }
+      final duplicate = notifier.initializeQueuedRecovery();
+      expect(identical(first, duplicate), isTrue);
+      expect(executions, 1);
+      expect(requests.claims, 1);
+      expect(requests.renewals.length, greaterThanOrEqualTo(7));
+
+      release.complete();
+      await Future.wait([first, duplicate]);
+      expect(requests.completions.single.succeeded, isTrue);
+      expect(scheduler.cancellations, 1);
+    },
+  );
+
+  test('renewal loss fences processing and never reports success', () async {
+    final requests = _Requests(
+      const AdminOperationRequest(
+        id: 'loses-lease',
+        operationType: 'gmail_sync',
+        claimToken: 'lost-token',
+      ),
+    );
+    final scheduler = _FakeHeartbeatScheduler();
+    final started = Completer<void>();
+    final release = Completer<void>();
+    final container = ProviderContainer(
+      overrides: [
+        adminOperationRequestRepositoryProvider.overrideWithValue(requests),
+        gmailSessionSnapshotProvider.overrideWithValue(_session),
+        leaseHeartbeatSchedulerProvider.overrideWithValue(scheduler),
+        gmailSyncExecutorProvider.overrideWithValue((_, _, guard) async {
+          started.complete();
+          await release.future;
+          await guard();
+          return _result;
+        }),
+      ],
+    );
+    addTearDown(container.dispose);
+    final future = container
+        .read(gmailSyncProvider.notifier)
+        .initializeQueuedRecovery();
+    await started.future;
+    requests.renewError = StateError('token_replaced');
+    await scheduler.tick();
+    release.complete();
+    await future;
+
+    expect(requests.completions, isEmpty);
+    expect(container.read(gmailSyncProvider).value, isNull);
+    expect(scheduler.cancellations, 1);
+  });
+
+  test(
+    'session change cancels heartbeat and suppresses stale completion',
+    () async {
+      var snapshot = _session;
+      final requests = _Requests(
+        const AdminOperationRequest(
+          id: 'session-change',
+          operationType: 'gmail_sync',
+          claimToken: 'session-token',
+        ),
+      );
+      final scheduler = _FakeHeartbeatScheduler();
+      final started = Completer<void>();
+      final release = Completer<void>();
+      final container = ProviderContainer(
+        overrides: [
+          adminOperationRequestRepositoryProvider.overrideWithValue(requests),
+          gmailSessionSnapshotProvider.overrideWith((_) => snapshot),
+          leaseHeartbeatSchedulerProvider.overrideWithValue(scheduler),
+          gmailSyncExecutorProvider.overrideWithValue((_, _, guard) async {
+            started.complete();
+            await release.future;
+            await guard();
+            return _result;
+          }),
+        ],
+      );
+      addTearDown(container.dispose);
+      final future = container
+          .read(gmailSyncProvider.notifier)
+          .initializeQueuedRecovery();
+      await started.future;
+      snapshot = const GmailSessionSnapshot(
+        userId: 'other-user',
+        sessionKey: 'other-session',
+        providerToken: 'other-token',
+      );
+      container.invalidate(gmailSessionSnapshotProvider);
+      await Future<void>.delayed(Duration.zero);
+      expect(scheduler.cancellations, 1);
+
+      release.complete();
+      await future;
+      expect(requests.completions, isEmpty);
+    },
+  );
 }

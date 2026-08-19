@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -105,6 +107,7 @@ abstract interface class AdminOperationRequestRepository {
     required bool succeeded,
     String? safeFailureCategory,
   });
+  Future<void> renew({required String requestId, required String claimToken});
 }
 
 class _SupabaseAdminOperationRequestRepository
@@ -150,6 +153,17 @@ class _SupabaseAdminOperationRequestRepository
       },
     );
   }
+
+  @override
+  Future<void> renew({
+    required String requestId,
+    required String claimToken,
+  }) async {
+    await _client.rpc(
+      'renew_my_admin_operation_request',
+      params: {'_request_id': requestId, '_claim_token': claimToken},
+    );
+  }
 }
 
 class GmailSessionSnapshot {
@@ -163,11 +177,63 @@ class GmailSessionSnapshot {
   final String? providerToken;
 }
 
+typedef OperationLeaseGuard = Future<void> Function();
 typedef GmailSyncExecutor =
     Future<GmailSyncResult> Function(
       GmailSessionSnapshot session,
       int lookbackDays,
+      OperationLeaseGuard leaseGuard,
     );
+
+abstract interface class LeaseHeartbeatHandle {
+  void cancel();
+}
+
+abstract interface class LeaseHeartbeatScheduler {
+  LeaseHeartbeatHandle periodic(
+    Duration interval,
+    Future<void> Function() callback,
+  );
+}
+
+class _TimerHeartbeatHandle implements LeaseHeartbeatHandle {
+  const _TimerHeartbeatHandle(this.timer);
+  final Timer timer;
+  @override
+  void cancel() => timer.cancel();
+}
+
+class _TimerHeartbeatScheduler implements LeaseHeartbeatScheduler {
+  const _TimerHeartbeatScheduler();
+  @override
+  LeaseHeartbeatHandle periodic(
+    Duration interval,
+    Future<void> Function() callback,
+  ) {
+    return _TimerHeartbeatHandle(
+      Timer.periodic(interval, (_) => unawaited(callback())),
+    );
+  }
+}
+
+final leaseHeartbeatSchedulerProvider = Provider<LeaseHeartbeatScheduler>(
+  (_) => const _TimerHeartbeatScheduler(),
+);
+
+class OperationLeaseLostException implements Exception {
+  const OperationLeaseLostException();
+}
+
+class _LeaseAttempt {
+  bool lost = false;
+  LeaseHeartbeatHandle? heartbeat;
+
+  void fenceAndCancel() {
+    lost = true;
+    heartbeat?.cancel();
+    heartbeat = null;
+  }
+}
 
 final adminOperationRequestRepositoryProvider =
     Provider<AdminOperationRequestRepository>(
@@ -190,10 +256,11 @@ final gmailSessionSnapshotProvider = Provider<GmailSessionSnapshot>((ref) {
 
 final gmailSyncExecutorProvider = Provider<GmailSyncExecutor>((ref) {
   final client = ref.watch(supabaseClientProvider);
-  return (session, lookbackDays) => _executeGmailSync(
+  return (session, lookbackDays, leaseGuard) => _executeGmailSync(
     client: client,
     session: session,
     lookbackDays: lookbackDays,
+    leaseGuard: leaseGuard,
   );
 });
 
@@ -201,6 +268,7 @@ Future<GmailSyncResult> _executeGmailSync({
   required SupabaseClient client,
   required GmailSessionSnapshot session,
   required int lookbackDays,
+  required OperationLeaseGuard leaseGuard,
 }) async {
   final accessToken = session.providerToken;
   final userId = session.userId;
@@ -214,11 +282,14 @@ Future<GmailSyncResult> _executeGmailSync({
   final gmailService = GmailSyncService(accessToken);
   final emailRepo = EmailRepository();
   try {
+    await leaseGuard();
     final after = DateTime.now().subtract(Duration(days: lookbackDays));
     final results = await gmailService.searchStatementEmails(after: after);
+    await leaseGuard();
     final persistence = await EmailDiscoveryPersister(
       emailRepo,
     ).persist(userId: userId, results: results);
+    await leaseGuard();
     final authSession = client.auth.currentSession;
     final userName =
         authSession?.user.userMetadata?['full_name'] as String? ?? 'there';
@@ -232,6 +303,7 @@ Future<GmailSyncResult> _executeGmailSync({
     final processingResult = await processingService.processUnprocessedEmails(
       allowedEmailIds: results.map((result) => result.messageId).toSet(),
     );
+    await leaseGuard();
     return GmailSyncResult(
       foundCount: results.length,
       newlyStoredCount: persistence.newlyStoredCount,
@@ -256,9 +328,11 @@ class GmailSyncNotifier extends AsyncNotifier<GmailSyncResult?> {
   String? _initializingSessionKey;
   String? _activeSessionKey;
   var _generation = 0;
+  _LeaseAttempt? _activeLease;
 
   @override
   Future<GmailSyncResult?> build() async {
+    ref.onDispose(_cancelHeartbeat);
     ref.listen<GmailSessionSnapshot>(gmailSessionSnapshotProvider, (
       previous,
       next,
@@ -272,6 +346,8 @@ class GmailSyncNotifier extends AsyncNotifier<GmailSyncResult?> {
   }
 
   void _resetForSession(GmailSessionSnapshot session) {
+    _activeLease?.fenceAndCancel();
+    _activeLease = null;
     _generation++;
     _activeSessionKey = session.sessionKey;
     _queuedInitialization = null;
@@ -347,12 +423,50 @@ class GmailSyncNotifier extends AsyncNotifier<GmailSyncResult?> {
     final repository = ref.read(adminOperationRequestRepositoryProvider);
     var succeeded = false;
     String? category;
+    final attempt = _LeaseAttempt();
+    _activeLease = attempt;
+    Future<void> renewAndFence() async {
+      if (attempt.lost ||
+          ref.read(gmailSessionSnapshotProvider).sessionKey !=
+              session.sessionKey) {
+        attempt.lost = true;
+        throw const OperationLeaseLostException();
+      }
+      try {
+        await repository.renew(
+          requestId: request.id,
+          claimToken: request.claimToken,
+        );
+      } catch (_) {
+        attempt.lost = true;
+        throw const OperationLeaseLostException();
+      }
+    }
+
+    Future<void> heartbeat() async {
+      try {
+        await renewAndFence();
+      } on OperationLeaseLostException {
+        // The next phase checkpoint fences the active execution. A timer
+        // callback must not surface an unhandled asynchronous error.
+      }
+    }
+
+    attempt.heartbeat = ref
+        .read(leaseHeartbeatSchedulerProvider)
+        .periodic(const Duration(minutes: 2), heartbeat);
     try {
       if (session.userId == null || session.providerToken == null) {
         category = 'reauthentication_required';
         return null;
       }
-      final result = await ref.read(gmailSyncExecutorProvider)(session, 30);
+      await renewAndFence();
+      final result = await ref.read(gmailSyncExecutorProvider)(
+        session,
+        30,
+        renewAndFence,
+      );
+      await renewAndFence();
       succeeded = true;
       return result;
     } on GmailUnavailableException {
@@ -361,17 +475,30 @@ class GmailSyncNotifier extends AsyncNotifier<GmailSyncResult?> {
     } on GmailAuthException {
       category = 'reauthentication_required';
       return null;
+    } on OperationLeaseLostException {
+      category = 'processing_failed';
+      return null;
     } catch (_) {
       category = 'processing_failed';
       rethrow;
     } finally {
-      await repository.complete(
-        requestId: request.id,
-        claimToken: request.claimToken,
-        succeeded: succeeded,
-        safeFailureCategory: category,
-      );
+      attempt.heartbeat?.cancel();
+      attempt.heartbeat = null;
+      if (identical(_activeLease, attempt)) _activeLease = null;
+      if (!attempt.lost) {
+        await repository.complete(
+          requestId: request.id,
+          claimToken: request.claimToken,
+          succeeded: succeeded,
+          safeFailureCategory: category,
+        );
+      }
     }
+  }
+
+  void _cancelHeartbeat() {
+    _activeLease?.fenceAndCancel();
+    _activeLease = null;
   }
 
   Future<void> syncGmail({int lookbackDays = 30}) async {
@@ -385,7 +512,11 @@ class GmailSyncNotifier extends AsyncNotifier<GmailSyncResult?> {
         );
       }
       state = AsyncValue.data(
-        await ref.read(gmailSyncExecutorProvider)(session, lookbackDays),
+        await ref.read(gmailSyncExecutorProvider)(
+          session,
+          lookbackDays,
+          () async {},
+        ),
       );
     } catch (e, st) {
       debugPrint('Gmail sync failed: $e');
