@@ -152,6 +152,19 @@ Future<void> _expectPermissionDenied(
   }
 }
 
+Future<void> _expectCheckViolation(
+  Future<dynamic> Function() operation, {
+  required String constraint,
+}) async {
+  try {
+    await operation();
+    fail('Expected check constraint $constraint to reject the row.');
+  } on PostgrestException catch (error) {
+    expect(error.code, '23514');
+    expect(error.message, contains(constraint));
+  }
+}
+
 Future<void> _expectServiceRpcValidation(
   Future<dynamic> Function() operation,
   String validationError,
@@ -600,6 +613,7 @@ void main() {
       final rejectedParserVersion = 'benefits-task10-reject-$suffix';
       final approvedParserVersion = 'benefits-task10-approve-$suffix';
       final discoveryParserVersion = 'benefits-task10-discovery-$suffix';
+      final lifecycleParserVersion = 'benefits-task2-lifecycle-$suffix';
 
       try {
         expect(_officialFixtureErrors, isEmpty);
@@ -663,6 +677,125 @@ void main() {
               .single(),
         );
         knownCardId = knownCard['id'] as String;
+
+        final mixedExpected = <String, dynamic>{
+          'days': <dynamic>[],
+          'mcc_codes': <dynamic>[],
+          'merchants': <dynamic>[],
+          'categories': <dynamic>[],
+          'transaction_types': <dynamic>[],
+          'additional': <String, dynamic>{
+            'source_terms': <dynamic>['legacy string'],
+            'legacy_values': <dynamic>[
+              <String, dynamic>{'path': r'$[1]', 'value': 42},
+              <String, dynamic>{'path': r'$[2]', 'value': null},
+              <String, dynamic>{'path': r'$[3]', 'value': true},
+              <String, dynamic>{
+                'path': r'$[4]',
+                'value': <String, dynamic>{'raw': 'value'},
+              },
+            ],
+          },
+        };
+        final mixedNormalized = _row(
+          await service.rpc(
+            'normalize_benefit_exclusions_value',
+            params: {
+              '_exclusions': <dynamic>[
+                'legacy string',
+                42,
+                null,
+                true,
+                <String, dynamic>{'raw': 'value'},
+              ],
+            },
+          ),
+        );
+        expect(mixedNormalized, mixedExpected);
+        expect(
+          _row(
+            await service.rpc(
+              'normalize_benefit_exclusions_value',
+              params: {'_exclusions': mixedNormalized},
+            ),
+          ),
+          mixedExpected,
+          reason: 'exclusion normalization must be exactly idempotent',
+        );
+
+        final v5Expected = <String, dynamic>{
+          'days': <dynamic>[],
+          'mcc_codes': <dynamic>[],
+          'merchants': <dynamic>[],
+          'categories': <dynamic>[],
+          'transaction_types': <dynamic>[],
+          'additional': <String, dynamic>{
+            'source_terms': <dynamic>['weekends', 'wallets'],
+          },
+        };
+        expect(
+          _row(
+            await service.rpc(
+              'normalize_benefit_exclusions_value',
+              params: {
+                '_exclusions': <dynamic>['weekends', 'wallets'],
+              },
+            ),
+          ),
+          v5Expected,
+          reason: 'flat benefits-v5 arrays must retain their source strings',
+        );
+
+        final lifecycleSourceUrl =
+            'https://task2.invalid/$lifecycleParserVersion';
+        final invalidEvidence = <String, dynamic>{
+          'sql-null': null,
+          'scalar': 'not-an-array',
+          'object': <String, dynamic>{'quote': 'not-an-array'},
+          'empty-array': <dynamic>[],
+        };
+        for (final evidenceCase in invalidEvidence.entries) {
+          await _expectCheckViolation(
+            () => service.from('card_benefits_staging').insert({
+              'card_id': knownCardId,
+              'source_url': lifecycleSourceUrl,
+              'request_type': 'official_benefit_enrichment',
+              'parser_version': lifecycleParserVersion,
+              'source_url_hash': _sha256(lifecycleSourceUrl),
+              'content_hash': _sha256(
+                '$lifecycleParserVersion-${evidenceCase.key}',
+              ),
+              'extracted_data': <String, dynamic>{
+                'request_type': 'official_benefit_enrichment',
+              },
+              'source_evidence': evidenceCase.value,
+            }),
+            constraint: 'card_benefits_staging_official_shape_check',
+          );
+        }
+        final validLifecycleStaging = _row(
+          await service
+              .from('card_benefits_staging')
+              .insert({
+                'card_id': knownCardId,
+                'source_url': lifecycleSourceUrl,
+                'request_type': 'official_benefit_enrichment',
+                'parser_version': lifecycleParserVersion,
+                'source_url_hash': _sha256(lifecycleSourceUrl),
+                'content_hash': _sha256(
+                  '$lifecycleParserVersion-non-empty-array',
+                ),
+                'extracted_data': <String, dynamic>{
+                  'request_type': 'official_benefit_enrichment',
+                },
+                'source_evidence': <dynamic>[
+                  <String, dynamic>{'quote': 'bounded fixture evidence'},
+                ],
+              })
+              .select('id')
+              .single(),
+        );
+        expect(validLifecycleStaging['id'], isNotNull);
 
         final existingBenefit = _row(
           await service
@@ -1249,6 +1382,10 @@ void main() {
           await service.from('card_catalog').delete().eq('id', discoveryCardId);
         }
         if (knownCardId != null) {
+          await service
+              .from('card_benefits_staging')
+              .delete()
+              .eq('parser_version', lifecycleParserVersion);
           await service.from('card_catalog').delete().eq('id', knownCardId);
         }
         if (createdApprovedBenefitId != null) {

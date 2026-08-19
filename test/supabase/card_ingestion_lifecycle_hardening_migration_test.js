@@ -56,6 +56,14 @@ function functionDefinition(sql, name) {
   );
 }
 
+function migrationAssertionBlock(sql, tag) {
+  return requiredMatch(
+    sql,
+    new RegExp(`DO \\$${tag}\\$[\\s\\S]*?\\$${tag}\\$;`, 'i'),
+    `${tag} transactional migration assertions are required`,
+  );
+}
+
 function escaped(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -253,6 +261,75 @@ test('losslessly audits malformed known, additional, and source_terms nested val
   );
 });
 
+test('transactionally verifies exclusion normalization fixtures during migration apply', async () => {
+  const sql = await lifecycleMigration();
+  const assertions = migrationAssertionBlock(
+    sql,
+    'exclusion_normalization_assertions',
+  );
+
+  for (const fixture of [
+    'mixed_root_array',
+    'json_null_root',
+    'number_root',
+    'boolean_root',
+    'malformed_nested_values',
+    'malformed_additional',
+    'malformed_source_terms',
+    'flat_v5_string_array',
+  ]) {
+    assert.match(
+      assertions,
+      new RegExp(`'${fixture}'`, 'i'),
+      `${fixture} must be an explicit runtime fixture`,
+    );
+  }
+  assert.match(
+    assertions,
+    /'\["legacy string", 42, null, true, \{"raw": "value"\}\]'::jsonb/i,
+  );
+  for (const auditPath of [
+    '$[1]',
+    '$[2]',
+    '$[3]',
+    '$[4]',
+    '$.additional.legacy_values',
+    '$.additional.source_terms[1]',
+    '$.additional.source_terms[2]',
+    '$.days',
+    '$.mcc_codes',
+    '$.merchants',
+    '$.categories',
+    '$.transaction_types',
+    '$.additional',
+    '$.additional.source_terms',
+  ]) {
+    assert.match(assertions, new RegExp(escaped(`"path": "${auditPath}"`)));
+  }
+  assert.match(assertions, /"note": "preserve me"/i);
+  assert.match(assertions, /'\["weekends", "wallets"\]'::jsonb/i);
+  assert.match(
+    assertions,
+    /"additional": \{"source_terms": \["weekends", "wallets"\]\}/i,
+  );
+  assert.match(
+    assertions,
+    /actual_value\s*:=\s*public\.normalize_benefit_exclusions_value\(\s*assertion_case\.input_value\s*\)/i,
+  );
+  assert.match(
+    assertions,
+    /actual_value IS DISTINCT FROM assertion_case\.expected_value[\s\S]*RAISE EXCEPTION/i,
+  );
+  assert.match(
+    assertions,
+    /public\.normalize_benefit_exclusions_value\(actual_value\)\s+IS DISTINCT FROM actual_value[\s\S]*RAISE EXCEPTION/i,
+  );
+  assert.ok(
+    sql.indexOf(assertions) < sql.search(/UPDATE public\.card_catalog\b/i),
+    'runtime helper assertions must precede the first table repair',
+  );
+});
+
 test('classifies legacy staging before enforcing request-specific contracts', async () => {
   const sql = await lifecycleMigration();
   const classificationStatement = stagingClassificationStatement(sql);
@@ -269,8 +346,9 @@ test('classifies legacy staging before enforcing request-specific contracts', as
 
   assert.match(
     classificationStatement,
-    /source_evidence IS NOT NULL[\s\S]*CASE\s+WHEN jsonb_typeof\(source_evidence\)\s*=\s*'array'\s+THEN jsonb_array_length\(source_evidence\)\s*>\s*0\s+ELSE false\s+END/i,
+    /public\.is_valid_official_source_evidence\(source_evidence\)/i,
   );
+  assert.doesNotMatch(classificationStatement, /jsonb_array_length\(source_evidence\)/i);
   assert.match(
     classificationStatement,
     /WHERE nullif\(trim\(request_type\),\s*''\) IS NULL/i,
@@ -285,8 +363,9 @@ test('classifies legacy staging before enforcing request-specific contracts', as
   );
   assert.match(
     officialShape,
-    /source_evidence IS NOT NULL[\s\S]*CASE\s+WHEN jsonb_typeof\(source_evidence\)\s*=\s*'array'\s+THEN jsonb_array_length\(source_evidence\)\s*>\s*0\s+ELSE false\s+END/i,
+    /public\.is_valid_official_source_evidence\(source_evidence\)/i,
   );
+  assert.doesNotMatch(officialShape, /jsonb_array_length\(source_evidence\)/i);
   assert.match(
     constraintDefinition(sql, 'card_benefits_staging_catalog_entry_shape_check'),
     /request_type\s*<>\s*'catalog_entry'[\s\S]*requested_by IS NOT NULL[\s\S]*jsonb_typeof\(extracted_data\)\s*=\s*'object'/i,
@@ -304,6 +383,60 @@ test('classifies legacy staging before enforcing request-specific contracts', as
       new RegExp(`VALIDATE CONSTRAINT ${constraint}`, 'i'),
     );
   }
+});
+
+test('transactionally verifies the shared official evidence predicate during migration apply', async () => {
+  const sql = await lifecycleMigration();
+  const predicate = functionDefinition(
+    sql,
+    'is_valid_official_source_evidence',
+  );
+  const assertions = migrationAssertionBlock(
+    sql,
+    'official_evidence_assertions',
+  );
+
+  assert.match(predicate, /RETURNS boolean/i);
+  assert.match(predicate, /IMMUTABLE/i);
+  assert.match(predicate, /_source_evidence IS NULL[\s\S]*false/i);
+  assert.match(predicate, /jsonb_typeof\(_source_evidence\)\s*=\s*'array'/i);
+  assert.match(predicate, /jsonb_array_length\(_source_evidence\)\s*>\s*0/i);
+  for (const fixture of [
+    'sql_null',
+    'json_null',
+    'string_scalar',
+    'number_scalar',
+    'boolean_scalar',
+    'object',
+    'empty_array',
+    'non_empty_array',
+  ]) {
+    assert.match(
+      assertions,
+      new RegExp(`'${fixture}'`, 'i'),
+      `${fixture} must be an explicit runtime fixture`,
+    );
+  }
+  for (const fixture of [
+    /'sql_null'\s*,\s*NULL::jsonb\s*,\s*false/i,
+    /'json_null'\s*,\s*'null'::jsonb\s*,\s*false/i,
+    /'string_scalar'\s*,\s*'"evidence"'::jsonb\s*,\s*false/i,
+    /'number_scalar'\s*,\s*'1'::jsonb\s*,\s*false/i,
+    /'boolean_scalar'\s*,\s*'true'::jsonb\s*,\s*false/i,
+    /'object'\s*,\s*'\{"quote": "evidence"\}'::jsonb\s*,\s*false/i,
+    /'empty_array'\s*,\s*'\[\]'::jsonb\s*,\s*false/i,
+    /'non_empty_array'\s*,\s*'\[\{"quote": "evidence"\}\]'::jsonb\s*,\s*true/i,
+  ]) {
+    assert.match(assertions, fixture);
+  }
+  assert.match(
+    assertions,
+    /public\.is_valid_official_source_evidence\(assertion_case\.input_value\)\s+IS DISTINCT FROM assertion_case\.expected_value[\s\S]*RAISE EXCEPTION/i,
+  );
+  assert.ok(
+    sql.indexOf(assertions) < sql.search(/UPDATE public\.card_catalog\b/i),
+    'runtime evidence assertions must precede the first table repair',
+  );
 });
 
 test('defines an explicit security-invoker active view with UTC lifecycle filters', async () => {
@@ -371,6 +504,7 @@ test('adds authenticated read policies before narrowing client table and RPC gra
   assert.match(sql, /create_or_get_card_catalog/i);
   for (const signature of [
     'normalize_benefit_exclusions_value(jsonb)',
+    'is_valid_official_source_evidence(jsonb)',
     'create_or_get_card_catalog(text, text, text, text, numeric, numeric, numeric)',
     'resolve_card_catalog_identity(text, text, text, text, text, text)',
     'initialize_card_benefit_enrichment_pilot(jsonb, text)',

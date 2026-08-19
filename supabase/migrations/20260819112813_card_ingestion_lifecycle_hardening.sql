@@ -23,14 +23,6 @@ CREATE INDEX IF NOT EXISTS idx_card_benefit_mapping_active_card_priority
   ON public.card_benefit_mapping (card_id, display_priority)
   WHERE retired_at IS NULL;
 
-UPDATE public.card_catalog
-SET is_discontinued = false
-WHERE is_discontinued IS NULL;
-
-ALTER TABLE public.card_catalog
-  ALTER COLUMN is_discontinued SET DEFAULT false,
-  ALTER COLUMN is_discontinued SET NOT NULL;
-
 -- Normalize historical JSON without assigning an unknown exclusion to a
 -- structured exclusion category. Unclassified strings remain auditably
 -- available in additional.source_terms. Existing object-valued additional
@@ -210,6 +202,253 @@ REVOKE ALL ON FUNCTION public.normalize_benefit_exclusions_value(jsonb)
 GRANT EXECUTE ON FUNCTION public.normalize_benefit_exclusions_value(jsonb)
   TO service_role;
 
+-- Keep historical classification and future official-row validation on the
+-- same scalar-safe evidence predicate.
+CREATE OR REPLACE FUNCTION public.is_valid_official_source_evidence(
+  _source_evidence jsonb
+) RETURNS boolean
+LANGUAGE sql
+IMMUTABLE
+SECURITY INVOKER
+SET search_path = pg_catalog
+AS $$
+  SELECT CASE
+    WHEN _source_evidence IS NULL THEN false
+    WHEN jsonb_typeof(_source_evidence) = 'array'
+      THEN jsonb_array_length(_source_evidence) > 0
+    ELSE false
+  END
+$$;
+
+REVOKE ALL ON FUNCTION public.is_valid_official_source_evidence(jsonb)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.is_valid_official_source_evidence(jsonb)
+  TO service_role;
+
+-- These assertions are side-effect-free and run transactionally at migration
+-- apply. A normalization regression aborts before any table repair begins.
+DO $exclusion_normalization_assertions$
+DECLARE
+  assertion_case record;
+  actual_value jsonb;
+BEGIN
+  FOR assertion_case IN
+    SELECT fixture.case_name, fixture.input_value, fixture.expected_value
+    FROM (VALUES
+      (
+        'mixed_root_array',
+        '["legacy string", 42, null, true, {"raw": "value"}]'::jsonb,
+        '{
+          "days": [],
+          "mcc_codes": [],
+          "merchants": [],
+          "categories": [],
+          "transaction_types": [],
+          "additional": {
+            "source_terms": ["legacy string"],
+            "legacy_values": [
+              {"path": "$[1]", "value": 42},
+              {"path": "$[2]", "value": null},
+              {"path": "$[3]", "value": true},
+              {"path": "$[4]", "value": {"raw": "value"}}
+            ]
+          }
+        }'::jsonb
+      ),
+      (
+        'json_null_root',
+        'null'::jsonb,
+        '{
+          "days": [],
+          "mcc_codes": [],
+          "merchants": [],
+          "categories": [],
+          "transaction_types": [],
+          "additional": {
+            "legacy_values": [{"path": "$", "value": null}]
+          }
+        }'::jsonb
+      ),
+      (
+        'number_root',
+        '12.5'::jsonb,
+        '{
+          "days": [],
+          "mcc_codes": [],
+          "merchants": [],
+          "categories": [],
+          "transaction_types": [],
+          "additional": {
+            "legacy_values": [{"path": "$", "value": 12.5}]
+          }
+        }'::jsonb
+      ),
+      (
+        'boolean_root',
+        'false'::jsonb,
+        '{
+          "days": [],
+          "mcc_codes": [],
+          "merchants": [],
+          "categories": [],
+          "transaction_types": [],
+          "additional": {
+            "legacy_values": [{"path": "$", "value": false}]
+          }
+        }'::jsonb
+      ),
+      (
+        'malformed_nested_values',
+        '{
+          "days": {"unexpected": 1},
+          "mcc_codes": "mcc raw",
+          "merchants": null,
+          "categories": false,
+          "transaction_types": 9,
+          "additional": {
+            "note": "preserve me",
+            "source_terms": ["already", 3, null],
+            "legacy_values": {"old": true}
+          },
+          "unknown": {"keep": true}
+        }'::jsonb,
+        '{
+          "days": [],
+          "mcc_codes": [],
+          "merchants": [],
+          "categories": [],
+          "transaction_types": [],
+          "additional": {
+            "note": "preserve me",
+            "source_terms": ["already", "mcc raw"],
+            "legacy_values": [
+              {
+                "path": "$.additional.legacy_values",
+                "value": {"old": true}
+              },
+              {"path": "$.additional.source_terms[1]", "value": 3},
+              {"path": "$.additional.source_terms[2]", "value": null},
+              {"path": "$.days", "value": {"unexpected": 1}},
+              {"path": "$.mcc_codes", "value": "mcc raw"},
+              {"path": "$.merchants", "value": null},
+              {"path": "$.categories", "value": false},
+              {"path": "$.transaction_types", "value": 9}
+            ]
+          },
+          "unknown": {"keep": true}
+        }'::jsonb
+      ),
+      (
+        'malformed_additional',
+        '{"additional": [{"legacy": 1}]}'::jsonb,
+        '{
+          "days": [],
+          "mcc_codes": [],
+          "merchants": [],
+          "categories": [],
+          "transaction_types": [],
+          "additional": {
+            "legacy_values": [
+              {"path": "$.additional", "value": [{"legacy": 1}]}
+            ]
+          }
+        }'::jsonb
+      ),
+      (
+        'malformed_source_terms',
+        '{
+          "additional": {
+            "note": "keep",
+            "source_terms": {"raw": true}
+          }
+        }'::jsonb,
+        '{
+          "days": [],
+          "mcc_codes": [],
+          "merchants": [],
+          "categories": [],
+          "transaction_types": [],
+          "additional": {
+            "note": "keep",
+            "source_terms": [],
+            "legacy_values": [
+              {
+                "path": "$.additional.source_terms",
+                "value": {"raw": true}
+              }
+            ]
+          }
+        }'::jsonb
+      ),
+      (
+        'flat_v5_string_array',
+        '["weekends", "wallets"]'::jsonb,
+        '{
+          "days": [],
+          "mcc_codes": [],
+          "merchants": [],
+          "categories": [],
+          "transaction_types": [],
+          "additional": {"source_terms": ["weekends", "wallets"]}
+        }'::jsonb
+      )
+    ) AS fixture(case_name, input_value, expected_value)
+  LOOP
+    actual_value := public.normalize_benefit_exclusions_value(
+      assertion_case.input_value
+    );
+    IF actual_value IS DISTINCT FROM assertion_case.expected_value THEN
+      RAISE EXCEPTION 'exclusion normalization assertion failed: %',
+        assertion_case.case_name
+        USING DETAIL = format(
+          'expected=%s actual=%s',
+          assertion_case.expected_value,
+          actual_value
+        );
+    END IF;
+    IF public.normalize_benefit_exclusions_value(actual_value)
+       IS DISTINCT FROM actual_value THEN
+      RAISE EXCEPTION 'exclusion normalization is not idempotent: %',
+        assertion_case.case_name;
+    END IF;
+  END LOOP;
+END;
+$exclusion_normalization_assertions$;
+
+DO $official_evidence_assertions$
+DECLARE
+  assertion_case record;
+BEGIN
+  FOR assertion_case IN
+    SELECT fixture.case_name, fixture.input_value, fixture.expected_value
+    FROM (VALUES
+      ('sql_null', NULL::jsonb, false),
+      ('json_null', 'null'::jsonb, false),
+      ('string_scalar', '"evidence"'::jsonb, false),
+      ('number_scalar', '1'::jsonb, false),
+      ('boolean_scalar', 'true'::jsonb, false),
+      ('object', '{"quote": "evidence"}'::jsonb, false),
+      ('empty_array', '[]'::jsonb, false),
+      ('non_empty_array', '[{"quote": "evidence"}]'::jsonb, true)
+    ) AS fixture(case_name, input_value, expected_value)
+  LOOP
+    IF public.is_valid_official_source_evidence(assertion_case.input_value)
+       IS DISTINCT FROM assertion_case.expected_value THEN
+      RAISE EXCEPTION 'official evidence assertion failed: %',
+        assertion_case.case_name;
+    END IF;
+  END LOOP;
+END;
+$official_evidence_assertions$;
+
+UPDATE public.card_catalog
+SET is_discontinued = false
+WHERE is_discontinued IS NULL;
+
+ALTER TABLE public.card_catalog
+  ALTER COLUMN is_discontinued SET DEFAULT false,
+  ALTER COLUMN is_discontinued SET NOT NULL;
+
 WITH normalized AS (
   SELECT
     benefit.benefit_id,
@@ -304,12 +543,7 @@ SET request_type = CASE
     AND nullif(trim(source_url_hash), '') IS NOT NULL
     AND nullif(trim(content_hash), '') IS NOT NULL
     AND jsonb_typeof(extracted_data) = 'object'
-    AND source_evidence IS NOT NULL
-    AND CASE
-      WHEN jsonb_typeof(source_evidence) = 'array'
-        THEN jsonb_array_length(source_evidence) > 0
-      ELSE false
-    END
+    AND public.is_valid_official_source_evidence(source_evidence)
     THEN 'official_benefit_enrichment'
   WHEN coalesce(nullif(trim(request_type), ''), extracted_data->>'request_type')
        = 'catalog_entry'
@@ -407,12 +641,7 @@ BEGIN
           AND nullif(trim(source_url_hash), '') IS NOT NULL
           AND nullif(trim(content_hash), '') IS NOT NULL
           AND jsonb_typeof(extracted_data) = 'object'
-          AND source_evidence IS NOT NULL
-          AND CASE
-            WHEN jsonb_typeof(source_evidence) = 'array'
-              THEN jsonb_array_length(source_evidence) > 0
-            ELSE false
-          END
+          AND public.is_valid_official_source_evidence(source_evidence)
         )
       ) NOT VALID;
   END IF;
