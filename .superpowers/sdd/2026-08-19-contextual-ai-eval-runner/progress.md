@@ -168,3 +168,11 @@ Ruling: Require candidate Card Data citations to equal the full applicable same-
 - The fixed candidate prompt publishes the same exact canonical arrays, preventing a hidden validator-only convention. Positive identity/benefit cases and normalized captured baselines use the identical path contract.
 
 Ruling: Require exact ordered canonical grounding paths per Card Data mode, shared by prompts, captured normalization, and candidate validation. Cost if wrong: adding a newly scored card field requires an explicit reviewed path-contract update, preventing generic citations from masquerading as field support.
+
+### Task 5 effective-network evidence correction
+
+- Identity normalization and validation now take the asserted network exclusively from `catalog_reference.network`, and the canonical citation binds that exact field.
+- `provenance_claims.network` remains a consistency signal: null/absent provenance is accepted when catalog network is present, while any conflicting non-null provenance network fails closed.
+- The shared canonical helper, fixed candidate prompt, normalized outputs, scorer fixtures, and real Feedback integration all use `facts.catalog_reference.network`.
+
+Ruling: Use catalog-reference network as the identity network oracle and citation target; treat a non-null provenance network only as a required consistency check. Cost if wrong: provenance cannot independently override the selected catalog network, preventing a null or contradictory extraction from becoming ambiguous evidence.

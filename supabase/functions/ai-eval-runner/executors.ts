@@ -155,7 +155,7 @@ function promptPayload(
   const schema = feature === "statement_processing"
     ? "For kind=transaction return {id,user_card_id,statement_id,amount,currency,merchant_name,category,transaction_type,transaction_date}; copy evidence fields exactly and predict only category/type"
     : feature === "card_data"
-    ? "Identity: {mode:'identity',card:{id,name,bank,network,annual_fee,joining_fee},sources:[{id,field_paths:['facts.catalog_reference.id','facts.provenance_claims.card_name','facts.provenance_claims.issuer','facts.provenance_claims.network','facts.catalog_reference.annual_fee','facts.catalog_reference.joining_fee']}]}; benefits: {mode:'benefits',card_id,benefits:[{id,dedupe_key,title,type,category,value_config,limit,period,eligibility}],sources:[{id,field_paths:['facts.catalog_reference_id','facts.benefits']}]}"
+    ? "Identity: {mode:'identity',card:{id,name,bank,network,annual_fee,joining_fee},sources:[{id,field_paths:['facts.catalog_reference.id','facts.provenance_claims.card_name','facts.provenance_claims.issuer','facts.catalog_reference.network','facts.catalog_reference.annual_fee','facts.catalog_reference.joining_fee']}]}; benefits: {mode:'benefits',card_id,benefits:[{id,dedupe_key,title,type,category,value_config,limit,period,eligibility}],sources:[{id,field_paths:['facts.catalog_reference_id','facts.benefits']}]}"
     : "{selected_card_id,selected_benefit_id,savings:number,final_amount:number,explanation<=1000 chars}";
   return {
     systemInstruction: {
@@ -385,10 +385,12 @@ function validateCardData(
     return output.card.id === reference.id &&
       output.card.name === reference.name &&
       output.card.bank === reference.bank &&
-      output.card.network === (claims.network ?? reference.network) &&
+      output.card.network === reference.network &&
       output.card.annual_fee === reference.annual_fee &&
       output.card.joining_fee === reference.joining_fee &&
       claims.card_name === reference.name && claims.issuer === reference.bank &&
+      (claims.network === null || claims.network === undefined ||
+        claims.network === reference.network) &&
       finiteMoney(output.card.annual_fee) &&
       finiteMoney(output.card.joining_fee) &&
       [...sourceIds].every((sourceId) =>
@@ -525,10 +527,12 @@ function identitySourceSupports(
   const reference = facts.catalog_reference;
   return card.id === reference.id && card.name === reference.name &&
     card.bank === reference.bank &&
-    card.network === (claims.network ?? reference.network) &&
+    card.network === reference.network &&
     card.annual_fee === reference.annual_fee &&
     card.joining_fee === reference.joining_fee &&
-    claims.card_name === card.name && claims.issuer === card.bank;
+    claims.card_name === card.name && claims.issuer === card.bank &&
+    (claims.network === null || claims.network === undefined ||
+      claims.network === card.network);
 }
 
 function canonicalGroundingPaths(
@@ -539,7 +543,7 @@ function canonicalGroundingPaths(
       "facts.catalog_reference.id",
       "facts.provenance_claims.card_name",
       "facts.provenance_claims.issuer",
-      "facts.provenance_claims.network",
+      "facts.catalog_reference.network",
       "facts.catalog_reference.annual_fee",
       "facts.catalog_reference.joining_fee",
     ]

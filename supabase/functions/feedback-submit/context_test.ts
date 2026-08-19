@@ -354,7 +354,7 @@ Deno.test("real provenance-shaped card feedback becomes a runnable immutable eva
               "facts.catalog_reference.id",
               "facts.provenance_claims.card_name",
               "facts.provenance_claims.issuer",
-              "facts.provenance_claims.network",
+              "facts.catalog_reference.network",
               "facts.catalog_reference.annual_fee",
               "facts.catalog_reference.joining_fee",
             ],

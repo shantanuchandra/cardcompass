@@ -15,7 +15,7 @@ const identityGroundingPaths = [
   "facts.catalog_reference.id",
   "facts.provenance_claims.card_name",
   "facts.provenance_claims.issuer",
-  "facts.provenance_claims.network",
+  "facts.catalog_reference.network",
   "facts.catalog_reference.annual_fee",
   "facts.catalog_reference.joining_fee",
 ];
@@ -283,6 +283,83 @@ Deno.test("captured card identity baseline normalizes persisted DTOs into the ex
     },
     sources: [{ id: "source-1", field_paths: identityGroundingPaths }],
   });
+});
+
+Deno.test("identity network cites catalog reference when provenance network is absent", async () => {
+  const item = fixture("card_data");
+  const safe = item.inputFixture.safe_input_context as Record<string, unknown>;
+  const official = safe.official_sources as Record<string, unknown>[];
+  const identity = official[0];
+  const facts = identity.facts as Record<string, unknown>;
+  const claims = facts.provenance_claims as Record<string, unknown>;
+  const result = await executeEvalCase(
+    {
+      ...item,
+      inputFixture: {
+        ...item.inputFixture,
+        safe_input_context: {
+          ...safe,
+          official_sources: [{
+            ...identity,
+            facts: {
+              ...facts,
+              provenance_claims: { ...claims, network: null },
+            },
+          }, ...official.slice(1)],
+        },
+      },
+    },
+    "captured-production-v1",
+    {
+      generate: () => {
+        throw new Error("must_not_call");
+      },
+    },
+  );
+  assertEquals(result.executionStatus, "succeeded");
+  assertEquals((result.output.card as Record<string, unknown>).network, "Visa");
+  assertEquals(
+    ((result.output.sources as Record<string, unknown>[])[0]
+      .field_paths as string[]).includes(
+        "facts.catalog_reference.network",
+      ),
+    true,
+  );
+});
+
+Deno.test("identity rejects conflicting non-null provenance network", async () => {
+  const item = fixture("card_data");
+  const safe = item.inputFixture.safe_input_context as Record<string, unknown>;
+  const official = safe.official_sources as Record<string, unknown>[];
+  const identity = official[0];
+  const facts = identity.facts as Record<string, unknown>;
+  const claims = facts.provenance_claims as Record<string, unknown>;
+  const result = await executeEvalCase(
+    {
+      ...item,
+      inputFixture: {
+        ...item.inputFixture,
+        safe_input_context: {
+          ...safe,
+          official_sources: [{
+            ...identity,
+            facts: {
+              ...facts,
+              provenance_claims: { ...claims, network: "Mastercard" },
+            },
+          }, ...official.slice(1)],
+        },
+      },
+    },
+    "captured-production-v1",
+    {
+      generate: () => {
+        throw new Error("must_not_call");
+      },
+    },
+  );
+  assertEquals(result.executionStatus, "failed");
+  assertEquals(result.safeFailureCategory, "insufficient_fixture");
 });
 
 Deno.test("captured benefit baseline uses persisted values and official grounding without answer leakage", async () => {

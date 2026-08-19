@@ -56,3 +56,9 @@ Canonical citation-path correction:
 - One shared helper now supplies exact mode-specific field paths to captured normalization and candidate validation, and the fixed prompt publishes those same paths.
 - Identity citations cover catalog ID/fees and provenance name/issuer/network. Benefit citations cover catalog linkage and official benefit facts.
 - Generic resolving paths (`url`, a provenance object, or unrelated facts), partial arrays, and reordered arrays are invalid rather than accepted as grounding.
+
+Effective-network evidence correction:
+
+- The normalized identity network comes from `catalog_reference.network`, and its canonical citation now points to that exact field.
+- A null/absent provenance network is compatible with a non-null catalog network; a conflicting non-null provenance network rejects the fixture/output.
+- Prompt, captured normalization, candidate validation, scorer fixtures, and real Feedback integration share the corrected path.
