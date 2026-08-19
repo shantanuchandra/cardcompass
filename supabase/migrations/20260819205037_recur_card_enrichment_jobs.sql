@@ -399,7 +399,7 @@ BEGIN
     'source_manifest_hash', 'canonical_benefit_hash', 'crawl_complete',
     'unsafe_mutation_count', 'raw_body_stored', 'evidence_passed',
     'idempotency_passed', 'quarantine_reason', 'retry_scheduled',
-    'lease_expired', 'reviewed_at', 'review_status', 'approved_count',
+    'lease_expired', 'pilot_qualified', 'reviewed_at', 'review_status', 'approved_count',
     'retired_count', 'rejected_count', 'retained_count'
   ] LOOP
     IF _summary ? allowed_key THEN
@@ -408,7 +408,8 @@ BEGIN
       IF allowed_key = ANY (ARRAY[
         'reused_staging', 'material_proposal', 'successful_no_change',
         'crawl_complete', 'raw_body_stored', 'evidence_passed',
-        'idempotency_passed', 'retry_scheduled', 'lease_expired'
+        'idempotency_passed', 'retry_scheduled', 'lease_expired',
+        'pilot_qualified'
       ]) AND jsonb_typeof(allowed_value) = 'boolean' THEN
         safe_summary := jsonb_set(safe_summary, ARRAY[allowed_key], allowed_value, true);
       ELSIF allowed_key = ANY (ARRAY[
@@ -528,9 +529,6 @@ BEGIN
   IF _run_mode <> 'scheduled' THEN
     RETURN CASE WHEN _next_run_at IS NULL THEN 'none' ELSE 'clear' END;
   END IF;
-  IF _has_pending_staging THEN
-    RETURN CASE WHEN _next_run_at IS NULL THEN 'none' ELSE 'clear' END;
-  END IF;
   IF NOT _eligible THEN
     RETURN CASE WHEN _next_run_at IS NULL THEN 'none' ELSE 'clear' END;
   END IF;
@@ -565,10 +563,7 @@ BEGIN
     INTO card_is_discontinued, active_cardholder
     FROM public.card_catalog AS card
     WHERE card.id = NEW.card_id;
-    IF public.card_has_unresolved_catalog_identity(NEW.card_id, NEW.canonical_url)
-       OR public.card_enrichment_job_has_pending_staging(
-         NEW.staging_id, NEW.card_id, NEW.parser_version
-       ) THEN
+    IF public.card_has_unresolved_catalog_identity(NEW.card_id, NEW.canonical_url) THEN
       NEW.next_run_at := NULL;
       RETURN NEW;
     END IF;
@@ -580,12 +575,15 @@ BEGIN
     ));
     recurrence_outcome := CASE
       WHEN terminal_disposition = 'not_modified' THEN 'not_modified'
-      WHEN NEW.status IN ('completed', 'staged') THEN 'success'
       WHEN terminal_disposition IN ('missing', 'not_found')
         OR NEW.failure_category IN ('http_404', 'http_410', 'missing') THEN 'missing'
       WHEN terminal_disposition IN ('blocked', 'review_required')
         OR NEW.failure_category IN ('http_401', 'http_403', 'http_429', 'robots_disallowed', 'challenge_page')
         THEN 'blocked'
+      WHEN NEW.failure_category IS NOT NULL
+        OR terminal_disposition IN ('failed', 'timeout', 'unreachable', 'http_5xx')
+        THEN 'failed'
+      WHEN NEW.status IN ('completed', 'staged') THEN 'success'
       ELSE 'failed'
     END;
     NEW.next_run_at := public.next_card_enrichment_observation_at(
@@ -612,6 +610,174 @@ BEFORE INSERT OR UPDATE OF status, next_retry_at, result_summary, failure_catego
   parser_version, run_mode, staging_id, canonical_url, card_id
 ON public.card_catalog_enrichment_jobs
 FOR EACH ROW EXECUTE FUNCTION public.schedule_terminal_card_enrichment_observation();
+
+CREATE OR REPLACE FUNCTION public.card_enrichment_pilot_job_is_qualified(
+  _status text,
+  _failure_category text,
+  _summary jsonb
+) RETURNS boolean
+LANGUAGE plpgsql
+IMMUTABLE
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  approved_count integer;
+  retained_count integer;
+  retired_count integer;
+  rejected_count integer;
+  review_keys text[] := ARRAY[
+    'review_status', 'approved_count', 'retained_count',
+    'retired_count', 'rejected_count'
+  ];
+BEGIN
+  IF jsonb_typeof(_summary) <> 'object'
+     OR coalesce(_summary->>'unsafe_mutation_count', '0') !~ '^0$'
+     OR _summary->'idempotency_passed' IS DISTINCT FROM 'true'::jsonb
+     OR coalesce(_summary->'raw_body_stored', 'false'::jsonb)
+       IS DISTINCT FROM 'false'::jsonb
+     OR _status NOT IN ('staged', 'completed', 'quarantined') THEN
+    RETURN false;
+  END IF;
+  IF _status = 'quarantined' THEN
+    RETURN nullif(trim(coalesce(_failure_category, '')), '') IS NOT NULL;
+  END IF;
+  IF _summary->'evidence_passed' IS DISTINCT FROM 'true'::jsonb THEN
+    RETURN false;
+  END IF;
+  IF _status = 'staged' THEN RETURN true; END IF;
+
+  IF _summary->'successful_no_change' = 'true'::jsonb
+     AND NOT (_summary ?| review_keys) THEN
+    RETURN true;
+  END IF;
+  IF _summary->>'review_status' <> 'approved'
+     OR coalesce(_summary->>'approved_count', '') !~ '^[0-9]{1,9}$'
+     OR coalesce(_summary->>'retained_count', '') !~ '^[0-9]{1,9}$'
+     OR coalesce(_summary->>'retired_count', '') !~ '^[0-9]{1,9}$'
+     OR coalesce(_summary->>'rejected_count', '') !~ '^[0-9]{1,9}$' THEN
+    RETURN false;
+  END IF;
+  approved_count := (_summary->>'approved_count')::integer;
+  retained_count := (_summary->>'retained_count')::integer;
+  retired_count := (_summary->>'retired_count')::integer;
+  rejected_count := (_summary->>'rejected_count')::integer;
+  RETURN rejected_count = 0
+    AND approved_count + retained_count + retired_count > 0;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.promote_qualified_card_benefit_enrichment_pilot(
+  _parser_version text
+) RETURNS SETOF public.card_catalog_enrichment_jobs
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  selected_parser text := lower(trim(coalesce(_parser_version, '')));
+  pilot_count integer;
+  promoted_count integer;
+  all_qualified boolean;
+BEGIN
+  IF selected_parser <> 'benefits-v6' THEN
+    RAISE EXCEPTION 'invalid_pilot_promotion';
+  END IF;
+  PERFORM pg_advisory_xact_lock(
+    hashtextextended('card_benefit_pilot_promotion:' || selected_parser, 0)
+  );
+  WITH locked_pilot AS MATERIALIZED (
+    SELECT job.*
+    FROM public.card_catalog_enrichment_jobs AS job
+    WHERE job.parser_version = selected_parser
+      AND (
+        job.run_mode = 'pilot'
+        OR (
+          job.run_mode = 'scheduled'
+          AND job.result_summary->'pilot_qualified' = 'true'::jsonb
+        )
+      )
+    ORDER BY job.id
+    FOR UPDATE OF job
+  )
+  SELECT count(*) FILTER (WHERE locked_pilot.run_mode = 'pilot'),
+    count(*) FILTER (WHERE locked_pilot.run_mode = 'scheduled'),
+    coalesce(bool_and(
+    public.card_enrichment_pilot_job_is_qualified(
+      locked_pilot.status,
+      locked_pilot.failure_category,
+      locked_pilot.result_summary
+    )
+  ), false)
+  INTO pilot_count, promoted_count, all_qualified
+  FROM locked_pilot;
+  IF pilot_count + promoted_count <> 5 THEN
+    RAISE EXCEPTION 'pilot_not_qualified';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM public.card_catalog_enrichment_jobs AS pilot_job
+    JOIN public.card_catalog_enrichment_jobs AS other_job
+      ON other_job.card_id = pilot_job.card_id
+     AND other_job.parser_version = pilot_job.parser_version
+     AND other_job.id <> pilot_job.id
+    WHERE pilot_job.parser_version = selected_parser
+      AND (
+        pilot_job.run_mode = 'pilot'
+        OR pilot_job.result_summary->'pilot_qualified' = 'true'::jsonb
+      )
+  ) THEN
+    RAISE EXCEPTION 'pilot_card_identity_conflict';
+  END IF;
+  IF promoted_count = 5 THEN
+    IF EXISTS (
+      SELECT 1
+      FROM public.card_catalog_enrichment_jobs AS promoted_job
+      WHERE promoted_job.parser_version = selected_parser
+        AND promoted_job.run_mode = 'scheduled'
+        AND promoted_job.result_summary->'pilot_qualified' = 'true'::jsonb
+        AND promoted_job.status = 'completed'
+        AND NOT public.card_enrichment_pilot_job_is_qualified(
+          promoted_job.status,
+          promoted_job.failure_category,
+          promoted_job.result_summary
+        )
+    ) THEN
+      RAISE EXCEPTION 'pilot_not_qualified';
+    END IF;
+    RETURN QUERY
+    SELECT job.*
+    FROM public.card_catalog_enrichment_jobs AS job
+    WHERE job.parser_version = selected_parser
+      AND job.run_mode = 'scheduled'
+      AND job.result_summary->'pilot_qualified' = 'true'::jsonb
+    ORDER BY job.id;
+    RETURN;
+  END IF;
+  IF pilot_count <> 5 OR promoted_count <> 0 OR NOT all_qualified THEN
+    RAISE EXCEPTION 'pilot_not_qualified';
+  END IF;
+
+  UPDATE public.card_catalog_enrichment_jobs AS job
+  SET run_mode = 'scheduled',
+      result_summary = coalesce(job.result_summary, '{}'::jsonb) ||
+        jsonb_build_object(
+          'pilot_qualified', true,
+          'pilot_qualified_at', statement_timestamp()
+        ),
+      updated_at = statement_timestamp()
+  WHERE job.parser_version = selected_parser
+    AND job.run_mode = 'pilot';
+
+  RETURN QUERY
+  SELECT job.*
+  FROM public.card_catalog_enrichment_jobs AS job
+  WHERE job.parser_version = selected_parser
+    AND job.run_mode = 'scheduled'
+    AND job.result_summary->'pilot_qualified' = 'true'::jsonb
+  ORDER BY job.id;
+END;
+$$;
 
 -- Bring pre-migration v6 terminal rows into the same trigger policy without
 -- changing their status, summary, staging link, or audit identity. v5 remains
@@ -782,9 +948,6 @@ BEGIN
       )
     )
     AND NOT public.card_has_unresolved_catalog_identity(job.card_id, job.canonical_url)
-    AND NOT public.card_enrichment_job_has_pending_staging(
-      job.staging_id, job.card_id, job.parser_version
-    )
     AND NOT EXISTS (
       SELECT 1 FROM public.card_catalog_enrichment_jobs AS leased
       WHERE lower(trim(leased.issuer)) = lower(trim(job.issuer))
@@ -816,9 +979,6 @@ BEGIN
         )
       )
       AND NOT public.card_has_unresolved_catalog_identity(job.card_id, job.canonical_url)
-      AND NOT public.card_enrichment_job_has_pending_staging(
-        job.staging_id, job.card_id, job.parser_version
-      )
     ORDER BY card.card_name, job.created_at, job.id
     LIMIT maximum_jobs
     FOR UPDATE OF job SKIP LOCKED
@@ -834,6 +994,24 @@ BEGIN
   WHERE job.id = candidates.id
   RETURNING job.*;
 END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.card_enrichment_effective_terminal_status(
+  _requested_status text,
+  _has_pending_staging boolean
+) RETURNS text
+LANGUAGE sql
+IMMUTABLE
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+  SELECT CASE
+    WHEN _requested_status NOT IN (
+      'staged', 'completed', 'quarantined', 'failed', 'review_required'
+    ) OR _has_pending_staging IS NULL THEN NULL
+    WHEN _has_pending_staging THEN 'staged'
+    ELSE _requested_status
+  END;
 $$;
 
 CREATE OR REPLACE FUNCTION public.finalize_card_catalog_enrichment_job(
@@ -858,6 +1036,8 @@ DECLARE
   existing_observation_history jsonb;
   observation_history jsonb;
   safe_summary jsonb;
+  has_pending_staging boolean;
+  effective_status text;
 BEGIN
   IF _job_id IS NULL OR _lease_token IS NULL
      OR _status NOT IN ('staged', 'completed', 'quarantined', 'failed', 'review_required')
@@ -889,6 +1069,15 @@ BEGIN
     RAISE EXCEPTION 'invalid_enrichment_staging_ownership';
   END IF;
 
+  has_pending_staging := public.card_enrichment_job_has_pending_staging(
+    coalesce(_staging_id, job_row.staging_id),
+    job_row.card_id,
+    job_row.parser_version
+  );
+  effective_status := public.card_enrichment_effective_terminal_status(
+    _status, has_pending_staging
+  );
+
   current_observation := public.sanitize_card_enrichment_observation(
     _result_summary->'observation', statement_timestamp()
   );
@@ -911,9 +1100,12 @@ BEGIN
   IF current_observation IS NOT NULL THEN
     safe_summary := safe_summary || jsonb_build_object('observation', current_observation);
   END IF;
+  IF job_row.result_summary->'pilot_qualified' = 'true'::jsonb THEN
+    safe_summary := safe_summary || jsonb_build_object('pilot_qualified', true);
+  END IF;
 
   UPDATE public.card_catalog_enrichment_jobs
-  SET status = _status,
+  SET status = effective_status,
       lease_expires_at = NULL,
       lease_token = NULL,
       staging_id = coalesce(_staging_id, job_row.staging_id),
@@ -921,7 +1113,10 @@ BEGIN
       normalized_fields = coalesce(_normalized_fields, '{}'::jsonb),
       result_summary = safe_summary,
       failure_category = _failure_category,
-      next_retry_at = _next_retry_at,
+      next_retry_at = CASE
+        WHEN has_pending_staging THEN NULL
+        ELSE _next_retry_at
+      END,
       next_run_at = NULL,
       updated_at = now()
   WHERE id = _job_id
@@ -979,6 +1174,14 @@ REVOKE ALL ON FUNCTION public.card_enrichment_requeue_action(
 GRANT EXECUTE ON FUNCTION public.card_enrichment_requeue_action(
   text, text, timestamptz, timestamptz, boolean, boolean
 ) TO service_role;
+REVOKE ALL ON FUNCTION public.card_enrichment_pilot_job_is_qualified(text, text, jsonb)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.card_enrichment_pilot_job_is_qualified(text, text, jsonb)
+  TO service_role;
+REVOKE ALL ON FUNCTION public.promote_qualified_card_benefit_enrichment_pilot(text)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.promote_qualified_card_benefit_enrichment_pilot(text)
+  TO service_role;
 REVOKE ALL ON FUNCTION public.schedule_terminal_card_enrichment_observation()
   FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.requeue_due_card_catalog_enrichment_jobs(text, integer, timestamptz)
@@ -988,6 +1191,10 @@ GRANT EXECUTE ON FUNCTION public.requeue_due_card_catalog_enrichment_jobs(text, 
 REVOKE ALL ON FUNCTION public.claim_card_catalog_enrichment_jobs(integer, integer, text, text)
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.claim_card_catalog_enrichment_jobs(integer, integer, text, text)
+  TO service_role;
+REVOKE ALL ON FUNCTION public.card_enrichment_effective_terminal_status(text, boolean)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.card_enrichment_effective_terminal_status(text, boolean)
   TO service_role;
 REVOKE ALL ON FUNCTION public.finalize_card_catalog_enrichment_job(
   uuid, uuid, text, uuid, text, jsonb, jsonb, text, timestamptz
@@ -1053,7 +1260,7 @@ BEGIN
      OR public.card_enrichment_requeue_action(
        'scheduled', 'staged', '2026-08-19T00:00:00Z',
        '2026-08-20T00:00:00Z', true, true
-     ) <> 'clear'
+     ) <> 'queue'
      OR public.card_enrichment_requeue_action(
        'scheduled', 'completed', '2026-08-19T00:00:00Z',
        '2026-08-20T00:00:00Z', false, false
@@ -1066,6 +1273,82 @@ BEGIN
   END IF;
 END;
 $recurrence_transition_assertions$;
+
+DO $pilot_qualification_assertions$
+DECLARE
+  safe_base jsonb := jsonb_build_object(
+    'unsafe_mutation_count', 0,
+    'idempotency_passed', true,
+    'evidence_passed', true,
+    'raw_body_stored', false
+  );
+  successful_no_change jsonb;
+  approved_review jsonb;
+  fully_rejected jsonb;
+  partially_rejected jsonb;
+BEGIN
+  successful_no_change := safe_base || jsonb_build_object(
+    'successful_no_change', true
+  );
+  approved_review := safe_base || jsonb_build_object(
+    'successful_no_change', false,
+    'review_status', 'approved',
+    'approved_count', 1,
+    'retained_count', 0,
+    'retired_count', 0,
+    'rejected_count', 0
+  );
+  fully_rejected := safe_base || jsonb_build_object(
+    'review_status', 'rejected',
+    'approved_count', 0,
+    'retained_count', 0,
+    'retired_count', 0,
+    'rejected_count', 2
+  );
+  partially_rejected := approved_review || jsonb_build_object(
+    'rejected_count', 1
+  );
+  IF NOT public.card_enrichment_pilot_job_is_qualified(
+       'staged', NULL, safe_base
+     )
+     OR NOT public.card_enrichment_pilot_job_is_qualified(
+       'completed', NULL, successful_no_change
+     )
+     OR NOT public.card_enrichment_pilot_job_is_qualified(
+       'completed', NULL, approved_review
+     )
+     OR public.card_enrichment_pilot_job_is_qualified(
+       'completed', NULL, fully_rejected
+     )
+     OR public.card_enrichment_pilot_job_is_qualified(
+       'completed', NULL, partially_rejected
+     )
+     OR public.card_enrichment_pilot_job_is_qualified(
+       'completed', NULL, safe_base
+     )
+     OR public.card_enrichment_pilot_job_is_qualified(
+       'completed', NULL,
+       approved_review || jsonb_build_object('approved_count', 'one')
+     )
+     OR NOT public.card_enrichment_pilot_job_is_qualified(
+       'quarantined', 'identity_mismatch', safe_base
+     )
+     OR public.card_enrichment_pilot_job_is_qualified(
+       'quarantined', '', safe_base
+     )
+     OR public.card_enrichment_effective_terminal_status(
+       'failed', true
+     ) <> 'staged'
+     OR public.card_enrichment_effective_terminal_status(
+       'completed', true
+     ) <> 'staged'
+     OR public.card_enrichment_effective_terminal_status(
+       'completed', false
+     ) <> 'completed' THEN
+    RAISE EXCEPTION 'pilot qualification assertion failed';
+  END IF;
+END;
+$pilot_qualification_assertions$;
 
 DO $recurrence_history_assertions$
 DECLARE

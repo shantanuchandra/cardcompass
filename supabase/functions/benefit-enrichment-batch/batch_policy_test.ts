@@ -9,6 +9,7 @@ import {
   selectPilotCandidates,
   simulateLeaseClaim,
 } from "./batch_policy.ts";
+import type { PilotJob } from "./batch_policy.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -558,7 +559,7 @@ Deno.test("secret comparison hashes unequal-length inputs before fixed-length co
 });
 
 Deno.test("scheduled rollout stays blocked until the exact safe five-job pilot passes", () => {
-  const base = Array.from({ length: 5 }, (_, index) => ({
+  const base: PilotJob[] = Array.from({ length: 5 }, (_, index) => ({
     id: `pilot-${index}`,
     runMode: "pilot" as const,
     status: index === 4 ? "quarantined" : "staged",
@@ -567,20 +568,42 @@ Deno.test("scheduled rollout stays blocked until the exact safe five-job pilot p
     idempotencyPassed: true,
     evidencePassed: true,
     rawBodyStored: false,
+    pilotQualified: false,
+    successfulNoChange: false,
+    reviewMetadataPresent: false,
+    reviewMetadataMalformed: false,
+    reviewStatus: null,
+    approvedCount: null,
+    retainedCount: null,
+    retiredCount: null,
+    rejectedCount: null,
   }));
   assert(
     evaluatePilotGate(base).status === "passed",
     "safe terminal pilot did not pass",
   );
-  const completedNoChange = base.map((job, index) =>
-    index === 0 ? { ...job, status: "completed" } : job
+  const completedNoChange: PilotJob[] = base.map((job, index) =>
+    index === 0
+      ? { ...job, status: "completed", successfulNoChange: true }
+      : job
   );
   assert(
     evaluatePilotGate(completedNoChange).status === "passed",
     "successful no-change completion did not finish the pilot",
   );
-  const completedApproval = base.map((job, index) =>
-    index === 1 ? { ...job, status: "completed" } : job
+  const completedApproval: PilotJob[] = base.map((job, index) =>
+    index === 1
+      ? {
+        ...job,
+        status: "completed",
+        reviewMetadataPresent: true,
+        reviewStatus: "approved",
+        approvedCount: 1,
+        retainedCount: 0,
+        retiredCount: 0,
+        rejectedCount: 0,
+      }
+      : job
   );
   assert(
     evaluatePilotGate(completedApproval).scheduledClaimAllowed,
@@ -653,5 +676,127 @@ Deno.test("scheduled rollout stays blocked until the exact safe five-job pilot p
   assert(
     evaluatePilotGate(recovered).status === "passed",
     "recovered pilot could not pass",
+  );
+
+  const fullyRejected: PilotJob[] = base.map((job, index) =>
+    index === 0
+      ? {
+        ...job,
+        status: "completed",
+        reviewMetadataPresent: true,
+        reviewStatus: "rejected",
+        approvedCount: 0,
+        retainedCount: 0,
+        retiredCount: 0,
+        rejectedCount: 2,
+      }
+      : job
+  );
+  assert(
+    evaluatePilotGate(fullyRejected).blockers.includes(
+      "pilot_review_rejected",
+    ),
+    "fully rejected review unlocked rollout",
+  );
+
+  const partiallyRejected: PilotJob[] = base.map((job, index) =>
+    index === 0
+      ? {
+        ...job,
+        status: "completed",
+        reviewMetadataPresent: true,
+        reviewStatus: "approved",
+        approvedCount: 1,
+        retainedCount: 0,
+        retiredCount: 0,
+        rejectedCount: 1,
+      }
+      : job
+  );
+  assert(
+    evaluatePilotGate(partiallyRejected).blockers.includes(
+      "pilot_review_partially_rejected",
+    ),
+    "mixed approval/rejection unlocked rollout",
+  );
+
+  for (
+    const malformed of [
+      {
+        reviewMetadataPresent: true,
+        reviewMetadataMalformed: true,
+        reviewStatus: "approved",
+        approvedCount: null,
+        rejectedCount: 0,
+      },
+      {
+        reviewMetadataPresent: true,
+        reviewMetadataMalformed: true,
+        reviewStatus: "approved",
+        approvedCount: -1,
+        rejectedCount: 0,
+      },
+      {
+        reviewMetadataPresent: false,
+        reviewMetadataMalformed: false,
+        reviewStatus: null,
+        approvedCount: null,
+        rejectedCount: null,
+      },
+    ] satisfies Array<Partial<PilotJob>>
+  ) {
+    const jobs: PilotJob[] = base.map((job, index) =>
+      index === 0 ? { ...job, status: "completed", ...malformed } : job
+    );
+    assert(
+      evaluatePilotGate(jobs).blockers.includes(
+        "pilot_review_metadata_invalid",
+      ),
+      "missing or malformed completed-review metadata unlocked rollout",
+    );
+  }
+
+  const promoted: PilotJob[] = completedApproval.map((job) => ({
+    ...job,
+    runMode: "scheduled" as const,
+    pilotQualified: true,
+  }));
+  assert(
+    evaluatePilotGate(promoted).status === "passed",
+    "qualified pilot handoff forgot the completed gate",
+  );
+  assert(
+    evaluatePilotGate(promoted.slice(0, 4)).status === "running",
+    "partial qualified handoff unlocked rollout",
+  );
+  const recurring = promoted.map((job, index) => ({
+    ...job,
+    status: ["queued", "processing", "failed", "staged", "completed"][index],
+    successfulNoChange: index === 4,
+  }));
+  assert(
+    evaluatePilotGate(recurring).status === "passed",
+    "a qualified scheduled recurrence self-deadlocked its own claim",
+  );
+  const rejectedAfterHandoff: PilotJob[] = promoted.map((job, index) =>
+    index === 0
+      ? {
+        ...job,
+        status: "completed",
+        successfulNoChange: false,
+        reviewMetadataPresent: true,
+        reviewStatus: "rejected",
+        approvedCount: 0,
+        retainedCount: 0,
+        retiredCount: 0,
+        rejectedCount: 1,
+      }
+      : job
+  );
+  assert(
+    evaluatePilotGate(rejectedAfterHandoff).blockers.includes(
+      "pilot_review_rejected",
+    ),
+    "a post-handoff full rejection left rollout unlocked",
   );
 });

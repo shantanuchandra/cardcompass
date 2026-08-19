@@ -3,6 +3,14 @@ import assert from 'node:assert/strict';
 import { readdir, readFile } from 'node:fs/promises';
 
 const migrationsRoot = new URL('../../supabase/migrations/', import.meta.url);
+const stagingMigration = new URL(
+  '../../supabase/migrations/20260819122252_supersede_stale_benefit_staging.sql',
+  import.meta.url,
+);
+const reviewMigration = new URL(
+  '../../supabase/migrations/20260819163046_review_card_benefit_enrichment_v2.sql',
+  import.meta.url,
+);
 
 async function migrationSql() {
   const names = (await readdir(migrationsRoot)).filter((name) =>
@@ -105,8 +113,10 @@ test('finalization preserves staging on 304, separates retry from recurrence, an
     finalize,
     /job_row\.result_summary\s*->\s*'observation'[\s\S]*normalize_card_enrichment_observation_history/i,
   );
-  assert.match(finalize, /next_retry_at\s*=\s*_next_retry_at/i);
+  assert.match(finalize, /ELSE _next_retry_at/i);
   assert.match(finalize, /next_run_at\s*=\s*NULL/i);
+  assert.match(finalize, /card_enrichment_effective_terminal_status\([\s\S]*has_pending_staging/i);
+  assert.match(finalize, /next_retry_at\s*=\s*CASE[\s\S]*has_pending_staging[\s\S]*THEN NULL/i);
   assert.match(finalize, /sanitize_card_enrichment_result_summary\(_result_summary/i);
   assert.doesNotMatch(finalize, /safe_summary\s*:=\s*\(_result_summary\s*-/i);
   assert.match(normalize, /observed_at/i);
@@ -151,10 +161,11 @@ test('claiming is one-card with a 300-second lease and admin completion shares t
     /'retry_scheduled'[\s\S]*card_enrichment_job_has_pending_staging[\s\S]*THEN false/i,
   );
   assert.match(claim, /card_has_unresolved_catalog_identity\(job\.card_id, job\.canonical_url\)/i);
-  assert.match(
-    trigger,
-    /card_enrichment_job_has_pending_staging[\s\S]*NEW\.next_run_at := NULL[\s\S]*RETURN NEW/i,
+  assert.doesNotMatch(
+    claim,
+    /AND NOT public\.card_enrichment_job_has_pending_staging/i,
   );
+  assert.doesNotMatch(trigger, /card_enrichment_job_has_pending_staging/i);
   assert.doesNotMatch(claim, /auth\.role\(\)|service_role_required/i);
   assert.match(sql, /BEFORE INSERT OR UPDATE[\s\S]*schedule_terminal_card_enrichment_observation/i);
   assert.doesNotMatch(sql, /CREATE OR REPLACE FUNCTION public\.approve_card_benefit_enrichment/i);
@@ -166,7 +177,10 @@ test('recurrence transitions and pending review are explicit, bounded, and index
   const requeue = functionBody(sql, 'requeue_due_card_catalog_enrichment_jobs');
 
   assert.match(action, /_run_mode\s*<>\s*'scheduled'[\s\S]*RETURN[\s\S]*'clear'/i);
-  assert.match(action, /_has_pending_staging[\s\S]*RETURN[\s\S]*'clear'/i);
+  assert.doesNotMatch(
+    action,
+    /IF _has_pending_staging[\s\S]*RETURN[\s\S]*'clear'/i,
+  );
   assert.match(action, /NOT _eligible[\s\S]*RETURN[\s\S]*'clear'/i);
   assert.match(action, /_next_run_at IS NULL OR _next_run_at <= _now[\s\S]*RETURN 'queue'/i);
   assert.match(requeue, /LIMIT _limit[\s\S]*FOR UPDATE(?: OF job)? SKIP LOCKED/i);
@@ -174,6 +188,69 @@ test('recurrence transitions and pending review are explicit, bounded, and index
   assert.match(requeue, /WHERE updated\.action = 'queue'/i);
   assert.match(sql, /CREATE INDEX IF NOT EXISTS idx_card_catalog_enrichment_jobs_recurrence_v6/i);
   assert.match(sql, /DO \$recurrence_transition_assertions\$[\s\S]*_limit=1/i);
+  assert.match(
+    sql,
+    /'scheduled', 'staged', '2026-08-19T00:00:00Z'[\s\S]*true\s*\)[\s\S]*<> 'queue'/i,
+  );
+});
+
+test('pending review recurs through ordered supersession while obsolete approval rolls back', async () => {
+  const sql = await migrationSql();
+  const finalize = functionBody(sql, 'finalize_card_catalog_enrichment_job');
+  const effective = functionBody(sql, 'card_enrichment_effective_terminal_status');
+  const stageSql = await readFile(stagingMigration, 'utf8');
+  const reviewSql = await readFile(reviewMigration, 'utf8');
+  const stage = functionBody(stageSql, 'stage_card_benefit_enrichment');
+  const approve = functionBody(reviewSql, 'approve_card_benefit_enrichment');
+
+  assert.match(effective, /_has_pending_staging[\s\S]*THEN 'staged'/i);
+  assert.match(finalize, /staging_id\s*=\s*coalesce\(_staging_id, job_row\.staging_id\)/i);
+  assert.match(finalize, /existing_observation_history[\s\S]*observations/i);
+  assert.match(stage, /superseded_by_newer_crawl/i);
+  assert.match(stage, /SET staging_id = resolved_staging_id/i);
+  assert.match(
+    approve,
+    /WHERE job\.staging_id = staging_row\.id[\s\S]*job\.status = 'staged'[\s\S]*linked_job_count < 1[\s\S]*RAISE EXCEPTION 'linked_staged_job_not_found'/i,
+  );
+  assert.doesNotMatch(sql, /CREATE OR REPLACE FUNCTION public\.approve_card_benefit_enrichment/i);
+});
+
+test('pilot qualification atomically promotes the existing exact five identities once', async () => {
+  const sql = await migrationSql();
+  const qualify = functionBody(sql, 'card_enrichment_pilot_job_is_qualified');
+  const promote = functionBody(sql, 'promote_qualified_card_benefit_enrichment_pilot');
+
+  assert.match(qualify, /successful_no_change/i);
+  assert.match(qualify, /review_status/i);
+  assert.match(qualify, /approved_count/i);
+  assert.match(qualify, /rejected_count/i);
+  assert.match(qualify, /status = 'quarantined'[\s\S]*failure_category/i);
+  assert.match(promote, /selected_parser\s*<>\s*'benefits-v6'/i);
+  assert.match(promote, /FOR UPDATE(?: OF job)?/i);
+  assert.match(promote, /count\(\*\)[\s\S]*<> 5/i);
+  assert.match(promote, /bool_and\([\s\S]*card_enrichment_pilot_job_is_qualified/i);
+  assert.match(promote, /SET run_mode = 'scheduled'/i);
+  assert.match(promote, /'pilot_qualified', true/i);
+  assert.match(
+    promote,
+    /other_job\.card_id = pilot_job\.card_id[\s\S]*other_job\.parser_version = pilot_job\.parser_version[\s\S]*other_job\.id <> pilot_job\.id/i,
+  );
+  assert.match(promote, /job\.run_mode = 'pilot'[\s\S]*pilot_qualified/i);
+  assert.match(
+    promote,
+    /IF promoted_count = 5 THEN[\s\S]*RETURN QUERY[\s\S]*RETURN;/i,
+  );
+  assert.match(
+    promote,
+    /promoted_count = 5[\s\S]*status = 'completed'[\s\S]*NOT public\.card_enrichment_pilot_job_is_qualified[\s\S]*RAISE EXCEPTION 'pilot_not_qualified'/i,
+  );
+  assert.match(
+    promote,
+    /pilot_count <> 5 OR promoted_count <> 0 OR NOT all_qualified/i,
+  );
+  assert.doesNotMatch(promote, /INSERT INTO public\.card_catalog_enrichment_jobs/i);
+  assert.match(sql, /REVOKE ALL ON FUNCTION public\.promote_qualified_card_benefit_enrichment_pilot\(text\)[\s\S]*TO service_role/i);
+  assert.match(sql, /DO \$pilot_qualification_assertions\$[\s\S]*fully_rejected[\s\S]*partially_rejected[\s\S]*successful_no_change/i);
 });
 
 test('canonical recurrence timestamps and history normalization have apply-time parity assertions', async () => {

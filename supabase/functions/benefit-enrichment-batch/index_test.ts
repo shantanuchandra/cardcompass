@@ -12,6 +12,7 @@ import {
   observationValidatedAt,
   previousFetchValidators,
   processJob,
+  promoteQualifiedPilotJobs,
   readCompleteAbsenceHistory,
   readCurrentBenefits,
   readPilotStatus,
@@ -266,6 +267,42 @@ Deno.test("pilot API rejects a different benefit parser generation", async () =>
     "a stale benefit parser reached pilot initialization",
   );
   assert(rpcCalls === 0, "stale parser reached the pilot RPC");
+});
+
+Deno.test("qualified pilot handoff promotes the same exact five jobs idempotently", async () => {
+  const jobs = Array.from({ length: 5 }, (_, index) => ({
+    id: `pilot-${index}`,
+    card_id: `card-${index}`,
+    parser_version: "benefits-v6",
+    run_mode: "scheduled",
+    status: "staged",
+    job_key: `card-${index}:hash-${index}:benefits-v6`,
+    result_summary: { pilot_qualified: true },
+  }));
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const db = {
+    async rpc(name: string, args: Record<string, unknown>) {
+      calls.push({ name, args });
+      return { data: jobs.map((job) => ({ ...job })), error: null };
+    },
+  };
+
+  const first = await promoteQualifiedPilotJobs(db);
+  const repeated = await promoteQualifiedPilotJobs(db);
+
+  assert(first.length === 5 && repeated.length === 5, "handoff lost a card");
+  assert(
+    first.map((job) => job.id).join(",") ===
+      repeated.map((job) => job.id).join(","),
+    "repeated handoff created different job identities",
+  );
+  assert(
+    calls.every((call) =>
+      call.name === "promote_qualified_card_benefit_enrichment_pilot" &&
+      call.args._parser_version === "benefits-v6"
+    ),
+    "handoff bypassed the atomic current-parser promotion RPC",
+  );
 });
 
 Deno.test("approved movie config and partners survive the next enrichment comparison", () => {
@@ -761,6 +798,7 @@ for (
 
 Deno.test("pilot gate evaluates only the current parser lane", async () => {
   const filters = new Map<string, unknown>();
+  let orFilter = "";
   const rows = [
     "benefits-v1",
     "benefits-v2",
@@ -772,7 +810,7 @@ Deno.test("pilot gate evaluates only the current parser lane", async () => {
     .flatMap((parserVersion) =>
       Array.from({ length: 5 }, (_, index) => ({
         id: `${parserVersion}-${index}`,
-        run_mode: "pilot",
+        run_mode: parserVersion === "benefits-v6" ? "scheduled" : "pilot",
         parser_version: parserVersion,
         status: "staged",
         failure_category: null,
@@ -781,6 +819,7 @@ Deno.test("pilot gate evaluates only the current parser lane", async () => {
           idempotency_passed: true,
           evidence_passed: true,
           raw_body_stored: false,
+          pilot_qualified: parserVersion === "benefits-v6",
         },
       }))
     );
@@ -792,6 +831,10 @@ Deno.test("pilot gate evaluates only the current parser lane", async () => {
       filters.set(column, value);
       return this;
     },
+    or(expression: string) {
+      orFilter = expression;
+      return this;
+    },
     then<TResult1 = unknown>(
       onfulfilled?:
         | ((value: unknown) => TResult1 | PromiseLike<TResult1>)
@@ -800,7 +843,7 @@ Deno.test("pilot gate evaluates only the current parser lane", async () => {
       const data = rows.filter((row) =>
         [...filters].every(([column, value]) =>
           row[column as keyof typeof row] === value
-        )
+        ) && (row.run_mode === "pilot" || row.result_summary.pilot_qualified)
       );
       return Promise.resolve({ data, error: null }).then(onfulfilled);
     },
@@ -814,8 +857,64 @@ Deno.test("pilot gate evaluates only the current parser lane", async () => {
     "pilot gate mixed parser generations",
   );
   assert(
+    orFilter.includes("run_mode.eq.pilot") &&
+      orFilter.includes("pilot_qualified"),
+    "pilot gate forgot the persisted qualified handoff",
+  );
+  assert(
     gate.status === "passed",
     "safe current-generation pilot did not pass",
+  );
+});
+
+Deno.test("pilot projection conservatively carries Task 4 review evidence", async () => {
+  const rows = Array.from({ length: 5 }, (_, index) => ({
+    id: `pilot-${index}`,
+    run_mode: "pilot",
+    parser_version: "benefits-v6",
+    status: index === 0 ? "completed" : "staged",
+    failure_category: null,
+    result_summary: {
+      unsafe_mutation_count: 0,
+      idempotency_passed: true,
+      evidence_passed: true,
+      raw_body_stored: false,
+      successful_no_change: false,
+      review_status: index === 0 ? "rejected" : undefined,
+      approved_count: index === 0 ? 0 : undefined,
+      retained_count: index === 0 ? 0 : undefined,
+      retired_count: index === 0 ? 0 : undefined,
+      rejected_count: index === 0 ? 2 : undefined,
+    },
+  }));
+  const query = {
+    select() {
+      return this;
+    },
+    eq() {
+      return this;
+    },
+    or() {
+      return this;
+    },
+    then<TResult1 = unknown>(
+      onfulfilled?:
+        | ((value: unknown) => TResult1 | PromiseLike<TResult1>)
+        | null,
+    ) {
+      return Promise.resolve({ data: rows, error: null }).then(onfulfilled);
+    },
+  };
+  const gate = await readPilotStatus({ from: () => query });
+  assert(
+    gate.blockers.includes("pilot_review_rejected"),
+    "Task 4 rejection evidence disappeared at the pilot projection",
+  );
+  rows[0].result_summary.review_status = "unexpected";
+  const malformed = await readPilotStatus({ from: () => query });
+  assert(
+    malformed.blockers.includes("pilot_review_metadata_invalid"),
+    "malformed review metadata was normalized into a passing review",
   );
 });
 
@@ -1091,6 +1190,7 @@ function scheduledSeederDb(
         "seeder wrote an unexpected table",
       );
       let selecting = false;
+      let includePilotHandoff = false;
       const filters = new Map<string, unknown>();
       return {
         select() {
@@ -1099,6 +1199,11 @@ function scheduledSeederDb(
         },
         eq(column: string, value: unknown) {
           filters.set(column, value);
+          return this;
+        },
+        or(expression: string) {
+          includePilotHandoff = expression.includes("run_mode.eq.pilot") &&
+            expression.includes("pilot_qualified");
           return this;
         },
         async upsert(
@@ -1123,7 +1228,10 @@ function scheduledSeederDb(
         ) {
           const data = selecting
             ? [...jobs.values()].filter((row) =>
-              [...filters].every(([column, value]) => row[column] === value)
+              [...filters].every(([column, value]) => row[column] === value) &&
+              (!includePilotHandoff || row.run_mode === "pilot" ||
+                (row.result_summary as Record<string, unknown> | undefined)
+                    ?.pilot_qualified === true)
             )
             : [];
           return Promise.resolve({ data, error: null }).then(
@@ -1556,14 +1664,15 @@ Deno.test("scheduled seeding skips pilot conflicts and preserves processing and 
   }
 });
 
-Deno.test("scheduled seeding excludes pilot card and parser identity despite cosmetic URL hashes", async () => {
+Deno.test("scheduled seeding excludes promoted pilot identity despite cosmetic URL hashes", async () => {
   const pilot = {
     id: "pilot-cosmetic-url",
     card_id: "card-valid",
     parser_version: "benefits-v6",
     job_key: `card-valid:${"f".repeat(64)}:benefits-v6`,
-    run_mode: "pilot",
+    run_mode: "scheduled",
     status: "completed",
+    result_summary: { pilot_qualified: true },
   };
   const db = scheduledSeederDb([validCatalogCard], [pilot]);
 

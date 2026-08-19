@@ -48,12 +48,21 @@ export type PilotCandidate = {
 export type PilotJob = {
   id: string;
   runMode: RunMode;
+  pilotQualified: boolean;
   status: string;
   quarantineReason: string | null;
   unsafeMutationCount: number;
   idempotencyPassed: boolean;
   evidencePassed: boolean;
   rawBodyStored: boolean;
+  successfulNoChange: boolean;
+  reviewMetadataPresent: boolean;
+  reviewMetadataMalformed: boolean;
+  reviewStatus: "approved" | "rejected" | null;
+  approvedCount: number | null;
+  retainedCount: number | null;
+  retiredCount: number | null;
+  rejectedCount: number | null;
 };
 
 function issuerKey(issuer: string): string {
@@ -295,12 +304,41 @@ export function selectPilotCandidates<T extends PilotCandidate>(
     : [];
 }
 
+function completedPilotReviewBlocker(job: PilotJob): string | null {
+  const reviewCounts = [
+    job.approvedCount,
+    job.retainedCount,
+    job.retiredCount,
+    job.rejectedCount,
+  ];
+  const hasValidCounts = reviewCounts.every((count) =>
+    Number.isInteger(count) && Number(count) >= 0
+  );
+  const positiveReviewActions = Number(job.approvedCount) +
+    Number(job.retainedCount) + Number(job.retiredCount);
+  if (job.successfulNoChange && !job.reviewMetadataPresent) return null;
+  if (
+    job.reviewMetadataMalformed || !hasValidCounts || job.reviewStatus === null
+  ) {
+    return "pilot_review_metadata_invalid";
+  }
+  if (job.reviewStatus === "rejected") return "pilot_review_rejected";
+  if (Number(job.rejectedCount) > 0) {
+    return "pilot_review_partially_rejected";
+  }
+  return positiveReviewActions < 1 ? "pilot_review_metadata_invalid" : null;
+}
+
 export function evaluatePilotGate(jobs: readonly PilotJob[]): {
   status: PilotStatus;
   scheduledClaimAllowed: boolean;
   blockers: string[];
 } {
-  const pilot = jobs.filter((job) => job.runMode === "pilot");
+  const activePilot = jobs.filter((job) => job.runMode === "pilot");
+  const promotedPilot = jobs.filter((job) =>
+    job.runMode === "scheduled" && job.pilotQualified
+  );
+  const pilot = [...activePilot, ...promotedPilot];
   if (pilot.length === 0) {
     return {
       status: "not_started",
@@ -314,6 +352,27 @@ export function evaluatePilotGate(jobs: readonly PilotJob[]): {
       scheduledClaimAllowed: false,
       blockers: ["pilot_incomplete"],
     };
+  }
+  if (promotedPilot.length > 0) {
+    const exactAtomicHandoff = promotedPilot.length === 5 &&
+      activePilot.length === 0;
+    if (!exactAtomicHandoff) {
+      return {
+        status: "blocked",
+        scheduledClaimAllowed: false,
+        blockers: ["pilot_job_count"],
+      };
+    }
+    const reviewBlockers = promotedPilot.flatMap((job) => {
+      const blocker = job.status === "completed"
+        ? completedPilotReviewBlocker(job)
+        : null;
+      return blocker ? [blocker] : [];
+    });
+    const blockers = [...new Set(reviewBlockers)];
+    return blockers.length === 0
+      ? { status: "passed", scheduledClaimAllowed: true, blockers: [] }
+      : { status: "blocked", scheduledClaimAllowed: false, blockers };
   }
   const blockers: string[] = [];
   if (pilot.length !== 5) blockers.push("pilot_job_count");
@@ -338,6 +397,10 @@ export function evaluatePilotGate(jobs: readonly PilotJob[]): {
       !job.evidencePassed
     ) {
       blockers.push("evidence_failed");
+    }
+    if (job.status === "completed") {
+      const reviewBlocker = completedPilotReviewBlocker(job);
+      if (reviewBlocker) blockers.push(reviewBlocker);
     }
     if (job.rawBodyStored) blockers.push("raw_body_stored");
   }

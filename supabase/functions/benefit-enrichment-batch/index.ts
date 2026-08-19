@@ -262,17 +262,48 @@ function pilotJob(row: Record<string, any>): PilotJob {
   const summary = row.result_summary && typeof row.result_summary === "object"
     ? row.result_summary
     : {};
+  const count = (value: unknown): number | null =>
+    typeof value === "number" && Number.isInteger(value) && value >= 0
+      ? value
+      : null;
+  const reviewStatus = summary.review_status === "approved" ||
+      summary.review_status === "rejected"
+    ? summary.review_status
+    : null;
+  const reviewCountKeys = [
+    "approved_count",
+    "retained_count",
+    "retired_count",
+    "rejected_count",
+  ] as const;
+  const hasOwn = (key: string) => Object.hasOwn(summary, key);
+  const reviewMetadataPresent = hasOwn("review_status") ||
+    reviewCountKeys.some(hasOwn);
+  const reviewMetadataMalformed =
+    (hasOwn("review_status") && reviewStatus === null) ||
+    reviewCountKeys.some((key) => hasOwn(key) && count(summary[key]) === null);
   return {
     id: String(row.id),
     runMode: row.run_mode,
+    pilotQualified: summary.pilot_qualified === true,
     status: String(row.status),
     quarantineReason: row.status === "quarantined"
       ? String(row.failure_category ?? "").trim() || null
       : null,
-    unsafeMutationCount: Number(summary.unsafe_mutation_count ?? 0),
+    unsafeMutationCount: summary.unsafe_mutation_count === undefined
+      ? 0
+      : count(summary.unsafe_mutation_count) ?? -1,
     idempotencyPassed: summary.idempotency_passed === true,
     evidencePassed: summary.evidence_passed === true,
     rawBodyStored: summary.raw_body_stored === true,
+    successfulNoChange: summary.successful_no_change === true,
+    reviewMetadataPresent,
+    reviewMetadataMalformed,
+    reviewStatus,
+    approvedCount: count(summary.approved_count),
+    retainedCount: count(summary.retained_count),
+    retiredCount: count(summary.retired_count),
+    rejectedCount: count(summary.rejected_count),
   };
 }
 
@@ -283,10 +314,28 @@ export async function readPilotStatus(
   assertBenefitParserVersion(parserVersion);
   const { data, error } = await db.from("card_catalog_enrichment_jobs")
     .select("id,run_mode,status,failure_category,result_summary")
-    .eq("run_mode", "pilot")
-    .eq("parser_version", parserVersion);
+    .eq("parser_version", parserVersion)
+    .or("run_mode.eq.pilot,result_summary->>pilot_qualified.eq.true");
   if (error) throw error;
   return evaluatePilotGate((data ?? []).map(pilotJob));
+}
+
+export async function promoteQualifiedPilotJobs(
+  db: UntypedSupabaseClient,
+  parserVersion = CURRENT_BENEFIT_PARSER_VERSION,
+): Promise<EnrichmentJob[]> {
+  assertBenefitParserVersion(parserVersion);
+  if (parserVersion !== CURRENT_BENEFIT_PARSER_VERSION) {
+    throw new Error("unsupported_pilot_parser_version");
+  }
+  const { data, error } = await db.rpc(
+    "promote_qualified_card_benefit_enrichment_pilot",
+    { _parser_version: parserVersion },
+  );
+  if (error) throw error;
+  const jobs = (data ?? []) as EnrichmentJob[];
+  if (jobs.length !== 5) throw new Error("pilot_promotion_failed");
+  return jobs;
 }
 
 export async function readCurrentBenefits(
@@ -824,9 +873,9 @@ export async function seedScheduledQueueIfAllowed(
   assertBenefitParserVersion(parserVersion);
   const { data: pilotRows, error: pilotError } = await db
     .from("card_catalog_enrichment_jobs")
-    .select("card_id,parser_version")
-    .eq("run_mode", "pilot")
-    .eq("parser_version", parserVersion);
+    .select("card_id,parser_version,result_summary")
+    .eq("parser_version", parserVersion)
+    .or("run_mode.eq.pilot,result_summary->>pilot_qualified.eq.true");
   if (pilotError) throw pilotError;
   const pilotIdentities = new Set(
     (pilotRows ?? []).map((row: Record<string, unknown>) =>
@@ -1793,6 +1842,12 @@ export async function handleBenefitEnrichmentBatch(
         retried: 0,
         pilotStatus: pilot.status,
       });
+    }
+    if (runMode === "scheduled") {
+      await promoteQualifiedPilotJobs(
+        db,
+        CURRENT_BENEFIT_PARSER_VERSION,
+      );
     }
 
     await seedScheduledQueueIfAllowed(

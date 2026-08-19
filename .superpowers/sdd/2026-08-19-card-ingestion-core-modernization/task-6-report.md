@@ -188,3 +188,73 @@ Live applied: **no**. No Docker, local database/PostgreSQL/Supabase runtime,
 linked Supabase command, migration apply/push/dry-run, external network,
 production data, or live write was used. Ordered Task 2–6 real PostgreSQL
 parse/apply/lint/transaction verification remains the explicit unresolved gate.
+
+## Review fix round 2/5 — 2026-08-20
+
+### Red proof
+
+- The expanded pilot-policy case reported **14 passed / 1 failed** when a
+  fully rejected Task 4 review still unlocked rollout. After review projection
+  was introduced, an additional red proved a promoted job becoming queued or
+  processing self-deadlocked its own scheduled claim.
+- The worker suite initially failed type checking because neither the Task 4
+  review projection nor the atomic pilot-promotion boundary existed.
+- The expanded recurrence migration suite reported **3 passed / 5 failed**
+  before pending staging could recur, the finalizer could preserve a current
+  review across later outcomes, obsolete approval was tied to the authoritative
+  link, and an exact-five pilot handoff existed.
+- A promoted-identity seed fixture failed before the persisted handoff marker
+  was included in the card/parser exclusion.
+
+### Fixes
+
+- A terminal scheduled `staged` job now receives normal cadence, requeues under
+  the same bounded lock, and can be claimed while retaining its current
+  `staging_id`. Task 3 remains the sole ordered supersession path: a later
+  complete material/removal observation rejects older pending staging and
+  moves the authoritative job link; history is retained.
+- The finalizer derives an effective terminal status under the locked job row.
+  When the authoritative linked staging is still pending, later no-change or
+  failed observations return the row to reviewable `staged`, keep the link,
+  append the observation, and schedule the appropriate long/short cadence.
+  Task 4 approval still requires that exact authoritative link and staged job;
+  an obsolete staging approval raises and its transaction rolls back.
+- Added a service-only, security-invoker pilot promotion RPC. It locks exactly
+  five qualifying pilot rows, rejects mixed/duplicate card-parser identities,
+  and changes those same rows to `scheduled` with a durable
+  `pilot_qualified` marker. It inserts no job, is idempotent, and its repeated
+  path does not reschedule or requalify ordinary queued/processing recurrence.
+- Scheduled gate reads and seeding include the persisted marker. Exactly five
+  promoted identities keep the gate passed regardless of later scheduled job
+  state, preventing requeue-before-gate self-deadlock while continuing to
+  exclude duplicate card/parser seeds. A later completed admin rejection is
+  still re-evaluated and blocks the gate.
+- Pilot projection now carries `successful_no_change`, `review_status`, and all
+  Task 4 decision counts. Completed no-change and zero-rejection approved
+  reviews pass. Fully rejected, mixed/partially rejected, missing, negative,
+  and malformed review metadata fail closed. Quarantine still requires a
+  non-empty justification.
+- Added apply-time assertions for staged recurrence, pending-review effective
+  terminal state, completed no-change, approved review, fully rejected review,
+  partial rejection, malformed counts, and justified quarantine. No Task 3 or
+  Task 4 RPC was copied or redefined, and no business table/column was added.
+
+### Green verification
+
+- Exact Task 6 Deno command — **93 passed, 0 failed**.
+- Exact Task 6 migration command — **28 passed, 0 failed**.
+- Total named behavioral/static tests — **121 passed, 0 failed**.
+- `deno check --node-modules-dir=auto` on all changed production TypeScript
+  files — passed.
+- `deno fmt --check` on all changed TypeScript files — passed.
+- `git diff --check` — passed.
+
+Migration remains
+`supabase/migrations/20260819205037_recur_card_enrichment_jobs.sql`.
+Review-fix-round-2 SHA-256 before commit:
+`9c405adbd2a752057c2a847e6e4ab5cb5a79392cd0d88a8fc9c1cf1a5aaaf6a7`.
+
+Live applied: **no**. No Docker, local database/PostgreSQL/Supabase runtime,
+linked Supabase command, migration apply/push/dry-run, external network,
+production data, or live write was used. Ordered Task 2–6 real PostgreSQL
+parse/apply/lint/transaction verification remains the explicit unresolved gate.
