@@ -1,7 +1,10 @@
 import { accessActionHandlers } from "./access.ts";
 import { cardDataActionHandlers } from "./card_data.ts";
+import { inboxActionHandlers } from "./inbox.ts";
 
-export const actionHandlers = Object.freeze({
-  ...accessActionHandlers,
-  ...cardDataActionHandlers,
-});
+export const actionHandlers = Object.freeze(Object.assign(
+  Object.create(null),
+  accessActionHandlers,
+  cardDataActionHandlers,
+  inboxActionHandlers,
+));
