@@ -6,6 +6,7 @@ import {
 } from "./types.ts";
 import {
   createGeminiTriageModel,
+  type StructuredTextModel,
   triageFeedback,
 } from "../_shared/feedback_triage.ts";
 
@@ -391,6 +392,11 @@ export async function handleEvalCaseAction(
 export async function handleFeedbackTriageRetry(
   body: JsonRecord,
   context: AdminActionContext,
+  provided?: Readonly<{
+    model?: StructuredTextModel;
+    waitUntil?: (task: Promise<unknown>) => void;
+    fetch?: typeof fetch;
+  }>,
 ) {
   only(body, new Set(["action", "feedback_id", "request_id"]));
   const id = uuid(body.feedback_id);
@@ -421,11 +427,13 @@ export async function handleFeedbackTriageRetry(
   if (reset.error || !Array.isArray(reset.data) || reset.data.length !== 1) {
     throw new AdminHttpError("state_conflict", 409);
   }
-  const apiKeys = [
-    Deno.env.get("GEMINI_API_KEY"),
-    Deno.env.get("GEMINI_API_KEY_2"),
-  ].filter((key): key is string => Boolean(key));
-  const model = createGeminiTriageModel({ apiKeys, fetch });
+  const model = provided?.model ?? createGeminiTriageModel({
+    apiKeys: [
+      Deno.env.get("GEMINI_API_KEY"),
+      Deno.env.get("GEMINI_API_KEY_2"),
+    ].filter((key): key is string => Boolean(key)),
+    fetch: provided?.fetch ?? fetch,
+  });
   const task = triageFeedback(id, {
     rpc: async (name, args) => {
       const result = await context.db.rpc(name, args);
@@ -435,7 +443,7 @@ export async function handleFeedbackTriageRetry(
     model,
   });
   try {
-    (globalThis as any).EdgeRuntime?.waitUntil?.(task);
+    (provided?.waitUntil ?? (globalThis as any).EdgeRuntime?.waitUntil)?.(task);
   } catch {
     task.catch(() => undefined);
   }

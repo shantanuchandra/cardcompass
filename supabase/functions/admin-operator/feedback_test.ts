@@ -268,14 +268,9 @@ Deno.test("feedback detail audits before reading feedback or eval cases", async 
 Deno.test({
   name:
     "admin retry audits, resets, claims, and records safe unavailable-model failure",
-  ignore: (await Deno.permissions.query({ name: "env" })).state !== "granted",
   fn: async () => {
     const events: string[] = [];
     let background: Promise<unknown> | undefined;
-    const originalRuntime = (globalThis as any).EdgeRuntime;
-    (globalThis as any).EdgeRuntime = {
-      waitUntil: (task: Promise<unknown>) => background = task,
-    };
     const context = {
       actor,
       requestId: "30000000-0000-4000-8000-000000000001",
@@ -321,19 +316,27 @@ Deno.test({
         },
       },
     } as unknown as AdminActionContext;
-    try {
-      assertEquals(
-        await handleFeedbackTriageRetry({
+    assertEquals(
+      await handleFeedbackTriageRetry(
+        {
           action: "feedback-triage-retry",
           feedback_id: id,
           request_id: "30000000-0000-4000-8000-000000000001",
-        }, context),
-        { feedback_id: id, triage_status: "awaiting_triage" },
-      );
-      await background;
-    } finally {
-      (globalThis as any).EdgeRuntime = originalRuntime;
-    }
+        },
+        context,
+        {
+          model: {
+            generateJson: () => Promise.reject(new Error("model_unavailable")),
+          },
+          fetch: async () => {
+            throw new Error("unexpected_network");
+          },
+          waitUntil: (task: Promise<unknown>) => background = task,
+        },
+      ),
+      { feedback_id: id, triage_status: "awaiting_triage" },
+    );
+    await background;
 
     assertEquals(events, [
       "from:ai_feedback",
