@@ -90,6 +90,7 @@ type SitemapDocument = {
 
 const unsafePagePattern =
   /(?:^|[/?=&_.-])(?:login|log-in|apply|application|track|tracking|blog|stories?|story|protection|insurance|generic|help|support|learning-centre)(?:$|[/?=&_.-])/i;
+const nonProductUrlPattern = /calculator/i;
 const supportingPattern =
   /(?:benefits?|fees?|charges?|rewards?|terms?|conditions?|mitc)(?:$|[/?=&_.-])/i;
 const productPattern =
@@ -589,7 +590,9 @@ export function classifyIssuerPage(
   );
   const warnings: string[] = [];
 
-  if (unsafePagePattern.test(evidence)) {
+  if (
+    nonProductUrlPattern.test(canonicalUrl) || unsafePagePattern.test(evidence)
+  ) {
     return sanitizeClassification({
       kind: "not_a_card",
       canonicalUrl,
