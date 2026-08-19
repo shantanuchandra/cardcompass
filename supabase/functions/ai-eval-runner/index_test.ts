@@ -155,6 +155,10 @@ Deno.test("registry exposes only reviewed configuration keys and SQL-parity cost
     getJudgeConfig("gemini-3.6-flash-blind-judge-v1").model,
     "gemini-3.6-flash",
   );
+  assertEquals(
+    getCandidateConfig("gemini-3.6-flash-recommendation-v1").taskScope,
+    "fixed_selection_explanation_and_arithmetic",
+  );
   const databasePolicy = Object.fromEntries(
     [...evalMigration.matchAll(/when\s+'([^']+)'\s+then\s+([0-9.]+)/gi)]
       .map((match) => [match[1], Number(match[2])]),
@@ -508,6 +512,143 @@ Deno.test("grounded benefit extraction accepts the exact official benefit only",
     )).safeFailureCategory,
     "invalid_model_output",
   );
+});
+
+Deno.test("Movie Deals arithmetic covers percent, fixed thresholds/caps and BOGO odd/even", async () => {
+  const cases = [
+    [{ discount_percent: 10, max_discount_per_transaction: 50 }, 50, 750],
+    [{ discount_amount: 150, min_transaction: 900 }, null, null],
+    [
+      { discount_amount: 150, min_transaction: 700, monthly_cap: 100 },
+      100,
+      700,
+    ],
+    [
+      {
+        discount_type: "bogo",
+        max_discount_per_transaction: 300,
+        max_usage_per_month: 2,
+      },
+      300,
+      500,
+    ],
+  ] as const;
+  for (const [config, savings, finalAmount] of cases) {
+    const item = fixture("recommendation");
+    const authoritative = item.inputFixture.authoritative_context as Record<
+      string,
+      unknown
+    >;
+    const customized = {
+      ...item,
+      inputFixture: {
+        ...item.inputFixture,
+        authoritative_context: {
+          ...authoritative,
+          benefits: [{ benefit_id: "benefit-1", value_config: config }],
+        },
+      },
+    };
+    let calls = 0;
+    const result = await executeEvalCase(
+      customized,
+      "gemini-3.6-flash-recommendation-v1",
+      {
+        generate: async () => {
+          calls++;
+          return fakeGeneration({
+            selected_card_id: "card-1",
+            selected_benefit_id: "benefit-1",
+            savings,
+            final_amount: finalAmount,
+            explanation: "Grounded arithmetic.",
+          });
+        },
+      },
+    );
+    assertEquals(
+      result.executionStatus,
+      savings === null ? "failed" : "succeeded",
+    );
+    if (savings === null) {
+      assertEquals(result.safeFailureCategory, "insufficient_fixture");
+    }
+  }
+  const even = fixture("recommendation");
+  const evenAuth = even.inputFixture.authoritative_context as Record<
+    string,
+    unknown
+  >;
+  const evenItem = {
+    ...even,
+    inputFixture: {
+      safe_input_context: {
+        number_of_tickets: 4,
+        price_per_ticket: 400,
+        task: "explain_fixed_selection",
+      },
+      authoritative_context: {
+        ...evenAuth,
+        benefits: [{
+          benefit_id: "benefit-1",
+          value_config: {
+            discount_type: "bogo",
+            max_discount_per_transaction: 300,
+            max_usage_per_month: 2,
+          },
+        }],
+      },
+    },
+  };
+  const evenResult = await executeEvalCase(
+    evenItem,
+    "gemini-3.6-flash-recommendation-v1",
+    {
+      generate: async () =>
+        fakeGeneration({
+          selected_card_id: "card-1",
+          selected_benefit_id: "benefit-1",
+          savings: 600,
+          final_amount: 1000,
+          explanation: "Two free tickets.",
+        }),
+    },
+  );
+  assertEquals(evenResult.executionStatus, "succeeded");
+});
+
+Deno.test("platform mismatch changes confidence and cinema remains informational like production", async () => {
+  for (
+    const [safePatch, benefitPatch] of [[{ preferred_platform: "pvr" }, {
+      partners: ["bookmyshow"],
+    }], [{ preferred_cinema: "imax" }, {
+      value_config: { discount_percent: 25, eligible_cinemas: ["inox"] },
+    }]] as const
+  ) {
+    const item = fixture("recommendation");
+    const safe = item.inputFixture.safe_input_context as Record<
+        string,
+        unknown
+      >,
+      auth = item.inputFixture.authoritative_context as Record<string, unknown>;
+    const benefit = (auth.benefits as Record<string, unknown>[])[0];
+    const customized = {
+      ...item,
+      inputFixture: {
+        safe_input_context: { ...safe, ...safePatch },
+        authoritative_context: {
+          ...auth,
+          benefits: [{ ...benefit, ...benefitPatch }],
+        },
+      },
+    };
+    const result = await executeEvalCase(
+      customized,
+      "gemini-3.6-flash-recommendation-v1",
+      { generate: async () => fakeGeneration(item.capturedOutput) },
+    );
+    assertEquals(result.executionStatus, "succeeded");
+  }
 });
 
 Deno.test("invalid output retains metering in a safe failure", async () => {

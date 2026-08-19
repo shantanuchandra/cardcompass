@@ -85,3 +85,16 @@ Ruling: Keep statement feedback reproducible at its selected target granularity:
 Ruling: Prefer no model call over an answer-contaminated or commercially under-specified fixture. Cost if wrong: current statement-level and card-data feedback may stay in human review until capture has original bounded source evidence, preserving evaluation validity over dataset coverage.
 
 Ruling: Scope recommendation candidates to `explain_fixed_selection` for MVP and validate their money against authoritative offer rules. Cost if wrong: reranking quality requires a later fixture contract containing the full eligible candidate set and ownership constraints, rather than being inferred from one selected trace.
+
+### Task 4 provenance, parity, and scope corrections
+
+- Real user-card feedback becomes runnable only when approved HTTPS catalog provenance or an official benefit URL supplies bounded source facts; otherwise it remains `card_requires_review`. Captured resolved catalog/benefit output stays separate.
+- The real query-shaped provenance path is covered end-to-end through context resolution, the immutable draft fixture envelope, and candidate execution for identity; the same official-source contract supports benefit mode.
+- Movie Deals normalization now carries `min_transaction` into the production rule and evaluator. Eval arithmetic mirrors percent, fixed/cycle-cap, and BOGO ticket-pair behavior; platform mismatch remains confidence-only and cinema informational, matching production semantics.
+- Every registry entry has mandatory `taskScope`; recommendation scope is `fixed_selection_explanation_and_arithmetic`, explicitly excluding selection and ranking.
+
+Ruling: A card case is runnable from stored feedback only when an HTTPS official provenance record or official benefit source supplies the extraction evidence. Cost if wrong: catalog rows without retained provenance remain human-review-only even when their resolved values look plausible.
+
+Ruling: Preserve production Movie Deals platform/cinema semantics in evals: platform mismatch changes confidence and cinema is informational, not an eligibility cutoff. Cost if wrong: stricter platform/cinema evaluation requires a separately reviewed product-behavior change rather than silently changing the evaluator oracle.
+
+Ruling: Publish recommendation scope as fixed-selection explanation and arithmetic, never ranking. Cost if wrong: Task 7 must label these results accordingly and cannot claim recommendation-selection improvement from this configuration.

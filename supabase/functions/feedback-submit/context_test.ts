@@ -3,6 +3,7 @@ import {
   resolveFeedbackContext,
   resolveRecommendationCatalog,
 } from "./context.ts";
+import { executeEvalCase } from "../ai-eval-runner/executors.ts";
 
 function fakeDb(rows: Record<string, Record<string, unknown>[]>) {
   const selects: string[] = [];
@@ -270,4 +271,85 @@ Deno.test("card fixture carries authoritative current identity facts", async () 
     last_four_digits: "1234",
   });
   assertEquals((resolved.authoritativeContext.benefits as unknown[]).length, 1);
+});
+
+Deno.test("real provenance-shaped card feedback becomes a runnable immutable eval fixture", async () => {
+  const rows = {
+    user_cards: [{
+      id: "uc-1",
+      user_id: "owner",
+      catalog_card_id: "card-1",
+      last_four_digits: "1234",
+      is_active: true,
+    }],
+    card_catalog: [{
+      id: "card-1",
+      card_name: "Regalia Gold",
+      bank: "HDFC",
+      network: "Visa",
+      card_type: "credit",
+      annual_fee: 2500,
+      joining_fee: 2500,
+      is_discontinued: false,
+      updated_at: "2026-08-01",
+    }],
+    card_benefit_mapping: [],
+    card_catalog_provenance: [{
+      id: "source-1",
+      card_id: "card-1",
+      source_url: "https://hdfc.example/regalia",
+      source_type: "official_html",
+      extracted_fields: {
+        card_id: "card-1",
+        card_name: "Regalia Gold",
+        bank: "HDFC",
+        network: "Visa",
+        annual_fee: 2500,
+        joining_fee: 2500,
+      },
+      source_evidence: { excerpt: "Official Regalia Gold fees" },
+    }],
+  };
+  const context = await resolveFeedbackContext(
+    fakeDb(rows),
+    "owner",
+    "card_data",
+    "user_card",
+    "uc-1",
+  );
+  assertEquals(context.safeInputContext.kind, "card_data");
+  const result = await executeEvalCase(
+    {
+      caseId: "case-1",
+      revision: 1,
+      featureKey: "card_data",
+      inputFixture: {
+        safe_input_context: context.safeInputContext,
+        authoritative_context: context.authoritativeContext,
+      },
+      capturedOutput: context.outputSnapshot,
+    },
+    "gemini-3.6-flash-card-data-v1",
+    {
+      generate: async () => ({
+        model: "gemini-3.6-flash",
+        inputTokens: 1,
+        outputTokens: 1,
+        latencyMs: 1,
+        response: {
+          mode: "identity",
+          card: {
+            id: "card-1",
+            name: "Regalia Gold",
+            bank: "HDFC",
+            network: "Visa",
+            annual_fee: 2500,
+            joining_fee: 2500,
+          },
+          sources: [{ id: "source-1", field_paths: ["facts.card_name"] }],
+        },
+      }),
+    },
+  );
+  assertEquals(result.executionStatus, "succeeded");
 });

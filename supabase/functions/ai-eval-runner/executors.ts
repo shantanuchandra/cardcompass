@@ -220,7 +220,6 @@ function validFixture(
       safe.official_sources.every(validOfficialSource);
   }
   const authoritative = fixture.authoritative_context;
-  const gross = Number(safe.number_of_tickets) * Number(safe.price_per_ticket);
   return safe.task === "explain_fixed_selection" &&
     typeof safe.number_of_tickets === "number" &&
     Number.isInteger(safe.number_of_tickets) && safe.number_of_tickets > 0 &&
@@ -228,8 +227,7 @@ function validFixture(
     authoritative.cards.length > 0 && Array.isArray(authoritative.benefits) &&
     authoritative.benefits.length > 0 &&
     authoritative.benefits.some((benefit) =>
-      isRecord(benefit) && isRecord(benefit.value_config) &&
-      expectedSavings(gross, benefit.value_config) !== null
+      isRecord(benefit) && expectedRecommendation(safe, benefit) !== null
     );
 }
 
@@ -432,18 +430,40 @@ function validateRecommendation(
   const benefit = (authoritative.benefits as unknown[]).find((entry) =>
     isRecord(entry) && entry.benefit_id === output.selected_benefit_id
   );
-  if (!isRecord(benefit) || !isRecord(benefit.value_config)) return false;
-  const gross = Number(safe.number_of_tickets) * Number(safe.price_per_ticket);
-  const expected = expectedSavings(gross, benefit.value_config);
+  if (!isRecord(benefit)) return false;
+  const expected = expectedRecommendation(safe, benefit);
   return expected !== null &&
-    Math.abs(Number(output.savings) - expected) <= 0.01 &&
-    Math.abs(Number(output.final_amount) - (gross - expected)) <= 0.01;
+    Math.abs(Number(output.savings) - expected.savings) <= 0.01 &&
+    Math.abs(Number(output.final_amount) - expected.finalAmount) <= 0.01;
 }
 
-function expectedSavings(
-  gross: number,
-  config: Record<string, unknown>,
-): number | null {
+function expectedRecommendation(
+  safe: Record<string, unknown>,
+  benefit: Record<string, unknown>,
+): { savings: number; finalAmount: number } | null {
+  if (!isRecord(benefit.value_config)) return null;
+  const config = benefit.value_config;
+  const tickets = Number(safe.number_of_tickets),
+    price = Number(safe.price_per_ticket),
+    gross = tickets * price;
+  const minimum = Number(config.min_transaction);
+  if (Number.isFinite(minimum) && gross < minimum) return null;
+  // Production intentionally treats platform mismatch as confidence, not
+  // ineligibility, and cinema as informational because catalog rules do not
+  // carry reliable cinema-chain eligibility.
+  if (String(config.discount_type).toLowerCase() === "bogo") {
+    const cap = Number(config.max_discount_per_transaction),
+      limit = Number(config.max_usage_per_month ?? config.max_usage_per_period);
+    if (
+      !Number.isFinite(cap) || cap <= 0 || !Number.isFinite(limit) ||
+      limit <= 0 || !Number.isInteger(tickets)
+    ) return null;
+    const savings = Math.min(
+      gross,
+      Math.floor(tickets / 2) * Math.min(price, cap),
+    );
+    return { savings, finalAmount: gross - savings };
+  }
   const percent = Number(config.discount_percent);
   const fixed = Number(config.discount_amount);
   let savings = Number.isFinite(percent) && percent > 0 && percent <= 100
@@ -454,7 +474,12 @@ function expectedSavings(
   if (!Number.isFinite(savings)) return null;
   const cap = Number(config.max_discount_per_transaction);
   if (Number.isFinite(cap) && cap >= 0) savings = Math.min(savings, cap);
-  return Math.min(gross, savings);
+  const cycleCap = Number(config.monthly_cap);
+  if (Number.isFinite(cycleCap) && cycleCap >= 0 && Number.isFinite(fixed)) {
+    savings = Math.min(savings, cycleCap);
+  }
+  savings = Math.min(gross, Math.max(0, savings));
+  return { savings, finalAmount: gross - savings };
 }
 
 function finiteMoney(value: unknown): boolean {

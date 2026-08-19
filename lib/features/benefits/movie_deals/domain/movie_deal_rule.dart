@@ -64,6 +64,7 @@ class MovieDealRule {
     this.validityEnd,
     this.discountPercent,
     this.fixedAmount,
+    this.minimumTransaction,
     this.perTransactionCap,
     this.cycleAmountCap,
     this.buyCount,
@@ -105,6 +106,7 @@ class MovieDealRule {
 
   final double? discountPercent;
   final double? fixedAmount;
+  final double? minimumTransaction;
 
   /// Caps a SINGLE booking's discount (e.g. bogo's per-pair cap, or
   /// percentDiscount's per-transaction ceiling — both from

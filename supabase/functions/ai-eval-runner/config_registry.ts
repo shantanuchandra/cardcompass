@@ -6,6 +6,7 @@ export type EvalConfig = Readonly<{
   provider: "captured" | "gemini";
   model: string;
   promptVersion: string;
+  taskScope: string;
   maxInputTokens: number;
   maxOutputTokens: number;
   estimatedMaximumCostUsd: number;
@@ -18,6 +19,7 @@ const configs: Readonly<Record<EvalConfigKey, EvalConfig>> = Object.freeze({
     provider: "captured",
     model: "captured-production",
     promptVersion: "captured-production-v1",
+    taskScope: "captured_production_output",
     maxInputTokens: 0,
     maxOutputTokens: 0,
     estimatedMaximumCostUsd: 0,
@@ -28,6 +30,7 @@ const configs: Readonly<Record<EvalConfigKey, EvalConfig>> = Object.freeze({
     provider: "gemini",
     model: "gemini-3.6-flash",
     promptVersion: "statement-v1",
+    taskScope: "statement_field_extraction_and_classification",
     maxInputTokens: 8192,
     maxOutputTokens: 4096,
     estimatedMaximumCostUsd: 0.01,
@@ -38,6 +41,7 @@ const configs: Readonly<Record<EvalConfigKey, EvalConfig>> = Object.freeze({
     provider: "gemini",
     model: "gemini-3.6-flash",
     promptVersion: "card-data-v1",
+    taskScope: "card_identity_and_benefit_extraction",
     maxInputTokens: 8192,
     maxOutputTokens: 4096,
     estimatedMaximumCostUsd: 0.02,
@@ -48,6 +52,7 @@ const configs: Readonly<Record<EvalConfigKey, EvalConfig>> = Object.freeze({
     provider: "gemini",
     model: "gemini-3.6-flash",
     promptVersion: "recommendation-v1",
+    taskScope: "fixed_selection_explanation_and_arithmetic",
     maxInputTokens: 8192,
     maxOutputTokens: 4096,
     estimatedMaximumCostUsd: 0.03,
@@ -60,6 +65,7 @@ const judge = Object.freeze({
   provider: "gemini" as const,
   model: "gemini-3.6-flash",
   promptVersion: "blind-judge-v1",
+  taskScope: "blind_output_comparison",
   maxInputTokens: 8192,
   maxOutputTokens: 1024,
   estimatedMaximumCostUsd: 0.01,

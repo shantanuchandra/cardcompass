@@ -104,20 +104,69 @@ export async function resolveFeedbackContext(
     const { data: mappings, error: benefitsError } = await db
       .from("card_benefit_mapping")
       .select(
-        "benefit:benefits(benefit_id,title,description,benefit_category,value_config,valid_from,valid_until,updated_at)",
+        "benefit:benefits(benefit_id,title,description,benefit_type,benefit_category,value_config,source_url,valid_from,valid_until,updated_at)",
       )
       .eq("card_id", row.catalog_card_id);
     if (benefitsError) throw new Error("request_failed");
     const benefits = (mappings ?? []).slice(0, 50)
       .map((entry: Record<string, unknown>) => entry.benefit)
       .filter((entry: unknown) => entry && typeof entry === "object");
+    const { data: provenance, error: provenanceError } = await db
+      .from("card_catalog_provenance")
+      .select("id,source_url,source_type,extracted_fields,source_evidence")
+      .eq("card_id", row.catalog_card_id);
+    if (provenanceError) throw new Error("request_failed");
+    const officialSources: Record<string, unknown>[] = (provenance ?? [])
+      .filter((source: Record<string, unknown>) =>
+        typeof source.source_url === "string" &&
+        source.source_url.startsWith("https://") &&
+        ["official_html", "official_pdf"].includes(
+          String(source.source_type),
+        ) && source.extracted_fields &&
+        typeof source.extracted_fields === "object"
+      )
+      .slice(0, 20).map((source: Record<string, unknown>) => ({
+        id: source.id,
+        url: source.source_url,
+        snippet: boundedText(
+          JSON.stringify(source.source_evidence ?? {}),
+          2000,
+        ),
+        facts: source.extracted_fields,
+      }));
+    for (const benefit of benefits as Record<string, unknown>[]) {
+      if (
+        typeof benefit.source_url === "string" &&
+        benefit.source_url.startsWith("https://")
+      ) {
+        officialSources.push({
+          id: benefit.benefit_id,
+          url: benefit.source_url,
+          snippet: boundedText(benefit.description, 2000),
+          facts: {
+            card_id: row.catalog_card_id,
+            benefits: [benefitOutputFact(benefit)],
+          },
+        });
+      }
+    }
+    const runnable = officialSources.length > 0;
     return {
       safeInputContext: {
-        kind: "card_requires_review",
-        user_card_id: row.id,
-        last_four_digits: boundedText(row.last_four_digits, 4),
+        kind: runnable ? "card_data" : "card_requires_review",
+        ...(runnable
+          ? {
+            identifiers: {
+              last_four_digits: boundedText(row.last_four_digits, 4),
+            },
+            official_sources: officialSources,
+          }
+          : {
+            user_card_id: row.id,
+            last_four_digits: boundedText(row.last_four_digits, 4),
+          }),
       },
-      outputSnapshot: { user_card: row, catalog_card: catalog },
+      outputSnapshot: { user_card: row, catalog_card: catalog, benefits },
       authoritativeContext: { catalog_card: catalog, benefits },
       metadata: { parser_version: "persisted_card_match_v1" },
     };
@@ -152,6 +201,24 @@ export async function resolveFeedbackContext(
   throw new Error("invalid_request");
 }
 
+function benefitOutputFact(value: Record<string, unknown>) {
+  const config = value.value_config && typeof value.value_config === "object"
+    ? value.value_config as Record<string, unknown>
+    : {};
+  return {
+    id: value.benefit_id,
+    dedupe_key: String(value.benefit_id),
+    title: value.title,
+    type: value.benefit_type ?? "unknown",
+    category: value.benefit_category,
+    value_config: config,
+    limit: config.limit ?? config.max_usage_per_period ??
+      config.max_usage_per_month ?? null,
+    period: config.usage_period ?? null,
+    eligibility: "see official terms",
+  };
+}
+
 function boundedText(value: unknown, maximum: number): string | null {
   if (typeof value !== "string") return null;
   return value.trim().slice(0, maximum);
@@ -169,7 +236,7 @@ export async function resolveRecommendationCatalog(
     : { data: [], error: null };
   const benefits = benefitIds.length
     ? await db.from("benefits").select(
-      "benefit_id,title,description,benefit_category,value_config,valid_from,valid_until,updated_at",
+      "benefit_id,title,description,benefit_type,benefit_category,value_config,partners,exclusions,source_url,valid_from,valid_until,updated_at",
     ).in("benefit_id", benefitIds).eq("is_active", true)
     : { data: [], error: null };
   if (cards.error || benefits.error) throw new Error("request_failed");

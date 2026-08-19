@@ -103,6 +103,7 @@ RuleNormalizationResult _normalizePercent(
       offerType: MovieDealOfferType.percentDiscount,
       partners: source.partners,
       discountPercent: discountPercent,
+      minimumTransaction: _number(source.valueConfig['min_transaction']),
       perTransactionCap: perTransactionCap,
     ),
   );
@@ -134,6 +135,7 @@ RuleNormalizationResult _normalizeFixed(
       offerType: MovieDealOfferType.fixedDiscount,
       partners: source.partners,
       fixedAmount: discountAmount,
+      minimumTransaction: _number(source.valueConfig['min_transaction']),
       cycleAmountCap: cycleCap,
     ),
   );
@@ -184,6 +186,7 @@ RuleNormalizationResult _normalizeBogo(MovieBenefitSource source) {
       partners: source.partners,
       buyCount: 1,
       freeCount: 1,
+      minimumTransaction: _number(source.valueConfig['min_transaction']),
       perTransactionCap: perTxnCap,
       cycleRedemptionLimit: cycleLimit,
       cyclePeriod: cyclePeriod,

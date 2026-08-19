@@ -145,6 +145,10 @@ String? _ineligibilityReason(
   MovieDealContext context,
   DateTime now,
 ) {
+  if (rule.minimumTransaction != null &&
+      request.totalAmount < rule.minimumTransaction!) {
+    return 'Minimum transaction amount was not met.';
+  }
   if (rule.validityStart != null && now.isBefore(rule.validityStart!)) {
     return 'Not active yet.';
   }
