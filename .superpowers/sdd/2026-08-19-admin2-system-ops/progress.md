@@ -17,7 +17,7 @@ Ruling: Carry the prior plan's final adjudication ledger update into the Tasks 1
 ## Tasks
 
 - Tasks 1–2: implementation complete, pending review — runtime control and scheduled worker enforcement
-- Task 3: pending — sanitized System gateway
+- Task 3: implementation complete, pending review — sanitized System gateway
 - Task 4: pending — typed System workspace
 - Task 5: pending — paused-pipeline Inbox item
 - Task 6: pending — whole-phase verification
@@ -50,3 +50,17 @@ Ruling: Share the hardened PostgreSQL connection/process primitives while keepin
 - Partial shared-role setup is exception-safe inside `ensureRoles`: roles are recorded immediately after creation and removed in reverse order before the original setup error is rethrown. A simulated failure after the first creation proves zero retained ownership and the exact cleanup command.
 
 Ruling: Make shared role provisioning own cleanup until it successfully transfers the complete created-role list to its caller. Cost if wrong: a cleanup failure can mask the original provisioning error, but cannot silently return incomplete role ownership to the caller.
+
+## Task 3 evidence
+
+- RED: the focused Deno test failed type checking because `system.ts` did not exist.
+- GREEN: the full admin-operator gateway suite passed 57/57 after implementation.
+- Status reads isolate the two bounded job sources and the named control source, construct exact DTOs, and mark an unavailable pipeline `unknown` without leaking its database error.
+- Job history permits one allowlisted family per request, strict family-specific statuses, exact UUID targeting, limits up to 50, deterministic `updated_at` then `id` descending order, and a single lookahead row.
+- Recovery is limited to benefit-enrichment states actually accepted by `admin_card_data_action`; control changes use the one named key and `admin_set_runtime_control`. Both paths pass actor, request UUID, observed timestamp, and bounded reasons exactly.
+
+Ruling: Treat `card_discovery` as status/history-only in System V1 because `admin_card_data_action` accepts discovery review IDs rather than discovery job IDs; exposing a job mutation would target the wrong aggregate. Cost if wrong: discovery recovery remains in its existing review workflow until a dedicated atomic job RPC exists.
+
+Ruling: Represent unquarantine as `action: system-quarantine` plus the exact `operation: unquarantine`, keeping the published three-action System mutation surface while mapping to the existing audited RPC operation. Cost if wrong: clients must include one additional discriminator for unquarantine instead of calling a fourth action name.
+
+Ruling: Read at most 1,000 rows per pipeline status source and return `unknown` on source failure; the operator gets bounded latency and partial health rather than an unbounded scan. Cost if wrong: counts on a pipeline with more than 1,000 recent rows are capped and should later move to a dedicated aggregate RPC.
