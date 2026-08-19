@@ -304,7 +304,7 @@ export function applyRemovalPolicy(input: {
         ...identifiers.flatMap((id) => input.completeAbsenceHistory[id] ?? []),
         input.observedAt,
       ]),
-    ];
+    ].sort();
     const eligibility = retirementEligibility({
       explicitEndDate: removal.benefit.effectiveTo,
       completeAbsenceObservedAt: observed,
@@ -314,6 +314,7 @@ export function applyRemovalPolicy(input: {
       ...removal,
       retirementEligible: eligibility.eligible,
       retirementReason: eligibility.reason,
+      completeAbsenceObservedAt: observed.slice(-24),
     };
   });
   return {

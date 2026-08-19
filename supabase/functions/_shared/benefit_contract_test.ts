@@ -1,10 +1,29 @@
 import {
+  canonicalBenefitCategory,
   canonicalBenefitHash,
   canonicalConditionObject,
   canonicalExclusions,
   canonicalValueConfig,
   cardScopedBenefitKey,
 } from "./benefit_contract.ts";
+
+Deno.test("reward aliases share the live points category and canonical hash", async () => {
+  for (const alias of ["rewards", "reward", "points", "POINTS"]) {
+    assertEquals(canonicalBenefitCategory(alias), "points");
+  }
+  const reward = {
+    title: "Reward points",
+    category: "rewards",
+    benefitType: "reward_points",
+    semanticKey: "rewards:reward_points:general",
+    value: 5,
+  };
+  assertEquals(canonicalConditionObject(reward).category, "points");
+  assertEquals(
+    await canonicalBenefitHash([reward]),
+    await canonicalBenefitHash([{ ...reward, category: "POINTS" }]),
+  );
+});
 
 function assertEquals(
   actual: unknown,

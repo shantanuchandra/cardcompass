@@ -109,13 +109,13 @@
     "text": "Earn 5 reward points for every ₹150 spent on eligible purchases.",
     "expected": [
       {
-        "benefitId": "card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:df0de5ba46451104967f31a7d55f46b409f9570d30e9e6c8c74589405c7e2bee",
-        "dedupeKey": "card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:df0de5ba46451104967f31a7d55f46b409f9570d30e9e6c8c74589405c7e2bee",
-        "conditionHash": "df0de5ba46451104967f31a7d55f46b409f9570d30e9e6c8c74589405c7e2bee",
+        "benefitId": "card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:d5a21f5acd12490936bf719c0c2de71de0e3029fe514ff21e448fca0ac22260a",
+        "dedupeKey": "card-benefit-v2:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa:d5a21f5acd12490936bf719c0c2de71de0e3029fe514ff21e448fca0ac22260a",
+        "conditionHash": "d5a21f5acd12490936bf719c0c2de71de0e3029fe514ff21e448fca0ac22260a",
         "parserVersion": "benefits-v6",
         "title": "5 reward points",
         "description": "Earn 5 reward points for every ₹150 spent on eligible purchases.",
-        "category": "rewards",
+        "category": "points",
         "valueType": "reward_points",
         "value": 5,
         "rate": null,

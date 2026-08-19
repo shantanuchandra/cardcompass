@@ -1,4 +1,5 @@
 import {
+  canonicalBenefitCategory,
   canonicalBenefitHash,
   type CanonicalBenefitInput,
   canonicalConditionObject,
@@ -1097,7 +1098,7 @@ export async function extractGroundedBenefitsV6(
     const input: CanonicalBenefitInput = {
       title: benefit.title,
       description: benefit.description,
-      category: benefit.category,
+      category: canonicalBenefitCategory(benefit.category),
       benefitType: benefit.valueType ?? null,
       semanticKey: subject,
       value: benefit.value,
@@ -1117,6 +1118,7 @@ export async function extractGroundedBenefitsV6(
     const dedupeKey = await cardScopedBenefitKey(cardId, input);
     return {
       ...benefit,
+      category: canonicalBenefitCategory(benefit.category) ?? benefit.category,
       offerSubject: subject,
       benefitId: dedupeKey,
       dedupeKey,

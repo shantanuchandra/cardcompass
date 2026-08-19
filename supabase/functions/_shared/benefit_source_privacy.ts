@@ -1,5 +1,22 @@
 const absoluteHttpUrl = /https?:\/\/[^\s<>"']+/gi;
 const hrefAttribute = /(\bhref\s*=\s*)(["'])([\s\S]*?)(\2)/gi;
+const structuralEncoding =
+  /%(?:3a|2f|3f|23|40)|&#(?:x(?:3a|2f|3f|23|40)|(?:58|47|63|35|64));?|&(?:colon|sol|quest|num|commat);/gi;
+const secretBearingReference =
+  /(?:https?:\/\/|\/\/|(?:[a-z0-9-]+\.)+[a-z]{2,}(?=[:/]))[^\s<>"']*|\/(?:[^\s<>"']*)?[?#][^\s<>"']*|[?#](?:[^\s<>"']+)/gi;
+const bareUserInfo =
+  /\b[^\s:@/]+:[^\s@/]+@((?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?(?:\/[^\s?#]*)?)(?:[?#][^\s]*)?/gi;
+
+function decodeStructuralEncoding(value: string): string {
+  return value.replace(structuralEncoding, (match) => {
+    const normalized = match.toLowerCase().replace(/;$/, "");
+    if (["%3a", "&#x3a", "&#58", "&colon"].includes(normalized)) return ":";
+    if (["%2f", "&#x2f", "&#47", "&sol"].includes(normalized)) return "/";
+    if (["%3f", "&#x3f", "&#63", "&quest"].includes(normalized)) return "?";
+    if (["%23", "&#x23", "&#35", "&num"].includes(normalized)) return "#";
+    return "@";
+  }).replace(/&amp;/gi, "&");
+}
 
 export function safeHttpsDisplayUrl(value: unknown): string | null {
   if (typeof value !== "string" || value.length > 16_384) return null;
@@ -33,7 +50,7 @@ function safeHrefValue(value: string): string {
 
 /** Redacts URL secrets before source text can enter parser or admin payloads. */
 export function redactSensitiveUrlsInText(value: string): string {
-  return value
+  return decodeStructuralEncoding(value)
     .replace(
       hrefAttribute,
       (_match, prefix: string, quote: string, href: string) =>
@@ -42,7 +59,23 @@ export function redactSensitiveUrlsInText(value: string): string {
     .replace(
       absoluteHttpUrl,
       (candidate) => safeHttpsDisplayUrl(candidate) ?? "[redacted-url]",
-    );
+    )
+    .replace(bareUserInfo, (_candidate, safeHost: string) => safeHost)
+    .replace(secretBearingReference, (candidate) => {
+      const boundary = candidate.search(/[?#]/);
+      const base = boundary >= 0 ? candidate.slice(0, boundary) : candidate;
+      if (/^https?:\/\//i.test(candidate)) {
+        return safeHttpsDisplayUrl(candidate) ?? "[redacted-url]";
+      }
+      if (candidate.startsWith("//")) {
+        return safeHttpsDisplayUrl(`https:${candidate}`)?.replace(
+          /^https:/,
+          "",
+        ) ??
+          "[redacted-url]";
+      }
+      return base || "[redacted-url]";
+    });
 }
 
 export function redactSensitiveUrlsInValue(value: unknown): unknown {

@@ -27,6 +27,20 @@ function normalizedText(value: string): string {
   return value.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+const categoryAliases: Readonly<Record<string, string>> = Object.freeze({
+  reward: "points",
+  rewards: "points",
+  point: "points",
+  points: "points",
+});
+
+/** The single application-level alias contract for live benefit categories. */
+export function canonicalBenefitCategory(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = normalizedText(value);
+  return normalized ? categoryAliases[normalized] ?? normalized : undefined;
+}
+
 function normalizedKey(value: string): string {
   return value.normalize("NFKC")
     .replace(/([a-z])([A-Z])/g, "$1_$2")
@@ -86,8 +100,8 @@ function canonicalObject(value: unknown): CanonicalObject {
       compare(left.canonicalKey, right.canonicalKey) ||
       left.priority - right.priority ||
       compare(
-        stableJson(left.canonicalValue),
-        stableJson(right.canonicalValue),
+        stableCanonicalJson(left.canonicalValue),
+        stableCanonicalJson(right.canonicalValue),
       ) ||
       compare(left.key, right.key)
     );
@@ -220,7 +234,7 @@ export function canonicalConditionObject(
 ): Record<string, unknown> {
   const condition: CanonicalObject = {
     benefit_type: optionalTerm(input.benefitType),
-    category: optionalTerm(input.category),
+    category: canonicalBenefitCategory(input.category),
     exclusions: canonicalExclusions(input.exclusions),
     partners: canonicalTerms(input.partners),
     regions: canonicalTerms(input.regions),
@@ -233,13 +247,17 @@ export function canonicalConditionObject(
   return canonicalObject(condition);
 }
 
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+export function stableCanonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableCanonicalJson).join(",")}]`;
+  }
   if (value && typeof value === "object") {
     return `{${
       Object.entries(value as Record<string, unknown>)
         .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
-        .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
+        .map(([key, item]) =>
+          `${JSON.stringify(key)}:${stableCanonicalJson(item)}`
+        )
         .join(",")
     }}`;
   }
@@ -259,7 +277,9 @@ async function sha256(value: string): Promise<string> {
 export async function canonicalBenefitHash(
   input: CanonicalBenefitInput[],
 ): Promise<string> {
-  const conditions = input.map(canonicalConditionObject).map(stableJson).sort();
+  const conditions = input.map(canonicalConditionObject).map(
+    stableCanonicalJson,
+  ).sort();
   return await sha256(`[${conditions.join(",")}]`);
 }
 

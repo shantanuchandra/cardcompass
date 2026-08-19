@@ -1,9 +1,13 @@
 import {
+  canonicalBenefitCategory,
   canonicalBenefitHash,
   canonicalConditionObject,
   canonicalExclusions,
+  canonicalValueConfig,
   cardScopedBenefitKey,
+  stableCanonicalJson,
 } from "../_shared/benefit_contract.ts";
+import { retirementEligibility } from "../benefit-enrichment-batch/crawl_policy.ts";
 import {
   redactSensitiveUrlsInText,
   safeHttpsDisplayUrl,
@@ -349,6 +353,10 @@ function benefitDiff(value: unknown, v6 = false) {
       informational: item.informational === true,
       retirementEligible: item.retirementEligible === true,
       retirementReason: text(item.retirementReason, 200),
+      completeAbsenceObservedAt: textList(
+        item.completeAbsenceObservedAt,
+        24,
+      ),
     })),
     unchanged: objectList(row.unchanged).map((item) => ({
       current: benefitForOutput(item.current, v6),
@@ -622,13 +630,181 @@ async function allowedDecisions(
   ) {
     throw new BenefitAdminError("invalid_benefit_decision");
   }
-  if (parserVersion !== "benefits-v6") return decisions as JsonRecord[];
+  if (parserVersion === "benefits-v5") {
+    if (!cardId) {
+      throw new BenefitAdminError("invalid_benefit_job_staging", 409);
+    }
+    return await validateV5ApprovalDecisions(
+      decisions as JsonRecord[],
+      stagedExtraction,
+      cardId,
+    );
+  }
+  if (parserVersion !== "benefits-v6") {
+    throw new BenefitAdminError("invalid_benefit_job_staging", 409);
+  }
   if (!cardId) throw new BenefitAdminError("invalid_benefit_job_staging", 409);
   return await validateV6ApprovalDecisions(
     decisions as JsonRecord[],
     stagedExtraction,
     cardId,
   );
+}
+
+async function validateV5ApprovalDecisions(
+  decisions: JsonRecord[],
+  stagedExtraction: unknown,
+  cardId: string,
+): Promise<JsonRecord[]> {
+  const extraction = asRecord(stagedExtraction);
+  if (
+    !extraction || extraction.request_type !== "official_benefit_enrichment" ||
+    extraction.parser_version !== "benefits-v5" ||
+    !Array.isArray(extraction.proposals) ||
+    extraction.proposals.some((proposal) => !asRecord(proposal))
+  ) throw new BenefitAdminError("invalid_benefit_job_staging", 409);
+  const proposals = extraction.proposals as JsonRecord[];
+  const byKey = new Map<string, { proposal: JsonRecord; index: number }>();
+  proposals.forEach((proposal, index) => {
+    const key = text(proposal.dedupeKey ?? proposal.dedupe_key, 200);
+    if (!key || byKey.has(key)) {
+      throw new BenefitAdminError("invalid_staged_benefit_identity", 409);
+    }
+    byKey.set(key, { proposal, index });
+  });
+  const diff = asRecord(extraction.diff) ?? {};
+  const currentCandidates = [
+    ...objectList(diff.modifications).flatMap((item) =>
+      asRecord(item.current) ? [asRecord(item.current)!] : []
+    ),
+    ...objectList(diff.possibleRemovals).flatMap((item) =>
+      asRecord(item.benefit) ? [asRecord(item.benefit)!] : []
+    ),
+    ...objectList(diff.unchanged).flatMap((item) =>
+      asRecord(item.current) ? [asRecord(item.current)!] : []
+    ),
+  ];
+  const seen = new Set<string>();
+  return await Promise.all(decisions.map(async (decision) => {
+    const action = String(decision.action ?? "").toLowerCase();
+    if (
+      !["approve", "edit", "reject", "keep_existing", "retire"].includes(
+        action,
+      )
+    ) throw new BenefitAdminError("invalid_benefit_decision");
+    const base: JsonRecord = {
+      action,
+      ...(text(decision.reason, 500)
+        ? { reason: text(decision.reason, 500) }
+        : {}),
+      ...(text(decision.change_type ?? decision.changeType, 60)
+        ? { change_type: text(decision.change_type ?? decision.changeType, 60) }
+        : {}),
+    };
+    if (action !== "approve" && action !== "edit") {
+      const submitted = asRecord(decision.benefit ?? decision.current);
+      const liveBenefitId = text(
+        decision.benefit_id ?? decision.current_benefit_id ??
+          submitted?.liveBenefitId,
+        100,
+      );
+      const proposalKey = text(
+        submitted?.dedupeKey ?? submitted?.dedupe_key,
+        200,
+      );
+      const current = liveBenefitId
+        ? currentCandidates.find((candidate) =>
+          candidate.liveBenefitId === liveBenefitId
+        )
+        : undefined;
+      const proposal = proposalKey ? byKey.get(proposalKey) : undefined;
+      if (
+        ((action === "retire" || action === "keep_existing") && !current) ||
+        (action === "reject" && liveBenefitId && !current) ||
+        (action === "reject" && proposalKey && !proposal)
+      ) {
+        throw new BenefitAdminError("benefit_decision_identity_mismatch", 409);
+      }
+      const identity = liveBenefitId
+        ? `live:${liveBenefitId}`
+        : proposalKey
+        ? `proposal:${proposalKey}`
+        : "reject:all";
+      if (seen.has(identity)) {
+        throw new BenefitAdminError("duplicate_benefit_decision", 409);
+      }
+      seen.add(identity);
+      if (action === "retire") {
+        validateRetirementDecisionEvidence(extraction, liveBenefitId!);
+      }
+      return {
+        ...base,
+        ...(liveBenefitId ? { benefit_id: liveBenefitId } : {}),
+        ...(action === "reject" && proposal
+          ? { proposal_index: proposal.index }
+          : {}),
+      };
+    }
+    const submitted = asRecord(
+      action === "edit"
+        ? decision.edited_benefit ?? decision.editedBenefit ?? decision.benefit
+        : decision.benefit ?? decision.proposed,
+    );
+    const key = text(submitted?.dedupeKey ?? submitted?.dedupe_key, 200);
+    const staged = key ? byKey.get(key) : undefined;
+    if (!submitted || !staged) {
+      throw new BenefitAdminError("benefit_decision_identity_mismatch", 409);
+    }
+    if (seen.has(`proposal:${key}`)) {
+      throw new BenefitAdminError("duplicate_benefit_decision", 409);
+    }
+    seen.add(`proposal:${key}`);
+    const server = benefitForOutput(staged.proposal, false) as JsonRecord;
+    let effective = server;
+    if (action === "edit") {
+      effective = { ...server };
+      for (const field of editableBenefitFields) {
+        if (!(field in submitted)) continue;
+        const item = submitted[field];
+        if (["value", "rate", "cap", "threshold"].includes(field)) {
+          if (typeof item !== "number" || !Number.isFinite(item)) {
+            throw new BenefitAdminError("invalid_benefit_edit");
+          }
+          effective[field] = item;
+        } else if (typeof item === "string") {
+          effective[field] = text(item, 2_000);
+        } else if (
+          item === null && ["effectiveFrom", "effectiveTo"].includes(field)
+        ) {
+          effective[field] = null;
+        } else throw new BenefitAdminError("invalid_benefit_edit");
+      }
+    }
+    const originalEnvelope = await buildCanonicalPublicationEnvelope(
+      cardId,
+      staged.proposal,
+      server,
+    );
+    const envelope = await buildCanonicalPublicationEnvelope(
+      cardId,
+      staged.proposal,
+      effective,
+    );
+    if (
+      action === "edit" &&
+      envelope.condition_hash === originalEnvelope.condition_hash
+    ) {
+      throw new BenefitAdminError("non_material_edit", 409);
+    }
+    return {
+      ...base,
+      proposal_index: staged.index,
+      canonical_envelope: envelope,
+      ...(action === "edit"
+        ? { edited_benefit: effective }
+        : { benefit: server }),
+    };
+  }));
 }
 
 function stableJson(value: unknown): string {
@@ -679,13 +855,19 @@ function canonicalApprovalInput(value: unknown) {
   return {
     title: String(proposal.title ?? ""),
     description: text(proposal.description, 2_000),
-    category: text(proposal.category, 200),
+    category: canonicalBenefitCategory(text(proposal.category, 200)),
     benefitType: text(proposal.valueType, 200),
     semanticKey: text(proposal.offerSubject, 256),
-    value: number(proposal.value),
-    rate: number(proposal.rate),
-    cap: number(proposal.cap),
-    threshold: number(proposal.threshold),
+    value: typeof proposal.value === "string"
+      ? proposal.value
+      : number(proposal.value),
+    rate: typeof proposal.rate === "string"
+      ? proposal.rate
+      : number(proposal.rate),
+    cap: typeof proposal.cap === "string" ? proposal.cap : number(proposal.cap),
+    threshold: typeof proposal.threshold === "string"
+      ? proposal.threshold
+      : number(proposal.threshold),
     frequency: text(proposal.frequency, 200),
     period: text(proposal.period, 200),
     valueConfig: projectedConfig,
@@ -695,6 +877,163 @@ function canonicalApprovalInput(value: unknown) {
     regions: textList(proposal.regions, 64),
     validFrom: text(proposal.effectiveFrom, 100),
     validUntil: text(proposal.effectiveTo, 100),
+  };
+}
+
+async function sha256Canonical(value: unknown): Promise<string> {
+  const bytes = new TextEncoder().encode(stableCanonicalJson(value));
+  const hash = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(hash)].map((byte) =>
+    byte.toString(16).padStart(2, "0")
+  ).join("");
+}
+
+function strictDate(value: unknown, field: string): string | null {
+  if (value == null || value === "") return null;
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new BenefitAdminError(`invalid_${field}`);
+  }
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  if (
+    Number.isNaN(parsed.valueOf()) ||
+    parsed.toISOString().slice(0, 10) !== value
+  ) {
+    throw new BenefitAdminError(`invalid_${field}`);
+  }
+  return value;
+}
+
+export async function buildCanonicalPublicationEnvelope(
+  cardId: string,
+  stagedProposal: unknown,
+  effectiveProposal: unknown = stagedProposal,
+) {
+  const staged = asRecord(stagedProposal);
+  const effective = asRecord(effectiveProposal);
+  if (!staged || !effective) {
+    throw new BenefitAdminError("invalid_benefit_proposal");
+  }
+  const input = canonicalApprovalInput(effective);
+  const validFrom = strictDate(input.validFrom, "benefit_valid_from");
+  const validUntil = strictDate(input.validUntil, "benefit_valid_until");
+  if (validFrom && validUntil && validFrom > validUntil) {
+    throw new BenefitAdminError("invalid_benefit_date_range");
+  }
+  const category = canonicalBenefitCategory(input.category);
+  if (!category) throw new BenefitAdminError("invalid_benefit_category");
+  const condition = canonicalConditionObject({
+    ...input,
+    category,
+    validFrom,
+    validUntil,
+  });
+  const conditionHash = await canonicalBenefitHash([{
+    ...input,
+    category,
+    validFrom,
+    validUntil,
+  }]);
+  const dedupeKey = await cardScopedBenefitKey(cardId, {
+    ...input,
+    category,
+    validFrom,
+    validUntil,
+  });
+  const exclusions = canonicalExclusions(input.exclusions);
+  const restrictions = condition.restrictions as string[];
+  return {
+    version: "benefit-publication-v2",
+    staged_proposal_binding: staged,
+    staged_proposal_hash: await sha256Canonical(staged),
+    condition,
+    condition_hash: conditionHash,
+    dedupe_key: dedupeKey,
+    benefit: {
+      title: String(effective.title ?? "").trim().slice(0, 500),
+      description: text(effective.description, 8_000),
+      benefit_category: category,
+      benefit_type: text(effective.valueType ?? effective.benefit_type, 200),
+      value_config: {
+        ...canonicalValueConfig(input),
+        offer_subject: input.semanticKey,
+        restrictions,
+        exclusions,
+      },
+      partners: condition.partners,
+      exclusions,
+      regions: condition.regions,
+      valid_from: validFrom,
+      valid_until: validUntil,
+    },
+  };
+}
+
+export function validateRetirementDecisionEvidence(
+  stagedExtraction: unknown,
+  liveBenefitId: string,
+): JsonRecord {
+  const extraction = asRecord(stagedExtraction);
+  const observation = asRecord(extraction?.crawl_observation);
+  const diff = asRecord(extraction?.diff);
+  if (
+    !extraction || !observation || !diff || observation.crawl_complete !== true
+  ) {
+    throw new BenefitAdminError("retirement_not_eligible", 409);
+  }
+  const removals = objectList(diff.possibleRemovals);
+  const removal = removals.find((candidate) =>
+    asRecord(candidate.benefit)?.liveBenefitId === liveBenefitId
+  );
+  const benefit = asRecord(removal?.benefit);
+  if (!removal || !benefit) {
+    throw new BenefitAdminError("retirement_not_eligible", 409);
+  }
+  const identifiers = [benefit.benefitId, benefit.dedupeKey].flatMap((item) =>
+    typeof item === "string" && item ? [item] : []
+  );
+  if (
+    !Array.isArray(observation.absent_benefit_ids) ||
+    !Array.isArray(observation.absent_legacy_benefit_ids) ||
+    [
+      ...observation.absent_benefit_ids,
+      ...observation.absent_legacy_benefit_ids,
+    ]
+      .some((item) => typeof item !== "string")
+  ) throw new BenefitAdminError("retirement_not_eligible", 409);
+  const absent = new Set([
+    ...textList(observation.absent_benefit_ids, 256),
+    ...textList(observation.absent_legacy_benefit_ids, 256),
+  ]);
+  if (identifiers.length === 0 || !identifiers.some((id) => absent.has(id))) {
+    throw new BenefitAdminError("retirement_not_eligible", 409);
+  }
+  const observedAt = text(observation.observed_at, 100);
+  if (!observedAt) throw new BenefitAdminError("retirement_not_eligible", 409);
+  if (
+    !Array.isArray(removal.completeAbsenceObservedAt) ||
+    removal.completeAbsenceObservedAt.length < 1 ||
+    removal.completeAbsenceObservedAt.length > 24 ||
+    removal.completeAbsenceObservedAt.some((item) => typeof item !== "string")
+  ) throw new BenefitAdminError("retirement_not_eligible", 409);
+  const history = textList(removal.completeAbsenceObservedAt, 24);
+  const observedAtMs = Date.parse(observedAt);
+  if (
+    !Number.isFinite(observedAtMs) ||
+    !history.some((item) => Date.parse(item) === observedAtMs)
+  ) throw new BenefitAdminError("retirement_not_eligible", 409);
+  const eligibility = retirementEligibility({
+    explicitEndDate: text(benefit.effectiveTo, 100),
+    completeAbsenceObservedAt: history,
+    now: observedAt,
+  });
+  if (
+    !eligibility.eligible || removal.retirementEligible !== true ||
+    text(removal.retirementReason, 200) !== eligibility.reason
+  ) throw new BenefitAdminError("retirement_not_eligible", 409);
+  return {
+    ...removal,
+    reason: eligibility.reason,
+    verifiedRetirementReason: eligibility.reason,
   };
 }
 
@@ -713,7 +1052,8 @@ export async function validateV6ApprovalDecisions(
   if (extraction.proposals.some((proposal) => !asRecord(proposal))) {
     throw new BenefitAdminError("invalid_staged_benefit_identity", 409);
   }
-  const staged = (extraction.proposals as JsonRecord[]).map((proposal) =>
+  const rawStaged = extraction.proposals as JsonRecord[];
+  const staged = rawStaged.map((proposal) =>
     benefitForOutput(proposal, true) as JsonRecord
   );
   const stagedByKey = new Map<string, JsonRecord>();
@@ -738,6 +1078,7 @@ export async function validateV6ApprovalDecisions(
     stagedDedupeKeys.add(dedupeKey);
   }
   const selected = new Set<string>();
+  const selectedDecisionIdentities = new Set<string>();
   const diff = asRecord(extraction.diff) ?? {};
   const modifications = objectList(diff.modifications);
   const possibleRemovals = objectList(diff.possibleRemovals);
@@ -752,8 +1093,13 @@ export async function validateV6ApprovalDecisions(
       asRecord(item.current) ? [asRecord(item.current)!] : []
     ),
   ];
-  return (decisions as JsonRecord[]).map((decision) => {
+  return await Promise.all((decisions as JsonRecord[]).map(async (decision) => {
     const action = String(decision.action ?? "").toLowerCase();
+    if (
+      !["approve", "edit", "reject", "keep_existing", "retire"].includes(
+        action,
+      )
+    ) throw new BenefitAdminError("invalid_benefit_decision");
     const base: JsonRecord = {
       action,
       ...(text(decision.reason, 500)
@@ -786,20 +1132,51 @@ export async function validateV6ApprovalDecisions(
       if (!current) {
         throw new BenefitAdminError("benefit_decision_identity_mismatch", 409);
       }
+      const decisionIdentity = `live:${liveBenefitId}`;
+      if (selectedDecisionIdentities.has(decisionIdentity)) {
+        throw new BenefitAdminError("duplicate_benefit_decision", 409);
+      }
+      selectedDecisionIdentities.add(decisionIdentity);
       if (action === "retire") {
-        const removal = possibleRemovals.find((candidate) =>
-          asRecord(candidate.benefit)?.liveBenefitId === liveBenefitId
-        );
-        if (
-          !removal || removal.retirementEligible !== true ||
-          !text(removal.retirementReason, 200)
-        ) {
-          throw new BenefitAdminError("retirement_not_eligible", 409);
-        }
+        validateRetirementDecisionEvidence(extraction, liveBenefitId!);
       }
       return { ...base, benefit_id: liveBenefitId };
     }
-    if (action !== "approve" && action !== "edit") return base;
+    if (action !== "approve" && action !== "edit") {
+      const submitted = asRecord(decision.benefit ?? decision.current);
+      const liveBenefitId = text(
+        decision.benefit_id ?? decision.current_benefit_id ??
+          submitted?.liveBenefitId,
+        100,
+      );
+      const proposalKey = text(
+        submitted?.benefitId ?? submitted?.dedupeKey,
+        200,
+      );
+      const proposal = proposalKey ? stagedByKey.get(proposalKey) : undefined;
+      const current = liveBenefitId
+        ? currentCandidates.find((candidate) =>
+          candidate.liveBenefitId === liveBenefitId
+        )
+        : undefined;
+      if ((liveBenefitId && !current) || (proposalKey && !proposal)) {
+        throw new BenefitAdminError("benefit_decision_identity_mismatch", 409);
+      }
+      const decisionIdentity = liveBenefitId
+        ? `live:${liveBenefitId}`
+        : proposalKey
+        ? `proposal:${proposalKey}`
+        : "reject:all";
+      if (selectedDecisionIdentities.has(decisionIdentity)) {
+        throw new BenefitAdminError("duplicate_benefit_decision", 409);
+      }
+      selectedDecisionIdentities.add(decisionIdentity);
+      return {
+        ...base,
+        ...(liveBenefitId ? { benefit_id: liveBenefitId } : {}),
+        ...(proposal ? { proposal_index: proposal.proposalIndex } : {}),
+      };
+    }
     const submitted = asRecord(
       action === "edit"
         ? decision.edited_benefit ?? decision.editedBenefit ?? decision.benefit
@@ -808,10 +1185,17 @@ export async function validateV6ApprovalDecisions(
     if (!submitted) throw new BenefitAdminError("invalid_benefit_decision");
     const key = text(submitted.benefitId ?? submitted.dedupeKey, 200);
     const server = key ? stagedByKey.get(key) : undefined;
-    if (!server || selected.has(key!)) {
+    if (!server) {
       throw new BenefitAdminError("benefit_decision_identity_mismatch", 409);
     }
+    const decisionIdentity = `proposal:${key}`;
+    if (
+      selected.has(key!) || selectedDecisionIdentities.has(decisionIdentity)
+    ) {
+      throw new BenefitAdminError("duplicate_benefit_decision", 409);
+    }
     selected.add(key!);
+    selectedDecisionIdentities.add(decisionIdentity);
     const proposalIndex = number(server.proposalIndex);
     const modification = modifications.find((candidate) => {
       const proposed = asRecord(candidate.proposed);
@@ -835,6 +1219,10 @@ export async function validateV6ApprovalDecisions(
           ? { existing_benefit_id: existingBenefitId }
           : {}),
         benefit: server,
+        canonical_envelope: await buildCanonicalPublicationEnvelope(
+          cardId,
+          rawStaged[proposalIndex!],
+        ),
       };
     }
     const edited: JsonRecord = { ...server };
@@ -857,16 +1245,29 @@ export async function validateV6ApprovalDecisions(
         submittedValue === null &&
         ["effectiveFrom", "effectiveTo"].includes(field)
       ) {
-        delete edited[field];
+        edited[field] = null;
       } else throw new BenefitAdminError("invalid_benefit_edit");
+    }
+    const originalEnvelope = await buildCanonicalPublicationEnvelope(
+      cardId,
+      rawStaged[proposalIndex!],
+    );
+    const editedEnvelope = await buildCanonicalPublicationEnvelope(
+      cardId,
+      rawStaged[proposalIndex!],
+      edited,
+    );
+    if (originalEnvelope.condition_hash === editedEnvelope.condition_hash) {
+      throw new BenefitAdminError("non_material_edit", 409);
     }
     return {
       ...base,
       proposal_index: proposalIndex,
       ...(existingBenefitId ? { existing_benefit_id: existingBenefitId } : {}),
       edited_benefit: edited,
+      canonical_envelope: editedEnvelope,
     };
-  });
+  }));
 }
 
 async function approvalTarget(
