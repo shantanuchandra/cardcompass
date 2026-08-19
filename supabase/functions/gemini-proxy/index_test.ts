@@ -85,3 +85,33 @@ Deno.test("proxy keeps auth, profile, quota, and safe server failures", async ()
   assertEquals(failed.status, 500);
   assertEquals(await failed.json(), { error: "request_failed" });
 });
+
+Deno.test("proxy resolves an omitted public model to the supported default", async () => {
+  let receivedModel = "";
+  const response = await handleGeminiProxyRequest(
+    new Request("http://local", {
+      method: "POST",
+      body: JSON.stringify({ payload: {} }),
+    }),
+    {
+      authenticate: () => Promise.resolve("user"),
+      requireActive: () => Promise.resolve(),
+      consumeQuota: () => Promise.resolve(true),
+      generate: (input) => {
+        receivedModel = input.model;
+        return Promise.resolve({
+          model: input.model,
+          response: {},
+          inputTokens: 0,
+          outputTokens: 0,
+          latencyMs: 0,
+          status: 200,
+          body: "{}",
+          selectedModel: input.model,
+        });
+      },
+    },
+  );
+  assertEquals(response.status, 200);
+  assertEquals(receivedModel, "gemini-3.6-flash");
+});

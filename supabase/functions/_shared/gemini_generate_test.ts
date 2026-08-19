@@ -196,6 +196,16 @@ Deno.test("Gemini transport rejects unknown models and oversized private payload
     "invalid_request",
   );
   await assertRejects(
+    () => generateGemini({ model: "  ", payload: {} }, dependencies),
+    Error,
+    "invalid_request",
+  );
+  await assertRejects(
+    () => generateGemini({ model: "", payload: {} }, dependencies),
+    Error,
+    "invalid_request",
+  );
+  await assertRejects(
     () =>
       generateGemini({
         model: "gemini-3.6-flash",

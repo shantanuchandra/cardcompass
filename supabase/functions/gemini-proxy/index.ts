@@ -105,7 +105,8 @@ export async function handleGeminiProxyRequest(
     });
   }
   try {
-    const { model, payload } = await request.json();
+    const { model: suppliedModel, payload } = await request.json();
+    const model = suppliedModel ?? "gemini-3.6-flash";
     if (
       !allowedModels.has(model) || !payload || typeof payload !== "object"
     ) {

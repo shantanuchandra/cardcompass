@@ -45,3 +45,13 @@ Ruling: Retain raw upstream status/body fields as a compatibility intersection o
 Ruling: Derive the persisted per-case maximum cost from the same finite configuration keys enforced at run creation, rather than accepting worker-supplied projections. Cost if wrong: every new candidate configuration requires a reviewed SQL allowlist/cost update alongside its code registry entry, preventing a caller from weakening the ceiling.
 
 Ruling: Select one latest applicable revision per source feedback lineage for each historical dataset version. Cost if wrong: two unrelated feedback reports remain separate cases even when semantically similar, while revisions of one report never double-weight a run.
+
+### Tasks 1–3 scoped re-review corrections
+
+- Revision ranking now happens before retirement filtering: a selected-version lineage whose newest approved revision is retired at that version disappears instead of falling back to an older revision. Live versions one, two, and retired version three prove the historical behavior.
+- The candidate configuration allowlist derives one exact feature family, and run creation filters the manifest to that family. Mixed-feature fixtures cannot enter a card-data run; a supported configuration with no matching cases returns `invalid_request`.
+- Typed Gemini transport calls reject empty and whitespace models. The public proxy alone resolves an omitted model to its supported default before calling the strict transport.
+
+Ruling: Apply retirement after selecting the newest historically approved revision in a lineage. Cost if wrong: retirement removes the logical case from later datasets instead of resurrecting an older superseded revision.
+
+Ruling: Bind each run manifest to the single feature family derived from its allowlisted candidate configuration. Cost if wrong: cross-feature comparison requires separate runs, ensuring every manifest case is executable by the selected candidate.

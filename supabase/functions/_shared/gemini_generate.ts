@@ -62,7 +62,7 @@ export async function generateGemini(
   input: GeminiInput,
   dependencies: GeminiDependencies,
 ): Promise<GeminiResult> {
-  const requestedModel = input.model || "gemini-3.6-flash";
+  const requestedModel = input.model;
   if (!allowedModels.has(requestedModel)) throw safeError("invalid_request");
   if (
     new TextEncoder().encode(JSON.stringify(input.payload)).byteLength > 100_000
