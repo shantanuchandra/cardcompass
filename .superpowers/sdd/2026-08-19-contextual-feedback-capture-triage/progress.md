@@ -21,7 +21,7 @@ Ruling: Carry the Cutover final-fix adjudication into the Tasks 1–3 code-beari
 - Task 5: complete — reusable Flutter feedback surface
 - Task 6: complete — attach three product families
 - Task 7: complete — Admin2 review and Inbox integration
-- Task 8: pending — full verification
+- Task 8: complete — full verification and local recovery evidence
 
 ## Tasks 1–3 evidence
 
@@ -123,3 +123,14 @@ Ruling: Keep LLM triage strictly advisory and require a separately persisted ope
 - Post-correction verification passes 91/91 Admin gateway tests and 155/155 Admin2 tests; scoped analysis and diff checks are clean.
 
 Ruling: Never seed an operator ground-truth editor from an LLM proposal; require an explicit human-authorship confirmation at the server boundary for both draft creation and revision. Cost if wrong: operators must deliberately enter or paste expected values even when the advisory proposal is correct, preserving provenance over speed.
+
+## Task 8 evidence
+
+- The full Flutter suite passes 691 tests with 25 explicit pre-existing Supabase integration skips. The full Node suite passes 49 tests with four explicit PostgreSQL opt-ins skipped in the ordinary run; all four opt-ins were then run sequentially against one disposable loopback PostgreSQL cluster and passed 17/17 with no skips. The full Edge suite passes 184/184.
+- Repository-wide `flutter analyze --no-fatal-infos` exits clean with the same 12 unrelated pre-existing informational diagnostics. Scoped Dart and feedback/Admin Deno format checks are clean; the plan's broad format command identified and then reverted unrelated legacy formatting drift instead of mixing it into this phase.
+- The full Node gate exposed a stale authenticated-gateway inventory. The test now includes `feedback-submit/index.ts` and proves it is discovered and active-profile-gated. Additional handler tests prove feedback detail audits before either data read and Admin retry audits, resets, claims, and persists the safe `model_unavailable` category when no provider credential exists.
+- The local recovery evidence covers the real feedback handler's immediate `202`, preserved submitted text, disposable-PostgreSQL `triage_failed` and rotated-token reclaim, validated advisory completion, operator-authored draft, explicit approval, and exactly one dataset-version increment. Feedback mutations touch only `ai_output_traces`, `ai_feedback`, `ai_eval_cases`, and `admin_audit_log`; no production catalog or product-output table is auto-mutated.
+- Privacy scans found no persisted or returned email body, PDF bytes, provider/OAuth credential, statement history, or transaction history. The only exact-term matches are Authorization transport/header handling and explicit resolver rejection fixtures. Exact-key parsers are present at the user endpoint and every Admin feedback action.
+- A live PostgREST stack was not available because the local Docker daemon was unavailable. The production PostgREST client was exercised directly and serialized the severity containment as `triage_result=cs.{\"severity\":\"high\"}` with deterministic dual ordering and range; database JSONB behavior is separately covered by disposable PostgreSQL, but a live HTTP/PostgREST round trip is Not Run.
+
+Ruling: Keep the unavailable-model Admin retry regression opt-in to `--allow-env`; the ordinary focused Admin suite reports it as one explicit ignore, while the required full Edge command runs it. Cost if wrong: a developer running only the no-permission focused suite will not exercise environment-backed retry construction, but CI/full verification does without weakening production environment access.

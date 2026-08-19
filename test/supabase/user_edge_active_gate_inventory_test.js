@@ -16,7 +16,7 @@ test('every discovered user-JWT service-role gateway gates before privileged wor
   const files = walk(root).map((path) => ({ path: relative(root, path), source: readFileSync(path, 'utf8') }));
   const gateways = discoverUserServiceGateways(files);
   assert.deepEqual(gateways.map((item) => item.path).sort(), [
-    'card-discovery/index.ts', 'gemini-proxy/index.ts', 'request-card-catalog-entry/index.ts',
+    'card-discovery/index.ts', 'feedback-submit/index.ts', 'gemini-proxy/index.ts', 'request-card-catalog-entry/index.ts',
   ]);
   assert.deepEqual(gateways.filter((item) => !hasEarlyActiveGate(item.source)).map((item) => item.path), []);
 });
