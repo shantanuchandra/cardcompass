@@ -52,3 +52,10 @@ Ruling: Store recommendation authoritative facts separately from the client-repo
 - Focused tests pass 18/18 across transport, parser/worker, proxy compatibility, context resolution, and endpoint async behavior. The complete Edge Function suite passes 174/174; both changed function entry points pass `deno check`.
 
 Ruling: Cap each proposed triage object at 8 KiB and the complete triage JSON at 15,000 UTF-8 bytes so validated output remains below the database's 16 KiB jsonb text constraint after jsonb normalization. Cost if wrong: unusually large advisory proposals are rejected for manual triage instead of consuming the database's full theoretical boundary.
+
+### Task 4 review corrections
+
+- Restored exact legacy fallback sequencing: every configured key is attempted for the current unavailable model before advancing to the next supported model; 429 key rotation and upstream status/body behavior remain intact.
+- Model-failure completion now gets one bounded recovery attempt using `triage_persistence_failed`. A stale claim conflict is ignored without overwrite, while two persistence failures leave the lease for the existing five-minute database recovery path.
+
+Ruling: Limit triage completion recovery to two total attempts and then rely on the database claim lease timeout. Cost if wrong: a transient second persistence failure delays retry until lease expiry, avoiding an unbounded Edge background loop.

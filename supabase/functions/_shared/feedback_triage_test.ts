@@ -148,7 +148,7 @@ Deno.test("triage keeps injection text in untrusted data and offers no tool chan
   assertEquals(completions[0]._succeeded, true);
 });
 
-Deno.test("triage records safe failure categories and preserves stale claim conflicts", async () => {
+Deno.test("triage records safe failure categories and ignores stale claim conflicts", async () => {
   const run = async (modelError: Error, completeError?: Error) => {
     const completeCalls: Array<Record<string, unknown>> = [];
     const promise = triageFeedback("40000000-0000-4000-8000-000000000001", {
@@ -190,8 +190,63 @@ Deno.test("triage records safe failure categories and preserves stale claim conf
     new Error("model_unavailable"),
     new Error("state_conflict"),
   );
-  await assertRejects(() => stale.promise, Error, "state_conflict");
+  await stale.promise;
   assertEquals(stale.completeCalls.length, 1);
+});
+
+Deno.test("model failure retries completion once as triage_persistence_failed", async () => {
+  const completeCalls: Array<Record<string, unknown>> = [];
+  await triageFeedback("40000000-0000-4000-8000-000000000001", {
+    rpc: (name, args) => {
+      if (name === "claim_ai_feedback_triage") {
+        return Promise.resolve({
+          id: "40000000-0000-4000-8000-000000000001",
+          claim_token: "50000000-0000-4000-8000-000000000001",
+          feature_key: "card_data",
+          feedback_text: "wrong card result",
+          safe_input_context: {},
+          output_snapshot: {},
+          authoritative_context: {},
+        });
+      }
+      completeCalls.push(args);
+      return completeCalls.length === 1
+        ? Promise.reject(new Error("request_failed"))
+        : Promise.resolve(null);
+    },
+    model: {
+      generateJson: () => Promise.reject(new Error("model_unavailable")),
+    },
+  });
+  assertEquals(completeCalls.map((call) => call._failure_category), [
+    "model_unavailable",
+    "triage_persistence_failed",
+  ]);
+});
+
+Deno.test("two failed completion attempts leave the lease for bounded recovery", async () => {
+  let completionAttempts = 0;
+  await triageFeedback("40000000-0000-4000-8000-000000000001", {
+    rpc: (name) => {
+      if (name === "claim_ai_feedback_triage") {
+        return Promise.resolve({
+          id: "40000000-0000-4000-8000-000000000001",
+          claim_token: "50000000-0000-4000-8000-000000000001",
+          feature_key: "card_data",
+          feedback_text: "wrong card result",
+          safe_input_context: {},
+          output_snapshot: {},
+          authoritative_context: {},
+        });
+      }
+      completionAttempts++;
+      return Promise.reject(new Error("request_failed"));
+    },
+    model: {
+      generateJson: () => Promise.reject(new Error("model_unavailable")),
+    },
+  });
+  assertEquals(completionAttempts, 2);
 });
 
 Deno.test("invalid model output is persisted as invalid_model_output", async () => {

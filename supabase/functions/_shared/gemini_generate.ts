@@ -63,7 +63,7 @@ export async function generateGemini(
           started,
         };
         if (response.status === 429) continue;
-        if (shouldTryAnotherModel(response.status, body)) break;
+        if (shouldTryAnotherModel(response.status, body)) continue;
         return resultFrom(last, now());
       }
       // Exhausting keys because each was rate-limited or reported this model

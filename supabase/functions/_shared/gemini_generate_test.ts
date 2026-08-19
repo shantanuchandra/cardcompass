@@ -52,6 +52,32 @@ Deno.test("Gemini transport falls forward only for unavailable models", async ()
   assertEquals(result.selectedModel, "gemini-3.5-flash");
 });
 
+Deno.test("Gemini transport exhausts keys for one unavailable model before advancing", async () => {
+  const calls: string[] = [];
+  const result = await generateGemini(input, {
+    apiKeys: ["first", "second"],
+    fetch: (url) => {
+      const parsed = new URL(String(url));
+      calls.push(
+        `${parsed.pathname.split("/").at(-1)}:${
+          parsed.searchParams.get("key")
+        }`,
+      );
+      return Promise.resolve(
+        calls.length < 3
+          ? new Response('{"error":"model not found"}', { status: 404 })
+          : new Response('{"candidates":[]}', { status: 200 }),
+      );
+    },
+  });
+  assertEquals(calls, [
+    "gemini-3.6-flash:generateContent:first",
+    "gemini-3.6-flash:generateContent:second",
+    "gemini-3.5-flash:generateContent:first",
+  ]);
+  assertEquals(result.selectedModel, "gemini-3.5-flash");
+});
+
 Deno.test("Gemini transport tries the next supported model after every key is rate limited", async () => {
   const urls: string[] = [];
   const result = await generateGemini(input, {

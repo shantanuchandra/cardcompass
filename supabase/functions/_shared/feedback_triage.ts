@@ -155,10 +155,7 @@ export async function triageFeedback(
       error instanceof Error && error.message === "invalid_model_output"
         ? "invalid_model_output"
         : "model_unavailable";
-    await dependencies.rpc(
-      "complete_ai_feedback_triage",
-      completionArgs(feedbackId, token, false, {}, category),
-    );
+    await completeFailureSafely(dependencies.rpc, feedbackId, token, category);
     return;
   }
   try {
@@ -167,14 +164,55 @@ export async function triageFeedback(
       completionArgs(feedbackId, token, true, result, null),
     );
   } catch (error) {
-    if (error instanceof Error && error.message === "state_conflict") {
-      throw error;
-    }
-    await dependencies.rpc(
-      "complete_ai_feedback_triage",
-      completionArgs(feedbackId, token, false, {}, "triage_persistence_failed"),
+    if (isStateConflict(error)) return;
+    await completeFailureSafely(
+      dependencies.rpc,
+      feedbackId,
+      token,
+      "triage_persistence_failed",
     );
   }
+}
+
+async function completeFailureSafely(
+  rpc: Rpc,
+  feedbackId: string,
+  token: string,
+  category:
+    | "model_unavailable"
+    | "invalid_model_output"
+    | "triage_persistence_failed",
+): Promise<void> {
+  try {
+    await rpc(
+      "complete_ai_feedback_triage",
+      completionArgs(feedbackId, token, false, {}, category),
+    );
+  } catch (error) {
+    if (isStateConflict(error) || category === "triage_persistence_failed") {
+      return;
+    }
+    try {
+      await rpc(
+        "complete_ai_feedback_triage",
+        completionArgs(
+          feedbackId,
+          token,
+          false,
+          {},
+          "triage_persistence_failed",
+        ),
+      );
+    } catch {
+      // A stale token never overwrites a newer claim. Repeated persistence
+      // failures leave this lease for database timeout recovery instead of
+      // creating an unbounded background retry loop.
+    }
+  }
+}
+
+function isStateConflict(error: unknown): boolean {
+  return error instanceof Error && error.message === "state_conflict";
 }
 
 function completionArgs(
