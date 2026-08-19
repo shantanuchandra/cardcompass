@@ -31,6 +31,7 @@ class AdminOperatorScreen extends ConsumerStatefulWidget {
     this.customerSource,
     this.initialCardLane = CardReviewLane.identity,
     this.initialCardTargetId,
+    this.initialSectionQuery,
   });
 
   final Future<void> Function()? onAuthenticationRequired;
@@ -41,6 +42,7 @@ class AdminOperatorScreen extends ConsumerStatefulWidget {
   final CustomerDataSource? customerSource;
   final CardReviewLane initialCardLane;
   final String? initialCardTargetId;
+  final String? initialSectionQuery;
 
   @override
   ConsumerState<AdminOperatorScreen> createState() =>
@@ -58,9 +60,11 @@ class _AdminOperatorScreenState extends ConsumerState<AdminOperatorScreen> {
   @override
   void initState() {
     super.initState();
-    _section = widget.initialCardTargetId == null
-        ? AdminWorkspaceSection.inbox
-        : AdminWorkspaceSection.cardData;
+    _section =
+        widget.initialCardTargetId != null ||
+            widget.initialSectionQuery == 'card-data'
+        ? AdminWorkspaceSection.cardData
+        : AdminWorkspaceSection.inbox;
     _cardLane = widget.initialCardLane;
     _cardTargetId = widget.initialCardTargetId;
     ref.listenManual(adminAccessProvider, (_, next) {

@@ -14,7 +14,7 @@ import '../../features/cards/screens/card_detail_screen.dart';
 import '../../features/transactions/screens/transactions_screen.dart';
 import '../../features/benefits/movie_deals/screens/movie_deals_screen.dart';
 import '../../features/settings/screens/settings_screen.dart';
-import '../../features/admin/screens/card_catalog_review_screen.dart';
+import '../../features/admin2/providers/admin_access_provider.dart';
 import '../../features/admin2/screens/admin_operator_screen.dart';
 import '../theme/brand_components.dart';
 import '../theme/brand_tokens.dart';
@@ -28,6 +28,8 @@ const _kTabPaths = [
   '/app/movie-deals',
   '/app/settings',
 ];
+
+const legacyCatalogReviewDestination = '/app/admin2?section=card-data';
 
 int _tabIndexFor(String loc) {
   if (loc.startsWith('/app/cards')) return 1;
@@ -128,13 +130,15 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/app/settings', pageBuilder: (_, s) => _appShellPage()),
       GoRoute(
         path: '/app/admin2',
-        pageBuilder: (_, s) =>
-            const NoTransitionPage(child: AdminOperatorScreen()),
+        pageBuilder: (_, state) => NoTransitionPage(
+          child: AdminOperatorScreen(
+            initialSectionQuery: state.uri.queryParameters['section'],
+          ),
+        ),
       ),
       GoRoute(
         path: '/app/admin/catalog-review',
-        pageBuilder: (_, s) =>
-            const NoTransitionPage(child: CardCatalogReviewScreen()),
+        redirect: (_, _) => legacyCatalogReviewDestination,
       ),
     ],
   );
@@ -172,12 +176,19 @@ class _AppShell extends ConsumerWidget {
 
         final isDesktop =
             MediaQuery.sizeOf(context).width >= _kDesktopBreakpoint;
+        final showAdmin =
+            ref.watch(adminEntryVisibilityProvider).valueOrNull == true;
 
         final shell = isDesktop
             ? Scaffold(
                 body: Row(
                   children: [
-                    AppSideRail(selectedIndex: tabIndex, onTap: onTap),
+                    AppSideRail(
+                      selectedIndex: tabIndex,
+                      onTap: onTap,
+                      showAdmin: showAdmin,
+                      onAdminTap: () => context.go('/app/admin2'),
+                    ),
                     Expanded(
                       child: IndexedStack(index: tabIndex, children: _bodies),
                     ),
@@ -208,7 +219,11 @@ class AppSideRail extends StatelessWidget {
     super.key,
     required this.selectedIndex,
     required this.onTap,
+    this.showAdmin = false,
+    this.onAdminTap,
   });
+  final bool showAdmin;
+  final VoidCallback? onAdminTap;
 
   static const _items = [
     (
@@ -346,6 +361,47 @@ class AppSideRail extends StatelessWidget {
                 ),
               );
             }),
+            if (showAdmin && onAdminTap != null) ...[
+              const Spacer(),
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Semantics(
+                  button: true,
+                  label: 'Admin',
+                  child: ExcludeSemantics(
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(BrandRadius.control),
+                      onTap: onAdminTap,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(minHeight: 48),
+                        child: const Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 14),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.admin_panel_settings_outlined,
+                                size: 19,
+                                color: BrandColors.mutedPaper,
+                              ),
+                              SizedBox(width: 12),
+                              Text(
+                                'Admin',
+                                style: TextStyle(
+                                  fontFamily: 'Manrope',
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700,
+                                  color: BrandColors.mutedPaper,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../core/providers/supabase_provider.dart';
 import '../../../core/repositories/user_data_repository.dart';
@@ -9,6 +10,7 @@ import '../../../core/theme/brand_tokens.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../dashboard/providers/gmail_sync_provider.dart';
 import '../../dashboard/providers/imported_data_refresh_provider.dart';
+import '../../admin2/providers/admin_access_provider.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -20,6 +22,8 @@ class SettingsScreen extends ConsumerWidget {
         user?.userMetadata?['full_name'] as String? ?? user?.email ?? 'User';
     final email = user?.email ?? '';
     final avatar = user?.userMetadata?['avatar_url'] as String?;
+    final showAdmin =
+        ref.watch(adminEntryVisibilityProvider).valueOrNull == true;
 
     return Scaffold(
       backgroundColor: BrandColors.paper,
@@ -30,6 +34,8 @@ class SettingsScreen extends ConsumerWidget {
           _ProfileCard(name: name, email: email, avatar: avatar),
           const SizedBox(height: BrandSpacing.lg),
           SettingsActionList(
+            showAdmin: showAdmin,
+            onOpenAdmin: () => context.go('/app/admin2'),
             onDeleteAllData: () async {
               final refreshImportedData = ref.read(importedDataRefreshProvider);
               final providerContainer = ProviderScope.containerOf(
@@ -136,10 +142,18 @@ class _ProfileCard extends StatelessWidget {
 
 /// Product settings with an explicit outcome for every visible row.
 class SettingsActionList extends StatelessWidget {
-  const SettingsActionList({super.key, this.onOpenUri, this.onDeleteAllData});
+  const SettingsActionList({
+    super.key,
+    this.onOpenUri,
+    this.onDeleteAllData,
+    this.showAdmin = false,
+    this.onOpenAdmin,
+  });
 
   final Future<bool> Function(Uri uri)? onOpenUri;
   final Future<void> Function()? onDeleteAllData;
+  final bool showAdmin;
+  final VoidCallback? onOpenAdmin;
 
   Uri _siteUri(String path) => Uri.base.resolve(path);
 
@@ -227,6 +241,13 @@ class SettingsActionList extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Column(
     children: [
+      if (showAdmin && onOpenAdmin != null)
+        BrandActionRow(
+          title: 'Admin',
+          description: 'Open the operator workspace',
+          leading: const Icon(Icons.admin_panel_settings_outlined),
+          onTap: onOpenAdmin,
+        ),
       const BrandActionRow(
         title: 'Notifications',
         description: 'Bill reminders and reward alerts',

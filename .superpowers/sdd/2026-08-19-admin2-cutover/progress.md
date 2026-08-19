@@ -18,7 +18,7 @@ Ruling: Carry the Customer plan's final adjudication ledger update into Task 1's
 
 - Task 1: complete — executable Card Data parity
 - Task 2: complete — shared database-backed legacy authorization
-- Task 3: pending — legacy redirect and conditional navigation entry
+- Task 3: complete — legacy redirect and conditional navigation entry
 - Task 4: pending — cutover checklist and full verification
 - Task 5: pending — stop at deployment boundary
 
@@ -42,3 +42,14 @@ Ruling: Attach `staging_id` only to benefit approve, edit-and-approve, and rejec
 - Focused authorization and legacy coverage passes 37/37; the complete Admin Operator plus legacy suite passes 103/103; all Supabase Function Deno tests pass 156/156; `deno check` passes for both entrypoints and the shared module; no runtime or test references to the removed email allowlist remain.
 
 Ruling: Keep each endpoint's established public error vocabulary while sharing only the authorization decision: Admin Operator emits stable machine codes, and the compatibility endpoint retains its human-readable authorization strings. Cost if wrong: legacy clients expecting machine codes would continue receiving the same pre-cutover strings until the compatibility endpoint is retired.
+
+## Task 3 evidence
+
+- RED: focused router, Settings, and Admin shell tests failed on the missing conditional-entry inputs and missing allowlisted initial-section query contract.
+- GREEN: `/app/admin/catalog-review` is now a route redirect to the exact `/app/admin2?section=card-data` destination; direct `/app/admin2` remains mounted and continues to enforce its own server-backed access check.
+- The operator screen accepts only the literal `card-data` initial section. Missing, empty, traversal-like, and non-allowlisted values default to Action Inbox.
+- A cached presentation provider derives visibility only from the existing Admin Operator `access` response. Loading, denied, and error states hide the entry; neither the shell nor Settings decodes claims or queries `users`.
+- Wide navigation exposes Admin as a separate secondary 48px semantic action after the five consumer tabs. Compact navigation remains unchanged and authorized operators can use the Settings entry.
+- Focused route, Settings, and full Admin2 coverage passes 156/156; scoped analysis reports no issues; `git diff --check` is clean.
+
+Ruling: Resolve conditional discoverability through the cached Admin Operator access request once per provider lifecycle, including for ordinary authenticated shells, and hide the entry for loading, denied, or error states. Cost if wrong: one small gateway access request is added per authenticated app lifecycle; removing it would make the wide entry undiscoverable until Settings or Admin2 had already loaded access.

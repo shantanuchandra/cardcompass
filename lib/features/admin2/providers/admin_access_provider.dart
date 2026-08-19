@@ -16,3 +16,10 @@ final adminOperatorRepositoryProvider = Provider<AdminOperatorRepository>((
 final adminAccessProvider = FutureProvider<AdminAccess>((ref) {
   return ref.watch(adminOperatorRepositoryProvider).access();
 });
+
+/// Cached presentation state derived solely from the operator gateway access
+/// response. Route visibility is a convenience; the destination still checks
+/// [adminAccessProvider] when mounted.
+final adminEntryVisibilityProvider = Provider<AsyncValue<bool>>((ref) {
+  return ref.watch(adminAccessProvider).whenData((access) => access.isAdmin);
+});

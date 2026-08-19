@@ -11,6 +11,7 @@ import 'package:cardcompass/features/admin2/customers/customer_models.dart';
 import 'package:cardcompass/features/admin2/customers/customer_repository.dart';
 import 'package:cardcompass/features/admin2/models/admin_access.dart';
 import 'package:cardcompass/features/admin2/inbox/inbox_models.dart';
+import 'package:cardcompass/features/admin2/inbox/action_inbox_section.dart';
 import 'package:cardcompass/features/admin2/providers/admin_access_provider.dart';
 import 'package:cardcompass/features/admin2/screens/admin_operator_screen.dart';
 import 'package:cardcompass/features/admin2/system/system_models.dart';
@@ -103,6 +104,7 @@ Future<void> _pumpScreen(
   Future<void> Function()? onAuthenticationRequired,
   VoidCallback? onAccessDenied,
   List<Override> extraOverrides = const [],
+  String? initialSectionQuery,
 }) async {
   await tester.binding.setSurfaceSize(size);
   addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -114,6 +116,7 @@ Future<void> _pumpScreen(
         home: MediaQuery(
           data: MediaQueryData(textScaler: TextScaler.linear(textScale)),
           child: AdminOperatorScreen(
+            initialSectionQuery: initialSectionQuery,
             onAuthenticationRequired: onAuthenticationRequired,
             onAccessDenied: onAccessDenied,
             cardDataSource: _ShellCardSource(),
@@ -448,5 +451,33 @@ void main() {
 
     expect(find.textContaining('Admin'), findsNothing);
     expect(find.text('Catalog Review'), findsNothing);
+  });
+
+  testWidgets('allowlisted card-data initial section opens Card Data', (
+    tester,
+  ) async {
+    await _pumpScreen(
+      tester,
+      access: (_) async => const AdminAccess(isAdmin: true),
+      initialSectionQuery: 'card-data',
+      size: const Size(768, 900),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(CardDataSection), findsOneWidget);
+  });
+
+  testWidgets('missing or invalid initial section defaults to Action Inbox', (
+    tester,
+  ) async {
+    for (final query in <String?>[null, 'system', '../card-data', '']) {
+      await _pumpScreen(
+        tester,
+        access: (_) async => const AdminAccess(isAdmin: true),
+        initialSectionQuery: query,
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(ActionInboxSection), findsOneWidget);
+    }
   });
 }
