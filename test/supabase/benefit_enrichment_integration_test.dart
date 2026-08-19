@@ -140,6 +140,31 @@ List<Map<String, dynamic>> _rows(dynamic value) => (value as List)
     .map((item) => Map<String, dynamic>.from(item as Map))
     .toList(growable: false);
 
+Future<void> _expectPermissionDenied(
+  Future<dynamic> Function() operation, {
+  required String reason,
+}) async {
+  try {
+    await operation();
+    fail(reason);
+  } on PostgrestException catch (error) {
+    expect(error.code, '42501', reason: reason);
+  }
+}
+
+Future<void> _expectServiceRpcValidation(
+  Future<dynamic> Function() operation,
+  String validationError,
+) async {
+  try {
+    await operation();
+    fail('RPC must reject the intentionally invalid service-role payload.');
+  } on PostgrestException catch (error) {
+    expect(error.code, isNot('42501'));
+    expect(error.message, contains(validationError));
+  }
+}
+
 String _sha256(String value) {
   final bytes = Uint8List.fromList(utf8.encode(value));
   final bitLength = bytes.length * 8;
@@ -556,7 +581,14 @@ void main() {
         'denies queue reads, and applies only approved additions', () async {
       final suffix = DateTime.now().microsecondsSinceEpoch.toString();
       final service = SupabaseClient(localSupabaseUrl, _serviceRoleKey);
-      final anonymous = SupabaseClient(localSupabaseUrl, localSupabaseAnonKey);
+      final unauthenticated = SupabaseClient(
+        localSupabaseUrl,
+        localSupabaseAnonKey,
+      );
+      final authenticated = SupabaseClient(
+        localSupabaseUrl,
+        localSupabaseAnonKey,
+      );
       String? knownCardId;
       String? discoveryCardId;
       String? reviewerId;
@@ -603,17 +635,19 @@ void main() {
           'card_benefits_staging',
         ]) {
           await expectLater(
-            anonymous.from(table).select(),
+            unauthenticated.from(table).select(),
             throwsA(isA<PostgrestException>()),
             reason: '$table must not be readable by anon',
           );
         }
 
-        final reviewer = await anonymous.auth.signUp(
-          email: 'benefit-enrichment-task10-$suffix@example.com',
+        final reviewerEmail = 'benefit-enrichment-task10-$suffix@example.com';
+        final reviewer = await authenticated.auth.signUp(
+          email: reviewerEmail,
           password: 'test-password-1234',
         );
-        reviewerId = reviewer.user!.id;
+        final authenticatedReviewerId = reviewer.user!.id;
+        reviewerId = authenticatedReviewerId;
 
         final knownCard = _row(
           await service
@@ -640,7 +674,14 @@ void main() {
                 'benefit_type': 'reward_points',
                 'value_config': {'rate': 1},
                 'partners': <dynamic>[],
-                'exclusions': <String, dynamic>{},
+                'exclusions': <String, dynamic>{
+                  'days': <dynamic>[],
+                  'mcc_codes': <dynamic>[],
+                  'merchants': <dynamic>[],
+                  'categories': <dynamic>[],
+                  'transaction_types': <dynamic>[],
+                  'additional': <String, dynamic>{'source_terms': <dynamic>[]},
+                },
                 'regions': <dynamic>[],
                 'dedupe_key': existingDedupeKey,
                 'is_active': true,
@@ -661,6 +702,189 @@ void main() {
               .select()
               .single(),
         );
+
+        for (final client in [unauthenticated, authenticated]) {
+          final role = identical(client, unauthenticated)
+              ? 'anon'
+              : 'authenticated';
+          await _expectPermissionDenied(
+            () => client.from('card_catalog').insert({
+              'bank': 'Task 2 denied $role',
+              'card_name': 'Task 2 denied $role $suffix',
+              'card_type': 'credit',
+            }),
+            reason: '$role must not write card_catalog',
+          );
+          await _expectPermissionDenied(
+            () => client.from('benefits').insert({
+              'title': 'Task 2 denied $role',
+              'benefit_category': 'DINING',
+              'dedupe_key': 'task2-denied-$role-$suffix',
+            }),
+            reason: '$role must not write benefits',
+          );
+          await _expectPermissionDenied(
+            () => client.from('card_benefit_mapping').insert({
+              'card_id': knownCardId,
+              'benefit_id': existingBenefit['benefit_id'],
+            }),
+            reason: '$role must not write card_benefit_mapping',
+          );
+          await _expectPermissionDenied(
+            () => client.from('card_benefits').insert(<String, dynamic>{}),
+            reason: '$role must not write legacy card_benefits',
+          );
+        }
+
+        expect(
+          await authenticated
+              .from('card_catalog')
+              .select('id')
+              .eq('id', knownCardId),
+          hasLength(1),
+        );
+        expect(
+          await authenticated
+              .from('benefits')
+              .select('benefit_id')
+              .eq('benefit_id', existingBenefit['benefit_id']),
+          hasLength(1),
+        );
+        expect(
+          await authenticated
+              .from('card_benefit_mapping')
+              .select('mapping_id')
+              .eq('mapping_id', existingMapping['mapping_id']),
+          hasLength(1),
+        );
+        await authenticated
+            .from('benefit_categories')
+            .select('category_code')
+            .limit(1);
+        await authenticated.from('card_catalog_aliases').select('id').limit(1);
+
+        const invalidId = '00000000-0000-0000-0000-000000000000';
+        await _expectPermissionDenied(
+          () => authenticated.rpc(
+            'claim_card_catalog_enrichment_jobs',
+            params: {
+              '_max_jobs': 1,
+              '_lease_seconds': 60,
+              '_run_mode': 'manual',
+              '_parser_version': 'benefits-v6',
+            },
+          ),
+          reason: 'authenticated must not execute the claim RPC',
+        );
+        await _expectPermissionDenied(
+          () => authenticated.rpc(
+            'finalize_card_catalog_enrichment_job',
+            params: {
+              '_job_id': invalidId,
+              '_lease_token': invalidId,
+              '_status': 'failed',
+              '_staging_id': null,
+              '_content_hash': null,
+              '_normalized_fields': <String, dynamic>{},
+              '_result_summary': <String, dynamic>{},
+              '_failure_category': 'task2_denied',
+              '_next_retry_at': DateTime.now().toUtc().toIso8601String(),
+            },
+          ),
+          reason: 'authenticated must not execute the finalize RPC',
+        );
+        await _expectPermissionDenied(
+          () => authenticated.rpc(
+            'approve_card_benefit_enrichment',
+            params: {
+              '_staging_id': invalidId,
+              '_reviewed_by': authenticatedReviewerId,
+              '_decisions': <dynamic>[],
+            },
+          ),
+          reason: 'authenticated must not execute the approval RPC',
+        );
+
+        await _expectPermissionDenied(
+          () => authenticated.from('users').insert({
+            'id': authenticatedReviewerId,
+            'email': reviewerEmail,
+            'is_admin': true,
+          }),
+          reason: 'authenticated must not set is_admin during insert',
+        );
+        await _expectPermissionDenied(
+          () => authenticated
+              .from('users')
+              .update({'is_admin': true})
+              .eq('id', authenticatedReviewerId),
+          reason: 'authenticated must not update its own is_admin value',
+        );
+
+        await _expectServiceRpcValidation(
+          () => service.rpc(
+            'finalize_card_catalog_enrichment_job',
+            params: {
+              '_job_id': invalidId,
+              '_lease_token': invalidId,
+              '_status': 'unsafe',
+              '_staging_id': null,
+              '_content_hash': null,
+              '_normalized_fields': <String, dynamic>{},
+              '_result_summary': <String, dynamic>{},
+              '_failure_category': null,
+              '_next_retry_at': null,
+            },
+          ),
+          'invalid_enrichment_finalization',
+        );
+
+        await service
+            .from('card_benefit_mapping')
+            .update({
+              'retired_at': DateTime.now()
+                  .toUtc()
+                  .subtract(const Duration(minutes: 1))
+                  .toIso8601String(),
+            })
+            .eq('mapping_id', existingMapping['mapping_id']);
+        expect(
+          await authenticated
+              .from('card_benefit_mapping')
+              .select('mapping_id,retired_at')
+              .eq('mapping_id', existingMapping['mapping_id']),
+          hasLength(1),
+          reason: 'past-retired mappings remain available for audit',
+        );
+        expect(
+          await authenticated
+              .from('active_card_benefits')
+              .select('mapping_id')
+              .eq('mapping_id', existingMapping['mapping_id']),
+          isEmpty,
+          reason: 'past-retired mappings are excluded from active reads',
+        );
+        await service
+            .from('card_benefit_mapping')
+            .update({
+              'retired_at': DateTime.now()
+                  .toUtc()
+                  .add(const Duration(hours: 1))
+                  .toIso8601String(),
+            })
+            .eq('mapping_id', existingMapping['mapping_id']);
+        expect(
+          await authenticated
+              .from('active_card_benefits')
+              .select('mapping_id')
+              .eq('mapping_id', existingMapping['mapping_id']),
+          hasLength(1),
+          reason: 'future-retired mappings remain active until their instant',
+        );
+        await service
+            .from('card_benefit_mapping')
+            .update({'retired_at': null})
+            .eq('mapping_id', existingMapping['mapping_id']);
 
         final existingDiscoveryCards = _rows(
           await service
@@ -1041,7 +1265,8 @@ void main() {
           await service.auth.admin.deleteUser(reviewerId);
         }
         service.dispose();
-        anonymous.dispose();
+        unauthenticated.dispose();
+        authenticated.dispose();
       }
     }, timeout: const Timeout(Duration(minutes: 4)));
   }, skip: _integrationSkipReason);
