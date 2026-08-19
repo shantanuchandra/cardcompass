@@ -21,3 +21,10 @@
 ## Residual risk
 
 The visible refresh time uses the server-provided inbox snapshot timestamp, but a retained snapshot after a failed refresh is intentionally stale and relies on its live-region warning to prevent operator confusion.
+
+## Review fixes
+
+- Successful compact deep links now display exact target detail immediately, preserve that detail through viewport changes, and retain ordinary queue-first entry plus Back behavior.
+- The 390-pixel integration covers repeated benefit then identity Inbox navigation and verifies the exact visible detail content, not only the outbound query.
+- Every row and its merged semantics distinguish card identity review from benefit enrichment work and identify Card Data / Identity or Benefits. Unknown future work types use the safe “Operator action” fallback, and IDs are not spoken.
+- Focused Inbox plus Card Data: 31/31 passed. Full Flutter phase suite: 103/103 passed. Deno phase suite: 62/62 passed. Migration contract: 4 passed, 1 opt-in integration skipped. Targeted analysis: clean.

@@ -108,6 +108,9 @@ class _CardDataSectionState extends ConsumerState<CardDataSection> {
         }
         _page = next;
         _selected = exact;
+        if (_targetId != null && exact != null) {
+          _compactDetail = true;
+        }
         if (_selected == null && _targetId == null && target == null) {
           _selected = next.items.firstOrNull;
         }

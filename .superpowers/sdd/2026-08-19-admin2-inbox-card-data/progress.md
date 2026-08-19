@@ -149,3 +149,14 @@ Ruling: Preserve the server's stable order within fixed critical, high, and norm
 Ruling: Recreate the Card Data target view for every inbox selection and pass the exact `(lane, target_id)` pair, so repeated and alternating selections cannot retain stale widget state. Cost if wrong: each inbox selection performs a fresh exact-target read instead of reusing an already-mounted Card Data queue.
 
 Ruling: Keep the last successful inbox snapshot visible during refresh and partial-source failure, with live-region warnings and an explicit retry for initial failure. Cost if wrong: an operator can briefly act from visibly timestamped stale context after a refresh failure, but retains useful work instead of seeing an empty surface.
+
+## Task 6 review fixes
+
+- Compact exact-target loads now open the resolved detail immediately; queue-first behavior remains unchanged for ordinary Card Data entry, and Back returns to the queue.
+- A 390-pixel workspace regression proves Inbox navigation renders the exact benefit detail, then a repeated identity selection renders the new exact detail. A direct Card Data regression preserves detail across compact-wide-compact viewport changes.
+- Inbox rows and merged semantics now identify the allowlisted work type plus Card Data lane, while unknown future types fall back to “Operator action” and record IDs remain absent from the spoken label.
+- Verification: focused Inbox plus Card Data passed 31/31; Admin2 plus legacy admin passed 103/103; Deno admin-operator plus legacy catalog passed 62/62; migration contracts passed 4/4 with the opt-in PostgreSQL test skipped; targeted analysis reported no issues.
+
+Ruling: Enter compact detail mode only after an exact deep-linked target is successfully resolved, preserving ordinary queue-first entry and missing-target behavior. Cost if wrong: a deep-linked item adds one state transition after its server response before detail is rendered.
+
+Ruling: Translate only the two allowlisted inbox work types and typed destinations into human-readable labels, falling back to generic operator-safe wording for future values without deriving labels from IDs. Cost if wrong: a new server work type remains generically labeled until the client allowlist is updated.

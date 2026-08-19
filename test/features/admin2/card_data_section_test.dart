@@ -132,6 +132,39 @@ void main() {
     expect(find.text('Refreshed 19 Aug 2026, 09:05 UTC'), findsOneWidget);
   });
 
+  testWidgets('compact exact target opens its detail immediately', (
+    tester,
+  ) async {
+    final target = _item(id: '33333333-3333-4333-8333-333333333333');
+    final source = _FakeSource([
+      _page(items: [target]),
+    ]);
+    await _pump(
+      tester,
+      source,
+      size: const Size(390, 844),
+      initialTargetId: target.id,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('card-data-compact-layout')), findsOneWidget);
+    expect(find.text(target.id), findsOneWidget);
+    expect(find.text('Back to review queue'), findsOneWidget);
+
+    await tester.binding.setSurfaceSize(const Size(1280, 900));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('card-data-wide-layout')), findsOneWidget);
+    expect(find.text(target.id), findsOneWidget);
+
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    await tester.pumpAndSettle();
+    expect(find.text('Back to review queue'), findsOneWidget);
+
+    await tester.tap(find.text('Back to review queue'));
+    await tester.pumpAndSettle();
+    expect(find.text('Compass Rewards'), findsOneWidget);
+  });
+
   testWidgets('missing exact target never falls back to an unrelated row', (
     tester,
   ) async {

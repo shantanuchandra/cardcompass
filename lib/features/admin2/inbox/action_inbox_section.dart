@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/theme/brand_components.dart';
 import '../../../core/theme/brand_tokens.dart';
+import '../card_data/card_data_models.dart';
 import '../data/admin_operator_repository.dart';
 import 'inbox_models.dart';
 
@@ -226,7 +227,7 @@ class _InboxItem extends StatelessWidget {
   Widget build(BuildContext context) => Semantics(
     key: Key('inbox-item-${item.id}'),
     label:
-        '${_severityLabel(item.severity)}. ${item.title}. ${item.explanation}. Status ${item.sourceStatus}. ${_formatAge(item.ageSeconds)} old.',
+        '${_severityLabel(item.severity)}. ${item.title}. ${_typeLabel(item.type)}. ${_sectionLabel(item.destination.section)}. ${_laneLabel(item.destination.lane)}. ${item.explanation}. Status ${item.sourceStatus}. ${_formatAge(item.ageSeconds)} old.',
     button: true,
     onTap: () => onOpen(item.destination),
     excludeSemantics: true,
@@ -247,6 +248,11 @@ class _InboxItem extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(item.title, style: Theme.of(context).textTheme.titleSmall),
+                const SizedBox(height: BrandSpacing.xs),
+                Text(
+                  '${_typeLabel(item.type)} · ${_sectionLabel(item.destination.section)} / ${_laneLabel(item.destination.lane)}',
+                  style: Theme.of(context).textTheme.labelMedium,
+                ),
                 const SizedBox(height: BrandSpacing.xs),
                 Text(item.explanation),
                 const SizedBox(height: BrandSpacing.xs),
@@ -295,6 +301,22 @@ String _severityLabel(AdminInboxSeverity severity) => switch (severity) {
   AdminInboxSeverity.critical => 'Critical',
   AdminInboxSeverity.high => 'High',
   AdminInboxSeverity.normal => 'Normal',
+};
+
+String _typeLabel(String type) => switch (type) {
+  'card_identity_review' => 'Card identity review',
+  'benefit_enrichment_review' => 'Benefit enrichment review',
+  _ => 'Operator action',
+};
+
+String _sectionLabel(String section) => switch (section) {
+  'cardData' => 'Card Data',
+  _ => 'Operator workspace',
+};
+
+String _laneLabel(CardReviewLane lane) => switch (lane) {
+  CardReviewLane.identity => 'Identity',
+  CardReviewLane.benefit => 'Benefits',
 };
 
 IconData _severityIcon(AdminInboxSeverity severity) => switch (severity) {

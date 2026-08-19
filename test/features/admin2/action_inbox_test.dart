@@ -222,6 +222,48 @@ void main() {
       expect(opened[1].lane, CardReviewLane.benefit);
     });
 
+    testWidgets('shows safe type and destination labels without record IDs', (
+      tester,
+    ) async {
+      await _pumpInbox(
+        tester,
+        _snapshot(
+          items: [
+            _item(
+              'private-identity-id',
+              AdminInboxSeverity.critical,
+              'Identity conflict',
+              type: 'card_identity_review',
+            ),
+            _item(
+              'private-benefit-id',
+              AdminInboxSeverity.high,
+              'Benefit recovery',
+              lane: CardReviewLane.benefit,
+              type: 'future_unrecognized_work',
+            ),
+          ],
+        ),
+      );
+
+      expect(
+        find.text('Card identity review · Card Data / Identity'),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Operator action · Card Data / Benefits'),
+        findsOneWidget,
+      );
+      final semantics = tester.getSemantics(
+        find.byKey(const Key('inbox-item-private-benefit-id')),
+      );
+      expect(
+        semantics.label,
+        contains('Operator action. Card Data. Benefits.'),
+      );
+      expect(semantics.label, isNot(contains('private-benefit-id')));
+    });
+
     testWidgets('refresh retains items and reports a safe retryable failure', (
       tester,
     ) async {
@@ -287,6 +329,8 @@ void main() {
       tester,
     ) async {
       final cards = _RecordingCardSource();
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
@@ -305,6 +349,12 @@ void main() {
                     'Review benefit recovery',
                     lane: CardReviewLane.benefit,
                   ),
+                  _item(
+                    'identity-review-8',
+                    AdminInboxSeverity.normal,
+                    'Review identity match',
+                    type: 'card_identity_review',
+                  ),
                 ],
               ),
               cardDataSource: cards,
@@ -319,7 +369,19 @@ void main() {
 
       expect(cards.queries.last.lane, CardReviewLane.benefit);
       expect(cards.queries.last.targetId, 'benefit-job-7');
-      expect(find.text('Benefits'), findsOneWidget);
+      expect(find.text('Deep-linked Benefit Card'), findsWidgets);
+      expect(find.text('Back to review queue'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('admin-section-inbox')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Review identity match'));
+      await tester.tap(find.text('Review identity match'));
+      await tester.pumpAndSettle();
+
+      expect(cards.queries.last.lane, CardReviewLane.identity);
+      expect(cards.queries.last.targetId, 'identity-review-8');
+      expect(find.text('Deep-linked Identity Card'), findsWidgets);
+      expect(find.text('Back to review queue'), findsOneWidget);
     });
   });
 }
@@ -335,7 +397,21 @@ final class _RecordingCardSource implements CardDataSource {
     queries.add(query);
     return CardReviewPage(
       lane: query.lane,
-      items: const [],
+      items: [
+        CardReviewItem(
+          id: query.targetId ?? 'fallback',
+          lane: query.lane,
+          status: query.lane == CardReviewLane.benefit ? 'failed' : 'pending',
+          updatedAt: DateTime.utc(2026, 8, 19),
+          evidence: const [],
+          warningCodes: const [],
+          proposedFields: const {},
+          cardName: query.lane == CardReviewLane.benefit
+              ? 'Deep-linked Benefit Card'
+              : 'Deep-linked Identity Card',
+          bank: 'Safe Bank',
+        ),
+      ],
       page: 1,
       limit: 25,
       hasMore: false,
@@ -377,9 +453,10 @@ AdminInboxItem _item(
   AdminInboxSeverity severity,
   String title, {
   CardReviewLane lane = CardReviewLane.identity,
+  String type = 'review',
 }) => AdminInboxItem(
   id: id,
-  type: 'review',
+  type: type,
   severity: severity,
   title: title,
   explanation: 'Safe operator explanation.',
