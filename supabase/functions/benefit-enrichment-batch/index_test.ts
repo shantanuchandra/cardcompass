@@ -11,9 +11,12 @@ import {
   issuerDiscoveryRunMode,
   loadApprovedIssuerCatalog,
   loadCatalogIdentity,
+  loadDiscoverySeed,
+  loadIssuerDiscoveryBacklog,
   networkWorkMayStart,
   newestValidCrawlObservations,
   observationValidatedAt,
+  persistIssuerRunProgress,
   persistNonProductIssuerOutcome,
   previousFetchValidators,
   processJob,
@@ -21,6 +24,7 @@ import {
   readCompleteAbsenceHistory,
   readCurrentBenefits,
   readPilotStatus,
+  recordIssuerDiscoveryOutcome,
   refreshEligibleCard,
   requeueDueJobs,
   requireExactCatalogIdentity,
@@ -41,6 +45,155 @@ import {
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
+}
+
+function issuerSchedulerStore(input: {
+  jobs?: Array<Record<string, any>>;
+  catalog?: Array<Record<string, any>>;
+}) {
+  const jobs = input.jobs ?? [];
+  const catalog = input.catalog ?? [];
+  const backlogRanges: Array<[number, number]> = [];
+  let sequence = jobs.length;
+  const matches = (
+    row: Record<string, any>,
+    filters: Array<(row: Record<string, any>) => boolean>,
+  ) => filters.every((filter) => filter(row));
+  const db = {
+    from(table: string) {
+      if (table === "card_catalog") {
+        const query = {
+          select() {
+            return this;
+          },
+          order() {
+            return this;
+          },
+          range(from: number, to: number) {
+            return Promise.resolve({
+              data: catalog.slice(from, to + 1),
+              error: null,
+            });
+          },
+        };
+        return query;
+      }
+      assert(
+        table === "card_discovery_jobs",
+        `unexpected issuer scheduler table ${table}`,
+      );
+      let operation: "select" | "update" | "insert" = "select";
+      let payload: Record<string, any> = {};
+      const filters: Array<(row: Record<string, any>) => boolean> = [];
+      const orders: Array<{ column: string; ascending: boolean }> = [];
+      const query = {
+        select() {
+          return this;
+        },
+        eq(column: string, value: unknown) {
+          filters.push((row) => row[column] === value);
+          return this;
+        },
+        is(column: string, value: unknown) {
+          filters.push((row) => row[column] === value);
+          return this;
+        },
+        in(column: string, values: unknown[]) {
+          filters.push((row) => values.includes(row[column]));
+          return this;
+        },
+        lte(column: string, value: string) {
+          filters.push((row) =>
+            typeof row[column] === "string" && row[column] <= value
+          );
+          return this;
+        },
+        contains(column: string, value: Record<string, unknown>) {
+          filters.push((row) =>
+            row[column] && typeof row[column] === "object" &&
+            Object.entries(value).every(([key, expected]) =>
+              row[column][key] === expected
+            )
+          );
+          return this;
+        },
+        order(column: string, options?: { ascending?: boolean }) {
+          orders.push({ column, ascending: options?.ascending !== false });
+          return this;
+        },
+        update(value: Record<string, any>) {
+          operation = "update";
+          payload = value;
+          return this;
+        },
+        insert(value: Record<string, any>) {
+          operation = "insert";
+          payload = value;
+          return this;
+        },
+        range(from: number, to: number) {
+          backlogRanges.push([from, to]);
+          const selected = jobs.filter((row) => matches(row, filters)).sort(
+            (left, right) => {
+              for (const order of orders) {
+                const comparison = String(left[order.column] ?? "")
+                  .localeCompare(String(right[order.column] ?? ""));
+                if (comparison !== 0) {
+                  return order.ascending ? comparison : -comparison;
+                }
+              }
+              return 0;
+            },
+          );
+          return Promise.resolve({
+            data: selected.slice(from, to + 1).map((row) => ({ ...row })),
+            error: null,
+          });
+        },
+        async maybeSingle() {
+          if (operation === "insert") {
+            const duplicate = jobs.some((row) =>
+              row.discovery_source === payload.discovery_source &&
+              row.dedupe_key === payload.dedupe_key && row.user_id === null
+            );
+            if (duplicate) return { data: null, error: { code: "23505" } };
+            const row = {
+              ...payload,
+              id: `run-${++sequence}`,
+              created_at: payload.created_at ?? payload.updated_at,
+            };
+            jobs.push(row);
+            return { data: { ...row }, error: null };
+          }
+          const row = jobs.find((candidate) => matches(candidate, filters));
+          if (!row) return { data: null, error: null };
+          if (operation === "update") Object.assign(row, payload);
+          return { data: { ...row }, error: null };
+        },
+      };
+      return query;
+    },
+  };
+  return { db, jobs, backlogRanges };
+}
+
+function persistedIssuerOutcomes(count: number) {
+  return Array.from({ length: count }, (_, index) => ({
+    candidate_key: index.toString(16).padStart(64, "0"),
+    disposition: "candidate",
+    attempted: true,
+    persistence_outcome: "existing",
+    classification: {
+      kind: "card_product",
+      canonicalUrl:
+        `https://www.axis.bank.in/cards/credit-card/product-${index}`,
+      proposedName: `Product ${index}`,
+      aliases: [`Axis Product ${index} Credit Card`],
+      confidence: 0.95,
+      warnings: [],
+      sanitizedEvidence: [`Axis Product ${index} Credit Card`],
+    },
+  }));
 }
 
 Deno.test("issuer discovery includes all-discontinued approved issuers and excludes disabled or unapproved rows", () => {
@@ -335,6 +488,233 @@ Deno.test("same-day issuer discovery claims are idempotent under a unique-insert
     [left.status, right.status].sort().join(",") ===
       "already_running,claimed",
     "concurrent same-day claim did not become claimed plus no-work",
+  );
+});
+
+Deno.test("unfinished issuer backlog is paginated, resumed oldest-first across UTC days, then releases fresh rotation", async () => {
+  const now = new Date("2026-08-22T00:00:00.000Z");
+  const oldOutcomes = persistedIssuerOutcomes(41);
+  const jobs = [{
+    id: "old-axis",
+    user_id: null,
+    discovery_source: "issuer_crawl",
+    issuer: "Axis Bank",
+    dedupe_key: "old-axis-key",
+    status: "failed",
+    attempt_count: 1,
+    next_retry_at: "2026-08-20T00:05:00.000Z",
+    created_at: "2026-08-20T00:00:00.000Z",
+    updated_at: "2026-08-20T00:05:00.000Z",
+    evidence: {
+      kind: "issuer_directory_run",
+      issuer: "Axis Bank",
+      canonical_url:
+        "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+      run_date: "2026-08-20",
+      lease_token: "11111111-1111-4111-8111-111111111111",
+      outcome_summaries: oldOutcomes,
+    },
+  }, {
+    id: "later-hdfc",
+    user_id: null,
+    discovery_source: "issuer_crawl",
+    issuer: "HDFC Bank",
+    dedupe_key: "later-hdfc-key",
+    status: "failed",
+    attempt_count: 1,
+    next_retry_at: "2026-08-21T00:05:00.000Z",
+    created_at: "2026-08-21T00:00:00.000Z",
+    updated_at: "2026-08-21T00:05:00.000Z",
+    evidence: {
+      kind: "issuer_directory_run",
+      issuer: "HDFC Bank",
+      canonical_url:
+        "https://www.hdfcbank.com/personal/pay/cards/credit-cards/regalia",
+      run_date: "2026-08-21",
+      lease_token: "22222222-2222-4222-8222-222222222222",
+      outcome_summaries: [],
+    },
+  }];
+  const catalog = [{
+    id: "card-1",
+    bank: "ICICI Bank",
+    card_url:
+      "https://www.icicibank.com/personal-banking/cards/credit-card/coral",
+    card_type: "credit",
+    is_discontinued: false,
+  }];
+  const store = issuerSchedulerStore({ jobs, catalog });
+
+  const backlog = await loadIssuerDiscoveryBacklog(store.db, now, 1, 4);
+  assert(backlog.length === 2, "bounded backlog pagination lost a later run");
+  assert(
+    JSON.stringify(store.backlogRanges) ===
+      JSON.stringify([[0, 0], [1, 1], [2, 2]]),
+    "backlog query did not paginate to its short terminal page",
+  );
+
+  const first = await loadDiscoverySeed(store.db, now, 200);
+  assert(first.status === "claimed", "oldest failed run was not reclaimed");
+  assert(first.seed?.rotationJobId === "old-axis", "newer backlog won");
+  assert(first.seed?.runDate === "2026-08-20", "restart changed run date");
+  assert(
+    (first.seed?.rotationEvidence.outcome_summaries as unknown[]).length === 41,
+    "next-day restart lost progress beyond one 40-request budget",
+  );
+  await recordIssuerDiscoveryOutcome(store.db, first.seed!, {
+    complete: true,
+    budgetExhausted: false,
+    reasons: [],
+    counts: { existing: 41 },
+    summaries: oldOutcomes,
+    considered: 41,
+    fetched: 0,
+    resumed: 41,
+  });
+
+  const second = await loadDiscoverySeed(store.db, now, 200);
+  assert(
+    second.seed?.rotationJobId === "later-hdfc",
+    "multiple unfinished runs were not resumed oldest-first",
+  );
+  await recordIssuerDiscoveryOutcome(store.db, second.seed!, {
+    complete: true,
+    budgetExhausted: false,
+    reasons: [],
+    counts: {},
+    summaries: [],
+    considered: 0,
+    fetched: 0,
+    resumed: 0,
+  });
+
+  const fresh = await loadDiscoverySeed(store.db, now, 200);
+  assert(fresh.status === "claimed", "fresh UTC rotation stayed starved");
+  assert(fresh.seed?.runDate === "2026-08-22", "fresh day slot was not used");
+  assert(
+    fresh.seed?.rotationJobId !== "old-axis" &&
+      fresh.seed?.rotationJobId !== "later-hdfc",
+    "completed backlog was reclaimed again",
+  );
+});
+
+Deno.test("exhausted oldest backlog is terminally quarantined so the next run can progress", async () => {
+  const now = new Date("2026-08-22T00:00:00.000Z");
+  const jobs = ["exhausted", "resumable"].map((id, index) => ({
+    id,
+    user_id: null,
+    discovery_source: "issuer_crawl",
+    issuer: index === 0 ? "Axis Bank" : "HDFC Bank",
+    dedupe_key: `${id}-key`,
+    status: "failed",
+    attempt_count: index === 0 ? 5 : 1,
+    next_retry_at: `2026-08-${20 + index}T00:05:00.000Z`,
+    created_at: `2026-08-${20 + index}T00:00:00.000Z`,
+    updated_at: `2026-08-${20 + index}T00:05:00.000Z`,
+    evidence: {
+      kind: "issuer_directory_run",
+      issuer: index === 0 ? "Axis Bank" : "HDFC Bank",
+      canonical_url: index === 0
+        ? "https://www.axis.bank.in/cards/credit-card/neo-credit-card"
+        : "https://www.hdfcbank.com/personal/pay/cards/credit-cards/regalia",
+      run_date: `2026-08-${20 + index}`,
+      lease_token: index === 0
+        ? "11111111-1111-4111-8111-111111111111"
+        : "22222222-2222-4222-8222-222222222222",
+      outcome_summaries: [],
+    },
+  }));
+  const store = issuerSchedulerStore({ jobs });
+  const claim = await loadDiscoverySeed(store.db, now, 200);
+
+  assert(
+    claim.seed?.rotationJobId === "resumable",
+    "exhausted oldest work starved another eligible backlog run",
+  );
+  const exhausted = store.jobs.find((row) => row.id === "exhausted")!;
+  assert(
+    exhausted.status === "review_required" &&
+      exhausted.failure_category === "resume_attempts_exhausted",
+    "resume-attempt ceiling did not create terminal operator-visible work",
+  );
+});
+
+Deno.test("issuer lease token fences expired holders from progress and final writes", async () => {
+  const selected = {
+    issuer: "Axis Bank",
+    canonical_url: "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+  };
+  const store = issuerSchedulerStore({});
+  const holderA = await claimIssuerDiscoveryRun(
+    store.db,
+    selected,
+    new Date("2026-08-20T00:00:00.000Z"),
+  );
+  assert(holderA.seed, "holder A did not acquire the run");
+  const tokenA = holderA.seed.rotationLeaseToken;
+  const holderB = await claimIssuerDiscoveryRun(
+    store.db,
+    selected,
+    new Date("2026-08-20T00:06:00.000Z"),
+  );
+  assert(holderB.seed, "holder B did not reclaim the expired lease");
+  assert(
+    holderB.seed.rotationLeaseToken !== tokenA,
+    "reclaim reused the stale holder token",
+  );
+  const tokenB = await persistIssuerRunProgress(
+    store.db,
+    holderB.seed,
+    [{ candidate_key: "b".repeat(64) }],
+    { existing: 1 },
+  );
+  assert(
+    tokenB === holderB.seed.rotationLeaseToken && tokenB !== tokenA,
+    "progress did not return and install its next lease token",
+  );
+
+  for (
+    const action of [
+      () =>
+        persistIssuerRunProgress(
+          store.db,
+          holderA.seed!,
+          [{ candidate_key: "a".repeat(64) }],
+          { review: 1 },
+        ),
+      () =>
+        recordIssuerDiscoveryOutcome(store.db, holderA.seed!, {
+          complete: true,
+          budgetExhausted: false,
+          reasons: [],
+          counts: {},
+          summaries: [],
+          considered: 0,
+          fetched: 0,
+          resumed: 0,
+        }),
+    ]
+  ) {
+    let error: unknown;
+    try {
+      await action();
+    } catch (caught) {
+      error = caught;
+    }
+    assert(
+      error instanceof Error && error.message === "issuer_discovery_lease_lost",
+      "stale holder did not fail with the harmless lease-loss result",
+    );
+  }
+  const live = store.jobs[0];
+  assert(live.status === "discovering", "stale holder finalized B's run");
+  assert(
+    live.evidence.lease_token === tokenB,
+    "stale holder overwrote B's progress token",
+  );
+  assert(
+    live.evidence.last_processed_candidate_identity === "b".repeat(64),
+    "stale holder overwrote B's durable candidate position",
   );
 });
 

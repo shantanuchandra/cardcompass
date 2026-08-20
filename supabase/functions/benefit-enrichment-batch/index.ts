@@ -97,6 +97,10 @@ type ProcessResult = {
 
 export const CURRENT_BENEFIT_PARSER_VERSION = "benefits-v6";
 const INVOCATION_DEADLINE_MS = 180_000;
+const ISSUER_DISCOVERY_LEASE_MS = 300_000;
+const ISSUER_DISCOVERY_BACKLOG_PAGE_SIZE = 100;
+const ISSUER_DISCOVERY_BACKLOG_MAX_PAGES = 10;
+const ISSUER_DISCOVERY_MAX_ATTEMPTS = 5;
 
 export function claimLimitForInvocation(_runMode: RunMode): 1 {
   return 1;
@@ -2131,15 +2135,18 @@ export async function persistNonProductIssuerOutcome(
   return "duplicate";
 }
 
-async function persistIssuerRunProgress(
+export async function persistIssuerRunProgress(
   db: UntypedSupabaseClient,
   seed: IssuerDiscoverySeed,
   summaries: Array<Record<string, unknown>>,
   counts: Record<string, number>,
-): Promise<void> {
+): Promise<string> {
   const last = summaries.at(-1);
+  const previousLeaseToken = seed.rotationLeaseToken;
+  const nextLeaseToken = crypto.randomUUID();
   const evidence = {
     ...seed.rotationEvidence,
+    lease_token: nextLeaseToken,
     outcome_summaries: summaries.slice(-200),
     outcome_counts: counts,
     last_processed_candidate_identity: last?.candidate_key ?? null,
@@ -2148,14 +2155,17 @@ async function persistIssuerRunProgress(
     evidence,
     updated_at: new Date().toISOString(),
   }).eq("id", seed.rotationJobId).eq("status", "discovering")
+    .contains("evidence", { lease_token: previousLeaseToken })
     .select("id,evidence,updated_at").maybeSingle();
   if (updated.error || !updated.data) {
-    throw updated.error ?? new Error("issuer_discovery_progress_race");
+    throw updated.error ?? new Error("issuer_discovery_lease_lost");
   }
   seed.rotationEvidence = evidence;
+  seed.rotationLeaseToken = nextLeaseToken;
   seed.rotationUpdatedAt = updated.data.updated_at
     ? String(updated.data.updated_at)
     : seed.rotationUpdatedAt;
+  return nextLeaseToken;
 }
 
 async function loadKnownIssuerCards(
@@ -2335,11 +2345,17 @@ export type IssuerDiscoverySeed =
     rotationJobId: string;
     rotationStatus: string;
     rotationUpdatedAt: string | null;
+    rotationLeaseToken: string;
     rotationEvidence: Record<string, unknown>;
   };
 
 export type IssuerDiscoveryClaim = {
-  status: "claimed" | "empty" | "already_running" | "already_completed";
+  status:
+    | "claimed"
+    | "empty"
+    | "already_running"
+    | "already_completed"
+    | "resume_exhausted";
   seed: IssuerDiscoverySeed | null;
 };
 
@@ -2418,7 +2434,7 @@ export function selectIssuerDiscoveryCandidate(
   return sorted[daySlot % sorted.length];
 }
 
-async function recordIssuerDiscoveryOutcome(
+export async function recordIssuerDiscoveryOutcome(
   db: UntypedSupabaseClient,
   seed: IssuerDiscoverySeed,
   outcome: {
@@ -2431,8 +2447,10 @@ async function recordIssuerDiscoveryOutcome(
     fetched: number;
     resumed: number;
   },
-): Promise<void> {
+): Promise<string> {
   const now = new Date().toISOString();
+  const previousLeaseToken = seed.rotationLeaseToken;
+  const nextLeaseToken = crypto.randomUUID();
   const resumable = outcome.budgetExhausted ||
     outcome.reasons.some((reason) =>
       [
@@ -2447,6 +2465,7 @@ async function recordIssuerDiscoveryOutcome(
   const status = resumable ? "failed" : "resolved";
   const evidence = {
     ...seed.rotationEvidence,
+    lease_token: nextLeaseToken,
     last_outcome: outcome.complete
       ? "complete"
       : outcome.budgetExhausted
@@ -2476,10 +2495,213 @@ async function recordIssuerDiscoveryOutcome(
     evidence,
     updated_at: now,
   })
-    .eq("id", seed.rotationJobId).eq("status", "discovering");
+    .eq("id", seed.rotationJobId).eq("status", "discovering")
+    .contains("evidence", { lease_token: previousLeaseToken });
   const { data, error } = await update.select("id").maybeSingle();
   if (error) throw error;
-  if (!data) throw new Error("issuer_discovery_finalize_race");
+  if (!data) throw new Error("issuer_discovery_lease_lost");
+  seed.rotationEvidence = evidence;
+  seed.rotationLeaseToken = nextLeaseToken;
+  seed.rotationUpdatedAt = now;
+  return nextLeaseToken;
+}
+
+const issuerLeaseTokenPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function issuerRunEvidence(row: Record<string, any>): Record<string, unknown> {
+  return row.evidence && typeof row.evidence === "object" &&
+      !Array.isArray(row.evidence)
+    ? row.evidence as Record<string, unknown>
+    : {};
+}
+
+function issuerRunIdentity(row: Record<string, any>): {
+  selected: Pick<EnrichmentJob, "issuer" | "canonical_url">;
+  runDate: string;
+} | null {
+  const evidence = issuerRunEvidence(row);
+  const issuer = String(evidence.issuer ?? row.issuer ?? "").trim();
+  const canonicalUrl = String(evidence.canonical_url ?? "").trim();
+  const runDate = String(evidence.run_date ?? "");
+  if (
+    !issuer || !/^\d{4}-\d{2}-\d{2}$/.test(runDate) ||
+    !Number.isFinite(Date.parse(`${runDate}T00:00:00.000Z`)) ||
+    !allowedOfficialUrl(issuer, canonicalUrl)
+  ) return null;
+  return {
+    selected: {
+      issuer,
+      canonical_url: canonicalOfficialUrl(issuer, canonicalUrl),
+    },
+    runDate,
+  };
+}
+
+function issuerDiscoverySeedFromRow(
+  row: Record<string, any>,
+  selected: Pick<EnrichmentJob, "issuer" | "canonical_url">,
+  runDate: string,
+): IssuerDiscoverySeed {
+  const evidence = issuerRunEvidence(row);
+  const leaseToken = String(evidence.lease_token ?? "");
+  if (!issuerLeaseTokenPattern.test(leaseToken)) {
+    throw new Error("issuer_discovery_claim_missing_token");
+  }
+  return {
+    ...selected,
+    runDate,
+    runKey: String(row.dedupe_key),
+    rotationJobId: String(row.id),
+    rotationStatus: String(row.status),
+    rotationUpdatedAt: row.updated_at ? String(row.updated_at) : null,
+    rotationLeaseToken: leaseToken,
+    rotationEvidence: evidence,
+  };
+}
+
+async function terminalizeIssuerDiscoveryBacklog(
+  db: UntypedSupabaseClient,
+  row: Record<string, any>,
+  now: Date,
+  reason: "resume_attempts_exhausted" | "invalid_run_evidence",
+): Promise<boolean> {
+  const previousEvidence = issuerRunEvidence(row);
+  const nextLeaseToken = crypto.randomUUID();
+  const evidence = {
+    ...previousEvidence,
+    lease_token: nextLeaseToken,
+    last_outcome: reason,
+    budget_exhausted: false,
+    incomplete_reasons: [reason],
+    terminalized_at: now.toISOString(),
+  };
+  let update = db.from("card_discovery_jobs").update({
+    status: "review_required",
+    next_retry_at: null,
+    failure_category: reason,
+    evidence,
+    updated_at: now.toISOString(),
+  }).eq("id", row.id).eq("status", row.status);
+  const previousLeaseToken = String(previousEvidence.lease_token ?? "");
+  if (issuerLeaseTokenPattern.test(previousLeaseToken)) {
+    update = update.contains("evidence", { lease_token: previousLeaseToken });
+  } else if (row.updated_at) {
+    update = update.eq("updated_at", row.updated_at);
+  }
+  const terminal = await update.select("id").maybeSingle();
+  if (terminal.error) throw terminal.error;
+  return Boolean(terminal.data);
+}
+
+async function claimExistingIssuerDiscoveryRow(
+  db: UntypedSupabaseClient,
+  row: Record<string, any>,
+  selected: Pick<EnrichmentJob, "issuer" | "canonical_url">,
+  runDate: string,
+  now: Date,
+): Promise<IssuerDiscoveryClaim> {
+  if (
+    ["resolved", "rejected", "review_required"].includes(String(row.status))
+  ) {
+    return { status: "already_completed", seed: null };
+  }
+  const leaseUntil = Date.parse(String(row.next_retry_at ?? ""));
+  if (
+    row.status === "discovering" && Number.isFinite(leaseUntil) &&
+    leaseUntil > now.getTime()
+  ) return { status: "already_running", seed: null };
+  if (Number(row.attempt_count ?? 0) >= ISSUER_DISCOVERY_MAX_ATTEMPTS) {
+    await terminalizeIssuerDiscoveryBacklog(
+      db,
+      row,
+      now,
+      "resume_attempts_exhausted",
+    );
+    return { status: "resume_exhausted", seed: null };
+  }
+  const previousEvidence = issuerRunEvidence(row);
+  const previousLeaseToken = String(previousEvidence.lease_token ?? "");
+  const nextLeaseToken = crypto.randomUUID();
+  const evidence = {
+    ...previousEvidence,
+    kind: "issuer_directory_run",
+    issuer: selected.issuer,
+    canonical_url: selected.canonical_url,
+    run_date: runDate,
+    lease_token: nextLeaseToken,
+    last_attempt_at: now.toISOString(),
+  };
+  let update = db.from("card_discovery_jobs").update({
+    status: "discovering",
+    attempt_count: Number(row.attempt_count ?? 0) + 1,
+    next_retry_at: new Date(
+      now.getTime() + ISSUER_DISCOVERY_LEASE_MS,
+    ).toISOString(),
+    failure_category: null,
+    evidence,
+    updated_at: now.toISOString(),
+  }).eq("id", row.id).eq("status", row.status);
+  if (issuerLeaseTokenPattern.test(previousLeaseToken)) {
+    update = update.contains("evidence", { lease_token: previousLeaseToken });
+  }
+  if (row.updated_at) update = update.eq("updated_at", row.updated_at);
+  const claimed = await update.select(
+    "id,issuer,evidence,status,updated_at,next_retry_at,attempt_count,dedupe_key,created_at",
+  ).maybeSingle();
+  if (claimed.error) throw claimed.error;
+  return claimed.data
+    ? {
+      status: "claimed",
+      seed: issuerDiscoverySeedFromRow(
+        claimed.data,
+        selected,
+        runDate,
+      ),
+    }
+    : { status: "already_running", seed: null };
+}
+
+export async function loadIssuerDiscoveryBacklog(
+  db: UntypedSupabaseClient,
+  now = new Date(),
+  pageSize = ISSUER_DISCOVERY_BACKLOG_PAGE_SIZE,
+  maxPages = ISSUER_DISCOVERY_BACKLOG_MAX_PAGES,
+): Promise<Array<Record<string, any>>> {
+  if (
+    !Number.isFinite(now.getTime()) || !Number.isInteger(pageSize) ||
+    pageSize < 1 || pageSize > 500 || !Number.isInteger(maxPages) ||
+    maxPages < 1 || maxPages > 20
+  ) throw new Error("invalid_issuer_backlog_request");
+  const rows: Array<Record<string, any>> = [];
+  for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
+    const offset = pageIndex * pageSize;
+    const query = await db.from("card_discovery_jobs")
+      .select(
+        "id,issuer,evidence,status,updated_at,next_retry_at,attempt_count,dedupe_key,created_at",
+      )
+      .eq("discovery_source", "issuer_crawl")
+      .is("user_id", null)
+      .in("status", ["failed", "discovering"])
+      .lte("next_retry_at", now.toISOString())
+      .contains("evidence", { kind: "issuer_directory_run" })
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(offset, offset + pageSize - 1);
+    if (query.error) throw query.error;
+    const page = (query.data ?? []) as Array<Record<string, any>>;
+    rows.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return rows.sort((left, right) => {
+    const leftEvidence = issuerRunEvidence(left);
+    const rightEvidence = issuerRunEvidence(right);
+    return String(leftEvidence.run_date ?? left.created_at ?? "").localeCompare(
+      String(rightEvidence.run_date ?? right.created_at ?? ""),
+    ) || String(left.created_at ?? "").localeCompare(
+      String(right.created_at ?? ""),
+    ) || String(left.id ?? "").localeCompare(String(right.id ?? ""));
+  });
 }
 
 export async function claimIssuerDiscoveryRun(
@@ -2494,7 +2716,7 @@ export async function claimIssuerDiscoveryRun(
   const loadExisting = async (): Promise<Record<string, any> | null> => {
     const existing = await db.from("card_discovery_jobs")
       .select(
-        "id,issuer,evidence,status,updated_at,next_retry_at,attempt_count,dedupe_key",
+        "id,issuer,evidence,status,updated_at,next_retry_at,attempt_count,dedupe_key,created_at",
       )
       .eq("discovery_source", "issuer_crawl")
       .eq("dedupe_key", key)
@@ -2503,60 +2725,23 @@ export async function claimIssuerDiscoveryRun(
     if (existing.error) throw existing.error;
     return existing.data ?? null;
   };
-  const asSeed = (row: Record<string, any>): IssuerDiscoverySeed => ({
-    ...selected,
-    runDate,
-    runKey: key,
-    rotationJobId: String(row.id),
-    rotationStatus: String(row.status),
-    rotationUpdatedAt: row.updated_at ? String(row.updated_at) : null,
-    rotationEvidence: row.evidence && typeof row.evidence === "object"
-      ? row.evidence as Record<string, unknown>
-      : {},
-  });
-  const existingClaim = async (
-    row: Record<string, any>,
-  ): Promise<IssuerDiscoveryClaim> => {
-    if (["resolved", "rejected"].includes(String(row.status))) {
-      return { status: "already_completed", seed: null };
-    }
-    const leaseUntil = Date.parse(String(row.next_retry_at ?? ""));
-    if (
-      row.status === "discovering" && Number.isFinite(leaseUntil) &&
-      leaseUntil > now.getTime()
-    ) return { status: "already_running", seed: null };
-    const evidence = {
-      ...(row.evidence && typeof row.evidence === "object" ? row.evidence : {}),
-      kind: "issuer_directory_run",
-      issuer: selected.issuer,
-      canonical_url: selected.canonical_url,
-      run_date: runDate,
-      last_attempt_at: now.toISOString(),
-    };
-    let update = db.from("card_discovery_jobs").update({
-      status: "discovering",
-      attempt_count: Number(row.attempt_count ?? 0) + 1,
-      next_retry_at: new Date(now.getTime() + 300_000).toISOString(),
-      failure_category: null,
-      evidence,
-      updated_at: now.toISOString(),
-    }).eq("id", row.id).eq("status", row.status);
-    if (row.updated_at) update = update.eq("updated_at", row.updated_at);
-    const claimed = await update.select(
-      "id,issuer,evidence,status,updated_at,next_retry_at,attempt_count,dedupe_key",
-    ).maybeSingle();
-    if (claimed.error) throw claimed.error;
-    return claimed.data
-      ? { status: "claimed", seed: asSeed(claimed.data) }
-      : { status: "already_running", seed: null };
-  };
   const previous = await loadExisting();
-  if (previous) return await existingClaim(previous);
+  if (previous) {
+    return await claimExistingIssuerDiscoveryRow(
+      db,
+      previous,
+      selected,
+      runDate,
+      now,
+    );
+  }
+  const leaseToken = crypto.randomUUID();
   const evidence = {
     kind: "issuer_directory_run",
     issuer: selected.issuer,
     canonical_url: selected.canonical_url,
     run_date: runDate,
+    lease_token: leaseToken,
     last_attempt_at: now.toISOString(),
     outcome_summaries: [],
   };
@@ -2569,20 +2754,31 @@ export async function claimIssuerDiscoveryRun(
     dedupe_key: key,
     status: "discovering",
     attempt_count: 1,
-    next_retry_at: new Date(now.getTime() + 300_000).toISOString(),
+    next_retry_at: new Date(
+      now.getTime() + ISSUER_DISCOVERY_LEASE_MS,
+    ).toISOString(),
     updated_at: now.toISOString(),
   }).select(
-    "id,issuer,evidence,status,updated_at,next_retry_at,attempt_count,dedupe_key",
+    "id,issuer,evidence,status,updated_at,next_retry_at,attempt_count,dedupe_key,created_at",
   ).maybeSingle();
   if (!inserted.error && inserted.data) {
-    return { status: "claimed", seed: asSeed(inserted.data) };
+    return {
+      status: "claimed",
+      seed: issuerDiscoverySeedFromRow(inserted.data, selected, runDate),
+    };
   }
   if (inserted.error?.code !== "23505") {
     throw inserted.error ?? new Error("issuer_discovery_claim_failed");
   }
   const raced = await loadExisting();
   if (!raced) throw new Error("issuer_discovery_claim_race");
-  return await existingClaim(raced);
+  return await claimExistingIssuerDiscoveryRow(
+    db,
+    raced,
+    selected,
+    runDate,
+    now,
+  );
 }
 
 export async function loadDiscoverySeed(
@@ -2590,6 +2786,28 @@ export async function loadDiscoverySeed(
   now = new Date(),
   pageSize = 200,
 ): Promise<IssuerDiscoveryClaim> {
+  const backlog = await loadIssuerDiscoveryBacklog(db, now);
+  for (const row of backlog) {
+    const identity = issuerRunIdentity(row);
+    if (!identity) {
+      await terminalizeIssuerDiscoveryBacklog(
+        db,
+        row,
+        now,
+        "invalid_run_evidence",
+      );
+      continue;
+    }
+    const claim = await claimExistingIssuerDiscoveryRow(
+      db,
+      row,
+      identity.selected,
+      identity.runDate,
+      now,
+    );
+    if (claim.seed) return claim;
+    if (claim.status === "already_completed") continue;
+  }
   const rows = await loadApprovedIssuerCatalog(db, pageSize);
   const selected = selectIssuerDiscoveryCandidate(rows, now);
   if (!selected) return { status: "empty", seed: null };

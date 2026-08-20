@@ -601,10 +601,75 @@ export function cardDiscontinuationEvidence(
   )].map((match) => ({
     start: match.index ?? 0,
     end: (match.index ?? 0) + match[0].length,
+    level: Number(match[1]),
     text: clean(match[2] ?? ""),
   }));
-  const productHeading = (value: string) =>
-    /\b(?:credit\s+)?card\b/i.test(value);
+  const sectionHeadingTokens = new Set([
+    "about",
+    "access",
+    "annual",
+    "application",
+    "apply",
+    "apr",
+    "availability",
+    "benefit",
+    "benefits",
+    "charge",
+    "charges",
+    "contact",
+    "details",
+    "document",
+    "documents",
+    "eligibility",
+    "faq",
+    "feature",
+    "features",
+    "fee",
+    "fees",
+    "frequently",
+    "how",
+    "important",
+    "information",
+    "interest",
+    "joining",
+    "key",
+    "lounge",
+    "milestone",
+    "offer",
+    "offers",
+    "overview",
+    "points",
+    "pricing",
+    "question",
+    "questions",
+    "rate",
+    "rates",
+    "reward",
+    "rewards",
+    "status",
+    "term",
+    "terms",
+    "welcome",
+  ]);
+  const issuerTokens = new Set(meaningful(issuer));
+  const normalSectionHeading = (value: string) => {
+    const tokens = meaningful(value).filter((token) =>
+      !issuerTokens.has(token)
+    );
+    return tokens.length === 0 ||
+      tokens.every((token) => sectionHeadingTokens.has(token));
+  };
+  const productHeading = (value: string) => {
+    if (containsTarget(value) || normalSectionHeading(value)) return false;
+    if (/\b(?:credit\s+)?card\b/i.test(value)) return true;
+    const tokens = meaningful(value);
+    const hasIssuerIdentity = tokens.some((token) => issuerTokens.has(token));
+    const distinctive = tokens.filter((token) =>
+      !issuerTokens.has(token) && !sectionHeadingTokens.has(token)
+    );
+    return distinctive.length > 0 &&
+      (hasIssuerIdentity || (tokens.length <= 6 && value.length <= 96));
+  };
   const anaphoric =
     /\b(?:this|the)\s+(?:credit\s+)?card\s+(?:has\s+been\s+|is\s+)(?:discontinued|withdrawn)\b|\b(?:this|the)\s+(?:credit\s+)?card\s+is\s+no\s+longer\s+(?:available|issued)\b/i;
   const targetPhrase = meaningful(cardName).join("[\\s\\W_]*");
@@ -614,6 +679,42 @@ export function cardDiscontinuationEvidence(
       "i",
     )
     : null;
+  const boundedSentences = (value: string): string[] => {
+    const withBoundaries = value
+      .replace(
+        /<\/?(?:article|aside|br|div|li|p|section|td|th|tr)\b[^>]*>/gi,
+        "\n",
+      )
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&(?:nbsp|amp);/gi, " ");
+    return (withBoundaries.match(/[^.!?\n]+[.!?]?/g) ?? [])
+      .map((sentence) => clean(sentence))
+      .filter(Boolean)
+      .slice(0, 256);
+  };
+  const exactTargetSentence = (value: string): string | null => {
+    if (!direct) return null;
+    for (const sentence of boundedSentences(value)) {
+      const match = direct.exec(sentence);
+      if (!match) continue;
+      const remainder = `${sentence.slice(0, match.index)} ${
+        sentence.slice(match.index + match[0].length)
+      }`.replace(
+        new RegExp(
+          `\\b${meaningful(issuer).join("[\\s\\W_]*")}\\b`,
+          "ig",
+        ),
+        " ",
+      );
+      if (
+        /\b(?:compare|instead|other|related|replacement|replaces?|successor|while|whereas)\b/i
+          .test(remainder) ||
+        /\b(?:credit\s+)?card\b/i.test(remainder)
+      ) continue;
+      return sentence;
+    }
+    return null;
+  };
 
   for (let index = 0; index < headings.length; index += 1) {
     const heading = headings[index];
@@ -621,17 +722,24 @@ export function cardDiscontinuationEvidence(
     const sibling = headings.slice(index + 1).find((candidate) =>
       productHeading(candidate.text) && !containsTarget(candidate.text)
     );
+    const remainder = boundedHtml.slice(heading.end, heading.end + 12_000);
+    const structuralBoundary =
+      /<(?:table\b|(?:div|section|article)\b[^>]*(?:class|data-component)\s*=\s*["'][^"']*(?:product[-_ ]?card|card[-_ ]?product|product[-_ ]?tile)[^"']*["'])/i
+        .exec(remainder);
     const scopeEnd = Math.min(
       sibling?.start ?? boundedHtml.length,
+      structuralBoundary?.index === undefined
+        ? boundedHtml.length
+        : heading.end + structuralBoundary.index,
       heading.end + 12_000,
     );
     const rawScope = boundedHtml.slice(heading.end, scopeEnd);
     const scoped = clean(rawScope).slice(0, 2_000);
-    const directMatch = direct?.exec(scoped) ?? null;
-    if (directMatch) {
+    const directSentence = exactTargetSentence(rawScope);
+    if (directSentence) {
       return {
         explicit: true,
-        matchedExcerpt: boundedExcerpt(`${heading.text} ${directMatch[0]}`),
+        matchedExcerpt: boundedExcerpt(`${heading.text} ${directSentence}`),
       };
     }
     const statusElement = [...rawScope.matchAll(
@@ -649,10 +757,11 @@ export function cardDiscontinuationEvidence(
     const anaphoricMatch = anaphoric.exec(scoped);
     if (anaphoricMatch) {
       const prior = scoped.slice(0, anaphoricMatch.index);
-      const refersToSuccessor =
-        /\b(?:successor|replacement|replaces?|replaced)\b/i.test(prior) &&
+      const refersToOtherProduct =
+        /\b(?:alternative|compare|related|successor|replacement|replaces?|replaced)\b/i
+          .test(prior) &&
         /\b(?:credit\s+)?card\b/i.test(prior);
-      if (!refersToSuccessor) {
+      if (!refersToOtherProduct) {
         return {
           explicit: true,
           matchedExcerpt: boundedExcerpt(
@@ -662,11 +771,13 @@ export function cardDiscontinuationEvidence(
       }
     }
   }
-  const plain = clean(html.slice(0, 120_000));
-  const directAnywhere = direct?.exec(plain) ?? null;
-  return directAnywhere
-    ? { explicit: true, matchedExcerpt: directAnywhere[0].slice(0, 512) }
-    : { explicit: false, matchedExcerpt: null };
+  if (headings.length === 0) {
+    const sentence = exactTargetSentence(boundedHtml);
+    if (sentence) {
+      return { explicit: true, matchedExcerpt: boundedExcerpt(sentence) };
+    }
+  }
+  return { explicit: false, matchedExcerpt: null };
 }
 
 export async function stageCatalogIdentityReview(

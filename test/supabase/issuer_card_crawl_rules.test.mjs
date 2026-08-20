@@ -858,10 +858,12 @@ test("a rejected nested sitemap child makes the directory observation incomplete
 });
 
 test("only wholly positive directory sources allow an empty inventory to be complete", async () => {
+  const productDirectory =
+    "https://www.axis.bank.in/cards/credit-card/sitemap.xml";
   const secondRoot = "https://www.axis.bank.in/sitemap-cards.xml";
   const empty = await discoverIssuerCardCandidates({
     issuer,
-    sitemapUrl: rootSitemap,
+    sitemapUrl: productDirectory,
     fetchOfficialIssuerResource: async (input) =>
       resource(input.url, sitemap([]), "application/xml"),
     delay: async () => {},
@@ -871,7 +873,7 @@ test("only wholly positive directory sources allow an empty inventory to be comp
 
   const partial = await discoverIssuerCardCandidates({
     issuer,
-    sitemapUrls: [rootSitemap, secondRoot],
+    sitemapUrls: [productDirectory, secondRoot],
     fetchOfficialIssuerResource: async (input) => {
       if (input.url === secondRoot) throw new Error("timeout");
       return resource(input.url, sitemap([]), "application/xml");
@@ -882,6 +884,92 @@ test("only wholly positive directory sources allow an empty inventory to be comp
   assert.ok(
     partial.incompleteReasons.includes("directory_source_fetch_failed"),
   );
+});
+
+test("supporting-document-only listings persist evidence but cannot prove product inventory", async () => {
+  const productDirectory =
+    "https://www.axis.bank.in/cards/credit-card/sitemap.xml";
+  const terms =
+    "https://www.axis.bank.in/cards/credit-card/privilege/terms-and-conditions";
+  const outcomes = [];
+  const result = await discoverIssuerCardCandidates({
+    issuer,
+    sitemapUrl: productDirectory,
+    fetchOfficialIssuerResource: async (input) =>
+      input.url === productDirectory
+        ? resource(input.url, sitemap([terms]), "application/xml")
+        : resource(
+          input.url,
+          "<h1>Axis Privilege Credit Card Terms and Conditions</h1>",
+        ),
+    delay: async () => {},
+    onCandidateOutcome: async (outcome) => outcomes.push(outcome),
+  });
+
+  assert.equal(outcomes.length, 1);
+  assert.equal(outcomes[0].classification.kind, "supporting_document");
+  assert.equal(result.candidates[0].kind, "supporting_document");
+  assert.equal(result.complete, false);
+  assert.ok(result.incompleteReasons.includes("product_inventory_unproven"));
+});
+
+test("a mixed product and supporting document inventory remains complete", async () => {
+  const productDirectory =
+    "https://www.axis.bank.in/cards/credit-card/sitemap.xml";
+  const product =
+    "https://www.axis.bank.in/cards/credit-card/privilege-credit-card";
+  const terms =
+    "https://www.axis.bank.in/cards/credit-card/privilege/terms-and-conditions";
+  const result = await discoverIssuerCardCandidates({
+    issuer,
+    sitemapUrl: productDirectory,
+    fetchOfficialIssuerResource: async (input) => {
+      if (input.url === productDirectory) {
+        return resource(
+          input.url,
+          sitemap([product, terms]),
+          "application/xml",
+        );
+      }
+      return resource(
+        input.url,
+        input.url === product
+          ? "<h1>Axis Privilege Credit Card</h1>"
+          : "<h1>Axis Privilege Credit Card Terms and Conditions</h1>",
+      );
+    },
+    delay: async () => {},
+  });
+
+  assert.deepEqual(
+    result.candidates.map((candidate) => candidate.kind).sort(),
+    ["card_product", "supporting_document"],
+  );
+  assert.equal(result.complete, true);
+});
+
+test("only an explicitly product-scoped empty source proves empty inventory", async () => {
+  const productDirectory =
+    "https://www.axis.bank.in/cards/credit-card/sitemap.xml";
+  const fetchOfficialIssuerResource = async (input) =>
+    resource(input.url, sitemap([]), "application/xml");
+  const generic = await discoverIssuerCardCandidates({
+    issuer,
+    sitemapUrl: rootSitemap,
+    fetchOfficialIssuerResource,
+    delay: async () => {},
+  });
+  const explicit = await discoverIssuerCardCandidates({
+    issuer,
+    sitemapUrl: productDirectory,
+    fetchOfficialIssuerResource,
+    delay: async () => {},
+  });
+
+  assert.equal(generic.complete, false);
+  assert.ok(generic.incompleteReasons.includes("product_inventory_unproven"));
+  assert.equal(explicit.complete, true);
+  assert.deepEqual(explicit.incompleteReasons, []);
 });
 
 test("a malformed nested sitemap prevents directory absence review", async () => {

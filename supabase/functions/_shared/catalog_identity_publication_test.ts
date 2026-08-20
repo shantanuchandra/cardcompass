@@ -618,6 +618,82 @@ Deno.test("discontinuation scope stops at sibling products and accepts only targ
   );
 });
 
+Deno.test("discontinuation scope derives product headings without treating ordinary sections as siblings", () => {
+  const siblingWithoutCard = cardDiscontinuationEvidence(
+    `<h2>Axis Neo Credit Card</h2>
+     <h3>My Zone</h3>
+     <p>This card has been discontinued.</p>`,
+    "Axis Bank",
+    "Neo",
+  );
+  assert(
+    !siblingWithoutCard.explicit,
+    "a sibling product heading without the word card leaked into Neo",
+  );
+
+  const sectionHeadings = cardDiscontinuationEvidence(
+    `<h2>Axis Neo Credit Card</h2>
+     <h3>Benefits</h3><p>Welcome rewards.</p>
+     <h3>Availability</h3>
+     <h4>Status</h4><p>This credit card is no longer issued.</p>`,
+    "Axis Bank",
+    "Neo",
+  );
+  assert(
+    sectionHeadings.explicit,
+    "normal benefit/availability/status sections ended the target scope",
+  );
+
+  const excludedSiblingFallback = cardDiscontinuationEvidence(
+    `<h2>Axis Neo Credit Card</h2>
+     <h2>My Zone Credit Card</h2>
+     <p>Axis Neo Credit Card has been discontinued.</p>`,
+    "Axis Bank",
+    "Neo",
+  );
+  assert(
+    !excludedSiblingFallback.explicit,
+    "global fallback crossed an excluded sibling product section",
+  );
+
+  const relatedInTargetSection = cardDiscontinuationEvidence(
+    `<h2>Axis Neo Credit Card</h2>
+     <p>Related product: My Zone Credit Card. This card has been discontinued.</p>`,
+    "Axis Bank",
+    "Neo",
+  );
+  assert(
+    !relatedInTargetSection.explicit,
+    "related-product anaphora became Neo lifecycle evidence",
+  );
+});
+
+Deno.test("no-heading discontinuation requires one exact target-only sentence", () => {
+  const exact = cardDiscontinuationEvidence(
+    "<p>Axis Neo Credit Card has been discontinued and is no longer issued.</p>",
+    "Axis Bank",
+    "Neo",
+  );
+  assert(exact.explicit, "exact no-heading target sentence was missed");
+
+  const competing = cardDiscontinuationEvidence(
+    `<p>Axis Neo Credit Card has been discontinued while My Zone Credit Card remains available.</p>`,
+    "Axis Bank",
+    "Neo",
+  );
+  assert(
+    !competing.explicit,
+    "a no-heading sentence with competing product context was accepted",
+  );
+
+  const related = cardDiscontinuationEvidence(
+    `<p>For the related My Zone Credit Card, Neo has been discontinued as a campaign name.</p>`,
+    "Axis Bank",
+    "Neo",
+  );
+  assert(!related.explicit, "related-card prose became target lifecycle proof");
+});
+
 Deno.test("reviewed catalog fields enforce a strict private bounded whole-envelope contract", () => {
   const valid = boundedReviewedCatalogFields({
     issuer: "Axis Bank",

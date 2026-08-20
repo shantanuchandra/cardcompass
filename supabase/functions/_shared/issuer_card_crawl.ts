@@ -487,6 +487,16 @@ function sanitizeClassification(page: PageClassification): PageClassification {
   };
 }
 
+function isExplicitProductDirectorySource(url: string): boolean {
+  try {
+    const pathname = new URL(url).pathname.toLowerCase();
+    return /(?:^|[-_/])(?:credit[-_/]?cards?|cards?[-_/]?(?:products?|catalog)|sitemap[-_.]?(?:credit[-_]?cards?|cards?))(?:[-_/.]|$)/
+      .test(pathname);
+  } catch {
+    return false;
+  }
+}
+
 function safeApprovedResourceUrl(value: unknown): string | null {
   if (typeof value !== "string" || value.length > 2_048) return null;
   try {
@@ -1133,6 +1143,7 @@ export async function discoverIssuerCardCandidates(
       }));
   let hasRequested = false;
   let directorySourceSucceeded = false;
+  let explicitProductDirectoryObserved = false;
   let crawlHadFailure = false;
   let budgetExhausted = false;
   let anchorHost: string | null = null;
@@ -1244,6 +1255,9 @@ export async function discoverIssuerCardCandidates(
       continue;
     }
     directorySourceSucceeded = true;
+    if (isExplicitProductDirectorySource(current.url)) {
+      explicitProductDirectoryObserved = true;
+    }
     for (const rawLocation of document.locations) {
       const location = requestForIssuer(input.issuer, rawLocation);
       if (!location) {
@@ -1345,6 +1359,9 @@ export async function discoverIssuerCardCandidates(
         continue;
       }
       directorySourceSucceeded = true;
+      if (isExplicitProductDirectorySource(indexUrl)) {
+        explicitProductDirectoryObserved = true;
+      }
       for (const match of (response.text ?? "").matchAll(htmlLinkPattern)) {
         let linked: string;
         try {
@@ -1397,6 +1414,7 @@ export async function discoverIssuerCardCandidates(
   let fetchedCount = 0;
   let resumedCount = 0;
   let terminalCandidateCount = 0;
+  let cardProductCount = 0;
   for (const url of rejectedCandidateUrls) {
     const key = await candidateKey(url);
     const completed = completedOutcomes.get(key);
@@ -1453,6 +1471,9 @@ export async function discoverIssuerCardCandidates(
       terminalCandidateCount += 1;
       if (completed.disposition === "candidate") {
         candidates.push(completed.classification);
+        if (completed.classification.kind === "card_product") {
+          cardProductCount += 1;
+        }
       } else {
         quarantined.push(completed.classification);
         markIncomplete("candidate_not_positive");
@@ -1573,6 +1594,7 @@ export async function discoverIssuerCardCandidates(
       });
       if (accepted) {
         candidates.push(page);
+        if (page.kind === "card_product") cardProductCount += 1;
       } else {
         quarantined.push(page);
         markIncomplete("candidate_persistence_review_required");
@@ -1596,6 +1618,12 @@ export async function discoverIssuerCardCandidates(
   }
   if (terminalCandidateCount !== fetchableCandidates.length) {
     markIncomplete("candidate_unattempted");
+  }
+  if (
+    cardProductCount === 0 &&
+    (candidateUrls.length > 0 || !explicitProductDirectoryObserved)
+  ) {
+    markIncomplete("product_inventory_unproven");
   }
 
   return {

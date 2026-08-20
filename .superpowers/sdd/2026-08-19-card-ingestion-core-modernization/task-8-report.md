@@ -39,6 +39,7 @@ Modified:
 - `supabase/functions/benefit-enrichment-batch/index_test.ts`
 - `supabase/functions/_shared/issuer_card_crawl.ts`
 - `supabase/functions/_shared/catalog_identity_publication.ts`
+- `supabase/functions/_shared/catalog_identity_publication_test.ts`
 - `test/gtm/benefit-enrichment-schedule.test.js`
 - `test/supabase/card_discovery_rules.test.mjs`
 - `test/supabase/issuer_card_crawl_rules.test.mjs`
@@ -81,6 +82,19 @@ No schema or migration file changed.
   by loading the winner; an active five-minute lease returns `already_running`;
   a terminal same-day run returns `already_completed`; failed or
   budget-exhausted work is safely reclaimed.
+- Before selecting the current UTC day slot, the scheduler scans eligible
+  service-owned failed/budget-exhausted and expired-discovering runs in stable
+  `created_at,id` pages, then orders the bounded result by persisted run date.
+  The oldest run is claimed first with its original issuer, date, canonical URL,
+  candidate summaries, and last position. Multiple unfinished dates drain in
+  order without a manual action. Five unsuccessful attempts terminalize a run as
+  operator-visible `resume_attempts_exhausted`, so permanently bad work cannot
+  starve fresh day-slot rotation forever.
+- Each claim installs an opaque UUID lease token inside the existing bounded run
+  evidence. Every progress/final compare-and-set requires the exact current
+  token and rotates it, returning the next token to the holder. An expired
+  holder cannot overwrite candidate position or finalize after another
+  invocation reclaims the row. This adds fencing without a schema column.
 - Progress retains at most 200 unique candidate summaries, matching the source
   cap. A retried candidate replaces its old summary and moves to the end, so one
   retry cannot evict unrelated completed progress and cause an oscillating
@@ -107,8 +121,12 @@ No schema or migration file changed.
   sources/candidates, fetch failures, quarantines, and deadline exhaustion all
   force `complete=false` with bounded reasons.
 - An empty inventory is complete only after all selected directory sources parse
-  positively with no cap, truncation, or failure. Only then are all known issuer
-  cards loaded with pagination and passed to the existing exact
+  positively with no cap, truncation, or failure and at least one successful
+  source is explicitly product-directory scoped. A generic empty sitemap cannot
+  prove inventory. A terms/supporting-document-only listing persists its
+  evidence but remains `product_inventory_unproven`; a mixed product plus terms
+  listing can be complete. Only proven inventory then loads all known issuer
+  cards with pagination and passes them to the existing exact
   family+tier+effective-network/card-type absence review boundary.
 - Incomplete issuer work does not alter or suppress Task 6 recurring benefit
   scheduling.
@@ -121,10 +139,14 @@ No schema or migration file changed.
   bounded central review evidence.
 - Approved functional query resource URLs and hashes remain distinct from
   sanitized display URLs.
-- Discontinuation scope now stops only at an actual sibling card/product
-  heading, not normal `Availability` or `Status` section headings. Existing
-  target-specific table/card evidence and bounded matched excerpts remain
-  intact; sibling and successor prose stays non-authoritative.
+- Discontinuation scope derives short sibling product identities such as
+  `My Zone` even when their headings omit `card`, while normal `Availability`,
+  `Status`, `Fees`, `Benefits`, and `Eligibility` headings remain inside the
+  target section. Table/product-card boundaries stop scope, and the old global
+  fallback cannot cross an excluded sibling section. Existing target-specific
+  table/card evidence and bounded matched excerpts remain intact. Headingless
+  evidence is accepted only when one bounded sentence contains the exact target
+  discontinuation and no competing/related/successor product context.
 
 ## Red-to-green evidence
 
@@ -143,19 +165,25 @@ Initial RED checkpoints:
   path-agnostic sitemap-index children, in-flight deadline persistence,
   rejected-outcome resume, transient-failure retry, and bounded retry-summary
   replacement. Each failure was observed before its production change.
+- Correction-round RED tests then failed on all four review findings: the
+  backlog/lease APIs and token were absent (six type errors), supporting-only
+  and generic-empty sources incorrectly reported complete, `My Zone` without
+  `card` did not end target scope, global fallback crossed sibling sections, and
+  competing/related product sentences were accepted. The exact behavioral tests
+  were green only after their production boundaries changed.
 
 Final GREEN commands:
 
-- Plan Task 8 command (`2` workflow plus `41` issuer-crawl tests): **43 passed,
+- Plan Task 8 command (`2` workflow plus `44` issuer-crawl tests): **46 passed,
   0 failed**.
 - Batch/Task 6 Deno suite (`recurrence`, `batch`, `crawl`, supporting documents,
-  and batch entry): **185 passed, 0 failed**.
-- Shared publication, shared issuer crawl, and card-discovery Deno suites: **29
+  and batch entry): **188 passed, 0 failed**.
+- Shared publication, shared issuer crawl, and card-discovery Deno suites: **31
   passed, 0 failed**.
-- Affected Supabase static and migration Node suites: **280 passed, 0 failed**.
+- Affected Supabase static and migration Node suites: **283 passed, 0 failed**.
 - Production `deno check` passed for the batch function, card discovery, issuer
   crawler, and catalog identity publication.
-- Changed-surface `deno fmt --check`: **11 files checked**.
+- Changed-surface `deno fmt --check`: passed.
 - `git diff --check`: passed.
 
 All verification used local mocks/static files only. No Docker, local or linked
