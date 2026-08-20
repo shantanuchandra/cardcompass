@@ -49,22 +49,27 @@ SECURITY INVOKER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
+  parts text[];
   parsed_value timestamptz;
+  offset_hour integer;
+  offset_minute integer;
 BEGIN
-  IF _value IS NULL OR _value !~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$' THEN
-    RETURN NULL;
-  END IF;
+  IF _value IS NULL OR length(_value) > 48 THEN RETURN NULL; END IF;
+  parts := regexp_match(
+    _value,
+    '^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(Z|([+-])(\d{2})(?::?(\d{2}))?)$'
+  );
+  IF parts IS NULL THEN RETURN NULL; END IF;
+  offset_hour := CASE WHEN upper(parts[4]) = 'Z' THEN 0 ELSE parts[6]::integer END;
+  offset_minute := CASE WHEN upper(parts[4]) = 'Z' THEN 0
+    ELSE coalesce(parts[7], '0')::integer END;
+  IF offset_hour > 14 OR offset_minute > 59
+     OR (offset_hour = 14 AND offset_minute <> 0) THEN RETURN NULL; END IF;
   BEGIN
     parsed_value := _value::timestamptz;
   EXCEPTION WHEN OTHERS THEN
     RETURN NULL;
   END;
-  IF to_char(
-    parsed_value AT TIME ZONE 'UTC',
-    'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
-  ) <> _value THEN
-    RETURN NULL;
-  END IF;
   RETURN parsed_value;
 END;
 $$;
@@ -84,22 +89,27 @@ DECLARE
   parts text[];
   canonical_value text;
   parsed_value timestamptz;
+  offset_hour integer;
+  offset_minute integer;
 BEGIN
-  IF _value IS NULL OR length(_value) > 40 THEN RETURN NULL; END IF;
+  IF _value IS NULL OR length(_value) > 48 THEN RETURN NULL; END IF;
   parts := regexp_match(
     _value,
-    '^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(?:Z|\+00(?::00)?)$'
+    '^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(Z|([+-])(\d{2})(?::?(\d{2}))?)$'
   );
   IF parts IS NULL THEN RETURN NULL; END IF;
-  canonical_value := parts[1] || 'T' || parts[2] || '.' ||
-    rpad(coalesce(parts[3], ''), 6, '0') || 'Z';
+  offset_hour := CASE WHEN upper(parts[4]) = 'Z' THEN 0 ELSE parts[6]::integer END;
+  offset_minute := CASE WHEN upper(parts[4]) = 'Z' THEN 0
+    ELSE coalesce(parts[7], '0')::integer END;
+  IF offset_hour > 14 OR offset_minute > 59
+     OR (offset_hour = 14 AND offset_minute <> 0) THEN RETURN NULL; END IF;
   BEGIN
-    parsed_value := canonical_value::timestamptz;
+    parsed_value := _value::timestamptz;
   EXCEPTION WHEN OTHERS THEN
     RETURN NULL;
   END;
-  IF public.canonical_card_benefit_row_timestamp(parsed_value) <> canonical_value
-     OR parsed_value < '2000-01-01T00:00:00Z'::timestamptz
+  canonical_value := public.canonical_card_benefit_row_timestamp(parsed_value);
+  IF canonical_value IS NULL OR parsed_value < '2000-01-01T00:00:00Z'::timestamptz
      OR parsed_value > clock_timestamp() + interval '5 minutes' THEN
     RETURN NULL;
   END IF;
@@ -114,7 +124,13 @@ BEGIN
      ) <> '2026-08-20T00:00:00.123400Z'
      OR public.canonical_card_benefit_row_timestamp(
        public.card_enrichment_pilot_timestamp('2026-08-20T00:00:00.1235Z')
-     ) <> '2026-08-20T00:00:00.123500Z' THEN
+     ) <> '2026-08-20T00:00:00.123500Z'
+     OR public.canonical_card_benefit_row_timestamp(
+       public.card_enrichment_pilot_timestamp('2026-08-20T05:30:00.123456+05:30')
+     ) <> '2026-08-20T00:00:00.123456Z'
+     OR public.canonical_card_benefit_row_timestamp(
+       public.card_enrichment_pilot_timestamp('2026-08-19T20:00:00.123456-04:00')
+     ) <> '2026-08-20T00:00:00.123456Z' THEN
     RAISE EXCEPTION 'pilot timestamp parity assertion failed';
   END IF;
 END;
@@ -182,9 +198,32 @@ BEGIN
      OR parsed_value > _now + interval '5 minutes' THEN
     RETURN NULL;
   END IF;
-  RETURN _value;
+  RETURN public.canonical_card_benefit_row_timestamp(parsed_value);
 END;
 $$;
+
+DO $recurrence_timestamp_offset_assertions$
+BEGIN
+  IF public.bounded_card_enrichment_timestamp(
+       '2026-08-20T05:30:00.123456+05:30',
+       '2026-08-21T00:00:00Z'::timestamptz
+     ) <> '2026-08-20T00:00:00.123456Z'
+     OR public.bounded_card_enrichment_timestamp(
+       '2026-08-19T20:00:00.123456-04:00',
+       '2026-08-21T00:00:00Z'::timestamptz
+     ) <> '2026-08-20T00:00:00.123456Z'
+     OR public.bounded_card_enrichment_timestamp(
+       '2026-08-20 00:00:00.1234+00',
+       '2026-08-21T00:00:00Z'::timestamptz
+     ) <> '2026-08-20T00:00:00.123400Z'
+     OR public.bounded_card_enrichment_timestamp(
+       '2026-02-30T00:00:00Z',
+       '2026-08-21T00:00:00Z'::timestamptz
+     ) IS NOT NULL THEN
+    RAISE EXCEPTION 'recurrence timestamp offset assertion failed';
+  END IF;
+END;
+$recurrence_timestamp_offset_assertions$;
 
 CREATE OR REPLACE FUNCTION public.sanitize_card_enrichment_source_attempt(
   _attempt jsonb,
@@ -431,7 +470,7 @@ CREATE OR REPLACE FUNCTION public.sanitize_card_enrichment_result_summary(
   _summary jsonb
 ) RETURNS jsonb
 LANGUAGE plpgsql
-IMMUTABLE
+STABLE
 SECURITY INVOKER
 SET search_path = public, pg_temp
 AS $$
@@ -490,10 +529,15 @@ BEGIN
         AND allowed_text IN ('approved', 'rejected') THEN
         safe_summary := jsonb_set(safe_summary, ARRAY[allowed_key], allowed_value, true);
       ELSIF allowed_key = 'reviewed_at'
-        AND jsonb_typeof(allowed_value) = 'string'
-        AND length(allowed_text) <= 40
-        AND allowed_text ~ '^\d{4}-\d{2}-\d{2}T' THEN
-        safe_summary := jsonb_set(safe_summary, ARRAY[allowed_key], allowed_value, true);
+        AND jsonb_typeof(allowed_value) = 'string' THEN
+        allowed_text := public.bounded_card_enrichment_timestamp(
+          allowed_text, statement_timestamp()
+        );
+        IF allowed_text IS NOT NULL THEN
+          safe_summary := jsonb_set(
+            safe_summary, ARRAY[allowed_key], to_jsonb(allowed_text), true
+          );
+        END IF;
       END IF;
     END IF;
   END LOOP;
@@ -1623,11 +1667,57 @@ BEGIN
   replay_input := evidence->'replay_input';
   IF jsonb_typeof(replay_input) <> 'object'
      OR (SELECT count(*) FROM jsonb_object_keys(replay_input)) <> 3
-     OR replay_input->'version' IS DISTINCT FROM '1'::jsonb
+     OR replay_input->'version' IS DISTINCT FROM '2'::jsonb
+     OR jsonb_typeof(replay_input->'context') <> 'object'
+     OR (SELECT count(*) FROM jsonb_object_keys(replay_input->'context')) <> 3
+     OR replay_input->'context'->>'issuer' IS DISTINCT FROM _job.issuer
+     OR length(replay_input->'context'->>'issuer') NOT BETWEEN 1 AND 128
+     OR replay_input->'context'->>'primary_source_url' !~
+       '^https://[^/@?#]+(?:/[^?#]*)?$'
+     OR replay_input->'context'->>'primary_source_url' IS DISTINCT FROM
+       regexp_replace(_job.canonical_url, '[?#].*$', '')
+     OR jsonb_typeof(replay_input->'context'->'identity_labels') <> 'array'
+     OR jsonb_array_length(replay_input->'context'->'identity_labels')
+       NOT BETWEEN 1 AND 8
+     OR EXISTS (
+       SELECT 1
+       FROM jsonb_array_elements(replay_input->'context'->'identity_labels')
+         AS label(value)
+       WHERE jsonb_typeof(label.value) <> 'string'
+          OR length(label.value #>> '{}') NOT BETWEEN 1 AND 128
+     )
+     OR replay_input->'context'->'identity_labels'->>0 IS DISTINCT FROM (
+       SELECT regexp_replace(trim(catalog.card_name), '\s+', ' ', 'g')
+       FROM public.card_catalog AS catalog
+       WHERE catalog.id = _job.card_id
+     )
+     OR EXISTS (
+       SELECT 1
+       FROM jsonb_array_elements_text(
+         replay_input->'context'->'identity_labels'
+       ) AS label(value)
+       WHERE NOT EXISTS (
+         SELECT 1 FROM (
+           SELECT regexp_replace(trim(catalog.card_name), '\s+', ' ', 'g')
+             AS allowed_label
+           FROM public.card_catalog AS catalog
+           WHERE catalog.id = _job.card_id
+           UNION
+           SELECT regexp_replace(trim(
+             catalog.card_name || ' ' || coalesce(catalog.network, '')
+           ), '\s+', ' ', 'g')
+           FROM public.card_catalog AS catalog
+           WHERE catalog.id = _job.card_id
+           UNION
+           SELECT regexp_replace(trim(alias.alias), '\s+', ' ', 'g')
+           FROM public.card_catalog_aliases AS alias
+           WHERE alias.card_id = _job.card_id
+         ) AS authoritative
+         WHERE authoritative.allowed_label = label.value
+       )
+     )
      OR jsonb_typeof(replay_input->'documents') <> 'array'
      OR jsonb_array_length(replay_input->'documents') NOT BETWEEN 1 AND 9
-     OR jsonb_typeof(replay_input->'required_resources') <> 'array'
-     OR jsonb_array_length(replay_input->'required_resources') > 8
      OR octet_length(convert_to(
        public.canonical_json_text(replay_input), 'UTF8'
      )) > 1048576
@@ -1635,7 +1725,7 @@ BEGIN
        SELECT 1
        FROM jsonb_array_elements(replay_input->'documents') AS document(value)
        WHERE jsonb_typeof(document.value) <> 'object'
-          OR (SELECT count(*) FROM jsonb_object_keys(document.value)) <> 6
+          OR (SELECT count(*) FROM jsonb_object_keys(document.value)) <> 8
           OR document.value->>'requested_source_url' !~
             '^https://[^/@?#]+(?:/[^?#]*)?$'
           OR document.value->>'final_source_url' !~
@@ -1649,39 +1739,107 @@ BEGIN
           OR jsonb_typeof(document.value->'public_text') <> 'string'
           OR octet_length(convert_to(document.value->>'public_text','UTF8'))
             NOT BETWEEN 1 AND 65536
+          OR document.value->>'public_text' ~*
+            '[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}'
+          OR document.value->>'public_text' ~
+            '(^|[^[:alnum:]+])\+?([0-9][() .-]*){10,}([^[:alnum:]]|$)'
+          OR document.value->>'public_text' ~
+            '\m[A-Z]{5}[0-9]{4}[A-Z]\M'
+          OR document.value->>'public_text' ~
+            '\m[Nn]ame[[:space:]]*[:=#-][[:space:]]*[A-Z][a-z]{2,}([[:space:]]+[A-Z][a-z]{2,}){0,3}\M'
+          OR document.value->>'public_text' ~*
+            '(customer|account|card|payment|pan|phone|mobile)[[:space:]]*((name|number|no\.?|id)[[:space:]]*[:=#-]|[:=#])[[:space:]]*[^,;.[:space:]][^,;.]{1,127}'
+          OR EXISTS (
+            SELECT 1
+            FROM regexp_matches(
+              lower(document.value->>'public_text'),
+              '\m([a-z]{3,})[[:space:]]+((gets?|receives?)\M|will[[:space:]]+(call|contact)\M|is[[:space:]]+the[[:space:]]+(customer|cardholder|member)\M)',
+              'g'
+            ) AS personal(match)
+            WHERE lower(personal.match[1]) NOT IN (
+              'applicant','applicants','cardholder','cardholders',
+              'customer','customers','member','members','user','users',
+              'cashback','card'
+            )
+          )
+          OR jsonb_typeof(document.value->'hyperlinks') <> 'array'
+          OR jsonb_array_length(document.value->'hyperlinks') > 8
+          OR document.value->'hyperlink_overflow' IS DISTINCT FROM 'false'::jsonb
+          OR EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(document.value->'hyperlinks') AS link(value)
+            WHERE jsonb_typeof(link.value) <> 'object'
+               OR (SELECT count(*) FROM jsonb_object_keys(link.value)) <> 3
+               OR link.value->>'href' !~ '^https://[^/@?#]+(?:/[^?#]*)?$'
+               OR length(coalesce(link.value->>'anchor_text','')) > 96
+               OR link.value->>'anchor_text' !~
+                 '^(|curated exact source|most important terms( and conditions)?|terms?( and conditions)?|conditions?|mitc|fees?|charges?|benefits?|rewards?|supporting (material|document))$'
+               OR coalesce(link.value->>'resource_identity_hash','')
+                 !~ '^[0-9a-f]{64}$'
+          )
           OR EXISTS (
             SELECT 1 FROM jsonb_object_keys(document.value) AS key(value)
             WHERE key.value NOT IN (
               'requested_source_url','final_source_url',
               'requested_resource_identity_hash','final_resource_identity_hash',
-              'content_hash','public_text'
+              'content_hash','public_text','hyperlinks','hyperlink_overflow'
             )
           )
      )
      OR EXISTS (
        SELECT 1
-       FROM jsonb_array_elements(replay_input->'required_resources')
-         WITH ORDINALITY AS required(value, ordinality)
-       WHERE jsonb_typeof(required.value) <> 'object'
-          OR (SELECT count(*) FROM jsonb_object_keys(required.value)) <> 1
-          OR coalesce(required.value->>'logical_source_key','')
-            !~ '^[0-9a-f]{64}$'
-          OR (required.ordinality > 1 AND
-            required.value->>'logical_source_key' <= (
-              SELECT prior.value->>'logical_source_key'
-              FROM jsonb_array_elements(replay_input->'required_resources')
-                WITH ORDINALITY AS prior(value, ordinality)
-              WHERE prior.ordinality = required.ordinality - 1
-            ))
+       FROM jsonb_array_elements(replay_input->'documents') AS document(value)
+       WHERE NOT EXISTS (
+         SELECT 1
+         FROM jsonb_array_elements(evidence->'source_attempts') AS attempt(value)
+         WHERE attempt.value->>'url' = document.value->>'final_source_url'
+           AND attempt.value->>'logicalSourceKey' =
+                 document.value->>'requested_resource_identity_hash'
+           AND attempt.value->>'finalResourceIdentityHash' =
+                 document.value->>'final_resource_identity_hash'
+           AND attempt.value->>'contentHash' = document.value->>'content_hash'
+           AND attempt.value->>'status' IN ('success','not_modified')
+       )
+     )
+     OR EXISTS (
+       SELECT 1
+       FROM jsonb_array_elements(replay_input->'documents') AS document(value)
+       CROSS JOIN LATERAL jsonb_array_elements(document.value->'hyperlinks')
+         AS link(value)
+       WHERE NOT EXISTS (
+         SELECT 1
+         FROM jsonb_array_elements(evidence->'source_attempts') AS attempt(value)
+         WHERE attempt.value->>'url' = link.value->>'href'
+           AND attempt.value->>'logicalSourceKey' =
+                 link.value->>'resource_identity_hash'
+       ) AND NOT EXISTS (
+         SELECT 1
+         FROM jsonb_array_elements(replay_input->'documents')
+           AS linked_document(value)
+         WHERE linked_document.value->>'requested_source_url' =
+                 link.value->>'href'
+           AND linked_document.value->>'requested_resource_identity_hash' =
+                 link.value->>'resource_identity_hash'
+       )
      )
   THEN RETURN false; END IF;
 
+  -- Recompute the required-source set from retained classifier inputs. This
+  -- deliberately does not read the worker's expected set.
   SELECT coalesce(jsonb_agg(to_jsonb(
-    required.value->>'logical_source_key'
-  ) ORDER BY required.ordinality), '[]'::jsonb)
+    required.source_key
+  ) ORDER BY required.source_key), '[]'::jsonb)
   INTO replay_required_source_keys
-  FROM jsonb_array_elements(replay_input->'required_resources')
-    WITH ORDINALITY AS required(value, ordinality);
+  FROM (
+    SELECT DISTINCT link.value->>'resource_identity_hash' AS source_key
+    FROM jsonb_array_elements(replay_input->'documents') AS document(value)
+    CROSS JOIN LATERAL jsonb_array_elements(document.value->'hyperlinks')
+      AS link(value)
+    WHERE link.value->>'href' ~*
+      '(^|[/?=&_.-])(terms?|conditions?|mitc|fees?|charges?)(?:$|[/?=&_.-])'
+       OR link.value->>'anchor_text' ~*
+      '\m(most[[:space:]]+important[[:space:]]+terms|terms?|conditions?|mitc|fees?|charges?|curated[[:space:]]+exact[[:space:]]+source)\M'
+  ) AS required;
   expected_required_source_keys := evidence->'expected_required_source_keys';
   SELECT coalesce(jsonb_agg(required.source_key ORDER BY required.source_key), '[]'::jsonb)
     INTO actual_required_source_keys
@@ -3195,6 +3353,7 @@ $pilot_qualification_assertions$;
 
 DO $pilot_atomic_evidence_assertions$
 DECLARE
+  validator_definition text;
   first_attempts jsonb := '[
     {"url":"https://issuer.example/card","role":"primary","status":"success",
      "contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -3214,6 +3373,20 @@ DECLARE
      "attemptedAt":"2026-08-21T00:00:00.000Z"}
   ]'::jsonb;
 BEGIN
+  SELECT pg_get_functiondef(
+    'public.card_enrichment_pilot_evidence_is_qualified(public.card_catalog_enrichment_jobs,public.card_benefits_staging)'::regprocedure
+  ) INTO validator_definition;
+  IF validator_definition !~* 'replay_input->''version'' IS DISTINCT FROM ''2''::jsonb'
+     OR validator_definition !~* 'replay_input->''context'''
+     OR validator_definition !~* 'resource_identity_hash'
+     OR validator_definition !~* 'card_catalog_aliases'
+     OR validator_definition !~* 'requested_resource_identity_hash'
+     OR validator_definition !~* 'logicalSourceKey'
+     OR validator_definition !~* 'link.value->>''href'''
+     OR validator_definition !~* 'attempt.value->>''url'''
+     OR validator_definition ~* 'replay_input->''required_resources''' THEN
+    RAISE EXCEPTION 'pilot replay classifier contract drift';
+  END IF;
   IF public.card_enrichment_pilot_source_identity_hash(
        'HTTPS://Issuer.Example:443/card/'
      ) IS DISTINCT FROM public.card_enrichment_pilot_source_identity_hash(

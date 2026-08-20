@@ -260,7 +260,7 @@ qualify. SQL does not claim to execute the TypeScript parser.
 flowchart LR
     S["Select five profiles across 3+ issuers"] --> D["Classify required sources before fetch"]
     D --> F["Fetch each selected resource once"]
-    F --> I["Persist bounded privacy-safe canonical replay input"]
+    F --> I["Persist replay v2: card context, minimal facts, sanitized links"]
     I --> R1["Extract pass 1 from replay input"]
     I --> R2["Independent extract pass 2 from a clone"]
     R1 --> H["Compare canonical verification hashes"]
@@ -303,7 +303,7 @@ proof:
 | `expected_required_source_keys`                     | Sorted logical identities discovered as required during the bounded crawl                            | Exact set equality with required attempts; each key has exactly one decisive result; empty is valid only for a true HTML-only source  |
 | `required_source_selection_overflow`                 | Set by the pre-fetch/depth-discovery classifier when more required identities exist than the bounded set can retain | Exactly `false`; the fact is hashed into both replay envelopes, so a capped manifest cannot appear complete                           |
 | `verification_envelope`, `repeat_verification_envelope` | Separate retained parser/job/card/mode/source/proposal outputs                                    | Exact shape and 256 KiB maximum; resource/required-source lists bind to attempts; boundary recomputes both SHA-256 values              |
-| `replay_input`                                      | Queryless requested/final display URLs, opaque resource identities, content hash, and exact privacy-validated plain extraction text (maximum 65,536 UTF-8 bytes per document; 9 documents) | Edge reruns the actual v6 classifier/extractor/canonical serializer and requires byte-canonical equality with authoritative staging; required identities are independently derived from `required_resources` |
+| `replay_input`                                      | Version 2 stores bounded known issuer/card labels and primary URL plus, per document, queryless requested/final display URLs, opaque resource identities, content hash, minimal privacy-safe public facts, at most 8 sanitized hyperlink `{href, anchor_text, resource_identity_hash}` inputs, and an explicit hyperlink-overflow bit (9 documents maximum) | It contains no copied expected-required-source set. Anchors are reduced to a tiny required-source vocabulary. Edge reruns the shared required-link and card-identity classifiers, then the actual v6 extractor/canonical serializer; every document binds to one exact attempt, every link binds to an exact attempt or the requested side of its retained redirect, and labels bind to the current catalog name/network/aliases |
 | `retained_documents` inside each envelope               | Requested/final resource-identity hashes, fetch content hash, SHA-256 of exact UTF-8 replay text, and byte count | Every entry maps one-to-one to replay input and a decisive attempt; SQL recomputes text hashes/bytes and the sealed replay-input hash without pretending to execute TypeScript |
 | `crawl_complete`                                    | Existing crawl completeness policy                                                                   | Exactly `true`; omission/failure blocks                                                                                               |
 | `suppressed_removal_count`                          | Existing removal policy                                                                              | Exactly zero for a qualifying job                                                                                                     |
@@ -322,9 +322,17 @@ document digest envelope, and the canonical proposal array. Resource fetches
 are not repeated. The worker first converts fetched documents into the exact
 privacy-safe representation it can retain, then both initial passes and the
 qualification-time rerun consume that representation. Input overflow or
-privacy failure rejects the pilot instead of truncating parser authority.
-Required-source selection is carried independently in replay input; omission
-from the attempt list cannot make a required source disappear.
+privacy failure rejects the pilot instead of truncating parser authority. The
+replay minimizer keeps known issuer/card identity and benefit-bearing public
+facts while discarding arbitrary prose, emails, payment/PAN numbers (including
+alphanumeric IDs), formatted phones, long account/customer identifiers
+(including values longer than 19 digits), labeled single- or multi-word
+customer names, and unknown person-like subjects under lowercase, uppercase,
+or mixed casing. Hyperlink anchor prose is reduced to the required-source
+vocabulary before retention.
+Required-source inputs are retained independently of
+attempts; the expected output is never copied into replay, so consistent
+omission from both the attempt list and expected set is still detected.
 
 After promotion, scheduled recurrence may replace mutable job status, summary,
 content hash, and latest staging pointer. Qualification therefore reads the
@@ -347,7 +355,10 @@ For the current `benefits-v6` lane, the gate performs these checks in order:
    keys from it, rerun the actual shared v6 parser twice, and require exact
    canonical equality with both retained envelopes and authoritative staging.
    Recompute both retained-envelope SHA-256 values and the source manifest;
-   bind the primary logical source to the job’s exact canonical URL, and require
+   bind every retained document to its exact source attempt, and every
+   hyperlink URL/opaque identity either to its exact attempt or to the requested
+   side of its retained requested-to-final redirect; bind identity labels to authoritative `card_catalog` and
+   alias rows, bind the primary logical source to the job’s canonical URL, and require
    the independently classified expected-required-source set to equal decisive
    required attempts.
 5. Require canonical replay equality, complete decisive sources, no required
@@ -361,7 +372,9 @@ For the current `benefits-v6` lane, the gate performs these checks in order:
    Staging/audit artifacts are outside the snapshot; live catalog, benefit, and
    mapping rows are not.
 7. Reject raw body/customer/statement/credential/token/query-secret fields at
-   the nested evidence boundary.
+   the nested evidence boundary. Run this check before staging and again before
+   finalization; direct official-source privacy probes may be discarded by the
+   replay minimizer but their bytes never enter either write payload.
 8. Derive no-change from canonical current/prior hash equality rather than an
    empty proposal array, while separately supporting a complete first zero set.
    Bind no-change to null staging. For
@@ -396,6 +409,20 @@ the parser. The locked SQL RPC protects against untrusted callers and races by
 recomputing DB-verifiable seals and authoritative snapshots. It cannot and does
 not claim resistance to a principal that can maliciously rewrite all trusted
 service-role/database rows.
+
+Task 4 publication now participates in Task 7's exact card-identity lock. The
+global overlapping order is review advisory lock, benefit-identity advisory
+lock, `card_catalog` row lock, then benefit staging row lock. Task 7 uses
+benefit identity, card row, discovery job, then identity review. Task 3 and
+Task 6 retain review advisory, enrichment job, then staging. Pairwise shared
+resources never invert, and Task 4 revalidates the credit-card identity after
+the shared card row is locked.
+
+All proof, recurrence-history, and reviewed-summary timestamps accept `Z` plus valid ISO/PostgreSQL numeric offsets,
+normalize the instant to `YYYY-MM-DDTHH:MM:SS.ffffffZ`, and preserve six-digit
+fractional differences in hashes. Task 4 writes this explicit UTC string into
+JSON audit/summary fields rather than relying on session-sensitive
+`timestamptz` JSON rendering.
 
 #### Pilot corpus and negative simulation
 
@@ -441,10 +468,18 @@ emitted nor projected through the admin response.
 - [ ] Confirm one network fetch per resource and two extraction passes over the
       same persisted replay input; confirm qualification reruns the actual v6
       parser without another fetch.
+- [ ] Inspect replay v2: issuer/card context is bounded, link display URLs have
+      no query, functional-query identity survives only as an opaque hash, no
+      expected-source output is copied into replay, and any classifier overflow
+      blocks qualification. Verify each link/document URL plus opaque identity
+      resolves to one exact attempt and all labels are current catalog
+      name/network/aliases.
 - [ ] Confirm all canonical/repeat and source-manifest hashes are lowercase
       SHA-256 and explain any difference; unexplained differences block rollout.
 - [ ] Confirm pre/post `card_catalog`, `benefits`, and `card_benefit_mapping`
       counts and hashes match exactly with six-microsecond UTC serialization;
+      confirm equivalent `Z`, positive-offset, and negative-offset instants hash
+      equally while a true microsecond change does not;
       for review, confirm Task 4 pre-state equals extraction state and reviewed
       post-state equals the current locked state.
 - [ ] Confirm no-change has null staging. For material proposals, confirm job

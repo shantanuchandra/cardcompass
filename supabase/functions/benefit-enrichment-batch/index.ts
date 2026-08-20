@@ -22,6 +22,7 @@ import {
 } from "../_shared/benefit_source_privacy.ts";
 import {
   allowedOfficialUrl,
+  assessOfficialCardIdentity,
   canonicalOfficialUrl,
   normalizedProduct,
 } from "../_shared/card_discovery.ts";
@@ -63,7 +64,11 @@ import {
   secureSecretEqual,
   selectPilotCandidates,
 } from "./batch_policy.ts";
-import { collectSupportingBenefitDocuments } from "./supporting_documents.ts";
+import {
+  canonicalRequiredReplayAnchorText,
+  classifyRequiredReplaySourceKeys,
+  collectSupportingBenefitDocuments,
+} from "./supporting_documents.ts";
 import {
   assessCrawlCompleteness,
   boundedSourceUrl,
@@ -577,18 +582,48 @@ function canonicalPilotUtcTimestamp(value: unknown): {
 } | null {
   if (typeof value !== "string") return null;
   const match = value.match(
-    /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(?:Z|\+00(?::00)?)$/,
+    /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(Z|([+-])(\d{2})(?::?(\d{2}))?)$/i,
   );
   if (!match) return null;
-  const milliseconds = (match[3] ?? "").slice(0, 3).padEnd(3, "0");
-  const instant = Date.parse(`${match[1]}T${match[2]}.${milliseconds}Z`);
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  const fraction = (match[7] ?? "").padEnd(6, "0");
+  const offsetHour = match[8].toUpperCase() === "Z" ? 0 : Number(match[10]);
+  const offsetMinute = match[8].toUpperCase() === "Z"
+    ? 0
+    : Number(match[11] ?? "0");
   if (
-    !Number.isFinite(instant) ||
-    new Date(instant).toISOString().slice(0, 19) !==
-      `${match[1]}T${match[2]}`
+    month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 ||
+    minute > 59 || second > 59 || offsetHour > 14 || offsetMinute > 59 ||
+    (offsetHour === 14 && offsetMinute !== 0)
+  ) return null;
+  const localInstant = Date.UTC(
+    year,
+    month - 1,
+    day,
+    hour,
+    minute,
+    second,
+    Number(fraction.slice(0, 3)),
+  );
+  const local = new Date(localInstant);
+  if (
+    local.getUTCFullYear() !== year || local.getUTCMonth() !== month - 1 ||
+    local.getUTCDate() !== day || local.getUTCHours() !== hour ||
+    local.getUTCMinutes() !== minute || local.getUTCSeconds() !== second
+  ) return null;
+  const direction = match[9] === "-" ? -1 : 1;
+  const instant = localInstant -
+    direction * ((offsetHour * 60) + offsetMinute) * 60_000;
+  if (
+    !Number.isFinite(instant)
   ) return null;
   return {
-    canonical: `${match[1]}T${match[2]}.${(match[3] ?? "").padEnd(6, "0")}Z`,
+    canonical: `${new Date(instant).toISOString().slice(0, 19)}.${fraction}Z`,
     instant,
   };
 }
@@ -843,9 +878,10 @@ export async function projectPilotJobEvidence(
     ? evidence!.expected_required_source_keys as string[]
     : null;
   const replayInput = parsePilotReplayInput(evidence?.replay_input);
-  const replayExpectedRequiredSourceKeys = replayInput?.required_resources.map(
-    (resource) => resource.logical_source_key,
-  ) ?? null;
+  const replayClassification = replayInput
+    ? classifyRequiredReplaySourceKeys(pilotReplayDocuments(replayInput))
+    : null;
+  const replayExpectedRequiredSourceKeys = replayClassification?.keys ?? null;
   const requiredSourceSelectionOverflow =
     typeof evidence?.required_source_selection_overflow === "boolean"
       ? evidence.required_source_selection_overflow
@@ -859,6 +895,7 @@ export async function projectPilotJobEvidence(
       stableCanonicalJson(replayExpectedRequiredSourceKeys) &&
     stableCanonicalJson(replayExpectedRequiredSourceKeys) ===
       stableCanonicalJson(actualRequiredSourceKeys) &&
+    replayClassification?.overflow === requiredSourceSelectionOverflow &&
     replayExpectedRequiredSourceKeys.every((key) => {
       const matches = requiredAttempts.filter((attempt) =>
         attempt.logicalSourceKey === key
@@ -952,6 +989,9 @@ export async function projectPilotJobEvidence(
         requiredSourceSelectionOverflow,
         attempts: sourceAttempts,
         documents: pilotReplayDocuments(replayInput),
+        issuer: replayInput.context.issuer,
+        identityLabels: replayInput.context.identity_labels,
+        primarySourceUrl: replayInput.context.primary_source_url,
       });
     } catch {
       independentlyRecomputedReplay = null;
@@ -986,6 +1026,10 @@ export async function projectPilotJobEvidence(
   } catch {
     expectedPrimarySourceKey = null;
   }
+  const authoritativeCardIdentityValid = replayLabelsMatchAuthoritativeCatalog(
+    row,
+    replayInput,
+  );
   const sourceBindingValid = evidence !== null &&
     evidence.parser_version === row.parser_version &&
     evidence.job_id === row.id && evidence.card_id === row.card_id &&
@@ -995,6 +1039,11 @@ export async function projectPilotJobEvidence(
     sourceAttempts.length > 0 &&
     expectedPrimarySourceKey !== null && primaryAttempts.length === 1 &&
     primaryAttempts[0].logicalSourceKey === expectedPrimarySourceKey &&
+    replayInput?.context.issuer === row.issuer &&
+    replayInput?.context.primary_source_url ===
+      safeHttpsDisplayUrl(row.canonical_url) &&
+    replayInput.context.identity_labels.length > 0 &&
+    authoritativeCardIdentityValid &&
     await computeSourceManifestHash(sourceAttempts) ===
       evidence.source_manifest_hash;
   const proposalCount = count(evidence?.proposal_count);
@@ -1237,7 +1286,7 @@ export async function readPilotStatus(
   assertBenefitParserVersion(parserVersion);
   const { data, error } = await db.from("card_catalog_enrichment_jobs")
     .select(
-      "id,card_id,issuer,canonical_url,parser_version,run_mode,status,failure_category,staging_id,normalized_fields,result_summary",
+      "id,card_id,issuer,canonical_url,parser_version,run_mode,status,failure_category,staging_id,normalized_fields,result_summary,card_catalog(card_name,network,card_catalog_aliases(alias))",
     )
     .eq("parser_version", parserVersion)
     .limit(6)
@@ -1576,12 +1625,22 @@ type PilotReplayInputDocument = {
   final_resource_identity_hash: string;
   content_hash: string;
   public_text: string;
+  hyperlinks: Array<{
+    href: string;
+    anchor_text: string;
+    resource_identity_hash: string;
+  }>;
+  hyperlink_overflow: boolean;
 };
 
 type PilotReplayInput = {
-  version: 1;
+  version: 2;
+  context: {
+    issuer: string;
+    identity_labels: string[];
+    primary_source_url: string;
+  };
   documents: PilotReplayInputDocument[];
-  required_resources: Array<{ logical_source_key: string }>;
 };
 
 function pilotReplayDocuments(input: PilotReplayInput): BenefitDocument[] {
@@ -1592,17 +1651,99 @@ function pilotReplayDocuments(input: PilotReplayInput): BenefitDocument[] {
     finalResourceIdentityHash: document.final_resource_identity_hash,
     contentHash: document.content_hash,
     text: document.public_text,
+    replayLinks: document.hyperlinks.map((link) => ({
+      href: link.href,
+      anchorText: link.anchor_text,
+      resourceIdentityHash: link.resource_identity_hash,
+    })),
+    replayLinkOverflow: document.hyperlink_overflow,
   }));
+}
+
+function pilotReplaySourcesAreBound(
+  input: PilotReplayInput,
+  attempts: readonly SourceAttempt[],
+): boolean {
+  const documentsBound = input.documents.every((document) =>
+    attempts.some((attempt) =>
+      attempt.url === document.final_source_url &&
+      attempt.logicalSourceKey ===
+        document.requested_resource_identity_hash &&
+      attempt.finalResourceIdentityHash ===
+        document.final_resource_identity_hash &&
+      attempt.contentHash === document.content_hash &&
+      decisivePilotSourceSucceeded(attempt)
+    )
+  );
+  const hyperlinksBound = input.documents.every((document) =>
+    document.hyperlinks.every((link) =>
+      attempts.some((attempt) =>
+        attempt.url === link.href &&
+        attempt.logicalSourceKey === link.resource_identity_hash
+      ) || input.documents.some((linkedDocument) =>
+        linkedDocument.requested_source_url === link.href &&
+        linkedDocument.requested_resource_identity_hash ===
+          link.resource_identity_hash
+      )
+    )
+  );
+  return documentsBound && hyperlinksBound;
+}
+
+function replayLabelsMatchAuthoritativeCatalog(
+  row: Record<string, any>,
+  replayInput: PilotReplayInput | null,
+): boolean {
+  if (!replayInput) return false;
+  const related = Array.isArray(row.card_catalog)
+    ? row.card_catalog.length === 1 ? row.card_catalog[0] : null
+    : row.card_catalog;
+  if (!related || typeof related !== "object" || Array.isArray(related)) {
+    return false;
+  }
+  const cardName = typeof related.card_name === "string"
+    ? related.card_name.replace(/\s+/g, " ").trim()
+    : "";
+  const network = typeof related.network === "string"
+    ? related.network.replace(/\s+/g, " ").trim()
+    : "";
+  if (!cardName || replayInput.context.identity_labels[0] !== cardName) {
+    return false;
+  }
+  const allowed = new Set([cardName, `${cardName} ${network}`.trim()]);
+  const aliases = Array.isArray(related.card_catalog_aliases)
+    ? related.card_catalog_aliases
+    : [];
+  for (const value of aliases) {
+    const alias = value && typeof value === "object" &&
+        !Array.isArray(value) && typeof value.alias === "string"
+      ? value.alias.replace(/\s+/g, " ").trim()
+      : "";
+    if (alias) allowed.add(alias);
+  }
+  return replayInput.context.identity_labels.every((label) =>
+    allowed.has(label)
+  );
 }
 
 function parsePilotReplayInput(value: unknown): PilotReplayInput | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const input = value as Record<string, unknown>;
   if (
-    Object.keys(input).length !== 3 || input.version !== 1 ||
-    !Array.isArray(input.documents) || input.documents.length < 1 ||
-    input.documents.length > 9 || !Array.isArray(input.required_resources) ||
-    input.required_resources.length > 8
+    Object.keys(input).length !== 3 || input.version !== 2 ||
+    !input.context || typeof input.context !== "object" ||
+    Array.isArray(input.context) || !Array.isArray(input.documents) ||
+    input.documents.length < 1 || input.documents.length > 9
+  ) return null;
+  const context = input.context as Record<string, unknown>;
+  if (
+    Object.keys(context).length !== 3 || typeof context.issuer !== "string" ||
+    context.issuer.length > 128 || !Array.isArray(context.identity_labels) ||
+    context.identity_labels.length > 8 ||
+    !context.identity_labels.every((label) =>
+      typeof label === "string" && label.length > 0 && label.length <= 128
+    ) || safeHttpsDisplayUrl(context.primary_source_url) !==
+      context.primary_source_url
   ) return null;
   const documentKeys = new Set([
     "requested_source_url",
@@ -1611,6 +1752,8 @@ function parsePilotReplayInput(value: unknown): PilotReplayInput | null {
     "final_resource_identity_hash",
     "content_hash",
     "public_text",
+    "hyperlinks",
+    "hyperlink_overflow",
   ]);
   const documents: PilotReplayInputDocument[] = [];
   for (const value of input.documents) {
@@ -1634,37 +1777,37 @@ function parsePilotReplayInput(value: unknown): PilotReplayInput | null {
       document.public_text.length === 0 ||
       new TextEncoder().encode(document.public_text).byteLength >
         MAX_PILOT_REPLAY_TEXT_BYTES ||
-      redactSensitiveUrlsInText(document.public_text) !== document.public_text
+      redactSensitiveUrlsInText(document.public_text) !==
+        document.public_text ||
+      !Array.isArray(document.hyperlinks) || document.hyperlinks.length > 8 ||
+      typeof document.hyperlink_overflow !== "boolean"
     ) return null;
+    for (const linkValue of document.hyperlinks) {
+      if (
+        !linkValue || typeof linkValue !== "object" || Array.isArray(linkValue)
+      ) {
+        return null;
+      }
+      const link = linkValue as Record<string, unknown>;
+      if (
+        Object.keys(link).length !== 3 ||
+        safeHttpsDisplayUrl(link.href) !== link.href ||
+        typeof link.anchor_text !== "string" || link.anchor_text.length > 96 ||
+        canonicalRequiredReplayAnchorText(link.anchor_text) !==
+          link.anchor_text ||
+        !lowercaseSha256.test(String(link.resource_identity_hash))
+      ) return null;
+    }
     documents.push(document as PilotReplayInputDocument);
   }
-  const requiredResources: Array<{ logical_source_key: string }> = [];
-  for (const value of input.required_resources) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      return null;
-    }
-    const resource = value as Record<string, unknown>;
-    if (
-      Object.keys(resource).length !== 1 ||
-      !lowercaseSha256.test(String(resource.logical_source_key))
-    ) return null;
-    requiredResources.push({
-      logical_source_key: String(resource.logical_source_key),
-    });
-  }
-  const requiredKeys = requiredResources.map((resource) =>
-    resource.logical_source_key
-  );
-  if (
-    new Set(requiredKeys).size !== requiredKeys.length ||
-    requiredKeys.some((key, index) =>
-      index > 0 && requiredKeys[index - 1] >= key
-    )
-  ) return null;
   const parsed: PilotReplayInput = {
-    version: 1,
+    version: 2,
+    context: {
+      issuer: context.issuer,
+      identity_labels: [...context.identity_labels] as string[],
+      primary_source_url: String(context.primary_source_url),
+    },
     documents,
-    required_resources: requiredResources,
   };
   try {
     assertSafePersistedEvidence(parsed);
@@ -1676,10 +1819,25 @@ function parsePilotReplayInput(value: unknown): PilotReplayInput | null {
 
 function buildPilotReplayInput(
   documents: readonly BenefitDocument[],
-  expectedRequiredSourceKeys: readonly string[],
+  context: {
+    issuer: string;
+    identityLabels: readonly string[];
+    primarySourceUrl: string;
+  },
 ): PilotReplayInput {
   const value: PilotReplayInput = {
-    version: 1,
+    version: 2,
+    context: {
+      issuer: context.issuer.trim().slice(0, 128),
+      identity_labels: [
+        ...new Set(
+          context.identityLabels.map((label) =>
+            label.replace(/\s+/g, " ").trim().slice(0, 128)
+          ).filter(Boolean),
+        ),
+      ].slice(0, 8),
+      primary_source_url: safeHttpsDisplayUrl(context.primarySourceUrl) ?? "",
+    },
     documents: documents.map((document) => {
       const requestedSourceUrl = safeHttpsDisplayUrl(document.sourceUrl);
       const finalSourceUrl = safeHttpsDisplayUrl(
@@ -1695,18 +1853,37 @@ function buildPilotReplayInput(
       if (!requestedSourceUrl || !finalSourceUrl) {
         throw new Error("invalid_pilot_replay_input");
       }
+      if ((document.replayLinks?.length ?? 0) > 8) {
+        throw new Error("pilot_evidence_unbounded");
+      }
       return {
         requested_source_url: requestedSourceUrl,
         final_source_url: finalSourceUrl,
         requested_resource_identity_hash: requestedResourceIdentityHash,
         final_resource_identity_hash: finalResourceIdentityHash,
         content_hash: String(document.contentHash ?? ""),
-        public_text: canonicalBenefitReplayText(String(document.text)),
+        public_text: canonicalBenefitReplayText(String(document.text), {
+          issuer: context.issuer,
+          identityLabels: [...context.identityLabels],
+        }),
+        hyperlinks: (document.replayLinks ?? []).map((link) => {
+          const href = safeHttpsDisplayUrl(link.href);
+          const resourceIdentityHash = link.resourceIdentityHash ||
+            sourceIdentityDigest(link.href);
+          if (!href || !lowercaseSha256.test(resourceIdentityHash)) {
+            throw new Error("invalid_pilot_replay_link");
+          }
+          return {
+            href,
+            anchor_text: canonicalRequiredReplayAnchorText(
+              String(link.anchorText),
+            ),
+            resource_identity_hash: resourceIdentityHash,
+          };
+        }),
+        hyperlink_overflow: document.replayLinkOverflow === true,
       };
     }),
-    required_resources: expectedRequiredSourceKeys.map((logicalSourceKey) => ({
-      logical_source_key: logicalSourceKey,
-    })),
   };
   const parsed = parsePilotReplayInput(value);
   if (!parsed) throw new Error("unsafe_persisted_evidence");
@@ -1723,6 +1900,9 @@ export async function computePilotReplayEvidence(input: {
   requiredSourceSelectionOverflow: boolean;
   attempts: SourceAttempt[];
   documents: readonly BenefitDocument[];
+  issuer?: string;
+  identityLabels?: string[];
+  primarySourceUrl?: string;
   extract?: PilotReplayExtractor;
 }): Promise<{
   proposals: BenefitComparisonProposal[];
@@ -1754,10 +1934,42 @@ export async function computePilotReplayEvidence(input: {
   }
   const replayInput = buildPilotReplayInput(
     input.documents,
-    input.expectedRequiredSourceKeys,
+    {
+      issuer: input.issuer ?? "",
+      identityLabels: input.identityLabels ?? [],
+      primarySourceUrl: input.primarySourceUrl ??
+        input.documents[0]?.sourceUrl ??
+        input.attempts.find((attempt) => attempt.role === "primary")?.url ?? "",
+    },
   );
+  const classifierDocuments = pilotReplayDocuments(replayInput);
+  const independentlyClassified = classifyRequiredReplaySourceKeys(
+    classifierDocuments,
+  );
+  const actualRequiredSourceKeys = pilotRequiredSourceKeys(sourceAttempts);
+  if (
+    stableCanonicalJson(independentlyClassified.keys) !==
+      stableCanonicalJson(input.expectedRequiredSourceKeys) ||
+    stableCanonicalJson(independentlyClassified.keys) !==
+      stableCanonicalJson(actualRequiredSourceKeys) ||
+    independentlyClassified.overflow !== input.requiredSourceSelectionOverflow
+  ) throw new Error("pilot_required_source_classification_mismatch");
+  if (!pilotReplaySourcesAreBound(replayInput, sourceAttempts)) {
+    throw new Error("pilot_replay_source_binding_mismatch");
+  }
+  if (replayInput.context.identity_labels.length > 0) {
+    for (const document of classifierDocuments) {
+      if (
+        assessOfficialCardIdentity(
+          document.text,
+          replayInput.context.issuer,
+          replayInput.context.identity_labels,
+        ).status !== "match"
+      ) throw new Error("pilot_card_identity_mismatch");
+    }
+  }
   const replayInputHash = await sha256Text(stableCanonicalJson(replayInput));
-  const retained = immutableDocumentSnapshot(pilotReplayDocuments(replayInput));
+  const retained = immutableDocumentSnapshot(classifierDocuments);
   const retainedDocuments = await retainedDocumentEnvelope(retained);
   const extract = input.extract ?? extractGroundedBenefitsV6;
   const first = await extract(
@@ -1770,7 +1982,7 @@ export async function computePilotReplayEvidence(input: {
     "benefits-v6",
     input.cardId,
   );
-  const expectedRequiredSourceKeys = [...input.expectedRequiredSourceKeys];
+  const expectedRequiredSourceKeys = [...independentlyClassified.keys];
   const envelope = (proposals: BenefitComparisonProposal[]) => ({
     parser_version: input.parserVersion,
     job_id: input.jobId,
@@ -3068,6 +3280,53 @@ function sourceAttemptInputs(
 const forbiddenStoredEvidenceKey =
   /(?:^|_)(?:raw_?body|response_?body|page_?html|document_?text|statement|customer|email|phone|last_?four|card_?number|lease_?token|access_?token|refresh_?token|password|secret|credential)(?:_|$)/i;
 
+const publicBenefitSubjectWords = new Set([
+  "applicant",
+  "applicants",
+  "cardholder",
+  "cardholders",
+  "customer",
+  "customers",
+  "member",
+  "members",
+  "user",
+  "users",
+  "cashback",
+  "card",
+]);
+
+function containsUnknownPersonSubject(value: string): boolean {
+  return [...value.matchAll(
+    /\b([a-z]{3,})\s+(?:(?:gets?|receives?)\b|will\s+(?:call|contact)\b|is\s+the\s+(?:customer|cardholder|member)\b)/gi,
+  )]
+    .some((match) => !publicBenefitSubjectWords.has(match[1].toLowerCase()));
+}
+
+function containsDirectPrivateData(value: string): boolean {
+  const numericProbe = value
+    .replace(
+      /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi,
+      "[uuid]",
+    )
+    .replace(/\b[0-9a-f]{64}\b/gi, "[digest]");
+  return /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i.test(value) ||
+    /(?<![a-z0-9+])\+?(?:\d[()\s.-]*){10,}(?![a-z0-9])/i.test(
+      numericProbe,
+    ) ||
+    /\b[A-Z]{5}\d{4}[A-Z]\b/.test(value) ||
+    /\bname\s*[:=#-]\s*[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){0,3}\b/
+      .test(value) ||
+    /(?:customer|account|card|payment|pan|phone|mobile)\s*(?:(?:name|number|no\.?|id)\s*[:=#-]|[:=#])\s*[^,;.\n]{2,128}/i
+      .test(value) ||
+    /relationship\s+manager\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}/
+      .test(value) ||
+    /\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){0,3}\s+(?:gets?|receives?|will\s+(?:call|contact)|is\s+the\s+(?:customer|cardholder|member))\b/
+      .test(value) ||
+    /\b(?:contact|call|ask)\s+[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){1,3}\b/
+      .test(value) ||
+    containsUnknownPersonSubject(value);
+}
+
 function safePilotReplayText(value: unknown): value is string {
   if (
     typeof value !== "string" || value.length === 0 ||
@@ -3085,7 +3344,7 @@ function safePilotReplayText(value: unknown): value is string {
     }
   }
   return !/(?:authorization\s*:\s*bearer|bearer\s+[a-z0-9._~-]{8,}|(?:access[_ -]?token|refresh[_ -]?token|lease[_ -]?token|password|secret|credential|customer[_ -]?(?:name|id|email|phone)|statement[_ -]?(?:id|header)|last[_ -]?four|card[_ -]?number)\s*[:=]\s*\S+)/i
-    .test(probe);
+    .test(probe) && !containsDirectPrivateData(probe);
 }
 
 function rawBodyWouldBeStored(value: unknown, depth = 0): boolean {
@@ -3105,7 +3364,7 @@ function rawBodyWouldBeStored(value: unknown, depth = 0): boolean {
       }
     }
     return /(?:authorization\s*:\s*bearer|bearer\s+[a-z0-9._~-]{8,}|(?:access[_ -]?token|refresh[_ -]?token|lease[_ -]?token|password|secret|credential|customer[_ -]?(?:name|id|email|phone)|statement[_ -]?(?:id|header)|last[_ -]?four|card[_ -]?number)\s*[:=]\s*\S+)/i
-      .test(probe);
+      .test(probe) || containsDirectPrivateData(probe);
   }
   if (Array.isArray(value)) {
     return value.length > 512 ||
@@ -3117,6 +3376,9 @@ function rawBodyWouldBeStored(value: unknown, depth = 0): boolean {
     entries.some(([key, item]) =>
       key === "public_text"
         ? !safePilotReplayText(item)
+        : key === "anchor_text"
+        ? !(typeof item === "string" &&
+          canonicalRequiredReplayAnchorText(item) === item)
         : (key === "raw_body_stored"
           ? item !== false
           : key === "document_text_hash"
@@ -3503,6 +3765,16 @@ export async function processJob(
         requiredSourceSelectionOverflow,
         attempts: pilotAttempts,
         documents,
+        issuer: job.issuer,
+        identityLabels: [
+          String(card.card_name ?? ""),
+          `${String(card.card_name ?? "")} ${String(card.network ?? "")}`
+            .trim(),
+          ...aliases.filter((alias: Record<string, unknown>) =>
+            String(alias.card_id) === job.card_id
+          ).map((alias: Record<string, unknown>) => String(alias.alias ?? "")),
+        ],
+        primarySourceUrl: job.canonical_url,
       });
       proposed = pilotReplay.proposals;
     } else {

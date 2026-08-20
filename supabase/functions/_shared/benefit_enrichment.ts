@@ -24,6 +24,13 @@ export type BenefitDocument = {
   finalResourceIdentityHash?: string;
   text: string;
   contentHash?: string;
+  /** Bounded, privacy-safe classifier input retained only for pilot replay. */
+  replayLinks?: Array<{
+    href: string;
+    anchorText: string;
+    resourceIdentityHash: string;
+  }>;
+  replayLinkOverflow?: boolean;
 };
 
 export type BenefitProposal = {
@@ -316,9 +323,124 @@ function readableText(value: string): string {
     .trim();
 }
 
-/** Exact privacy-redacted plain text retained as the v6 pilot replay input. */
-export function canonicalBenefitReplayText(value: string): string {
-  return readableText(value);
+const replayBenefitSignal =
+  /(?:cashback|cash\s+back|reward|points?|miles?|discount|waiver|lounge|insurance|movie|fuel|dining|travel|spend|annual\s+fee|joining\s+fee|interest|apr|valid|expires?|effective|cap(?:ped)?|maximum|minimum|threshold|per\s+(?:month|quarter|year|annum|week|day)|\b\d+(?:\.\d+)?\s*%|(?:₹|rs\.?|inr)\s*\d)/i;
+const replayDirectPii =
+  /(?:[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}|\+?(?:\d[()\s.-]*){10,}|\b[A-Z]{5}\d{4}[A-Z]\b|\bname\s*[:=#-]\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}|(?:customer|account|card|payment|pan|phone|mobile)\s*(?:(?:name|number|no\.?|id)\s*[:=#-]?|[:=#])\s*\S+|relationship\s+manager\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})/i;
+const commercialTitleWords = new Set([
+  "annual",
+  "airport",
+  "bank",
+  "benefit",
+  "benefits",
+  "cashback",
+  "card",
+  "conditions",
+  "credit",
+  "dining",
+  "domestic",
+  "fee",
+  "fees",
+  "fuel",
+  "international",
+  "lounge",
+  "mastercard",
+  "mitc",
+  "most",
+  "important",
+  "points",
+  "rewards",
+  "rupay",
+  "terms",
+  "travel",
+  "visa",
+  "waiver",
+]);
+const publicBenefitSubjectWords = new Set([
+  "applicant",
+  "applicants",
+  "cardholder",
+  "cardholders",
+  "customer",
+  "customers",
+  "member",
+  "members",
+  "user",
+  "users",
+  "cashback",
+  "card",
+]);
+
+function hasUnknownPersonLikeSpan(
+  value: string,
+  identityPhrases: readonly string[],
+): boolean {
+  const identityWords = new Set(
+    identityPhrases.flatMap((phrase) => phrase.split(/[^a-z0-9]+/)).filter(
+      (word) => word.length > 1,
+    ),
+  );
+  let probe = value;
+  for (const [index, phrase] of identityPhrases.entries()) {
+    if (!phrase) continue;
+    probe = probe.replaceAll(
+      new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"),
+      ` knownidentity${index} `,
+    );
+  }
+  return [...probe.matchAll(/\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,}){1,3}\b/g)]
+    .some((match) =>
+      match[0].split(/\s+/).some((word) =>
+        !commercialTitleWords.has(word.toLowerCase()) &&
+        !identityWords.has(word.toLowerCase())
+      )
+    ) ||
+    [...probe.matchAll(
+      /\b([a-z]{3,})\s+(?:(?:gets?|receives?)\b|will\s+(?:call|contact)\b|is\s+the\s+(?:customer|cardholder|member)\b)/gi,
+    )]
+      .some((match) =>
+        !publicBenefitSubjectWords.has(match[1].toLowerCase()) &&
+        !commercialTitleWords.has(match[1].toLowerCase()) &&
+        !identityWords.has(match[1].toLowerCase())
+      );
+}
+
+/**
+ * Minimal public facts retained for v6 replay. Arbitrary page prose and any
+ * sentence containing direct customer/payment data are discarded before the
+ * value can cross a persistence boundary.
+ */
+export function canonicalBenefitReplayText(
+  value: string,
+  context: { issuer?: string; identityLabels?: string[] } = {},
+): string {
+  const plain = readableText(value);
+  const identityPhrases = [
+    context.issuer ?? "",
+    ...(context.identityLabels ?? []),
+  ]
+    .map((item) => item.replace(/\s+/g, " ").trim().toLowerCase())
+    .filter((item) => item.length >= 3);
+  const fragments = plain.split(/(?<=[.!?])\s+|\n+/).map((item) => item.trim())
+    .filter(Boolean);
+  const retained: string[] = [];
+  for (const fragment of fragments) {
+    if (
+      replayDirectPii.test(fragment) ||
+      hasUnknownPersonLikeSpan(fragment, identityPhrases)
+    ) continue;
+    const lowered = fragment.toLowerCase();
+    const identityFact = identityPhrases.some((phrase) =>
+      lowered.includes(phrase)
+    );
+    if (!identityFact && !replayBenefitSignal.test(fragment)) continue;
+    const safe = fragment.replace(/\s+/g, " ").trim().slice(0, 500);
+    if (safe && !retained.includes(safe)) retained.push(safe);
+    if (new TextEncoder().encode(retained.join("\n")).byteLength >= 1_800) {
+      break;
+    }
+  }
+  return retained.join("\n").slice(0, 1_900);
 }
 
 function decimal(value: string | undefined): number | undefined {

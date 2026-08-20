@@ -1,5 +1,8 @@
 import { type BenefitDocument } from "../_shared/benefit_enrichment.ts";
-import { redactSensitiveUrlsInText } from "../_shared/benefit_source_privacy.ts";
+import {
+  redactSensitiveUrlsInText,
+  safeHttpsDisplayUrl,
+} from "../_shared/benefit_source_privacy.ts";
 import { assessOfficialCardIdentity } from "../_shared/card_discovery.ts";
 import {
   approvedStoredQueryParameters,
@@ -105,6 +108,12 @@ type SourceCandidate = {
   rejectionCode?: "unapproved_query" | "invalid_source_url";
 };
 
+function requiredSourceHint(href: string, anchorText: string): boolean {
+  return requiredSourcePattern.test(href) ||
+    requiredAnchorPattern.test(anchorText) ||
+    anchorText.trim().toLowerCase() === "curated exact source";
+}
+
 function sourceRole(
   candidate: SourceCandidate,
   curated: boolean,
@@ -113,6 +122,99 @@ function sourceRole(
       candidate.requiredHint
     ? "required_supporting"
     : "supporting";
+}
+
+export function canonicalRequiredReplayAnchorText(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.toLowerCase() === "curated exact source") {
+    return "curated exact source";
+  }
+  const known = normalized.match(
+    /\b(?:most\s+important\s+terms(?:\s+and\s+conditions)?|terms?(?:\s+and\s+conditions)?|conditions?|mitc|fees?|charges?|benefits?|rewards?|supporting\s+(?:material|document))\b/i,
+  )?.[0];
+  return known?.toLowerCase().slice(0, 96) ?? "";
+}
+
+function replayLinksFromClassifierInput(
+  issuer: string,
+  baseUrl: string,
+  html: string,
+  curatedUrls: readonly string[] = [],
+) {
+  let overflow = false;
+  const links: NonNullable<BenefitDocument["replayLinks"]> = [];
+  const candidates: Array<{ url: string; anchorText: string }> = curatedUrls
+    .map((url) => ({ url, anchorText: "curated exact source" }));
+  for (const match of html.matchAll(anchorPattern)) {
+    const anchorText = (match[4] ?? "").replace(/<[^>]*>/g, " ")
+      .replace(/&(?:amp|nbsp);/gi, " ").replace(/\s+/g, " ").trim()
+      .slice(0, 256);
+    const encodedHref = match[1] ?? match[2] ?? match[3] ?? "";
+    const hrefValue = encodedHref
+      .replace(/&amp;|&#0*38;|&#x0*26;/gi, "&")
+      .replace(/&quot;|&#0*34;|&#x0*22;/gi, '"')
+      .replace(/&apos;|&#0*39;|&#x0*27;/gi, "'");
+    if (!requiredSourceHint(hrefValue, anchorText)) continue;
+    try {
+      const raw = new URL(hrefValue, baseUrl).toString();
+      let url = raw;
+      try {
+        url = canonicalOfficialRequestUrl(
+          issuer,
+          raw,
+          approvedStoredQueryParameters(raw),
+        );
+      } catch {
+        // The live classifier retains the raw identity for a rejected required
+        // query/path. Replay must still be able to prove it was not omitted.
+      }
+      candidates.push({ url, anchorText });
+    } catch {
+      // Invalid hrefs remain decisive failed attempts in the live crawl. They
+      // have no safe display URL or canonical identity to persist.
+    }
+  }
+  candidates.sort((left, right) => left.url.localeCompare(right.url));
+  for (const candidate of candidates) {
+    const href = safeHttpsDisplayUrl(candidate.url);
+    if (!href) continue;
+    let resourceIdentityHash: string;
+    try {
+      resourceIdentityHash = sourceIdentityDigest(candidate.url);
+    } catch {
+      continue;
+    }
+    if (
+      links.some((link) => link.resourceIdentityHash === resourceIdentityHash)
+    ) continue;
+    if (links.length >= MAX_SUPPORTING_LINKS) {
+      overflow = true;
+      continue;
+    }
+    links.push({
+      href,
+      anchorText: canonicalRequiredReplayAnchorText(candidate.anchorText),
+      resourceIdentityHash,
+    });
+  }
+  return { links, overflow };
+}
+
+/** Reuses the live required-source predicate over the retained link inputs. */
+export function classifyRequiredReplaySourceKeys(
+  documents: readonly BenefitDocument[],
+): { keys: string[]; overflow: boolean } {
+  const keys = new Set<string>();
+  let overflow = false;
+  for (const document of documents) {
+    overflow ||= document.replayLinkOverflow === true;
+    for (const link of document.replayLinks ?? []) {
+      if (requiredSourceHint(link.href, link.anchorText)) {
+        keys.add(link.resourceIdentityHash);
+      }
+    }
+  }
+  return { keys: [...keys].sort(), overflow };
 }
 
 function linkedUrls(
@@ -135,8 +237,7 @@ function linkedUrls(
       .replace(/&amp;|&#0*38;|&#x0*26;/gi, "&")
       .replace(/&quot;|&#0*34;|&#x0*22;/gi, '"')
       .replace(/&apos;|&#0*39;|&#x0*27;/gi, "'");
-    const hrefRequired = requiredSourcePattern.test(href);
-    const decisiveRequired = requiredHint || hrefRequired;
+    const decisiveRequired = requiredSourceHint(href, anchorText);
     let raw: string;
     try {
       raw = new URL(href, baseUrl).toString();
@@ -339,6 +440,14 @@ export async function collectSupportingBenefitDocuments(
       input.primary.canonicalUrl,
     ),
   ];
+  const primaryReplayLinks = replayLinksFromClassifierInput(
+    input.issuer,
+    input.primary.canonicalUrl,
+    input.primary.text ?? "",
+    [...exactSet],
+  );
+  primaryDocument.replayLinks = primaryReplayLinks.links;
+  primaryDocument.replayLinkOverflow = primaryReplayLinks.overflow;
   const rejectedInitial = initialCandidates.filter((candidate) =>
     candidate.rejectionCode
   );
@@ -573,7 +682,24 @@ export async function collectSupportingBenefitDocuments(
       });
       continue;
     }
+    const nestedCandidates = current.depth < MAX_SUPPORTING_DEPTH &&
+        resource.contentType !== "application/pdf"
+      ? linkedUrls(
+        input.issuer,
+        resource.canonicalUrl,
+        resource.text ?? "",
+        input.identityLabels,
+        input.primary.canonicalUrl,
+      )
+      : [];
     const document = await benefitDocument(resource, current.url);
+    const documentReplayLinks = replayLinksFromClassifierInput(
+      input.issuer,
+      resource.canonicalUrl,
+      resource.text ?? "",
+    );
+    document.replayLinks = documentReplayLinks.links;
+    document.replayLinkOverflow = documentReplayLinks.overflow;
     if (document.text.trim()) {
       documents.push(document);
       attempts.push({
@@ -604,19 +730,8 @@ export async function collectSupportingBenefitDocuments(
         attemptedAt: resource.retrievedAt,
       });
     }
-    if (
-      current.depth < MAX_SUPPORTING_DEPTH &&
-      resource.contentType !== "application/pdf"
-    ) {
-      for (
-        const candidate of linkedUrls(
-          input.issuer,
-          resource.canonicalUrl,
-          resource.text ?? "",
-          input.identityLabels,
-          input.primary.canonicalUrl,
-        )
-      ) {
+    if (nestedCandidates.length > 0) {
+      for (const candidate of nestedCandidates) {
         const discovered = {
           ...candidate,
           depth: current.depth + 1,
@@ -682,6 +797,7 @@ export async function collectSupportingBenefitDocuments(
     documents,
     attempts,
     expectedRequiredSourceKeys: [...expectedRequiredSourceKeys].sort(),
-    requiredSourceSelectionOverflow,
+    requiredSourceSelectionOverflow: requiredSourceSelectionOverflow ||
+      documents.some((document) => document.replayLinkOverflow === true),
   };
 }

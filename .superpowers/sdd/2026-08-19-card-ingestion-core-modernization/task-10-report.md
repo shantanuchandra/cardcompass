@@ -32,10 +32,19 @@ For a pilot run, the worker:
    of truncating verification input.
 4. Runs two independent `benefits-v6` extractions over separate clones of that
    same retained snapshot.
-5. Converts fetched documents to a bounded, privacy-validated canonical replay
-   input (queryless display URLs, opaque requested/final identities, content
-   hash, and exact public extraction text), then uses that persisted form for
-   both extraction passes and for the qualification-time actual v6 parser rerun.
+5. Converts fetched documents to replay input v2: bounded known issuer/card
+   context, queryless display URLs, opaque requested/final identities, content
+   hash, minimal public benefit/identity facts, and at most eight sanitized
+   hyperlink href/required-source-vocabulary pairs with opaque resource identity. The replay does
+   not copy `expected_required_source_keys`; the live and qualification paths
+   reuse the same required-link predicate to derive them independently. It then
+   uses that persisted form for both extraction passes, the card-identity
+   classifier, and the qualification-time actual v6 parser rerun. Each retained
+   document URL plus opaque identity must match the exact authoritative
+   attempt. A link must bind either to that exact attempt or to the requested
+   side of a retained requested-to-final redirect; an identity borrowed from a
+   different href fails. Retained card labels must be the current catalog name,
+   name/network label, or a current catalog alias.
    Retains and hashes both independently produced canonical verification
    envelopes containing parser, job, card, run mode, source
    manifest/resources, the replay-input hash, a bounded retained-document digest envelope (requested
@@ -55,11 +64,25 @@ For a pilot run, the worker:
 8. Recursively inspects persistable artifacts and retained envelopes before
    any staging write, and repeats the check before finalization, for
    raw-body, statement/customer, credential, token, lease, signed-query, and
-   secret-bearing fields and byte overflow. Cache validators are omitted from
+   secret-bearing fields and byte overflow. Replay minimization removes emails,
+   payment/PAN numbers including spaced/dashed forms, phones, long account or
+   customer IDs (including values longer than 19 digits), alphanumeric
+   PAN/payment IDs, formatted phones, labeled
+   single- or multi-word customer names, arbitrary prose, and unknown
+   person-like subjects regardless of lowercase, uppercase, or mixed casing.
+   Hyperlink anchors are reduced to a tiny required-source vocabulary rather
+   than retaining arbitrary prose. Direct official-source probes prove those bytes never
+   reach either staging or finalization. Cache validators are omitted from
    pilot evidence.
 9. Promotes only inside the locked SQL transaction after the RPC recomputes
    replay-input/canonical/source hashes and validates exact job/staging/review/live
    bindings, five distinct profiles, and three normalized issuers.
+10. Publishes Task 4 review results under the global review advisory -> benefit
+    identity advisory -> card row -> staging row order shared with Task 7, then
+    revalidates the locked credit-card identity. JSON audit timestamps are
+    explicit six-microsecond UTC strings; `Z`, positive offsets, negative
+    offsets, spaces, and variable fractional widths normalize to the same
+    instant without erasing true microsecond changes.
 
 The bounded result is stored in existing
 `card_catalog_enrichment_jobs.normalized_fields`:
@@ -149,6 +172,10 @@ and lease tokens are omitted.
   representable; no-change is not inferred from `proposals.length == 0`.
 - Required HTML/PDF/supporting failure remains incomplete; possible removals
   are suppressed and counted.
+- Query-bearing required hyperlinks retain only a queryless display href plus
+  opaque full-resource identity. A link omitted consistently from both the
+  supplied expected set and attempts still fails independent classification;
+  hyperlink overflow fails closed.
 - Changed terms and shared legacy identities continue through the existing
   canonical diff/review tests.
 - Any live card, mapped benefit, or mapping hash/count change fails proof;
@@ -164,9 +191,9 @@ and lease tokens are omitted.
 - Task 4's actual audit shape is honored: approve/edit bind proposal index,
   resolved benefit UUID, dedupe key, and condition hash together; proposal and
   live-removal reject lanes remain exact.
-- PostgreSQL space/`+00`/variable-microsecond timestamps and Edge ISO strings
-  canonicalize to one six-microsecond UTC hash representation without erasing
-  sub-millisecond mutations.
+- PostgreSQL space/`+00`/positive/negative-offset/variable-microsecond
+  timestamps and Edge ISO strings canonicalize to one six-microsecond UTC hash
+  representation without erasing sub-millisecond mutations.
 
 ## Red-to-green evidence
 
@@ -257,6 +284,68 @@ pending catalog conflict blocking, metric-name/encoded-secret stripping,
 direct legacy-evidence rejection in the promotion contract, and locked-state
 mutation rejection between Edge qualification and SQL promotion.
 
+Third fresh-review RED checkpoint, before round-3 production edits:
+
+```text
+Edge focused behaviors                       0 passed, 6 failed
+  direct proposal PII; minimal safe replay; replay v2/link+identity rerun;
+  direct source PII; equal offset live hash; offset review timestamp
+Task 4 migration contract                   11 passed, 3 failed
+  Task 4/7 shared lock order and post-lock card validation;
+  canonical UTC JSON audit writes and offset assertion
+Task 6 migration contract                    8 passed, 2 failed
+  replay v2 context/hyperlink classifier authority; ISO offset parity
+```
+
+One initial Task 3 occurrence-order assertion included an immutable pre-read;
+the test was narrowed, before production changes, to compare only the
+post-advisory row-lock sequences. It then remained red solely on Task 4's
+missing benefit-identity/card locks.
+
+A final pre-write privacy audit added the required unlabeled-person probe
+before its production fix:
+
+```text
+Edge proposal privacy                         0 passed, 1 failed
+  unlabeled person span                       crossed the generic pre-write boundary
+Task 6 replay privacy                         0 passed, 1 failed
+  labeled/person replay regex                 absent from the locked SQL validator
+```
+
+The independent review then produced four additional behavioral REDs before
+their fixes:
+
+```text
+Edge source-attempt binding                   0 passed, 1 failed
+  borrowed opaque identity                    matched a different hyperlink URL
+Edge catalog-label authority                  0 passed, 1 failed
+  self-consistent rival label                 was not tied to card_catalog/aliases
+Edge formatted/alphanumeric PII               0 passed, 2 failed
+  single names, dotted phone, PAN ID           survived minimization/pre-write
+Task 6 authority/time contracts               0 passed, 2 failed
+  URL/hash/label binding; recurrence offsets   missing from locked validation
+```
+
+The review follow-up then exercised the remaining privacy and redirect edges
+under their real boundaries before each fix:
+
+```text
+Edge generic pre-write privacy                0 passed, 1 failed
+  lowercase name / >19-digit ID / anchor      survived a persistable artifact
+Replay minimizer privacy                      0 passed, 1 failed
+  lowercase name / >19-digit ID / anchor      survived retained replay input
+Task 6 replay privacy                         0 passed, 1 failed
+  equivalent SQL name/ID/anchor rules         were absent
+Requested-to-final redirect binding           0 passed, 1 failed
+  legitimate exact redirect                   was rejected as unbound
+Edge replay casing privacy                    0 passed, 1 failed
+  uppercase/mixed-case person subject         survived replay minimization
+Task 6 replay casing privacy                  0 passed, 1 failed
+  uppercase/mixed-case person subject         bypassed SQL validation
+Edge finalizer casing privacy                 0 passed, 1 failed
+  uppercase/mixed-case proposal subject       crossed the pre-write boundary
+```
+
 Final prescribed command (the auth fixture now binds only the prescribed
 loopback capability):
 
@@ -265,7 +354,7 @@ deno test --node-modules-dir=auto --allow-env \
   --allow-net=0.0.0.0:8000 --frozen \
   supabase/functions/benefit-enrichment-batch/index_test.ts \
   supabase/functions/admin-catalog-entry/benefit_admin_test.ts
-# 199 passed, 0 failed (150 ingestion + 49 admin)
+# 204 passed, 0 failed (155 ingestion + 49 admin)
 ```
 
 Affected shared/policy suites:
@@ -298,7 +387,7 @@ node --test test/supabase/active_benefit_read_rules.test.mjs \
   test/supabase/card_catalog_enrichment_rules.test.mjs \
   test/supabase/issuer_card_discovery_rules.test.mjs \
   test/supabase/recur_card_enrichment_jobs_migration_test.js
-# 96 passed, 0 failed
+# 100 passed, 0 failed
 ```
 
 Static verification:
@@ -307,6 +396,7 @@ Static verification:
 deno check --node-modules-dir=auto --frozen \
   supabase/functions/_shared/benefit_enrichment.ts \
   supabase/functions/benefit-enrichment-batch/index.ts \
+  supabase/functions/benefit-enrichment-batch/supporting_documents.ts \
   supabase/functions/benefit-enrichment-batch/batch_policy.ts \
   supabase/functions/admin-catalog-entry/index.ts \
   supabase/functions/admin-catalog-entry/benefit_admin.ts
@@ -341,8 +431,8 @@ Task 4 and Task 6 migrations were authorized for modification while still locall
 Relevant migration SHA-256 values are:
 
 ```text
-2d960ad657600ef67e3672da2812ce1c878d2099d4d7fb1ab10ce6d3cd53cba7  supabase/migrations/20260819163046_review_card_benefit_enrichment_v2.sql
-c886328059b6d842955b9c9c0b86de6cc43cfa014d3398edf9cf5f32128be4b8  supabase/migrations/20260819205037_recur_card_enrichment_jobs.sql
+ae091272f1169cb75194e932e791df9e0aaa2e9a13cb7bcc41038fd748a9057a  supabase/migrations/20260819163046_review_card_benefit_enrichment_v2.sql
+98ae55bad6c3969f1bbc800323329445cdaf79d50f0e4c141b788406291a02c7  supabase/migrations/20260819205037_recur_card_enrichment_jobs.sql
 8e0dd3ac01346d5ec7531be906bc974480e0e93c8f8d9f482b6010323e06a3a7  supabase/migrations/20260819231435_publish_reviewed_card_identity.sql
 82df4f501eb24f5e88be6080b66c5c296f95bb4d68a7cd4b5f3c1a44a015980e  supabase/migrations/20260819063836_add_admin_flag_to_public_users.sql
 ```

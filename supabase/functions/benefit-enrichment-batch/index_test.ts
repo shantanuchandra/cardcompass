@@ -39,6 +39,7 @@ import {
 } from "./index.ts";
 import * as batchModule from "./index.ts";
 import {
+  canonicalBenefitReplayText,
   diffBenefits,
   extractGroundedBenefits,
   extractGroundedBenefitsV6,
@@ -75,9 +76,11 @@ Deno.test("pilot replay canonicalizes the same immutable documents twice without
     status: "success",
     httpStatus: 200,
     contentHash: "a".repeat(64),
-    finalResourceIdentityHash: "b".repeat(64),
+    finalResourceIdentityHash: sourceIdentityDigest(
+      "https://issuer.example/card",
+    ),
     attemptedAt: "2026-08-20T00:00:00.000Z",
-    logicalSourceKey: "c".repeat(64),
+    logicalSourceKey: sourceIdentityDigest("https://issuer.example/card"),
   }];
   const sourceManifestHash = await computeSourceManifestHash(attempts as never);
   let extractionCount = 0;
@@ -131,24 +134,23 @@ Deno.test("pilot replay canonicalizes the same immutable documents twice without
 Deno.test("pilot replay hash is bound to the exact retained document bytes and resource identities", async () => {
   const compute = task10BatchModule.computePilotReplayEvidence;
   assert(typeof compute === "function", "computed pilot replay is missing");
-  const attempts = [{
-    url: "https://issuer.example/card",
-    role: "primary",
-    status: "success",
-    httpStatus: 200,
-    contentHash: "a".repeat(64),
-    finalResourceIdentityHash: "b".repeat(64),
-    attemptedAt: "2026-08-20T00:00:00.000Z",
-    logicalSourceKey: sourceIdentityDigest("https://issuer.example/card"),
-  }];
-  const sourceManifestHash = await computeSourceManifestHash(attempts as never);
-  const run = async (text: string, finalUrl: string) =>
-    await compute({
+  const run = async (text: string, finalUrl: string) => {
+    const attempts = [{
+      url: finalUrl,
+      role: "primary",
+      status: "success",
+      httpStatus: 200,
+      contentHash: "a".repeat(64),
+      finalResourceIdentityHash: sourceIdentityDigest(finalUrl),
+      attemptedAt: "2026-08-20T00:00:00.000Z",
+      logicalSourceKey: sourceIdentityDigest("https://issuer.example/card"),
+    }];
+    return await compute({
       jobId: "11111111-1111-4111-8111-111111111111",
       cardId: "22222222-2222-4222-8222-222222222222",
       parserVersion: "benefits-v6",
       runMode: "pilot",
-      sourceManifestHash,
+      sourceManifestHash: await computeSourceManifestHash(attempts as never),
       expectedRequiredSourceKeys: [],
       requiredSourceSelectionOverflow: false,
       attempts,
@@ -160,16 +162,17 @@ Deno.test("pilot replay hash is bound to the exact retained document bytes and r
       }],
       extract: async () => [{ fixture: "same-proposal" }],
     });
+  };
   const first = await run(
-    "original issuer bytes",
+    "Get 10% cashback on original issuer spends.",
     "https://issuer.example/card",
   );
   const changedBytes = await run(
-    "changed issuer bytes",
+    "Get 11% cashback on changed issuer spends.",
     "https://issuer.example/card",
   );
   const changedIdentity = await run(
-    "original issuer bytes",
+    "Get 10% cashback on original issuer spends.",
     "https://issuer.example/card/redirected",
   );
   assert(
@@ -186,7 +189,7 @@ Deno.test("pilot replay hash is bound to the exact retained document bytes and r
   );
   assert(
     !JSON.stringify(first.verificationEnvelope).includes(
-      "original issuer bytes",
+      "Get 10% cashback on original issuer spends.",
     ),
     "raw retained document bytes entered evidence",
   );
@@ -209,6 +212,28 @@ Deno.test("pilot safety validation is an explicit pre-write boundary", () => {
           public_text: encodeURIComponent(
             "customer_email=person@example.com",
           ),
+        },
+      },
+      { proposal: { description: "Email john.doe@example.com for approval" } },
+      { proposal: { description: "Pay with 4111-1111-1111-1111" } },
+      { proposal: { description: "Call +91 98765 43210" } },
+      { proposal: { description: "Account ID: 1234567890123456" } },
+      { proposal: { description: "Customer Name: Rahul Sharma" } },
+      { proposal: { description: "Rahul Sharma gets 10% cashback" } },
+      { proposal: { description: "Name: John gets 10% cashback" } },
+      { proposal: { description: "john gets 10% cashback" } },
+      { proposal: { description: "JOHN gets 10% cashback" } },
+      { proposal: { description: "JOhN receives rewards" } },
+      { proposal: { description: "Phone 123.456.7890" } },
+      { proposal: { description: "PAN ABCDE1234F" } },
+      {
+        proposal: {
+          description: "Reference 12345678901234567890 gets 10% cashback",
+        },
+      },
+      {
+        replay_input: {
+          hyperlinks: [{ anchor_text: "John Doe", href: "terms" }],
         },
       },
     ]
@@ -235,9 +260,11 @@ Deno.test("pilot replay fails closed when the independent second parse mutates o
     status: "success",
     httpStatus: 200,
     contentHash: "a".repeat(64),
-    finalResourceIdentityHash: "b".repeat(64),
+    finalResourceIdentityHash: sourceIdentityDigest(
+      "https://issuer.example/card",
+    ),
     attemptedAt: "2026-08-20T00:00:00.000Z",
-    logicalSourceKey: "c".repeat(64),
+    logicalSourceKey: sourceIdentityDigest("https://issuer.example/card"),
   }];
   const sourceManifestHash = await computeSourceManifestHash(attempts as never);
   let pass = 0;
@@ -316,7 +343,7 @@ Deno.test("pilot replay rejects retained input overflow instead of silently trun
   );
 });
 
-Deno.test("pilot replay retains bounded plain issuer text larger than a log field", async () => {
+Deno.test("pilot replay retains only bounded privacy-safe classifier facts", async () => {
   const compute = task10BatchModule.computePilotReplayEvidence;
   assert(typeof compute === "function", "computed pilot replay is missing");
   const attempts = [{
@@ -331,8 +358,11 @@ Deno.test("pilot replay retains bounded plain issuer text larger than a log fiel
     attemptedAt: "2026-08-20T00:00:00.000Z",
     logicalSourceKey: sourceIdentityDigest("https://issuer.example/card"),
   }];
-  const longPublicText = `${"Issuer terms and conditions. ".repeat(400)}
-Get 10% cashback on dining spends.`;
+  const longPublicText = `${"Unrelated issuer boilerplate. ".repeat(400)}
+Issuer Example Card. Get 10% cashback on dining spends.
+Email john.doe@example.com. Pay with 4111 1111 1111 1111.
+Call +91 98765 43210. Customer ID: 1234567890123456.
+Relationship manager Amit Kumar Sharma will call.`;
   const replay = await compute({
     jobId: "11111111-1111-4111-8111-111111111111",
     cardId: "22222222-2222-4222-8222-222222222222",
@@ -341,6 +371,9 @@ Get 10% cashback on dining spends.`;
     sourceManifestHash: await computeSourceManifestHash(attempts as never),
     expectedRequiredSourceKeys: [],
     requiredSourceSelectionOverflow: false,
+    issuer: "Issuer Example",
+    identityLabels: ["Issuer Example Card"],
+    primarySourceUrl: "https://issuer.example/card",
     attempts,
     documents: [{
       sourceUrl: "https://issuer.example/card",
@@ -353,8 +386,308 @@ Get 10% cashback on dining spends.`;
       new TextEncoder().encode(
           (replay as any).replayInput.documents[0]
             .public_text,
-        ).byteLength > 8_000,
-    "bounded public replay text was treated like a truncated log field",
+        ).byteLength < 2_000,
+    "pilot replay retained arbitrary page prose instead of minimal facts",
+  );
+  const retained = String(
+    (replay as any).replayInput.documents[0].public_text,
+  );
+  for (
+    const unsafe of [
+      "john.doe@example.com",
+      "4111 1111 1111 1111",
+      "+91 98765 43210",
+      "1234567890123456",
+      "Amit Kumar Sharma",
+      "Unrelated issuer boilerplate",
+    ]
+  ) {
+    assert(
+      !retained.includes(unsafe),
+      `replay retained unsafe prose: ${unsafe}`,
+    );
+  }
+  assert(
+    retained.includes("Issuer Example Card") &&
+      retained.includes("10% cashback"),
+    "privacy minimization removed known card identity or benefit facts",
+  );
+});
+
+Deno.test("pilot replay reruns required-link and card-identity classifiers from retained inputs", async () => {
+  const compute = task10BatchModule.computePilotReplayEvidence;
+  assert(typeof compute === "function", "computed pilot replay is missing");
+  const primaryUrl = "https://issuer.example/card";
+  const termsUrl = "https://issuer.example/support/card-terms.pdf?locale=en";
+  const primaryKey = sourceIdentityDigest(primaryUrl);
+  const termsKey = sourceIdentityDigest(termsUrl);
+  const attempts = [{
+    url: primaryUrl,
+    role: "primary",
+    status: "success",
+    httpStatus: 200,
+    contentHash: "a".repeat(64),
+    finalResourceIdentityHash: primaryKey,
+    attemptedAt: "2026-08-20T00:00:00.000Z",
+    logicalSourceKey: primaryKey,
+  }, {
+    url: "https://issuer.example/support/card-terms.pdf",
+    role: "required_supporting",
+    status: "success",
+    httpStatus: 200,
+    contentHash: "b".repeat(64),
+    finalResourceIdentityHash: termsKey,
+    attemptedAt: "2026-08-20T00:00:01.000Z",
+    logicalSourceKey: termsKey,
+  }];
+  const documents = [{
+    sourceUrl: primaryUrl,
+    finalUrl: primaryUrl,
+    text: "Issuer Example Card. Get 10% cashback on dining spends.",
+    contentHash: "a".repeat(64),
+    replayLinks: [{
+      href: termsUrl,
+      anchorText: "Terms John Doe",
+    }],
+  }, {
+    sourceUrl: termsUrl,
+    finalUrl: termsUrl,
+    text: "Issuer Example Card MITC. Dining cashback is 10%.",
+    contentHash: "b".repeat(64),
+  }];
+  const binding = {
+    jobId: "11111111-1111-4111-8111-111111111111",
+    cardId: "22222222-2222-4222-8222-222222222222",
+    parserVersion: "benefits-v6",
+    runMode: "pilot",
+    issuer: "Issuer Example",
+    identityLabels: ["Issuer Example Card"],
+    primarySourceUrl: primaryUrl,
+    requiredSourceSelectionOverflow: false,
+  };
+  const replay = await compute({
+    ...binding,
+    sourceManifestHash: await computeSourceManifestHash(attempts as never),
+    expectedRequiredSourceKeys: [termsKey],
+    attempts,
+    documents,
+  });
+  const replayInput = (replay as any).replayInput;
+  assert(replayInput?.version === 2, "classifier-capable replay v2 is absent");
+  assert(
+    !("required_resources" in replayInput),
+    "replay copied classifier output instead of retaining classifier input",
+  );
+  assert(
+    replayInput.context?.issuer === "Issuer Example" &&
+      replayInput.context?.identity_labels?.[0] === "Issuer Example Card",
+    "replay lost known issuer/card identity context",
+  );
+  const retainedLink = replayInput.documents[0].hyperlinks[0];
+  assert(
+    retainedLink.href === "https://issuer.example/support/card-terms.pdf" &&
+      !retainedLink.href.includes("?") &&
+      retainedLink.resource_identity_hash === termsKey &&
+      retainedLink.anchor_text === "terms",
+    "replay retained query/anchor PII or lost the opaque required-link identity",
+  );
+
+  const redirectedTermsUrl =
+    "https://issuer.example/support/current-card-terms.pdf";
+  const redirectedAttempts = structuredClone(attempts);
+  redirectedAttempts[1].url = redirectedTermsUrl;
+  redirectedAttempts[1].finalResourceIdentityHash = sourceIdentityDigest(
+    redirectedTermsUrl,
+  );
+  const redirectedDocuments: any[] = structuredClone(documents);
+  redirectedDocuments[1].finalUrl = redirectedTermsUrl;
+  redirectedDocuments[1].finalResourceIdentityHash = sourceIdentityDigest(
+    redirectedTermsUrl,
+  );
+  const redirected = await compute({
+    ...binding,
+    sourceManifestHash: await computeSourceManifestHash(
+      redirectedAttempts as never,
+    ),
+    expectedRequiredSourceKeys: [termsKey],
+    attempts: redirectedAttempts,
+    documents: redirectedDocuments,
+  });
+  assert(
+    redirected.deterministicReplayPassed === true,
+    "exact requested/final resource bindings rejected a legitimate redirect",
+  );
+
+  let omittedError: unknown;
+  try {
+    const omittedAttempts = attempts.slice(0, 1);
+    await compute({
+      ...binding,
+      sourceManifestHash: await computeSourceManifestHash(
+        omittedAttempts as never,
+      ),
+      expectedRequiredSourceKeys: [],
+      attempts: omittedAttempts,
+      documents: documents.slice(0, 1),
+    });
+  } catch (error) {
+    omittedError = error;
+  }
+  assert(
+    omittedError instanceof Error &&
+      omittedError.message === "pilot_required_source_classification_mismatch",
+    "a consistently omitted required link passed replay classification",
+  );
+
+  let borrowedIdentityError: unknown;
+  try {
+    await compute({
+      ...binding,
+      sourceManifestHash: await computeSourceManifestHash(attempts as never),
+      expectedRequiredSourceKeys: [termsKey],
+      attempts,
+      documents: [{
+        ...documents[0],
+        replayLinks: [{
+          href: "https://issuer.example/support/other-terms.pdf",
+          anchorText: "Terms and Conditions",
+          resourceIdentityHash: termsKey,
+        }],
+      }, documents[1]],
+    });
+  } catch (error) {
+    borrowedIdentityError = error;
+  }
+  assert(
+    borrowedIdentityError instanceof Error &&
+      borrowedIdentityError.message === "pilot_replay_source_binding_mismatch",
+    "a replay hyperlink borrowed another required attempt's opaque identity",
+  );
+
+  let identityError: unknown;
+  try {
+    await compute({
+      ...binding,
+      sourceManifestHash: await computeSourceManifestHash(attempts as never),
+      expectedRequiredSourceKeys: [termsKey],
+      attempts,
+      documents: documents.map((document) => ({
+        ...document,
+        text: "Rival Bank Other Card. Get 10% cashback on dining spends.",
+      })),
+    });
+  } catch (error) {
+    identityError = error;
+  }
+  assert(
+    identityError instanceof Error &&
+      identityError.message === "pilot_card_identity_mismatch",
+    "replay did not rerun the actual card identity classifier",
+  );
+});
+
+Deno.test("canonical pilot replay text removes direct official-source PII probes", () => {
+  const sanitize = canonicalBenefitReplayText as unknown as (
+    value: string,
+    context: { issuer: string; identityLabels: string[] },
+  ) => string;
+  const safe = sanitize(
+    `Issuer Example Card. Get 10% cashback on dining spends.
+Email: jane.smith@example.com
+PAN 4111-1111-1111-1111; phone +91 98765 43210.
+Account number 1234567890123456. Customer Name: Priya Sharma.
+Relationship manager Arjun Kumar Singh will call.
+Rahul Sharma gets this cashback.
+Name: John gets 10% cashback. Phone 123.456.7890.
+PAN ABCDE1234F receives rewards. john gets 10% cashback.
+Reference 12345678901234567890 gets rewards.
+JOHN gets 10% cashback. JOhN receives rewards.`,
+    { issuer: "Issuer Example", identityLabels: ["Issuer Example Card"] },
+  );
+  assert(
+    safe.includes("Issuer Example Card") && safe.includes("10% cashback"),
+    "privacy minimization removed known identity or benefit facts",
+  );
+  for (
+    const unsafe of [
+      "jane.smith@example.com",
+      "4111-1111-1111-1111",
+      "+91 98765 43210",
+      "1234567890123456",
+      "Priya Sharma",
+      "Arjun Kumar Singh",
+      "Rahul Sharma",
+      "Name: John",
+      "123.456.7890",
+      "ABCDE1234F",
+      "john gets",
+      "12345678901234567890",
+      "JOHN gets",
+      "JOhN receives",
+    ]
+  ) assert(!safe.includes(unsafe), `official-source replay leaked ${unsafe}`);
+});
+
+Deno.test("pilot source binding preserves exact requested and redirected resource identities", async () => {
+  const compute = task10BatchModule.computePilotReplayEvidence;
+  assert(typeof compute === "function", "computed pilot replay is missing");
+  const primaryUrl = "https://issuer.example/card";
+  const requestedTermsUrl = "https://issuer.example/terms.pdf";
+  const finalTermsUrl = "https://issuer.example/current-terms.pdf";
+  const requestedTermsKey = sourceIdentityDigest(requestedTermsUrl);
+  const attempts = [{
+    url: primaryUrl,
+    role: "primary",
+    status: "success",
+    httpStatus: 200,
+    contentHash: "a".repeat(64),
+    logicalSourceKey: sourceIdentityDigest(primaryUrl),
+    finalResourceIdentityHash: sourceIdentityDigest(primaryUrl),
+    attemptedAt: "2026-08-20T00:00:00.000Z",
+  }, {
+    url: finalTermsUrl,
+    role: "required_supporting",
+    status: "success",
+    httpStatus: 200,
+    contentHash: "b".repeat(64),
+    logicalSourceKey: requestedTermsKey,
+    finalResourceIdentityHash: sourceIdentityDigest(finalTermsUrl),
+    attemptedAt: "2026-08-20T00:00:01.000Z",
+  }];
+  const replay = await compute({
+    jobId: "11111111-1111-4111-8111-111111111111",
+    cardId: "22222222-2222-4222-8222-222222222222",
+    parserVersion: "benefits-v6",
+    runMode: "pilot",
+    sourceManifestHash: await computeSourceManifestHash(attempts as never),
+    expectedRequiredSourceKeys: [requestedTermsKey],
+    requiredSourceSelectionOverflow: false,
+    issuer: "Issuer Example",
+    identityLabels: ["Issuer Example Card"],
+    primarySourceUrl: primaryUrl,
+    attempts,
+    documents: [{
+      sourceUrl: primaryUrl,
+      finalUrl: primaryUrl,
+      text: "Issuer Example Card. Get 10% cashback.",
+      contentHash: "a".repeat(64),
+      replayLinks: [{
+        href: requestedTermsUrl,
+        anchorText: "Terms",
+        resourceIdentityHash: requestedTermsKey,
+      }],
+    }, {
+      sourceUrl: requestedTermsUrl,
+      finalUrl: finalTermsUrl,
+      requestedResourceIdentityHash: requestedTermsKey,
+      finalResourceIdentityHash: sourceIdentityDigest(finalTermsUrl),
+      text: "Issuer Example Card terms. Get 10% cashback.",
+      contentHash: "b".repeat(64),
+    }],
+  });
+  assert(
+    replay.deterministicReplayPassed === true,
+    "redirected requested/final replay identities were rejected",
   );
 });
 
@@ -395,9 +728,24 @@ const task10BatchModule = batchModule as Task10BatchModule;
 
 async function withComputedPilotEvidence<T extends Record<string, any>>(
   row: T,
-  options: { proposalCount?: 0 | 1 } | number = {},
+  options: {
+    proposalCount?: 0 | 1;
+    replayIdentityLabel?: string;
+    authoritativeCardName?: string;
+  } | number = {},
 ): Promise<T> {
   const fixtureIndex = Number(String(row.id).match(/(\d+)$/)?.[1] ?? 0);
+  const fixtureIssuer = row.issuer ?? ["Issuer A", "Issuer B", "Issuer C"][
+    fixtureIndex % 3
+  ];
+  const fixtureIdentityLabel = typeof options === "object" &&
+      options.replayIdentityLabel
+    ? options.replayIdentityLabel
+    : `${fixtureIssuer} Example Card`;
+  const authoritativeCardName = typeof options === "object" &&
+      options.authoritativeCardName
+    ? options.authoritativeCardName
+    : fixtureIdentityLabel;
   const observedAt = "2026-08-20T00:00:00.000Z";
   const attempts = [{
     url: "https://issuer.example/card",
@@ -425,8 +773,8 @@ async function withComputedPilotEvidence<T extends Record<string, any>>(
     : null;
   const stagingContentHash = disposition === "material" ? "f".repeat(64) : null;
   const retainedText = proposalCount === 0
-    ? "No qualifying card benefits are listed."
-    : "Get 10% cashback on dining spends.";
+    ? `${fixtureIdentityLabel}. No qualifying card benefits are listed.`
+    : `${fixtureIdentityLabel}. Get 10% cashback on dining spends.`;
   const replay = await task10BatchModule.computePilotReplayEvidence!({
     jobId: String(row.id),
     cardId: row.card_id ?? `card-${row.id}`,
@@ -435,6 +783,9 @@ async function withComputedPilotEvidence<T extends Record<string, any>>(
     sourceManifestHash,
     expectedRequiredSourceKeys: [],
     requiredSourceSelectionOverflow: false,
+    issuer: fixtureIssuer,
+    identityLabels: [fixtureIdentityLabel],
+    primarySourceUrl: "https://issuer.example/card",
     attempts,
     documents: [{
       sourceUrl: "https://issuer.example/card",
@@ -486,9 +837,12 @@ async function withComputedPilotEvidence<T extends Record<string, any>>(
   };
   return {
     ...row,
-    issuer: row.issuer ?? ["Issuer A", "Issuer B", "Issuer C"][
-      fixtureIndex % 3
-    ],
+    card_catalog: {
+      card_name: authoritativeCardName,
+      network: null,
+      card_catalog_aliases: [],
+    },
+    issuer: fixtureIssuer,
     card_id: row.card_id ?? `card-${row.id}`,
     canonical_url: row.canonical_url ?? "https://issuer.example/card",
     staging_id: row.staging_id === undefined ? stagingId : row.staging_id,
@@ -540,6 +894,29 @@ async function withComputedPilotEvidence<T extends Record<string, any>>(
     },
   };
 }
+
+Deno.test("pilot replay identity labels are bound to authoritative catalog identity", async () => {
+  const project = task10BatchModule.projectPilotJobEvidence;
+  assert(typeof project === "function", "pilot evidence boundary is missing");
+  const row = await withComputedPilotEvidence({
+    id: "pilot-authoritative-identity-0",
+    card_id: "22222222-2222-4222-8222-222222222222",
+    run_mode: "pilot",
+    parser_version: "benefits-v6",
+    status: "completed",
+  }, {
+    replayIdentityLabel: "Rival Card",
+    authoritativeCardName: "Issuer A Example Card",
+  }) as Record<string, any>;
+  const projected = await project(row, {
+    currentLiveState: row.normalized_fields.pilot_evidence.live_state_after,
+  });
+  assert(
+    projected.computedEvidenceValid === false &&
+      projected.sourceBindingValid === false,
+    "self-consistent rival identity labels were not bound to card_catalog",
+  );
+});
 
 function pilotStagingRows(
   rows: Array<Record<string, any>>,
@@ -724,6 +1101,22 @@ Deno.test("pilot live-state proof hashes the exact card, mapping, and mapped ben
     "22222222-2222-4222-8222-222222222222",
   );
   assert(mutations(before, unchanged) === 0, "unchanged live state failed");
+  for (
+    const equivalentOffset of [
+      "2026-08-20T05:30:00.123400+05:30",
+      "2026-08-19T20:00:00.123400-04:00",
+    ]
+  ) {
+    state.card_catalog[0].updated_at = equivalentOffset;
+    const offsetSnapshot = await capture(
+      db,
+      "22222222-2222-4222-8222-222222222222",
+    );
+    assert(
+      offsetSnapshot.card_catalog.row_hash === before.card_catalog.row_hash,
+      `equal offset instant changed the live hash: ${equivalentOffset}`,
+    );
+  }
   state.card_catalog[0].updated_at = "2026-08-20 00:00:00.1235+00";
   const timestampMutation = await capture(
     db,
@@ -4158,7 +4551,7 @@ async function stableCanonicalProcessFixture(
   materialChange = false,
   isDiscontinued = false,
   runMode: "scheduled" | "pilot" = "scheduled",
-  unsafeEvidence = false,
+  unsafeEvidence: boolean | string = false,
 ) {
   const cardId = "00000000-0000-4000-8000-000000000001";
   const card = {
@@ -4170,7 +4563,9 @@ async function stableCanonicalProcessFixture(
     card_url: "https://issuer.example/credit-cards/issuer-test-card",
     is_discontinued: isDiscontinued,
   };
-  const text = unsafeEvidence
+  const text = typeof unsafeEvidence === "string"
+    ? unsafeEvidence
+    : unsafeEvidence
     ? "<html><title>Issuer Test Visa Credit Card</title><h1>Issuer Test Visa Credit Card</h1><p>Get 10% cashback on dining spends with access_token=abcdefgh-secret.</p></html>"
     : "<html><title>Issuer Test Visa Credit Card</title><h1>Issuer Test Visa Credit Card</h1><p>Get 10% cashback on dining spends.</p></html>";
   const [proposed] = await extractGroundedBenefitsV6(
@@ -4420,6 +4815,12 @@ Deno.test("pilot processing fetches once and persists computed replay and live-s
     | undefined;
   assert(normalized, "pilot finalization omitted normalized evidence");
   const evidence = normalized.pilot_evidence as Record<string, unknown>;
+  assert(
+    evidence,
+    `pilot evidence missing from finalization: ${
+      JSON.stringify(fixture.finalization)
+    }`,
+  );
   const metrics = normalized.operational_metrics as Record<string, unknown>;
   assert(
     normalized.pilot_profile === "straightforward" &&
@@ -4465,6 +4866,51 @@ Deno.test("unsafe extracted evidence is rejected before staging and never reache
     !JSON.stringify(fixture.finalization).includes("abcdefgh-secret"),
     "unsafe evidence reached the finalizer payload",
   );
+});
+
+Deno.test("direct official-source customer and payment probes never reach staging or finalization", async () => {
+  for (
+    const unsafe of [
+      "Email john.doe@example.com for assistance.",
+      "Pay with 4111-1111-1111-1111.",
+      "Call +91 98765 43210.",
+      "Account ID: 1234567890123456.",
+      "Customer Name: Rahul Sharma.",
+      "Relationship manager Amit Kumar Sharma will call.",
+      "Name: John gets 10% cashback.",
+      "john gets 10% cashback.",
+      "Phone 123.456.7890.",
+      "PAN ABCDE1234F receives rewards.",
+      "Reference 12345678901234567890 gets rewards.",
+    ]
+  ) {
+    const fixture = await stableCanonicalProcessFixture(
+      null,
+      false,
+      false,
+      "pilot",
+      `<html><title>Issuer Test Visa Credit Card</title><h1>Issuer Test Visa Credit Card</h1><p>Get 10% cashback on dining spends.</p><p>${unsafe}</p></html>`,
+    );
+    const persisted = JSON.stringify([
+      fixture.stageCalls,
+      fixture.finalization,
+    ]);
+    assert(
+      !persisted.includes(unsafe) &&
+        !persisted.includes("john.doe@example.com") &&
+        !persisted.includes("4111-1111-1111-1111") &&
+        !persisted.includes("98765 43210") &&
+        !persisted.includes("1234567890123456") &&
+        !persisted.includes("Rahul Sharma") &&
+        !persisted.includes("Amit Kumar Sharma") &&
+        !persisted.includes("Name: John") &&
+        !persisted.includes("john gets") &&
+        !persisted.includes("123.456.7890") &&
+        !persisted.includes("ABCDE1234F") &&
+        !persisted.includes("12345678901234567890"),
+      `direct official-source private data crossed a write boundary: ${unsafe}`,
+    );
+  }
 });
 
 Deno.test("an exact recurring reappearance stages reviewed reactivation", async () => {
@@ -5637,6 +6083,8 @@ Deno.test("pilot review accepts PostgreSQL UTC microseconds for reviewed decisio
       "2026-08-20 00:01:00.123456+00",
       "2026-08-20T00:01:00.123456+00:00",
       "2026-08-20T00:01:00.123456Z",
+      "2026-08-20T05:31:00.123456+05:30",
+      "2026-08-19T20:01:00.123456-04:00",
     ]
   ) {
     staging.benefit_decisions[0].reviewed_at = reviewedAt;

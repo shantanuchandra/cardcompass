@@ -1,4 +1,7 @@
-import { collectSupportingBenefitDocuments } from "./supporting_documents.ts";
+import {
+  classifyRequiredReplaySourceKeys,
+  collectSupportingBenefitDocuments,
+} from "./supporting_documents.ts";
 import {
   assessCrawlCompleteness,
   sourceIdentityDigest,
@@ -236,6 +239,13 @@ Deno.test("supporting functional query keys are explicitly approved without pers
       document.finalUrl === `${privilege}/terms`
     ),
     "queryless display provenance was not retained",
+  );
+  const replayLink = collected.documents[0].replayLinks?.[0];
+  assert(
+    replayLink?.href === `${privilege}/terms` &&
+      replayLink.anchorText === "mitc" &&
+      replayLink.resourceIdentityHash === sourceIdentityDigest(terms),
+    "live collection did not retain bounded queryless classifier input and opaque query identity",
   );
   assert(
     !JSON.stringify({
@@ -1069,6 +1079,12 @@ Deno.test("SBI Card ELITE receives its exact official campaign terms before gene
   assert(
     attempts[1]?.role === "required_supporting",
     "curated required terms were not marked required",
+  );
+  assert(
+    classifyRequiredReplaySourceKeys(documents).keys.includes(
+      sourceIdentityDigest(campaign),
+    ),
+    "curated source context could not be reclassified from replay input",
   );
 });
 

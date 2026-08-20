@@ -58,6 +58,19 @@ AS $$
   END;
 $$;
 
+DO $card_benefit_timestamp_offset_assertions$
+BEGIN
+  IF public.canonical_card_benefit_row_timestamp(
+       '2026-08-20T05:30:00.123456+05:30'::timestamptz
+     ) <> '2026-08-20T00:00:00.123456Z'
+     OR public.canonical_card_benefit_row_timestamp(
+       '2026-08-19T20:00:00.123456-04:00'::timestamptz
+     ) <> '2026-08-20T00:00:00.123456Z' THEN
+    RAISE EXCEPTION 'card benefit timestamp offset assertion failed';
+  END IF;
+END;
+$card_benefit_timestamp_offset_assertions$;
+
 CREATE OR REPLACE FUNCTION public.card_benefit_review_snapshot_rows(
   _rows jsonb
 ) RETURNS jsonb
@@ -956,6 +969,8 @@ DECLARE
   MAX_STAGED_STRING_CHARS constant integer := 8000;
   staging_row public.card_benefits_staging%ROWTYPE;
   staging_card_id uuid;
+  staging_parser_version text;
+  locked_card_type text;
   staged_proposal jsonb;
   canonical_envelope jsonb;
   canonical_benefit jsonb;
@@ -1003,7 +1018,8 @@ BEGIN
   );
   -- Task 3 uses this exact card-scoped key before it locks either the queue job
   -- or staging. Do the same here, then revalidate under the staging row lock.
-  SELECT staging.card_id INTO staging_card_id
+  SELECT staging.card_id, staging.parser_version
+  INTO staging_card_id, staging_parser_version
   FROM public.card_benefits_staging AS staging
   WHERE staging.id = _staging_id
     AND staging.request_type = 'official_benefit_enrichment';
@@ -1014,10 +1030,24 @@ BEGIN
     'card_benefit_enrichment_review:' || staging_card_id::text,
     0
   ));
+  -- Task 7 publishes mutable card identity under this exact lock. The global
+  -- order is review advisory -> benefit identity advisory -> card row ->
+  -- staging row, so neither flow can observe an identity half-transition.
+  PERFORM pg_advisory_xact_lock(hashtextextended(
+    'card_benefit_enrichment_identity:' || staging_card_id::text || ':benefits-v6',
+    0
+  ));
+  SELECT catalog.card_type INTO locked_card_type
+  FROM public.card_catalog AS catalog
+  WHERE catalog.id = staging_card_id
+    AND lower(trim(coalesce(catalog.card_type, ''))) = 'credit'
+  FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'card_target_not_found'; END IF;
   SELECT staging.* INTO staging_row
   FROM public.card_benefits_staging AS staging
   WHERE staging.id = _staging_id
     AND staging.card_id = staging_card_id
+    AND staging.parser_version = staging_parser_version
     AND staging.request_type = 'official_benefit_enrichment'
   FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'invalid_benefit_staging'; END IF;
@@ -1371,7 +1401,7 @@ BEGIN
     END IF;
     audit_decision := jsonb_strip_nulls(audit_decision || jsonb_build_object(
       'reviewed_by', _reviewed_by,
-      'reviewed_at', statement_timestamp(),
+      'reviewed_at', public.canonical_card_benefit_row_timestamp(statement_timestamp()),
       'review_payload_hash', review_payload_hash,
       'parser_version', staging_row.parser_version
     ));
@@ -1411,7 +1441,7 @@ BEGIN
       next_retry_at = NULL,
       updated_at = statement_timestamp(),
       result_summary = coalesce(result_summary, '{}'::jsonb) || jsonb_build_object(
-        'reviewed_at', statement_timestamp(),
+        'reviewed_at', public.canonical_card_benefit_row_timestamp(statement_timestamp()),
         'review_status', final_status,
         'approved_count', approved_count,
         'retired_count', retired_count,
@@ -1852,6 +1882,10 @@ DECLARE
   protected_oid regprocedure;
   approval_definition text;
   envelope_definition text;
+  review_lock_position integer;
+  identity_lock_position integer;
+  card_lock_position integer;
+  staging_lock_position integer;
 BEGIN
   FOREACH protected_oid IN ARRAY ARRAY[
     'public.canonical_json_text(jsonb)'::regprocedure,
@@ -1875,11 +1909,29 @@ BEGIN
   END LOOP;
   SELECT pg_get_functiondef(approval_oid) INTO approval_definition;
   SELECT pg_get_functiondef(envelope_oid) INTO envelope_definition;
+  review_lock_position := strpos(
+    approval_definition, 'card_benefit_enrichment_review:'
+  );
+  identity_lock_position := strpos(
+    approval_definition, 'card_benefit_enrichment_identity:'
+  );
+  card_lock_position := identity_lock_position + strpos(
+    substr(approval_definition, identity_lock_position),
+    'FROM public.card_catalog AS catalog'
+  );
+  staging_lock_position := card_lock_position + strpos(
+    substr(approval_definition, card_lock_position),
+    'SELECT staging.* INTO staging_row'
+  );
   IF approval_definition ~* 'auth\.role\s*\('
      OR approval_definition !~* 'FOR UPDATE'
      OR approval_definition !~* 'validate_benefit_publication_envelope\([\s\S]*staging_row\.card_id'
      OR approval_definition !~* 'ON CONFLICT \(dedupe_key\) DO NOTHING'
      OR approval_definition ~* 'UPDATE public\.benefits'
+     OR review_lock_position = 0 OR identity_lock_position = 0
+     OR card_lock_position <= identity_lock_position
+     OR staging_lock_position <= card_lock_position
+     OR review_lock_position >= identity_lock_position
      OR envelope_definition !~* 'card_scoped_benefit_key\(_card_id' THEN
     RAISE EXCEPTION 'v2 approval invariant assertion failed';
   END IF;
