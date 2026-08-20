@@ -345,6 +345,41 @@ Deno.test("admin authorization prefers the confirmed database flag and diagnoses
       "unconfirmed allowlisted identity received break-glass access",
     );
 
+    const genericConfirmedBreakGlass = await handle(
+      request({ action: "access" }),
+      {},
+      adminProfileAuthDb({
+        id: "generic-confirmed",
+        email: "breakglass@example.com",
+        email_confirmed_at: null,
+        confirmed_at: confirmed,
+      }, false),
+    );
+    assert(
+      genericConfirmedBreakGlass.status === 403,
+      "generic confirmed_at authorized an unconfirmed allowlisted email",
+    );
+
+    const unrelatedVerifiedIdentityBreakGlass = await handle(
+      request({ action: "access" }),
+      {},
+      adminProfileAuthDb({
+        id: "unrelated-identity",
+        email: "breakglass@example.com",
+        email_confirmed_at: null,
+        identities: [{
+          identity_data: {
+            email: "different@example.com",
+            email_verified: true,
+          },
+        }],
+      }, false),
+    );
+    assert(
+      unrelatedVerifiedIdentityBreakGlass.status === 403,
+      "an unrelated verified identity authorized the allowlisted user email",
+    );
+
     const breakGlass = await handle(
       request({ action: "access" }),
       {},
@@ -365,6 +400,101 @@ Deno.test("admin authorization prefers the confirmed database flag and diagnoses
       "authorization diagnostics leaked the allowlist",
     );
   } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  }
+});
+
+Deno.test("loopback auth matrix binds break glass to the exact confirmed user email", async () => {
+  const handle = await handler();
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "breakglass@example.com");
+  const confirmed = "2026-08-20T00:00:00.000Z";
+  const users: Record<string, Record<string, unknown>> = {
+    generic: {
+      id: "generic-confirmed",
+      email: "breakglass@example.com",
+      email_confirmed_at: null,
+      confirmed_at: confirmed,
+    },
+    unrelated: {
+      id: "unrelated-identity",
+      email: "breakglass@example.com",
+      email_confirmed_at: null,
+      identities: [{
+        identity_data: {
+          email: "different@example.com",
+          email_verified: true,
+        },
+      }],
+    },
+    exact_timestamp: {
+      id: "exact-email-timestamp",
+      email: "breakglass@example.com",
+      email_confirmed_at: confirmed,
+    },
+    exact_identity: {
+      id: "exact-email-identity",
+      email: "breakglass@example.com",
+      email_confirmed_at: null,
+      identities: [{
+        identity_data: {
+          email: "BREAKGLASS@example.com",
+          email_verified: true,
+        },
+      }],
+    },
+  };
+  let resolvePort!: (port: number) => void;
+  const portReady = new Promise<number>((resolve) => resolvePort = resolve);
+  const server = Deno.serve(
+    {
+      hostname: "127.0.0.1",
+      port: 0,
+      onListen: ({ port }) => resolvePort(port),
+    },
+    (request) => {
+      const authCase = request.headers.get("x-auth-case") ?? "";
+      const user = users[authCase];
+      return handle(request, {}, adminProfileAuthDb(user ?? null, false));
+    },
+  );
+  const port = await portReady;
+  try {
+    for (
+      const authCase of [
+        { name: "generic", status: 403, source: null },
+        { name: "unrelated", status: 403, source: null },
+        { name: "exact_timestamp", status: 200, source: "break_glass" },
+        { name: "exact_identity", status: 200, source: "break_glass" },
+      ]
+    ) {
+      const response = await fetch(`http://127.0.0.1:${port}/admin`, {
+        method: "POST",
+        headers: {
+          authorization: "Bearer valid-token",
+          "content-type": "application/json",
+          "x-auth-case": authCase.name,
+        },
+        body: JSON.stringify({ action: "access" }),
+      });
+      const body = await response.json();
+      assert(
+        response.status === authCase.status,
+        `${authCase.name} returned ${response.status}, expected ${authCase.status}`,
+      );
+      assert(
+        (body.authorization_source ?? null) === authCase.source,
+        `${authCase.name} returned the wrong authorization source`,
+      );
+      assert(
+        !JSON.stringify(body).includes("breakglass@example.com"),
+        `${authCase.name} leaked the allowlisted email`,
+      );
+    }
+  } finally {
+    await server.shutdown();
     if (originalAllowlist === undefined) {
       Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
     } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
@@ -553,12 +683,16 @@ Deno.test("catalog admin DTO keeps reviewed fields and bounded public evidence o
         explicit_discontinuation: true,
         retrieved_at: "2026-08-20T12:00:00.123456Z",
         matched_excerpt: "Astra Reserve card has been discontinued.",
+        customer_name: "PRIYA SHARMA",
+        statement_identity: { last_four: "4242" },
         lease_token: "private-lease",
         producer_evidence: "full internal producer evidence",
       },
     },
     source_evidence: {
       target_excerpt: "Astra Reserve card has been discontinued.",
+      customer_name: "PRIYA SHARMA",
+      statement_identity: { last_four: "4242" },
       lease_token: "private-source-lease",
     },
     existing_candidates: [{ id: "card-2", card_name: "Astra" }],
@@ -568,7 +702,14 @@ Deno.test("catalog admin DTO keeps reviewed fields and bounded public evidence o
       proposed_product: "Astra Reserve",
       status: "review_required",
       evidence: {
-        pdf_header_excerpt: "Bounded public statement header",
+        last_four: "4242",
+        pdf_header_excerpt:
+          "PRIYA SHARMA · card ending 4242 · private statement header",
+        customer_name: "PRIYA SHARMA",
+        nested: {
+          cardholder_name: "PRIYA SHARMA",
+          statement_identifier: "4242",
+        },
         raw_body: "private raw issuer page",
       },
       lease_token: "private-job-lease",
@@ -585,10 +726,30 @@ Deno.test("catalog admin DTO keeps reviewed fields and bounded public evidence o
     serialized.includes("Astra Reserve card has been discontinued"),
     "target-specific public evidence was removed",
   );
-  assert(
-    serialized.includes("Bounded public statement header"),
-    "bounded public producer evidence was removed",
-  );
+  function assertNoStatementIdentity(value: unknown, path = "root") {
+    if (Array.isArray(value)) {
+      value.forEach((item, index) =>
+        assertNoStatementIdentity(item, `${path}[${index}]`)
+      );
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    for (const [key, nested] of Object.entries(value)) {
+      assert(
+        !/(?:last_four|pdf_header_excerpt|customer_name|cardholder_name|statement_identifier)/i
+          .test(key),
+        `catalog DTO retained private statement key at ${path}.${key}`,
+      );
+      assertNoStatementIdentity(nested, `${path}.${key}`);
+    }
+  }
+  assertNoStatementIdentity(output);
+  for (const privateValue of ["PRIYA SHARMA", "4242", "private statement"]) {
+    assert(
+      !serialized.includes(privateValue),
+      `catalog DTO leaked statement value ${privateValue}`,
+    );
+  }
   for (
     const secret of [
       "private-lease",

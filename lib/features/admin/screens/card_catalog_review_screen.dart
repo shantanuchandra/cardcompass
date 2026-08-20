@@ -974,7 +974,6 @@ class CatalogIdentityReviewCard extends StatelessWidget {
               _line('PDF filename', evidence['filename_product']),
               _line('PDF header', evidence['pdf_header_product']),
               _line('Network', fields['network'] ?? evidence['network']),
-              _line('Masked last four', evidence['last_four']),
               _line('Official source', fields['official_url']),
               const SizedBox(height: 10),
               Text(
@@ -983,8 +982,6 @@ class CatalogIdentityReviewCard extends StatelessWidget {
               ),
               _line('Confidence', _confidenceLabel(item['confidence'])),
               if (warnings.isNotEmpty) _line('Warnings', warnings.join(' · ')),
-              if (evidence['pdf_header_excerpt'] != null)
-                _line('Sanitized evidence', evidence['pdf_header_excerpt']),
               if (pending) ...[
                 const SizedBox(height: 16),
                 Wrap(

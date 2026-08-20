@@ -229,3 +229,73 @@ was used.
 - Service-role and anon environment variables remain deployment-only inputs;
   no values were read, written, or reported here.
 - Live smoke/application and production writes remain deliberately pending.
+
+## Fresh-review fix round 1
+
+The first post-implementation review identified four defects. They were
+reproduced before changing production code:
+
+```sh
+flutter test --no-pub test/features/admin/benefit_enrichment_review_test.dart
+# RED: 24 passed, 4 failed
+# - production-shaped approved/legacy current v6 rows rejected
+# - staging-only v6 corruption parsed as legacy and did not show repair
+# - statement last-four/header/customer prose rendered in catalog UI
+
+deno test --allow-env --allow-read --node-modules-dir=auto --frozen \
+  --filter 'admin authorization prefers' \
+  supabase/functions/admin-catalog-entry/benefit_admin_test.ts
+# RED: 0 passed, 1 failed — generic confirmed_at received break-glass
+
+deno test --allow-env --allow-read --node-modules-dir=auto --frozen \
+  --filter 'catalog admin DTO' \
+  supabase/functions/admin-catalog-entry/benefit_admin_test.ts
+# RED: 0 passed, 1 failed — nested DTO retained evidence.last_four
+```
+
+Corrections:
+
+- v6 validation now has separate structural lanes. Additions and proposed
+  modification/unchanged/conflict rows require exact canonical
+  `benefitId == dedupeKey` plus a SHA-256 condition hash. Approved current/live
+  rows require their immutable live ID and dedupe key, accept legacy dedupe
+  identity, and do not invent a missing condition hash. If a current row does
+  supply canonical ID/hash, inconsistency still fails closed. Literal fixtures
+  mirror `currentBenefitProposal` for canonical current modification, legacy
+  unchanged, and legacy possible-removal rows.
+- Any of job, staging, or extraction parser version declaring `benefits-v6`
+  enters v6 validation. A staging-only v6 disagreement now reaches the real
+  repository/panel malformed-data repair state instead of rendering as legacy.
+- Break-glass still requires general confirmed identity at the auth boundary,
+  but additionally requires confirmation tied to the exact normalized
+  allowlisted `user.email`: either its `email_confirmed_at`, or a verified
+  identity whose email equals it. Generic `confirmed_at` and an unrelated
+  verified identity cannot authorize break-glass. A loopback-only HTTP matrix
+  covers both denials and both exact-email confirmation forms; database-admin
+  authorization remains independent and server-governed.
+- Catalog/quarantine presentation removes `last_four` and
+  `pdf_header_excerpt` from the strict job-evidence allowlist, recursively drops
+  customer/statement keys outside that allowlist, and verifies that injected
+  digits, customer name, and private statement prose are absent. Flutter no
+  longer renders either statement field even if an unsafe raw map bypasses the
+  Edge presenter. Target-specific public issuer evidence remains bounded and
+  visible.
+
+Fresh full GREEN results after the correction:
+
+```text
+Flutter admin review                         28 passed, 0 failed
+Flutter movie consumer                      15 passed, 0 failed
+Edge admin (includes loopback auth matrix)  48 passed, 0 failed
+Ingestion + publication Deno regressions   153 passed, 0 failed
+Node active/security/catalog/migrations     85 passed, 0 failed
+Deno production checks                       passed
+Flutter analysis (infos non-fatal)           passed; same 12 baseline infos
+```
+
+No migration was created or modified. The existing admin-hardening migration
+remains SHA-256
+`82df4f501eb24f5e88be6080b66c5c296f95bb4d68a7cd4b5f3c1a44a015980e`.
+The auth-matrix HTTP server bound only to ephemeral `127.0.0.1`; no external
+network, Docker, local/linked/live Supabase/Postgres, production data/write,
+secret, or workflow action was used. Live applied: **no**.

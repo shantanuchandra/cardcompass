@@ -250,9 +250,7 @@ export function presentCatalogReview(
         "filename_product",
         "pdf_header_product",
         "network",
-        "last_four",
         "official_url",
-        "pdf_header_excerpt",
         "target_excerpt",
         "retrieved_at",
       ]),
@@ -346,6 +344,19 @@ export async function handleAdminCatalogEntry(
   if (!confirmedIdentity) {
     return json({ error: "Administrator access required" }, 403);
   }
+  const normalizedUserEmail = typeof user.email === "string"
+    ? user.email.trim().toLowerCase()
+    : "";
+  const exactEmailConfirmed = Boolean(user.email_confirmed_at) ||
+    (normalizedUserEmail.length > 0 && Array.isArray(user.identities) &&
+      user.identities.some((identity: any) => {
+        const identityEmail = typeof identity?.identity_data?.email === "string"
+          ? identity.identity_data.email.trim().toLowerCase()
+          : "";
+        return identityEmail === normalizedUserEmail &&
+          (identity?.identity_data?.email_verified === true ||
+            Boolean(identity?.identity_data?.email_confirmed_at));
+      }));
 
   let databaseAdmin = false;
   try {
@@ -357,7 +368,7 @@ export async function handleAdminCatalogEntry(
   } catch {
     databaseAdmin = false;
   }
-  const breakGlass = !databaseAdmin &&
+  const breakGlass = !databaseAdmin && exactEmailConfirmed &&
     isAdminEmail(user.email, Deno.env.get("CARD_CATALOG_ADMIN_EMAILS"));
   if (!databaseAdmin && !breakGlass) {
     return json({ error: "Administrator access required" }, 403);

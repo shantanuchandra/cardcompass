@@ -175,6 +175,15 @@ final _v6JobJson = <String, dynamic>{
   },
 };
 
+Map<String, dynamic> get _stagingOnlyV6Corruption => <String, dynamic>{
+  ..._jobJson,
+  'staging': {
+    ...(_jobJson['staging'] as Map<String, dynamic>),
+    'card_id': 'card-1',
+    'parser_version': 'benefits-v6',
+  },
+};
+
 void _noop() {}
 void _noopValue(String _) {}
 
@@ -324,6 +333,85 @@ void main() {
   });
 
   test(
+    'v6 accepts production current and legacy live rows while validating proposed identity',
+    () {
+      final productionShape = <String, dynamic>{
+        ..._v6JobJson,
+        'staging': {
+          ...(_v6JobJson['staging'] as Map<String, dynamic>),
+          'extracted_data': {
+            ...((_v6JobJson['staging']
+                    as Map<String, dynamic>)['extracted_data']
+                as Map<String, dynamic>),
+            'diff': {
+              'modifications': [
+                {
+                  'current': {
+                    'liveBenefitId': '11111111-1111-4111-8111-111111111111',
+                    'benefitId': 'card-benefit-v2:card-1:approved-current',
+                    'dedupeKey': 'card-benefit-v2:card-1:approved-current',
+                    'title': 'Approved dining benefit',
+                    'parserVersion': 'current-approved-benefit',
+                  },
+                  'proposed': {
+                    'benefitId': 'card-benefit-v2:card-1:proposed-change',
+                    'dedupeKey': 'card-benefit-v2:card-1:proposed-change',
+                    'conditionHash': '1' * 64,
+                    'title': 'Updated dining benefit',
+                  },
+                },
+              ],
+              'unchanged': [
+                {
+                  'current': {
+                    'liveBenefitId': '22222222-2222-4222-8222-222222222222',
+                    'dedupeKey': 'legacy-lounge-benefit',
+                    'title': 'Legacy lounge benefit',
+                    'parserVersion': 'current-approved-benefit',
+                  },
+                  'proposed': {
+                    'benefitId': 'card-benefit-v2:card-1:unchanged',
+                    'dedupeKey': 'card-benefit-v2:card-1:unchanged',
+                    'conditionHash': '2' * 64,
+                    'title': 'Legacy lounge benefit',
+                  },
+                },
+              ],
+              'possibleRemovals': [
+                {
+                  'benefit': {
+                    'liveBenefitId': '33333333-3333-4333-8333-333333333333',
+                    'dedupeKey': 'legacy-movie-benefit',
+                    'title': 'Legacy movie benefit',
+                    'parserVersion': 'current-approved-benefit',
+                  },
+                  'informational': true,
+                  'retirementEligible': false,
+                },
+              ],
+            },
+          },
+        },
+      };
+
+      final review = BenefitEnrichmentReview.fromJson(productionShape);
+      final diff = review.staging.extractedData.diff;
+
+      expect(diff.modifications.single.current.conditionHash, isNull);
+      expect(
+        diff.modifications.single.current.liveBenefitId,
+        '11111111-1111-4111-8111-111111111111',
+      );
+      expect(diff.unchanged.single.current.benefitId, isNull);
+      expect(diff.unchanged.single.current.dedupeKey, 'legacy-lounge-benefit');
+      expect(
+        diff.possibleRemovals.single.benefit.dedupeKey,
+        'legacy-movie-benefit',
+      );
+    },
+  );
+
+  test(
     'malformed required v6 identity fails closed while legacy remains readable',
     () {
       final malformed = <String, dynamic>{
@@ -352,9 +440,37 @@ void main() {
           ..._v6JobJson,
           'staging': {
             ...(_v6JobJson['staging'] as Map<String, dynamic>),
+            'extracted_data': {
+              ...((_v6JobJson['staging']
+                      as Map<String, dynamic>)['extracted_data']
+                  as Map<String, dynamic>),
+              'diff': {
+                'possibleRemovals': [
+                  {
+                    'benefit': {
+                      'dedupeKey': 'legacy-without-live-id',
+                      'title': 'Structurally incomplete current benefit',
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        }),
+        throwsA(isA<FormatException>()),
+      );
+      expect(
+        () => BenefitEnrichmentReview.fromJson({
+          ..._v6JobJson,
+          'staging': {
+            ...(_v6JobJson['staging'] as Map<String, dynamic>),
             'card_id': 'different-card',
           },
         }),
+        throwsA(isA<FormatException>()),
+      );
+      expect(
+        () => BenefitEnrichmentReview.fromJson(_stagingOnlyV6Corruption),
         throwsA(isA<FormatException>()),
       );
       expect(() => BenefitEnrichmentReview.fromJson(_jobJson), returnsNormally);
@@ -459,6 +575,48 @@ void main() {
       expect(find.text('Approve as new card'), findsNothing);
       expect(find.text('Edit and approve'), findsNothing);
       expect(find.textContaining('lease_token'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'catalog review never renders statement identifiers or customer prose',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: CatalogIdentityReviewCard(
+              item: const {
+                'status': 'pending',
+                'proposed_fields': {
+                  'issuer': 'Horizon Bank',
+                  'cardName': 'Astra Reserve',
+                },
+                'card_discovery_jobs': {
+                  'issuer': 'Horizon Bank',
+                  'proposed_product': 'Astra Reserve',
+                  'evidence': {
+                    'subject_product': 'Astra Reserve',
+                    'last_four': '4242',
+                    'pdf_header_excerpt':
+                        'PRIYA SHARMA · card ending 4242 · private statement',
+                    'customer_name': 'PRIYA SHARMA',
+                  },
+                },
+              },
+              onApprove: _noop,
+              onEditApprove: _noop,
+              onMerge: _noopValue,
+              onRetry: _noop,
+              onReject: _noop,
+            ),
+          ),
+        ),
+      );
+
+      expect(find.textContaining('4242'), findsNothing);
+      expect(find.textContaining('PRIYA SHARMA'), findsNothing);
+      expect(find.textContaining('private statement'), findsNothing);
+      expect(find.textContaining('Astra Reserve'), findsWidgets);
     },
   );
 
@@ -1241,6 +1399,24 @@ void main() {
 
     expect(find.textContaining('Malformed v6 review data'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+
+  testWidgets('staging-only v6 corruption reaches the visible repair state', (
+    tester,
+  ) async {
+    final response = AdminCatalogEntryResponse(200, {
+      'items': [_stagingOnlyV6Corruption],
+      'counts': {'total': 1, 'by_status': {}, 'by_run_mode': {}},
+      'page': 1,
+      'limit': 25,
+      'has_more': false,
+    });
+
+    await _pumpPanel(tester, AdminCatalogRepository(_FakeApi(response)));
+
+    expect(find.textContaining('Malformed v6 review data'), findsOneWidget);
+    expect(find.textContaining('repaired'), findsOneWidget);
+    expect(find.text('Approved dining benefit'), findsNothing);
   });
 
   testWidgets('benefit approval explains its consequence before applying', (

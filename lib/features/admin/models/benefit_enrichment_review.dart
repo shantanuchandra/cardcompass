@@ -173,6 +173,7 @@ class BenefitEnrichmentReview {
           json['crawler_discovered_without_statement_signal'] == true,
     );
     if (review.parserVersion == 'benefits-v6' ||
+        review.staging.parserVersion == 'benefits-v6' ||
         review.staging.extractedData.parserVersion == 'benefits-v6') {
       review._validateV6();
     }
@@ -214,17 +215,25 @@ class BenefitEnrichmentReview {
         staging.extractedData.parserVersion != 'benefits-v6') {
       throw const FormatException('Malformed v6 review identity.');
     }
-    final proposals = staging.extractedData.diff.allProposals;
-    for (final proposal in proposals) {
+    final diff = staging.extractedData.diff;
+    final digest = RegExp(r'^[0-9a-f]{64}$', caseSensitive: false);
+    for (final proposal in diff.canonicalProposals) {
       if (proposal.benefitId == null ||
           proposal.dedupeKey == null ||
           proposal.benefitId != proposal.dedupeKey ||
           proposal.conditionHash == null ||
-          !RegExp(
-            r'^[0-9a-f]{64}$',
-            caseSensitive: false,
-          ).hasMatch(proposal.conditionHash!)) {
+          !digest.hasMatch(proposal.conditionHash!)) {
         throw const FormatException('Malformed required v6 benefit identity.');
+      }
+    }
+    for (final current in diff.currentProposals) {
+      if (current.liveBenefitId == null ||
+          current.dedupeKey == null ||
+          (current.benefitId != null &&
+              current.benefitId != current.dedupeKey) ||
+          (current.conditionHash != null &&
+              !digest.hasMatch(current.conditionHash!))) {
+        throw const FormatException('Malformed current v6 benefit identity.');
       }
     }
   }
@@ -421,22 +430,31 @@ class BenefitDiff {
   final List<BenefitModification> unchanged;
   final List<BenefitConflict> conflicts;
 
-  Iterable<BenefitProposal> get allProposals sync* {
+  Iterable<BenefitProposal> get canonicalProposals sync* {
     yield* additions;
     for (final item in modifications) {
-      yield item.current;
       yield item.proposed;
+    }
+    for (final item in unchanged) {
+      yield item.proposed;
+    }
+    for (final item in conflicts) {
+      yield* item.proposed;
+    }
+  }
+
+  Iterable<BenefitProposal> get currentProposals sync* {
+    for (final item in modifications) {
+      yield item.current;
     }
     for (final item in possibleRemovals) {
       yield item.benefit;
     }
     for (final item in unchanged) {
       yield item.current;
-      yield item.proposed;
     }
     for (final item in conflicts) {
       yield* item.current;
-      yield* item.proposed;
     }
   }
 }
