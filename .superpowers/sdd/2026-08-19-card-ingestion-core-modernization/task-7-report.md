@@ -7,7 +7,10 @@ publication boundary. Statement/user discovery, issuer crawler discovery,
 catalog enrichment, lifecycle observations, and legacy manual catalog entry no
 longer write canonical card rows from Edge code. Reviewed publication now owns
 strong identity resolution, URL keys, append-only provenance, audit, lifecycle
-state, and the exactly-one benefits-v6 recurring job outcome.
+state, and the exactly-one benefits-v6 recurring job outcome. The review
+hardening pass also removes existing-card bypasses, binds reviewed changes to a
+catalog baseline, and turns recurring 410/explicit-discontinuation/reappearance
+observations into bounded review work without changing acquisition state.
 
 Live applied: **no**.
 
@@ -29,6 +32,8 @@ Modified:
 - `supabase/functions/_shared/official_issuer_fetch.ts`
 - `supabase/functions/admin-catalog-entry/index.ts`
 - `supabase/functions/admin-catalog-entry/benefit_admin_test.ts`
+- `supabase/functions/benefit-enrichment-batch/index.ts`
+- `supabase/functions/benefit-enrichment-batch/index_test.ts`
 - `supabase/functions/card-discovery/index.ts`
 - `supabase/functions/catalog-enrichment/index.ts`
 - `test/supabase/card_catalog_enrichment_rules.test.mjs`
@@ -41,7 +46,7 @@ No earlier migration was modified.
 ## Migration
 
 - File: `20260819231435_publish_reviewed_card_identity.sql`
-- SHA-256: `7dfdd0603061d45663016d5e8c97131a7298b28bd30cccc91ba01475fe2f862a`
+- SHA-256: `76864ea6770e89786a964175c20fb1000377de21bce66596f6eb6707606e4d83`
 - Created with `supabase migration new publish_reviewed_card_identity`.
 - Project-ref preflight remained exactly `prbcoxqobhjnnfnxevxf`.
 
@@ -57,6 +62,9 @@ No earlier migration was modified.
   30-day compatibility wrapper.
 - Added the internal page-move boundary
   `adopt_reviewed_card_enrichment_source(uuid,text,text,text,text,text)` and the
+  service-only lifecycle-review boundary
+  `stage_card_catalog_lifecycle_review(uuid,text,jsonb,text,text,text,text)` and
+  a nullable-version-safe full catalog snapshot comparator, plus the
   retained-history cleanup boundary
   `terminalize_calculator_review_rows(uuid,integer)`.
 - Resolver, publisher, wrapper, and internal helpers are `SECURITY INVOKER`,
@@ -66,8 +74,12 @@ No earlier migration was modified.
   removing the remaining alternate canonical writer without changing the v5
   benefit rollback lane.
 - `resolve_verified` accepts only independently verified statement jobs with no
-  actor/review item. Crawler and user-request paths require a pending review and
-  authenticated admin actor.
+  actor/review item. `observe_existing` is limited to service-role execution,
+  an already exact credit-card target, issuer/family/tier/network/hash
+  compatibility, validated official HTML with HTTP 200, and no mutable catalog
+  changes. New crawler/user identities still require pending review and an
+  authenticated actor whose authoritative `public.users.is_admin` flag is
+  true.
 
 ## Identity, URL, and artifact decisions
 
@@ -78,8 +90,9 @@ No earlier migration was modified.
   payment network. Weak standalone aliases such as Visa, Gold, Platinum,
   Infinite, Signature, and World cannot resolve or create a product.
 - Production loaders now carry stored network evidence and fail closed on
-  cross-network or ambiguous hash/body matches. Ordinary fees/terms/benefits
-  prose is excluded from competing title identity.
+  absent-network, absent-tier, non-credit, cross-network, or ambiguous hash/body
+  matches. Ordinary fees/terms/benefits prose is excluded from competing title
+  identity.
 - SQL and TypeScript retain only approved functional query keys, preserve
   query ordering/duplicates/encoding, remove tracking and fragments, reject
   credentials/sensitive keys, and enforce issuer-domain ownership and the
@@ -95,6 +108,12 @@ No earlier migration was modified.
   observations never rewrite earlier evidence. Exact publisher replay checks
   the original actor/action/fields and returns without a second audit or
   provenance row.
+- Crawler deduplication includes both the exact submitted selector identity and
+  final resource identity. Two submitted selectors that share one redirect
+  remain separate review jobs. Submitted and final domains are each validated.
+- Replayed exact trusted observations re-enter publication, deduplicate only the
+  exact same provenance observation, and still verify the existing v6 job.
+  Changed retrieval/content evidence appends history; it is never rewritten.
 
 ## Lock order and page moves
 
@@ -137,14 +156,29 @@ For a reviewed same-card page move:
 - A reviewed rename/network/page move is first bound to its explicit existing
   card under the old strong identity; old approved names become aliases.
 - `mark_discontinued` and `reactivate` require actor, reason, matching stored
-  suggested action, exact source observation, and a locked explicit card. They
-  update only `is_discontinued` and write before/after audit.
+  suggested action, exact source observation, and a locked explicit card. The
+  SQL boundary independently requires either a 410 strong-gone observation, a
+  validated 200 explicit card-discontinuation statement, or a validated 200
+  exact-card reappearance. They update only `is_discontinued` and write
+  before/after audit.
 - Successful exact-card reappearance proposes reactivation. Explicit 410
   evidence may suggest discontinuation. 404, redirect, and identity failures
   produce weaker retained review evidence and cannot authorize a lifecycle
   action. No HTTP status directly mutates acquisition state.
 - Actively held discontinued cards continue through the Task 6 recurring
   eligibility boundary.
+- Recurring benefits-v6 410 and strong explicit discontinuation observations
+  upsert one exact-card lifecycle review. Later exact reappearance proposes
+  reactivation; issuer crawl includes discontinued rows for this identity
+  match. A 404, redirect, directory absence, missing network/tier, or debit row
+  cannot authorize lifecycle publication.
+- Every edit/lifecycle proposal stores the old mutable fields, acquisition
+  state, canonical URL, and `updated_at` (nullable for legacy rows). Publication
+  compares that full snapshot again under the card lock and returns
+  `stale_catalog_baseline` without mutation if another review won first.
+- `retry` can reopen retained pending or rejected review work, preserves its
+  audit history, and keeps the same review identifier. Approved/merged work is
+  not reopened. Replay equality includes reason and merge target.
 - Calculator cleanup now terminalizes and audits review/job rows instead of
   deleting them. Review/audit/provenance/URL/enrichment foreign keys no longer
   cascade-delete identity history; user deletion de-identifies statement jobs.
@@ -168,20 +202,33 @@ The first focused run established these failures before implementation:
 A page-move mutation test also removed `review_required` from the allowed
 terminal states and failed the page-move contract before restoration.
 
+The review-hardening red run then produced the required exact failures:
+
+- shared publication TypeScript failed with `TS2305`/`TS2322` for the missing
+  lifecycle, baseline, and `observe_existing` interfaces;
+- the combined discovery/crawl/migration run was **50 passed / 19 failed** for
+  direct existing-card bypasses, weak identity, exact submitted/final URL
+  evidence, lifecycle reviews, admin authorization, and stale baselines;
+- the focused existing-card replay test returned `duplicate` instead of
+  re-entering publication;
+- nullable legacy baseline, weak HTTP-absence authority, rejected-review retry,
+  and exact catalog lifecycle-evidence tests each failed before their bounded
+  implementations were added.
+
 ## Green verification
 
 - `deno test --node-modules-dir=auto --allow-env --frozen` across every Edge
-  test except the separately permissioned admin listener suite: **193 passed,
+  test except the separately permissioned admin listener suite: **200 passed,
   0 failed**.
 - `deno test --node-modules-dir=auto --allow-env
   --allow-net=0.0.0.0:8000 --frozen
   supabase/functions/admin-catalog-entry/benefit_admin_test.ts`: **41 passed,
   0 failed**. The only network permission is the unchanged local test listener.
 - `node --test` across every `test/supabase/*_test.js` and
-  `test/supabase/*.test.mjs`: **226 passed, 0 failed**.
+  `test/supabase/*.test.mjs`: **237 passed, 0 failed**.
 - `flutter test --no-pub test/supabase/card_catalog_url_identity_test.dart`:
   **2 passed, 0 failed**.
-- Total unique named offline tests: **462 passed, 0 failed**.
+- Total unique named offline tests: **480 passed, 0 failed**.
 - `deno check --node-modules-dir=auto --frozen` on all changed production
   TypeScript: passed.
 - `deno fmt --check` on the complete changed TypeScript/JavaScript test surface:

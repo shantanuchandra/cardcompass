@@ -12,7 +12,11 @@ import {
   requireOfficialFetchBody,
 } from "../_shared/official_issuer_fetch.ts";
 import { safeHttpsDisplayUrl } from "../_shared/benefit_source_privacy.ts";
-import { publicationFieldsFromFetch } from "../_shared/catalog_identity_publication.ts";
+import {
+  catalogPublicationBaseline,
+  hasStrongExplicitCardDiscontinuation,
+  publicationFieldsFromFetch,
+} from "../_shared/catalog_identity_publication.ts";
 
 type UntypedSupabaseClient = any;
 const CATALOG_FETCH_DEADLINE_MS = 25_000;
@@ -116,6 +120,7 @@ export async function processCatalogEnrichmentJob(
   jobId: string,
   deadlineAt = Date.now() + CATALOG_FETCH_DEADLINE_MS,
 ) {
+  let catalogSnapshot: Record<string, unknown> | null = null;
   const { data: current, error: readError } = await db
     .from("card_catalog_enrichment_jobs").select("*").eq("id", jobId).single();
   if (readError || !current) throw readError ?? new Error("job_not_found");
@@ -145,6 +150,14 @@ export async function processCatalogEnrichmentJob(
   if (!claimed) return "already_processing";
 
   try {
+    const { data: catalog, error: catalogError } = await db.from("card_catalog")
+      .select(
+        "id, bank, card_name, network, card_type, joining_fee, annual_fee, apr, card_url, is_discontinued, updated_at",
+      )
+      .eq("id", claimed.card_id).single();
+    if (catalogError) throw catalogError;
+    catalogSnapshot = catalog;
+    const catalogBaseline = catalogPublicationBaseline(catalog);
     const robotsCache = createOfficialRobotsCache();
     const page = requireOfficialFetchBody(
       await fetchOfficialIssuerResource({
@@ -159,12 +172,6 @@ export async function processCatalogEnrichmentJob(
         robotsCache,
       }),
     );
-    const { data: catalog, error: catalogError } = await db.from("card_catalog")
-      .select(
-        "id, bank, card_name, network, card_type, joining_fee, annual_fee, apr, is_discontinued",
-      )
-      .eq("id", claimed.card_id).single();
-    if (catalogError) throw catalogError;
     requireCatalogPageIdentity(
       page.text,
       claimed.issuer,
@@ -207,8 +214,7 @@ export async function processCatalogEnrichmentJob(
     );
     const lifecycleSuggestion = catalog.is_discontinued === true
       ? "reactivate"
-      : /\b(?:product|card)\s+(?:has\s+been\s+)?(?:discontinued|withdrawn)\b|\bno\s+longer\s+(?:available|issued)\b/i
-          .test(page.text)
+      : hasStrongExplicitCardDiscontinuation(page.text)
       ? "mark_discontinued"
       : null;
     const reviewChanges = [
@@ -235,6 +241,7 @@ export async function processCatalogEnrichmentJob(
         reviewChanges,
         {
           ...proposedCatalogFields,
+          catalog_baseline: catalogBaseline,
           ...(lifecycleSuggestion
             ? { suggested_action: lifecycleSuggestion }
             : {}),
@@ -243,9 +250,15 @@ export async function processCatalogEnrichmentJob(
           ...publicationEvidence,
           source_type: "official_html",
           source_observation: {
-            status: page.status,
-            kind: "catalog_enrichment",
+            source_status: page.status,
+            kind: lifecycleSuggestion === "reactivate"
+              ? "exact_card_reappearance"
+              : lifecycleSuggestion === "mark_discontinued"
+              ? "strong_explicit_discontinuation"
+              : "catalog_enrichment",
+            identity_validated: true,
           },
+          catalog_baseline: catalogBaseline,
         },
       );
     }
@@ -273,6 +286,9 @@ export async function processCatalogEnrichmentJob(
         .includes(message) && claimed.discovery_job_id
     ) {
       const strongGoneObservation = message === "http_410";
+      const catalogBaseline = catalogSnapshot
+        ? catalogPublicationBaseline(catalogSnapshot as never)
+        : null;
       await queueConflictReview(
         db,
         claimed,
@@ -284,7 +300,12 @@ export async function processCatalogEnrichmentJob(
             ? "http_lifecycle_observation"
             : "weak_source_absence_observation",
         }],
-        strongGoneObservation ? { suggested_action: "mark_discontinued" } : {},
+        {
+          ...(strongGoneObservation
+            ? { suggested_action: "mark_discontinued" }
+            : {}),
+          ...(catalogBaseline ? { catalog_baseline: catalogBaseline } : {}),
+        },
         {
           official_url: claimed.canonical_url,
           ...(message === "http_404"
@@ -298,7 +319,14 @@ export async function processCatalogEnrichmentJob(
             kind: strongGoneObservation
               ? "strong_gone_observation"
               : "weak_source_absence_observation",
+            source_status: strongGoneObservation
+              ? 410
+              : message === "http_404"
+              ? 404
+              : null,
+            identity_validated: false,
           },
+          ...(catalogBaseline ? { catalog_baseline: catalogBaseline } : {}),
         },
       );
     }

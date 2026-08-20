@@ -6,6 +6,7 @@ import {
 
 export type CatalogPublicationAction =
   | "resolve_verified"
+  | "observe_existing"
   | "approve"
   | "edit_approve"
   | "merge"
@@ -36,6 +37,30 @@ type PublicationClient = {
     name: string,
     args: Record<string, unknown>,
   ): PromiseLike<{ data?: unknown; error: unknown }>;
+};
+
+export type CatalogLifecycleAction = "mark_discontinued" | "reactivate";
+
+export type CatalogLifecycleReviewInput = {
+  cardId: string;
+  suggestedAction: CatalogLifecycleAction;
+  sourceObservation: Record<string, unknown>;
+  sourceUrl: string;
+  sourceUrlHash: string;
+  contentHash?: string | null;
+  parserVersion?: string;
+};
+
+type CatalogBaselineSource = {
+  id: unknown;
+  card_name: unknown;
+  network: unknown;
+  annual_fee: unknown;
+  joining_fee: unknown;
+  apr: unknown;
+  card_url: unknown;
+  is_discontinued: unknown;
+  updated_at: unknown;
 };
 
 const REVIEWED_ACTIONS = new Set<CatalogPublicationAction>([
@@ -132,6 +157,88 @@ export function publicationFieldsFromFetch(
   };
 }
 
+export function catalogLifecycleSuggestion(input: {
+  isDiscontinued: boolean;
+  httpStatus: number | null;
+  identityValidated: boolean;
+  explicitDiscontinuation: boolean;
+}): CatalogLifecycleAction | null {
+  if (
+    input.isDiscontinued && input.httpStatus === 200 &&
+    input.identityValidated
+  ) return "reactivate";
+  if (
+    !input.isDiscontinued &&
+    (input.httpStatus === 410 ||
+      (input.httpStatus === 200 && input.identityValidated &&
+        input.explicitDiscontinuation))
+  ) return "mark_discontinued";
+  return null;
+}
+
+export function catalogPublicationBaseline(
+  card: CatalogBaselineSource,
+): Record<string, unknown> {
+  if (
+    !nonEmpty(card.id) || !nonEmpty(card.card_name) ||
+    (card.updated_at !== null &&
+      (!nonEmpty(card.updated_at) ||
+        !Number.isFinite(Date.parse(card.updated_at))))
+  ) throw new Error("invalid_catalog_baseline");
+  return {
+    card_id: card.id,
+    card_name: card.card_name,
+    network: card.network ?? null,
+    annual_fee: card.annual_fee ?? null,
+    joining_fee: card.joining_fee ?? null,
+    apr: card.apr ?? null,
+    card_url: card.card_url ?? null,
+    is_discontinued: card.is_discontinued === true,
+    updated_at: card.updated_at ?? null,
+  };
+}
+
+export function hasStrongExplicitCardDiscontinuation(text: string): boolean {
+  return /\b(?:this\s+)?(?:credit\s+)?card\s+(?:has\s+been\s+|is\s+)(?:discontinued|withdrawn)\b|\b(?:this\s+)?(?:credit\s+)?card\s+is\s+no\s+longer\s+(?:available|issued)\b/i
+    .test(text.slice(0, 120_000));
+}
+
+export async function proposeCatalogLifecycleReview(
+  db: PublicationClient,
+  input: CatalogLifecycleReviewInput,
+): Promise<string> {
+  const parserVersion = input.parserVersion?.trim() || "benefits-v6";
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      .test(input.cardId) ||
+    !["mark_discontinued", "reactivate"].includes(input.suggestedAction) ||
+    !input.sourceObservation || Array.isArray(input.sourceObservation) ||
+    typeof input.sourceObservation !== "object" ||
+    !nonEmpty(input.sourceUrl) ||
+    !/^[0-9a-f]{64}$/i.test(input.sourceUrlHash) ||
+    (input.contentHash !== undefined && input.contentHash !== null &&
+      !/^[0-9a-f]{64}$/i.test(input.contentHash)) ||
+    parserVersion !== "benefits-v6"
+  ) throw new Error("invalid_catalog_lifecycle_review");
+
+  const { data, error } = await db.rpc("stage_card_catalog_lifecycle_review", {
+    _card_id: input.cardId,
+    _suggested_action: input.suggestedAction,
+    _source_observation: input.sourceObservation,
+    _source_url: input.sourceUrl,
+    _source_url_hash: input.sourceUrlHash.toLowerCase(),
+    _content_hash: input.contentHash?.toLowerCase() ?? null,
+    _parser_version: parserVersion,
+  });
+  if (error) throw error;
+  if (
+    typeof data !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      .test(data)
+  ) throw new Error("invalid_catalog_lifecycle_review_outcome");
+  return data;
+}
+
 export async function publishReviewedCardIdentity(
   db: PublicationClient,
   input: ReviewedCatalogPublication,
@@ -146,6 +253,18 @@ export async function publishReviewedCardIdentity(
     if (input.reviewItemId || input.actorId) {
       throw new Error("invalid_verified_source_authority");
     }
+  } else if (input.action === "observe_existing") {
+    const sourceObservation = input.reviewedFields.source_observation;
+    if (
+      input.reviewItemId || input.actorId ||
+      !nonEmpty(input.reviewedFields.card_id) ||
+      !sourceObservation || typeof sourceObservation !== "object" ||
+      Array.isArray(sourceObservation) ||
+      input.reviewedFields.source_type !== "official_html" ||
+      (sourceObservation as Record<string, unknown>).identity_validated !==
+        true ||
+      (sourceObservation as Record<string, unknown>).source_status !== 200
+    ) throw new Error("invalid_existing_observation_authority");
   } else if (
     !REVIEWED_ACTIONS.has(input.action) || !nonEmpty(input.reviewItemId) ||
     !nonEmpty(input.actorId)

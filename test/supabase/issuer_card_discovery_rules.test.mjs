@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHash } from "node:crypto";
 
 import { persistCrawlerCandidate } from "../../supabase/functions/_shared/issuer_card_crawl.ts";
+
+const hashUrl = (value) => createHash("sha256").update(value).digest("hex");
 
 function candidate(overrides = {}) {
   return {
@@ -22,11 +25,16 @@ function createDb(
     {},
 ) {
   const state = {
-    catalogRows,
+    catalogRows: catalogRows.map((row) => ({
+      card_type: "credit",
+      is_discontinued: false,
+      ...row,
+    })),
     aliasRows,
     jobs: [...jobs],
     reviews: [],
     calls: [],
+    rpcCalls: [],
   };
 
   const result = (table, action, filters, payload) => {
@@ -170,8 +178,44 @@ function createDb(
       };
       return query;
     },
-    rpc() {
-      throw new Error("crawler persistence must not resolve catalog identity");
+    async rpc(name, args) {
+      state.rpcCalls.push({ name, args });
+      if (name === "publish_card_catalog_identity") {
+        const job = state.jobs.find((row) => row.id === args._discovery_job_id);
+        if (job) {
+          job.status = "resolved";
+          job.resolved_card_id = args._reviewed_fields.card_id;
+        }
+        return {
+          data: [{
+            card_id: args._reviewed_fields.card_id,
+            job_id: args._discovery_job_id,
+            resulting_status: "resolved",
+          }],
+          error: null,
+        };
+      }
+      if (name === "stage_card_catalog_lifecycle_review") {
+        const card = state.catalogRows.find((row) => row.id === args._card_id);
+        const review = {
+          id: "33333333-3333-4333-8333-333333333333",
+          status: "pending",
+          proposed_fields: {
+            card_id: args._card_id,
+            issuer: card?.bank,
+            suggested_action: args._suggested_action,
+            source_observation: args._source_observation,
+            catalog_baseline: { card_id: args._card_id },
+          },
+          source_evidence: {
+            source_observation: args._source_observation,
+            source_url: args._source_url,
+          },
+        };
+        state.reviews.push(review);
+        return { data: review.id, error: null };
+      }
+      return { data: null, error: { message: `unexpected RPC ${name}` } };
     },
   };
   return db;
@@ -193,8 +237,16 @@ test("returns a URL-hash catalog card only when the fetched candidate identity a
   const result = await persistCrawlerCandidate(db, "Axis Bank", candidate());
 
   assert.deepEqual(result, { outcome: "existing", catalogCardId: "card-url" });
-  assert.equal(db.state.jobs.length, 0);
+  assert.equal(db.state.jobs.length, 1);
   assert.equal(db.state.reviews.length, 0);
+  assert.equal(db.state.jobs[0].status, "resolved");
+  assert.equal(db.state.rpcCalls.length, 1);
+  assert.equal(
+    db.state.rpcCalls[0].name,
+    "publish_card_catalog_identity",
+    "existing identity bypassed central publication",
+  );
+  assert.equal(db.state.rpcCalls[0].args._action, "observe_existing");
 });
 
 test("does not let a body match override a mismatched URL hash binding", async () => {
@@ -246,6 +298,30 @@ test("does not bind a crawler candidate across a stored payment network", async 
   assert.equal(result.catalogCardId, undefined);
 });
 
+test("does not bind a crawler candidate when observed network is absent but stored network is authoritative", async () => {
+  const db = createDb({
+    catalogRows: [{
+      id: "card-visa",
+      bank: "Axis Bank",
+      card_name: "Neo",
+      network: "Visa",
+    }],
+  });
+
+  const result = await persistCrawlerCandidate(
+    db,
+    "Axis Bank",
+    candidate({ network: undefined }),
+  );
+
+  assert.deepEqual(result, { outcome: "review", reviewId: "review-1" });
+  assert.equal(
+    db.state.rpcCalls.length,
+    0,
+    "weak observation reached publication",
+  );
+});
+
 test("fails closed when one opaque resource hash has conflicting DB bindings", async () => {
   const hash = "d".repeat(64);
   const db = createDb({
@@ -267,7 +343,7 @@ test("fails closed when one opaque resource hash has conflicting DB bindings", a
   assert.equal(db.state.reviews.length, 0);
 });
 
-test("returns one canonical issuer/name catalog candidate without queueing crawler work", async () => {
+test("observes one canonical issuer/name catalog candidate through publication", async () => {
   const db = createDb({
     catalogRows: [
       {
@@ -282,23 +358,45 @@ test("returns one canonical issuer/name catalog candidate without queueing crawl
   const result = await persistCrawlerCandidate(db, "Axis Bank", candidate());
 
   assert.deepEqual(result, { outcome: "existing", catalogCardId: "card-neo" });
-  assert.equal(db.state.jobs.length, 0);
+  assert.equal(db.state.jobs.length, 1);
   assert.equal(db.state.reviews.length, 0);
-  assert.equal(
-    db.state.calls.some(({ table }) => table === "card_catalog"),
-    false,
-  );
-  assert.equal(
-    db.state.calls.some(({ table }) => table === "card_catalog_aliases"),
-    false,
-  );
-  assert.equal(
-    db.state.calls.some(({ table }) => table === "card_catalog_provenance"),
-    false,
+  assert.equal(db.state.rpcCalls.length, 1);
+  assert.equal(db.state.rpcCalls[0].args._action, "observe_existing");
+  assert.equal(db.state.rpcCalls[0].args._reviewed_fields.card_id, "card-neo");
+});
+
+test("replays an existing-card observation through publication without creating review work", async () => {
+  const db = createDb({
+    catalogRows: [
+      {
+        id: "card-neo",
+        bank: "Axis Bank",
+        card_name: "Neo",
+        network: "Visa",
+      },
+    ],
+  });
+
+  const first = await persistCrawlerCandidate(db, "Axis Bank", candidate());
+  const repeated = await persistCrawlerCandidate(db, "Axis Bank", candidate());
+
+  assert.deepEqual(first, { outcome: "existing", catalogCardId: "card-neo" });
+  assert.deepEqual(repeated, {
+    outcome: "existing",
+    catalogCardId: "card-neo",
+  });
+  assert.equal(db.state.jobs.length, 1);
+  assert.equal(db.state.reviews.length, 0);
+  assert.equal(db.state.rpcCalls.length, 2);
+  assert.ok(
+    db.state.rpcCalls.every((call) =>
+      call.name === "publish_card_catalog_identity" &&
+      call.args._action === "observe_existing"
+    ),
   );
 });
 
-test("returns one normalized alias catalog candidate without queueing crawler work", async () => {
+test("does not let a weak alias rename a differently named catalog identity", async () => {
   const db = createDb({
     catalogRows: [
       {
@@ -319,9 +417,10 @@ test("returns one normalized alias catalog candidate without queueing crawler wo
 
   const result = await persistCrawlerCandidate(db, "Axis Bank", candidate());
 
-  assert.deepEqual(result, { outcome: "existing", catalogCardId: "card-alt" });
-  assert.equal(db.state.jobs.length, 0);
-  assert.equal(db.state.reviews.length, 0);
+  assert.deepEqual(result, { outcome: "review", reviewId: "review-1" });
+  assert.equal(db.state.jobs.length, 1);
+  assert.equal(db.state.reviews.length, 1);
+  assert.equal(db.state.rpcCalls.length, 0);
 });
 
 test("queues ambiguous catalog candidates for review instead of selecting one", async () => {
@@ -358,26 +457,73 @@ test("queues a genuinely new crawler product for review and reuses that service 
   assert.deepEqual(repeated, { outcome: "duplicate", reviewId: "review-1" });
   assert.equal(db.state.jobs.length, 1);
   assert.equal(db.state.reviews.length, 1);
-  assert.deepEqual(db.state.reviews[0].proposed_fields, {
-    issuer: "Axis Bank",
-    cardName: "Neo",
-    network: "Visa",
-    aliases: ["Neo Credit Card", "Axis Neo Credit Card"],
-    official_url: "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
-  });
+  const proposed = db.state.reviews[0].proposed_fields;
+  assert.equal(proposed.issuer, "Axis Bank");
+  assert.equal(proposed.cardName, "Neo");
+  assert.equal(proposed.network, "Visa");
+  assert.deepEqual(proposed.aliases, [
+    "Neo Credit Card",
+    "Axis Neo Credit Card",
+  ]);
+  assert.equal(
+    proposed.submitted_url,
+    "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+  );
+  assert.equal(proposed.final_url, proposed.submitted_url);
+  assert.match(proposed.submitted_url_hash, /^[0-9a-f]{64}$/);
+  assert.equal(proposed.final_url_hash, proposed.submitted_url_hash);
+});
+
+test("crawler proposal keeps exact queryful submitted/final URLs paired with their hashes", async () => {
+  const submitted =
+    "https://www.axis.bank.in/cards/credit-card/neo-credit-card?variant=gold&lang=en";
+  const final =
+    "https://www.axis.bank.in/cards/credit-card/neo-credit-card?variant=gold&lang=en&version=2";
+  const submittedHash = hashUrl(submitted);
+  const finalHash = hashUrl(final);
+  const db = createDb();
+
+  await persistCrawlerCandidate(
+    db,
+    "Axis Bank",
+    candidate({
+      submittedUrl: submitted,
+      finalUrl: final,
+      submittedResourceIdentityHash: submittedHash,
+      finalResourceIdentityHash: finalHash,
+      contentHash: "c".repeat(64),
+      retrievedAt: "2026-08-20T00:00:00.000Z",
+      sourceStatus: 200,
+    }),
+  );
+
+  const proposal = db.state.reviews[0].proposed_fields;
+  assert.equal(proposal.submitted_url, submitted);
+  assert.equal(proposal.final_url, final);
+  assert.equal(proposal.submitted_url_hash, submittedHash);
+  assert.equal(proposal.final_url_hash, finalHash);
+  assert.notEqual(
+    proposal.official_url,
+    proposal.final_url,
+    "display URL replaced exact final resource identity",
+  );
 });
 
 test("query-selected crawler variants keep distinct opaque review identities", async () => {
   const db = createDb();
   const display = "https://www.axis.bank.in/cards/credit-card/regalia";
-  const goldHash = "b".repeat(64);
-  const platinumHash = "c".repeat(64);
+  const goldUrl = `${display}?variant=gold`;
+  const platinumUrl = `${display}?variant=platinum`;
+  const goldHash = hashUrl(goldUrl);
+  const platinumHash = hashUrl(platinumUrl);
 
   const gold = await persistCrawlerCandidate(
     db,
     "Axis Bank",
     candidate({
       canonicalUrl: display,
+      submittedUrl: goldUrl,
+      finalUrl: goldUrl,
       proposedName: "Regalia Gold Credit Card",
       aliases: ["Regalia Gold"],
       submittedResourceIdentityHash: goldHash,
@@ -389,6 +535,8 @@ test("query-selected crawler variants keep distinct opaque review identities", a
     "Axis Bank",
     candidate({
       canonicalUrl: display,
+      submittedUrl: platinumUrl,
+      finalUrl: platinumUrl,
       proposedName: "Regalia Platinum Credit Card",
       aliases: ["Regalia Platinum"],
       submittedResourceIdentityHash: platinumHash,
@@ -403,6 +551,93 @@ test("query-selected crawler variants keep distinct opaque review identities", a
     db.state.jobs.map((job) => job.evidence.url_hash),
     [goldHash, platinumHash],
     "opaque final identities were replaced by display hashes",
+  );
+});
+
+test("different submitted selectors stay distinct when they share one final redirect", async () => {
+  const db = createDb();
+  const display = "https://www.axis.bank.in/cards/credit-card/neo-credit-card";
+  const final = `${display}?lang=en`;
+  const finalHash = hashUrl(final);
+  const gold = `${display}?variant=gold`;
+  const platinum = `${display}?variant=platinum`;
+
+  const first = await persistCrawlerCandidate(
+    db,
+    "Axis Bank",
+    candidate({
+      submittedUrl: gold,
+      finalUrl: final,
+      submittedResourceIdentityHash: hashUrl(gold),
+      finalResourceIdentityHash: finalHash,
+    }),
+  );
+  const second = await persistCrawlerCandidate(
+    db,
+    "Axis Bank",
+    candidate({
+      submittedUrl: platinum,
+      finalUrl: final,
+      submittedResourceIdentityHash: hashUrl(platinum),
+      finalResourceIdentityHash: finalHash,
+    }),
+  );
+
+  assert.deepEqual(first, { outcome: "review", reviewId: "review-1" });
+  assert.deepEqual(second, { outcome: "review", reviewId: "review-2" });
+  assert.equal(db.state.jobs.length, 2, "final redirect collapsed selectors");
+  assert.notEqual(
+    db.state.jobs[0].dedupe_key,
+    db.state.jobs[1].dedupe_key,
+    "submitted resource identity was absent from dedupe",
+  );
+});
+
+test("discontinued exact identity is staged as reviewed reactivation", async () => {
+  const cardId = "11111111-1111-4111-8111-111111111111";
+  const db = createDb({
+    catalogRows: [{
+      id: cardId,
+      bank: "Axis Bank",
+      card_name: "Neo",
+      network: "Visa",
+      is_discontinued: true,
+      updated_at: "2026-08-19T00:00:00.000Z",
+    }],
+  });
+
+  const reappearanceUrl =
+    "https://www.axis.bank.in/cards/credit-card/neo-credit-card?variant=standard";
+
+  const result = await persistCrawlerCandidate(
+    db,
+    "Axis Bank",
+    candidate({
+      submittedUrl: reappearanceUrl,
+      finalUrl: reappearanceUrl,
+      submittedResourceIdentityHash: hashUrl(reappearanceUrl),
+      finalResourceIdentityHash: hashUrl(reappearanceUrl),
+      contentHash: "b".repeat(64),
+      retrievedAt: "2026-08-20T00:00:00.000Z",
+      sourceStatus: 200,
+    }),
+  );
+
+  assert.deepEqual(result, {
+    outcome: "review",
+    reviewId: "33333333-3333-4333-8333-333333333333",
+  });
+  assert.equal(db.state.rpcCalls.length, 1);
+  assert.equal(
+    db.state.rpcCalls[0].name,
+    "stage_card_catalog_lifecycle_review",
+  );
+  assert.equal(db.state.rpcCalls[0].args._suggested_action, "reactivate");
+  assert.equal(db.state.rpcCalls[0].args._card_id, cardId);
+  assert.equal(db.state.reviews[0].proposed_fields.card_id, cardId);
+  assert.equal(
+    db.state.reviews[0].proposed_fields.suggested_action,
+    "reactivate",
   );
 });
 

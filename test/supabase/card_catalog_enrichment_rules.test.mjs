@@ -169,6 +169,17 @@ test("catalog lifecycle observations create review evidence without directly cha
   );
   assert.match(source, /suggested_action:\s*lifecycleSuggestion/);
   assert.match(source, /source_status:\s*410/);
+  assert.match(
+    source,
+    /kind:\s*lifecycleSuggestion\s*===\s*["']reactivate["']/,
+  );
+  assert.match(source, /["']exact_card_reappearance["']/);
+  assert.match(source, /["']strong_explicit_discontinuation["']/);
+  assert.match(source, /identity_validated:\s*true/);
+  assert.match(
+    source,
+    /kind:\s*strongGoneObservation[\s\S]*["']strong_gone_observation["'][\s\S]*source_status:\s*strongGoneObservation\s*\?\s*410/,
+  );
   assert.doesNotMatch(source, /is_discontinued\s*:/);
   assert.doesNotMatch(source, /\.update\(\{[\s\S]{0,180}is_discontinued/);
 });

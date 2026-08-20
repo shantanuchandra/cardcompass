@@ -67,7 +67,41 @@ test("resolver independently reconciles submitted and final hash bindings before
   assert.match(resolver, /url_identity_incompatible/i);
   assert.match(resolver, /normalized_network/i);
   assert.match(resolver, /card_catalog_source_matches_issuer/i);
+  assert.match(resolver, /card_type[\s\S]*credit/i);
+  assert.match(resolver, /normalized_tier/i);
+  assert.match(resolver, /resolved_card_type/i);
   assert.doesNotMatch(resolver, /ORDER BY[^;]*created_at[\s\S]{0,80}LIMIT 1/i);
+});
+
+test("trusted existing observations are explicit, service-only, and still enqueue v6", async () => {
+  const sql = await migrationSql();
+  const publish = functionBody(sql, "publish_card_catalog_identity");
+  assert.match(publish, /observe_existing/i);
+  assert.match(
+    publish,
+    /_action = 'observe_existing'[\s\S]*_review_item_id IS NOT NULL[\s\S]*_actor_id IS NOT NULL/i,
+  );
+  assert.match(
+    publish,
+    /strong_existing_official_card[\s\S]*identity_validated/i,
+  );
+  assert.match(
+    publish,
+    /observe_existing[\s\S]*resolved_card_id[\s\S]*resolve_card_catalog_identity/i,
+  );
+  assert.match(
+    publish,
+    /job_row\.status IN \('resolved', 'rejected'\)[\s\S]*_action = 'observe_existing'[\s\S]*job_row\.resolved_card_id = resolved_card_id/i,
+  );
+  assert.match(
+    publish,
+    /INSERT INTO public\.card_catalog_provenance[\s\S]*WHERE NOT EXISTS[\s\S]*submitted_url_hash = submitted_hash[\s\S]*content_hash = publish_card_catalog_identity\.content_hash/i,
+  );
+  assert.doesNotMatch(
+    publish,
+    /observed_job\.status = 'resolved'[\s\S]{0,300}RETURN NEXT/i,
+  );
+  assert.match(publish, /unexpected_enrichment_enqueue/i);
 });
 
 test("publication persists the full reviewed artifact set and validates one v6 enqueue", async () => {
@@ -133,6 +167,11 @@ test("reviewed page moves preserve one recurring job and its historical observat
     publish,
     /DELETE FROM public\.card_catalog_(?:provenance|url_keys)/i,
   );
+  assert.match(publish, /legacy_catalog_url_backfill/i);
+  assert.match(
+    publish,
+    /card_row\.card_url[\s\S]*INSERT INTO public\.card_catalog_url_keys[\s\S]*INSERT INTO public\.card_catalog_provenance/i,
+  );
   const trigger = sql.match(
     /CREATE TRIGGER schedule_terminal_card_enrichment_observation[\s\S]*?EXECUTE FUNCTION public\.schedule_terminal_card_enrichment_observation\(\);/i,
   )?.[0];
@@ -177,12 +216,51 @@ test("reviewed fields and lifecycle actions fail closed", async () => {
   assert.match(publish, /actor_required/i);
   assert.match(
     publish,
+    /public\.users[\s\S]*is_admin[\s\S]*administrator_required/i,
+    "central RPC trusts an arbitrary actor UUID",
+  );
+  assert.match(publish, /catalog_baseline/i);
+  assert.match(publish, /stale_catalog_baseline/i);
+  assert.match(
+    publish,
+    /strong_gone_observation[\s\S]*source_status[\s\S]*410[\s\S]*strong_explicit_discontinuation[\s\S]*identity_validated[\s\S]*exact_card_reappearance/i,
+  );
+  assert.match(
+    publish,
     /_action = 'edit_approve'[\s\S]*edit_target_card_id[\s\S]*resolve_card_catalog_identity[\s\S]*edit_target_conflict/i,
   );
   assert.doesNotMatch(
     publish,
     /http_(?:404|410)[\s\S]{0,120}is_discontinued\s*=/i,
   );
+});
+
+test("reviewed edit and lifecycle proposals are optimistically bound to the live catalog", async () => {
+  const sql = await migrationSql();
+  const baseline = functionBody(sql, "card_catalog_baseline_matches");
+  const publish = functionBody(sql, "publish_card_catalog_identity");
+  const lifecycle = functionBody(sql, "stage_card_catalog_lifecycle_review");
+  assert.match(baseline, /_updated_at/i);
+  assert.match(baseline, /_annual_fee/i);
+  assert.match(baseline, /_is_discontinued/i);
+  assert.match(publish, /card_catalog_baseline_matches\(/i);
+  assert.match(lifecycle, /catalog_baseline/i);
+  assert.match(sql, /pending_edit_baseline_assertion_failed/i);
+  assert.match(sql, /pending_lifecycle_baseline_assertion_failed/i);
+});
+
+test("recurring lifecycle review staging is bounded, idempotent, and excludes weak absence", async () => {
+  const sql = await migrationSql();
+  const lifecycle = functionBody(sql, "stage_card_catalog_lifecycle_review");
+  assert.match(lifecycle, /strong_gone_observation/i);
+  assert.match(lifecycle, /strong_explicit_discontinuation/i);
+  assert.match(lifecycle, /exact_card_reappearance/i);
+  assert.match(lifecycle, /identity_validated/i);
+  assert.match(lifecycle, /source_status/i);
+  assert.match(lifecycle, /catalog_baseline/i);
+  assert.match(lifecycle, /ON CONFLICT|maybe_existing|existing_review/i);
+  assert.doesNotMatch(lifecycle, /is_discontinued\s*=/i);
+  assert.doesNotMatch(lifecycle, /http_404/i);
 });
 
 test("SQL resource identity matches bounded TypeScript functional-query policy", async () => {
@@ -194,9 +272,47 @@ test("SQL resource identity matches bounded TypeScript functional-query policy",
   assert.match(canonical, /length\(query_value\) > 512/i);
   assert.match(canonical, /query_key ~ '\^utm_'/i);
   assert.match(canonical, /'document'[\s\S]*'variant'/i);
+  assert.match(canonical, /decode_card_resource_component/i);
+  assert.match(canonical, /normalize_card_resource_path/i);
   assert.match(issuerMatch, /axis\.bank\.in/i);
   assert.match(issuerMatch, /americanexpress\.com/i);
   assert.match(issuerMatch, /hostname LIKE '%\.' \|\| approved\.domain/i);
+  assert.match(sql, /encoded_query_key_parity_assertion_failed/i);
+  assert.match(sql, /dot_path_parity_assertion_failed/i);
+  assert.match(sql, /query_order_duplicate_parity_assertion_failed/i);
+});
+
+test("publication validates submitted and final issuer domains independently", async () => {
+  const publish = functionBody(
+    await migrationSql(),
+    "publish_card_catalog_identity",
+  );
+  assert.match(
+    publish,
+    /card_catalog_source_matches_issuer\(issuer, submitted_url\)/i,
+  );
+  assert.match(
+    publish,
+    /card_catalog_source_matches_issuer\(issuer, final_url\)/i,
+  );
+});
+
+test("retry reopens retained review work and replay equality includes reason and merge target", async () => {
+  const publish = functionBody(
+    await migrationSql(),
+    "publish_card_catalog_identity",
+  );
+  assert.match(
+    publish,
+    /_action = 'retry'[\s\S]*status = 'pending'[\s\S]*review_item_id = review_row\.id/i,
+  );
+  assert.match(
+    publish,
+    /review_row\.status NOT IN \('pending', 'rejected'\)/i,
+  );
+  assert.match(publish, /replay_audit\.details->>'reason'/i);
+  assert.match(publish, /replay_audit\.details->>'merge_card_id'/i);
+  assert.match(publish, /'merge_card_id', _merge_card_id/i);
 });
 
 test("compatibility wrapper delegates without duplicating publication artifacts", async () => {
@@ -268,6 +384,10 @@ test("production entry paths cannot bypass reviewed publication", async () => {
       "../../supabase/functions/_shared/issuer_card_crawl.ts",
       import.meta.url,
     ),
+    recurring: new URL(
+      "../../supabase/functions/benefit-enrichment-batch/index.ts",
+      import.meta.url,
+    ),
   };
   const sources = Object.fromEntries(
     await Promise.all(
@@ -289,6 +409,11 @@ test("production entry paths cannot bypass reviewed publication", async () => {
     );
   }
   assert.match(sources.admin, /publishReviewedCardIdentity\(db,/);
+  assert.match(sources.discovery, /action:\s*["']observe_existing["']/);
+  assert.match(sources.crawler, /action:\s*["']observe_existing["']/);
+  assert.match(sources.recurring, /proposeCatalogLifecycleReview\(/);
+  assert.match(sources.recurring, /catalogLifecycleSuggestion\(/);
+  assert.doesNotMatch(sources.discovery, /function markResolved\(/);
   assert.match(sources.discovery, /authenticated_source_requires_admin_review/);
   assert.match(sources.enrichment, /catalog_review_context_required/);
   assert.doesNotMatch(sources.crawler, /resolve_card_catalog_identity/);

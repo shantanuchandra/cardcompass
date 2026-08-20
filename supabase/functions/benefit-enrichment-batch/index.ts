@@ -24,6 +24,11 @@ import {
   persistCrawlerCandidate,
 } from "../_shared/issuer_card_crawl.ts";
 import {
+  catalogLifecycleSuggestion,
+  hasStrongExplicitCardDiscontinuation,
+  proposeCatalogLifecycleReview,
+} from "../_shared/catalog_identity_publication.ts";
+import {
   approvedStoredQueryParameters,
   createOfficialRobotsCache,
   fetchOfficialIssuerObservation,
@@ -1033,13 +1038,13 @@ export async function loadCatalogIdentity(
   if (cardError || !card) throw cardError ?? new Error("identity_mismatch");
   const { data: catalogRows, error: catalogError } = await db
     .from("card_catalog")
-    .select("id,card_name,bank")
-    .ilike("bank", String(card.bank))
-    .eq("is_discontinued", false);
+    .select("id,card_name,bank,network,card_type,is_discontinued")
+    .ilike("bank", String(card.bank));
   if (catalogError) throw catalogError;
   const catalog = (catalogRows ?? []).filter((row: Record<string, unknown>) =>
     String(row.bank ?? "").trim().toLowerCase() ===
-      String(card.bank).trim().toLowerCase()
+      String(card.bank).trim().toLowerCase() &&
+    String(row.card_type ?? "").trim().toLowerCase() === "credit"
   );
   if (
     !catalog.some((row: Record<string, unknown>) =>
@@ -1050,6 +1055,9 @@ export async function loadCatalogIdentity(
       id: card.id,
       card_name: card.card_name,
       bank: card.bank,
+      network: card.network,
+      card_type: card.card_type,
+      is_discontinued: card.is_discontinued,
     });
   }
   const cardIds = catalog.map((row: Record<string, unknown>) => String(row.id));
@@ -1063,7 +1071,12 @@ export async function loadCatalogIdentity(
 
 function requireMatchingIdentity(
   job: EnrichmentJob,
-  catalog: Array<{ id: string; card_name: string }>,
+  catalog: Array<{
+    id: string;
+    card_name: string;
+    network?: string | null;
+    card_type?: string | null;
+  }>,
   aliases: Array<{ card_id: string; alias: string }>,
   html: string,
   canonicalUrl: string,
@@ -1082,6 +1095,7 @@ function requireMatchingIdentity(
     classification.proposedName ?? "",
     catalog,
     aliases,
+    classification.network,
   );
 }
 
@@ -1089,33 +1103,53 @@ export function requireExactCatalogIdentity(
   targetCardId: string,
   issuer: string,
   proposedName: string,
-  catalog: Array<{ id: string; card_name: string }>,
+  catalog: Array<{
+    id: string;
+    card_name: string;
+    network?: string | null;
+    card_type?: string | null;
+  }>,
   aliases: Array<{ card_id: string; alias: string }>,
+  proposedNetwork?: string | null,
 ): void {
-  const exactProduct = (value: string): string => {
+  const exactProduct = (value: string, network?: string | null): string => {
     const base = normalizedProduct(value, issuer);
     const networks = [
       /\b(?:amex|american\s+express)\b/i.test(value) ? "amex" : "",
       /\bmastercard\b/i.test(value) ? "mastercard" : "",
       /\brupay\b/i.test(value) ? "rupay" : "",
       /\bvisa\b/i.test(value) ? "visa" : "",
+      /\b(?:amex|american\s+express)\b/i.test(network ?? "") ? "amex" : "",
+      /\bmastercard\b/i.test(network ?? "") ? "mastercard" : "",
+      /\brupay\b/i.test(network ?? "") ? "rupay" : "",
+      /\bvisa\b/i.test(network ?? "") ? "visa" : "",
     ].filter(Boolean).sort();
-    return [base, ...networks].join("|");
+    return [base, ...new Set(networks)].join("|");
   };
   const proposedBase = normalizedProduct(proposedName, issuer);
-  const proposed = exactProduct(proposedName);
+  const proposed = exactProduct(proposedName, proposedNetwork);
   if (proposedBase.length < 2) throw new Error("identity_mismatch");
-  const activeIds = new Set(catalog.map((row) => String(row.id)));
+  const activeIds = new Set(
+    catalog.filter((row) => row.card_type?.trim().toLowerCase() === "credit")
+      .map((row) => String(row.id)),
+  );
   const matches = new Set<string>();
   for (const row of catalog) {
-    if (exactProduct(row.card_name) === proposed) {
+    if (
+      row.card_type?.trim().toLowerCase() === "credit" &&
+      exactProduct(row.card_name, row.network) === proposed
+    ) {
       matches.add(String(row.id));
     }
   }
   for (const alias of aliases) {
     if (
       activeIds.has(String(alias.card_id)) &&
-      exactProduct(alias.alias) === proposed
+      exactProduct(
+          alias.alias,
+          catalog.find((row) => String(row.id) === String(alias.card_id))
+            ?.network,
+        ) === proposed
     ) {
       matches.add(String(alias.card_id));
     }
@@ -1387,6 +1421,27 @@ export async function processJob(
         },
       };
       failureCategory = errorCode;
+      const lifecycleAction = catalogLifecycleSuggestion({
+        isDiscontinued: card.is_discontinued === true,
+        httpStatus: Number(fetchSummary.http_status ?? 0) || null,
+        identityValidated: false,
+        explicitDiscontinuation: false,
+      });
+      if (lifecycleAction) {
+        await proposeCatalogLifecycleReview(db, {
+          cardId: String(card.id),
+          suggestedAction: lifecycleAction,
+          sourceUrl: job.canonical_url,
+          sourceUrlHash: await sha256Text(job.canonical_url),
+          contentHash: null,
+          sourceObservation: {
+            ...fetchSummary,
+            kind: "strong_gone_observation",
+            source_status: fetchSummary.http_status,
+            identity_validated: false,
+          },
+        });
+      }
       if (fetchObservation.disposition === "blocked") {
         outcome = "quarantined";
       } else if (fetchObservation.disposition === "review_required") {
@@ -1470,6 +1525,31 @@ export async function processJob(
       throw error;
     }
     fetchSummary.card_identity_validated = true;
+    const lifecycleAction = catalogLifecycleSuggestion({
+      isDiscontinued: card.is_discontinued === true,
+      httpStatus: page.status,
+      identityValidated: true,
+      explicitDiscontinuation: hasStrongExplicitCardDiscontinuation(page.text),
+    });
+    if (lifecycleAction) {
+      const lifecycleUrl = page.finalResourceUrl ?? page.finalUrl;
+      await proposeCatalogLifecycleReview(db, {
+        cardId: String(card.id),
+        suggestedAction: lifecycleAction,
+        sourceUrl: lifecycleUrl,
+        sourceUrlHash: page.finalResourceIdentityHash ??
+          await sha256Text(lifecycleUrl),
+        contentHash: page.contentHash,
+        sourceObservation: {
+          ...fetchSummary,
+          kind: lifecycleAction === "reactivate"
+            ? "exact_card_reappearance"
+            : "strong_explicit_discontinuation",
+          source_status: page.status,
+          identity_validated: true,
+        },
+      });
+    }
     const collected = await collectSupportingBenefitDocuments({
       issuer: job.issuer,
       primary: page,

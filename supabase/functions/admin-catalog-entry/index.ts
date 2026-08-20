@@ -43,6 +43,7 @@ export function safeError(error: unknown): { error: string; status: number } {
       "edit_target_conflict",
       "stale_catalog_review",
       "stale_catalog_publication",
+      "stale_catalog_baseline",
     ]
   ) {
     if (message.includes(code)) return { error: code, status: 409 };

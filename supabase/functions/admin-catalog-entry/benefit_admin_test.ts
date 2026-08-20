@@ -104,6 +104,11 @@ Deno.test("reviewed page-move conflicts remain explicitly retryable", async () =
     identity.status === 409 && identity.error === "conflicting_url_identity",
     "reviewed identity conflict lost its stable outcome",
   );
+  const stale = module.safeError({ message: "stale_catalog_baseline" });
+  assert(
+    stale.status === 409 && stale.error === "stale_catalog_baseline",
+    "stale reviewed catalog state was not returned as a retryable conflict",
+  );
 });
 
 function request(body: Record<string, unknown>, token = "valid-token") {

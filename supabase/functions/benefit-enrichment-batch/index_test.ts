@@ -212,9 +212,120 @@ Deno.test("failed primary observations reach the finalizer with bounded retry an
   }
 });
 
+Deno.test("only a recurring 410 stages a bounded catalog discontinuation review", async () => {
+  for (const status of [404, 410]) {
+    const lifecycleCalls: Record<string, unknown>[] = [];
+    const finalizations: Record<string, unknown>[] = [];
+    const card = {
+      id: "00000000-0000-4000-8000-000000000001",
+      card_name: "Issuer Test Card",
+      bank: "Issuer",
+      network: "Visa",
+      card_type: "credit",
+      card_url: "https://issuer.example/card",
+      is_discontinued: false,
+    };
+    const db = {
+      from(table: string) {
+        const query = {
+          select() {
+            return this;
+          },
+          eq() {
+            return this;
+          },
+          ilike() {
+            return this;
+          },
+          in() {
+            return this;
+          },
+          async single() {
+            return { data: card, error: null };
+          },
+          then<TResult1 = unknown>(
+            onfulfilled?:
+              | ((value: unknown) => TResult1 | PromiseLike<TResult1>)
+              | null,
+          ) {
+            return Promise.resolve({
+              data: table === "card_catalog" ? [card] : [],
+              error: null,
+            }).then(onfulfilled);
+          },
+        };
+        return query;
+      },
+      async rpc(name: string, args: Record<string, unknown>) {
+        if (name === "stage_card_catalog_lifecycle_review") {
+          lifecycleCalls.push(args);
+          return {
+            data: "00000000-0000-4000-8000-000000000099",
+            error: null,
+          };
+        }
+        assert(
+          name === "finalize_card_catalog_enrichment_job",
+          `unexpected RPC ${name}`,
+        );
+        finalizations.push(args);
+        return { data: "job-1", error: null };
+      },
+    };
+    const attemptedAt = new Date().toISOString();
+    await processJob(
+      db,
+      {
+        id: "job-1",
+        card_id: card.id,
+        issuer: card.bank,
+        canonical_url: card.card_url,
+        parser_version: "benefits-v6",
+        attempt_count: 1,
+        run_mode: "scheduled",
+        lease_token: "lease-1",
+        staging_id: null,
+        result_summary: {},
+      },
+      "run-1",
+      Date.now(),
+      {
+        fetchObservation: async () => ({
+          disposition: "review_required",
+          reviewReason: `http_${status}`,
+          attempts: [{ status, attemptedAt }],
+        }),
+      },
+    );
+    assert(finalizations.length === 1, `${status} was not finalized once`);
+    assert(
+      lifecycleCalls.length === (status === 410 ? 1 : 0),
+      `${status} received the wrong lifecycle-review outcome`,
+    );
+    if (status === 410) {
+      const call = lifecycleCalls[0];
+      assert(
+        call._card_id === card.id &&
+          call._suggested_action === "mark_discontinued" &&
+          call._source_url === card.card_url &&
+          /^[0-9a-f]{64}$/.test(String(call._source_url_hash)),
+        "410 lifecycle proposal was not bound to the exact catalog resource",
+      );
+      const observation = call._source_observation as Record<string, unknown>;
+      assert(
+        observation.kind === "strong_gone_observation" &&
+          observation.source_status === 410 &&
+          observation.identity_validated === false,
+        "410 lifecycle proposal lost its decisive source observation",
+      );
+    }
+  }
+});
+
 async function stableCanonicalProcessFixture(
   stagingStatusAtFinalize: "pending" | "approved" | "rejected" | null,
   materialChange = false,
+  isDiscontinued = false,
 ) {
   const cardId = "00000000-0000-4000-8000-000000000001";
   const card = {
@@ -224,10 +335,10 @@ async function stableCanonicalProcessFixture(
     network: "Visa",
     card_type: "credit",
     card_url: "https://issuer.example/credit-cards/issuer-test-card",
-    is_discontinued: false,
+    is_discontinued: isDiscontinued,
   };
   const text =
-    "<html><title>Issuer Test Card Credit Card</title><h1>Issuer Test Card Credit Card</h1><p>Get 10% cashback on dining spends.</p></html>";
+    "<html><title>Issuer Test Visa Credit Card</title><h1>Issuer Test Visa Credit Card</h1><p>Get 10% cashback on dining spends.</p></html>";
   const [proposed] = await extractGroundedBenefitsV6(
     [{ sourceUrl: card.card_url, text, contentHash: "b".repeat(64) }],
     "benefits-v6",
@@ -268,6 +379,7 @@ async function stableCanonicalProcessFixture(
   }];
   const finalizations: Record<string, unknown>[] = [];
   const stageCalls: Record<string, unknown>[] = [];
+  const lifecycleCalls: Record<string, unknown>[] = [];
   let stagingReads = 0;
   let effectiveFinalStatus: string | null = null;
   const tableRows: Record<string, Record<string, unknown>[]> = {
@@ -323,6 +435,13 @@ async function stableCanonicalProcessFixture(
       return query;
     },
     async rpc(name: string, args: Record<string, unknown>) {
+      if (name === "stage_card_catalog_lifecycle_review") {
+        lifecycleCalls.push(args);
+        return {
+          data: "00000000-0000-4000-8000-000000000099",
+          error: null,
+        };
+      }
       if (name === "stage_card_benefit_enrichment") {
         stageCalls.push(args);
         return {
@@ -402,10 +521,40 @@ async function stableCanonicalProcessFixture(
     result,
     finalization: finalizations[0],
     stageCalls,
+    lifecycleCalls,
     stagingReads,
     effectiveFinalStatus,
   };
 }
+
+Deno.test("an exact recurring reappearance stages reviewed reactivation", async () => {
+  const { lifecycleCalls, finalization } = await stableCanonicalProcessFixture(
+    null,
+    false,
+    true,
+  );
+  assert(lifecycleCalls.length === 1, "reappearance did not stage one review");
+  const call = lifecycleCalls[0];
+  assert(
+    call._card_id === "00000000-0000-4000-8000-000000000001" &&
+      call._suggested_action === "reactivate" &&
+      call._source_url ===
+        "https://issuer.example/credit-cards/issuer-test-card" &&
+      call._content_hash === "b".repeat(64),
+    "reactivation proposal was not bound to exact validated evidence",
+  );
+  const observation = call._source_observation as Record<string, unknown>;
+  assert(
+    observation.kind === "exact_card_reappearance" &&
+      observation.source_status === 200 &&
+      observation.identity_validated === true,
+    "reactivation proposal lost its exact identity evidence",
+  );
+  assert(
+    finalization?._status === "completed",
+    "reactivation review incorrectly blocked recurring benefit completion",
+  );
+});
 
 Deno.test("stable canonical 200 delegates pending reviewability to the locked finalizer", async () => {
   for (
@@ -1382,8 +1531,12 @@ Deno.test("pilot projection fails closed on missing or malformed safety metadata
 
 Deno.test("catalog identity requires an exact target match instead of a product-name substring", () => {
   const catalog = [
-    { id: "regalia", card_name: "Regalia" },
-    { id: "regalia-gold", card_name: "Regalia Gold" },
+    { id: "regalia", card_name: "Regalia", card_type: "credit" },
+    {
+      id: "regalia-gold",
+      card_name: "Regalia Gold",
+      card_type: "credit",
+    },
   ];
   let wrongVariant: unknown;
   try {
@@ -1419,8 +1572,12 @@ Deno.test("catalog identity rejects an alias shared by active issuer variants", 
       "HDFC Bank",
       "Regalia Premium",
       [
-        { id: "regalia", card_name: "Regalia" },
-        { id: "regalia-gold", card_name: "Regalia Gold" },
+        { id: "regalia", card_name: "Regalia", card_type: "credit" },
+        {
+          id: "regalia-gold",
+          card_name: "Regalia Gold",
+          card_type: "credit",
+        },
       ],
       [
         { card_id: "regalia", alias: "Regalia Premium" },
@@ -1438,10 +1595,11 @@ Deno.test("catalog identity rejects an alias shared by active issuer variants", 
 
 Deno.test("catalog identity keeps payment-network words when sibling variants would otherwise collide", () => {
   const catalog = [
-    { id: "hpcl-coral", card_name: "Hpcl Coral" },
+    { id: "hpcl-coral", card_name: "Hpcl Coral", card_type: "credit" },
     {
       id: "hpcl-coral-amex",
       card_name: "Hpcl Coral American Express",
+      card_type: "credit",
     },
   ];
 
@@ -1454,24 +1612,51 @@ Deno.test("catalog identity keeps payment-network words when sibling variants wo
   );
 });
 
+Deno.test("catalog identity never accepts an absent or non-credit card type", () => {
+  for (const cardType of [undefined, "debit"]) {
+    let error: unknown;
+    try {
+      requireExactCatalogIdentity(
+        "regalia",
+        "HDFC Bank",
+        "Regalia",
+        [{ id: "regalia", card_name: "Regalia", card_type: cardType }],
+        [],
+      );
+    } catch (caught) {
+      error = caught;
+    }
+    assert(
+      error instanceof Error && error.message === "identity_mismatch",
+      `${cardType ?? "missing"} card type reached recurring extraction`,
+    );
+  }
+});
+
 Deno.test("catalog identity loading includes an actively held discontinued target with active variants", async () => {
   const catalog = [
     {
       id: "regalia",
       card_name: "Regalia",
       bank: "HDFC Bank",
+      network: "Visa",
+      card_type: "credit",
       is_discontinued: false,
     },
     {
       id: "regalia-gold",
       card_name: "Regalia Gold",
       bank: "HDFC Bank",
+      network: "Visa",
+      card_type: "credit",
       is_discontinued: true,
     },
     {
       id: "axis",
       card_name: "Select",
       bank: "Axis Bank",
+      network: "RuPay",
+      card_type: "credit",
       is_discontinued: false,
     },
   ];
@@ -1517,7 +1702,8 @@ Deno.test("catalog identity loading includes an actively held discontinued targe
             ? catalog.filter((row) =>
               row.bank.toLowerCase() ===
                 String(filters.get("bank")).toLowerCase() &&
-              row.is_discontinued === filters.get("is_discontinued")
+              (!filters.has("is_discontinued") ||
+                row.is_discontinued === filters.get("is_discontinued"))
             )
             : aliases.filter((row) => includedIds.includes(row.card_id));
           return Promise.resolve({ data, error: null }).then(

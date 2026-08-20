@@ -352,8 +352,20 @@ test("selects URL-hash catalog candidates only after exact fetched body identity
   const selectMatch = cardDiscovery.selectCatalogUrlIdentityMatch;
   assert.equal(typeof selectMatch, "function");
   const candidates = [
-    { cardId: "gold", cardName: "Regalia Gold", aliases: [] },
-    { cardId: "platinum", cardName: "Regalia Platinum", aliases: [] },
+    {
+      cardId: "gold",
+      issuer: "HDFC Bank",
+      cardName: "Regalia Gold",
+      aliases: [],
+      cardType: "credit",
+    },
+    {
+      cardId: "platinum",
+      issuer: "HDFC Bank",
+      cardName: "Regalia Platinum",
+      aliases: [],
+      cardType: "credit",
+    },
   ];
   assert.equal(
     selectMatch("<h1>Regalia Gold Credit Card</h1>", "HDFC Bank", candidates),
@@ -371,6 +383,38 @@ test("selects URL-hash catalog candidates only after exact fetched body identity
     selectMatch("<h1>Infinia Credit Card</h1>", "HDFC Bank", candidates),
     null,
     "a URL hash alone resolved a card whose fetched identity disagreed",
+  );
+});
+
+test("weak aliases cannot claim a stored network/tier identity and non-credit rows never resolve", () => {
+  const content = "<title>Privilege Credit Card | Axis Bank</title>";
+  assert.equal(
+    cardDiscovery.selectCatalogUrlIdentityMatch(content, "Axis Bank", [{
+      cardId: "privilege-infinite",
+      issuer: "Axis Bank",
+      cardName: "Privilege Visa Infinite",
+      aliases: ["Privilege"],
+      network: "Visa",
+      cardType: "credit",
+    }]),
+    null,
+    "generic alias overrode stored Visa Infinite identity",
+  );
+  assert.equal(
+    cardDiscovery.selectCatalogUrlIdentityMatch(
+      "<title>Privilege Visa Infinite Credit Card | Axis Bank</title>",
+      "Axis Bank",
+      [{
+        cardId: "debit-privilege",
+        issuer: "Axis Bank",
+        cardName: "Privilege Visa Infinite",
+        aliases: [],
+        network: "Visa",
+        cardType: "debit",
+      }],
+    ),
+    null,
+    "non-credit catalog row entered card resolution",
   );
 });
 
@@ -410,7 +454,13 @@ test("reconciles submitted and final opaque bindings with separate lookups befor
     },
     loadCandidates: async (ids) => {
       assert.deepEqual(ids, ["gold"]);
-      return [{ cardId: "gold", cardName: "Regalia Gold", aliases: [] }];
+      return [{
+        cardId: "gold",
+        issuer: "HDFC Bank",
+        cardName: "Regalia Gold",
+        aliases: [],
+        cardType: "credit",
+      }];
     },
   });
   assert.equal(same, "gold");
@@ -434,8 +484,13 @@ test("opaque resource lookup fails closed on a non-unique binding or body mismat
       issuer: "HDFC Bank",
       content: "<h1>Regalia Platinum Credit Card</h1>",
       lookupCardIds: async () => ["gold"],
-      loadCandidates:
-        async () => [{ cardId: "gold", cardName: "Regalia Gold", aliases: [] }],
+      loadCandidates: async () => [{
+        cardId: "gold",
+        issuer: "HDFC Bank",
+        cardName: "Regalia Gold",
+        aliases: [],
+        cardType: "credit",
+      }],
     }),
     /identity_conflict/,
   );

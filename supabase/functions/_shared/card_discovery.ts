@@ -18,9 +18,11 @@ export type OfficialCardIdentityAssessment = {
 
 export type CatalogUrlIdentityCandidate = {
   cardId: string;
+  issuer: string;
   cardName: string;
   aliases: string[];
   network?: string | null;
+  cardType: string;
 };
 
 export type AutomaticGateInput = {
@@ -611,7 +613,19 @@ export function selectCatalogUrlIdentityMatch(
 ): string | null {
   const matchingIds = new Set<string>();
   for (const candidate of candidates) {
-    const expectedProducts = [candidate.cardName, ...candidate.aliases]
+    if (
+      candidate.issuer.trim().toLowerCase() !== issuer.trim().toLowerCase() ||
+      candidate.cardType.trim().toLowerCase() !== "credit"
+    ) continue;
+    const canonicalKey = identityKey(candidate.cardName, issuer);
+    const canonicalVariant = networkVariantKey(candidate.cardName);
+    const expectedProducts = [
+      candidate.cardName,
+      ...candidate.aliases.filter((alias) =>
+        identityKey(alias, issuer) === canonicalKey &&
+        (!canonicalVariant || networkVariantKey(alias) === canonicalVariant)
+      ),
+    ]
       .filter((value, index, all) => value && all.indexOf(value) === index);
     const identities = expectedProducts
       .map((expected) => exactOfficialPageIdentity(content, issuer, expected))
@@ -620,8 +634,8 @@ export function selectCatalogUrlIdentityMatch(
       );
     const storedNetwork = candidate.network?.trim().toLowerCase() ?? null;
     const networkCompatible = identities.some((identity) =>
-      !storedNetwork || !identity.network ||
-      identity.network.trim().toLowerCase() === storedNetwork
+      !storedNetwork ||
+      (identity.network?.trim().toLowerCase() ?? null) === storedNetwork
     );
     if (identities.length > 0 && networkCompatible) {
       matchingIds.add(candidate.cardId);
