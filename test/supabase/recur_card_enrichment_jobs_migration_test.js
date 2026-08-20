@@ -259,6 +259,11 @@ test('pilot qualification atomically promotes the existing exact five identities
   const sql = await migrationSql();
   const qualify = functionBody(sql, 'card_enrichment_pilot_job_is_qualified');
   const promote = functionBody(sql, 'promote_qualified_card_benefit_enrichment_pilot');
+  const validateEnvelope = functionBody(sql, 'card_enrichment_pilot_evidence_is_qualified');
+  const sourceIdentity = functionBody(sql, 'card_enrichment_pilot_source_identity_hash');
+  const sourceManifest = functionBody(sql, 'card_enrichment_pilot_source_manifest_hash');
+  const liveSnapshot = functionBody(sql, 'card_enrichment_pilot_live_state_snapshot');
+  const capturePublished = functionBody(sql, 'capture_card_enrichment_pilot_publication_snapshot');
   const initialize = functionBody(sql, 'initialize_card_benefit_enrichment_pilot');
   const cohortAction = functionBody(sql, 'card_enrichment_pilot_cohort_action');
   const enqueue = functionBody(sql, 'enqueue_card_benefit_enrichment_jobs');
@@ -275,8 +280,43 @@ test('pilot qualification atomically promotes the existing exact five identities
   assert.match(qualify, /failure_category[\s\S]*\^\[a-z0-9_\][^$]*\$/i);
   assert.match(promote, /selected_parser\s*<>\s*'benefits-v6'/i);
   assert.match(promote, /FOR UPDATE(?: OF job)?/i);
+  assert.match(promote, /card_benefits_staging[\s\S]*FOR UPDATE/i);
+  assert.match(promote, /card_catalog_review_queue[\s\S]*status\s*=\s*'pending'[\s\S]*FOR SHARE/i);
+  assert.match(promote, /card_benefit_mapping[\s\S]*FOR SHARE/i);
+  assert.match(promote, /public\.benefits[\s\S]*FOR SHARE/i);
+  assert.match(promote, /LOCK TABLE public\.card_catalog_review_queue IN SHARE MODE/i);
+  assert.match(promote, /LOCK TABLE public\.card_benefit_mapping IN SHARE MODE/i);
+  assert.match(promote, /card_benefit_enrichment_review:[\s\S]*pilot_card_id/i);
+  assert.match(promote, /normalized_fields->'pilot_evidence'->>'staging_id'/i);
   assert.match(promote, /count\(\*\)[\s\S]*<> 5/i);
-  assert.match(promote, /bool_and\([\s\S]*card_enrichment_pilot_job_is_qualified/i);
+  assert.match(promote, /bool_and\([\s\S]*card_enrichment_pilot_evidence_is_qualified/i);
+  assert.match(validateEnvelope, /verification_envelope/i);
+  assert.match(validateEnvelope, /repeat_verification_envelope/i);
+  assert.match(validateEnvelope, /canonical_json_text/i);
+  assert.match(validateEnvelope, /extensions\.digest/i);
+  assert.match(validateEnvelope, /benefit_decisions/i);
+  assert.match(validateEnvelope, /catalog_identity_conflict_count/i);
+  assert.match(validateEnvelope, /source_manifest_hash[\s\S]*card_enrichment_pilot_source_manifest_hash/i);
+  assert.match(validateEnvelope, /logicalSourceKey[\s\S]*card_enrichment_pilot_source_identity_hash\(_job\.canonical_url\)/i);
+  assert.doesNotMatch(validateEnvelope, /role' = 'primary'\)[\s\S]{0,120}url'[\s\S]*_job\.canonical_url/i);
+  assert.match(validateEnvelope, /required_source_selection_overflow[\s\S]*IS DISTINCT FROM 'false'::jsonb/i);
+  assert.match(validateEnvelope, /expected_required_source_keys[\s\S]*required_supporting/i);
+  assert.match(validateEnvelope, /role' IN \('primary','required_supporting'\)[\s\S]*status' NOT IN \('success','not_modified'\)/i);
+  assert.match(validateEnvelope, /attemptHistoryOverflow[\s\S]*= 'true'::jsonb/i);
+  assert.match(validateEnvelope, /retained_documents[\s\S]*document_text_hash/i);
+  assert.match(validateEnvelope, /verification_envelope\s+IS DISTINCT FROM repeat_verification_envelope/i);
+  assert.match(validateEnvelope, /current_live_state[\s\S]*published_live_state/i);
+  assert.match(validateEnvelope, /proposal_index[\s\S]*benefit_id[\s\S]*HAVING count\(\*\) <> 1/i);
+  assert.match(validateEnvelope, /count\(\*\) FILTER \(WHERE value->>'action' IN \('approve','edit'\)\)/i);
+  assert.match(sourceManifest, /attemptedAt/i);
+  assert.match(sourceManifest, /attemptHistory/i);
+  assert.match(sourceManifest, /string_agg[\s\S]*ORDER BY public\.canonical_json_text/i);
+  assert.match(sourceIdentity, /regexp_match[\s\S]*extensions\.digest/i);
+  assert.match(liveSnapshot, /card_catalog[\s\S]*card_benefit_mapping[\s\S]*public\.benefits/i);
+  assert.match(liveSnapshot, /canonical_card_enrichment_timestamp/i);
+  assert.match(capturePublished, /OLD\.status IS DISTINCT FROM 'approved'/i);
+  assert.match(capturePublished, /pilot_evidence'[\s\S]*staging_id/i);
+  assert.match(sql, /CREATE TRIGGER capture_card_enrichment_pilot_publication_snapshot[\s\S]*BEFORE UPDATE OF status ON public\.card_benefits_staging/i);
   assert.match(promote, /SET run_mode = 'scheduled'/i);
   assert.match(promote, /'pilot_qualified', true/i);
   assert.match(
@@ -290,7 +330,7 @@ test('pilot qualification atomically promotes the existing exact five identities
   );
   assert.match(
     promote,
-    /promoted_count = 5[\s\S]*status = 'completed'[\s\S]*NOT public\.card_enrichment_pilot_job_is_qualified[\s\S]*RAISE EXCEPTION 'pilot_not_qualified'/i,
+    /promoted_count = 5[\s\S]*status = 'completed'[\s\S]*NOT public\.card_enrichment_pilot_evidence_is_qualified[\s\S]*RAISE EXCEPTION 'pilot_not_qualified'/i,
   );
   assert.match(
     promote,
@@ -347,6 +387,7 @@ test('pilot qualification atomically promotes the existing exact five identities
   assert.match(sql, /REVOKE ALL ON FUNCTION public\.initialize_card_benefit_enrichment_pilot\(jsonb, text\)[\s\S]*TO service_role/i);
   assert.match(sql, /REVOKE ALL ON FUNCTION public\.enqueue_card_benefit_enrichment_jobs\(jsonb\)[\s\S]*TO service_role/i);
   assert.match(sql, /DO \$pilot_qualification_assertions\$[\s\S]*fully_rejected[\s\S]*partially_rejected[\s\S]*successful_no_change/i);
+  assert.match(sql, /DO \$pilot_atomic_evidence_assertions\$[\s\S]*pilot_source_manifest_timestamp_or_order_drift[\s\S]*pilot_publication_snapshot_trigger_missing/i);
   assert.match(sql, /DO \$pilot_cohort_assertions\$[\s\S]*return_promoted[\s\S]*partial[\s\S]*five_plus_five[\s\S]*duplicate/i);
   assert.match(sql, /missing_unsafe[\s\S]*null_unsafe[\s\S]*string_unsafe[\s\S]*negative_unsafe[\s\S]*noninteger_unsafe[\s\S]*missing_raw[\s\S]*null_raw[\s\S]*string_raw[\s\S]*true_raw/i);
   assert.match(qualify, /review_status'[\s\S]*IS DISTINCT FROM 'approved'/i);

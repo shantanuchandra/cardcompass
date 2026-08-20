@@ -25,7 +25,7 @@ const MAX_SUPPORTING_DEPTH = 2;
 const relevantPath =
   /(?:credit[-_/ ]?cards?|cards?[-_/ ]?credit|benefits?|fees?|charges?|rewards?|terms?|conditions?|mitc)(?:$|[/?=&_.-])/i;
 const unsafePath =
-  /(?:^|[/?=&_.-])(?:login|apply|application|track|support|help)(?:$|[/?=&_.-])/i;
+  /(?:^|[/?=&_.-])(?:login|apply|application|track)(?:$|[/?=&_.-])/i;
 const anchorPattern =
   /<a\b[^>]*\bhref\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a\s*>/gi;
 const requiredSourcePattern =
@@ -135,15 +135,17 @@ function linkedUrls(
       .replace(/&amp;|&#0*38;|&#x0*26;/gi, "&")
       .replace(/&quot;|&#0*34;|&#x0*22;/gi, '"')
       .replace(/&apos;|&#0*39;|&#x0*27;/gi, "'");
+    const hrefRequired = requiredSourcePattern.test(href);
+    const decisiveRequired = requiredHint || hrefRequired;
     let raw: string;
     try {
       raw = new URL(href, baseUrl).toString();
     } catch {
-      if (requiredHint) {
+      if (decisiveRequired) {
         candidates.set(`invalid:${href.slice(0, 512)}`, {
           url: href,
           anchorText,
-          requiredHint,
+          requiredHint: true,
           rejectionCode: "invalid_source_url",
         });
       }
@@ -154,10 +156,20 @@ function linkedUrls(
       candidatePath.startsWith(`${primaryPath.toLowerCase()}/`);
     const namesTargetProduct = tokens.length > 0 &&
       tokens.every((token) => candidatePath.includes(token));
+    if (decisiveRequired && unsafePath.test(raw)) {
+      candidates.set(`rejected:${raw}`, {
+        url: raw,
+        anchorText,
+        requiredHint: true,
+        rejectionCode: "invalid_source_url",
+      });
+      continue;
+    }
     if (
-      !((relevantPath.test(raw) || requiredHint ||
+      !((relevantPath.test(raw) || decisiveRequired ||
         relevantAnchorPattern.test(anchorText)) &&
-        !unsafePath.test(raw) && (sameProductPath || namesTargetProduct))
+        !unsafePath.test(raw) &&
+        (decisiveRequired || sameProductPath || namesTargetProduct))
     ) continue;
     try {
       const url = canonicalOfficialRequestUrl(
@@ -175,14 +187,14 @@ function linkedUrls(
       candidates.set(url, {
         url,
         anchorText: anchorTexts.join(" ").slice(0, 256),
-        requiredHint: existing?.requiredHint === true || requiredHint,
+        requiredHint: existing?.requiredHint === true || decisiveRequired,
       });
     } catch (error) {
       const code = sanitizedSourceErrorCode(error);
       candidates.set(`rejected:${raw}`, {
         url: raw,
         anchorText,
-        requiredHint,
+        requiredHint: decisiveRequired,
         rejectionCode: code === "unapproved_query"
           ? "unapproved_query"
           : "invalid_source_url",
@@ -202,6 +214,9 @@ async function benefitDocument(
   return {
     sourceUrl: requestedUrl,
     finalUrl: boundedSourceUrl(body.canonicalUrl),
+    requestedResourceIdentityHash: sourceIdentityDigest(requestedUrl),
+    finalResourceIdentityHash: body.finalResourceIdentityHash ??
+      sourceIdentityDigest(body.canonicalUrl),
     text: redactSensitiveUrlsInText(await officialResourceText(body)),
     contentHash: body.contentHash,
   };

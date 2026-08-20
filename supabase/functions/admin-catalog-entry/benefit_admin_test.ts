@@ -450,8 +450,8 @@ Deno.test("loopback auth matrix binds break glass to the exact confirmed user em
   const portReady = new Promise<number>((resolve) => resolvePort = resolve);
   const server = Deno.serve(
     {
-      hostname: "127.0.0.1",
-      port: 0,
+      hostname: "0.0.0.0",
+      port: 8000,
       onListen: ({ port }) => resolvePort(port),
     },
     (request) => {
@@ -470,7 +470,7 @@ Deno.test("loopback auth matrix binds break glass to the exact confirmed user em
         { name: "exact_identity", status: 200, source: "break_glass" },
       ]
     ) {
-      const response = await fetch(`http://127.0.0.1:${port}/admin`, {
+      const response = await fetch(`http://0.0.0.0:${port}/admin`, {
         method: "POST",
         headers: {
           authorization: "Bearer valid-token",
@@ -3874,6 +3874,7 @@ Deno.test("admin pilot evidence exposes bounded computed proof and derives revie
         fetch_missing: 0.5,
         fetch_success_rate: 2,
         approvals: 999,
+        retries: 2,
         processing_started_at: "Bearer secret-lease",
       },
     },
@@ -3934,7 +3935,8 @@ Deno.test("admin pilot evidence exposes bounded computed proof and derives revie
       presented.result_summary.operational_metrics.approvals === 1 &&
       presented.result_summary.operational_metrics.edits === 1 &&
       presented.result_summary.operational_metrics.targeted_rejects === 1 &&
-      presented.result_summary.operational_metrics.retirements === 1,
+      presented.result_summary.operational_metrics.retirements === 1 &&
+      presented.result_summary.operational_metrics.retries === 2,
     "admin metrics trusted supplied totals instead of exact decisions",
   );
   assert(

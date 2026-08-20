@@ -1302,7 +1302,6 @@ function reviewMetrics(value: unknown) {
     targeted_rejects: targetedRejects,
     global_rejects: actionCount("reject") - targetedRejects,
     retirements: actionCount("retire"),
-    retries: actionCount("retry"),
   };
 }
 

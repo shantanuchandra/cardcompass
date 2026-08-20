@@ -2,12 +2,16 @@
 
 ## Outcome
 
-Task 10 is implemented without a schema or migration change. The current
+Task 10 is implemented with no schema-shape change. The existing, locally
+unapplied Task 6 recurrence migration is hardened in place; no new table,
+column, index, constraint, or RPC signature is introduced. The current
 `benefits-v6` pilot no longer qualifies from caller-written success booleans.
 The worker computes replay, source-manifest, live-state, completeness,
 suppression, conflict, and privacy evidence from the run that actually
 executed. The Edge promotion path re-reads the cohort and fails closed before
-calling the existing promotion RPC.
+calling the promotion RPC. That service-role-only RPC independently recomputes
+qualification under locks, so caller-written legacy booleans or a mutation
+between the Edge read and RPC cannot promote.
 
 The gate now also rechecks the initializer's cohort invariants: exactly five
 cards, all five distinct profiles, at least three case-normalized issuers, and
@@ -29,24 +33,35 @@ For a pilot run, the worker:
    same retained snapshot.
 5. Retains and hashes both independently produced canonical verification
    envelopes containing parser, job, card, run mode, source
-   manifest/resources, the independently classified expected-required-source
+   manifest/resources, a bounded no-body retained-document envelope (requested
+   and final resource identities, fetch content hash, exact UTF-8 text hash and
+   byte count), the independently classified expected-required-source
    set, its explicit selection-overflow fact, and proposal order/terms.
 6. Captures the same three live-table projections after processing and derives
-   mutation count from their counts/hashes.
+   mutation count from their counts/hashes. Reviewed publication records its
+   exact post-publication snapshot on the locked staging row in the same
+   transaction.
 7. At qualification, re-reads current live rows and authoritative staging
    identity/status/decisions/proposals. Pre-publication and no-change rows must still
    match the post-run snapshot; reviewed material work must match its exact
-   same-card/parser/content staging row and decision counts.
-8. Recursively inspects persistable artifacts and retained envelopes for
+   same-card/parser/content staging row, the recomputed post-publication live
+   snapshot, and exact one-decision-per-target coverage. Pending catalog
+   identity reviews are queried for each pilot card.
+8. Recursively inspects persistable artifacts and retained envelopes before
+   any staging write, and repeats the check before finalization, for
    raw-body, statement/customer, credential, token, lease, signed-query, and
-   secret-bearing fields. Cache validators are omitted from pilot evidence.
+   secret-bearing fields and byte overflow. Cache validators are omitted from
+   pilot evidence.
+9. Promotes only inside the locked SQL transaction after the RPC recomputes
+   canonical/source hashes and validates exact job/staging/review/live bindings.
 
 The bounded result is stored in existing
 `card_catalog_enrichment_jobs.normalized_fields`:
 
 - `pilot_profile` retains the database-validated initializer profile.
 - `pilot_evidence` contains exact binding fields, both replay hashes and the
-  separately retained envelopes, source manifest/attempts, the sorted expected
+  separately retained envelopes and their document digests, source
+  manifest/attempts, the sorted expected
   required-source identities and
   `required_source_selection_overflow` fact, proposal
   disposition/staging identity,
@@ -81,8 +96,8 @@ validates computed normalized evidence rather than trusting those aliases.
   timestamps;
 - no-change with staging/review metadata, proposal-count/disposition mismatch,
   current pre-publication state that differs from the recorded post-run state,
-  or staging identity/status/extracted proposals/decision totals that differ
-  from the authoritative row;
+  or staging identity/status/extracted proposals/decision targets/totals that
+  differ from the authoritative row;
 - fewer/more than five cohort rows, duplicate/missing profiles, fewer than
   three issuers, pending review, quarantine, rejection, partial rejection, or
   malformed review totals.
@@ -94,7 +109,8 @@ before the RPC and refuses promotion unless this computed gate is `passed`.
 
 ## Operational metrics and privacy
 
-Metrics are derived from exact bounded data, not supplied totals:
+Metrics are derived from exact bounded data, not supplied totals. Structured
+logs use an explicit metric-name allowlist:
 
 - retry-aware fetch attempts, success, reusable `304`, blocked, missing,
   failed, incomplete, and history overflow;
@@ -107,7 +123,8 @@ Metrics are derived from exact bounded data, not supplied totals:
 - replay/side-effect booleans plus bounded UTC start/end/duration.
 
 Admin presentation exposes the computed pilot proof and profile, sanitizes
-metrics, derives review action totals from locked staging decisions, and
+metrics, derives approval/edit/reject/retire totals from locked staging
+decisions, and
 derives review age from staging timestamps. Structured logs include UUIDs,
 bounded scalar metrics, and an allowlisted reason taxonomy only. Raw bodies,
 customer/statement data, credentials, signed queries, access/refresh tokens,
@@ -176,30 +193,42 @@ required-source overflow                   capped required selection lacked an e
 review timestamp                           valid PostgreSQL UTC microseconds were rejected
 ```
 
-The mandatory independent re-review found the recurrence, required-source,
-staging-proposal, review-timestamp, and threat-boundary fixes complete and
-returned **Ready to merge: Yes** with no critical or important findings.
+Fresh-review fix round RED checkpoint, before production edits:
 
-Final prescribed command:
+```text
+batch + supporting                         168 passed, 3 failed
+  changed retained bytes                   reused the same replay proof
+  pre-write privacy boundary               helper absent
+  /support/...terms.pdf                    disappeared before fetch/manifest
+Task 6 migration contract                    8 passed, 1 failed
+  atomic evidence validator                function absent
+prescribed minimal network gate            188 passed, 1 permission failure
+```
+
+A final threat-model checkpoint before commit added two more focused reds:
+
+```text
+admin pilot metric projection                0 passed, 1 failed
+  reviewed decisions                         replaced an observed retry count with zero
+Task 6 atomic contract                       0 passed, 1 failed
+  SQL replay authority                       did not independently reject required-source failure/overflow
+```
+
+The behavioral green set also covers invalid/interactive/overflow required
+links, exact partial/duplicate/unknown review target rejection, authoritative
+pending catalog conflict blocking, metric-name/encoded-secret stripping,
+direct legacy-evidence rejection in the promotion contract, and locked-state
+mutation rejection between Edge qualification and SQL promotion.
+
+Final prescribed command (the auth fixture now binds only the prescribed
+loopback capability):
 
 ```sh
 deno test --node-modules-dir=auto --allow-env \
   --allow-net=0.0.0.0:8000 --frozen \
   supabase/functions/benefit-enrichment-batch/index_test.ts \
   supabase/functions/admin-catalog-entry/benefit_admin_test.ts
-# 188 passed, 1 environment-permission failure
-# Existing loopback auth test binds 127.0.0.1:0, which the prescribed
-# 0.0.0.0:8000-only capability does not authorize.
-```
-
-The same full suites with only ephemeral loopback authorized:
-
-```sh
-deno test --node-modules-dir=auto --allow-env \
-  --allow-net=127.0.0.1 --frozen \
-  supabase/functions/benefit-enrichment-batch/index_test.ts \
-  supabase/functions/admin-catalog-entry/benefit_admin_test.ts
-# 189 passed, 0 failed (140 ingestion + 49 admin)
+# 193 passed, 0 failed (144 ingestion + 49 admin)
 ```
 
 Affected shared/policy suites:
@@ -211,8 +240,9 @@ deno test --node-modules-dir=auto --allow-env --frozen \
   supabase/functions/benefit-enrichment-batch/supporting_documents_test.ts \
   supabase/functions/benefit-enrichment-batch/recurrence_policy_test.ts \
   supabase/functions/_shared/benefit_contract_test.ts \
-  supabase/functions/_shared/catalog_identity_publication_test.ts
-# 123 passed, 0 failed
+  supabase/functions/_shared/catalog_identity_publication_test.ts \
+  supabase/functions/_shared/issuer_card_crawl_test.ts
+# 133 passed, 0 failed
 ```
 
 Task 9 admin/consumer gates:
@@ -229,8 +259,9 @@ node --test test/supabase/active_benefit_read_rules.test.mjs \
   test/supabase/review_card_benefit_enrichment_v2_migration_test.js \
   test/supabase/publish_reviewed_card_identity_migration_test.js \
   test/supabase/card_catalog_enrichment_rules.test.mjs \
-  test/supabase/issuer_card_discovery_rules.test.mjs
-# 85 passed, 0 failed
+  test/supabase/issuer_card_discovery_rules.test.mjs \
+  test/supabase/recur_card_enrichment_jobs_migration_test.js
+# 94 passed, 0 failed
 ```
 
 Static verification:
@@ -243,8 +274,8 @@ deno check --node-modules-dir=auto --frozen \
   supabase/functions/admin-catalog-entry/benefit_admin.ts
 # passed
 
-deno fmt --check <eight changed TypeScript files>
-# 8 checked, 0 failed
+deno fmt --check <seven changed TypeScript files>
+# 7 checked, 0 failed
 
 git diff --check
 # passed
@@ -263,32 +294,32 @@ flutter analyze --no-pub --no-fatal-infos
 - the five positive profiles plus separate incomplete-source negative phase;
 - metric/privacy contracts, exact acceptance thresholds, and a rollout
   checklist;
-- the remaining direct service-role SQL promotion residual.
+- the locked service-role SQL promotion authority and its race boundary.
 
 ## Schema, migration, and live-action decision
 
-No migration was created or modified. `git diff -- supabase/migrations` is
-empty. Relevant existing migration SHA-256 values remain:
+No new migration was created and there is no schema-shape change. The existing
+Task 6 migration was authorized for modification while still locally unapplied.
+Relevant migration SHA-256 values are:
 
 ```text
-6cda51f2d52454e1535353c737a2a69eb046fcdb13d9cbfebf58fb14c62b6a32  supabase/migrations/20260819205037_recur_card_enrichment_jobs.sql
+08ccb04271d212c9323184edadf41130116eb6d4987e25c8f42d5ef5ca4ad21f  supabase/migrations/20260819205037_recur_card_enrichment_jobs.sql
 8e0dd3ac01346d5ec7531be906bc974480e0e93c8f8d9f482b6010323e06a3a7  supabase/migrations/20260819231435_publish_reviewed_card_identity.sql
 82df4f501eb24f5e88be6080b66c5c296f95bb4d68a7cd4b5f3c1a44a015980e  supabase/migrations/20260819063836_add_admin_flag_to_public_users.sql
 ```
 
 No Docker, local/linked/live Supabase/Postgres, external issuer/network,
 production data/write, secret change, workflow dispatch, or live action was
-used. The only network capability used by tests was an ephemeral
-`127.0.0.1` loopback server owned by the existing admin auth test.
+used. The only network capability used by tests was the isolated
+`0.0.0.0:8000` loopback server owned by the admin auth test.
 
-## Task 11 residual
+## Atomic promotion boundary
 
-The service-role-only SQL promotion RPC still validates legacy summary
-booleans internally. The production Edge path now makes direct use unsafe and
-unnecessary by computing and rechecking evidence first, but a future migration
-should move equivalent computed-evidence validation into the locked RPC if
-direct database callers must ever be supported. Until then, operators must
-promote only through the Edge/API pre-gate.
-Direct `service_role` fabrication of job/staging JSON is consequently outside
-the trusted-worker threat model for this no-migration task, not a property the
-Edge evidence format claims to prevent.
+The existing service-role-only RPC now locks and revalidates authoritative job,
+staging decisions/proposals, pending catalog reviews, catalog card, mappings,
+and mapped benefits. It recomputes the live snapshot, source manifest, and both canonical
+envelope hashes and rejects fabricated legacy booleans, partial/duplicate/
+unknown review targets, summary mismatches, and read-to-RPC mutation races.
+A principal able to replace every authoritative database row remains the
+database-administrator trust boundary; no evidence format can defend against
+that principal while simultaneously granting it unrestricted write authority.

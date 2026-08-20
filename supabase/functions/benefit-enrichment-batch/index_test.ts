@@ -120,6 +120,97 @@ Deno.test("pilot replay canonicalizes the same immutable documents twice without
   );
 });
 
+Deno.test("pilot replay hash is bound to the exact retained document bytes and resource identities", async () => {
+  const compute = task10BatchModule.computePilotReplayEvidence;
+  assert(typeof compute === "function", "computed pilot replay is missing");
+  const attempts = [{
+    url: "https://issuer.example/card",
+    role: "primary",
+    status: "success",
+    httpStatus: 200,
+    contentHash: "a".repeat(64),
+    finalResourceIdentityHash: "b".repeat(64),
+    attemptedAt: "2026-08-20T00:00:00.000Z",
+    logicalSourceKey: sourceIdentityDigest("https://issuer.example/card"),
+  }];
+  const sourceManifestHash = await computeSourceManifestHash(attempts as never);
+  const run = async (text: string, finalUrl: string) =>
+    await compute({
+      jobId: "11111111-1111-4111-8111-111111111111",
+      cardId: "22222222-2222-4222-8222-222222222222",
+      parserVersion: "benefits-v6",
+      runMode: "pilot",
+      sourceManifestHash,
+      expectedRequiredSourceKeys: [],
+      requiredSourceSelectionOverflow: false,
+      attempts,
+      documents: [{
+        sourceUrl: "https://issuer.example/card",
+        finalUrl,
+        text,
+        contentHash: "a".repeat(64),
+      }],
+      extract: async () => [{ fixture: "same-proposal" }],
+    });
+  const first = await run(
+    "original issuer bytes",
+    "https://issuer.example/card",
+  );
+  const changedBytes = await run(
+    "changed issuer bytes",
+    "https://issuer.example/card",
+  );
+  const changedIdentity = await run(
+    "original issuer bytes",
+    "https://issuer.example/card/redirected",
+  );
+  assert(
+    first.canonicalHash !== changedBytes.canonicalHash,
+    "changed retained bytes reused replay proof",
+  );
+  assert(
+    first.canonicalHash !== changedIdentity.canonicalHash,
+    "changed final resource identity reused replay proof",
+  );
+  assert(
+    Array.isArray(first.verificationEnvelope.retained_documents),
+    "bounded retained document envelope is absent",
+  );
+  assert(
+    !JSON.stringify(first.verificationEnvelope).includes(
+      "original issuer bytes",
+    ),
+    "raw retained document bytes entered evidence",
+  );
+});
+
+Deno.test("pilot safety validation is an explicit pre-write boundary", () => {
+  const assertSafe = task10BatchModule.assertSafePersistedEvidence;
+  assert(
+    typeof assertSafe === "function",
+    "pre-write safety boundary is missing",
+  );
+  assertSafe!({ source_excerpt: "fee waiver applies" });
+  for (
+    const unsafe of [
+      { source_excerpt: "Authorization: Bearer abcdefgh.secret" },
+      { evidence: { customer_email: "person@example.com" } },
+      { source_excerpt: encodeURIComponent("access_token=abcdefgh-secret") },
+    ]
+  ) {
+    let error: unknown;
+    try {
+      assertSafe!(unsafe);
+    } catch (caught) {
+      error = caught;
+    }
+    assert(
+      error instanceof Error,
+      "unsafe persisted evidence passed the pre-write boundary",
+    );
+  }
+});
+
 Deno.test("pilot replay fails closed when the independent second parse mutates order or terms", async () => {
   const compute = task10BatchModule.computePilotReplayEvidence;
   assert(typeof compute === "function", "computed pilot replay is missing");
@@ -256,7 +347,9 @@ async function withComputedPilotEvidence<T extends Record<string, any>>(
     status: "success",
     httpStatus: 200,
     contentHash: "9".repeat(64),
-    finalResourceIdentityHash: "8".repeat(64),
+    finalResourceIdentityHash: sourceIdentityDigest(
+      "https://issuer.example/card",
+    ),
     attemptedAt: observedAt,
     logicalSourceKey: sourceIdentityDigest("https://issuer.example/card"),
   }];
@@ -280,7 +373,12 @@ async function withComputedPilotEvidence<T extends Record<string, any>>(
     expectedRequiredSourceKeys: [],
     requiredSourceSelectionOverflow: false,
     attempts,
-    documents: [],
+    documents: [{
+      sourceUrl: "https://issuer.example/card",
+      finalUrl: "https://issuer.example/card",
+      text: "retained pilot fixture",
+      contentHash: "9".repeat(64),
+    }],
     extract: async () => proposalCount === 0 ? [] : [{ fixture: "proposal" }],
   });
   const summary = {
@@ -359,10 +457,15 @@ function pilotStagingRows(rows: Array<Record<string, any>>) {
     const evidence = row.normalized_fields?.pilot_evidence;
     if (typeof evidence?.staging_id !== "string") return [];
     const summary = row.result_summary ?? {};
+    let proposalIndex = 0;
+    let removalIndex = 0;
     const decisionsFor = (action: string, value: unknown) =>
       Number.isInteger(value) && Number(value) >= 0 && Number(value) <= 64
         ? Array.from({ length: Number(value) }, () => ({
           action,
+          ...(action === "approve" || action === "edit" || action === "reject"
+            ? { proposal_index: proposalIndex++ }
+            : { benefit_id: `removed-${removalIndex++}` }),
           reviewed_at: "2026-08-20T00:01:00.000Z",
         }))
         : [];
@@ -383,6 +486,24 @@ function pilotStagingRows(rows: Array<Record<string, any>>) {
         proposals: structuredClone(
           evidence.verification_envelope.canonical_proposals,
         ),
+        retained_documents: structuredClone(
+          evidence.verification_envelope.retained_documents,
+        ),
+        ...(row.status === "completed"
+          ? {
+            published_live_state: structuredClone(
+              evidence.live_state_after,
+            ),
+          }
+          : {}),
+        diff: {
+          possibleRemovals: Array.from(
+            { length: removalIndex },
+            (_, index) => ({
+              benefit: { benefitId: `removed-${index}` },
+            }),
+          ),
+        },
       },
     }];
   });
@@ -572,7 +693,14 @@ Deno.test("operational metrics derive exact attempts, diffs, actions, and safe b
       "http_404",
       "Authorization: Bearer secret-token",
     ],
-    metrics,
+    metrics: {
+      ...metrics,
+      customer_email: "person@example.com",
+      arbitrary_timestamp: "2026-08-20T00:00:00.000Z",
+      encoded_nested_secret: encodeURIComponent(JSON.stringify({
+        access_token: "abcdefgh-secret",
+      })),
+    },
     raw_body: "<html>customer 4242</html>",
     signed_url: "https://issuer.example/card?token=secret-token",
     lease_token: "lease-secret",
@@ -585,6 +713,9 @@ Deno.test("operational metrics derive exact attempts, diffs, actions, and safe b
       "lease-secret",
       "signed_url",
       "raw_body",
+      "person@example.com",
+      "arbitrary_timestamp",
+      "abcdefgh-secret",
     ]
   ) {
     assert(
@@ -3798,6 +3929,7 @@ async function stableCanonicalProcessFixture(
   materialChange = false,
   isDiscontinued = false,
   runMode: "scheduled" | "pilot" = "scheduled",
+  unsafeEvidence = false,
 ) {
   const cardId = "00000000-0000-4000-8000-000000000001";
   const card = {
@@ -3809,8 +3941,9 @@ async function stableCanonicalProcessFixture(
     card_url: "https://issuer.example/credit-cards/issuer-test-card",
     is_discontinued: isDiscontinued,
   };
-  const text =
-    "<html><title>Issuer Test Visa Credit Card</title><h1>Issuer Test Visa Credit Card</h1><p>Get 10% cashback on dining spends.</p></html>";
+  const text = unsafeEvidence
+    ? "<html><title>Issuer Test Visa Credit Card</title><h1>Issuer Test Visa Credit Card</h1><p>Get 10% cashback on dining spends with access_token=abcdefgh-secret.</p></html>"
+    : "<html><title>Issuer Test Visa Credit Card</title><h1>Issuer Test Visa Credit Card</h1><p>Get 10% cashback on dining spends.</p></html>";
   const [proposed] = await extractGroundedBenefitsV6(
     [{ sourceUrl: card.card_url, text, contentHash: "b".repeat(64) }],
     "benefits-v6",
@@ -3955,6 +4088,9 @@ async function stableCanonicalProcessFixture(
           error: null,
         };
       }
+      if (name === "card_has_unresolved_catalog_identity") {
+        return { data: false, error: null };
+      }
       assert(
         name === "finalize_card_catalog_enrichment_job",
         `unexpected RPC ${name}`,
@@ -4081,6 +4217,24 @@ Deno.test("pilot processing fetches once and persists computed replay and live-s
       metrics.deterministic_replay_passed === true &&
       metrics.side_effect_proof_passed === true,
     "pilot operational metrics were not derived from the executed run",
+  );
+});
+
+Deno.test("unsafe extracted evidence is rejected before staging and never reaches final payloads", async () => {
+  const fixture = await stableCanonicalProcessFixture(
+    null,
+    true,
+    false,
+    "pilot",
+    true,
+  );
+  assert(
+    fixture.stageCalls.length === 0,
+    "unsafe evidence reached the staging RPC",
+  );
+  assert(
+    !JSON.stringify(fixture.finalization).includes("abcdefgh-secret"),
+    "unsafe evidence reached the finalizer payload",
   );
 });
 
@@ -4298,6 +4452,7 @@ Deno.test("qualified pilot handoff promotes the same exact five jobs idempotentl
       })),
   );
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  let lockedMutationDetected = false;
   const db = {
     from() {
       return {
@@ -4317,15 +4472,20 @@ Deno.test("qualified pilot handoff promotes the same exact five jobs idempotentl
     },
     async rpc(name: string, args: Record<string, unknown>) {
       calls.push({ name, args });
+      if (lockedMutationDetected) {
+        return { data: null, error: new Error("pilot_not_qualified") };
+      }
       return { data: jobs.map((job) => ({ ...job })), error: null };
     },
   };
 
   const first = await promoteQualifiedPilotJobs(db, "benefits-v6", {
     captureLiveStateSnapshot: pilotSnapshotCapture(jobs),
+    readCatalogIdentityConflictCount: async () => 0,
   });
   const repeated = await promoteQualifiedPilotJobs(db, "benefits-v6", {
     captureLiveStateSnapshot: pilotSnapshotCapture(jobs),
+    readCatalogIdentityConflictCount: async () => 0,
   });
 
   assert(first.length === 5 && repeated.length === 5, "handoff lost a card");
@@ -4340,6 +4500,20 @@ Deno.test("qualified pilot handoff promotes the same exact five jobs idempotentl
       call.args._parser_version === "benefits-v6"
     ),
     "handoff bypassed the atomic current-parser promotion RPC",
+  );
+  lockedMutationDetected = true;
+  let raceError: unknown;
+  try {
+    await promoteQualifiedPilotJobs(db, "benefits-v6", {
+      captureLiveStateSnapshot: pilotSnapshotCapture(jobs),
+      readCatalogIdentityConflictCount: async () => 0,
+    });
+  } catch (caught) {
+    raceError = caught;
+  }
+  assert(
+    raceError instanceof Error && raceError.message === "pilot_not_qualified",
+    "locked SQL rejection of a read-to-promotion mutation race was ignored",
   );
 });
 
@@ -4429,6 +4603,7 @@ Deno.test("promoted pilot proof survives later no-change and material scheduled 
     "benefits-v6",
     {
       captureLiveStateSnapshot: pilotSnapshotCapture(replayedRows),
+      readCatalogIdentityConflictCount: async () => 0,
     },
   );
   assert(
@@ -4991,6 +5166,7 @@ Deno.test("pilot gate evaluates only the current parser lane", async () => {
 
   const gate = await readPilotStatus(db, "benefits-v6", {
     captureLiveStateSnapshot: pilotSnapshotCapture(rows),
+    readCatalogIdentityConflictCount: async () => 0,
   });
 
   assert(
@@ -5078,6 +5254,7 @@ Deno.test("pilot projection conservatively carries Task 4 review evidence", asyn
   };
   const gate = await readPilotStatus(db, "benefits-v6", {
     captureLiveStateSnapshot: pilotSnapshotCapture(rows),
+    readCatalogIdentityConflictCount: async () => 0,
   });
   assert(
     gate.blockers.includes("pilot_review_rejected"),
@@ -5086,6 +5263,7 @@ Deno.test("pilot projection conservatively carries Task 4 review evidence", asyn
   rows[0].result_summary.review_status = "unexpected";
   const malformed = await readPilotStatus(db, "benefits-v6", {
     captureLiveStateSnapshot: pilotSnapshotCapture(rows),
+    readCatalogIdentityConflictCount: async () => 0,
   });
   assert(
     malformed.blockers.includes("pilot_review_metadata_invalid"),
@@ -5170,6 +5348,7 @@ Deno.test("pilot review projection enforces exact bounded metadata parity", asyn
       "benefits-v6",
       {
         captureLiveStateSnapshot: pilotSnapshotCapture(rows),
+        readCatalogIdentityConflictCount: async () => 0,
       },
     );
   };
@@ -5242,6 +5421,72 @@ Deno.test("pilot review accepts PostgreSQL UTC microseconds for reviewed decisio
   }
 });
 
+Deno.test("pilot review requires exactly one known decision for every staged target", async () => {
+  const project = task10BatchModule.projectPilotJobEvidence;
+  assert(typeof project === "function", "pilot evidence boundary is missing");
+  const row = await withComputedPilotEvidence({
+    id: "pilot-exact-review-0",
+    card_id: "22222222-2222-4222-8222-222222222222",
+    run_mode: "pilot",
+    parser_version: "benefits-v6",
+    status: "completed",
+    result_summary: {
+      review_status: "approved",
+      approved_count: 1,
+      retained_count: 0,
+      retired_count: 0,
+      rejected_count: 0,
+    },
+  }) as Record<string, any>;
+  const staging = pilotStagingRows([row])[0];
+  const currentLiveState =
+    row.normalized_fields.pilot_evidence.live_state_after;
+  const valid = await project(row, { staging, currentLiveState });
+  assert(
+    valid.computedEvidenceValid,
+    "complete exact review fixture did not qualify",
+  );
+  const pendingCatalogConflict = await project(row, {
+    staging,
+    currentLiveState,
+    catalogIdentityConflictCount: 1,
+  });
+  assert(
+    !pendingCatalogConflict.computedEvidenceValid &&
+      Number(pendingCatalogConflict.conflictCount) > 0,
+    "authoritative pending catalog identity review did not block qualification",
+  );
+  const racedLiveState = structuredClone(currentLiveState);
+  racedLiveState.card_catalog.row_hash = "0".repeat(64);
+  const liveRace = await project(row, {
+    staging,
+    currentLiveState: racedLiveState,
+  });
+  assert(
+    !liveRace.computedEvidenceValid,
+    "post-publication live-state mutation race qualified",
+  );
+  for (
+    const [label, decisions] of [
+      ["partial", []],
+      ["duplicate", [
+        staging.benefit_decisions[0],
+        staging.benefit_decisions[0],
+      ]],
+      ["unknown", [{ ...staging.benefit_decisions[0], proposal_index: 9 }]],
+    ] as const
+  ) {
+    const projected = await project(row, {
+      staging: { ...staging, benefit_decisions: structuredClone(decisions) },
+      currentLiveState,
+    });
+    assert(
+      !projected.computedEvidenceValid,
+      `${label} review target coverage qualified`,
+    );
+  }
+});
+
 Deno.test("pilot projection fails closed on missing or malformed safety metadata", async () => {
   const invalidSummaries: Array<Record<string, unknown>> = [
     { raw_body_stored: false },
@@ -5301,6 +5546,7 @@ Deno.test("pilot projection fails closed on missing or malformed safety metadata
     };
     const gate = await readPilotStatus({ from: () => query }, "benefits-v6", {
       captureLiveStateSnapshot: pilotSnapshotCapture(rows),
+      readCatalogIdentityConflictCount: async () => 0,
     });
     assert(
       gate.blockers.includes("pilot_safety_metadata_invalid"),
@@ -5349,6 +5595,7 @@ Deno.test("pilot projection fails closed on missing or malformed safety metadata
     };
     const gate = await readPilotStatus({ from: () => query }, "benefits-v6", {
       captureLiveStateSnapshot: pilotSnapshotCapture(rows),
+      readCatalogIdentityConflictCount: async () => 0,
     });
     assert(gate.blockers.includes(expected), `${expected} was not blocked`);
   }

@@ -435,6 +435,7 @@ const pilotVerificationEnvelopeKeys = new Set([
   "run_mode",
   "source_manifest_hash",
   "source_resources",
+  "retained_documents",
   "expected_required_source_keys",
   "required_source_selection_overflow",
   "canonical_proposals",
@@ -451,6 +452,52 @@ function pilotRequiredSourceKeys(
     ),
   ]
     .filter((key) => lowercaseSha256.test(key)).sort();
+}
+
+const retainedDocumentKeys = new Set([
+  "requested_resource_identity_hash",
+  "final_resource_identity_hash",
+  "content_hash",
+  "document_text_hash",
+  "document_bytes",
+]);
+
+function validRetainedDocumentEnvelope(
+  value: unknown,
+  attempts: readonly SourceAttempt[],
+): value is Record<string, unknown>[] {
+  const decisiveAttemptCount =
+    attempts.filter(decisivePilotSourceSucceeded).length;
+  if (
+    !Array.isArray(value) || value.length > 9 ||
+    value.length !== decisiveAttemptCount
+  ) return false;
+  return value.every((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const document = item as Record<string, unknown>;
+    if (
+      Object.keys(document).length !== retainedDocumentKeys.size ||
+      !Object.keys(document).every((key) => retainedDocumentKeys.has(key)) ||
+      !lowercaseSha256.test(
+        String(document.requested_resource_identity_hash),
+      ) ||
+      !lowercaseSha256.test(String(document.final_resource_identity_hash)) ||
+      !lowercaseSha256.test(String(document.content_hash)) ||
+      !lowercaseSha256.test(String(document.document_text_hash)) ||
+      !Number.isInteger(document.document_bytes) ||
+      Number(document.document_bytes) < 0 ||
+      Number(document.document_bytes) > 1_048_576
+    ) return false;
+    return attempts.filter((attempt) =>
+      decisivePilotSourceSucceeded(attempt) &&
+      attempt.logicalSourceKey === document.requested_resource_identity_hash &&
+      attempt.finalResourceIdentityHash ===
+        document.final_resource_identity_hash &&
+      attempt.contentHash === document.content_hash
+    ).length === 1;
+  }) && new Set(value.map((item) =>
+        stableCanonicalJson(item)
+      )).size === value.length;
 }
 
 function validPilotRequiredSourceKeys(value: unknown): value is string[] {
@@ -473,6 +520,7 @@ function validPilotVerificationEnvelope(
     sourceAttempts: readonly SourceAttempt[];
     expectedRequiredSourceKeys: readonly string[];
     requiredSourceSelectionOverflow: boolean;
+    retainedDocuments: readonly Record<string, unknown>[];
   },
 ): value is Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -497,6 +545,8 @@ function validPilotVerificationEnvelope(
     envelope.source_manifest_hash === binding.sourceManifestHash &&
     stableCanonicalJson(envelope.source_resources) ===
       stableCanonicalJson(replaySourceEnvelope(binding.sourceAttempts)) &&
+    stableCanonicalJson(envelope.retained_documents) ===
+      stableCanonicalJson(binding.retainedDocuments) &&
     stableCanonicalJson(envelope.expected_required_source_keys) ===
       stableCanonicalJson(binding.expectedRequiredSourceKeys) &&
     envelope.required_source_selection_overflow ===
@@ -556,11 +606,67 @@ function reviewedStagingCounts(value: unknown): {
   return counts;
 }
 
+function exactReviewedStagingCounts(
+  decisions: unknown,
+  extracted: Record<string, unknown> | null,
+): ReturnType<typeof reviewedStagingCounts> {
+  const counts = reviewedStagingCounts(decisions);
+  if (!counts || !extracted || !Array.isArray(extracted.proposals)) return null;
+  const proposalTargets = extracted.proposals.map((_, index) =>
+    `proposal:${index}`
+  );
+  const diff = extracted.diff && typeof extracted.diff === "object" &&
+      !Array.isArray(extracted.diff)
+    ? extracted.diff as Record<string, unknown>
+    : {};
+  const removals = Array.isArray(diff.possibleRemovals)
+    ? diff.possibleRemovals
+    : [];
+  const removalTargets = removals.map((item) => {
+    const removal = item && typeof item === "object" && !Array.isArray(item)
+      ? item as Record<string, unknown>
+      : {};
+    const benefit = removal.benefit && typeof removal.benefit === "object" &&
+        !Array.isArray(removal.benefit)
+      ? removal.benefit as Record<string, unknown>
+      : {};
+    const id = benefit.benefitId ?? benefit.dedupeKey;
+    return typeof id === "string" && id.length > 0 ? `benefit:${id}` : "";
+  });
+  if (removalTargets.includes("")) return null;
+  const expected = [...proposalTargets, ...removalTargets];
+  const actual = (decisions as Record<string, unknown>[]).map((decision) => {
+    const hasProposal = Number.isInteger(decision.proposal_index) &&
+      Number(decision.proposal_index) >= 0;
+    const hasBenefit = typeof decision.benefit_id === "string" &&
+      decision.benefit_id.length > 0;
+    if (hasProposal === hasBenefit) return "";
+    if (
+      hasProposal &&
+      !["approve", "edit", "reject"].includes(String(decision.action))
+    ) return "";
+    if (
+      hasBenefit &&
+      !["retire", "keep_existing", "reject"].includes(String(decision.action))
+    ) return "";
+    return hasProposal
+      ? `proposal:${decision.proposal_index}`
+      : `benefit:${decision.benefit_id}`;
+  });
+  return actual.length === expected.length && !actual.includes("") &&
+      new Set(actual).size === actual.length &&
+      stableCanonicalJson([...actual].sort()) ===
+        stableCanonicalJson([...expected].sort())
+    ? counts
+    : null;
+}
+
 export async function projectPilotJobEvidence(
   row: Record<string, any>,
   boundary: {
     staging?: PilotStagingEvidence | null;
     currentLiveState?: PilotLiveStateSnapshot | null;
+    catalogIdentityConflictCount?: number;
   } = {},
 ): Promise<PilotJob> {
   const summary = row.result_summary && typeof row.result_summary === "object"
@@ -683,6 +789,16 @@ export async function projectPilotJobEvidence(
     : "";
   const verificationEnvelope = evidence?.verification_envelope;
   const repeatVerificationEnvelope = evidence?.repeat_verification_envelope;
+  const retainedDocuments = verificationEnvelope &&
+      typeof verificationEnvelope === "object" &&
+      !Array.isArray(verificationEnvelope) &&
+      validRetainedDocumentEnvelope(
+        (verificationEnvelope as Record<string, unknown>).retained_documents,
+        sourceAttempts,
+      )
+    ? (verificationEnvelope as Record<string, unknown>)
+      .retained_documents as Record<string, unknown>[]
+    : [];
   const verificationBinding = {
     parserVersion: evidence?.parser_version,
     jobId: evidence?.job_id,
@@ -692,6 +808,7 @@ export async function projectPilotJobEvidence(
     sourceAttempts,
     expectedRequiredSourceKeys: expectedRequiredSourceKeys ?? [],
     requiredSourceSelectionOverflow: requiredSourceSelectionOverflow === true,
+    retainedDocuments,
   };
   const envelopesValid = expectedRequiredSourceKeys !== null &&
     requiredSourceSelectionOverflow !== null &&
@@ -783,7 +900,12 @@ export async function projectPilotJobEvidence(
     Array.isArray(stagingExtraction.proposals) &&
     stagingExtraction.proposals.length <= 256 && envelopesValid &&
     stableCanonicalJson(stagingExtraction.proposals) ===
-      stableCanonicalJson(verificationEnvelope.canonical_proposals);
+      stableCanonicalJson(verificationEnvelope.canonical_proposals) &&
+    stableCanonicalJson(stagingExtraction.retained_documents) ===
+      stableCanonicalJson(verificationEnvelope.retained_documents);
+  const publishedLiveState = validatedPilotSnapshot(
+    stagingExtraction?.published_live_state,
+  );
   const stagingIdentityValid = proposalDisposition !== "no_change" &&
     typeof evidenceStagingId === "string" &&
     typeof evidenceStagingContentHash === "string" &&
@@ -796,7 +918,7 @@ export async function projectPilotJobEvidence(
     (promotedEvidence || summary.successful_no_change === false);
   const stagingCounts = stagingIdentityValid &&
       (promotedEvidence || row.status === "completed")
-    ? reviewedStagingCounts(staging?.benefit_decisions)
+    ? exactReviewedStagingCounts(staging?.benefit_decisions, stagingExtraction)
     : null;
   const stagingReviewStatus = staging?.status === "approved" ||
       staging?.status === "rejected"
@@ -818,13 +940,22 @@ export async function projectPilotJobEvidence(
   const prePublicationState = !promotedEvidence &&
     (proposalDisposition === "no_change" || row.status === "staged");
   const currentLiveStateValid = currentLiveState !== null && after !== null &&
-    (!prePublicationState ||
-      liveStateMutationCount(after, currentLiveState) === 0);
+    (promotedEvidence
+      ? true
+      : prePublicationState || proposalDisposition === "no_change"
+      ? liveStateMutationCount(after, currentLiveState) === 0
+      : publishedLiveState !== null &&
+        liveStateMutationCount(publishedLiveState, currentLiveState) === 0);
   const suppressedRemovalCount = count(evidence?.suppressed_removal_count);
   const conflictCount = count(evidence?.conflict_count);
   const catalogIdentityConflictCount = count(
-    evidence?.catalog_identity_conflict_count,
+    boundary.catalogIdentityConflictCount ??
+      evidence?.catalog_identity_conflict_count,
   );
+  const catalogIdentityConflictBindingValid =
+    boundary.catalogIdentityConflictCount === undefined ||
+    evidence?.catalog_identity_conflict_count ===
+      boundary.catalogIdentityConflictCount;
   const exactEvidenceShape = evidence !== null &&
     Object.keys(evidence).length === pilotEvidenceKeys.size &&
     Object.keys(evidence).every((key) => pilotEvidenceKeys.has(key));
@@ -839,6 +970,7 @@ export async function projectPilotJobEvidence(
     evidence!.raw_body_stored === false &&
     evidence!.side_effect_proof_passed === true &&
     conflictCount === 0 && catalogIdentityConflictCount === 0 &&
+    catalogIdentityConflictBindingValid &&
     !rawBodyWouldBeStored(evidence);
   const projectedReviewMetadataPresent = promotedEvidence
     ? proposalDisposition !== "no_change"
@@ -901,6 +1033,11 @@ export async function readPilotStatus(
   parserVersion = CURRENT_BENEFIT_PARSER_VERSION,
   dependencies: {
     captureLiveStateSnapshot?: typeof capturePilotLiveStateSnapshot;
+    readCatalogIdentityConflictCount?: (
+      db: UntypedSupabaseClient,
+      cardId: string,
+      canonicalUrl: string,
+    ) => Promise<number>;
   } = {},
 ) {
   assertBenefitParserVersion(parserVersion);
@@ -957,9 +1094,28 @@ export async function readPilotStatus(
         currentLiveState: await (
           dependencies.captureLiveStateSnapshot ?? capturePilotLiveStateSnapshot
         )(db, String(row.card_id)),
+        catalogIdentityConflictCount: await (
+          dependencies.readCatalogIdentityConflictCount ??
+            readPilotCatalogIdentityConflictCount
+        )(db, String(row.card_id), String(row.canonical_url)),
       })
     )),
   );
+}
+
+async function readPilotCatalogIdentityConflictCount(
+  db: UntypedSupabaseClient,
+  cardId: string,
+  canonicalUrl: string,
+): Promise<number> {
+  const { data, error } = await db.rpc("card_has_unresolved_catalog_identity", {
+    _card_id: cardId,
+    _canonical_url: canonicalUrl,
+  });
+  if (error || typeof data !== "boolean") {
+    throw error ?? new Error("pilot_catalog_identity_conflict_check_failed");
+  }
+  return data ? 1 : 0;
 }
 
 export async function promoteQualifiedPilotJobs(
@@ -967,6 +1123,11 @@ export async function promoteQualifiedPilotJobs(
   parserVersion = CURRENT_BENEFIT_PARSER_VERSION,
   dependencies: {
     captureLiveStateSnapshot?: typeof capturePilotLiveStateSnapshot;
+    readCatalogIdentityConflictCount?: (
+      db: UntypedSupabaseClient,
+      cardId: string,
+      canonicalUrl: string,
+    ) => Promise<number>;
   } = {},
 ): Promise<EnrichmentJob[]> {
   assertBenefitParserVersion(parserVersion);
@@ -1134,10 +1295,53 @@ function immutableDocumentSnapshot(
     Object.freeze({
       sourceUrl: String(document.sourceUrl),
       ...(document.finalUrl ? { finalUrl: String(document.finalUrl) } : {}),
+      ...(document.requestedResourceIdentityHash
+        ? {
+          requestedResourceIdentityHash: String(
+            document.requestedResourceIdentityHash,
+          ),
+        }
+        : {}),
+      ...(document.finalResourceIdentityHash
+        ? {
+          finalResourceIdentityHash: String(
+            document.finalResourceIdentityHash,
+          ),
+        }
+        : {}),
       text: String(document.text),
       contentHash: String(document.contentHash),
     })
   );
+}
+
+async function retainedDocumentEnvelope(
+  documents: readonly BenefitDocument[],
+): Promise<Record<string, unknown>[]> {
+  if (documents.length > 9) throw new Error("pilot_evidence_unbounded");
+  return await Promise.all(documents.map(async (document) => {
+    const text = String(document.text);
+    const contentHash = String(document.contentHash ?? "");
+    if (!lowercaseSha256.test(contentHash)) {
+      throw new Error("invalid_pilot_document_content_hash");
+    }
+    const requestedResourceIdentityHash =
+      document.requestedResourceIdentityHash ??
+        sourceIdentityDigest(String(document.sourceUrl));
+    const finalResourceIdentityHash = document.finalResourceIdentityHash ??
+      sourceIdentityDigest(String(document.finalUrl ?? document.sourceUrl));
+    if (
+      !lowercaseSha256.test(requestedResourceIdentityHash) ||
+      !lowercaseSha256.test(finalResourceIdentityHash)
+    ) throw new Error("invalid_pilot_document_resource_identity");
+    return {
+      requested_resource_identity_hash: requestedResourceIdentityHash,
+      final_resource_identity_hash: finalResourceIdentityHash,
+      content_hash: contentHash,
+      document_text_hash: await sha256Text(text),
+      document_bytes: new TextEncoder().encode(text).byteLength,
+    };
+  }));
 }
 
 function replaySourceEnvelope(attempts: readonly SourceAttempt[]) {
@@ -1192,6 +1396,7 @@ export async function computePilotReplayEvidence(input: {
   expectedRequiredSourceKeys: string[];
   requiredSourceSelectionOverflow: boolean;
   sourceAttempts: SourceAttempt[];
+  retainedDocuments: Record<string, unknown>[];
 }> {
   if (
     input.parserVersion !== CURRENT_BENEFIT_PARSER_VERSION ||
@@ -1207,6 +1412,7 @@ export async function computePilotReplayEvidence(input: {
     throw new Error("pilot_source_manifest_mismatch");
   }
   const retained = immutableDocumentSnapshot(input.documents);
+  const retainedDocuments = await retainedDocumentEnvelope(retained);
   const extract = input.extract ?? extractGroundedBenefitsV6;
   const first = await extract(
     structuredClone(retained),
@@ -1226,6 +1432,7 @@ export async function computePilotReplayEvidence(input: {
     run_mode: input.runMode,
     source_manifest_hash: sourceManifestHash,
     source_resources: replaySourceEnvelope(sourceAttempts),
+    retained_documents: retainedDocuments,
     expected_required_source_keys: expectedRequiredSourceKeys,
     required_source_selection_overflow: input.requiredSourceSelectionOverflow,
     canonical_proposals: proposals,
@@ -1249,6 +1456,7 @@ export async function computePilotReplayEvidence(input: {
     expectedRequiredSourceKeys,
     requiredSourceSelectionOverflow: input.requiredSourceSelectionOverflow,
     sourceAttempts,
+    retainedDocuments,
   };
 }
 
@@ -1257,7 +1465,24 @@ async function snapshotRows(
   identityKey: string,
 ): Promise<{ count: number; row_hash: string }> {
   if (rows.length > 512) throw new Error("pilot_live_state_unbounded");
-  const sorted = [...rows].sort((left, right) =>
+  const canonicalRows = rows.map((row) =>
+    Object.fromEntries(
+      Object.entries(row).map(([key, value]) => {
+        if (
+          ["created_at", "updated_at", "retired_at"].includes(key) &&
+          typeof value === "string"
+        ) {
+          const instant = utcInstant(value);
+          return [
+            key,
+            instant === null ? value : new Date(instant).toISOString(),
+          ];
+        }
+        return [key, value];
+      }),
+    )
+  );
+  const sorted = canonicalRows.sort((left, right) =>
     String(left[identityKey] ?? "").localeCompare(
       String(right[identityKey] ?? ""),
     )
@@ -1413,6 +1638,7 @@ export function buildOperationalMetrics(input: {
   conflicts?: unknown;
   catalogIdentityConflicts?: unknown;
   decisions?: unknown;
+  retryCount?: unknown;
   deterministicReplayPassed?: unknown;
   sideEffectProofPassed?: unknown;
   startedAt?: unknown;
@@ -1555,7 +1781,9 @@ export function buildOperationalMetrics(input: {
     targeted_rejects: targetedRejects,
     global_rejects: globalRejects,
     retirements: decisionCount("retire"),
-    retries: decisionCount("retry"),
+    retries: Number.isInteger(input.retryCount) && Number(input.retryCount) >= 0
+      ? Number(input.retryCount)
+      : decisionCount("retry"),
     deterministic_replay_passed: input.deterministicReplayPassed === true,
     side_effect_proof_passed: input.sideEffectProofPassed === true,
     processing_started_at: input.startedAt,
@@ -1567,6 +1795,41 @@ export function buildOperationalMetrics(input: {
 const uuid =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+const operationalMetricKeys = new Set([
+  "fetch_attempts",
+  "fetch_success",
+  "fetch_not_modified",
+  "fetch_blocked",
+  "fetch_missing",
+  "fetch_failed",
+  "fetch_incomplete",
+  "fetch_attempt_history_overflow",
+  "fetch_success_rate",
+  "required_supporting_attempted",
+  "required_supporting_succeeded",
+  "required_supporting_failed",
+  "required_supporting_omitted",
+  "required_supporting_success_rate",
+  "staged_additions",
+  "staged_modifications",
+  "staged_removals",
+  "identity_migrations",
+  "suppressed_removals",
+  "proposal_conflicts",
+  "catalog_identity_conflicts",
+  "approvals",
+  "edits",
+  "targeted_rejects",
+  "global_rejects",
+  "retirements",
+  "retries",
+  "deterministic_replay_passed",
+  "side_effect_proof_passed",
+  "processing_started_at",
+  "processing_completed_at",
+  "processing_duration_ms",
+]);
+
 export function operationalLogEntry(
   input: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -1576,7 +1839,7 @@ export function operationalLogEntry(
     : {};
   const safeMetrics = Object.fromEntries(
     Object.entries(metrics).filter(([key, value]) =>
-      /^[a-z][a-z0-9_]{0,63}$/.test(key) &&
+      operationalMetricKeys.has(key) &&
       (typeof value === "boolean" ||
         (typeof value === "number" && Number.isFinite(value)) ||
         (typeof value === "string" && value.length <= 40 &&
@@ -2455,7 +2718,7 @@ function sourceAttemptInputs(
 }
 
 const forbiddenStoredEvidenceKey =
-  /(?:^|_)(?:raw_?body|response_?body|page_?html|document_?text|statement|last_?four|card_?number|lease_?token|access_?token|refresh_?token)(?:_|$)/i;
+  /(?:^|_)(?:raw_?body|response_?body|page_?html|document_?text|statement|customer|email|phone|last_?four|card_?number|lease_?token|access_?token|refresh_?token|password|secret|credential)(?:_|$)/i;
 
 function rawBodyWouldBeStored(value: unknown, depth = 0): boolean {
   if (depth > 12) return true;
@@ -2486,9 +2749,24 @@ function rawBodyWouldBeStored(value: unknown, depth = 0): boolean {
     entries.some(([key, item]) =>
       (key === "raw_body_stored"
         ? item !== false
+        : key === "document_text_hash"
+        ? !(typeof item === "string" && lowercaseSha256.test(item))
         : forbiddenStoredEvidenceKey.test(key)) ||
       rawBodyWouldBeStored(item, depth + 1)
     );
+}
+
+export function assertSafePersistedEvidence(value: unknown): void {
+  let encoded: string;
+  try {
+    encoded = stableCanonicalJson(value);
+  } catch {
+    throw new Error("unsafe_persisted_evidence");
+  }
+  if (
+    new TextEncoder().encode(encoded).byteLength > 1_048_576 ||
+    rawBodyWouldBeStored(value)
+  ) throw new Error("unsafe_persisted_evidence");
 }
 
 export async function processJob(
@@ -2521,6 +2799,7 @@ export async function processJob(
     | null = null;
   let pilotObservedAt: string | null = null;
   let pilotStagingContentHash: string | null = null;
+  let metricCatalogIdentityConflictCount = -1;
   const persistedArtifacts: unknown[] = [];
   let resultSummary: Record<string, unknown> = {
     run_id: runId,
@@ -2965,6 +3244,9 @@ export async function processJob(
         source_url: boundedSourceUrl(document.finalUrl ?? document.sourceUrl),
         content_hash: document.contentHash ?? null,
       })),
+      ...(pilotReplay
+        ? { retained_documents: pilotReplay.retainedDocuments }
+        : {}),
       proposals: proposed,
       diff: compared,
     };
@@ -2997,6 +3279,9 @@ export async function processJob(
         absent_benefit_ids: observation.absent_benefit_ids,
         absent_legacy_benefit_ids: observation.absent_legacy_benefit_ids,
       }];
+    // This is the last boundary before any proposal/evidence can enter
+    // staging. The finalizer repeats the same fail-closed check below.
+    assertSafePersistedEvidence([safeExtraction, sourceEvidence]);
     persistedArtifacts.push(safeExtraction, sourceEvidence);
     const previousObservation = latestValidCrawlObservation(
       job.result_summary,
@@ -3093,6 +3378,16 @@ export async function processJob(
     };
     return { outcome, retried };
   } catch (error) {
+    if (
+      error instanceof Error && error.message === "unsafe_persisted_evidence"
+    ) {
+      // Unsafe in-memory parser output must not be copied into pilot replay or
+      // final evidence after the pre-staging boundary rejects it.
+      pilotReplay = null;
+      persistedArtifacts.length = 0;
+      normalizedFields = {};
+      resultSummary = {};
+    }
     failureCategory = safeFailureCategory(error);
     if (PERMANENT_FAILURES.has(failureCategory)) {
       outcome = "quarantined";
@@ -3136,6 +3431,20 @@ export async function processJob(
       ? -1
       : 0;
     const sideEffectProofPassed = unsafeMutationCount === 0;
+    try {
+      metricCatalogIdentityConflictCount =
+        await readPilotCatalogIdentityConflictCount(
+          db,
+          job.card_id,
+          job.canonical_url,
+        );
+    } catch {
+      metricCatalogIdentityConflictCount = -1;
+      if (job.run_mode === "pilot") {
+        outcome = "review_required";
+        failureCategory = "pilot_catalog_identity_check_failed";
+      }
+    }
     const operationalMetrics = buildOperationalMetrics({
       attempts: metricAttempts,
       crawlComplete: metricCrawlComplete,
@@ -3144,8 +3453,13 @@ export async function processJob(
       removals: metricRemovals,
       suppressedRemovals: metricSuppressedRemovalCount,
       conflicts: metricConflicts,
-      catalogIdentityConflicts: [],
-      decisions: retried ? [{ action: "retry" }] : [],
+      catalogIdentityConflicts: metricCatalogIdentityConflictCount > 0
+        ? Array.from({ length: metricCatalogIdentityConflictCount }, () => ({
+          kind: "pending_catalog_identity_review",
+        }))
+        : [],
+      decisions: [],
+      retryCount: retried ? 1 : 0,
       deterministicReplayPassed:
         pilotReplay?.deterministicReplayPassed === true,
       sideEffectProofPassed,
@@ -3199,7 +3513,7 @@ export async function processJob(
         live_state_before: pilotBefore,
         live_state_after: pilotAfter,
         conflict_count: metricConflicts.length,
-        catalog_identity_conflict_count: 0,
+        catalog_identity_conflict_count: metricCatalogIdentityConflictCount,
         proposal_count: resultSummary.proposals,
         proposal_disposition: resultSummary.proposal_disposition,
         staging_id: stagingId,
@@ -3239,6 +3553,7 @@ export async function processJob(
         operational_metrics: operationalMetrics,
       };
     }
+    assertSafePersistedEvidence([normalizedFields, resultSummary]);
     const { data: finalizedId, error: finalizeError } = await db.rpc(
       "finalize_card_catalog_enrichment_job",
       {

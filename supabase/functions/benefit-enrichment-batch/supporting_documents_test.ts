@@ -87,6 +87,56 @@ Deno.test("supporting redirects remain bound to the expected card identity", asy
   }
 });
 
+Deno.test("required central support links are fetched or retained as decisive failure evidence", async () => {
+  const product = "https://www.axis.bank.in/cards/credit-card/privilege";
+  const centralTerms = "https://www.axis.bank.in/support/card-terms.pdf";
+  const fetched: string[] = [];
+  const collected = await collectSupportingBenefitDocuments({
+    issuer: "Axis Bank",
+    primary: resource(
+      product,
+      `<h1>Privilege Credit Card</h1><a href="${centralTerms}">Download PDF</a>`,
+    ),
+    identityLabels: ["Privilege Credit Card"],
+    fetchOfficialIssuerResource: async (input) => {
+      fetched.push(input.url);
+      return resource(
+        input.url,
+        "Privilege Credit Card terms and fees",
+        "application/pdf",
+      );
+    },
+  });
+  assert(
+    fetched.includes(centralTerms),
+    "href-only central terms link was dropped before fetch",
+  );
+  assert(
+    collected.expectedRequiredSourceKeys.includes(
+      sourceIdentityDigest(centralTerms),
+    ),
+    "central terms link was omitted from the required manifest",
+  );
+
+  const unsafe = await collectSupportingBenefitDocuments({
+    issuer: "Axis Bank",
+    primary: resource(
+      product,
+      `<a href="${product}/application/terms.pdf">Download PDF</a><a href="https://[invalid/fees.pdf">Download</a>`,
+    ),
+    identityLabels: ["Privilege Credit Card"],
+    fetchOfficialIssuerResource: async () => {
+      throw new Error("unsafe required link must not be fetched");
+    },
+  });
+  assert(
+    unsafe.attempts.some((attempt) =>
+      attempt.role === "required_supporting" && attempt.status === "failed"
+    ),
+    "unsafe or invalid required href disappeared instead of becoming decisive failure evidence",
+  );
+});
+
 Deno.test("supporting identity reconciles conflicting strong labels and ignores ordinary partner prose", async () => {
   const privilege = "https://www.axis.bank.in/cards/credit-card/privilege";
   const benefits = `${privilege}/benefits`;
@@ -269,6 +319,14 @@ Deno.test("supporting attempts retain opaque final resource identity", async () 
     persisted.finalResourceIdentityHash === finalHash,
     "supporting final identity was dropped from evidence",
   );
+  const retained = collected.documents.find((document) =>
+    document.sourceUrl === terms
+  );
+  assert(
+    retained?.requestedResourceIdentityHash === sourceIdentityDigest(terms) &&
+      retained.finalResourceIdentityHash === finalHash,
+    "retained parser document lost exact requested/final resource identities",
+  );
 });
 
 Deno.test("supporting crawl follows relevant official links to depth two and retains PDF provenance", async () => {
@@ -330,7 +388,15 @@ Deno.test("supporting crawl follows relevant official links to depth two and ret
     "crawl exceeded relevant depth-two links",
   );
   assert(documents.length === 5, "primary/supporting evidence was lost");
-  assert(attempts.length === 5, "successful source attempts were not retained");
+  assert(
+    attempts.length === 6 &&
+      attempts.some((attempt) =>
+        attempt.role === "required_supporting" &&
+        attempt.status === "failed" &&
+        attempt.requestedUrl === "https://evil.example/fees"
+      ),
+    "successful or rejected required source attempts were not retained",
+  );
   const pdfDocument = documents.find((document) => document.sourceUrl === pdf);
   assert(
     pdfDocument?.text.includes("2 lounge visits per quarter"),

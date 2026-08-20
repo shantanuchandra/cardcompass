@@ -1254,6 +1254,530 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION public.card_enrichment_pilot_snapshot_rows(
+  _rows jsonb
+) RETURNS jsonb
+LANGUAGE sql
+IMMUTABLE
+SECURITY INVOKER
+SET search_path = public, extensions, pg_temp
+AS $$
+  SELECT jsonb_build_object(
+    'count', jsonb_array_length(_rows),
+    'row_hash', encode(extensions.digest(
+      convert_to(public.canonical_json_text(_rows), 'UTF8'), 'sha256'
+    ), 'hex')
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION public.card_enrichment_pilot_live_state_snapshot(
+  _card_id uuid
+) RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY INVOKER
+SET search_path = public, extensions, pg_temp
+AS $$
+DECLARE
+  catalog_rows jsonb;
+  mapping_rows jsonb;
+  benefit_rows jsonb;
+BEGIN
+  SELECT coalesce(jsonb_agg(jsonb_build_object(
+    'id', card.id, 'card_name', card.card_name, 'bank', card.bank,
+    'network', card.network, 'card_type', card.card_type,
+    'annual_fee', card.annual_fee, 'joining_fee', card.joining_fee,
+    'apr', card.apr, 'card_url', card.card_url,
+    'is_discontinued', card.is_discontinued,
+    'created_at', public.canonical_card_enrichment_timestamp(card.created_at::text),
+    'updated_at', public.canonical_card_enrichment_timestamp(card.updated_at::text)
+  ) ORDER BY card.id), '[]'::jsonb) INTO catalog_rows
+  FROM public.card_catalog AS card WHERE card.id = _card_id;
+
+  SELECT coalesce(jsonb_agg(jsonb_build_object(
+    'mapping_id', mapping.mapping_id, 'card_id', mapping.card_id,
+    'benefit_id', mapping.benefit_id,
+    'display_priority', mapping.display_priority,
+    'is_primary', mapping.is_primary, 'category_codes', mapping.category_codes,
+    'retired_at', public.canonical_card_enrichment_timestamp(mapping.retired_at::text),
+    'created_at', public.canonical_card_enrichment_timestamp(mapping.created_at::text)
+  ) ORDER BY mapping.mapping_id), '[]'::jsonb) INTO mapping_rows
+  FROM public.card_benefit_mapping AS mapping WHERE mapping.card_id = _card_id;
+
+  SELECT coalesce(jsonb_agg(benefit.row_value ORDER BY benefit.benefit_id), '[]'::jsonb)
+    INTO benefit_rows
+  FROM (
+    SELECT DISTINCT ON (stored.benefit_id) stored.benefit_id,
+      jsonb_build_object(
+        'benefit_id', stored.benefit_id, 'dedupe_key', stored.dedupe_key,
+        'title', stored.title, 'description', stored.description,
+        'benefit_category', stored.benefit_category,
+        'benefit_type', stored.benefit_type, 'value_config', stored.value_config,
+        'partners', stored.partners, 'exclusions', stored.exclusions,
+        'regions', stored.regions, 'source_url', stored.source_url,
+        'valid_from', stored.valid_from, 'valid_until', stored.valid_until,
+        'is_active', stored.is_active,
+        'created_at', public.canonical_card_enrichment_timestamp(stored.created_at::text),
+        'updated_at', public.canonical_card_enrichment_timestamp(stored.updated_at::text)
+      ) AS row_value
+    FROM public.benefits AS stored
+    JOIN public.card_benefit_mapping AS mapping
+      ON mapping.benefit_id = stored.benefit_id
+    WHERE mapping.card_id = _card_id
+    ORDER BY stored.benefit_id
+  ) AS benefit;
+
+  RETURN jsonb_build_object(
+    'card_catalog', public.card_enrichment_pilot_snapshot_rows(catalog_rows),
+    'benefits', public.card_enrichment_pilot_snapshot_rows(benefit_rows),
+    'card_benefit_mapping', public.card_enrichment_pilot_snapshot_rows(mapping_rows)
+  );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.capture_card_enrichment_pilot_publication_snapshot()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public, extensions, pg_temp
+AS $$
+BEGIN
+  IF NEW.status = 'approved' AND OLD.status IS DISTINCT FROM 'approved'
+     AND NEW.parser_version = 'benefits-v6'
+     AND EXISTS (
+       SELECT 1 FROM public.card_catalog_enrichment_jobs AS job
+       WHERE job.card_id = NEW.card_id
+         AND job.parser_version = NEW.parser_version
+         AND job.normalized_fields->'pilot_evidence'->>'staging_id' = NEW.id::text
+     ) THEN
+    NEW.extracted_data := jsonb_set(
+      NEW.extracted_data,
+      '{published_live_state}',
+      public.card_enrichment_pilot_live_state_snapshot(NEW.card_id),
+      true
+    );
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS capture_card_enrichment_pilot_publication_snapshot
+  ON public.card_benefits_staging;
+CREATE TRIGGER capture_card_enrichment_pilot_publication_snapshot
+BEFORE UPDATE OF status ON public.card_benefits_staging
+FOR EACH ROW EXECUTE FUNCTION public.capture_card_enrichment_pilot_publication_snapshot();
+
+-- Promotion never trusts worker/admin booleans alone.  This validator is
+-- called only while the exact job, staging, catalog-review, mapping, benefit,
+-- and catalog rows are locked by the promotion RPC below.
+CREATE OR REPLACE FUNCTION public.card_enrichment_pilot_source_identity_hash(
+  _url text
+) RETURNS text
+LANGUAGE plpgsql
+IMMUTABLE
+SECURITY INVOKER
+SET search_path = public, extensions, pg_temp
+AS $$
+DECLARE
+  parts text[];
+  authority text;
+  resource_path text;
+  resource_query text;
+  canonical_url text;
+BEGIN
+  IF _url IS NULL OR length(trim(_url)) NOT BETWEEN 9 AND 2048
+     OR trim(_url) ~ '[[:cntrl:][:space:]]' THEN
+    RETURN NULL;
+  END IF;
+  parts := regexp_match(
+    trim(_url), '^https://([^/?#]+)([^?#]*)(\?[^#]*)?$', 'i'
+  );
+  IF parts IS NULL OR parts[1] = '' OR parts[1] LIKE '%@%'
+     OR parts[1] !~ '^[A-Za-z0-9.-]+(:[0-9]+)?$' THEN
+    RETURN NULL;
+  END IF;
+  authority := lower(regexp_replace(parts[1], ':443$', '', 'i'));
+  resource_path := coalesce(parts[2], '');
+  resource_query := coalesce(parts[3], '');
+  IF resource_path = '' THEN resource_path := '/'; END IF;
+  canonical_url := 'https://' || authority || resource_path || resource_query;
+  canonical_url := regexp_replace(canonical_url, '/$', '');
+  RETURN encode(extensions.digest(convert_to(canonical_url, 'UTF8'), 'sha256'), 'hex');
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.card_enrichment_pilot_source_manifest_hash(
+  _attempts jsonb
+) RETURNS text
+LANGUAGE sql
+IMMUTABLE
+SECURITY INVOKER
+SET search_path = public, extensions, pg_temp
+AS $$
+  SELECT CASE WHEN jsonb_typeof(_attempts) = 'array'
+                   AND jsonb_array_length(_attempts) BETWEEN 1 AND 9
+    THEN encode(extensions.digest(convert_to(coalesce(string_agg(
+      public.canonical_json_text(
+        (attempt.value - 'attemptedAt' - 'attemptHistory') ||
+        CASE WHEN jsonb_typeof(attempt.value->'attemptHistory') = 'array'
+          THEN jsonb_build_object('attemptHistory', coalesce((
+            SELECT jsonb_agg(history.value - 'attemptedAt' ORDER BY history.ordinality)
+            FROM jsonb_array_elements(attempt.value->'attemptHistory')
+              WITH ORDINALITY AS history(value, ordinality)
+          ), '[]'::jsonb)) ELSE '{}'::jsonb END
+      ), E'\n' ORDER BY public.canonical_json_text(
+        (attempt.value - 'attemptedAt' - 'attemptHistory') ||
+        CASE WHEN jsonb_typeof(attempt.value->'attemptHistory') = 'array'
+          THEN jsonb_build_object('attemptHistory', coalesce((
+            SELECT jsonb_agg(history.value - 'attemptedAt' ORDER BY history.ordinality)
+            FROM jsonb_array_elements(attempt.value->'attemptHistory')
+              WITH ORDINALITY AS history(value, ordinality)
+          ), '[]'::jsonb)) ELSE '{}'::jsonb END
+      )
+    ), ''), 'UTF8'), 'sha256'), 'hex') ELSE NULL END
+  FROM jsonb_array_elements(CASE WHEN jsonb_typeof(_attempts) = 'array'
+    THEN _attempts ELSE '[]'::jsonb END) AS attempt(value);
+$$;
+
+CREATE OR REPLACE FUNCTION public.card_enrichment_pilot_evidence_is_qualified(
+  _job public.card_catalog_enrichment_jobs,
+  _staging public.card_benefits_staging
+) RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+SECURITY INVOKER
+SET search_path = public, extensions, pg_temp
+AS $$
+DECLARE
+  evidence jsonb := _job.normalized_fields->'pilot_evidence';
+  verification_envelope jsonb;
+  repeat_verification_envelope jsonb;
+  expected_source_resources jsonb;
+  expected_required_source_keys jsonb;
+  actual_required_source_keys jsonb;
+  current_live_state jsonb;
+  decisions jsonb;
+  proposals jsonb;
+  removals jsonb;
+  approved_count integer;
+  retained_count integer;
+  retired_count integer;
+  rejected_count integer;
+BEGIN
+  current_live_state := public.card_enrichment_pilot_live_state_snapshot(_job.card_id);
+  IF NOT (
+       (_job.run_mode = 'pilot' AND public.card_enrichment_pilot_job_is_qualified(
+          _job.status, _job.failure_category, _job.result_summary
+        ))
+       OR (_job.run_mode = 'scheduled'
+         AND _job.result_summary->'pilot_qualified' = 'true'::jsonb)
+     )
+     OR jsonb_typeof(evidence) <> 'object'
+     OR evidence->>'parser_version' IS DISTINCT FROM _job.parser_version
+     OR evidence->>'job_id' IS DISTINCT FROM _job.id::text
+     OR evidence->>'card_id' IS DISTINCT FROM _job.card_id::text
+     OR evidence->>'run_mode' IS DISTINCT FROM 'pilot'
+     OR EXISTS (
+       SELECT 1 FROM jsonb_object_keys(evidence) AS key(value)
+       WHERE key.value NOT IN (
+         'parser_version','job_id','card_id','run_mode','canonical_hash',
+         'repeat_canonical_hash','deterministic_replay_passed',
+         'source_manifest_hash','source_attempts','expected_required_source_keys',
+         'required_source_selection_overflow','verification_envelope',
+         'repeat_verification_envelope','crawl_complete',
+         'suppressed_removal_count','unsafe_mutation_count','raw_body_stored',
+         'side_effect_proof_passed','observed_at','live_state_before',
+         'live_state_after','conflict_count','catalog_identity_conflict_count',
+         'proposal_count','proposal_disposition','staging_id',
+         'staging_content_hash'
+       )
+     )
+     OR evidence->>'catalog_identity_conflict_count' IS DISTINCT FROM '0'
+     OR evidence->>'conflict_count' IS DISTINCT FROM '0'
+     OR evidence->>'suppressed_removal_count' IS DISTINCT FROM '0'
+     OR evidence->>'unsafe_mutation_count' IS DISTINCT FROM '0'
+     OR evidence->'crawl_complete' IS DISTINCT FROM 'true'::jsonb
+     OR evidence->'raw_body_stored' IS DISTINCT FROM 'false'::jsonb
+     OR evidence->'side_effect_proof_passed' IS DISTINCT FROM 'true'::jsonb
+     OR evidence->'deterministic_replay_passed' IS DISTINCT FROM 'true'::jsonb
+     OR evidence->'required_source_selection_overflow'
+          IS DISTINCT FROM 'false'::jsonb
+     OR evidence->'live_state_before' IS DISTINCT FROM evidence->'live_state_after'
+     OR jsonb_typeof(evidence->'live_state_before') <> 'object'
+     OR (SELECT count(*) FROM jsonb_object_keys(evidence->'live_state_before')) <> 3
+     OR EXISTS (
+       SELECT 1
+       FROM jsonb_each(evidence->'live_state_before') AS snapshot(table_name, value)
+       WHERE snapshot.table_name NOT IN (
+         'card_catalog','benefits','card_benefit_mapping'
+       ) OR jsonb_typeof(snapshot.value) <> 'object'
+         OR (SELECT count(*) FROM jsonb_object_keys(snapshot.value)) <> 2
+         OR jsonb_typeof(snapshot.value->'count') <> 'number'
+         OR coalesce(snapshot.value->>'count','') !~ '^[0-9]+$'
+         OR (snapshot.value->>'count')::numeric > 512
+         OR coalesce(snapshot.value->>'row_hash','') !~ '^[0-9a-f]{64}$'
+     )
+     OR jsonb_typeof(evidence->'source_attempts') <> 'array'
+     OR jsonb_array_length(evidence->'source_attempts') NOT BETWEEN 1 AND 9
+     OR (SELECT count(*) FROM jsonb_array_elements(evidence->'source_attempts') AS attempt(value)
+         WHERE attempt.value->>'role' = 'primary') <> 1
+     OR EXISTS (
+       SELECT 1 FROM jsonb_array_elements(evidence->'source_attempts') AS attempt(value)
+       WHERE jsonb_typeof(attempt.value) <> 'object'
+          OR attempt.value->>'role' NOT IN ('primary','required_supporting','supporting')
+          OR attempt.value->>'status' NOT IN ('success','not_modified','failed')
+          OR EXISTS (
+            SELECT 1 FROM jsonb_object_keys(attempt.value) AS key(value)
+            WHERE key.value NOT IN (
+              'url','role','status','httpStatus','contentHash',
+              'finalResourceIdentityHash','errorCode','attemptedAt',
+              'parserCacheReusable','logicalSourceKey','attemptHistory',
+              'attemptHistoryOverflow'
+            )
+          )
+          OR (attempt.value->>'status' IN ('success','not_modified') AND (
+            coalesce(attempt.value->>'contentHash','') !~ '^[0-9a-f]{64}$'
+            OR coalesce(attempt.value->>'logicalSourceKey','') !~ '^[0-9a-f]{64}$'
+            OR coalesce(attempt.value->>'finalResourceIdentityHash','') !~ '^[0-9a-f]{64}$'
+          ))
+          OR (attempt.value->>'status' = 'not_modified'
+            AND attempt.value->'parserCacheReusable' IS DISTINCT FROM 'true'::jsonb)
+          OR (attempt.value->>'role' IN ('primary','required_supporting')
+            AND attempt.value->>'status' NOT IN ('success','not_modified'))
+          OR attempt.value->'attemptHistoryOverflow' = 'true'::jsonb
+     )
+     OR (SELECT attempt.value->>'logicalSourceKey'
+         FROM jsonb_array_elements(evidence->'source_attempts') AS attempt(value)
+         WHERE attempt.value->>'role' = 'primary') IS DISTINCT FROM
+           public.card_enrichment_pilot_source_identity_hash(_job.canonical_url)
+     OR EXISTS (
+       SELECT attempt.value->>'logicalSourceKey'
+       FROM jsonb_array_elements(evidence->'source_attempts') AS attempt(value)
+       WHERE attempt.value->>'role' = 'required_supporting'
+       GROUP BY attempt.value->>'logicalSourceKey'
+       HAVING count(*) <> 1
+     )
+     OR evidence->>'source_manifest_hash' IS DISTINCT FROM
+          public.card_enrichment_pilot_source_manifest_hash(evidence->'source_attempts')
+     OR public.card_has_unresolved_catalog_identity(_job.card_id, _job.canonical_url)
+  THEN RETURN false; END IF;
+
+  expected_required_source_keys := evidence->'expected_required_source_keys';
+  SELECT coalesce(jsonb_agg(required.source_key ORDER BY required.source_key), '[]'::jsonb)
+    INTO actual_required_source_keys
+  FROM (
+    SELECT DISTINCT attempt.value->>'logicalSourceKey' AS source_key
+    FROM jsonb_array_elements(evidence->'source_attempts') AS attempt(value)
+    WHERE attempt.value->>'role' = 'required_supporting'
+  ) AS required;
+  IF jsonb_typeof(expected_required_source_keys) <> 'array'
+     OR jsonb_array_length(expected_required_source_keys) > 8
+     OR EXISTS (
+       SELECT 1 FROM jsonb_array_elements(expected_required_source_keys)
+         WITH ORDINALITY AS required(value, ordinality)
+       WHERE jsonb_typeof(required.value) <> 'string'
+          OR trim(BOTH '"' FROM required.value::text) !~ '^[0-9a-f]{64}$'
+          OR (required.ordinality > 1 AND trim(BOTH '"' FROM required.value::text) <= (
+            SELECT trim(BOTH '"' FROM prior.value::text)
+            FROM jsonb_array_elements(expected_required_source_keys)
+              WITH ORDINALITY AS prior(value, ordinality)
+            WHERE prior.ordinality = required.ordinality - 1
+          ))
+     )
+     OR expected_required_source_keys IS DISTINCT FROM actual_required_source_keys
+  THEN RETURN false; END IF;
+
+  verification_envelope := evidence->'verification_envelope';
+  repeat_verification_envelope := evidence->'repeat_verification_envelope';
+  SELECT jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
+      'url', attempt.value->'url', 'role', attempt.value->'role',
+      'status', attempt.value->'status', 'http_status', attempt.value->'httpStatus',
+      'content_hash', attempt.value->'contentHash',
+      'logical_source_key', attempt.value->'logicalSourceKey',
+      'final_resource_identity_hash', attempt.value->'finalResourceIdentityHash',
+      'error_code', attempt.value->'errorCode'
+    )) ORDER BY attempt.ordinality)
+    INTO expected_source_resources
+  FROM jsonb_array_elements(evidence->'source_attempts')
+    WITH ORDINALITY AS attempt(value, ordinality);
+  IF jsonb_typeof(verification_envelope) <> 'object'
+     OR jsonb_typeof(repeat_verification_envelope) <> 'object'
+     OR verification_envelope IS DISTINCT FROM repeat_verification_envelope
+     OR (SELECT count(*) FROM jsonb_object_keys(verification_envelope)) <> 10
+     OR EXISTS (
+       SELECT 1 FROM jsonb_object_keys(verification_envelope) AS key(value)
+       WHERE key.value NOT IN (
+         'parser_version','job_id','card_id','run_mode','source_manifest_hash',
+         'source_resources','retained_documents','expected_required_source_keys',
+         'required_source_selection_overflow','canonical_proposals'
+       )
+     )
+     OR octet_length(convert_to(
+          public.canonical_json_text(verification_envelope), 'UTF8'
+        )) > 262144
+     OR jsonb_typeof(verification_envelope->'retained_documents') <> 'array'
+     OR jsonb_array_length(verification_envelope->'retained_documents') > 9
+     OR verification_envelope->'source_resources' IS DISTINCT FROM expected_source_resources
+     OR verification_envelope->'expected_required_source_keys'
+          IS DISTINCT FROM expected_required_source_keys
+     OR verification_envelope->'required_source_selection_overflow'
+          IS DISTINCT FROM 'false'::jsonb
+     OR jsonb_array_length(verification_envelope->'retained_documents') <>
+        (SELECT count(*) FROM jsonb_array_elements(expected_source_resources) AS resource(value)
+         WHERE resource.value->>'status' IN ('success', 'not_modified')
+           AND resource.value ? 'content_hash')
+     OR EXISTS (
+       SELECT 1 FROM jsonb_array_elements(verification_envelope->'retained_documents') AS document(value)
+       WHERE jsonb_typeof(document.value) <> 'object'
+          OR (SELECT count(*) FROM jsonb_object_keys(document.value)) <> 5
+          OR coalesce(document.value->>'requested_resource_identity_hash', '') !~ '^[0-9a-f]{64}$'
+          OR coalesce(document.value->>'final_resource_identity_hash', '') !~ '^[0-9a-f]{64}$'
+          OR coalesce(document.value->>'content_hash', '') !~ '^[0-9a-f]{64}$'
+          OR coalesce(document.value->>'document_text_hash', '') !~ '^[0-9a-f]{64}$'
+          OR jsonb_typeof(document.value->'document_bytes') <> 'number'
+          OR coalesce(document.value->>'document_bytes', '') !~ '^[0-9]+$'
+          OR (document.value->>'document_bytes')::numeric > 1048576
+          OR NOT EXISTS (
+            SELECT 1 FROM jsonb_array_elements(expected_source_resources) AS resource(value)
+            WHERE resource.value->>'logical_source_key' = document.value->>'requested_resource_identity_hash'
+              AND resource.value->>'final_resource_identity_hash' = document.value->>'final_resource_identity_hash'
+              AND resource.value->>'content_hash' = document.value->>'content_hash'
+              AND resource.value->>'status' IN ('success', 'not_modified')
+          )
+     )
+     OR EXISTS (
+       SELECT 1
+       FROM jsonb_array_elements(verification_envelope->'retained_documents')
+         AS document(value)
+       GROUP BY public.canonical_json_text(document.value)
+       HAVING count(*) <> 1
+     )
+     OR EXISTS (
+       SELECT 1 FROM jsonb_array_elements(expected_source_resources) AS resource(value)
+       WHERE resource.value->>'status' IN ('success','not_modified')
+         AND resource.value ? 'content_hash'
+         AND (SELECT count(*)
+              FROM jsonb_array_elements(verification_envelope->'retained_documents')
+                AS document(value)
+              WHERE document.value->>'requested_resource_identity_hash' =
+                      resource.value->>'logical_source_key'
+                AND document.value->>'final_resource_identity_hash' =
+                      resource.value->>'final_resource_identity_hash'
+                AND document.value->>'content_hash' = resource.value->>'content_hash') <> 1
+     )
+     OR evidence->>'canonical_hash' IS DISTINCT FROM encode(
+          extensions.digest(convert_to(public.canonical_json_text(verification_envelope), 'UTF8'), 'sha256'), 'hex'
+        )
+     OR evidence->>'repeat_canonical_hash' IS DISTINCT FROM encode(
+          extensions.digest(convert_to(public.canonical_json_text(repeat_verification_envelope), 'UTF8'), 'sha256'), 'hex'
+        )
+     OR evidence->>'canonical_hash' IS DISTINCT FROM evidence->>'repeat_canonical_hash'
+     OR verification_envelope->>'job_id' IS DISTINCT FROM _job.id::text
+     OR verification_envelope->>'card_id' IS DISTINCT FROM _job.card_id::text
+     OR verification_envelope->>'parser_version' IS DISTINCT FROM _job.parser_version
+     OR verification_envelope->>'run_mode' IS DISTINCT FROM 'pilot'
+     OR verification_envelope->>'source_manifest_hash' IS DISTINCT FROM evidence->>'source_manifest_hash'
+  THEN RETURN false; END IF;
+
+  proposals := verification_envelope->'canonical_proposals';
+  IF jsonb_typeof(proposals) <> 'array' OR jsonb_array_length(proposals) > 256
+     OR proposals IS DISTINCT FROM repeat_verification_envelope->'canonical_proposals'
+     OR (evidence->>'proposal_count')::integer IS DISTINCT FROM jsonb_array_length(proposals)
+     OR evidence->>'proposal_disposition' NOT IN (
+       'no_change','material','removal_review'
+     )
+     OR (_job.run_mode = 'pilot' AND
+       (_job.result_summary->>'proposals')::integer IS DISTINCT FROM
+         jsonb_array_length(proposals))
+  THEN RETURN false; END IF;
+
+  IF evidence->>'proposal_disposition' = 'no_change' THEN
+    RETURN evidence->'staging_id' = 'null'::jsonb
+      AND evidence->'staging_content_hash' = 'null'::jsonb
+      AND (_job.run_mode = 'scheduled' OR _job.staging_id IS NULL)
+      AND jsonb_array_length(proposals) = 0
+      AND (_job.run_mode = 'scheduled' OR
+        current_live_state IS NOT DISTINCT FROM evidence->'live_state_after')
+      AND (_job.run_mode = 'scheduled'
+        OR _job.result_summary->'successful_no_change' = 'true'::jsonb);
+  END IF;
+  IF _staging.id IS NULL
+     OR _staging.id::text IS DISTINCT FROM evidence->>'staging_id'
+     OR (_job.run_mode = 'pilot' AND _job.staging_id IS DISTINCT FROM _staging.id)
+     OR _staging.card_id IS DISTINCT FROM _job.card_id
+     OR _staging.parser_version IS DISTINCT FROM _job.parser_version
+     OR _staging.content_hash IS DISTINCT FROM evidence->>'staging_content_hash'
+     OR _staging.status IS DISTINCT FROM 'approved'
+     OR _staging.extracted_data->'proposals' IS DISTINCT FROM proposals
+     OR _staging.extracted_data->'retained_documents' IS DISTINCT FROM
+          verification_envelope->'retained_documents'
+     OR jsonb_typeof(_staging.extracted_data->'published_live_state') <> 'object'
+     OR (_job.run_mode = 'pilot' AND
+       _staging.extracted_data->'published_live_state' IS DISTINCT FROM
+         current_live_state)
+  THEN RETURN false; END IF;
+
+  decisions := _staging.benefit_decisions;
+  removals := coalesce(_staging.extracted_data->'diff'->'possibleRemovals', '[]'::jsonb);
+  IF jsonb_typeof(decisions) <> 'array' OR jsonb_array_length(decisions) > 64
+     OR jsonb_typeof(removals) <> 'array'
+     OR jsonb_array_length(decisions) <>
+          jsonb_array_length(proposals) + jsonb_array_length(removals)
+     OR EXISTS (
+       SELECT 1 FROM jsonb_array_elements(decisions) AS decision(value)
+       WHERE decision.value->>'action' NOT IN ('approve','edit','reject','retire','keep_existing')
+          OR (decision.value ? 'proposal_index') = (decision.value ? 'benefit_id')
+          OR jsonb_typeof(decision.value->'reviewed_at') <> 'string'
+          OR coalesce(decision.value->>'reviewed_at','') !~
+            '^20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?(Z|\+00:00)$'
+     )
+     OR EXISTS (
+       SELECT 1 FROM jsonb_array_elements(decisions) AS decision(value)
+       WHERE decision.value ? 'proposal_index' AND (
+         decision.value->>'action' NOT IN ('approve','edit','reject')
+         OR (decision.value->>'proposal_index') !~ '^[0-9]+$'
+         OR (decision.value->>'proposal_index')::integer >= jsonb_array_length(proposals)
+       )
+     )
+     OR EXISTS (
+       SELECT 1 FROM jsonb_array_elements(decisions) AS decision(value)
+       WHERE decision.value ? 'benefit_id' AND (
+         decision.value->>'action' NOT IN ('retire','keep_existing','reject')
+         OR NOT EXISTS (
+           SELECT 1 FROM jsonb_array_elements(removals) AS removal(value)
+           WHERE coalesce(removal.value->'benefit'->>'benefitId', removal.value->'benefit'->>'dedupeKey')
+             = decision.value->>'benefit_id'
+         )
+       )
+     )
+     OR EXISTS (
+       SELECT identity FROM (
+         SELECT CASE WHEN decision.value ? 'proposal_index'
+           THEN 'proposal:' || decision.value->>'proposal_index'
+           ELSE 'benefit:' || decision.value->>'benefit_id' END AS identity
+         FROM jsonb_array_elements(decisions) AS decision(value)
+       ) reviewed GROUP BY identity HAVING count(*) <> 1
+     )
+  THEN RETURN false; END IF;
+
+  SELECT count(*) FILTER (WHERE value->>'action' IN ('approve','edit')),
+         count(*) FILTER (WHERE value->>'action' = 'keep_existing'),
+         count(*) FILTER (WHERE value->>'action' = 'retire'),
+         count(*) FILTER (WHERE value->>'action' = 'reject')
+    INTO approved_count, retained_count, retired_count, rejected_count
+  FROM jsonb_array_elements(decisions);
+  RETURN rejected_count = 0
+    AND (_job.run_mode = 'scheduled' OR (
+      approved_count = (_job.result_summary->>'approved_count')::integer
+      AND retained_count = (_job.result_summary->>'retained_count')::integer
+      AND retired_count = (_job.result_summary->>'retired_count')::integer
+      AND rejected_count = (_job.result_summary->>'rejected_count')::integer
+    ));
+EXCEPTION WHEN OTHERS THEN
+  RETURN false;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION public.promote_qualified_card_benefit_enrichment_pilot(
   _parser_version text
 ) RETURNS SETOF public.card_catalog_enrichment_jobs
@@ -1266,6 +1790,7 @@ DECLARE
   pilot_count integer;
   promoted_count integer;
   all_qualified boolean;
+  pilot_card_id uuid;
 BEGIN
   IF selected_parser <> 'benefits-v6' THEN
     RAISE EXCEPTION 'invalid_pilot_promotion';
@@ -1273,6 +1798,47 @@ BEGIN
   PERFORM pg_advisory_xact_lock(
     hashtextextended('card_benefit_enrichment_pilot:' || selected_parser, 0)
   );
+  FOR pilot_card_id IN
+    SELECT job.card_id
+    FROM public.card_catalog_enrichment_jobs AS job
+    WHERE job.parser_version = selected_parser
+      AND (job.run_mode = 'pilot'
+        OR job.result_summary->'pilot_qualified' = 'true'::jsonb)
+    ORDER BY job.card_id
+  LOOP
+    PERFORM pg_advisory_xact_lock(hashtextextended(
+      'card_benefit_enrichment_review:' || pilot_card_id::text,
+      0
+    ));
+  END LOOP;
+  PERFORM 1 FROM public.card_catalog_enrichment_jobs AS job
+    WHERE job.parser_version = selected_parser
+      AND (job.run_mode = 'pilot'
+        OR job.result_summary->'pilot_qualified' = 'true'::jsonb)
+    ORDER BY job.id FOR UPDATE OF job;
+  PERFORM 1 FROM public.card_benefits_staging AS staging
+    JOIN public.card_catalog_enrichment_jobs AS job
+      ON nullif(job.normalized_fields->'pilot_evidence'->>'staging_id', '')::uuid = staging.id
+    WHERE job.parser_version = selected_parser
+      AND (job.run_mode = 'pilot'
+        OR job.result_summary->'pilot_qualified' = 'true'::jsonb)
+    ORDER BY staging.id FOR UPDATE OF staging;
+  -- Block a review/source/live mutation from racing the read/decision boundary.
+  LOCK TABLE public.card_catalog_review_queue IN SHARE MODE;
+  LOCK TABLE public.card_benefit_mapping IN SHARE MODE;
+  LOCK TABLE public.benefits IN SHARE MODE;
+  PERFORM 1 FROM public.card_catalog_review_queue AS review
+    WHERE review.status = 'pending' ORDER BY review.id FOR SHARE;
+  PERFORM 1 FROM public.card_catalog AS card
+    JOIN public.card_catalog_enrichment_jobs AS job ON job.card_id = card.id
+    WHERE job.parser_version = selected_parser ORDER BY card.id FOR SHARE OF card;
+  PERFORM 1 FROM public.card_benefit_mapping AS mapping
+    JOIN public.card_catalog_enrichment_jobs AS job ON job.card_id = mapping.card_id
+    WHERE job.parser_version = selected_parser ORDER BY mapping.mapping_id FOR SHARE OF mapping;
+  PERFORM 1 FROM public.benefits AS benefit
+    JOIN public.card_benefit_mapping AS mapping ON mapping.benefit_id = benefit.benefit_id
+    JOIN public.card_catalog_enrichment_jobs AS job ON job.card_id = mapping.card_id
+    WHERE job.parser_version = selected_parser ORDER BY benefit.benefit_id FOR SHARE OF benefit;
   WITH locked_pilot AS MATERIALIZED (
     SELECT job.*
     FROM public.card_catalog_enrichment_jobs AS job
@@ -1286,18 +1852,26 @@ BEGIN
       )
     ORDER BY job.id
     FOR UPDATE OF job
+  ), locked_staging AS MATERIALIZED (
+    SELECT staging.*
+    FROM public.card_benefits_staging AS staging
+    JOIN locked_pilot AS pilot
+      ON nullif(pilot.normalized_fields->'pilot_evidence'->>'staging_id', '')::uuid = staging.id
+    ORDER BY staging.id
+    FOR UPDATE OF staging
   )
   SELECT count(*) FILTER (WHERE locked_pilot.run_mode = 'pilot'),
     count(*) FILTER (WHERE locked_pilot.run_mode = 'scheduled'),
     coalesce(bool_and(
-    public.card_enrichment_pilot_job_is_qualified(
-      locked_pilot.status,
-      locked_pilot.failure_category,
-      locked_pilot.result_summary
+    public.card_enrichment_pilot_evidence_is_qualified(
+      locked_pilot,
+      locked_staging
     )
   ), false)
   INTO pilot_count, promoted_count, all_qualified
-  FROM locked_pilot;
+  FROM locked_pilot
+  LEFT JOIN locked_staging ON locked_staging.id =
+    nullif(locked_pilot.normalized_fields->'pilot_evidence'->>'staging_id', '')::uuid;
   IF pilot_count + promoted_count <> 5 THEN
     RAISE EXCEPTION 'pilot_not_qualified';
   END IF;
@@ -1324,10 +1898,13 @@ BEGIN
         AND promoted_job.run_mode = 'scheduled'
         AND promoted_job.result_summary->'pilot_qualified' = 'true'::jsonb
         AND promoted_job.status = 'completed'
-        AND NOT public.card_enrichment_pilot_job_is_qualified(
-          promoted_job.status,
-          promoted_job.failure_category,
-          promoted_job.result_summary
+        AND NOT public.card_enrichment_pilot_evidence_is_qualified(
+          promoted_job,
+          (SELECT staging FROM public.card_benefits_staging AS staging
+             WHERE staging.id = nullif(
+               promoted_job.normalized_fields->'pilot_evidence'->>'staging_id',
+               ''
+             )::uuid)
         )
     ) THEN
       RAISE EXCEPTION 'pilot_not_qualified';
@@ -1834,6 +2411,30 @@ REVOKE ALL ON FUNCTION public.card_enrichment_pilot_job_is_qualified(text, text,
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.card_enrichment_pilot_job_is_qualified(text, text, jsonb)
   TO service_role;
+REVOKE ALL ON FUNCTION public.card_enrichment_pilot_evidence_is_qualified(
+  public.card_catalog_enrichment_jobs, public.card_benefits_staging
+) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.card_enrichment_pilot_evidence_is_qualified(
+  public.card_catalog_enrichment_jobs, public.card_benefits_staging
+) TO service_role;
+REVOKE ALL ON FUNCTION public.card_enrichment_pilot_source_manifest_hash(jsonb)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.card_enrichment_pilot_source_manifest_hash(jsonb)
+  TO service_role;
+REVOKE ALL ON FUNCTION public.card_enrichment_pilot_source_identity_hash(text)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.card_enrichment_pilot_source_identity_hash(text)
+  TO service_role;
+REVOKE ALL ON FUNCTION public.card_enrichment_pilot_snapshot_rows(jsonb)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.card_enrichment_pilot_snapshot_rows(jsonb)
+  TO service_role;
+REVOKE ALL ON FUNCTION public.card_enrichment_pilot_live_state_snapshot(uuid)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.card_enrichment_pilot_live_state_snapshot(uuid)
+  TO service_role;
+REVOKE ALL ON FUNCTION public.capture_card_enrichment_pilot_publication_snapshot()
+  FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.card_enrichment_enqueue_catalog_eligible(
   uuid, text, text, text, text, text, text, boolean, boolean, boolean
 ) FROM PUBLIC, anon, authenticated;
@@ -2246,6 +2847,59 @@ BEGIN
   END IF;
 END;
 $pilot_qualification_assertions$;
+
+DO $pilot_atomic_evidence_assertions$
+DECLARE
+  first_attempts jsonb := '[
+    {"url":"https://issuer.example/card","role":"primary","status":"success",
+     "contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "logicalSourceKey":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "finalResourceIdentityHash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+     "attemptedAt":"2026-08-20T00:00:00.000Z"},
+    {"url":"https://issuer.example/terms","role":"required_supporting","status":"failed",
+     "errorCode":"http_404","attemptedAt":"2026-08-20T00:00:01.000Z"}
+  ]'::jsonb;
+  reordered_attempts jsonb := '[
+    {"url":"https://issuer.example/terms","role":"required_supporting","status":"failed",
+     "errorCode":"http_404","attemptedAt":"2026-08-21T00:00:01.000Z"},
+    {"url":"https://issuer.example/card","role":"primary","status":"success",
+     "contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "logicalSourceKey":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "finalResourceIdentityHash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+     "attemptedAt":"2026-08-21T00:00:00.000Z"}
+  ]'::jsonb;
+BEGIN
+  IF public.card_enrichment_pilot_source_identity_hash(
+       'HTTPS://Issuer.Example:443/card/'
+     ) IS DISTINCT FROM public.card_enrichment_pilot_source_identity_hash(
+       'https://issuer.example/card'
+     ) OR public.card_enrichment_pilot_source_identity_hash(
+       'https://issuer.example?variant=one'
+     ) IS DISTINCT FROM public.card_enrichment_pilot_source_identity_hash(
+       'https://issuer.example/?variant=one'
+     ) THEN
+    RAISE EXCEPTION 'pilot_source_identity_canonicalization_drift';
+  END IF;
+  IF public.card_enrichment_pilot_source_manifest_hash(first_attempts)
+       IS DISTINCT FROM
+     public.card_enrichment_pilot_source_manifest_hash(reordered_attempts) THEN
+    RAISE EXCEPTION 'pilot_source_manifest_timestamp_or_order_drift';
+  END IF;
+  IF public.card_enrichment_pilot_snapshot_rows('[]'::jsonb)->>'count' <> '0'
+     OR coalesce(public.card_enrichment_pilot_snapshot_rows('[]'::jsonb)->>'row_hash', '')
+       !~ '^[0-9a-f]{64}$' THEN
+    RAISE EXCEPTION 'pilot_live_snapshot_contract_drift';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'capture_card_enrichment_pilot_publication_snapshot'
+      AND tgrelid = 'public.card_benefits_staging'::regclass
+      AND NOT tgisinternal
+  ) THEN
+    RAISE EXCEPTION 'pilot_publication_snapshot_trigger_missing';
+  END IF;
+END;
+$pilot_atomic_evidence_assertions$;
 
 DO $pilot_cohort_assertions$
 BEGIN

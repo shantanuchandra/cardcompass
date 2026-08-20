@@ -19,6 +19,9 @@ export type BenefitDocument = {
   sourceUrl: string;
   /** Redirect-resolved canonical URL used only for redacted presentation. */
   finalUrl?: string;
+  /** Opaque identities retained for replay binding; never rendered as URLs. */
+  requestedResourceIdentityHash?: string;
+  finalResourceIdentityHash?: string;
   text: string;
   contentHash?: string;
 };
