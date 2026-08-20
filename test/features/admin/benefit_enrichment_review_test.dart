@@ -9,10 +9,14 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 const _v6JobId = '8d3b4ab7-2cf9-4bf2-b4ee-1fa4791fc23b';
 const _v6CardId = '49b1ed82-91bb-4dbe-a58f-4db4f8b90aed';
+const _otherV6CardId = 'be256660-7ed2-4519-b754-e30b3d6eca43';
 const _v6StagingId = 'a2b42814-7eb6-4e72-a303-46b3a68e70f9';
 const _v6LiveModificationId = 'c198353b-2379-4a67-a892-7c584bb391e5';
 const _v6LiveLegacyId = 'f2803720-eb85-472c-9a28-2603991f147a';
 const _v6LiveOtherId = '0e96f79d-249f-4e07-a084-903c50524037';
+const _v6LiveUnchangedId = '76bf1f2c-9989-4fa7-a56b-323991e7cc90';
+const _v6PublishedAdditionId = 'bd28ed15-c37c-4ae6-9c61-67af888e1b36';
+const _v6PublishedModificationId = 'e6e9a0e3-efef-4495-8196-62f997f8f04d';
 
 const _jobJson = <String, dynamic>{
   'id': 'job-1',
@@ -324,6 +328,262 @@ List<Map<String, dynamic>> _malformedV6UuidRows() => [
   _v6DecisionWithLiveBenefitId(_v6LiveModificationId.toUpperCase()),
 ];
 
+Map<String, dynamic> _v6DecisionLaneFixture() {
+  final staging = _v6JobJson['staging'] as Map<String, dynamic>;
+  final extractedData = staging['extracted_data'] as Map<String, dynamic>;
+  final baseDiff = extractedData['diff'] as Map<String, dynamic>;
+  final modification = Map<String, dynamic>.from(
+    (baseDiff['modifications'] as List).single as Map,
+  );
+  final removal = Map<String, dynamic>.from(
+    (baseDiff['possibleRemovals'] as List).single as Map,
+  );
+  final addition = <String, dynamic>{
+    'benefitId': 'card-benefit-v2:$_v6CardId:${'d' * 64}',
+    'dedupeKey': 'card-benefit-v2:$_v6CardId:${'d' * 64}',
+    'conditionHash': 'd' * 64,
+    'title': 'Added airport transfer benefit',
+  };
+  final unchangedCurrent = <String, dynamic>{
+    'liveBenefitId': _v6LiveUnchangedId,
+    'dedupeKey': 'legacy:approved:unchanged-benefit',
+    'title': 'Unchanged insurance benefit',
+  };
+  final unchangedProposed = <String, dynamic>{
+    'benefitId': 'card-benefit-v2:$_v6CardId:${'e' * 64}',
+    'dedupeKey': 'card-benefit-v2:$_v6CardId:${'e' * 64}',
+    'conditionHash': 'e' * 64,
+    'title': 'Unchanged insurance benefit',
+  };
+  final proposed = Map<String, dynamic>.from(modification['proposed'] as Map);
+  final removalBenefit = Map<String, dynamic>.from(removal['benefit'] as Map);
+
+  return <String, dynamic>{
+    ..._v6JobJson,
+    'staging': {
+      ...staging,
+      'benefit_decisions': [
+        {
+          'action': 'approve',
+          'dedupe_key': addition['dedupeKey'],
+          'benefit': addition,
+        },
+        {
+          'action': 'approve',
+          'change_type': 'identity_migration',
+          'benefit_id': _v6LiveModificationId,
+          'dedupe_key': proposed['dedupeKey'],
+          'proposed': proposed,
+        },
+        {
+          'action': 'retire',
+          'reason': 'Issuer corroborated retirement',
+          'benefit_id': _v6LiveLegacyId,
+          'dedupe_key': removalBenefit['dedupeKey'],
+          'benefit': removalBenefit,
+        },
+        {
+          'action': 'keep_existing',
+          'benefit_id': _v6LiveUnchangedId,
+          'dedupe_key': unchangedCurrent['dedupeKey'],
+          'current': unchangedCurrent,
+        },
+        {'action': 'reject', 'reason': 'Reviewed remaining proposals'},
+      ],
+      'extracted_data': {
+        ...extractedData,
+        'diff': {
+          ...baseDiff,
+          'additions': [addition],
+          'modifications': [modification],
+          'possibleRemovals': [removal],
+          'unchanged': [
+            {'current': unchangedCurrent, 'proposed': unchangedProposed},
+          ],
+        },
+      },
+    },
+  };
+}
+
+Map<String, dynamic> _replaceV6Decision(
+  int index,
+  Map<String, dynamic> replacement,
+) {
+  final row = _v6DecisionLaneFixture();
+  final staging = row['staging'] as Map<String, dynamic>;
+  final decisions = (staging['benefit_decisions'] as List)
+      .map((item) => Map<String, dynamic>.from(item as Map))
+      .toList();
+  decisions[index] = replacement;
+  return <String, dynamic>{
+    ...row,
+    'staging': {...staging, 'benefit_decisions': decisions},
+  };
+}
+
+Map<String, dynamic> _v6WithOnlyDecision(Map<String, dynamic> decision) {
+  final row = _v6DecisionLaneFixture();
+  final staging = row['staging'] as Map<String, dynamic>;
+  return <String, dynamic>{
+    ...row,
+    'staging': {
+      ...staging,
+      'benefit_decisions': [decision],
+    },
+  };
+}
+
+Map<String, dynamic> _v6PublishedDecisionLaneFixture() {
+  final row = _v6DecisionLaneFixture();
+  final staging = row['staging'] as Map<String, dynamic>;
+  final decisions = staging['benefit_decisions'] as List;
+  final addition = decisions[0] as Map<String, dynamic>;
+  final modification = decisions[1] as Map<String, dynamic>;
+  final removal = decisions[2] as Map<String, dynamic>;
+  final unchanged = decisions[3] as Map<String, dynamic>;
+  return <String, dynamic>{
+    ...row,
+    'status': 'completed',
+    'staging': {
+      ...staging,
+      'status': 'approved',
+      'benefit_decisions': [
+        {
+          'action': 'approve',
+          'benefit_id': _v6PublishedAdditionId,
+          'dedupe_key': addition['dedupe_key'],
+        },
+        {
+          'action': 'approve',
+          'benefit_id': _v6PublishedModificationId,
+          'dedupe_key': modification['dedupe_key'],
+          'change_type': 'identity_migration',
+        },
+        {'action': 'retire', 'benefit_id': removal['benefit_id']},
+        {'action': 'keep_existing', 'benefit_id': unchanged['benefit_id']},
+        {'action': 'reject', 'reason': 'Reviewed remaining proposals'},
+      ],
+    },
+  };
+}
+
+List<Map<String, dynamic>> _invalidV6DecisionRows() {
+  final valid = _v6DecisionLaneFixture();
+  final staging = valid['staging'] as Map<String, dynamic>;
+  final decisions = (staging['benefit_decisions'] as List)
+      .map((item) => Map<String, dynamic>.from(item as Map))
+      .toList();
+  final addition = Map<String, dynamic>.from(decisions[0]['benefit'] as Map);
+  final modification = Map<String, dynamic>.from(
+    decisions[1]['proposed'] as Map,
+  );
+  final removal = Map<String, dynamic>.from(decisions[2]['benefit'] as Map);
+
+  Map<String, dynamic> replaceCanonical(Map<String, dynamic> benefit) =>
+      _replaceV6Decision(0, {...decisions[0], 'benefit': benefit});
+
+  final duplicate = _v6DecisionLaneFixture();
+  final duplicateStaging = duplicate['staging'] as Map<String, dynamic>;
+  final duplicateDecisions = List<dynamic>.from(
+    duplicateStaging['benefit_decisions'] as List,
+  );
+  duplicateDecisions.add(Map<String, dynamic>.from(decisions[0]));
+
+  final ambiguous = _v6DecisionLaneFixture();
+  final ambiguousStaging = ambiguous['staging'] as Map<String, dynamic>;
+  final ambiguousExtraction =
+      ambiguousStaging['extracted_data'] as Map<String, dynamic>;
+  final ambiguousDiff = ambiguousExtraction['diff'] as Map<String, dynamic>;
+  final ambiguousAdditions = List<dynamic>.from(
+    ambiguousDiff['additions'] as List,
+  )..add(Map<String, dynamic>.from(addition));
+
+  return [
+    replaceCanonical({
+      ...addition,
+      'benefitId': 'card-benefit-v2:$_otherV6CardId:${'d' * 64}',
+      'dedupeKey': 'card-benefit-v2:$_otherV6CardId:${'d' * 64}',
+    }),
+    replaceCanonical({
+      ...addition,
+      'benefitId': 'card-benefit-v2:$_v6CardId:${'D' * 64}',
+      'dedupeKey': 'card-benefit-v2:$_v6CardId:${'D' * 64}',
+      'conditionHash': 'D' * 64,
+    }),
+    replaceCanonical({
+      ...addition,
+      'benefitId': 'card-benefit-v2:$_v6CardId:${'z' * 64}',
+      'dedupeKey': 'card-benefit-v2:$_v6CardId:${'z' * 64}',
+      'conditionHash': 'z' * 64,
+    }),
+    replaceCanonical({...addition, 'conditionHash': 'e' * 64}),
+    replaceCanonical({...addition, 'liveBenefitId': _v6LiveUnchangedId}),
+    _replaceV6Decision(1, {...decisions[1], 'benefit_id': _v6LiveUnchangedId}),
+    _replaceV6Decision(1, {
+      'action': 'approve',
+      'benefit_id': _v6LiveUnchangedId,
+      'dedupe_key': modification['dedupeKey'],
+    }),
+    <String, dynamic>{
+      ..._replaceV6Decision(1, {
+        'action': 'approve',
+        'benefit_id': _v6LiveUnchangedId,
+        'dedupe_key': modification['dedupeKey'],
+      }),
+      'status': 'completed',
+    },
+    _replaceV6Decision(1, {
+      ...decisions[1],
+      'dedupe_key': addition['dedupeKey'],
+    }),
+    _replaceV6Decision(2, {
+      ...decisions[2],
+      'benefit': {
+        ...removal,
+        'benefitId': 'card-benefit-v2:$_v6CardId:${'f' * 64}',
+      },
+    }),
+    <String, dynamic>{
+      ...duplicate,
+      'staging': {...duplicateStaging, 'benefit_decisions': duplicateDecisions},
+    },
+    <String, dynamic>{
+      ...ambiguous,
+      'staging': {
+        ...ambiguousStaging,
+        'extracted_data': {
+          ...ambiguousExtraction,
+          'diff': {...ambiguousDiff, 'additions': ambiguousAdditions},
+        },
+      },
+    },
+    replaceCanonical({
+      ...addition,
+      'benefitId': 'card-benefit-v2:$_v6CardId:${'f' * 64}',
+      'dedupeKey': 'card-benefit-v2:$_v6CardId:${'f' * 64}',
+      'conditionHash': 'f' * 64,
+    }),
+    _replaceV6Decision(0, {
+      ...decisions[0],
+      'action': 'retire',
+      'benefit_id': _v6LiveLegacyId,
+    }),
+    _replaceV6Decision(3, {
+      ...decisions[3],
+      'current': {
+        ...Map<String, dynamic>.from(decisions[3]['current'] as Map),
+        'dedupeKey': 'legacy:approved:wrong-current',
+      },
+    }),
+    _replaceV6Decision(1, {
+      ...decisions[1],
+      'proposed': modification,
+      'benefit': addition,
+    }),
+  ];
+}
+
 void _noop() {}
 void _noopValue(String _) {}
 
@@ -499,6 +759,7 @@ void main() {
         ..._v6JobJson,
         'staging': {
           ...(_v6JobJson['staging'] as Map<String, dynamic>),
+          'benefit_decisions': const [],
           'extracted_data': {
             ...((_v6JobJson['staging']
                     as Map<String, dynamic>)['extracted_data']
@@ -753,6 +1014,126 @@ void main() {
         throwsA(isA<FormatException>()),
       );
     }
+  });
+
+  test(
+    'v6 staged and published decision lanes bind to locked diff identities',
+    () {
+      final staged = BenefitEnrichmentReview.fromJson(_v6DecisionLaneFixture());
+      expect(staged.staging.decisions, hasLength(5));
+      expect(staged.staging.decisions[0].action, 'approve');
+      expect(staged.staging.decisions[1].changeType, 'identity_migration');
+      expect(staged.staging.decisions[1].liveBenefitId, _v6LiveModificationId);
+      expect(staged.staging.decisions[2].action, 'retire');
+      expect(staged.staging.decisions[2].liveBenefitId, _v6LiveLegacyId);
+      expect(staged.staging.decisions[3].action, 'keep_existing');
+      expect(staged.staging.decisions[3].liveBenefitId, _v6LiveUnchangedId);
+      expect(staged.staging.decisions[4].action, 'reject');
+
+      expect(
+        () =>
+            BenefitEnrichmentReview.fromJson(_v6PublishedDecisionLaneFixture()),
+        returnsNormally,
+      );
+
+      final stagedJson = _v6DecisionLaneFixture();
+      final stagedMap = stagedJson['staging'] as Map<String, dynamic>;
+      final stagedDecisions = stagedMap['benefit_decisions'] as List;
+      final modification = Map<String, dynamic>.from(stagedDecisions[1] as Map);
+      final proposed = Map<String, dynamic>.from(
+        modification['proposed'] as Map,
+      );
+      expect(
+        () => BenefitEnrichmentReview.fromJson(
+          _v6WithOnlyDecision({
+            ...modification,
+            'action': 'edit',
+            'edited_benefit': {
+              ...proposed,
+              'title': 'Operator-reviewed dining points',
+            },
+          }),
+        ),
+        returnsNormally,
+      );
+      expect(
+        () => BenefitEnrichmentReview.fromJson(
+          _v6WithOnlyDecision({...modification, 'action': 'reject'}),
+        ),
+        returnsNormally,
+      );
+
+      final normalModification = _v6DecisionLaneFixture();
+      final normalStaging =
+          normalModification['staging'] as Map<String, dynamic>;
+      final normalExtraction =
+          normalStaging['extracted_data'] as Map<String, dynamic>;
+      final normalDiff = normalExtraction['diff'] as Map<String, dynamic>;
+      final normalModifications = (normalDiff['modifications'] as List)
+          .map((item) => Map<String, dynamic>.from(item as Map))
+          .toList();
+      normalModifications.single.remove('changeType');
+      final normalDecisions = (normalStaging['benefit_decisions'] as List)
+          .map((item) => Map<String, dynamic>.from(item as Map))
+          .toList();
+      normalDecisions[1].remove('change_type');
+      expect(
+        () => BenefitEnrichmentReview.fromJson({
+          ...normalModification,
+          'staging': {
+            ...normalStaging,
+            'benefit_decisions': normalDecisions,
+            'extracted_data': {
+              ...normalExtraction,
+              'diff': {...normalDiff, 'modifications': normalModifications},
+            },
+          },
+        }),
+        returnsNormally,
+      );
+    },
+  );
+
+  test(
+    'v6 staged decisions reject malformed unmatched and ambiguous lanes',
+    () {
+      for (final row in _invalidV6DecisionRows()) {
+        expect(
+          () => BenefitEnrichmentReview.fromJson(row),
+          throwsA(isA<FormatException>()),
+        );
+      }
+    },
+  );
+
+  test('repository preserves exact bound v6 decision identities', () async {
+    final api = _FakeApi(
+      AdminCatalogEntryResponse(200, const {'success': true}),
+    );
+    final repository = AdminCatalogRepository(api);
+    final item = BenefitEnrichmentReview.fromJson(_v6DecisionLaneFixture());
+
+    await repository.approve(item);
+
+    final decisions = api.bodies.single['decisions'] as List;
+    expect(decisions, hasLength(5));
+    expect(
+      (decisions[0] as Map)['dedupe_key'],
+      'card-benefit-v2:$_v6CardId:${'d' * 64}',
+    );
+    expect((decisions[1] as Map)['benefit_id'], _v6LiveModificationId);
+    expect((decisions[1] as Map), isNot(contains('change_type')));
+    expect((decisions[2] as Map)['benefit_id'], _v6LiveLegacyId);
+    expect(
+      ((decisions[2] as Map)['benefit'] as Map)['benefitId'],
+      'card-benefit-v2:$_v6CardId:${'c' * 64}',
+    );
+    expect((decisions[3] as Map)['benefit_id'], _v6LiveUnchangedId);
+    expect(
+      ((decisions[3] as Map)['current'] as Map)['dedupeKey'],
+      'legacy:approved:unchanged-benefit',
+    );
+    expect((decisions[4] as Map)['action'], 'reject');
   });
 
   test('admin reauthorization clears the stale session before login', () async {
@@ -1609,6 +1990,7 @@ void main() {
       ..._v6JobJson,
       'staging': {
         ...(_v6JobJson['staging'] as Map<String, dynamic>),
+        'benefit_decisions': const [],
         'extracted_data': {
           ...((_v6JobJson['staging'] as Map<String, dynamic>)['extracted_data']
               as Map<String, dynamic>),
@@ -1798,6 +2180,30 @@ void main() {
       await tester.pumpAndSettle();
     }
   });
+
+  testWidgets(
+    'invalid staged v6 decision identities reach the visible repair state',
+    (tester) async {
+      for (final row in _invalidV6DecisionRows()) {
+        final response = AdminCatalogEntryResponse(200, {
+          'items': [row],
+          'counts': {'total': 1, 'by_status': {}, 'by_run_mode': {}},
+          'page': 1,
+          'limit': 25,
+          'has_more': false,
+        });
+
+        await _pumpPanel(tester, AdminCatalogRepository(_FakeApi(response)));
+
+        expect(find.textContaining('Malformed v6 review data'), findsOneWidget);
+        expect(find.textContaining('repaired'), findsOneWidget);
+        expect(find.text('Added airport transfer benefit'), findsNothing);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pumpAndSettle();
+      }
+    },
+  );
 
   testWidgets('benefit approval explains its consequence before applying', (
     tester,

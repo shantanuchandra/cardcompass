@@ -19,6 +19,20 @@ List<String> _strings(Object? value) => value is List
     ? value.whereType<String>().toList(growable: false)
     : const <String>[];
 
+bool _hasMeaningfulJson(Object? value) {
+  if (value == null) return false;
+  if (value is String) return value.trim().isNotEmpty;
+  if (value is num || value is bool) return true;
+  if (value is List) return value.any(_hasMeaningfulJson);
+  if (value is Map) return value.values.any(_hasMeaningfulJson);
+  return true;
+}
+
+BenefitProposal? _decisionProposal(Object? value) {
+  if (value is! Map || !_hasMeaningfulJson(value)) return null;
+  return BenefitProposal.fromJson(Map<String, dynamic>.from(value));
+}
+
 String _readableCode(String value) {
   final words = value.replaceAll('_', ' ').trim();
   if (words.isEmpty) return value;
@@ -242,22 +256,22 @@ class BenefitEnrichmentReview {
       return digest.hasMatch(valueDigest) ? valueDigest : null;
     }
 
-    for (final proposal in diff.canonicalProposals) {
+    bool validCanonicalProposal(BenefitProposal proposal) {
       final conditionHash = proposal.conditionHash;
       final expectedBenefitId = conditionHash == null
           ? null
           : '$cardScopedPrefix$conditionHash';
-      if (proposal.benefitId == null ||
-          proposal.dedupeKey == null ||
-          invalidProposalLiveUuid(proposal) ||
-          proposal.benefitId != proposal.dedupeKey ||
-          proposal.benefitId != expectedBenefitId ||
-          conditionHash == null ||
-          !digest.hasMatch(conditionHash)) {
-        throw const FormatException('Malformed required v6 benefit identity.');
-      }
+      return proposal.benefitId != null &&
+          proposal.dedupeKey != null &&
+          !invalidProposalLiveUuid(proposal) &&
+          proposal.benefitId == proposal.dedupeKey &&
+          proposal.benefitId == expectedBenefitId &&
+          conditionHash != null &&
+          digest.hasMatch(conditionHash);
     }
-    for (final current in diff.currentProposals) {
+
+    bool validCurrentProposal(BenefitProposal current) {
+      final liveBenefitId = current.liveBenefitId;
       final dedupeKey = current.dedupeKey;
       final benefitId = current.benefitId;
       final conditionHash = current.conditionHash;
@@ -266,25 +280,366 @@ class BenefitEnrichmentReview {
       final benefitDigest = benefitId == null
           ? null
           : cardScopedDigest(benefitId);
-      if (current.liveBenefitId == null ||
-          !uuid.hasMatch(current.liveBenefitId!) ||
-          dedupeKey == null ||
-          (benefitId == null && dedupeIsCardScoped) ||
-          (benefitId != null && benefitDigest == null) ||
-          (dedupeIsCardScoped && benefitId != dedupeKey) ||
-          (conditionHash != null && !digest.hasMatch(conditionHash)) ||
-          (conditionHash != null &&
+      return liveBenefitId != null &&
+          uuid.hasMatch(liveBenefitId) &&
+          dedupeKey != null &&
+          !(benefitId == null && dedupeIsCardScoped) &&
+          !(benefitId != null && benefitDigest == null) &&
+          !(dedupeIsCardScoped && benefitId != dedupeKey) &&
+          !(conditionHash != null && !digest.hasMatch(conditionHash)) &&
+          !(conditionHash != null &&
               benefitDigest != null &&
-              conditionHash != benefitDigest)) {
+              conditionHash != benefitDigest);
+    }
+
+    bool sameCanonicalIdentity(BenefitProposal left, BenefitProposal right) =>
+        left.liveBenefitId == right.liveBenefitId &&
+        left.benefitId == right.benefitId &&
+        left.dedupeKey == right.dedupeKey &&
+        left.conditionHash == right.conditionHash;
+
+    bool sameCurrentIdentity(BenefitProposal left, BenefitProposal right) =>
+        left.liveBenefitId == right.liveBenefitId &&
+        left.dedupeKey == right.dedupeKey &&
+        left.benefitId == right.benefitId &&
+        left.conditionHash == right.conditionHash;
+
+    for (final proposal in diff.canonicalProposals) {
+      if (!validCanonicalProposal(proposal)) {
+        throw const FormatException('Malformed required v6 benefit identity.');
+      }
+    }
+    for (final current in diff.currentProposals) {
+      if (!validCurrentProposal(current)) {
         throw const FormatException('Malformed current v6 benefit identity.');
       }
     }
+
+    final canonicalTargets = <String, List<_V6CanonicalDecisionTarget>>{};
+    final currentTargets = <String, List<_V6CurrentDecisionTarget>>{};
+    void addCanonicalTarget(_V6CanonicalDecisionTarget target) {
+      canonicalTargets
+          .putIfAbsent(target.proposal.benefitId!, () => [])
+          .add(target);
+    }
+
+    void addCurrentTarget(_V6CurrentDecisionTarget target) {
+      currentTargets
+          .putIfAbsent(target.current.liveBenefitId!, () => [])
+          .add(target);
+    }
+
+    for (final proposal in diff.additions) {
+      addCanonicalTarget(
+        _V6CanonicalDecisionTarget(proposal: proposal, lane: 'addition'),
+      );
+    }
+    for (final modification in diff.modifications) {
+      addCanonicalTarget(
+        _V6CanonicalDecisionTarget(
+          proposal: modification.proposed,
+          current: modification.current,
+          lane: 'modification',
+          changeType: modification.changeType,
+        ),
+      );
+      addCurrentTarget(
+        _V6CurrentDecisionTarget(
+          current: modification.current,
+          proposed: modification.proposed,
+          lane: 'modification',
+          changeType: modification.changeType,
+        ),
+      );
+    }
+    for (final removal in diff.possibleRemovals) {
+      addCurrentTarget(
+        _V6CurrentDecisionTarget(
+          current: removal.benefit,
+          lane: 'possible_removal',
+          retirementEligible: removal.retirementEligible,
+        ),
+      );
+    }
+    for (final unchanged in diff.unchanged) {
+      addCanonicalTarget(
+        _V6CanonicalDecisionTarget(
+          proposal: unchanged.proposed,
+          current: unchanged.current,
+          lane: 'unchanged',
+        ),
+      );
+      addCurrentTarget(
+        _V6CurrentDecisionTarget(
+          current: unchanged.current,
+          proposed: unchanged.proposed,
+          lane: 'unchanged',
+        ),
+      );
+    }
+    for (final conflict in diff.conflicts) {
+      for (final proposal in conflict.proposed) {
+        addCanonicalTarget(
+          _V6CanonicalDecisionTarget(proposal: proposal, lane: 'conflict'),
+        );
+      }
+    }
+
+    _V6CanonicalDecisionTarget exactCanonicalTarget(BenefitProposal proposal) {
+      if (!validCanonicalProposal(proposal)) {
+        throw const FormatException('Malformed v6 decision identity.');
+      }
+      final matches = (canonicalTargets[proposal.benefitId] ?? const [])
+          .where((target) => sameCanonicalIdentity(proposal, target.proposal))
+          .toList(growable: false);
+      if (matches.length != 1) {
+        throw const FormatException('Malformed v6 decision identity.');
+      }
+      return matches.single;
+    }
+
+    _V6CanonicalDecisionTarget canonicalTargetForKey(String? key) {
+      final matches = key == null
+          ? const <_V6CanonicalDecisionTarget>[]
+          : canonicalTargets[key] ?? const <_V6CanonicalDecisionTarget>[];
+      if (matches.length != 1) {
+        throw const FormatException('Malformed v6 decision identity.');
+      }
+      return matches.single;
+    }
+
+    _V6CurrentDecisionTarget exactCurrentTarget(BenefitProposal current) {
+      if (!validCurrentProposal(current)) {
+        throw const FormatException('Malformed v6 decision identity.');
+      }
+      final matches = (currentTargets[current.liveBenefitId] ?? const [])
+          .where((target) => sameCurrentIdentity(current, target.current))
+          .toList(growable: false);
+      if (matches.length != 1) {
+        throw const FormatException('Malformed v6 decision identity.');
+      }
+      return matches.single;
+    }
+
+    _V6CurrentDecisionTarget currentTargetForId(String? liveBenefitId) {
+      final matches = liveBenefitId == null
+          ? const <_V6CurrentDecisionTarget>[]
+          : currentTargets[liveBenefitId] ?? const <_V6CurrentDecisionTarget>[];
+      if (matches.length != 1) {
+        throw const FormatException('Malformed v6 decision identity.');
+      }
+      return matches.single;
+    }
+
+    void requireCanonicalTarget(
+      _V6CanonicalDecisionTarget expected,
+      BenefitProposal proposal,
+    ) {
+      final actual = exactCanonicalTarget(proposal);
+      if (actual.proposal.benefitId != expected.proposal.benefitId) {
+        throw const FormatException('Malformed v6 decision identity.');
+      }
+    }
+
+    void requireCurrentTarget(
+      _V6CurrentDecisionTarget expected,
+      BenefitProposal current,
+    ) {
+      final actual = exactCurrentTarget(current);
+      if (actual.current.liveBenefitId != expected.current.liveBenefitId) {
+        throw const FormatException('Malformed v6 decision identity.');
+      }
+    }
+
+    bool validCanonicalChangeType(
+      _V6CanonicalDecisionTarget target,
+      String? changeType,
+    ) {
+      if (changeType == null) return true;
+      if (changeType == target.changeType) return true;
+      return changeType == 'category_alias_identity_migration' &&
+          target.proposal.category == 'rewards';
+    }
+
+    // The staging row owns whether these are pending client-submittable
+    // decisions or reduced terminal audit decisions. A stale job status must
+    // never loosen validation for a still-pending staging row.
+    final publishedDecisionLane = staging.status != 'pending';
+    final seenDecisionIdentities = <String>{};
     for (final decision in staging.decisions) {
       if (invalidOptionalUuid(decision.liveBenefitId) ||
-          invalidProposalLiveUuid(decision.benefit) ||
-          invalidProposalLiveUuid(decision.proposed) ||
-          invalidProposalLiveUuid(decision.editedBenefit)) {
-        throw const FormatException('Malformed current v6 benefit identity.');
+          invalidOptionalUuid(decision.existingBenefitId)) {
+        throw const FormatException('Malformed v6 decision identity.');
+      }
+      final action = decision.action.toLowerCase();
+      String decisionIdentity;
+      if (action == 'approve' || action == 'edit') {
+        final primary = action == 'edit'
+            ? decision.editedBenefit ?? decision.benefit
+            : decision.benefit ?? decision.proposed;
+        if (!publishedDecisionLane && primary == null) {
+          throw const FormatException('Malformed v6 decision identity.');
+        }
+        final target = primary == null
+            ? canonicalTargetForKey(decision.dedupeKey)
+            : exactCanonicalTarget(primary);
+        for (final proposal in [
+          decision.benefit,
+          decision.proposed,
+          decision.editedBenefit,
+        ]) {
+          if (proposal != null) requireCanonicalTarget(target, proposal);
+        }
+        if (decision.current != null) {
+          final linkedCurrent = target.current;
+          if (linkedCurrent == null) {
+            throw const FormatException('Malformed v6 decision identity.');
+          }
+          requireCurrentTarget(
+            currentTargetForId(linkedCurrent.liveBenefitId),
+            decision.current!,
+          );
+        }
+        if (decision.dedupeKey != null &&
+            decision.dedupeKey != target.proposal.dedupeKey) {
+          throw const FormatException('Malformed v6 decision identity.');
+        }
+        if (decision.existingBenefitId != null &&
+            decision.existingBenefitId != target.current?.liveBenefitId) {
+          throw const FormatException('Malformed v6 decision identity.');
+        }
+        if (!publishedDecisionLane &&
+            decision.liveBenefitId != null &&
+            decision.liveBenefitId != target.current?.liveBenefitId) {
+          throw const FormatException('Malformed v6 decision identity.');
+        }
+        if (!validCanonicalChangeType(target, decision.changeType)) {
+          throw const FormatException('Malformed v6 decision identity.');
+        }
+        decisionIdentity = 'proposal:${target.proposal.benefitId}';
+      } else if (action == 'keep_existing' || action == 'retire') {
+        if (decision.proposed != null || decision.editedBenefit != null) {
+          throw const FormatException('Malformed v6 decision identity.');
+        }
+        final submittedCurrent = decision.benefit ?? decision.current;
+        final liveBenefitId =
+            decision.liveBenefitId ?? submittedCurrent?.liveBenefitId;
+        final target = currentTargetForId(liveBenefitId);
+        if (decision.benefit != null) {
+          requireCurrentTarget(target, decision.benefit!);
+        }
+        if (decision.current != null) {
+          requireCurrentTarget(target, decision.current!);
+        }
+        if (decision.dedupeKey != null &&
+            decision.dedupeKey != target.current.dedupeKey) {
+          throw const FormatException('Malformed v6 decision identity.');
+        }
+        if (decision.existingBenefitId != null &&
+            decision.existingBenefitId != target.current.liveBenefitId) {
+          throw const FormatException('Malformed v6 decision identity.');
+        }
+        if (action == 'retire' &&
+            (target.lane != 'possible_removal' || !target.retirementEligible)) {
+          throw const FormatException('Malformed v6 decision identity.');
+        }
+        final expectedDisplayChange = target.lane == 'possible_removal'
+            ? 'possible_removal'
+            : target.lane;
+        if (decision.changeType != null &&
+            decision.changeType != target.changeType &&
+            decision.changeType != expectedDisplayChange) {
+          throw const FormatException('Malformed v6 decision identity.');
+        }
+        decisionIdentity = 'live:${target.current.liveBenefitId}';
+      } else if (action == 'reject') {
+        if (decision.editedBenefit != null) {
+          throw const FormatException('Malformed v6 decision identity.');
+        }
+        _V6CanonicalDecisionTarget? canonicalTarget;
+        _V6CurrentDecisionTarget? currentTarget;
+        void bindCanonical(BenefitProposal proposal) {
+          final target = exactCanonicalTarget(proposal);
+          if (canonicalTarget != null &&
+              canonicalTarget!.proposal.benefitId !=
+                  target.proposal.benefitId) {
+            throw const FormatException('Malformed v6 decision identity.');
+          }
+          canonicalTarget = target;
+        }
+
+        void bindCurrent(BenefitProposal current) {
+          final target = exactCurrentTarget(current);
+          if (currentTarget != null &&
+              currentTarget!.current.liveBenefitId !=
+                  target.current.liveBenefitId) {
+            throw const FormatException('Malformed v6 decision identity.');
+          }
+          currentTarget = target;
+        }
+
+        if (decision.benefit != null) {
+          if (decision.benefit!.liveBenefitId != null) {
+            bindCurrent(decision.benefit!);
+          } else {
+            bindCanonical(decision.benefit!);
+          }
+        }
+        if (decision.proposed != null) bindCanonical(decision.proposed!);
+        if (decision.current != null) bindCurrent(decision.current!);
+        if (decision.liveBenefitId != null) {
+          final target = currentTargetForId(decision.liveBenefitId);
+          if (currentTarget != null &&
+              currentTarget!.current.liveBenefitId !=
+                  target.current.liveBenefitId) {
+            throw const FormatException('Malformed v6 decision identity.');
+          }
+          currentTarget = target;
+        }
+        if (decision.existingBenefitId != null) {
+          final target = currentTargetForId(decision.existingBenefitId);
+          if (currentTarget != null &&
+              currentTarget!.current.liveBenefitId !=
+                  target.current.liveBenefitId) {
+            throw const FormatException('Malformed v6 decision identity.');
+          }
+          currentTarget = target;
+        }
+        if (decision.dedupeKey != null) {
+          final expectedDedupe =
+              canonicalTarget?.proposal.dedupeKey ??
+              currentTarget?.current.dedupeKey;
+          if (expectedDedupe == null || decision.dedupeKey != expectedDedupe) {
+            throw const FormatException('Malformed v6 decision identity.');
+          }
+        }
+        if (canonicalTarget != null && currentTarget != null) {
+          final linkedLiveId = canonicalTarget!.current?.liveBenefitId;
+          final linkedProposalId = currentTarget!.proposed?.benefitId;
+          if (linkedLiveId != currentTarget!.current.liveBenefitId ||
+              linkedProposalId != canonicalTarget!.proposal.benefitId) {
+            throw const FormatException('Malformed v6 decision identity.');
+          }
+        }
+        if (canonicalTarget != null &&
+            !validCanonicalChangeType(canonicalTarget!, decision.changeType)) {
+          throw const FormatException('Malformed v6 decision identity.');
+        }
+        if (canonicalTarget == null &&
+            currentTarget == null &&
+            decision.changeType != null) {
+          throw const FormatException('Malformed v6 decision identity.');
+        }
+        decisionIdentity = currentTarget != null
+            ? 'live:${currentTarget!.current.liveBenefitId}'
+            : canonicalTarget != null
+            ? 'proposal:${canonicalTarget!.proposal.benefitId}'
+            : 'reject:all';
+      } else {
+        throw const FormatException('Malformed v6 decision identity.');
+      }
+      if (!seenDecisionIdentities.add(decisionIdentity)) {
+        throw const FormatException('Malformed v6 decision identity.');
       }
     }
   }
@@ -508,6 +863,36 @@ class BenefitDiff {
       yield* item.current;
     }
   }
+}
+
+class _V6CanonicalDecisionTarget {
+  const _V6CanonicalDecisionTarget({
+    required this.proposal,
+    required this.lane,
+    this.current,
+    this.changeType,
+  });
+
+  final BenefitProposal proposal;
+  final BenefitProposal? current;
+  final String lane;
+  final String? changeType;
+}
+
+class _V6CurrentDecisionTarget {
+  const _V6CurrentDecisionTarget({
+    required this.current,
+    required this.lane,
+    this.proposed,
+    this.changeType,
+    this.retirementEligible = false,
+  });
+
+  final BenefitProposal current;
+  final BenefitProposal? proposed;
+  final String lane;
+  final String? changeType;
+  final bool retirementEligible;
 }
 
 class BenefitPossibleRemoval {
@@ -789,41 +1174,43 @@ class BenefitReviewDecision {
     this.reason,
     this.changeType,
     this.liveBenefitId,
+    this.existingBenefitId,
     this.dedupeKey,
     this.displayPriority,
     this.isPrimary,
     this.benefit,
     this.proposed,
     this.editedBenefit,
+    this.current,
   });
   factory BenefitReviewDecision.fromJson(JsonMap json) => BenefitReviewDecision(
     action: _text(json['action']) ?? '',
     reason: _text(json['reason']),
     changeType: _text(json['change_type'] ?? json['changeType']),
     liveBenefitId: _text(json['benefit_id'] ?? json['current_benefit_id']),
+    existingBenefitId: _text(json['existing_benefit_id']),
     dedupeKey: _text(json['dedupe_key'] ?? json['dedupeKey']),
     displayPriority: (json['display_priority'] as num?)?.toInt(),
     isPrimary: json['is_primary'] as bool?,
-    benefit: json['benefit'] is Map
-        ? BenefitProposal.fromJson(_map(json['benefit']))
-        : null,
-    proposed: json['proposed'] is Map
-        ? BenefitProposal.fromJson(_map(json['proposed']))
-        : null,
-    editedBenefit: json['edited_benefit'] is Map
-        ? BenefitProposal.fromJson(_map(json['edited_benefit']))
-        : null,
+    benefit: _decisionProposal(json['benefit']),
+    proposed: _decisionProposal(json['proposed']),
+    editedBenefit: _decisionProposal(
+      json['edited_benefit'] ?? json['editedBenefit'],
+    ),
+    current: _decisionProposal(json['current']),
   );
   final String action;
   final String? reason;
   final String? changeType;
   final String? liveBenefitId;
+  final String? existingBenefitId;
   final String? dedupeKey;
   final int? displayPriority;
   final bool? isPrimary;
   final BenefitProposal? benefit;
   final BenefitProposal? proposed;
   final BenefitProposal? editedBenefit;
+  final BenefitProposal? current;
 
   BenefitReviewDecision withEditedBenefit(BenefitProposal edited) =>
       BenefitReviewDecision(
@@ -831,12 +1218,14 @@ class BenefitReviewDecision {
         reason: reason,
         changeType: changeType,
         liveBenefitId: liveBenefitId,
+        existingBenefitId: existingBenefitId,
         dedupeKey: dedupeKey,
         displayPriority: displayPriority,
         isPrimary: isPrimary,
         benefit: benefit,
         proposed: proposed,
         editedBenefit: edited,
+        current: current,
       );
 
   JsonMap toJson() => {
@@ -846,6 +1235,7 @@ class BenefitReviewDecision {
     if (benefit != null) 'benefit': benefit!.toJson(),
     if (proposed != null) 'proposed': proposed!.toJson(),
     if (editedBenefit != null) 'edited_benefit': editedBenefit!.toJson(),
+    if (current != null) 'current': current!.toJson(),
     if (changeType != null) 'change_type': changeType,
     if (dedupeKey != null) 'dedupe_key': dedupeKey,
     if (displayPriority != null) 'display_priority': displayPriority,

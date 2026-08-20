@@ -495,3 +495,102 @@ The round-4 pre-commit production/test hashes were respectively
 Only the existing auth-matrix test used an ephemeral `127.0.0.1` listener. No
 external network, Docker, local/linked/live Supabase/Postgres, production
 data/write, secret, or workflow action was used. Live applied: **no**.
+
+## Fresh-review fix round 5
+
+The final automatic review found that the v6 Flutter boundary validated diff
+identities but did not validate or bind the decision objects that select those
+identities. Before production changes, decision-schema inspection established
+the real lanes:
+
+- Pending approve/edit decisions select a locked canonical proposal; the Edge
+  validator derives any linked existing benefit and change classification.
+- Keep/retire select a locked current/live UUID; retire additionally requires
+  the locked possible-removal evidence to be eligible.
+- Reject may target a proposal, a current/live row, or the whole review. Edge
+  duplicate identity precedence remains live, then proposal, then global.
+- Published approval audit rows retain a resolved `benefit_id` and canonical
+  dedupe key but may no longer contain a submitted proposal object. The Edge
+  presenter also emits recursively empty benefit-shaped maps for absent
+  decision objects, so those exact sentinels must be treated as absent rather
+  than as malformed submitted objects.
+
+The defect was reproduced through DTO, repository serialization, and the real
+repository/widget repair path before production code changed:
+
+```sh
+flutter test --no-pub test/features/admin/benefit_enrichment_review_test.dart
+# RED: 35 passed, 3 failed
+# - cross-card/mismatched/unmatched staged decision identity parsed normally
+# - a real server-shaped current decision object was lost during serialization
+# - malformed staged decisions rendered review content instead of the visible
+#   malformed-v6 repair state
+```
+
+Corrections:
+
+- Every meaningful decision `benefit`, `proposed`, and `edited_benefit` object
+  now matches exactly one locked canonical diff identity: the review card,
+  lowercase 64-hex condition hash, benefit ID, and dedupe key must all agree.
+  Any optional live UUID on that object must also equal the locked object.
+- Every meaningful decision `current` or current-shaped `benefit` object now
+  matches exactly one locked current row by canonical lowercase live UUID,
+  server-issued dedupe key, decorated/legacy benefit ID, and any supplied
+  condition hash. The exact object survives repository serialization.
+- Pending approve/edit rows require the submitted canonical object expected by
+  the Edge mutation contract. Their optional top-level live/current ID must
+  equal the linked modification/identity-migration current UUID; additions
+  cannot acquire an unrelated live UUID. Published audit approve/edit rows are
+  instead bound by their exact canonical dedupe key and schema-valid resolved
+  UUID, preserving the narrower fields the database audit actually stores. The
+  staging status owns this distinction, so a stale terminal job status cannot
+  loosen validation on a still-pending staging row.
+- Keep/retire bind only to current candidates. Retire additionally binds to one
+  eligible possible-removal action. Action/object mismatches fail closed.
+- Reject supports the three server lanes while binding every supplied object,
+  live ID, dedupe key, and linked canonical/current pair. Duplicate decisions,
+  ambiguous duplicate diff targets, unmatched proposals, conflicting decision
+  objects, wrong-but-valid UUIDs, wrong dedupe/benefit IDs, uppercase/non-hex
+  digests, and cross-card canonical IDs all reach the visible repair state.
+- Valid production-shape controls cover addition, ordinary modification,
+  identity migration, removal, unchanged, edit, targeted reject, global reject,
+  and the reduced published-audit representation. Existing legacy/current UUID
+  lanes and exact server-issued retirement serialization remain unchanged.
+
+Fresh full GREEN results after this correction:
+
+```text
+Flutter admin review                         38 passed, 0 failed
+Flutter movie consumer                       15 passed, 0 failed
+Edge admin (includes loopback auth matrix)   48 passed, 0 failed
+Ingestion + publication Deno regressions    153 passed, 0 failed
+Node active/security/catalog/migrations      85 passed, 0 failed
+Total                                       339 passed, 0 failed
+Deno production checks                        passed
+Dart and Deno format checks                   passed
+Flutter analysis (infos non-fatal)            passed; same 12 baseline infos
+git diff --check                              passed
+```
+
+No migration was created or modified relative to fix-round-4 commit
+`348840644addc2fb2ae138f2e48cf618b54a665e`. The existing admin-hardening
+migration remains SHA-256
+`82df4f501eb24f5e88be6080b66c5c296f95bb4d68a7cd4b5f3c1a44a015980e`.
+The round-5 pre-commit production/test hashes are respectively
+`ddf69ca9e8d5fb4e354933cb421d379778baa9c1f40d45cd45dd7afaef51d3f0` and
+`cf81c0a1242ef7072dc4daedb4cd7abef2d1a60f7b2888407808e1673e7e4697`.
+
+Residual boundary: a published approve/edit audit row's resolved new benefit
+UUID cannot be recomputed from the locked pre-publication diff. Flutter binds
+that reduced audit row to the exact canonical dedupe key and validates the UUID
+shape; the locked Edge/SQL publication path remains authoritative for which
+new row that UUID names. Likewise, the current Edge presenter does not expose a
+stored reject `proposal_index` or decision `current` field. Full staged objects
+are bound when present, while a presenter-reduced reject without a retained
+identity is necessarily represented as the server's global-reject lane. These
+are honest limits of the existing DTO/audit schema, not reconstructed client
+authority.
+
+Only the existing auth-matrix test used an ephemeral `127.0.0.1` listener. No
+external network, Docker, local/linked/live Supabase/Postgres, production
+data/write, secret, or workflow action was used. Live applied: **no**.
