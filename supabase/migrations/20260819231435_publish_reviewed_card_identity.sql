@@ -1898,10 +1898,43 @@ BEGIN
              review_row.proposed_fields->'source_observation'
            ) AS quarantine_field(key)
            WHERE quarantine_field.key NOT IN (
-             'anchor_job_id', 'classification', 'issuer', 'kind', 'reason'
+             'anchor_job_id', 'classification', 'issuer', 'kind', 'reason',
+             'retryable', 'retryability_reason'
            )
+         )
+         OR jsonb_typeof(
+           review_row.proposed_fields->'source_observation'->'retryable'
+         ) IS DISTINCT FROM 'boolean'
+         OR coalesce(
+           review_row.proposed_fields->'source_observation'->>'retryability_reason', ''
+         ) NOT IN ('attempt_budget_reset_allowed', 'manual_repair_required')
+         OR (
+           review_row.proposed_fields->'source_observation'->>'retryable' = 'true'
+           AND (
+             coalesce(
+               review_row.proposed_fields->'source_observation'->>'reason', ''
+             ) NOT IN ('resume_attempts_exhausted', 'transient_producer_state')
+             OR review_row.proposed_fields->'source_observation'->>'retryability_reason'
+               <> 'attempt_budget_reset_allowed'
+           )
+         )
+         OR (
+           review_row.proposed_fields->'source_observation'->>'retryable' = 'false'
+           AND review_row.proposed_fields->'source_observation'->>'retryability_reason'
+             <> 'manual_repair_required'
          ) THEN
         RAISE EXCEPTION 'invalid_issuer_discovery_quarantine';
+      END IF;
+      IF length(trim(coalesce(_reason, ''))) < 2 THEN
+        RAISE EXCEPTION 'invalid_issuer_discovery_quarantine_reason';
+      END IF;
+      IF _action = 'retry' AND (
+        review_row.proposed_fields->'source_observation'->>'retryable'
+          IS DISTINCT FROM 'true'
+        OR review_row.proposed_fields->'source_observation'->>'retryability_reason'
+          IS DISTINCT FROM 'attempt_budget_reset_allowed'
+      ) THEN
+        RAISE EXCEPTION 'issuer_discovery_quarantine_manual_repair_required';
       END IF;
       issuer_quarantine_anchor_id := nullif(
         review_row.proposed_fields->'source_observation'->>'anchor_job_id', ''
@@ -1914,10 +1947,17 @@ BEGIN
          OR issuer_quarantine_anchor.id = job_row.id
          OR issuer_quarantine_anchor.user_id IS NOT NULL
          OR issuer_quarantine_anchor.discovery_source <> 'issuer_crawl'
-         OR lower(trim(issuer_quarantine_anchor.issuer)) IS DISTINCT FROM
-           lower(trim(review_row.proposed_fields->'source_observation'->>'issuer'))
-         OR lower(trim(job_row.issuer)) IS DISTINCT FROM
-           lower(trim(issuer_quarantine_anchor.issuer)) THEN
+         OR lower(regexp_replace(
+           trim(issuer_quarantine_anchor.issuer), '\s+', ' ', 'g'
+         )) IS DISTINCT FROM lower(regexp_replace(
+           trim(review_row.proposed_fields->'source_observation'->>'issuer'),
+           '\s+', ' ', 'g'
+         ))
+         OR lower(regexp_replace(
+           trim(job_row.issuer), '\s+', ' ', 'g'
+         )) IS DISTINCT FROM lower(regexp_replace(
+           trim(issuer_quarantine_anchor.issuer), '\s+', ' ', 'g'
+         )) THEN
         RAISE EXCEPTION 'invalid_issuer_discovery_quarantine';
       END IF;
       IF EXISTS (

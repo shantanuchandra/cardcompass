@@ -2089,7 +2089,7 @@ export async function persistNonProductIssuerOutcome(
     return "quarantined";
   }
   const existing = await db.from("card_discovery_jobs")
-    .select("id,status")
+    .select("id,status,failure_category")
     .eq("discovery_source", "issuer_crawl")
     .eq("dedupe_key", dedupeKey)
     .is("user_id", null)
@@ -2117,7 +2117,7 @@ export async function persistNonProductIssuerOutcome(
     dedupe_key: dedupeKey,
     status: supporting ? "resolved" : rejected ? "rejected" : "review_required",
     updated_at: new Date().toISOString(),
-  }).select("id,status").maybeSingle();
+  }).select("id,status,failure_category").maybeSingle();
   if (!inserted.error && inserted.data) {
     return supporting ? "supporting" : rejected ? "rejected" : "quarantined";
   }
@@ -2125,7 +2125,7 @@ export async function persistNonProductIssuerOutcome(
     throw inserted.error ?? new Error("issuer_candidate_persistence_failed");
   }
   const raced = await db.from("card_discovery_jobs")
-    .select("id,status")
+    .select("id,status,failure_category")
     .eq("discovery_source", "issuer_crawl")
     .eq("dedupe_key", dedupeKey)
     .is("user_id", null)
@@ -2157,7 +2157,7 @@ export async function persistIssuerRunProgress(
     updated_at: new Date().toISOString(),
   }).eq("id", seed.rotationJobId).eq("status", "discovering")
     .contains("evidence", { lease_token: previousLeaseToken })
-    .select("id,evidence,updated_at").maybeSingle();
+    .select("id,evidence,updated_at,failure_category").maybeSingle();
   if (updated.error || !updated.data) {
     throw updated.error ?? new Error("issuer_discovery_lease_lost");
   }
@@ -2423,12 +2423,14 @@ type IssuerDiscoveryReviewSummary = {
   staged: number;
   quarantined: number;
   conflicts: number;
+  remaining: number;
 };
 
 const emptyIssuerDiscoveryReviewSummary = (): IssuerDiscoveryReviewSummary => ({
   staged: 0,
   quarantined: 0,
   conflicts: 0,
+  remaining: 0,
 });
 
 function addIssuerDiscoveryReviewSummary(
@@ -2439,18 +2441,70 @@ function addIssuerDiscoveryReviewSummary(
     staged: left.staged + (right?.staged ?? 0),
     quarantined: left.quarantined + (right?.quarantined ?? 0),
     conflicts: left.conflicts + (right?.conflicts ?? 0),
+    remaining: left.remaining + (right?.remaining ?? 0),
   };
 }
 
 export function issuerDiscoveryResponseSummary(
   claim: Pick<IssuerDiscoveryClaim, "seed" | "reviewSummary">,
 ): IssuerDiscoveryReviewSummary & { noWork: boolean } {
-  const review = claim.reviewSummary ?? emptyIssuerDiscoveryReviewSummary();
+  const review = addIssuerDiscoveryReviewSummary(
+    emptyIssuerDiscoveryReviewSummary(),
+    claim.reviewSummary,
+  );
   return {
     ...review,
     noWork: !claim.seed && review.staged === 0 && review.quarantined === 0 &&
-      review.conflicts === 0,
+      review.conflicts === 0 && review.remaining === 0,
   };
+}
+
+type IssuerDiscoveryQuarantineReason =
+  | "resume_attempts_exhausted"
+  | "transient_producer_state"
+  | "invalid_run_evidence"
+  | "legacy_anchor_conflict"
+  | "anchor_identity_conflict";
+
+type IssuerDiscoveryQuarantineBudget = {
+  limit: number;
+  used: number;
+  deadlineAt: number;
+  nowMs: () => number;
+};
+
+type IssuerDiscoveryClaimOptions = {
+  deadlineAt?: number;
+  nowMs?: () => number;
+  quarantineLimit?: number;
+  quarantineBudget?: IssuerDiscoveryQuarantineBudget;
+};
+
+function issuerDiscoveryQuarantineBudget(
+  options: IssuerDiscoveryClaimOptions = {},
+): IssuerDiscoveryQuarantineBudget {
+  if (options.quarantineBudget) return options.quarantineBudget;
+  const nowMs = options.nowMs ?? Date.now;
+  return {
+    limit: Math.max(
+      1,
+      Math.min(
+        ISSUER_DISCOVERY_QUARANTINE_BATCH,
+        Math.trunc(
+          options.quarantineLimit ?? ISSUER_DISCOVERY_QUARANTINE_BATCH,
+        ),
+      ),
+    ),
+    used: 0,
+    deadlineAt: options.deadlineAt ?? nowMs() + INVOCATION_DEADLINE_MS,
+    nowMs,
+  };
+}
+
+function issuerQuarantineWorkMayStart(
+  budget: IssuerDiscoveryQuarantineBudget,
+): boolean {
+  return budget.used < budget.limit && budget.nowMs() < budget.deadlineAt;
 }
 
 function normalizedIssuerKey(value: unknown): string {
@@ -2595,7 +2649,8 @@ export async function recordIssuerDiscoveryOutcome(
   })
     .eq("id", seed.rotationJobId).eq("status", "discovering")
     .contains("evidence", { lease_token: previousLeaseToken });
-  const { data, error } = await update.select("id").maybeSingle();
+  const { data, error } = await update.select("id,failure_category")
+    .maybeSingle();
   if (error) throw error;
   if (!data) throw new Error("issuer_discovery_lease_lost");
   seed.rotationEvidence = evidence;
@@ -2614,20 +2669,30 @@ function issuerRunEvidence(row: Record<string, any>): Record<string, unknown> {
     : {};
 }
 
+function validIssuerRunDate(value: unknown): value is string {
+  const runDate = String(value ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(runDate)) return false;
+  const parsed = new Date(`${runDate}T00:00:00.000Z`);
+  return Number.isFinite(parsed.getTime()) &&
+    parsed.toISOString().slice(0, 10) === runDate;
+}
+
 function issuerRunIdentity(row: Record<string, any>): {
   selected: Pick<EnrichmentJob, "issuer" | "canonical_url">;
   runDate: string;
 } | null {
   const evidence = issuerRunEvidence(row);
-  const issuer = String(evidence.issuer ?? row.issuer ?? "").trim();
+  const issuer = String(evidence.issuer ?? row.issuer ?? "").trim().replace(
+    /\s+/g,
+    " ",
+  );
   const canonicalUrl = String(evidence.canonical_url ?? "").trim();
   const runDate = String(evidence.run_date ?? "");
   const attemptCount = Number(row.attempt_count ?? 0);
   if (
     !issuer ||
     normalizedIssuerKey(row.issuer) !== normalizedIssuerKey(issuer) ||
-    !/^\d{4}-\d{2}-\d{2}$/.test(runDate) ||
-    !Number.isFinite(Date.parse(`${runDate}T00:00:00.000Z`)) ||
+    !validIssuerRunDate(runDate) ||
     !Number.isInteger(attemptCount) || attemptCount < 0 ||
     attemptCount > ISSUER_DISCOVERY_MAX_ATTEMPTS ||
     !allowedOfficialUrl(issuer, canonicalUrl)
@@ -2652,6 +2717,7 @@ async function issuerAnchorIdentityValid(
     " ",
   );
   const evidenceUrl = String(evidence.canonical_url ?? "").trim();
+  const attemptCount = Number(row.attempt_count ?? 0);
   const expectedAnchorKey = await sha256Text(
     `issuer-directory-anchor:${normalizedIssuerKey(rowIssuer)}`,
   );
@@ -2659,7 +2725,13 @@ async function issuerAnchorIdentityValid(
     normalizedIssuerKey(rowIssuer) === normalizedIssuerKey(selected.issuer) &&
     normalizedIssuerKey(rowIssuer) === normalizedIssuerKey(evidenceIssuer) &&
     String(row.dedupe_key ?? "") === expectedAnchorKey &&
-    allowedOfficialUrl(rowIssuer, evidenceUrl);
+    validIssuerRunDate(evidence.run_date) &&
+    Number.isInteger(attemptCount) && attemptCount >= 0 &&
+    attemptCount <= ISSUER_DISCOVERY_MAX_ATTEMPTS &&
+    allowedOfficialUrl(
+      selected.issuer.trim().replace(/\s+/g, " "),
+      evidenceUrl,
+    );
 }
 
 function issuerDiscoverySeedFromRow(
@@ -2689,11 +2761,7 @@ async function terminalizeIssuerDiscoveryBacklog(
   db: UntypedSupabaseClient,
   row: Record<string, any>,
   now: Date,
-  reason:
-    | "resume_attempts_exhausted"
-    | "invalid_run_evidence"
-    | "legacy_anchor_conflict"
-    | "anchor_identity_conflict",
+  reason: IssuerDiscoveryQuarantineReason,
 ): Promise<IssuerDiscoveryReviewSummary> {
   const previousEvidence = issuerRunEvidence(row);
   const issuer = String(row.issuer ?? "").trim().replace(/\s+/g, " ");
@@ -2701,7 +2769,13 @@ async function terminalizeIssuerDiscoveryBacklog(
     throw new Error("invalid_issuer_quarantine_identity");
   }
   const nowIso = now.toISOString();
-  let quarantinedRow = row;
+  if (
+    String(row.status) === "failed" &&
+    String(row.failure_category ?? "") === "issuer_discovery_quarantined" &&
+    (row.next_retry_at === null || row.next_retry_at === undefined)
+  ) {
+    return emptyIssuerDiscoveryReviewSummary();
+  }
   if (
     String(row.status) !== "failed" ||
     String(row.failure_category ?? "") !== "issuer_discovery_quarantined"
@@ -2729,20 +2803,27 @@ async function terminalizeIssuerDiscoveryBacklog(
     ).maybeSingle();
     if (transitioned.error) throw transitioned.error;
     if (!transitioned.data) return emptyIssuerDiscoveryReviewSummary();
-    quarantinedRow = transitioned.data;
   }
   const sourceObservation = {
     kind: "issuer_discovery_quarantine",
     classification: "issuer_discovery_quarantine",
     reason,
+    retryable: [
+      "resume_attempts_exhausted",
+      "transient_producer_state",
+    ].includes(reason),
+    retryability_reason: [
+        "resume_attempts_exhausted",
+        "transient_producer_state",
+      ].includes(reason)
+      ? "attempt_budget_reset_allowed"
+      : "manual_repair_required",
     anchor_job_id: String(row.id).slice(0, 64),
     issuer,
   };
   const semanticHash = await sha256Text(JSON.stringify(sourceObservation));
   const reviewDedupeKey = await sha256Text(
-    `issuer-discovery-quarantine:${String(row.id)}:${
-      String(quarantinedRow.updated_at ?? nowIso)
-    }:${reason}`,
+    `issuer-discovery-quarantine:${String(row.id)}:${reason}`,
   );
   const staged = await stageCatalogIdentityReview(db, {
     discoveryJobId: null,
@@ -2755,7 +2836,7 @@ async function terminalizeIssuerDiscoveryBacklog(
     proposedFields: {
       issuer,
       cardName: "Issuer discovery quarantine",
-      suggested_action: "retry",
+      suggested_action: sourceObservation.retryable ? "retry" : "reject",
       source_observation: sourceObservation,
     },
     sourceEvidence: { source_observation: sourceObservation },
@@ -2774,7 +2855,7 @@ async function terminalizeIssuerDiscoveryBacklog(
     updated_at: nowIso,
   }).eq("id", row.id).eq("status", "failed")
     .eq("failure_category", "issuer_discovery_quarantined")
-    .select("id").maybeSingle();
+    .select("id,failure_category").maybeSingle();
   if (cleared.error) throw cleared.error;
   if (!cleared.data) throw new Error("issuer_discovery_quarantine_race");
   return {
@@ -2785,6 +2866,39 @@ async function terminalizeIssuerDiscoveryBacklog(
       )
       ? 1
       : 0,
+    remaining: 0,
+  };
+}
+
+async function terminalizeIssuerDiscoveryRows(
+  db: UntypedSupabaseClient,
+  rows: Array<Record<string, any>>,
+  now: Date,
+  reason: IssuerDiscoveryQuarantineReason,
+  budget: IssuerDiscoveryQuarantineBudget,
+): Promise<IssuerDiscoveryReviewSummary> {
+  let summary = emptyIssuerDiscoveryReviewSummary();
+  let processed = 0;
+  const pendingRows = rows.filter((row) =>
+    !(
+      String(row.status) === "failed" &&
+      String(row.failure_category ?? "") ===
+        "issuer_discovery_quarantined" &&
+      (row.next_retry_at === null || row.next_retry_at === undefined)
+    )
+  );
+  for (const row of pendingRows) {
+    if (!issuerQuarantineWorkMayStart(budget)) break;
+    budget.used += 1;
+    processed += 1;
+    summary = addIssuerDiscoveryReviewSummary(
+      summary,
+      await terminalizeIssuerDiscoveryBacklog(db, row, now, reason),
+    );
+  }
+  return {
+    ...summary,
+    remaining: summary.remaining + pendingRows.length - processed,
   };
 }
 
@@ -2821,6 +2935,49 @@ function boundedIssuerRunHistory(
   return combined.slice(-24);
 }
 
+function issuerDiscoveryIssuerPattern(issuer: string): string {
+  const tokens = normalizedIssuerKey(issuer).split(" ").filter(Boolean);
+  if (tokens.length === 0) throw new Error("invalid_issuer_search_identity");
+  const escaped = tokens.map((token) => token.replace(/[%_\\]/g, "\\$&"));
+  return `%${escaped.join("%")}%`;
+}
+
+async function loadStableIssuerDiscoveryRows(
+  db: UntypedSupabaseClient,
+  issuer: string,
+  pageSize = 100,
+  maxRows = 1_000,
+): Promise<{
+  rows: Array<Record<string, any>>;
+  complete: boolean;
+}> {
+  const rows: Array<Record<string, any>> = [];
+  for (let offset = 0; offset <= maxRows; offset += pageSize) {
+    const probe = offset === maxRows;
+    const query = await db.from("card_discovery_jobs")
+      .select(
+        "id,issuer,evidence,status,failure_category,updated_at,next_retry_at,attempt_count,dedupe_key,created_at,review_item_id",
+      )
+      .eq("discovery_source", "issuer_crawl")
+      .ilike("issuer", issuerDiscoveryIssuerPattern(issuer))
+      .is("user_id", null)
+      .contains("evidence", { kind: "issuer_directory_anchor" })
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(offset, probe ? offset : offset + pageSize - 1);
+    if (query.error) throw query.error;
+    const pageRows = (query.data ?? []) as Array<Record<string, any>>;
+    if (probe) return { rows, complete: pageRows.length === 0 };
+    rows.push(
+      ...pageRows.filter((row) =>
+        normalizedIssuerKey(row.issuer) === normalizedIssuerKey(issuer)
+      ),
+    );
+    if (pageRows.length < pageSize) return { rows, complete: true };
+  }
+  return { rows, complete: false };
+}
+
 async function loadLegacyIssuerDiscoveryRows(
   db: UntypedSupabaseClient,
   issuer: string,
@@ -2835,10 +2992,10 @@ async function loadLegacyIssuerDiscoveryRows(
     const offset = page * pageSize;
     const query = await db.from("card_discovery_jobs")
       .select(
-        "id,issuer,evidence,status,updated_at,next_retry_at,attempt_count,dedupe_key,created_at,review_item_id",
+        "id,issuer,evidence,status,failure_category,updated_at,next_retry_at,attempt_count,dedupe_key,created_at,review_item_id",
       )
       .eq("discovery_source", "issuer_crawl")
-      .ilike("issuer", issuer)
+      .ilike("issuer", issuerDiscoveryIssuerPattern(issuer))
       .is("user_id", null)
       .contains("evidence", { kind: "issuer_directory_run" })
       .order("created_at", { ascending: true })
@@ -2862,15 +3019,17 @@ async function claimExistingIssuerDiscoveryRow(
   selected: Pick<EnrichmentJob, "issuer" | "canonical_url">,
   runDate: string,
   now: Date,
+  budget: IssuerDiscoveryQuarantineBudget,
 ): Promise<IssuerDiscoveryClaim> {
   const rowStatus = String(row.status);
   const previousEvidence = issuerRunEvidence(row);
   if (!await issuerAnchorIdentityValid(row, selected)) {
-    const reviewSummary = await terminalizeIssuerDiscoveryBacklog(
+    const reviewSummary = await terminalizeIssuerDiscoveryRows(
       db,
-      row,
+      [row],
       now,
       "anchor_identity_conflict",
+      budget,
     );
     return { status: "quarantined", seed: null, reviewSummary };
   }
@@ -2891,9 +3050,9 @@ async function claimExistingIssuerDiscoveryRow(
     if (row.next_retry_at === null || row.next_retry_at === undefined) {
       return { status: "quarantined", seed: null };
     }
-    const reviewSummary = await terminalizeIssuerDiscoveryBacklog(
+    const reviewSummary = await terminalizeIssuerDiscoveryRows(
       db,
-      row,
+      [row],
       now,
       previousEvidence.quarantine_reason === "resume_attempts_exhausted" ||
         previousEvidence.quarantine_reason === "invalid_run_evidence" ||
@@ -2901,6 +3060,7 @@ async function claimExistingIssuerDiscoveryRow(
         previousEvidence.quarantine_reason === "anchor_identity_conflict"
         ? previousEvidence.quarantine_reason
         : "invalid_run_evidence",
+      budget,
     );
     return { status: "quarantined", seed: null, reviewSummary };
   }
@@ -2916,11 +3076,12 @@ async function claimExistingIssuerDiscoveryRow(
     !startsNewSlot &&
     Number(row.attempt_count ?? 0) >= ISSUER_DISCOVERY_MAX_ATTEMPTS
   ) {
-    const reviewSummary = await terminalizeIssuerDiscoveryBacklog(
+    const reviewSummary = await terminalizeIssuerDiscoveryRows(
       db,
-      row,
+      [row],
       now,
       "resume_attempts_exhausted",
+      budget,
     );
     return { status: "resume_exhausted", seed: null, reviewSummary };
   }
@@ -2978,7 +3139,7 @@ async function claimExistingIssuerDiscoveryRow(
   }
   if (row.updated_at) update = update.eq("updated_at", row.updated_at);
   const claimed = await update.select(
-    "id,issuer,evidence,status,updated_at,next_retry_at,attempt_count,dedupe_key,created_at",
+    "id,issuer,evidence,status,failure_category,updated_at,next_retry_at,attempt_count,dedupe_key,created_at",
   ).maybeSingle();
   if (claimed.error) throw claimed.error;
   return claimed.data
@@ -3009,7 +3170,7 @@ export async function loadIssuerDiscoveryBacklog(
     const offset = pageIndex * pageSize;
     const query = await db.from("card_discovery_jobs")
       .select(
-        "id,issuer,evidence,status,updated_at,next_retry_at,attempt_count,dedupe_key,created_at",
+        "id,issuer,evidence,status,failure_category,updated_at,next_retry_at,attempt_count,dedupe_key,created_at",
       )
       .eq("discovery_source", "issuer_crawl")
       .is("user_id", null)
@@ -3044,7 +3205,9 @@ export async function claimIssuerDiscoveryRun(
   db: UntypedSupabaseClient,
   selected: Pick<EnrichmentJob, "issuer" | "canonical_url">,
   now = new Date(),
+  options: IssuerDiscoveryClaimOptions = {},
 ): Promise<IssuerDiscoveryClaim> {
+  const budget = issuerDiscoveryQuarantineBudget(options);
   const runDate = utcIssuerRunDate(now);
   const key = await sha256Text(
     `issuer-directory-anchor:${normalizedIssuerKey(selected.issuer)}`,
@@ -3052,7 +3215,7 @@ export async function claimIssuerDiscoveryRun(
   const loadExisting = async (): Promise<Record<string, any> | null> => {
     const existing = await db.from("card_discovery_jobs")
       .select(
-        "id,issuer,evidence,status,updated_at,next_retry_at,attempt_count,dedupe_key,created_at",
+        "id,issuer,evidence,status,failure_category,updated_at,next_retry_at,attempt_count,dedupe_key,created_at",
       )
       .eq("discovery_source", "issuer_crawl")
       .eq("dedupe_key", key)
@@ -3061,7 +3224,40 @@ export async function claimIssuerDiscoveryRun(
     if (existing.error) throw existing.error;
     return existing.data ?? null;
   };
-  let previous = await loadExisting();
+  const stableScan = await loadStableIssuerDiscoveryRows(db, selected.issuer);
+  if (!stableScan.complete) {
+    throw new Error("issuer_discovery_stable_scan_exhausted");
+  }
+  const corruptStableRows: Array<Record<string, any>> = [];
+  const validStableRows: Array<Record<string, any>> = [];
+  for (const row of stableScan.rows) {
+    if (await issuerAnchorIdentityValid(row, selected)) {
+      validStableRows.push(row);
+    } else {
+      corruptStableRows.push(row);
+    }
+  }
+  if (corruptStableRows.length > 0) {
+    const reviewSummary = await terminalizeIssuerDiscoveryRows(
+      db,
+      corruptStableRows,
+      now,
+      "anchor_identity_conflict",
+      budget,
+    );
+    return { status: "quarantined", seed: null, reviewSummary };
+  }
+  if (validStableRows.length > 1) {
+    const reviewSummary = await terminalizeIssuerDiscoveryRows(
+      db,
+      validStableRows.slice(1),
+      now,
+      "anchor_identity_conflict",
+      budget,
+    );
+    return { status: "quarantined", seed: null, reviewSummary };
+  }
+  let previous: Record<string, any> | null = validStableRows[0] ?? null;
   const legacyScan = await loadLegacyIssuerDiscoveryRows(db, selected.issuer);
   if (!legacyScan.complete) {
     throw new Error("issuer_discovery_legacy_scan_exhausted");
@@ -3085,20 +3281,13 @@ export async function claimIssuerDiscoveryRun(
 
   if (previous && unfinishedLegacy.length > 0) {
     const conflictRows = unfinishedLegacy;
-    let reviewSummary = emptyIssuerDiscoveryReviewSummary();
-    for (
-      const row of conflictRows.slice(0, ISSUER_DISCOVERY_QUARANTINE_BATCH)
-    ) {
-      reviewSummary = addIssuerDiscoveryReviewSummary(
-        reviewSummary,
-        await terminalizeIssuerDiscoveryBacklog(
-          db,
-          row,
-          now,
-          "legacy_anchor_conflict",
-        ),
-      );
-    }
+    const reviewSummary = await terminalizeIssuerDiscoveryRows(
+      db,
+      conflictRows,
+      now,
+      "legacy_anchor_conflict",
+      budget,
+    );
     return { status: "legacy_conflict", seed: null, reviewSummary };
   }
   if (previous) {
@@ -3108,27 +3297,18 @@ export async function claimIssuerDiscoveryRun(
       selected,
       runDate,
       now,
+      budget,
     );
   }
 
   if (unfinishedLegacy.length > 1) {
-    let reviewSummary = emptyIssuerDiscoveryReviewSummary();
-    for (
-      const row of unfinishedLegacy.slice(
-        0,
-        ISSUER_DISCOVERY_QUARANTINE_BATCH,
-      )
-    ) {
-      reviewSummary = addIssuerDiscoveryReviewSummary(
-        reviewSummary,
-        await terminalizeIssuerDiscoveryBacklog(
-          db,
-          row,
-          now,
-          "legacy_anchor_conflict",
-        ),
-      );
-    }
+    const reviewSummary = await terminalizeIssuerDiscoveryRows(
+      db,
+      unfinishedLegacy,
+      now,
+      "legacy_anchor_conflict",
+      budget,
+    );
     return { status: "legacy_conflict", seed: null, reviewSummary };
   }
   if (unfinishedLegacy.length === 1) {
@@ -3161,7 +3341,7 @@ export async function claimIssuerDiscoveryRun(
       migrate = migrate.eq("updated_at", legacy.updated_at);
     }
     const migrated = await migrate.select(
-      "id,issuer,evidence,status,updated_at,next_retry_at,attempt_count,dedupe_key,created_at",
+      "id,issuer,evidence,status,failure_category,updated_at,next_retry_at,attempt_count,dedupe_key,created_at",
     ).maybeSingle();
     if (migrated.error?.code === "23505") {
       previous = await loadExisting();
@@ -3172,6 +3352,7 @@ export async function claimIssuerDiscoveryRun(
           selected,
           runDate,
           now,
+          budget,
         )
         : { status: "already_running", seed: null };
     }
@@ -3184,6 +3365,7 @@ export async function claimIssuerDiscoveryRun(
       selected,
       identity?.runDate ?? runDate,
       now,
+      budget,
     );
   }
 
@@ -3222,7 +3404,7 @@ export async function claimIssuerDiscoveryRun(
     ).toISOString(),
     updated_at: now.toISOString(),
   }).select(
-    "id,issuer,evidence,status,updated_at,next_retry_at,attempt_count,dedupe_key,created_at",
+    "id,issuer,evidence,status,failure_category,updated_at,next_retry_at,attempt_count,dedupe_key,created_at",
   ).maybeSingle();
   if (!inserted.error && inserted.data) {
     return {
@@ -3241,6 +3423,7 @@ export async function claimIssuerDiscoveryRun(
     selected,
     runDate,
     now,
+    budget,
   );
 }
 
@@ -3248,21 +3431,36 @@ export async function loadDiscoverySeed(
   db: UntypedSupabaseClient,
   now = new Date(),
   pageSize = 200,
+  options: IssuerDiscoveryClaimOptions = {},
 ): Promise<IssuerDiscoveryClaim> {
+  const quarantineBudget = issuerDiscoveryQuarantineBudget(options);
+  const claimOptions = { ...options, quarantineBudget };
   let reviewSummary = emptyIssuerDiscoveryReviewSummary();
   const backlog = await loadIssuerDiscoveryBacklog(db, now);
-  for (const row of backlog) {
+  for (let index = 0; index < backlog.length; index += 1) {
+    const row = backlog[index];
     const identity = issuerRunIdentity(row);
     if (!identity) {
       reviewSummary = addIssuerDiscoveryReviewSummary(
         reviewSummary,
-        await terminalizeIssuerDiscoveryBacklog(
+        await terminalizeIssuerDiscoveryRows(
           db,
-          row,
+          [row],
           now,
           "invalid_run_evidence",
+          quarantineBudget,
         ),
       );
+      if (!issuerQuarantineWorkMayStart(quarantineBudget)) {
+        return {
+          status: "quarantined",
+          seed: null,
+          reviewSummary: {
+            ...reviewSummary,
+            remaining: reviewSummary.remaining + backlog.length - index - 1,
+          },
+        };
+      }
       continue;
     }
     if (
@@ -3272,16 +3470,22 @@ export async function loadDiscoverySeed(
     ) {
       reviewSummary = addIssuerDiscoveryReviewSummary(
         reviewSummary,
-        await terminalizeIssuerDiscoveryBacklog(
+        await terminalizeIssuerDiscoveryRows(
           db,
-          row,
+          [row],
           now,
           "anchor_identity_conflict",
+          quarantineBudget,
         ),
       );
       return { status: "quarantined", seed: null, reviewSummary };
     }
-    const claim = await claimIssuerDiscoveryRun(db, identity.selected, now);
+    const claim = await claimIssuerDiscoveryRun(
+      db,
+      identity.selected,
+      now,
+      claimOptions,
+    );
     reviewSummary = addIssuerDiscoveryReviewSummary(
       reviewSummary,
       claim.reviewSummary,
@@ -3295,7 +3499,7 @@ export async function loadDiscoverySeed(
   const rows = await loadApprovedIssuerCatalog(db, pageSize);
   const selected = selectIssuerDiscoveryCandidate(rows, now);
   if (!selected) return { status: "empty", seed: null, reviewSummary };
-  const claim = await claimIssuerDiscoveryRun(db, selected, now);
+  const claim = await claimIssuerDiscoveryRun(db, selected, now, claimOptions);
   return {
     ...claim,
     reviewSummary: addIssuerDiscoveryReviewSummary(
@@ -3335,7 +3539,9 @@ export async function handleBenefitEnrichmentBatch(
       if (!issuerMode) {
         return json({ error: "invalid_issuer_discovery_request" }, 400);
       }
-      const claim = await loadDiscoverySeed(db, new Date(), 200);
+      const claim = await loadDiscoverySeed(db, new Date(), 200, {
+        deadlineAt: invocationStartedAt + INVOCATION_DEADLINE_MS,
+      });
       const discoveryState = issuerDiscoveryResponseSummary(claim);
       if (!claim.seed) {
         return json({

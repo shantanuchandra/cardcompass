@@ -665,29 +665,45 @@ export function cardDiscontinuationEvidence(
   const lifecycleBindingTokens = new Set([
     ...sectionHeadingTokens,
     "and",
+    "april",
+    "august",
     "available",
     "been",
+    "december",
     "discontinued",
+    "due",
     "effective",
+    "february",
     "from",
     "has",
     "immediate",
     "immediately",
     "is",
     "issued",
+    "january",
+    "july",
+    "june",
     "longer",
+    "march",
+    "may",
     "no",
     "not",
+    "november",
+    "october",
     "of",
     "on",
+    "portfolio",
+    "review",
+    "september",
     "the",
     "this",
+    "to",
     "withdrawn",
   ]);
   const hasCompetingProductIdentity = (value: string) => {
     const remaining = meaningful(value).filter((token) =>
       !targetTokens.includes(token) && !issuerTokens.has(token) &&
-      !lifecycleBindingTokens.has(token)
+      !lifecycleBindingTokens.has(token) && !/^\d{1,4}$/.test(token)
     );
     return remaining.length > 0;
   };
@@ -787,6 +803,21 @@ export function cardDiscontinuationEvidence(
       return {
         explicit: true,
         matchedExcerpt: boundedExcerpt(`${heading.text} ${directSentence}`),
+      };
+    }
+    const neutralStatusSentence = boundedSentences(rawScope).find((value) =>
+      structuredStatus.test(value) &&
+      !/\b(?:this|the)\s+(?:credit\s+)?card\b/i.test(value) &&
+      !hasCompetingProductIdentity(value) &&
+      !competingContext(value) &&
+      !/\bnot\s+(?:discontinued|withdrawn)\b/i.test(value)
+    );
+    if (neutralStatusSentence) {
+      return {
+        explicit: true,
+        matchedExcerpt: boundedExcerpt(
+          `${heading.text} ${neutralStatusSentence}`,
+        ),
       };
     }
     const statusElement = [...rawScope.matchAll(

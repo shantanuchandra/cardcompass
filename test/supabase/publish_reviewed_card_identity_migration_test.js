@@ -426,6 +426,31 @@ test("issuer discovery quarantine retry atomically resets only its referenced pr
     /_action = 'reject'[\s\S]*status = 'rejected'[\s\S]*issuer_discovery_quarantined/i,
     "reject does not keep the issuer producer quarantined",
   );
+  assert.match(
+    publish,
+    /source_observation[\s\S]*retryable[\s\S]*retryability_reason/i,
+    "quarantine review omits its bounded retry policy",
+  );
+  assert.match(
+    publish,
+    /coalesce\([\s\S]*retryability_reason[\s\S]*NOT IN \('attempt_budget_reset_allowed', 'manual_repair_required'\)/i,
+    "missing retryability policy does not fail closed",
+  );
+  assert.match(
+    publish,
+    /_action = 'retry'[\s\S]*retryable[\s\S]*true[\s\S]*attempt_budget_reset_allowed/i,
+    "SQL does not reject Retry for nonretryable/manual-repair quarantine",
+  );
+  assert.match(
+    publish,
+    /_action IN \('retry', 'reject', 'mark_discontinued', 'reactivate'\)[\s\S]*length\(trim\(coalesce\(_reason, ''\)\)\) < 2[\s\S]*reason_required/i,
+    "Retry/Keep quarantined does not require an operator reason",
+  );
+  assert.match(
+    publish,
+    /issuer_quarantine_anchor\.issuer[\s\S]*regexp_replace[\s\S]*source_observation[\s\S]*issuer/i,
+    "quarantine retry issuer comparison does not normalize whitespace",
+  );
 });
 
 test("edit destination conflict distinguishes strong-compatible duplicates from sibling variants", async () => {

@@ -230,6 +230,8 @@ void main() {
                     'anchor_job_id': 'anchor-123',
                     'issuer': 'Axis Bank',
                     'reason': 'resume_attempts_exhausted',
+                    'retryable': true,
+                    'retryability_reason': 'attempt_budget_reset_allowed',
                   },
                 },
                 'validation_warnings': ['issuer_discovery_quarantine'],
@@ -262,6 +264,73 @@ void main() {
       expect(find.textContaining('lease_token'), findsNothing);
     },
   );
+
+  testWidgets(
+    'nonretryable issuer quarantine explains manual repair and hides Retry',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: CatalogIdentityReviewCard(
+              item: const {
+                'status': 'pending',
+                'proposed_fields': {
+                  'source_observation': {
+                    'kind': 'issuer_discovery_quarantine',
+                    'classification': 'issuer_discovery_quarantine',
+                    'anchor_job_id': 'anchor-corrupt',
+                    'issuer': 'Axis Bank',
+                    'reason': 'anchor_identity_conflict',
+                    'retryable': false,
+                    'retryability_reason': 'manual_repair_required',
+                  },
+                },
+              },
+              onApprove: _noop,
+              onEditApprove: _noop,
+              onMerge: _noopValue,
+              onRetry: _noop,
+              onReject: _noop,
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('Retry issuer discovery'), findsNothing);
+      expect(find.text('Keep quarantined'), findsOneWidget);
+      expect(find.textContaining('Manual repair required'), findsOneWidget);
+    },
+  );
+
+  test('issuer quarantine action requests require a nonempty reason', () {
+    expect(
+      () => catalogIdentityReviewActionBody(
+        action: 'retry',
+        reviewItemId: 'review-1',
+        reason: ' ',
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => catalogIdentityReviewActionBody(
+        action: 'reject',
+        reviewItemId: 'review-1',
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      catalogIdentityReviewActionBody(
+        action: 'retry',
+        reviewItemId: 'review-1',
+        reason: 'Verified temporary upstream outage',
+      ),
+      {
+        'action': 'retry',
+        'review_item_id': 'review-1',
+        'reason': 'Verified temporary upstream outage',
+      },
+    );
+  });
 
   test(
     'repository maps a paginated benefit response and sends its API action',

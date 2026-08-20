@@ -303,3 +303,106 @@ These remain intentionally unexecuted:
 4. observe same-day overlap/lease recovery and real issuer rate-limit duration;
 5. enable the daily workflow only through the Task 12 staged rollout gate, then
    monitor one issuer slot before expanding coverage.
+
+## Fix round 4/5 — projection-realistic quarantine and bounded repair
+
+This round closes the fourth scoped-review findings without adding a migration
+or business column.
+
+- Every issuer `card_discovery_jobs` PostgREST projection now explicitly selects
+  `failure_category`. The scheduler fake applies the requested projection rather
+  than returning full rows, so an omitted field can no longer make a test pass.
+- Every claim performs bounded, paginated discovery of all stable-anchor-kind
+  rows whose row issuer normalizes to the selected issuer. Corrupt stable keys,
+  evidence, URLs, attempts, or UTC run dates are quarantined even when the row is
+  future-backoff or resolved; no replacement anchor is inserted.
+- Legacy reconciliation uses a tokenized broad `ilike` search followed by exact
+  whitespace/case-normalized post-filtering. Active late legacy leases remain a
+  claim fence on every invocation.
+- Quarantine first CAS-transitions the private producer to
+  `failed/issuer_discovery_quarantined` with a due retry marker, then stages the
+  separate bounded review. A staging or final clear failure therefore remains
+  self-fenced and resumable. Review identity is stable anchor ID plus semantic
+  reason and no longer contains mutable `updated_at`; retry reuses the same
+  review. A fully staged producer clears the retry marker and later invocations
+  do not restage it.
+- Review observations explicitly carry bounded `retryable` and
+  `retryability_reason`. Only attempt exhaustion or a typed transient producer
+  state can be retried. Identity/evidence/key/URL/run-date corruption is marked
+  `manual_repair_required`; the admin surface hides Retry, explains the manual
+  repair requirement, and retains only Keep quarantined. The Task 7 RPC validates
+  this policy server-side and rejects Retry for nonretryable reviews.
+- Retry and Keep quarantined requests both require a trimmed operator reason.
+  The request-envelope helper and widget tests cover the exact payload and
+  presentation behavior.
+- Quarantine transition/staging uses one shared per-invocation budget of 20 and
+  checks the internal deadline before every row. Responses include exact
+  `staged`, `quarantined`, `conflicts`, and `remaining` counts. A 1,000-corrupt-
+  anchor fixture stages 20, reports 980, and never starts seed crawl work.
+- Target-only neutral lifecycle text such as `Status: discontinued effective
+  DATE`, a neutral status element, and `Due to a portfolio review, this card...`
+  is accepted. Competing proper-product subjects remain rejected, including
+  competitor-named status/availability elements and anaphora.
+
+### Fix-round-4 red and green evidence
+
+The first combined focused Deno RED run reported **137 passed / 11 failed**.
+The failures covered whitespace-normalized legacy fencing, future/resolved
+corrupt stable rows, staging/clear quarantine recovery, retryability metadata,
+exact bounded remaining counts, the 1,000-row cap, response accounting, and
+neutral lifecycle wording. The projection-aware fake also exposed prior
+quarantine/reject behavior that had depended on unselected fields. SQL and
+Flutter contract/widget repros were added for server-enforced retryability,
+required reasons, request payloads, and nonretryable presentation.
+
+Fresh final commands and exact counts:
+
+```sh
+node --test test/gtm/card-discovery-schedule.test.js test/gtm/benefit-enrichment-schedule.test.js test/supabase/issuer_card_crawl_rules.test.mjs
+```
+
+Workflow/crawler checks: **48 passed, 0 failed**.
+
+```sh
+deno test supabase/functions/benefit-enrichment-batch/index_test.ts supabase/functions/benefit-enrichment-batch/recurrence_policy_test.ts supabase/functions/benefit-enrichment-batch/batch_policy_test.ts supabase/functions/benefit-enrichment-batch/crawl_policy_test.ts supabase/functions/benefit-enrichment-batch/supporting_documents_test.ts
+```
+
+Batch/Task 6 checks: **218 passed, 0 failed**.
+
+```sh
+deno test supabase/functions/_shared/catalog_identity_publication_test.ts supabase/functions/_shared/issuer_card_crawl_test.ts supabase/functions/card-discovery/index_test.ts
+```
+
+Shared publication, issuer crawl, and card discovery: **34 passed, 0 failed**.
+
+```sh
+node --test --test-concurrency=1 $(find test -type f \( -name '*.test.js' -o -name '*.test.mjs' -o -name '*_test.js' \) -print | sort)
+```
+
+Repository Node/static/migration checks: **386 passed, 0 failed**.
+
+```sh
+flutter test --no-pub test/features/admin/benefit_enrichment_review_test.dart
+```
+
+Focused admin checks: **12 passed, 0 failed**.
+
+The corrected fix-round-3 baseline was **689**, not 690: its Flutter command
+contained 10 tests, while the prior report counted 11. Fix round 4 adds six
+batch tests, one shared lifecycle test, and two Flutter tests, for **698 passing
+checks, 0 failures** across the five non-overlapping reported executions.
+
+Production `deno check` passed for the batch function, card discovery, shared
+issuer crawler, catalog identity publication, and admin entry point. Focused
+Flutter analysis returned no issues. Changed-surface Deno/Dart formatting and
+`git diff --check` passed.
+
+The existing unapplied Task 7 migration changed from SHA-256
+`d7a1323ef0c2fc2e6020a791a51462afc0e311f6424745d8e0defac5bae47755` to
+`8e0dd3ac01346d5ec7531be906bc974480e0e93c8f8d9f482b6010323e06a3a7`.
+No migration or schema object was added.
+
+Live applied: **no**. No Docker, database/Postgres/Supabase runtime, linked or
+live command, issuer/external network, production data, secret change, remote
+workflow enablement/dispatch, or live write was used. The existing live-only
+rollout gates above remain pending.

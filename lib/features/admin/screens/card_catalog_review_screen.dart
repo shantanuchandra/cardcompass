@@ -15,6 +15,30 @@ Future<void> requestAdminReauthorization({
   showLogin();
 }
 
+Map<String, dynamic> catalogIdentityReviewActionBody({
+  required String action,
+  required Object? reviewItemId,
+  Map<String, dynamic>? fields,
+  String? mergeCardId,
+  String? reason,
+}) {
+  final normalizedReason = reason?.trim();
+  if ((action == 'retry' || action == 'reject') &&
+      (normalizedReason == null || normalizedReason.length < 2)) {
+    throw ArgumentError.value(reason, 'reason', 'A review reason is required');
+  }
+  final body = <String, dynamic>{
+    'action': action,
+    'review_item_id': reviewItemId,
+  };
+  if (fields != null) body['proposed_fields'] = fields;
+  if (mergeCardId != null) body['merge_card_id'] = mergeCardId;
+  if (normalizedReason != null && normalizedReason.isNotEmpty) {
+    body['reason'] = normalizedReason;
+  }
+  return body;
+}
+
 class CardCatalogReviewScreen extends StatefulWidget {
   const CardCatalogReviewScreen({super.key});
 
@@ -73,13 +97,13 @@ class _CardCatalogReviewScreenState extends State<CardCatalogReviewScreen> {
     String? mergeCardId,
     String? reason,
   }) async {
-    final body = <String, dynamic>{
-      'action': action,
-      'review_item_id': item['id'],
-    };
-    if (fields != null) body['proposed_fields'] = fields;
-    if (mergeCardId != null) body['merge_card_id'] = mergeCardId;
-    if (reason != null) body['reason'] = reason;
+    final body = catalogIdentityReviewActionBody(
+      action: action,
+      reviewItemId: item['id'],
+      fields: fields,
+      mergeCardId: mergeCardId,
+      reason: reason,
+    );
     try {
       await _invoke(body);
       _reload();
@@ -274,6 +298,7 @@ class _CardCatalogReviewScreenState extends State<CardCatalogReviewScreen> {
               onRetry: (item) async {
                 final note = await _askReason(
                   'Retry official-source discovery',
+                  required: true,
                 );
                 if (note != null) await _act('retry', item, reason: note);
               },
@@ -692,6 +717,10 @@ class CatalogIdentityReviewCard extends StatelessWidget {
     final issuerDiscoveryQuarantine =
         sourceObservation['classification'] == 'issuer_discovery_quarantine' &&
         sourceObservation['kind'] == 'issuer_discovery_quarantine';
+    final issuerDiscoveryRetryable =
+        sourceObservation['retryable'] == true &&
+        sourceObservation['retryability_reason'] ==
+            'attempt_budget_reset_allowed';
     final warnings = (item['validation_warnings'] as List? ?? const [])
         .map((warning) => _identityWarningLabel(warning.toString()))
         .toList(growable: false);
@@ -715,15 +744,23 @@ class CatalogIdentityReviewCard extends StatelessWidget {
                 'Reason',
                 _identityWarningLabel(sourceObservation['reason'].toString()),
               ),
+              if (!issuerDiscoveryRetryable)
+                const Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: Text(
+                    'Manual repair required before issuer discovery can be retried.',
+                  ),
+                ),
               if (pending) ...[
                 const SizedBox(height: 16),
                 Wrap(
                   spacing: 8,
                   children: [
-                    FilledButton(
-                      onPressed: onRetry,
-                      child: const Text('Retry issuer discovery'),
-                    ),
+                    if (issuerDiscoveryRetryable)
+                      FilledButton(
+                        onPressed: onRetry,
+                        child: const Text('Retry issuer discovery'),
+                      ),
                     TextButton(
                       onPressed: onReject,
                       child: const Text('Keep quarantined'),

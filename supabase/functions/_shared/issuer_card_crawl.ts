@@ -956,7 +956,7 @@ export async function persistCrawlerCandidate(
   );
   const { data: existingJob, error: existingJobError } = await supabase
     .from("card_discovery_jobs")
-    .select("id, review_item_id, status, updated_at")
+    .select("id, review_item_id, status, updated_at, failure_category")
     .eq("discovery_source", "issuer_crawl")
     .eq("dedupe_key", dedupeKey)
     .is("user_id", null)
@@ -990,14 +990,14 @@ export async function persistCrawlerCandidate(
         status: "queued",
         updated_at: new Date().toISOString(),
       })
-      .select("id, status, updated_at")
+      .select("id, status, updated_at, failure_category")
       .single();
     if (!error) {
       job = data;
     } else {
       const { data: racedJob, error: racedJobError } = await supabase
         .from("card_discovery_jobs")
-        .select("id, review_item_id, status, updated_at")
+        .select("id, review_item_id, status, updated_at, failure_category")
         .eq("discovery_source", "issuer_crawl")
         .eq("dedupe_key", dedupeKey)
         .is("user_id", null)
