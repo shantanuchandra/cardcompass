@@ -15,6 +15,16 @@ List<JsonMap> _maps(Object? value) => value is List
           .toList(growable: false)
     : const <JsonMap>[];
 
+List<String> _strings(Object? value) => value is List
+    ? value.whereType<String>().toList(growable: false)
+    : const <String>[];
+
+String _readableCode(String value) {
+  final words = value.replaceAll('_', ' ').trim();
+  if (words.isEmpty) return value;
+  return '${words[0].toUpperCase()}${words.substring(1)}';
+}
+
 class BenefitEnrichmentReviewPage {
   const BenefitEnrichmentReviewPage({
     required this.items,
@@ -140,7 +150,7 @@ class BenefitEnrichmentReview {
 
   factory BenefitEnrichmentReview.fromJson(JsonMap json) {
     final card = _map(json['card']);
-    return BenefitEnrichmentReview(
+    final review = BenefitEnrichmentReview(
       id: _text(json['id']) ?? '',
       cardId: _text(json['card_id']) ?? _text(card['id']) ?? '',
       issuer: _text(json['issuer']) ?? _text(card['bank']) ?? 'Unknown issuer',
@@ -162,6 +172,11 @@ class BenefitEnrichmentReview {
       crawlerDiscoveredWithoutStatementSignal:
           json['crawler_discovered_without_statement_signal'] == true,
     );
+    if (review.parserVersion == 'benefits-v6' ||
+        review.staging.extractedData.parserVersion == 'benefits-v6') {
+      review._validateV6();
+    }
+    return review;
   }
 
   final String id;
@@ -186,6 +201,33 @@ class BenefitEnrichmentReview {
   bool get isQuarantined => status == 'quarantined';
   bool get canQuarantine =>
       status == 'queued' || status == 'failed' || status == 'review_required';
+
+  void _validateV6() {
+    if (id.isEmpty ||
+        cardId.isEmpty ||
+        stagingId == null ||
+        staging.id == null ||
+        stagingId != staging.id ||
+        staging.cardId != cardId ||
+        parserVersion != 'benefits-v6' ||
+        staging.parserVersion != 'benefits-v6' ||
+        staging.extractedData.parserVersion != 'benefits-v6') {
+      throw const FormatException('Malformed v6 review identity.');
+    }
+    final proposals = staging.extractedData.diff.allProposals;
+    for (final proposal in proposals) {
+      if (proposal.benefitId == null ||
+          proposal.dedupeKey == null ||
+          proposal.benefitId != proposal.dedupeKey ||
+          proposal.conditionHash == null ||
+          !RegExp(
+            r'^[0-9a-f]{64}$',
+            caseSensitive: false,
+          ).hasMatch(proposal.conditionHash!)) {
+        throw const FormatException('Malformed required v6 benefit identity.');
+      }
+    }
+  }
 }
 
 class BenefitRunSummary {
@@ -218,6 +260,8 @@ class BenefitRunSummary {
 class BenefitStaging {
   const BenefitStaging({
     this.id,
+    this.cardId,
+    this.parserVersion,
     this.status,
     this.sourceUrl,
     this.calculatedConfidence,
@@ -229,6 +273,8 @@ class BenefitStaging {
 
   factory BenefitStaging.fromJson(JsonMap json) => BenefitStaging(
     id: _text(json['id']),
+    cardId: _text(json['card_id']),
+    parserVersion: _text(json['parser_version']),
     status: _text(json['status']),
     sourceUrl: _text(json['source_url']),
     calculatedConfidence: _number(json['calculated_confidence']),
@@ -246,6 +292,8 @@ class BenefitStaging {
   );
 
   final String? id;
+  final String? cardId;
+  final String? parserVersion;
   final String? status;
   final String? sourceUrl;
   final num? calculatedConfidence;
@@ -264,16 +312,80 @@ class BenefitStaging {
 class BenefitExtraction {
   const BenefitExtraction({
     this.parserVersion,
+    this.retrievedAt,
+    this.crawl = const BenefitCrawlObservation(),
     this.diff = const BenefitDiff(),
   });
 
   factory BenefitExtraction.fromJson(JsonMap json) => BenefitExtraction(
     parserVersion: _text(json['parser_version']),
+    retrievedAt: _text(json['retrieved_at']),
+    crawl: BenefitCrawlObservation.fromJson(_map(json['crawl_observation'])),
     diff: BenefitDiff.fromJson(_map(json['diff'])),
   );
 
   final String? parserVersion;
+  final String? retrievedAt;
+  final BenefitCrawlObservation crawl;
   final BenefitDiff diff;
+}
+
+class BenefitCrawlObservation {
+  const BenefitCrawlObservation({
+    this.complete,
+    this.reason,
+    this.observedAt,
+    this.sourceAttempts = const [],
+  });
+
+  factory BenefitCrawlObservation.fromJson(JsonMap json) =>
+      BenefitCrawlObservation(
+        complete: json['crawl_complete'] as bool?,
+        reason: _text(json['crawl_reason']),
+        observedAt: _text(json['observed_at']),
+        sourceAttempts: _maps(
+          json['source_attempts'],
+        ).map(BenefitSourceAttempt.fromJson).toList(growable: false),
+      );
+
+  final bool? complete;
+  final String? reason;
+  final String? observedAt;
+  final List<BenefitSourceAttempt> sourceAttempts;
+
+  String? get readableReason => reason?.replaceAll('_', ' ');
+}
+
+class BenefitSourceAttempt {
+  const BenefitSourceAttempt({
+    required this.url,
+    required this.role,
+    required this.status,
+    this.httpStatus,
+    this.errorCode,
+    this.attemptedAt,
+  });
+
+  factory BenefitSourceAttempt.fromJson(JsonMap json) => BenefitSourceAttempt(
+    url: _text(json['url']) ?? 'Unavailable source',
+    role: _text(json['role']) ?? 'unknown',
+    status: _text(json['status']) ?? 'unknown',
+    httpStatus: (json['httpStatus'] ?? json['http_status']) is num
+        ? ((json['httpStatus'] ?? json['http_status']) as num).toInt()
+        : null,
+    errorCode: _text(json['errorCode'] ?? json['error_code']),
+    attemptedAt: _text(json['attemptedAt'] ?? json['attempted_at']),
+  );
+
+  final String url;
+  final String role;
+  final String status;
+  final int? httpStatus;
+  final String? errorCode;
+  final String? attemptedAt;
+
+  String get readableRole => role.replaceAll('_', ' ');
+  String get readableStatus => status.replaceAll('_', ' ');
 }
 
 class BenefitDiff {
@@ -292,9 +404,9 @@ class BenefitDiff {
     modifications: _maps(
       json['modifications'],
     ).map(BenefitModification.fromJson).toList(growable: false),
-    possibleRemovals: _maps(json['possibleRemovals'])
-        .map((row) => BenefitProposal.fromJson(_map(row['benefit'] ?? row)))
-        .toList(growable: false),
+    possibleRemovals: _maps(
+      json['possibleRemovals'],
+    ).map(BenefitPossibleRemoval.fromJson).toList(growable: false),
     unchanged: _maps(
       json['unchanged'],
     ).map(BenefitModification.fromJson).toList(growable: false),
@@ -305,14 +417,65 @@ class BenefitDiff {
 
   final List<BenefitProposal> additions;
   final List<BenefitModification> modifications;
-  final List<BenefitProposal> possibleRemovals;
+  final List<BenefitPossibleRemoval> possibleRemovals;
   final List<BenefitModification> unchanged;
   final List<BenefitConflict> conflicts;
+
+  Iterable<BenefitProposal> get allProposals sync* {
+    yield* additions;
+    for (final item in modifications) {
+      yield item.current;
+      yield item.proposed;
+    }
+    for (final item in possibleRemovals) {
+      yield item.benefit;
+    }
+    for (final item in unchanged) {
+      yield item.current;
+      yield item.proposed;
+    }
+    for (final item in conflicts) {
+      yield* item.current;
+      yield* item.proposed;
+    }
+  }
+}
+
+class BenefitPossibleRemoval {
+  const BenefitPossibleRemoval({
+    required this.benefit,
+    this.informational = true,
+    this.retirementEligible = false,
+    this.retirementReason,
+    this.completeAbsenceObservedAt = const [],
+  });
+
+  factory BenefitPossibleRemoval.fromJson(JsonMap json) =>
+      BenefitPossibleRemoval(
+        benefit: BenefitProposal.fromJson(_map(json['benefit'] ?? json)),
+        informational: json['informational'] != false,
+        retirementEligible: json['retirementEligible'] == true,
+        retirementReason: _text(json['retirementReason']),
+        completeAbsenceObservedAt: _strings(json['completeAbsenceObservedAt']),
+      );
+
+  final BenefitProposal benefit;
+  final bool informational;
+  final bool retirementEligible;
+  final String? retirementReason;
+  final List<String> completeAbsenceObservedAt;
+
+  String? get readableRetirementReason =>
+      retirementReason == null ? null : _readableCode(retirementReason!);
 }
 
 class BenefitProposal {
   const BenefitProposal({
+    this.liveBenefitId,
+    this.benefitId,
     this.dedupeKey,
+    this.conditionHash,
+    this.offerSubject,
     this.title,
     this.description,
     this.category,
@@ -323,12 +486,15 @@ class BenefitProposal {
     this.threshold,
     this.frequency,
     this.period,
+    this.valueConfig = const {},
     this.restrictions = const [],
     this.exclusions = const [],
     this.effectiveFrom,
     this.effectiveTo,
     this.sourceUrl,
     this.sourceUrls = const [],
+    this.sourceIdentity,
+    this.sourceIdentities = const [],
     this.sourceExcerpt,
     this.contentHash,
     this.parserVersion,
@@ -338,7 +504,11 @@ class BenefitProposal {
   });
 
   factory BenefitProposal.fromJson(JsonMap json) => BenefitProposal(
+    liveBenefitId: _text(json['liveBenefitId']),
+    benefitId: _text(json['benefitId']),
     dedupeKey: _text(json['dedupeKey']),
+    conditionHash: _text(json['conditionHash']),
+    offerSubject: _text(json['offerSubject']),
     title: _text(json['title']),
     description: _text(json['description']),
     category: _text(json['category']),
@@ -349,18 +519,17 @@ class BenefitProposal {
     threshold: json['threshold'],
     frequency: _text(json['frequency']),
     period: _text(json['period']),
+    valueConfig: _map(json['valueConfig'] ?? json['value_config']),
     restrictions: (json['restrictions'] as List? ?? const [])
         .whereType<String>()
         .toList(growable: false),
-    exclusions: (json['exclusions'] as List? ?? const [])
-        .whereType<String>()
-        .toList(growable: false),
+    exclusions: json['exclusions'],
     effectiveFrom: _text(json['effectiveFrom']),
     effectiveTo: _text(json['effectiveTo']),
     sourceUrl: _text(json['sourceUrl']),
-    sourceUrls: (json['sourceUrls'] as List? ?? const [])
-        .whereType<String>()
-        .toList(growable: false),
+    sourceUrls: _strings(json['sourceUrls']),
+    sourceIdentity: _text(json['sourceIdentity']),
+    sourceIdentities: _strings(json['sourceIdentities']),
     sourceExcerpt: _text(json['sourceExcerpt']),
     contentHash: _text(json['contentHash']),
     parserVersion: _text(json['parserVersion']),
@@ -370,12 +539,14 @@ class BenefitProposal {
     evidence: _map(
       json['evidence'],
     ).map((key, value) => MapEntry(key, value.toString())),
-    warnings: (json['warnings'] as List? ?? const [])
-        .whereType<String>()
-        .toList(growable: false),
+    warnings: _strings(json['warnings']),
   );
 
+  final String? liveBenefitId;
+  final String? benefitId;
   final String? dedupeKey;
+  final String? conditionHash;
+  final String? offerSubject;
   final String? title;
   final String? description;
   final String? category;
@@ -386,12 +557,15 @@ class BenefitProposal {
   final Object? threshold;
   final String? frequency;
   final String? period;
+  final JsonMap valueConfig;
   final List<String> restrictions;
-  final List<String> exclusions;
+  final Object? exclusions;
   final String? effectiveFrom;
   final String? effectiveTo;
   final String? sourceUrl;
   final List<String> sourceUrls;
+  final String? sourceIdentity;
+  final List<String> sourceIdentities;
   final String? sourceExcerpt;
   final String? contentHash;
   final String? parserVersion;
@@ -403,7 +577,11 @@ class BenefitProposal {
 
   BenefitProposal copyWith({String? title, String? description}) =>
       BenefitProposal(
+        liveBenefitId: liveBenefitId,
+        benefitId: benefitId,
         dedupeKey: dedupeKey,
+        conditionHash: conditionHash,
+        offerSubject: offerSubject,
         title: title ?? this.title,
         description: description ?? this.description,
         category: category,
@@ -414,12 +592,15 @@ class BenefitProposal {
         threshold: threshold,
         frequency: frequency,
         period: period,
+        valueConfig: valueConfig,
         restrictions: restrictions,
         exclusions: exclusions,
         effectiveFrom: effectiveFrom,
         effectiveTo: effectiveTo,
         sourceUrl: sourceUrl,
         sourceUrls: sourceUrls,
+        sourceIdentity: sourceIdentity,
+        sourceIdentities: sourceIdentities,
         sourceExcerpt: sourceExcerpt,
         contentHash: contentHash,
         parserVersion: parserVersion,
@@ -429,7 +610,11 @@ class BenefitProposal {
       );
 
   JsonMap toJson() => {
+    if (liveBenefitId != null) 'liveBenefitId': liveBenefitId,
+    if (benefitId != null) 'benefitId': benefitId,
     if (dedupeKey != null) 'dedupeKey': dedupeKey,
+    if (conditionHash != null) 'conditionHash': conditionHash,
+    if (offerSubject != null) 'offerSubject': offerSubject,
     if (title != null) 'title': title,
     if (description != null) 'description': description,
     if (category != null) 'category': category,
@@ -440,12 +625,15 @@ class BenefitProposal {
     if (threshold != null) 'threshold': threshold,
     if (frequency != null) 'frequency': frequency,
     if (period != null) 'period': period,
+    if (valueConfig.isNotEmpty) 'valueConfig': valueConfig,
     if (restrictions.isNotEmpty) 'restrictions': restrictions,
-    if (exclusions.isNotEmpty) 'exclusions': exclusions,
+    if (exclusions != null) 'exclusions': exclusions,
     if (effectiveFrom != null) 'effectiveFrom': effectiveFrom,
     if (effectiveTo != null) 'effectiveTo': effectiveTo,
     if (sourceUrl != null) 'sourceUrl': sourceUrl,
     if (sourceUrls.isNotEmpty) 'sourceUrls': sourceUrls,
+    if (sourceIdentity != null) 'sourceIdentity': sourceIdentity,
+    if (sourceIdentities.isNotEmpty) 'sourceIdentities': sourceIdentities,
     if (sourceExcerpt != null) 'sourceExcerpt': sourceExcerpt,
     if (contentHash != null) 'contentHash': contentHash,
     if (parserVersion != null) 'parserVersion': parserVersion,
@@ -456,15 +644,21 @@ class BenefitProposal {
 }
 
 class BenefitModification {
-  const BenefitModification({required this.current, required this.proposed});
+  const BenefitModification({
+    required this.current,
+    required this.proposed,
+    this.changeType,
+  });
 
   factory BenefitModification.fromJson(JsonMap json) => BenefitModification(
     current: BenefitProposal.fromJson(_map(json['current'])),
     proposed: BenefitProposal.fromJson(_map(json['proposed'])),
+    changeType: _text(json['changeType'] ?? json['change_type']),
   );
 
   final BenefitProposal current;
   final BenefitProposal proposed;
+  final String? changeType;
 }
 
 class BenefitConflict {
@@ -490,21 +684,33 @@ class BenefitConflict {
 class BenefitSourceEvidence {
   const BenefitSourceEvidence({
     this.dedupeKey,
+    this.offerSubject,
+    this.sourceIdentity,
+    this.sourceIdentities = const [],
     this.sourceUrl,
     this.sourceExcerpt,
+    this.contentHash,
     this.evidence = const {},
   });
   factory BenefitSourceEvidence.fromJson(JsonMap json) => BenefitSourceEvidence(
     dedupeKey: _text(json['dedupe_key']),
+    offerSubject: _text(json['offer_subject']),
+    sourceIdentity: _text(json['source_identity']),
+    sourceIdentities: _strings(json['source_identities']),
     sourceUrl: _text(json['source_url']),
     sourceExcerpt: _text(json['source_excerpt']),
+    contentHash: _text(json['content_hash']),
     evidence: _map(
       json['evidence'],
     ).map((key, value) => MapEntry(key, value.toString())),
   );
   final String? dedupeKey;
+  final String? offerSubject;
+  final String? sourceIdentity;
+  final List<String> sourceIdentities;
   final String? sourceUrl;
   final String? sourceExcerpt;
+  final String? contentHash;
   final Map<String, String> evidence;
 }
 
@@ -513,6 +719,7 @@ class BenefitReviewDecision {
     required this.action,
     this.reason,
     this.changeType,
+    this.liveBenefitId,
     this.dedupeKey,
     this.displayPriority,
     this.isPrimary,
@@ -524,6 +731,7 @@ class BenefitReviewDecision {
     action: _text(json['action']) ?? '',
     reason: _text(json['reason']),
     changeType: _text(json['change_type'] ?? json['changeType']),
+    liveBenefitId: _text(json['benefit_id'] ?? json['current_benefit_id']),
     dedupeKey: _text(json['dedupe_key'] ?? json['dedupeKey']),
     displayPriority: (json['display_priority'] as num?)?.toInt(),
     isPrimary: json['is_primary'] as bool?,
@@ -540,6 +748,7 @@ class BenefitReviewDecision {
   final String action;
   final String? reason;
   final String? changeType;
+  final String? liveBenefitId;
   final String? dedupeKey;
   final int? displayPriority;
   final bool? isPrimary;
@@ -547,9 +756,24 @@ class BenefitReviewDecision {
   final BenefitProposal? proposed;
   final BenefitProposal? editedBenefit;
 
+  BenefitReviewDecision withEditedBenefit(BenefitProposal edited) =>
+      BenefitReviewDecision(
+        action: 'edit',
+        reason: reason,
+        changeType: changeType,
+        liveBenefitId: liveBenefitId,
+        dedupeKey: dedupeKey,
+        displayPriority: displayPriority,
+        isPrimary: isPrimary,
+        benefit: benefit,
+        proposed: proposed,
+        editedBenefit: edited,
+      );
+
   JsonMap toJson() => {
     'action': action,
     if (reason != null) 'reason': reason,
+    if (liveBenefitId != null) 'benefit_id': liveBenefitId,
     if (benefit != null) 'benefit': benefit!.toJson(),
     if (proposed != null) 'proposed': proposed!.toJson(),
     if (editedBenefit != null) 'edited_benefit': editedBenefit!.toJson(),

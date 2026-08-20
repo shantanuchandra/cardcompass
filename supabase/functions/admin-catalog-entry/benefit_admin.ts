@@ -1068,8 +1068,30 @@ function sourceEvidence(value: unknown) {
     ) => digest(identity) ? [digest(identity)!] : []),
     source_url: safeUrl(item.source_url),
     source_excerpt: text(item.source_excerpt, 500),
+    content_hash: text(item.content_hash, 200),
     evidence: fieldEvidence(item.evidence),
   }));
+}
+
+function crawlObservationForOutput(value: unknown) {
+  const row = asRecord(value) ?? {};
+  return {
+    crawl_complete: typeof row.crawl_complete === "boolean"
+      ? row.crawl_complete
+      : null,
+    crawl_reason: text(row.crawl_reason, 100),
+    observed_at: text(row.observed_at, 100),
+    source_attempts: objectList(row.source_attempts).slice(0, 32).map(
+      (attempt) => ({
+        url: safeUrl(attempt.url),
+        role: text(attempt.role, 40),
+        status: text(attempt.status, 40),
+        httpStatus: number(attempt.httpStatus ?? attempt.http_status),
+        errorCode: text(attempt.errorCode ?? attempt.error_code, 100),
+        attemptedAt: text(attempt.attemptedAt ?? attempt.attempted_at, 100),
+      }),
+    ),
+  };
 }
 
 function extractionForOutput(value: unknown) {
@@ -1080,6 +1102,7 @@ function extractionForOutput(value: unknown) {
     parser_version: text(row.parser_version, 100),
     content_hash: text(row.content_hash, 200),
     retrieved_at: text(row.retrieved_at, 100),
+    crawl_observation: crawlObservationForOutput(row.crawl_observation),
     proposals: objectList(row.proposals).map((item) =>
       benefitForOutput(item, v6)
     ),

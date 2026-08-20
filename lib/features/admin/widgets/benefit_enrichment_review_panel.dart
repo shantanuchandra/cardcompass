@@ -75,16 +75,16 @@ class _BenefitEnrichmentReviewPanelState
   }
 
   Future<String?> _askReason(String title) async {
-    final controller = TextEditingController();
-    final result = await showDialog<String>(
+    var reason = '';
+    return showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text(title),
         content: TextField(
-          controller: controller,
           autofocus: true,
           minLines: 2,
           maxLines: 5,
+          onChanged: (value) => reason = value.trim(),
           decoration: const InputDecoration(labelText: 'Reason (required)'),
         ),
         actions: [
@@ -94,7 +94,6 @@ class _BenefitEnrichmentReviewPanelState
           ),
           FilledButton(
             onPressed: () {
-              final reason = controller.text.trim();
               if (reason.length >= 3) Navigator.pop(context, reason);
             },
             child: const Text('Continue'),
@@ -102,8 +101,6 @@ class _BenefitEnrichmentReviewPanelState
         ],
       ),
     );
-    controller.dispose();
-    return result;
   }
 
   Future<bool> _confirmApproval() async =>
@@ -127,6 +124,47 @@ class _BenefitEnrichmentReviewPanelState
         ),
       ) ??
       false;
+
+  Future<String?> _confirmRetirement(BenefitPossibleRemoval removal) async {
+    var reason = '';
+    return showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Retire ${removal.benefit.label}?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'This retires only this card-to-benefit mapping. Confirm the issuer evidence and provide an audit reason.',
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              autofocus: true,
+              minLines: 2,
+              maxLines: 5,
+              onChanged: (value) => reason = value.trim(),
+              decoration: const InputDecoration(
+                labelText: 'Retirement reason (required)',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (reason.length >= 3) Navigator.pop(context, reason);
+            },
+            child: const Text('Retire'),
+          ),
+        ],
+      ),
+    );
+  }
 
   Future<void> _edit(BenefitEnrichmentReview item) async {
     final decision = item.staging.decisions.firstWhereOrNull(
@@ -180,17 +218,20 @@ class _BenefitEnrichmentReviewPanelState
           FilledButton(
             onPressed: () => Navigator.pop(
               context,
-              BenefitReviewDecision(
-                action: 'edit',
-                changeType: decision?.changeType,
-                dedupeKey: decision?.dedupeKey ?? candidate.dedupeKey,
-                displayPriority: decision?.displayPriority,
-                isPrimary: decision?.isPrimary,
-                editedBenefit: candidate.copyWith(
-                  title: title.text.trim(),
-                  description: description.text.trim(),
-                ),
-              ),
+              (decision ??
+                      BenefitReviewDecision(
+                        action: 'edit',
+                        liveBenefitId: candidate.liveBenefitId,
+                        dedupeKey: candidate.dedupeKey,
+                        benefit: candidate,
+                        proposed: candidate,
+                      ))
+                  .withEditedBenefit(
+                    candidate.copyWith(
+                      title: title.text.trim(),
+                      description: description.text.trim(),
+                    ),
+                  ),
             ),
             child: const Text('Approve edit'),
           ),
@@ -218,9 +259,13 @@ class _BenefitEnrichmentReviewPanelState
               onAuthorize: widget.onAuthorizationRequired,
             );
           }
-          final message = snapshot.error is AdminAccessDenied
-              ? 'Administrator access is required for benefit reviews.'
-              : 'Could not load benefit enrichment reviews.';
+          final message = switch (snapshot.error) {
+            AdminAccessDenied() =>
+              'Administrator access is required for benefit reviews.',
+            FormatException() =>
+              'Malformed v6 review data was rejected. Refresh after the ingestion record is repaired.',
+            _ => 'Could not load benefit enrichment reviews.',
+          };
           return _MessageState(message: message, onRetry: _reload);
         }
         final page = snapshot.data!;
@@ -278,6 +323,20 @@ class _BenefitEnrichmentReviewPanelState
                               if (reason != null) {
                                 await _run(
                                   () => widget.repository.reject(item, reason),
+                                );
+                              }
+                            }
+                          : null,
+                      onRetire: !_mutating && item.canReview
+                          ? (removal) async {
+                              final reason = await _confirmRetirement(removal);
+                              if (reason != null) {
+                                await _run(
+                                  () => widget.repository.retire(
+                                    item,
+                                    removal,
+                                    reason,
+                                  ),
                                 );
                               }
                             }
@@ -403,6 +462,7 @@ class _BenefitReviewCard extends StatelessWidget {
     this.onApprove,
     this.onEdit,
     this.onReject,
+    this.onRetire,
     this.onRetry,
     this.onQuarantine,
   });
@@ -412,6 +472,7 @@ class _BenefitReviewCard extends StatelessWidget {
   final VoidCallback? onApprove;
   final VoidCallback? onEdit;
   final VoidCallback? onReject;
+  final ValueChanged<BenefitPossibleRemoval>? onRetire;
   final VoidCallback? onRetry;
   final VoidCallback? onQuarantine;
 
@@ -450,13 +511,49 @@ class _BenefitReviewCard extends StatelessWidget {
                 label: const Text('Open official source'),
               ),
             ],
+            if (item.staging.extractedData.retrievedAt != null)
+              Text('Retrieved: ${item.staging.extractedData.retrievedAt}'),
+            if (item.staging.extractedData.crawl.observedAt != null)
+              Text(
+                'Crawl observed: ${item.staging.extractedData.crawl.observedAt}',
+              ),
+            if (item.staging.extractedData.crawl.complete == false) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Incomplete crawl — ${item.staging.extractedData.crawl.readableReason ?? 'required evidence is missing'}',
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+            if (item.staging.extractedData.crawl.sourceAttempts.isNotEmpty) ...[
+              const Divider(),
+              const Text('Source attempts'),
+              ...item.staging.extractedData.crawl.sourceAttempts.map(
+                (attempt) => Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: SelectableText(
+                    '${attempt.readableRole} · ${attempt.readableStatus}'
+                    '${attempt.httpStatus == null ? '' : ' · ${attempt.httpStatus}'}'
+                    '${attempt.errorCode == null ? '' : ' · ${attempt.errorCode}'}'
+                    '${attempt.attemptedAt == null ? '' : ' · ${attempt.attemptedAt}'}\n'
+                    '${attempt.url}',
+                  ),
+                ),
+              ),
+            ],
             if (diff.modifications.isNotEmpty) ...[
               const Divider(),
               const Text('Current'),
               ...diff.modifications.map(
-                (change) => _DiffRow(
-                  current: change.current,
-                  proposed: change.proposed,
+                (change) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (change.changeType == 'identity_migration')
+                      const Text('Identity migration'),
+                    _DiffRow(
+                      current: change.current,
+                      proposed: change.proposed,
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -468,7 +565,16 @@ class _BenefitReviewCard extends StatelessWidget {
             if (diff.possibleRemovals.isNotEmpty) ...[
               const Divider(),
               const Text('Possible removals (informational)'),
-              ...diff.possibleRemovals.map(_ProposalEvidence.new),
+              ...diff.possibleRemovals.map(
+                (removal) => _RemovalEvidence(
+                  removal: removal,
+                  onRetire:
+                      removal.retirementEligible &&
+                          removal.benefit.liveBenefitId != null
+                      ? onRetire
+                      : null,
+                ),
+              ),
             ],
             if (diff.unchanged.isNotEmpty) ...[
               const Divider(),
@@ -498,9 +604,22 @@ class _BenefitReviewCard extends StatelessWidget {
               ...item.staging.sourceEvidence.map(
                 (evidence) => Padding(
                   padding: const EdgeInsets.only(top: 6),
-                  child: Text(
-                    evidence.sourceExcerpt ??
-                        evidence.evidence.values.join(' · '),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        evidence.sourceExcerpt ??
+                            evidence.evidence.values.join(' · '),
+                      ),
+                      if (evidence.dedupeKey != null)
+                        SelectableText('Benefit key: ${evidence.dedupeKey}'),
+                      if (evidence.offerSubject != null)
+                        Text('Condition: ${evidence.offerSubject}'),
+                      if (evidence.sourceUrl != null)
+                        SelectableText('Source: ${evidence.sourceUrl}'),
+                      if (evidence.contentHash != null)
+                        SelectableText('Content hash: ${evidence.contentHash}'),
+                    ],
                   ),
                 ),
               ),
@@ -556,13 +675,23 @@ class _DiffRow extends StatelessWidget {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          '${current.label}${current.value == null ? '' : ' (${current.value})'} → ${proposed.label}${proposed.value == null ? '' : ' (${proposed.value})'}',
-        ),
+        Text('${_proposalSummary(current)} → ${_proposalSummary(proposed)}'),
         _ProposalEvidence(proposed),
       ],
     ),
   );
+}
+
+String _proposalSummary(BenefitProposal proposal) {
+  final terms = <String>[
+    if (proposal.value != null) 'value ${proposal.value}',
+    if (proposal.rate != null) 'rate ${proposal.rate}',
+    if (proposal.cap != null) 'cap ${proposal.cap}',
+    if (proposal.threshold != null) 'threshold ${proposal.threshold}',
+    if (proposal.frequency != null) 'frequency ${proposal.frequency}',
+    if (proposal.period != null) 'period ${proposal.period}',
+  ];
+  return [proposal.label, ...terms].join(' · ');
 }
 
 class _ProposalEvidence extends StatelessWidget {
@@ -574,7 +703,12 @@ class _ProposalEvidence extends StatelessWidget {
     final details = [
       proposal.description,
       proposal.category,
-      proposal.value,
+      if (proposal.value != null) 'value ${proposal.value}',
+      if (proposal.rate != null) 'rate ${proposal.rate}',
+      if (proposal.cap != null) 'cap ${proposal.cap}',
+      if (proposal.threshold != null) 'threshold ${proposal.threshold}',
+      proposal.frequency,
+      proposal.period,
     ].whereType<String>().where((value) => value.isNotEmpty).join(' · ');
     final evidence = proposal.evidence.values.join(' · ');
     final confidence = proposal.confidence.entries
@@ -586,6 +720,16 @@ class _ProposalEvidence extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(proposal.label),
+          if (proposal.liveBenefitId != null)
+            SelectableText('Live benefit ID: ${proposal.liveBenefitId}'),
+          if (proposal.benefitId != null)
+            SelectableText('Benefit ID: ${proposal.benefitId}'),
+          if (proposal.dedupeKey != null)
+            SelectableText('Benefit key: ${proposal.dedupeKey}'),
+          if (proposal.conditionHash != null)
+            SelectableText('Condition hash: ${proposal.conditionHash}'),
+          if (proposal.sourceIdentity != null)
+            SelectableText('Source identity: ${proposal.sourceIdentity}'),
           if (details.isNotEmpty) Text(details),
           if (evidence.isNotEmpty) Text('Evidence: $evidence'),
           if (confidence.isNotEmpty) Text('Confidence: $confidence'),
@@ -597,6 +741,38 @@ class _ProposalEvidence extends StatelessWidget {
       ),
     );
   }
+}
+
+class _RemovalEvidence extends StatelessWidget {
+  const _RemovalEvidence({required this.removal, this.onRetire});
+
+  final BenefitPossibleRemoval removal;
+  final ValueChanged<BenefitPossibleRemoval>? onRetire;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: 8),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _ProposalEvidence(removal.benefit),
+        Text(
+          'Retirement eligible: ${removal.retirementEligible ? 'Yes' : 'No'}',
+        ),
+        if (removal.readableRetirementReason != null)
+          Text(removal.readableRetirementReason!),
+        if (removal.completeAbsenceObservedAt.isNotEmpty)
+          Text(
+            'Complete absence observed: ${removal.completeAbsenceObservedAt.join(' · ')}',
+          ),
+        if (onRetire != null)
+          TextButton(
+            onPressed: () => onRetire!(removal),
+            child: const Text('Retire benefit'),
+          ),
+      ],
+    ),
+  );
 }
 
 String _warningLabel(String warning) {

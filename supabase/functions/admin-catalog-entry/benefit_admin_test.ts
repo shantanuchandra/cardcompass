@@ -135,6 +135,40 @@ function authenticatedDb(
   };
 }
 
+function adminProfileAuthDb(
+  user: Record<string, unknown> | null,
+  isAdmin: boolean,
+) {
+  return {
+    ...authenticatedDb(user),
+    from(table: string) {
+      assert(
+        table === "users",
+        "admin authorization queried an unexpected table",
+      );
+      return {
+        select(columns: string) {
+          assert(
+            columns === "is_admin",
+            "admin authorization selected profile data",
+          );
+          return this;
+        },
+        eq(column: string, value: unknown) {
+          assert(
+            column === "id" && value === user?.id,
+            "admin authorization was not bound to the authenticated user id",
+          );
+          return this;
+        },
+        async maybeSingle() {
+          return { data: { is_admin: isAdmin }, error: null };
+        },
+      };
+    },
+  };
+}
+
 function withAuthenticatedUser(db: Record<string, unknown>) {
   return {
     ...db,
@@ -253,6 +287,82 @@ Deno.test("protected admin handler requires a verified allowlisted email", async
     assert(
       allowlisted.status === 200,
       "verified allowlisted email was rejected",
+    );
+  } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  }
+});
+
+Deno.test("admin authorization prefers the confirmed database flag and diagnoses break glass", async () => {
+  const handle = await handler();
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "breakglass@example.com");
+  const confirmed = "2026-08-20T00:00:00.000Z";
+  try {
+    const databaseAdmin = await handle(
+      request({ action: "access", email: "breakglass@example.com" }),
+      {},
+      adminProfileAuthDb({
+        id: "database-admin",
+        email: "operator@example.com",
+        email_confirmed_at: confirmed,
+      }, true),
+    );
+    const databaseBody = await databaseAdmin.json();
+    assert(databaseAdmin.status === 200, "confirmed DB admin was rejected");
+    assert(
+      databaseBody.authorization_source === "database_admin",
+      "database admin authorization source was not diagnosed",
+    );
+
+    const normal = await handle(
+      request({ action: "access", email: "breakglass@example.com" }),
+      {},
+      adminProfileAuthDb({
+        id: "normal-user",
+        email: "normal@example.com",
+        email_confirmed_at: confirmed,
+      }, false),
+    );
+    assert(
+      normal.status === 403,
+      "normal user escalated by submitting or knowing an admin email",
+    );
+
+    const unconfirmedBreakGlass = await handle(
+      request({ action: "access" }),
+      {},
+      adminProfileAuthDb({
+        id: "unconfirmed",
+        email: "breakglass@example.com",
+        email_confirmed_at: null,
+      }, false),
+    );
+    assert(
+      unconfirmedBreakGlass.status === 403,
+      "unconfirmed allowlisted identity received break-glass access",
+    );
+
+    const breakGlass = await handle(
+      request({ action: "access" }),
+      {},
+      adminProfileAuthDb({
+        id: "break-glass-user",
+        email: "breakglass@example.com",
+        email_confirmed_at: confirmed,
+      }, false),
+    );
+    const breakGlassBody = await breakGlass.json();
+    assert(breakGlass.status === 200, "confirmed break glass was rejected");
+    assert(
+      breakGlassBody.authorization_source === "break_glass",
+      "break-glass authorization source was not diagnosed",
+    );
+    assert(
+      !JSON.stringify(breakGlassBody).includes("breakglass@example.com"),
+      "authorization diagnostics leaked the allowlist",
     );
   } finally {
     if (originalAllowlist === undefined) {
@@ -412,6 +522,86 @@ Deno.test("listing pending catalog reviews is read-only", async () => {
   }
 });
 
+Deno.test("catalog admin DTO keeps reviewed fields and bounded public evidence only", async () => {
+  const module = await import("./index.ts") as {
+    presentCatalogReview?: (row: Record<string, unknown>) => Record<
+      string,
+      unknown
+    >;
+  };
+  assert(
+    typeof module.presentCatalogReview === "function",
+    "catalog review presenter is missing",
+  );
+  const output = module.presentCatalogReview!({
+    id: "review-1",
+    status: "pending",
+    created_at: "2026-08-20T12:00:00.123456Z",
+    proposed_fields: {
+      cardName: "Astra Reserve",
+      network: "Visa Infinite",
+      suggested_action: "mark_discontinued",
+      catalog_baseline: {
+        card_id: "card-1",
+        card_name: "Astra",
+        annual_fee: 3000,
+      },
+      source_observation: {
+        kind: "strong_explicit_discontinuation",
+        source_status: 200,
+        identity_validated: true,
+        explicit_discontinuation: true,
+        retrieved_at: "2026-08-20T12:00:00.123456Z",
+        matched_excerpt: "Astra Reserve card has been discontinued.",
+        lease_token: "private-lease",
+        producer_evidence: "full internal producer evidence",
+      },
+    },
+    source_evidence: {
+      target_excerpt: "Astra Reserve card has been discontinued.",
+      lease_token: "private-source-lease",
+    },
+    existing_candidates: [{ id: "card-2", card_name: "Astra" }],
+    card_discovery_jobs: {
+      id: "job-1",
+      issuer: "Horizon Bank",
+      proposed_product: "Astra Reserve",
+      status: "review_required",
+      evidence: {
+        pdf_header_excerpt: "Bounded public statement header",
+        raw_body: "private raw issuer page",
+      },
+      lease_token: "private-job-lease",
+    },
+  });
+  const serialized = JSON.stringify(output);
+
+  assert(serialized.includes("review-1"), "stable review id was removed");
+  assert(
+    serialized.includes("2026-08-20T12:00:00.123456Z"),
+    "lossless review timestamp was removed",
+  );
+  assert(
+    serialized.includes("Astra Reserve card has been discontinued"),
+    "target-specific public evidence was removed",
+  );
+  assert(
+    serialized.includes("Bounded public statement header"),
+    "bounded public producer evidence was removed",
+  );
+  for (
+    const secret of [
+      "private-lease",
+      "private-source-lease",
+      "full internal producer evidence",
+      "private raw issuer page",
+      "private-job-lease",
+    ]
+  ) {
+    assert(!serialized.includes(secret), `catalog DTO leaked ${secret}`);
+  }
+});
+
 Deno.test("issuer quarantine listing is newest-first filtered and cursor-paginated", async () => {
   const handle = await handler();
   const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
@@ -430,7 +620,7 @@ Deno.test("issuer quarantine listing is newest-first filtered and cursor-paginat
     {
       id: "22222222-2222-4222-8222-222222222222",
       status: "pending",
-      created_at: "2026-08-20T00:00:02+00:00",
+      created_at: "2026-08-20T00:00:02.123456+00:00",
       proposed_fields: {
         source_observation: {
           classification: "issuer_discovery_quarantine",
@@ -553,9 +743,41 @@ Deno.test("issuer quarantine listing is newest-first filtered and cursor-paginat
     );
     assert(
       typeof queryRecords[1].cursor === "string" &&
-        queryRecords[1].cursor.length > 0,
-      "cursor was not enforced by the database query",
+        queryRecords[1].cursor.includes("2026-08-20T00:00:02.123456+00:00"),
+      "cursor lost PostgreSQL microseconds or was not enforced by the query",
     );
+  } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  }
+});
+
+Deno.test("issuer quarantine listing rejects invalid status and classification", async () => {
+  const handle = await handler();
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
+  const auth = authenticatedDb({
+    id: "admin-1",
+    email: "admin@example.com",
+    email_confirmed_at: "2026-08-20T00:00:00.000Z",
+  });
+  try {
+    for (
+      const body of [
+        {
+          action: "issuer-quarantine-list",
+          status: "pending,or(status.eq.approved)",
+        },
+        {
+          action: "issuer-quarantine-list",
+          classification: "anything_else",
+        },
+      ]
+    ) {
+      const response = await handle(request(body), {}, auth);
+      assert(response.status === 400, "invalid quarantine filter was accepted");
+    }
   } finally {
     if (originalAllowlist === undefined) {
       Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
@@ -943,6 +1165,21 @@ Deno.test("v6 admin presentation and approval preserve canonical replay identity
       extracted_data: {
         request_type: "official_benefit_enrichment",
         parser_version: "benefits-v6",
+        retrieved_at: "2026-08-20T10:11:12.123456Z",
+        crawl_observation: {
+          crawl_complete: false,
+          crawl_reason: "required_source_failed",
+          observed_at: "2026-08-20T10:11:12.123456Z",
+          source_attempts: [{
+            url: "https://issuer.example/terms",
+            role: "required_supporting",
+            status: "failed",
+            httpStatus: 503,
+            errorCode: "http_5xx",
+            attemptedAt: "2026-08-20T10:11:13.123456Z",
+            leaseToken: "private-lease",
+          }],
+        },
         proposals: [{
           ...proposal,
           sourceUrl: `${proposal.sourceUrl}?selector=secret-query`,
@@ -966,6 +1203,16 @@ Deno.test("v6 admin presentation and approval preserve canonical replay identity
   assert(
     !JSON.stringify(presented).includes("secret-query"),
     "admin presenter exposed a raw source query",
+  );
+  assert(
+    presented.staging.extracted_data.retrieved_at ===
+        "2026-08-20T10:11:12.123456Z" &&
+      presented.staging.extracted_data.crawl_observation.crawl_complete ===
+        false &&
+      presented.staging.extracted_data.crawl_observation.source_attempts[0]
+          .role === "required_supporting" &&
+      !JSON.stringify(presented).includes("private-lease"),
+    "admin presenter lost bounded crawl completeness or leaked internals",
   );
 
   let submitted: Record<string, any>[] = [];

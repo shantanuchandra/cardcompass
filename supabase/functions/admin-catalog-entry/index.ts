@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.95.0";
 import { isAdminEmail } from "../_shared/card_discovery.ts";
 import { publishReviewedCardIdentity } from "../_shared/catalog_identity_publication.ts";
+import { redactSensitiveUrlsInValue } from "../_shared/benefit_source_privacy.ts";
 import {
   BenefitAdminError,
   handleBenefitAdminAction,
@@ -93,6 +94,173 @@ const catalogReviewProjection = `
   )
 `;
 
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function catalogReviewText(value: unknown, maximum = 512): string | null {
+  return typeof value === "string" && value.trim()
+    ? value.slice(0, maximum)
+    : null;
+}
+
+function pickCatalogFields(
+  source: Record<string, unknown>,
+  keys: readonly string[],
+): Record<string, unknown> {
+  const entries: Array<[string, unknown]> = [];
+  for (const key of keys) {
+    const value = source[key];
+    if (
+      value === null || typeof value === "boolean" ||
+      (typeof value === "number" && Number.isFinite(value))
+    ) {
+      entries.push([key, value]);
+      continue;
+    }
+    const bounded = catalogReviewText(value, key.includes("url") ? 2_048 : 512);
+    if (bounded !== null) entries.push([key, bounded]);
+  }
+  return Object.fromEntries(entries);
+}
+
+export function presentCatalogReview(
+  value: Record<string, unknown>,
+): Record<string, unknown> {
+  const proposed = record(value.proposed_fields);
+  const observation = record(proposed.source_observation);
+  const baseline = record(proposed.catalog_baseline);
+  const evidence = record(value.source_evidence);
+  const rawJob = Array.isArray(value.card_discovery_jobs)
+    ? value.card_discovery_jobs[0]
+    : value.card_discovery_jobs;
+  const job = record(rawJob);
+  const jobEvidence = record(job.evidence);
+  const candidateRows = Array.isArray(value.existing_candidates)
+    ? value.existing_candidates.slice(0, 32)
+    : [];
+  const output = {
+    ...pickCatalogFields(value, [
+      "id",
+      "status",
+      "review_reason",
+      "created_at",
+      "updated_at",
+      "reviewed_at",
+    ]),
+    confidence: typeof value.confidence === "number" &&
+        Number.isFinite(value.confidence)
+      ? value.confidence
+      : null,
+    validation_warnings: Array.isArray(value.validation_warnings)
+      ? value.validation_warnings.slice(0, 32).flatMap((item) =>
+        catalogReviewText(item, 100) ? [catalogReviewText(item, 100)!] : []
+      )
+      : [],
+    proposed_fields: {
+      ...pickCatalogFields(proposed, [
+        "issuer",
+        "bank",
+        "cardName",
+        "card_name",
+        "network",
+        "official_url",
+        "card_url",
+        "joining_fee",
+        "annual_fee",
+        "apr",
+        "suggested_action",
+        "submitted_url_hash",
+        "final_url_hash",
+        "content_hash",
+        "retrieved_at",
+      ]),
+      ...(Object.keys(baseline).length > 0
+        ? {
+          catalog_baseline: pickCatalogFields(baseline, [
+            "card_id",
+            "card_name",
+            "network",
+            "joining_fee",
+            "annual_fee",
+            "apr",
+            "card_url",
+            "is_discontinued",
+            "updated_at",
+            "version_observed_at",
+          ]),
+        }
+        : {}),
+      ...(Object.keys(observation).length > 0
+        ? {
+          source_observation: pickCatalogFields(observation, [
+            "kind",
+            "classification",
+            "issuer",
+            "reason",
+            "retryable",
+            "retryability_reason",
+            "public_evidence",
+            "source_status",
+            "identity_validated",
+            "explicit_discontinuation",
+            "retrieved_at",
+            "observed_at",
+            "matched_excerpt",
+          ]),
+        }
+        : {}),
+    },
+    source_evidence: pickCatalogFields(evidence, [
+      "issuer",
+      "official_url",
+      "submitted_url",
+      "final_url",
+      "retrieved_at",
+      "source_status",
+      "target_excerpt",
+      "matched_excerpt",
+    ]),
+    existing_candidates: candidateRows.map((candidate) =>
+      pickCatalogFields(record(candidate), [
+        "id",
+        "card_name",
+        "bank",
+        "network",
+        "card_url",
+        "is_discontinued",
+      ])
+    ),
+    card_discovery_jobs: {
+      ...pickCatalogFields(job, [
+        "id",
+        "issuer",
+        "proposed_product",
+        "status",
+        "attempt_count",
+        "failure_category",
+        "resolved_card_id",
+        "created_at",
+        "updated_at",
+      ]),
+      evidence: pickCatalogFields(jobEvidence, [
+        "subject_product",
+        "filename_product",
+        "pdf_header_product",
+        "network",
+        "last_four",
+        "official_url",
+        "pdf_header_excerpt",
+        "target_excerpt",
+        "retrieved_at",
+      ]),
+    },
+  };
+  return redactSensitiveUrlsInValue(output) as Record<string, unknown>;
+}
+
 function issuerQuarantineCursor(row: Record<string, unknown>): string {
   const encoded = btoa(JSON.stringify({
     created_at: row.created_at,
@@ -123,7 +291,9 @@ function parseIssuerQuarantineCursor(value: unknown): {
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
         .test(id)
     ) throw new Error("invalid_quarantine_cursor");
-    return { createdAt: date.toISOString(), id };
+    // `Date` validates the instant only. Keep the original PostgreSQL text so
+    // six-digit fractional precision is not silently rounded to milliseconds.
+    return { createdAt, id };
   } catch {
     throw new Error("invalid_quarantine_cursor");
   }
@@ -145,15 +315,11 @@ export async function handleAdminCatalogEntry(
   if (!authorization?.startsWith("Bearer ")) {
     return json({ error: "Authentication required" }, 401);
   }
-  let db: UntypedSupabaseClient;
   let user: Record<string, any> | null = null;
   let authError: unknown = null;
+  let authDb: UntypedSupabaseClient | null = null;
   try {
-    db = providedDb ?? createClient(
-      Deno.env.get("SUPABASE_URL") ?? "",
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-    );
-    const authDb = providedAuthDb ?? providedDb ?? createAdminAuthClient(
+    authDb = providedAuthDb ?? providedDb ?? createAdminAuthClient(
       request,
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_ANON_KEY") ?? "",
@@ -169,12 +335,34 @@ export async function handleAdminCatalogEntry(
   if (authError || !user) {
     return json({ error: "Authentication required" }, 401);
   }
-  if (
-    !user.email_confirmed_at ||
-    !isAdminEmail(user.email, Deno.env.get("CARD_CATALOG_ADMIN_EMAILS"))
-  ) {
+  const confirmedIdentity = Boolean(
+    user.email_confirmed_at || user.confirmed_at ||
+      (Array.isArray(user.identities) &&
+        user.identities.some((identity: any) =>
+          identity?.identity_data?.email_verified === true ||
+          Boolean(identity?.identity_data?.email_confirmed_at)
+        )),
+  );
+  if (!confirmedIdentity) {
     return json({ error: "Administrator access required" }, 403);
   }
+
+  let databaseAdmin = false;
+  try {
+    const { data, error } = await (authDb as any).from("users")
+      .select("is_admin")
+      .eq("id", user.id)
+      .maybeSingle();
+    databaseAdmin = !error && data?.is_admin === true;
+  } catch {
+    databaseAdmin = false;
+  }
+  const breakGlass = !databaseAdmin &&
+    isAdminEmail(user.email, Deno.env.get("CARD_CATALOG_ADMIN_EMAILS"));
+  if (!databaseAdmin && !breakGlass) {
+    return json({ error: "Administrator access required" }, 403);
+  }
+  const authorizationSource = databaseAdmin ? "database_admin" : "break_glass";
 
   try {
     const body = await request.json();
@@ -182,7 +370,26 @@ export async function handleAdminCatalogEntry(
       return json({ error: "Invalid request" }, 400);
     }
     const action = body.action;
-    if (action === "access") return json({ is_admin: true });
+    if (breakGlass) {
+      console.warn(
+        `card_catalog_admin_break_glass user_id=${
+          String(user.id).slice(0, 100)
+        } action=${String(action).slice(0, 80)}`,
+      );
+    }
+    if (action === "access") {
+      return json({
+        is_admin: true,
+        authorization_source: authorizationSource,
+      });
+    }
+
+    // The privileged client is intentionally created only after the caller's
+    // JWT, confirmed identity, and server-governed admin profile are checked.
+    const db: UntypedSupabaseClient = providedDb ?? createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+    );
 
     if (action === "purge-calculator-reviews") {
       if (body.confirm !== "non_product_calculator_resource") {
@@ -202,6 +409,20 @@ export async function handleAdminCatalogEntry(
       if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
         return json({ error: "invalid_quarantine_limit" }, 400);
       }
+      const allowedStatuses = new Set([
+        "pending",
+        "approved",
+        "merged",
+        "rejected",
+      ]);
+      if (
+        body.status !== undefined &&
+        (typeof body.status !== "string" || !allowedStatuses.has(body.status))
+      ) return json({ error: "invalid_quarantine_status" }, 400);
+      if (
+        body.classification !== undefined &&
+        body.classification !== "issuer_discovery_quarantine"
+      ) return json({ error: "invalid_quarantine_classification" }, 400);
       const cursor = parseIssuerQuarantineCursor(body.cursor);
       let query = db.from("card_catalog_review_queue")
         .select(catalogReviewProjection)
@@ -227,7 +448,7 @@ export async function handleAdminCatalogEntry(
       const hasMore = rows.length > limit;
       const items = rows.slice(0, limit);
       return json({
-        items,
+        items: items.map(presentCatalogReview),
         has_more: hasMore,
         next_cursor: hasMore
           ? issuerQuarantineCursor(items[items.length - 1])
@@ -244,7 +465,11 @@ export async function handleAdminCatalogEntry(
       }
       const { data, error } = await query.limit(100);
       if (error) throw error;
-      return json({ items: data ?? [] });
+      return json({
+        items: ((data ?? []) as Array<Record<string, unknown>>).map(
+          presentCatalogReview,
+        ),
+      });
     }
 
     if (

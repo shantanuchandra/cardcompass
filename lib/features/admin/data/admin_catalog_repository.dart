@@ -77,6 +77,11 @@ abstract class BenefitEnrichmentRepository {
   Future<void> retry(BenefitEnrichmentReview item);
   Future<void> quarantine(BenefitEnrichmentReview item, String reason);
   Future<void> unquarantine(BenefitEnrichmentReview item);
+  Future<void> retire(
+    BenefitEnrichmentReview item,
+    BenefitPossibleRemoval removal,
+    String reason,
+  );
 }
 
 class AdminCatalogRepository implements BenefitEnrichmentRepository {
@@ -135,6 +140,12 @@ class AdminCatalogRepository implements BenefitEnrichmentRepository {
         .map(
           (decision) => BenefitReviewDecision(
             action: 'reject',
+            reason: reason,
+            changeType: decision.changeType,
+            liveBenefitId: decision.liveBenefitId,
+            dedupeKey: decision.dedupeKey,
+            displayPriority: decision.displayPriority,
+            isPrimary: decision.isPrimary,
             benefit: decision.benefit,
             proposed: decision.proposed,
           ),
@@ -159,6 +170,36 @@ class AdminCatalogRepository implements BenefitEnrichmentRepository {
   Future<void> unquarantine(BenefitEnrichmentReview item) =>
       _request({'action': 'benefit-unquarantine', 'job_id': item.id});
 
+  @override
+  Future<void> retire(
+    BenefitEnrichmentReview item,
+    BenefitPossibleRemoval removal,
+    String reason,
+  ) {
+    final normalizedReason = reason.trim();
+    final liveBenefitId = removal.benefit.liveBenefitId;
+    if (!removal.retirementEligible ||
+        liveBenefitId == null ||
+        normalizedReason.length < 3) {
+      throw AdminCatalogRequestFailed(
+        'An eligible benefit and a retirement reason are required.',
+      );
+    }
+    return _mutate(
+      'benefit-approve',
+      item,
+      decisions: [
+        BenefitReviewDecision(
+          action: 'retire',
+          reason: normalizedReason,
+          liveBenefitId: liveBenefitId,
+          dedupeKey: removal.benefit.dedupeKey,
+          benefit: removal.benefit,
+        ),
+      ],
+    );
+  }
+
   Future<void> _mutate(
     String action,
     BenefitEnrichmentReview item, {
@@ -176,7 +217,16 @@ class AdminCatalogRepository implements BenefitEnrichmentRepository {
       'job_id': item.id,
       'staging_id': stagingId,
       'decisions': decisions
-          .map((decision) => decision.toJson())
+          .map((decision) {
+            final request = decision.toJson();
+            if (item.parserVersion == 'benefits-v6') {
+              // v6 keeps the server's classification visible in the DTO, but
+              // the Edge validator recomputes it from locked staging rather
+              // than accepting client publication authority.
+              request.remove('change_type');
+            }
+            return request;
+          })
           .toList(growable: false),
       'reason': ?reason,
     });
@@ -197,24 +247,27 @@ class AdminCatalogRepository implements BenefitEnrichmentRepository {
       ...diff.modifications.map(
         (change) => BenefitReviewDecision(
           action: 'approve',
-          changeType: 'modification',
+          changeType: change.changeType ?? 'modification',
+          liveBenefitId: change.current.liveBenefitId,
           dedupeKey: change.proposed.dedupeKey ?? change.current.dedupeKey,
           benefit: change.proposed,
           proposed: change.proposed,
         ),
       ),
       ...diff.possibleRemovals.map(
-        (benefit) => BenefitReviewDecision(
+        (removal) => BenefitReviewDecision(
           action: 'keep_existing',
           changeType: 'possible_removal',
-          dedupeKey: benefit.dedupeKey,
-          benefit: benefit,
+          liveBenefitId: removal.benefit.liveBenefitId,
+          dedupeKey: removal.benefit.dedupeKey,
+          benefit: removal.benefit,
         ),
       ),
       ...diff.unchanged.map(
         (change) => BenefitReviewDecision(
           action: 'keep_existing',
           changeType: 'unchanged',
+          liveBenefitId: change.current.liveBenefitId,
           dedupeKey: change.current.dedupeKey ?? change.proposed.dedupeKey,
           benefit: change.current,
           proposed: change.proposed,
@@ -226,6 +279,7 @@ class AdminCatalogRepository implements BenefitEnrichmentRepository {
             (benefit) => BenefitReviewDecision(
               action: 'keep_existing',
               changeType: 'conflict',
+              liveBenefitId: benefit.liveBenefitId,
               dedupeKey: benefit.dedupeKey,
               benefit: benefit,
             ),
