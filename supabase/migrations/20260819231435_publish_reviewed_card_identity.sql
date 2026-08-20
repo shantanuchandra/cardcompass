@@ -316,9 +316,35 @@ SET search_path = public, extensions, pg_temp
 AS $$
   SELECT lower(regexp_replace(
     regexp_replace(
-      trim(regexp_replace(coalesce(_value, ''),
-        '^(fees[[:space:]]+and[[:space:]]+charges[[:space:]]+for|terms[[:space:]]+and[[:space:]]+conditions[[:space:]]+for|benefits[[:space:]]+of)[[:space:]]+',
-        '', 'i')),
+      regexp_replace(
+        trim(regexp_replace(coalesce(_value, ''),
+          '^(fees[[:space:]]+and[[:space:]]+charges[[:space:]]+for|terms[[:space:]]+and[[:space:]]+conditions[[:space:]]+for|benefits[[:space:]]+of)[[:space:]]+',
+          '', 'i')),
+        '\m(visa|master[[:space:]]*card|rupay|american[[:space:]]+express|amex|bank|credit|card|statement|your|the|for|club|axis|hdfc|icici|kotak|mahindra|indusind|hsbc|pnb|punjab|national|sbi|au)\M',
+        ' ', 'gi'
+      ),
+      '([[:space:]]+credit)?[[:space:]]+card$', '', 'i'
+    ),
+    '[^a-zA-Z0-9]+', '', 'g'
+  ));
+$$;
+
+CREATE OR REPLACE FUNCTION public.normalize_card_catalog_family(_value text)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+SECURITY INVOKER
+SET search_path = public, extensions, pg_temp
+AS $$
+  SELECT lower(regexp_replace(
+    regexp_replace(
+      regexp_replace(
+        trim(regexp_replace(coalesce(_value, ''),
+          '^(fees[[:space:]]+and[[:space:]]+charges[[:space:]]+for|terms[[:space:]]+and[[:space:]]+conditions[[:space:]]+for|benefits[[:space:]]+of)[[:space:]]+',
+          '', 'i')),
+        '\m(visa|master[[:space:]]*card|rupay|american[[:space:]]+express|amex|bank|credit|card|statement|your|the|for|club|axis|hdfc|icici|kotak|mahindra|indusind|hsbc|pnb|punjab|national|sbi|au|world[[:space:]-]+elite|infinite|signature|world|platinum|gold|select|classic)\M',
+        ' ', 'gi'
+      ),
       '([[:space:]]+credit)?[[:space:]]+card$', '', 'i'
     ),
     '[^a-zA-Z0-9]+', '', 'g'
@@ -378,6 +404,7 @@ AS $$
 DECLARE
   normalized_issuer text := lower(trim(coalesce(_issuer, '')));
   normalized_name text := public.normalize_card_catalog_product(_card_name);
+  normalized_family text;
   normalized_network text := public.normalize_card_catalog_network(_network);
   normalized_tier text := public.normalize_card_catalog_tier(_card_name);
   submitted_bound_cards uuid[];
@@ -394,6 +421,10 @@ DECLARE
   resolved_tier text;
   resolved_card_type text;
 BEGIN
+  normalized_family := coalesce(
+    nullif(public.normalize_card_catalog_family(_card_name), ''),
+    normalized_name
+  );
   IF length(normalized_issuer) < 2 OR length(normalized_name) < 2
      OR normalized_name IN (
        'visa', 'mastercard', 'rupay', 'americanexpress',
@@ -419,7 +450,7 @@ BEGIN
     'card_catalog_publication:url:' || greatest(lower(_submitted_url_hash), lower(_final_url_hash)), 0
   ));
   PERFORM pg_advisory_xact_lock(hashtextextended(
-    'card_catalog_publication:identity:' || normalized_issuer || ':' || normalized_name || ':' || coalesce(normalized_network, '-'), 0
+    'card_catalog_identity:' || normalized_issuer || ':' || normalized_family, 0
   ));
 
   SELECT array_agg(DISTINCT binding.card_id ORDER BY binding.card_id)
@@ -459,7 +490,7 @@ BEGIN
     FROM public.card_catalog AS catalog
     WHERE lower(trim(catalog.bank)) = normalized_issuer
       AND lower(trim(coalesce(catalog.card_type, ''))) = 'credit'
-      AND public.normalize_card_catalog_product(catalog.card_name) = normalized_name
+      AND public.normalize_card_catalog_family(catalog.card_name) = normalized_family
     UNION
     SELECT catalog.id
     FROM public.card_catalog AS catalog
@@ -467,7 +498,6 @@ BEGIN
     WHERE lower(trim(catalog.bank)) = normalized_issuer
       AND lower(trim(coalesce(catalog.card_type, ''))) = 'credit'
       AND public.normalize_card_catalog_product(alias.alias) = normalized_name
-      AND public.normalize_card_catalog_product(catalog.card_name) = normalized_name
       AND normalized_name NOT IN (
         'visa', 'mastercard', 'rupay', 'americanexpress',
         'gold', 'platinum', 'infinite', 'signature', 'world'
@@ -483,7 +513,6 @@ BEGIN
       resolved_card_type
     FROM public.card_catalog AS catalog WHERE catalog.id = bound_card;
     IF lower(trim(coalesce(resolved_bank, ''))) <> normalized_issuer
-       OR public.normalize_card_catalog_product(resolved_name) <> normalized_name
        OR lower(trim(coalesce(resolved_card_type, ''))) <> 'credit'
        OR (resolved_network IS NOT NULL AND (
          normalized_network IS NULL OR normalized_network <> resolved_network
@@ -519,6 +548,10 @@ BEGIN
       );
     IF coalesce(cardinality(compatible_candidate_ids), 0) > 1 THEN
       RAISE EXCEPTION 'ambiguous_catalog_identity';
+    END IF;
+    IF coalesce(cardinality(candidate_ids), 0) > 0
+       AND coalesce(cardinality(compatible_candidate_ids), 0) = 0 THEN
+      RAISE EXCEPTION 'strong_catalog_identity_conflict';
     END IF;
     resolved_id := compatible_candidate_ids[1];
   END IF;
@@ -737,10 +770,13 @@ DECLARE
   source_status integer;
   observation_kind text;
   identity_validated boolean;
+  source_observation_hash text;
+  prior_review_updated_at timestamptz;
 BEGIN
   IF _card_id IS NULL
      OR _suggested_action NOT IN ('mark_discontinued', 'reactivate')
      OR jsonb_typeof(_source_observation) IS DISTINCT FROM 'object'
+     OR octet_length(_source_observation::text) > 16384
      OR _parser_version IS DISTINCT FROM 'benefits-v6'
      OR lower(coalesce(_source_url_hash, '')) !~ '^[0-9a-f]{64}$'
      OR (_content_hash IS NOT NULL AND lower(_content_hash) !~ '^[0-9a-f]{64}$') THEN
@@ -786,7 +822,8 @@ BEGIN
   ELSIF card_row.is_discontinued IS DISTINCT FROM true
      OR observation_kind IS DISTINCT FROM 'exact_card_reappearance'
      OR source_status IS DISTINCT FROM 200
-     OR identity_validated IS DISTINCT FROM true THEN
+     OR identity_validated IS DISTINCT FROM true
+     OR coalesce((_source_observation->>'explicit_discontinuation')::boolean, false) THEN
     RAISE EXCEPTION 'invalid_catalog_lifecycle_review';
   END IF;
 
@@ -799,11 +836,19 @@ BEGIN
     'apr', card_row.apr,
     'card_url', card_row.card_url,
     'is_discontinued', card_row.is_discontinued,
-    'updated_at', card_row.updated_at
+    'updated_at', card_row.updated_at,
+    'version_observed_at', coalesce(
+      card_row.updated_at,
+      nullif(_source_observation->>'retrieved_at', '')::timestamptz
+    )
   );
+  source_observation_hash := encode(extensions.digest(
+    convert_to(_source_observation::text, 'UTF8'), 'sha256'
+  ), 'hex');
   lifecycle_dedupe_key := encode(extensions.digest(convert_to(
     'catalog-lifecycle:' || card_row.id::text || ':' || _suggested_action || ':' ||
-    catalog_baseline::text,
+    catalog_baseline::text || ':' || coalesce(lower(_content_hash), lower(_source_url_hash)) ||
+    ':' || source_observation_hash,
     'UTF8'
   ), 'sha256'), 'hex';
 
@@ -825,6 +870,7 @@ BEGIN
         'source_url', _source_url,
         'source_url_hash', lower(_source_url_hash),
         'content_hash', coalesce(lower(_content_hash), lower(_source_url_hash)),
+        'source_observation_hash', source_observation_hash,
         'catalog_baseline', catalog_baseline
       ),
       lifecycle_dedupe_key, 'queued', statement_timestamp()
@@ -844,7 +890,8 @@ BEGIN
 
   SELECT review.* INTO existing_review
   FROM public.card_catalog_review_queue AS review
-  WHERE review.discovery_job_id = lifecycle_job_id;
+  WHERE review.discovery_job_id = lifecycle_job_id
+  FOR UPDATE;
   IF FOUND AND existing_review.status IN ('approved', 'merged', 'rejected') THEN
     RETURN existing_review.id;
   END IF;
@@ -866,8 +913,15 @@ BEGIN
         'source_url', _source_url,
         'source_url_hash', lower(_source_url_hash),
         'content_hash', coalesce(lower(_content_hash), lower(_source_url_hash)),
+        'source_observation_hash', source_observation_hash,
         'source_observation', _source_observation,
-        'catalog_baseline', catalog_baseline
+        'catalog_baseline', catalog_baseline,
+        'observation_history', jsonb_build_array(jsonb_build_object(
+          'source_observation_hash', source_observation_hash,
+          'observed_at', coalesce(
+            _source_observation->>'retrieved_at', statement_timestamp()::text
+          )
+        ))
       ),
       jsonb_build_array(jsonb_build_object(
         'card_id', card_row.id,
@@ -883,6 +937,7 @@ BEGIN
     RETURNING id INTO lifecycle_review_id;
   ELSE
     lifecycle_review_id := existing_review.id;
+    prior_review_updated_at := existing_review.updated_at;
     UPDATE public.card_catalog_review_queue AS review SET
       proposed_fields = jsonb_build_object(
         'card_id', card_row.id,
@@ -896,11 +951,22 @@ BEGIN
         'source_url', _source_url,
         'source_url_hash', lower(_source_url_hash),
         'content_hash', coalesce(lower(_content_hash), lower(_source_url_hash)),
+        'source_observation_hash', source_observation_hash,
         'source_observation', _source_observation,
-        'catalog_baseline', catalog_baseline
+        'catalog_baseline', catalog_baseline,
+        'observation_history', coalesce(
+          existing_review.source_evidence->'observation_history', '[]'::jsonb
+        ) || jsonb_build_array(jsonb_build_object(
+          'source_observation_hash', source_observation_hash,
+          'observed_at', coalesce(
+            _source_observation->>'retrieved_at', statement_timestamp()::text
+          )
+        ))
       ),
       updated_at = statement_timestamp()
-    WHERE review.id = lifecycle_review_id AND review.status = 'pending';
+    WHERE review.id = lifecycle_review_id AND review.status = 'pending'
+      AND review.updated_at IS NOT DISTINCT FROM prior_review_updated_at;
+    IF NOT FOUND THEN RAISE EXCEPTION 'catalog_lifecycle_review_race'; END IF;
   END IF;
   IF lifecycle_review_id IS NULL THEN
     SELECT review.id INTO lifecycle_review_id
@@ -971,6 +1037,7 @@ DECLARE
   catalog_baseline jsonb;
   legacy_catalog_url text;
   legacy_catalog_url_hash text;
+  enrichment_exception text;
 BEGIN
   IF _discovery_job_id IS NULL OR jsonb_typeof(fields) <> 'object'
      OR _parser_version <> 'benefits-v6'
@@ -979,6 +1046,12 @@ BEGIN
        'reject', 'mark_discontinued', 'reactivate'
      ) THEN
     RAISE EXCEPTION 'invalid_catalog_publication';
+  END IF;
+  IF fields ? 'source_observation' AND (
+    jsonb_typeof(fields->'source_observation') IS DISTINCT FROM 'object'
+    OR octet_length((fields->'source_observation')::text) > 16384
+  ) THEN
+    RAISE EXCEPTION 'invalid_source_observation';
   END IF;
   SELECT job.* INTO observed_job
   FROM public.card_discovery_jobs AS job WHERE job.id = _discovery_job_id;
@@ -1005,6 +1078,15 @@ BEGIN
        OR nullif(fields->>'card_id', '') IS NULL THEN
       RAISE EXCEPTION 'invalid_existing_observation_authority';
     END IF;
+    IF observed_job.review_item_id IS NOT NULL
+       OR observed_job.status = 'review_required'
+       OR EXISTS (
+         SELECT 1 FROM public.card_catalog_review_queue AS pending_review
+         WHERE pending_review.discovery_job_id = observed_job.id
+           AND pending_review.status = 'pending'
+       ) THEN
+      RAISE EXCEPTION 'existing_observation_requires_review';
+    END IF;
   ELSIF _review_item_id IS NULL OR _actor_id IS NULL THEN
     RAISE EXCEPTION 'actor_required';
   ELSIF NOT EXISTS (
@@ -1022,7 +1104,7 @@ BEGIN
     review_row := observed_review;
     IF fields = '{}'::jsonb THEN fields := review_row.proposed_fields; END IF;
   END IF;
-  IF _action IN ('reject', 'mark_discontinued', 'reactivate')
+  IF _action IN ('retry', 'reject', 'mark_discontinued', 'reactivate')
      AND length(trim(coalesce(_reason, ''))) < 2 THEN
     RAISE EXCEPTION 'reason_required';
   END IF;
@@ -1054,8 +1136,12 @@ BEGIN
     fields->'source_observation'->>'kind' = 'exact_card_reappearance'
     AND fields->'source_observation'->>'source_status' = '200'
     AND fields->'source_observation'->>'identity_validated' = 'true'
+    AND coalesce(
+      (fields->'source_observation'->>'explicit_discontinuation')::boolean,
+      false
+    ) = false
   ) THEN
-    RAISE EXCEPTION 'lifecycle_action_mismatch';
+    RAISE EXCEPTION 'reactivation_evidence_conflict';
   END IF;
   IF _action IN ('edit_approve', 'mark_discontinued', 'reactivate')
      AND jsonb_typeof(fields->'catalog_baseline') IS DISTINCT FROM 'object' THEN
@@ -1121,7 +1207,7 @@ BEGIN
       VALUES (
         review_row.id, _actor_id, _action,
         jsonb_build_object(
-          'reason', coalesce(_reason, 'retry requested'),
+          'reason', _reason,
           'retained_history', true,
           'prior_proposed_fields', review_row.proposed_fields,
           'prior_source_evidence', review_row.source_evidence,
@@ -1281,6 +1367,10 @@ BEGIN
   SELECT catalog.* INTO card_row FROM public.card_catalog AS catalog
   WHERE catalog.id = resolved_card_id FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'card_target_not_found'; END IF;
+  IF _action IN ('mark_discontinued', 'reactivate')
+     AND lower(trim(coalesce(card_row.card_type, ''))) <> 'credit' THEN
+    RAISE EXCEPTION 'lifecycle_credit_card_required';
+  END IF;
   SELECT job.* INTO job_row FROM public.card_discovery_jobs AS job
   WHERE job.id = _discovery_job_id FOR UPDATE;
   IF _review_item_id IS NOT NULL THEN
@@ -1556,6 +1646,25 @@ BEGIN
     IF enqueued_count + existing_v6_job_count <> 1 THEN
       RAISE EXCEPTION 'unexpected_enrichment_enqueue';
     END IF;
+  ELSE
+    -- Sole exact-one exception: a reviewed acquisition discontinuation for an
+    -- unheld card is intentionally ineligible for Task 6 recurrence.
+    enrichment_exception := 'unheld_reviewed_discontinuation';
+    existing_v6_job_count := 0;
+    enqueued_count := 0;
+    IF _action <> 'mark_discontinued' OR has_active_holder OR has_existing_v6 THEN
+      RAISE EXCEPTION 'unexpected_enrichment_enqueue';
+    END IF;
+    IF _review_item_id IS NOT NULL THEN
+      UPDATE public.card_catalog_review_audit AS audit SET
+        details = audit.details || jsonb_build_object(
+          'enrichment_exception', enrichment_exception,
+          'existing_v6_job_count', existing_v6_job_count,
+          'enqueued_count', enqueued_count
+        )
+      WHERE audit.review_item_id = review_row.id
+        AND audit.actor_id = _actor_id AND audit.action = _action;
+    END IF;
   END IF;
 
   card_id := resolved_card_id;
@@ -1613,6 +1722,10 @@ BEGIN
   IF _actor_id IS NULL OR _limit NOT BETWEEN 1 AND 1000 THEN
     RAISE EXCEPTION 'invalid_terminal_review_transition';
   END IF;
+  PERFORM 1 FROM public.users AS actor
+  WHERE actor.id = _actor_id AND actor.is_admin IS TRUE
+  FOR KEY SHARE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'administrator_required'; END IF;
   FOR calculator_review_terminal IN
     SELECT review.id, review.discovery_job_id
     FROM public.card_catalog_review_queue AS review
@@ -1738,6 +1851,7 @@ REVOKE ALL ON FUNCTION public.canonical_card_resource_url(text) FROM PUBLIC, ano
 REVOKE ALL ON FUNCTION public.card_catalog_source_matches_issuer(text, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.card_enrichment_enqueue_catalog_eligible(uuid, text, text, text, text, text, text, boolean, boolean, boolean) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.normalize_card_catalog_product(text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.normalize_card_catalog_family(text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.normalize_card_catalog_network(text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.normalize_card_catalog_tier(text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.resolve_card_catalog_identity(text, text, text, text, text, text) FROM PUBLIC, anon, authenticated;
@@ -1758,6 +1872,7 @@ GRANT EXECUTE ON FUNCTION public.canonical_card_resource_url(text) TO service_ro
 GRANT EXECUTE ON FUNCTION public.card_catalog_source_matches_issuer(text, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.card_enrichment_enqueue_catalog_eligible(uuid, text, text, text, text, text, text, boolean, boolean, boolean) TO service_role;
 GRANT EXECUTE ON FUNCTION public.normalize_card_catalog_product(text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.normalize_card_catalog_family(text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.normalize_card_catalog_network(text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.normalize_card_catalog_tier(text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.resolve_card_catalog_identity(text, text, text, text, text, text) TO service_role;
@@ -1776,6 +1891,7 @@ DECLARE
   resolver_definition text;
 BEGIN
   IF to_regprocedure('public.resolve_card_catalog_identity(text,text,text,text,text,text)') IS NULL
+     OR to_regprocedure('public.normalize_card_catalog_family(text)') IS NULL
      OR to_regprocedure('public.publish_card_catalog_identity(uuid,uuid,uuid,text,jsonb,uuid,text,text)') IS NULL
      OR to_regprocedure('public.review_card_catalog_discovery(uuid,uuid,text,jsonb,uuid,text)') IS NULL
      OR to_regprocedure('public.adopt_reviewed_card_enrichment_source(uuid,text,text,text,text,text)') IS NULL THEN
@@ -1802,7 +1918,7 @@ BEGIN
      OR strpos(resolver_definition, 'least(lower(_submitted_url_hash)') >=
        strpos(resolver_definition, 'greatest(lower(_submitted_url_hash)')
      OR strpos(resolver_definition, 'greatest(lower(_submitted_url_hash)') >=
-       strpos(resolver_definition, 'card_catalog_publication:identity:') THEN
+       strpos(resolver_definition, 'card_catalog_identity:') THEN
     RAISE EXCEPTION 'publication_lock_order_assertion_failed';
   END IF;
 END;
@@ -1888,6 +2004,31 @@ BEGIN
   END IF;
 END;
 $card_resource_url_behavior_assertions$;
+
+DO $card_catalog_variant_behavior_assertions$
+BEGIN
+  IF public.normalize_card_catalog_product(
+       'Privilege Visa Infinite Credit Card'
+     ) IS DISTINCT FROM 'privilegeinfinite'
+     OR public.normalize_card_catalog_family(
+       'Privilege Visa Infinite Credit Card'
+     ) IS DISTINCT FROM 'privilege'
+     OR public.normalize_card_catalog_tier(
+       'Privilege Visa Infinite Credit Card'
+     ) IS DISTINCT FROM 'infinite'
+     OR public.normalize_card_catalog_product(
+       'Privilege Mastercard World Elite Credit Card'
+     ) IS DISTINCT FROM 'privilegeworldelite'
+     OR public.normalize_card_catalog_family(
+       'Privilege Mastercard World Elite Credit Card'
+     ) IS DISTINCT FROM 'privilege'
+     OR public.normalize_card_catalog_product(
+       'Axis Bank Privilege Visa Infinite Credit Card'
+     ) IS DISTINCT FROM 'privilegeinfinite' THEN
+    RAISE EXCEPTION 'catalog_variant_normalization_assertion_failed';
+  END IF;
+END;
+$card_catalog_variant_behavior_assertions$;
 
 DO $catalog_baseline_behavior_assertions$
 DECLARE

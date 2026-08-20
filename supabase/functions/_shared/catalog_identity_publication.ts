@@ -3,6 +3,7 @@ import {
   canonicalOfficialRequestUrl,
   type OfficialFetchResult,
 } from "./official_issuer_fetch.ts";
+import { redactSensitiveUrlsInValue } from "./benefit_source_privacy.ts";
 
 export type CatalogPublicationAction =
   | "resolve_verified"
@@ -61,6 +62,7 @@ type CatalogBaselineSource = {
   card_url: unknown;
   is_discontinued: unknown;
   updated_at: unknown;
+  retrieved_at?: unknown;
 };
 
 const REVIEWED_ACTIONS = new Set<CatalogPublicationAction>([
@@ -165,7 +167,7 @@ export function catalogLifecycleSuggestion(input: {
 }): CatalogLifecycleAction | null {
   if (
     input.isDiscontinued && input.httpStatus === 200 &&
-    input.identityValidated
+    input.identityValidated && !input.explicitDiscontinuation
   ) return "reactivate";
   if (
     !input.isDiscontinued &&
@@ -174,6 +176,49 @@ export function catalogLifecycleSuggestion(input: {
         input.explicitDiscontinuation))
   ) return "mark_discontinued";
   return null;
+}
+
+export function boundedCatalogSourceObservation(
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  const sanitized = redactSensitiveUrlsInValue(input);
+  let remaining = 12_000;
+  const bound = (value: unknown, depth: number): unknown => {
+    if (remaining <= 0 || depth > 6) return "[truncated]";
+    if (
+      value === null || typeof value === "boolean" || typeof value === "number"
+    ) {
+      remaining -= 8;
+      return value;
+    }
+    if (typeof value === "string") {
+      const result = value.slice(0, Math.min(512, remaining));
+      remaining -= result.length + 2;
+      return result;
+    }
+    if (Array.isArray(value)) {
+      return value.slice(0, 32).map((entry) => bound(entry, depth + 1));
+    }
+    if (typeof value === "object") {
+      const output: Record<string, unknown> = {};
+      for (const [rawKey, entry] of Object.entries(value).slice(0, 32)) {
+        if (remaining <= 0) break;
+        const key = rawKey.slice(0, 64);
+        remaining -= key.length + 4;
+        output[key] = bound(entry, depth + 1);
+      }
+      return output;
+    }
+    return String(value).slice(0, 128);
+  };
+  const output = bound(sanitized, 0) as Record<string, unknown>;
+  if (JSON.stringify(output).length <= 16_384) return output;
+  return {
+    kind: typeof output.kind === "string"
+      ? output.kind.slice(0, 128)
+      : "observation",
+    truncated: true,
+  };
 }
 
 export function catalogPublicationBaseline(
@@ -185,7 +230,16 @@ export function catalogPublicationBaseline(
       (!nonEmpty(card.updated_at) ||
         !Number.isFinite(Date.parse(card.updated_at))))
   ) throw new Error("invalid_catalog_baseline");
-  return {
+  const retrievedAt =
+    card.retrieved_at === undefined || card.retrieved_at === null
+      ? null
+      : nonEmpty(card.retrieved_at) &&
+          Number.isFinite(Date.parse(card.retrieved_at))
+      ? card.retrieved_at
+      : (() => {
+        throw new Error("invalid_catalog_baseline");
+      })();
+  const baseline: Record<string, unknown> = {
     card_id: card.id,
     card_name: card.card_name,
     network: card.network ?? null,
@@ -196,6 +250,10 @@ export function catalogPublicationBaseline(
     is_discontinued: card.is_discontinued === true,
     updated_at: card.updated_at ?? null,
   };
+  if (card.updated_at === null && retrievedAt !== null) {
+    baseline.version_observed_at = retrievedAt;
+  }
+  return baseline;
 }
 
 export function hasStrongExplicitCardDiscontinuation(text: string): boolean {
@@ -224,7 +282,9 @@ export async function proposeCatalogLifecycleReview(
   const { data, error } = await db.rpc("stage_card_catalog_lifecycle_review", {
     _card_id: input.cardId,
     _suggested_action: input.suggestedAction,
-    _source_observation: input.sourceObservation,
+    _source_observation: boundedCatalogSourceObservation(
+      input.sourceObservation,
+    ),
     _source_url: input.sourceUrl,
     _source_url_hash: input.sourceUrlHash.toLowerCase(),
     _content_hash: input.contentHash?.toLowerCase() ?? null,
@@ -275,7 +335,9 @@ export async function publishReviewedCardIdentity(
     throw new Error("merge_target_required");
   }
   if (
-    ["reject", "mark_discontinued", "reactivate"].includes(input.action) &&
+    ["retry", "reject", "mark_discontinued", "reactivate"].includes(
+      input.action,
+    ) &&
     !nonEmpty(input.reason)
   ) throw new Error("reason_required");
   if (
@@ -288,12 +350,22 @@ export async function publishReviewedCardIdentity(
     throw new Error("invalid_publication_parser");
   }
 
+  const reviewedFields = { ...input.reviewedFields };
+  if (
+    reviewedFields.source_observation &&
+    typeof reviewedFields.source_observation === "object" &&
+    !Array.isArray(reviewedFields.source_observation)
+  ) {
+    reviewedFields.source_observation = boundedCatalogSourceObservation(
+      reviewedFields.source_observation as Record<string, unknown>,
+    );
+  }
   const { data, error } = await db.rpc("publish_card_catalog_identity", {
     _discovery_job_id: input.discoveryJobId,
     _review_item_id: input.reviewItemId ?? null,
     _actor_id: input.actorId ?? null,
     _action: input.action,
-    _reviewed_fields: input.reviewedFields,
+    _reviewed_fields: reviewedFields,
     _merge_card_id: input.mergeCardId ?? null,
     _reason: input.reason ?? null,
     _parser_version: parserVersion,

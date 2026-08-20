@@ -94,7 +94,7 @@ Deno.test("supporting identity reconciles conflicting strong labels and ignores 
         false,
       ],
       [
-        "<title>Privilege Credit Card</title><h1>Privilege Visa Infinite Credit Card</h1><p>Offer at the Regalia Gold hotel partner.</p>",
+        "<title>Privilege Credit Card</title><h1>Privilege Credit Card</h1><p>Offer at the Regalia Gold hotel partner.</p>",
         true,
       ],
     ] as const

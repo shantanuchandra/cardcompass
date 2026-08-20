@@ -188,8 +188,11 @@ test("reconciles all strong product identities before accepting an exact card", 
     "Axis Bank",
     "Privilege",
   );
-  assert.equal(networkAlias?.cardName, "Privilege");
-  assert.equal(networkAlias?.network, "Visa");
+  assert.equal(
+    networkAlias,
+    null,
+    "a generic expected identity claimed a more specific network/tier page",
+  );
   assert.equal(
     exactOfficialPageIdentity(
       "<title>Gold Credit Card | HDFC Bank</title>",
@@ -237,6 +240,22 @@ test("treats conflicting payment-network product variants as different identitie
     "Visa",
   );
   assert.equal(
+    officialCardIdentityFromHtml(
+      "<title>Privilege Visa Infinite Credit Card | Axis Bank</title>",
+      "Axis Bank",
+    )?.cardName,
+    "Privilege Infinite",
+    "classifier erased the authoritative tier from the product identity",
+  );
+  assert.equal(
+    officialCardIdentityFromHtml(
+      "<title>Privilege Mastercard World Elite Credit Card | Axis Bank</title>",
+      "Axis Bank",
+    )?.cardName,
+    "Privilege World Elite",
+    "classifier erased the Mastercard tier from the product identity",
+  );
+  assert.equal(
     evaluateAutomaticCatalogGate({
       issuer: "Axis Bank",
       officialUrl: "https://www.axis.bank.in/cards/privilege",
@@ -246,8 +265,8 @@ test("treats conflicting payment-network product variants as different identitie
       catalogCandidateCount: 0,
       conflicts: [],
     }).autoAdd,
-    true,
-    "an agreeing explicit network alias was treated as another product",
+    false,
+    "a generic official page erased the statement's Infinite tier",
   );
 });
 
@@ -326,7 +345,7 @@ test("target body identity is case-insensitive and ignores relationship-prefixed
       "Axis Bank",
       "Privilege Visa Infinite",
     )?.cardName,
-    "Privilege",
+    "Privilege Infinite",
   );
   assert.equal(
     exactOfficialPageIdentity(
@@ -415,6 +434,35 @@ test("weak aliases cannot claim a stored network/tier identity and non-credit ro
     ),
     null,
     "non-credit catalog row entered card resolution",
+  );
+});
+
+test("historical aliases can prove a renamed family but cannot weaken its stored tier", () => {
+  const candidate = {
+    cardId: "renamed-infinite",
+    issuer: "Axis Bank",
+    cardName: "Atlas Infinite",
+    aliases: ["Legacy Miles Infinite", "Legacy Miles"],
+    network: "Visa",
+    cardType: "credit",
+  };
+  assert.equal(
+    cardDiscovery.selectCatalogUrlIdentityMatch(
+      "<title>Legacy Miles Visa Infinite Credit Card | Axis Bank</title>",
+      "Axis Bank",
+      [candidate],
+    ),
+    "renamed-infinite",
+    "historical strong alias was required to equal the current name",
+  );
+  assert.equal(
+    cardDiscovery.selectCatalogUrlIdentityMatch(
+      "<title>Legacy Miles Credit Card | Axis Bank</title>",
+      "Axis Bank",
+      [candidate],
+    ),
+    null,
+    "historical weak alias erased the stored Infinite tier",
   );
 });
 
@@ -542,6 +590,31 @@ test("authenticated discovery retains publication evidence for central admin rev
   assert.doesNotMatch(source, /functions\/v1\/catalog-enrichment/);
   assert.match(source, /exactOfficialPageIdentity\(/);
   assert.doesNotMatch(source, /pageIdentity\.includes\(expectedIdentity\)/);
+  assert.doesNotMatch(
+    source.match(/async function upsertDiscoveryJob[\s\S]*?\n\}/)?.[0] ?? "",
+    /\.upsert\(/,
+    "normal user resubmission can overwrite a terminal discovery job",
+  );
+  assert.match(
+    source,
+    /terminalDiscoveryStatus\([^)]+\)[\s\S]*return existing/i,
+    "terminal resubmission does not return its immutable outcome",
+  );
+  assert.match(
+    source,
+    /terminalDiscoveryStatus\(job\.status\)[\s\S]*return json\(publicDiscoveryResult\(job\)\)[\s\S]*processSubmittedUrl/i,
+    "resolve_url still refetches or mutates terminal reviewed work",
+  );
+  assert.doesNotMatch(
+    source.match(/async function putInReview[\s\S]*?\n\}/)?.[0] ?? "",
+    /\.upsert\(/,
+    "normal review staging can silently reopen a terminal decision",
+  );
+  assert.match(
+    source,
+    /bound_resource_identities[\s\S]*submitted[\s\S]*final[\s\S]*putInReview/i,
+    "bound URL/body conflict is not materialized as actionable review evidence",
+  );
 });
 
 test("benefit enrichment keeps initialization and issuer discovery off unsafe paths", async () => {
@@ -595,6 +668,13 @@ test("clears stale URL failures when a discovery job enters review", () => {
       updated_at: "2026-08-17T00:00:00.000Z",
     },
   );
+});
+
+test("normal resubmission treats resolved and rejected discovery work as immutable", () => {
+  assert.equal(cardDiscovery.terminalDiscoveryStatus("resolved"), true);
+  assert.equal(cardDiscovery.terminalDiscoveryStatus("rejected"), true);
+  assert.equal(cardDiscovery.terminalDiscoveryStatus("review_required"), false);
+  assert.equal(cardDiscovery.terminalDiscoveryStatus("failed"), false);
 });
 
 test("returns only safe discovery status fields to the client", () => {

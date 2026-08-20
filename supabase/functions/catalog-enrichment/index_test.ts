@@ -1,4 +1,4 @@
-import { processCatalogEnrichmentJob } from "./index.ts";
+import { processCatalogEnrichmentJob, queueConflictReview } from "./index.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -33,6 +33,153 @@ function terminalJobDb(job: Record<string, unknown>) {
     },
   };
 }
+
+function reviewDb() {
+  const state: {
+    jobs: Array<Record<string, unknown>>;
+    reviews: Array<Record<string, unknown>>;
+  } = { jobs: [], reviews: [] };
+  const db = {
+    state,
+    from(table: string) {
+      let action = "select";
+      let payload: Record<string, unknown> | null = null;
+      const filters: Record<string, unknown> = {};
+      let statuses: unknown[] | null = null;
+      const execute = () => {
+        const rows = table === "card_discovery_jobs"
+          ? state.jobs
+          : state.reviews;
+        const matches = (row: Record<string, unknown>) =>
+          Object.entries(filters).every(([key, value]) => row[key] === value) &&
+          (statuses === null || statuses.includes(row.status));
+        if (action === "insert") {
+          if (
+            table === "card_discovery_jobs" &&
+            state.jobs.some((row) =>
+              row.discovery_source === payload?.discovery_source &&
+              row.dedupe_key === payload?.dedupe_key && row.user_id === null
+            )
+          ) return { data: null, error: { code: "23505" } };
+          const row = {
+            id: `${table === "card_discovery_jobs" ? "job" : "review"}-${
+              rows.length + 1
+            }`,
+            ...payload,
+          };
+          rows.push(row);
+          return { data: row, error: null };
+        }
+        const row = rows.find(matches) ?? null;
+        if (action === "update" && row && payload) Object.assign(row, payload);
+        return { data: row, error: null };
+      };
+      const query = {
+        select() {
+          return query;
+        },
+        insert(value: Record<string, unknown>) {
+          action = "insert";
+          payload = value;
+          return query;
+        },
+        update(value: Record<string, unknown>) {
+          action = "update";
+          payload = value;
+          return query;
+        },
+        eq(key: string, value: unknown) {
+          filters[key] = value;
+          return query;
+        },
+        is(key: string, value: unknown) {
+          filters[key] = value;
+          return query;
+        },
+        in(_key: string, values: unknown[]) {
+          statuses = values;
+          return query;
+        },
+        maybeSingle() {
+          return Promise.resolve(execute());
+        },
+        single() {
+          return Promise.resolve(execute());
+        },
+        then(
+          resolve: (value: unknown) => unknown,
+          reject: (reason: unknown) => unknown,
+        ) {
+          return Promise.resolve(execute()).then(resolve, reject);
+        },
+      };
+      return query;
+    },
+  };
+  return db;
+}
+
+Deno.test("catalog conflict reviews version material content while keeping terminal rows immutable", async () => {
+  const db = reviewDb();
+  const catalogJob = {
+    id: "catalog-job",
+    card_id: "11111111-1111-4111-8111-111111111111",
+    issuer: "Axis Bank",
+    card_name: "Privilege Infinite",
+    canonical_url: "https://www.axis.bank.in/card?variant=infinite",
+  };
+  const proposed = {
+    annual_fee: 1500,
+    catalog_baseline: { card_name: "Privilege Infinite", updated_at: null },
+  };
+  const observation = (contentHash: string, retrievedAt: string) => ({
+    submitted_url_hash: "a".repeat(64),
+    final_url_hash: "b".repeat(64),
+    content_hash: contentHash,
+    retrieved_at: retrievedAt,
+    source_observation: { kind: "catalog_enrichment" },
+  });
+
+  const first = await queueConflictReview(
+    db,
+    catalogJob,
+    [{ field: "annual_fee" }],
+    proposed,
+    observation("c".repeat(64), "2026-08-20T00:00:00.000Z"),
+  );
+  const refreshed = await queueConflictReview(
+    db,
+    catalogJob,
+    [{ field: "annual_fee" }],
+    proposed,
+    observation("c".repeat(64), "2026-08-20T00:00:00.000Z"),
+  );
+  assert(first === refreshed, "same material evidence created a second review");
+  assert(db.state.jobs.length === 1, "same content created a second job");
+  assert(
+    ((db.state.reviews[0].source_evidence as Record<string, unknown>)
+      .observation_history as unknown[]).length === 2,
+    "pending refresh did not append history",
+  );
+  db.state.reviews[0].status = "approved";
+  db.state.jobs[0].status = "resolved";
+  const next = await queueConflictReview(
+    db,
+    catalogJob,
+    [{ field: "annual_fee" }],
+    proposed,
+    observation("d".repeat(64), "2026-08-20T01:00:00.000Z"),
+  );
+  assert(next !== first, "new content reused a terminal decision");
+  assert(
+    Number(db.state.jobs.length) === 2 && Number(db.state.reviews.length) === 2,
+    "new content was not reviewable",
+  );
+  assert(
+    db.state.reviews[0].status === "approved",
+    "terminal review was overwritten",
+  );
+});
 
 Deno.test("legacy catalog enrichment refuses scheduled and pilot benefit jobs", async () => {
   for (const runMode of ["scheduled", "pilot"]) {

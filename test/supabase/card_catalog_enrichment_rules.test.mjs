@@ -183,3 +183,30 @@ test("catalog lifecycle observations create review evidence without directly cha
   assert.doesNotMatch(source, /is_discontinued\s*:/);
   assert.doesNotMatch(source, /\.update\(\{[\s\S]{0,180}is_discontinued/);
 });
+
+test("catalog conflicts stage a versioned approvable job instead of reusing terminal discovery work", async () => {
+  const source = await readFile(catalogEntrypoint, "utf8");
+  const queue = source.match(
+    /async function queueConflictReview[\s\S]*?\n\}/,
+  )?.[0] ?? "";
+  assert.match(
+    queue,
+    /content_hash[\s\S]*submitted_url_hash[\s\S]*final_url_hash/i,
+  );
+  assert.match(queue, /from\(["']card_discovery_jobs["']\)[\s\S]*\.insert\(/i);
+  assert.doesNotMatch(
+    queue,
+    /discovery_job_id:\s*job\.discovery_job_id/,
+    "catalog review is pinned to an unrelated terminal discovery job",
+  );
+  assert.doesNotMatch(
+    source,
+    /includes\(message\)\s*&&\s*claimed\.discovery_job_id/,
+    "lifecycle evidence still depends on a stale legacy discovery link",
+  );
+  assert.match(queue, /observation_history/i);
+  assert.match(
+    queue,
+    /\.eq\(["']updated_at["'],\s*existingReview\.updated_at\)/i,
+  );
+});

@@ -99,6 +99,16 @@ function createDb(
         state.reviews.push(row);
         return { data: row, error: null };
       }
+      if (action === "update") {
+        const row = state.reviews.find((review) =>
+          review.id === filters.id &&
+          (!filters.status || review.status === filters.status) &&
+          (!("updated_at" in filters) ||
+            review.updated_at === filters.updated_at)
+        );
+        if (row) Object.assign(row, payload);
+        return { data: row ?? null, error: null };
+      }
       if (action === "upsert") {
         const existing = state.reviews.find((review) =>
           review.discovery_job_id === payload.discovery_job_id
@@ -322,6 +332,39 @@ test("does not bind a crawler candidate when observed network is absent but stor
   );
 });
 
+test("generic crawler identity retains the stored tier sibling as a conflict candidate", async () => {
+  const db = createDb({
+    catalogRows: [{
+      id: "privilege-infinite",
+      bank: "Axis Bank",
+      card_name: "Privilege Infinite",
+      network: "Visa",
+    }],
+  });
+  const result = await persistCrawlerCandidate(
+    db,
+    "Axis Bank",
+    candidate({
+      proposedName: "Privilege Credit Card",
+      aliases: ["Axis Privilege Credit Card"],
+      network: undefined,
+    }),
+  );
+
+  assert.deepEqual(result, { outcome: "review", reviewId: "review-1" });
+  assert.deepEqual(
+    db.state.reviews[0].existing_candidates.map((row) => row.id),
+    [
+      "privilege-infinite",
+    ],
+  );
+  assert.ok(
+    db.state.reviews[0].validation_warnings.includes(
+      "conflicting_strong_identity",
+    ),
+  );
+});
+
 test("fails closed when one opaque resource hash has conflicting DB bindings", async () => {
   const hash = "d".repeat(64);
   const db = createDb({
@@ -396,7 +439,7 @@ test("replays an existing-card observation through publication without creating 
   );
 });
 
-test("does not let a weak alias rename a differently named catalog identity", async () => {
+test("accepts a strong historical alias without requiring equality to the current name", async () => {
   const db = createDb({
     catalogRows: [
       {
@@ -417,10 +460,10 @@ test("does not let a weak alias rename a differently named catalog identity", as
 
   const result = await persistCrawlerCandidate(db, "Axis Bank", candidate());
 
-  assert.deepEqual(result, { outcome: "review", reviewId: "review-1" });
+  assert.deepEqual(result, { outcome: "existing", catalogCardId: "card-alt" });
   assert.equal(db.state.jobs.length, 1);
-  assert.equal(db.state.reviews.length, 1);
-  assert.equal(db.state.rpcCalls.length, 0);
+  assert.equal(db.state.reviews.length, 0);
+  assert.equal(db.state.rpcCalls.length, 1);
 });
 
 test("queues ambiguous catalog candidates for review instead of selecting one", async () => {
@@ -472,6 +515,62 @@ test("queues a genuinely new crawler product for review and reuses that service 
   assert.equal(proposed.final_url, proposed.submitted_url);
   assert.match(proposed.submitted_url_hash, /^[0-9a-f]{64}$/);
   assert.equal(proposed.final_url_hash, proposed.submitted_url_hash);
+});
+
+test("material crawler content creates a new immutable review version after a terminal decision", async () => {
+  const db = createDb();
+  const first = await persistCrawlerCandidate(
+    db,
+    "Axis Bank",
+    candidate({
+      contentHash: "a".repeat(64),
+      retrievedAt: "2026-08-20T00:00:00.000Z",
+    }),
+  );
+  db.state.reviews[0].status = "approved";
+  db.state.jobs[0].status = "resolved";
+  const second = await persistCrawlerCandidate(
+    db,
+    "Axis Bank",
+    candidate({
+      contentHash: "b".repeat(64),
+      retrievedAt: "2026-08-20T01:00:00.000Z",
+    }),
+  );
+
+  assert.deepEqual(first, { outcome: "review", reviewId: "review-1" });
+  assert.deepEqual(second, { outcome: "review", reviewId: "review-2" });
+  assert.equal(db.state.jobs.length, 2, "new content reused a terminal job");
+  assert.equal(
+    db.state.reviews.length,
+    2,
+    "new content overwrote a terminal review",
+  );
+  assert.equal(db.state.reviews[0].status, "approved");
+});
+
+test("same-content pending crawler refresh appends history under the review CAS", async () => {
+  const db = createDb();
+  const observed = candidate({
+    contentHash: "e".repeat(64),
+    retrievedAt: "2026-08-20T00:00:00.000Z",
+  });
+  await persistCrawlerCandidate(db, "Axis Bank", observed);
+  await persistCrawlerCandidate(db, "Axis Bank", observed);
+
+  assert.equal(db.state.jobs.length, 1);
+  assert.equal(db.state.reviews.length, 1);
+  assert.equal(db.state.reviews[0].status, "pending");
+  assert.equal(
+    db.state.reviews[0].source_evidence.observation_history.length,
+    2,
+  );
+  assert.ok(
+    db.state.calls.some((call) =>
+      call.table === "card_catalog_review_queue" && call.action === "update"
+    ),
+    "pending evidence was returned without a CAS refresh",
+  );
 });
 
 test("crawler proposal keeps exact queryful submitted/final URLs paired with their hashes", async () => {
@@ -638,6 +737,41 @@ test("discontinued exact identity is staged as reviewed reactivation", async () 
   assert.equal(
     db.state.reviews[0].proposed_fields.suggested_action,
     "reactivate",
+  );
+});
+
+test("current explicit discontinuation blocks crawler reactivation despite a matching 200 page", async () => {
+  const db = createDb({
+    catalogRows: [{
+      id: "card-neo",
+      bank: "Axis Bank",
+      card_name: "Neo",
+      network: "Visa",
+      is_discontinued: true,
+      updated_at: "2026-08-19T00:00:00.000Z",
+    }],
+  });
+
+  const result = await persistCrawlerCandidate(
+    db,
+    "Axis Bank",
+    candidate({
+      explicitDiscontinuation: true,
+      contentHash: "d".repeat(64),
+      retrievedAt: "2026-08-20T00:00:00.000Z",
+      sourceStatus: 200,
+    }),
+  );
+
+  assert.notEqual(
+    db.state.rpcCalls[0]?.args?._suggested_action,
+    "reactivate",
+    "explicit current discontinuation was proposed as reappearance",
+  );
+  assert.notEqual(
+    result.outcome,
+    "existing",
+    "discontinued card was published active",
   );
 });
 

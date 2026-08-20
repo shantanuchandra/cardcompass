@@ -13,6 +13,8 @@ import {
 } from "../_shared/official_issuer_fetch.ts";
 import { safeHttpsDisplayUrl } from "../_shared/benefit_source_privacy.ts";
 import {
+  boundedCatalogSourceObservation,
+  catalogLifecycleSuggestion,
   catalogPublicationBaseline,
   hasStrongExplicitCardDiscontinuation,
   publicationFieldsFromFetch,
@@ -25,18 +27,88 @@ function json(body: unknown, status = 200): Response {
   return Response.json(body, { status });
 }
 
-async function queueConflictReview(
+export async function queueConflictReview(
   db: UntypedSupabaseClient,
   job: Record<string, any>,
   conflicts: unknown[],
   proposedFields: Record<string, unknown>,
   sourceObservation: Record<string, unknown>,
 ) {
-  if (!job.discovery_job_id) throw new Error("catalog_review_context_required");
+  if (!job.card_id || !job.issuer) {
+    throw new Error("catalog_review_context_required");
+  }
+  const boundedObservation = boundedCatalogSourceObservation(sourceObservation);
+  const digest = async (value: string) => {
+    const bytes = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(value),
+    );
+    return [...new Uint8Array(bytes)].map((byte) =>
+      byte.toString(16).padStart(2, "0")
+    ).join("");
+  };
+  const submittedHash = String(
+    boundedObservation.submitted_url_hash ??
+      boundedObservation.submitted_resource_identity_hash ?? "",
+  ).toLowerCase();
+  const finalHash = String(
+    boundedObservation.final_url_hash ??
+      boundedObservation.final_resource_identity_hash ?? submittedHash,
+  ).toLowerCase();
+  const sourceObservationHash = await digest(
+    JSON.stringify(boundedObservation),
+  );
+  const contentHash =
+    /^[0-9a-f]{64}$/.test(String(boundedObservation.content_hash ?? ""))
+      ? String(boundedObservation.content_hash).toLowerCase()
+      : sourceObservationHash;
+  const baselineHash = await digest(JSON.stringify(
+    proposedFields.catalog_baseline ?? boundedObservation.catalog_baseline ??
+      null,
+  ));
+  const baselineCardName =
+    (proposedFields.catalog_baseline as Record<string, unknown> | undefined)
+      ?.card_name;
+  const dedupeKey = await digest(
+    `catalog-review:${job.card_id}:${submittedHash}:${finalHash}:${contentHash}:${sourceObservationHash}:${baselineHash}`,
+  );
+  const discoveryEvidence = {
+    card_id: job.card_id,
+    issuer: job.issuer,
+    catalog_enrichment_parent_job_id: job.id,
+    submitted_url_hash: submittedHash || null,
+    final_url_hash: finalHash || null,
+    content_hash: contentHash,
+    source_observation_hash: sourceObservationHash,
+    source_observation: boundedObservation,
+  };
+  let { data: reviewJob, error: reviewJobError } = await db
+    .from("card_discovery_jobs")
+    .insert({
+      user_id: null,
+      discovery_source: "issuer_crawl",
+      issuer: job.issuer,
+      proposed_product: baselineCardName ?? job.card_name ?? null,
+      evidence: discoveryEvidence,
+      dedupe_key: dedupeKey,
+      status: "queued",
+      updated_at: new Date().toISOString(),
+    }).select("id,status,review_item_id").maybeSingle();
+  if (reviewJobError && reviewJobError.code !== "23505") throw reviewJobError;
+  if (!reviewJob) {
+    const raced = await db.from("card_discovery_jobs")
+      .select("id,status,review_item_id")
+      .eq("discovery_source", "issuer_crawl")
+      .eq("dedupe_key", dedupeKey).is("user_id", null).single();
+    if (raced.error || !raced.data) throw raced.error ?? reviewJobError;
+    reviewJob = raced.data;
+  }
   const { data: existingReview, error: existingReviewError } = await db
     .from("card_catalog_review_queue")
-    .select("id,status")
-    .eq("discovery_job_id", job.discovery_job_id)
+    .select(
+      "id,status,proposed_fields,source_evidence,existing_candidates,validation_warnings,confidence,updated_at",
+    )
+    .eq("discovery_job_id", reviewJob.id)
     .maybeSingle();
   if (existingReviewError) throw existingReviewError;
   if (
@@ -44,19 +116,27 @@ async function queueConflictReview(
     ["approved", "merged", "rejected"].includes(existingReview.status)
   ) return existingReview.id;
   const reviewPayload = {
-    discovery_job_id: job.discovery_job_id,
+    discovery_job_id: reviewJob.id,
     proposed_fields: {
       card_id: job.card_id,
       issuer: job.issuer,
+      cardName: baselineCardName ?? job.card_name ?? null,
       ...proposedFields,
-      ...sourceObservation,
+      ...boundedObservation,
     },
     source_evidence: {
       official_url: safeHttpsDisplayUrl(job.canonical_url) ??
         "invalid-source",
-      content_hash: sourceObservation.content_hash ?? job.content_hash,
-      ...sourceObservation,
+      content_hash: contentHash,
+      source_observation_hash: sourceObservationHash,
+      ...boundedObservation,
       field_conflicts: conflicts,
+      observation_history: [{
+        observed_at: boundedObservation.retrieved_at ??
+          new Date().toISOString(),
+        content_hash: contentHash,
+        source_observation_hash: sourceObservationHash,
+      }],
     },
     existing_candidates: [{ card_id: job.card_id }],
     validation_warnings: ["catalog_field_conflict"],
@@ -66,12 +146,27 @@ async function queueConflictReview(
   };
   let review = existingReview;
   if (existingReview) {
-    const { data, error } = await db.from("card_catalog_review_queue")
-      .update(reviewPayload)
+    const history =
+      Array.isArray(existingReview.source_evidence?.observation_history)
+        ? existingReview.source_evidence.observation_history.slice(-15)
+        : [];
+    const refreshed = {
+      ...reviewPayload,
+      source_evidence: {
+        ...reviewPayload.source_evidence,
+        observation_history: [
+          ...history,
+          ...reviewPayload.source_evidence.observation_history,
+        ],
+      },
+    };
+    let update = db.from("card_catalog_review_queue").update(refreshed)
       .eq("id", existingReview.id)
-      .eq("status", "pending")
-      .select("id,status")
-      .maybeSingle();
+      .eq("status", "pending");
+    update = existingReview.updated_at
+      ? update.eq("updated_at", existingReview.updated_at)
+      : update.is("updated_at", null);
+    const { data, error } = await update.select("id,status").maybeSingle();
     if (error) throw error;
     review = data;
   } else {
@@ -83,7 +178,7 @@ async function queueConflictReview(
   if (!review) {
     const { data, error } = await db.from("card_catalog_review_queue")
       .select("id,status")
-      .eq("discovery_job_id", job.discovery_job_id)
+      .eq("discovery_job_id", reviewJob.id)
       .single();
     if (error || !data) throw error ?? new Error("catalog_review_race");
     review = data;
@@ -91,10 +186,23 @@ async function queueConflictReview(
   if (["approved", "merged", "rejected"].includes(review.status)) {
     return review.id;
   }
-  await db.from("card_discovery_jobs").update({
+  const { data: linkedJob, error: linkedJobError } = await db.from(
+    "card_discovery_jobs",
+  ).update({
+    status: "review_required",
     review_item_id: review.id,
+    failure_category: null,
+    next_retry_at: null,
     updated_at: new Date().toISOString(),
-  }).eq("id", job.discovery_job_id);
+  }).eq("id", reviewJob.id).in("status", [
+    "queued",
+    "discovering",
+    "failed",
+    "review_required",
+  ]).select("id").maybeSingle();
+  if (linkedJobError || !linkedJob) {
+    throw linkedJobError ?? new Error("catalog_review_job_race");
+  }
   return review.id;
 }
 
@@ -157,7 +265,6 @@ export async function processCatalogEnrichmentJob(
       .eq("id", claimed.card_id).single();
     if (catalogError) throw catalogError;
     catalogSnapshot = catalog;
-    const catalogBaseline = catalogPublicationBaseline(catalog);
     const robotsCache = createOfficialRobotsCache();
     const page = requireOfficialFetchBody(
       await fetchOfficialIssuerResource({
@@ -172,6 +279,10 @@ export async function processCatalogEnrichmentJob(
         robotsCache,
       }),
     );
+    const catalogBaseline = catalogPublicationBaseline({
+      ...catalog,
+      retrieved_at: page.retrievedAt,
+    });
     requireCatalogPageIdentity(
       page.text,
       claimed.issuer,
@@ -212,11 +323,15 @@ export async function processCatalogEnrichmentJob(
         proposal.value,
       ]),
     );
-    const lifecycleSuggestion = catalog.is_discontinued === true
-      ? "reactivate"
-      : hasStrongExplicitCardDiscontinuation(page.text)
-      ? "mark_discontinued"
-      : null;
+    const explicitDiscontinuation = hasStrongExplicitCardDiscontinuation(
+      page.text,
+    );
+    const lifecycleSuggestion = catalogLifecycleSuggestion({
+      isDiscontinued: catalog.is_discontinued === true,
+      httpStatus: page.status,
+      identityValidated: true,
+      explicitDiscontinuation,
+    });
     const reviewChanges = [
       ...compared.conflicts,
       ...Object.entries(compared.backfill).map(([field, proposed]) => ({
@@ -257,6 +372,8 @@ export async function processCatalogEnrichmentJob(
               ? "strong_explicit_discontinuation"
               : "catalog_enrichment",
             identity_validated: true,
+            explicit_discontinuation: explicitDiscontinuation,
+            retrieved_at: page.retrievedAt,
           },
           catalog_baseline: catalogBaseline,
         },
@@ -283,7 +400,7 @@ export async function processCatalogEnrichmentJob(
       : "enrichment_failed";
     if (
       ["http_404", "http_410", "identity_review", "redirect_rejected"]
-        .includes(message) && claimed.discovery_job_id
+        .includes(message)
     ) {
       const strongGoneObservation = message === "http_410";
       const catalogBaseline = catalogSnapshot

@@ -1112,46 +1112,60 @@ export function requireExactCatalogIdentity(
   aliases: Array<{ card_id: string; alias: string }>,
   proposedNetwork?: string | null,
 ): void {
-  const exactProduct = (value: string, network?: string | null): string => {
-    const base = normalizedProduct(value, issuer);
-    const networks = [
-      /\b(?:amex|american\s+express)\b/i.test(value) ? "amex" : "",
-      /\bmastercard\b/i.test(value) ? "mastercard" : "",
-      /\brupay\b/i.test(value) ? "rupay" : "",
-      /\bvisa\b/i.test(value) ? "visa" : "",
-      /\b(?:amex|american\s+express)\b/i.test(network ?? "") ? "amex" : "",
-      /\bmastercard\b/i.test(network ?? "") ? "mastercard" : "",
-      /\brupay\b/i.test(network ?? "") ? "rupay" : "",
-      /\bvisa\b/i.test(network ?? "") ? "visa" : "",
-    ].filter(Boolean).sort();
-    return [base, ...new Set(networks)].join("|");
+  const networkKey = (
+    value: string,
+    network?: string | null,
+  ): string | null => {
+    const signal = `${value} ${network ?? ""}`;
+    if (/\b(?:amex|american\s+express)\b/i.test(signal)) return "amex";
+    if (/\bmaster\s*card\b/i.test(signal)) return "mastercard";
+    if (/\brupay\b/i.test(signal)) return "rupay";
+    if (/\bvisa\b/i.test(signal)) return "visa";
+    return null;
+  };
+  const tierKey = (value: string): string | null => {
+    const normalized = value.toLowerCase().replace(/[^a-z0-9]+/g, " ");
+    if (/\bworld elite\b/.test(normalized)) return "world-elite";
+    for (
+      const tier of [
+        "infinite",
+        "signature",
+        "world",
+        "platinum",
+        "gold",
+        "select",
+        "classic",
+      ]
+    ) {
+      if (new RegExp(`\\b${tier}\\b`).test(normalized)) return tier;
+    }
+    return null;
   };
   const proposedBase = normalizedProduct(proposedName, issuer);
-  const proposed = exactProduct(proposedName, proposedNetwork);
+  const proposedNetworkKey = networkKey(proposedName, proposedNetwork);
+  const proposedTierKey = tierKey(proposedName);
   if (proposedBase.length < 2) throw new Error("identity_mismatch");
-  const activeIds = new Set(
-    catalog.filter((row) => row.card_type?.trim().toLowerCase() === "credit")
-      .map((row) => String(row.id)),
-  );
   const matches = new Set<string>();
-  for (const row of catalog) {
+  for (
+    const row of catalog.filter((candidate) =>
+      candidate.card_type?.trim().toLowerCase() === "credit"
+    )
+  ) {
+    const storedNetwork = networkKey(row.card_name, row.network);
+    const storedTier = tierKey(row.card_name);
     if (
-      row.card_type?.trim().toLowerCase() === "credit" &&
-      exactProduct(row.card_name, row.network) === proposed
+      (storedNetwork && proposedNetworkKey !== storedNetwork) ||
+      (storedTier && proposedTierKey !== storedTier)
+    ) continue;
+    const labels = [
+      row.card_name,
+      ...aliases.filter((alias) => String(alias.card_id) === String(row.id))
+        .map((alias) => alias.alias),
+    ];
+    if (
+      labels.some((label) => normalizedProduct(label, issuer) === proposedBase)
     ) {
       matches.add(String(row.id));
-    }
-  }
-  for (const alias of aliases) {
-    if (
-      activeIds.has(String(alias.card_id)) &&
-      exactProduct(
-          alias.alias,
-          catalog.find((row) => String(row.id) === String(alias.card_id))
-            ?.network,
-        ) === proposed
-    ) {
-      matches.add(String(alias.card_id));
     }
   }
   if (matches.size > 1) throw new Error("ambiguous_product");
@@ -1525,11 +1539,14 @@ export async function processJob(
       throw error;
     }
     fetchSummary.card_identity_validated = true;
+    const explicitDiscontinuation = hasStrongExplicitCardDiscontinuation(
+      page.text,
+    );
     const lifecycleAction = catalogLifecycleSuggestion({
       isDiscontinued: card.is_discontinued === true,
       httpStatus: page.status,
       identityValidated: true,
-      explicitDiscontinuation: hasStrongExplicitCardDiscontinuation(page.text),
+      explicitDiscontinuation,
     });
     if (lifecycleAction) {
       const lifecycleUrl = page.finalResourceUrl ?? page.finalUrl;
@@ -1547,6 +1564,8 @@ export async function processJob(
             : "strong_explicit_discontinuation",
           source_status: page.status,
           identity_validated: true,
+          explicit_discontinuation: explicitDiscontinuation,
+          retrieved_at: page.retrievedAt,
         },
       });
     }

@@ -1,4 +1,5 @@
 import {
+  boundedCatalogSourceObservation,
   canonicalPublicationResource,
   catalogLifecycleSuggestion,
   catalogPublicationBaseline,
@@ -136,6 +137,14 @@ Deno.test("central helper enforces source authority and calls exactly one public
       {
         discoveryJobId: "11111111-1111-4111-8111-111111111111",
         action: "approve",
+        reviewedFields: {},
+        parserVersion: "benefits-v6",
+      },
+      {
+        discoveryJobId: "11111111-1111-4111-8111-111111111111",
+        reviewItemId: "22222222-2222-4222-8222-222222222222",
+        actorId: "33333333-3333-4333-8333-333333333333",
+        action: "retry",
         reviewedFields: {},
         parserVersion: "benefits-v6",
       },
@@ -285,6 +294,41 @@ Deno.test("catalog lifecycle suggestions require strong evidence and exact reapp
     }) === "reactivate",
     "exact discontinued-card reappearance was ignored",
   );
+  assert(
+    catalogLifecycleSuggestion({
+      isDiscontinued: true,
+      httpStatus: 200,
+      identityValidated: true,
+      explicitDiscontinuation: true,
+    }) === null,
+    "current explicit discontinuation was overridden by weak reactivation precedence",
+  );
+});
+
+Deno.test("catalog source observations are recursively private and structurally bounded", () => {
+  const observation = boundedCatalogSourceObservation({
+    kind: "catalog_conflict",
+    nested: {
+      source: "https://user:pass@www.axis.bank.in/card?token=secret#private",
+      oversized: "x".repeat(20_000),
+      entries: Array.from({ length: 100 }, (_, index) => ({ index })),
+    },
+  });
+  const serialized = JSON.stringify(observation);
+  assert(
+    !/user:pass|token=secret|#private/.test(serialized),
+    "URL secrets survived",
+  );
+  assert(
+    serialized.length <= 16_384,
+    "source observation exceeded its SQL envelope",
+  );
+  assert(
+    Array.isArray((observation.nested as Record<string, unknown>).entries) &&
+      ((observation.nested as Record<string, unknown>).entries as unknown[])
+          .length <= 32,
+    "recursive array bound was not enforced",
+  );
 });
 
 Deno.test("lifecycle proposal delegates one bounded exact-card review RPC", async () => {
@@ -365,6 +409,21 @@ Deno.test("catalog baseline preserves every reviewed mutable and lifecycle autho
       updated_at: null,
     }).updated_at === null,
     "legacy nullable timestamp could not be bound by its full field snapshot",
+  );
+  assert(
+    catalogPublicationBaseline({
+      id: "11111111-1111-4111-8111-111111111111",
+      card_name: "Legacy Privilege",
+      network: null,
+      annual_fee: null,
+      joining_fee: null,
+      apr: null,
+      card_url: null,
+      is_discontinued: false,
+      updated_at: null,
+      retrieved_at: "2026-08-20T01:02:03.000Z",
+    }).version_observed_at === "2026-08-20T01:02:03.000Z",
+    "nullable legacy version lost the safe source retrieval fallback",
   );
 });
 

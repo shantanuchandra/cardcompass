@@ -73,6 +73,47 @@ test("resolver independently reconciles submitted and final hash bindings before
   assert.doesNotMatch(resolver, /ORDER BY[^;]*created_at[\s\S]{0,80}LIMIT 1/i);
 });
 
+test("resolver serializes one issuer family and rejects incompatible strong siblings", async () => {
+  const sql = await migrationSql();
+  const resolver = functionBody(sql, "resolve_card_catalog_identity");
+  const family = functionBody(sql, "normalize_card_catalog_family");
+  assert.match(
+    family,
+    /world(?:\\s\+)?elite|infinite|signature|platinum|gold/i,
+  );
+  assert.match(
+    resolver,
+    /card_catalog_identity:[\s\S]*normalized_family/i,
+    "lock namespace still depends on optional variant fields",
+  );
+  assert.doesNotMatch(
+    resolver.match(/pg_advisory_xact_lock[\s\S]{0,450}/i)?.[0] ?? "",
+    /normalized_network|normalized_tier/i,
+    "present and absent variant requests can take different locks",
+  );
+  assert.match(resolver, /strong_catalog_identity_conflict/i);
+  assert.match(
+    resolver,
+    /candidate_ids[\s\S]*compatible_candidate_ids[\s\S]*strong_catalog_identity_conflict/i,
+  );
+  assert.match(
+    sql,
+    /publication_lock_order_assertions[\s\S]*card_catalog_identity:/i,
+  );
+  assert.doesNotMatch(
+    sql.match(
+      /DO \$publication_lock_order_assertions\$[\s\S]*?\$publication_lock_order_assertions\$;/i,
+    )?.[0] ?? "",
+    /card_catalog_publication:identity:/i,
+    "apply-time lock assertion still names the superseded namespace",
+  );
+  assert.match(sql, /card_catalog_variant_behavior_assertions/i);
+  assert.match(
+    sql,
+    /Axis Bank Privilege Visa Infinite Credit Card[\s\S]*privilegeinfinite/i,
+  );
+});
+
 test("trusted existing observations are explicit, service-only, and still enqueue v6", async () => {
   const sql = await migrationSql();
   const publish = functionBody(sql, "publish_card_catalog_identity");
@@ -102,6 +143,11 @@ test("trusted existing observations are explicit, service-only, and still enqueu
     /observed_job\.status = 'resolved'[\s\S]{0,300}RETURN NEXT/i,
   );
   assert.match(publish, /unexpected_enrichment_enqueue/i);
+  assert.match(
+    publish,
+    /observe_existing[\s\S]*observed_job\.review_item_id IS NOT NULL[\s\S]*existing_observation_requires_review/i,
+    "review-bound jobs can bypass the admin decision through observe_existing",
+  );
 });
 
 test("publication persists the full reviewed artifact set and validates one v6 enqueue", async () => {
@@ -233,6 +279,16 @@ test("reviewed fields and lifecycle actions fail closed", async () => {
     publish,
     /http_(?:404|410)[\s\S]{0,120}is_discontinued\s*=/i,
   );
+  assert.match(
+    publish,
+    /_action IN \('mark_discontinued', 'reactivate'\)[\s\S]*card_row\.card_type[\s\S]*credit/i,
+    "lifecycle publication does not recheck credit-card authority",
+  );
+  assert.match(
+    publish,
+    /_action = 'reactivate'[\s\S]*explicit_discontinuation[\s\S]*reactivation_evidence_conflict/i,
+    "explicit current discontinuation can still be reviewed as reappearance",
+  );
 });
 
 test("reviewed edit and lifecycle proposals are optimistically bound to the live catalog", async () => {
@@ -261,6 +317,39 @@ test("recurring lifecycle review staging is bounded, idempotent, and excludes we
   assert.match(lifecycle, /ON CONFLICT|maybe_existing|existing_review/i);
   assert.doesNotMatch(lifecycle, /is_discontinued\s*=/i);
   assert.doesNotMatch(lifecycle, /http_404/i);
+  assert.match(
+    lifecycle,
+    /content_hash[\s\S]*source_observation_hash[\s\S]*dedupe/i,
+    "material lifecycle evidence is not versioned",
+  );
+  assert.match(
+    lifecycle,
+    /octet_length\(_source_observation::text\)[\s\S]*16384/i,
+  );
+  assert.match(
+    lifecycle,
+    /observation_kind IS DISTINCT FROM 'exact_card_reappearance'[\s\S]*explicit_discontinuation[\s\S]*invalid_catalog_lifecycle_review/i,
+  );
+});
+
+test("terminal cleanup requires authoritative database admin membership", async () => {
+  const terminalize = functionBody(
+    await migrationSql(),
+    "terminalize_calculator_review_rows",
+  );
+  assert.match(terminalize, /public\.users[\s\S]*is_admin/i);
+  assert.match(terminalize, /administrator_required/i);
+});
+
+test("reviewed unheld discontinuation documents the sole zero-v6 acquisition exception", async () => {
+  const publish = functionBody(
+    await migrationSql(),
+    "publish_card_catalog_identity",
+  );
+  assert.match(
+    publish,
+    /unheld_reviewed_discontinuation[\s\S]*existing_v6_job_count := 0[\s\S]*enqueued_count := 0/i,
+  );
 });
 
 test("SQL resource identity matches bounded TypeScript functional-query policy", async () => {
@@ -309,6 +398,10 @@ test("retry reopens retained review work and replay equality includes reason and
   assert.match(
     publish,
     /review_row\.status NOT IN \('pending', 'rejected'\)/i,
+  );
+  assert.match(
+    publish,
+    /_action IN \('retry', 'reject', 'mark_discontinued', 'reactivate'\)[\s\S]*reason_required/i,
   );
   assert.match(publish, /replay_audit\.details->>'reason'/i);
   assert.match(publish, /replay_audit\.details->>'merge_card_id'/i);

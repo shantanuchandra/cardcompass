@@ -106,6 +106,10 @@ export function reviewRequiredJobPatch(
   };
 }
 
+export function terminalDiscoveryStatus(status: unknown): boolean {
+  return status === "resolved" || status === "rejected";
+}
+
 const issuerDomains: Record<string, string[]> = {
   "Axis Bank": ["axis.bank.in", "axisbank.com"],
   "HDFC Bank": ["hdfcbank.com", "hdfc.bank.in"],
@@ -286,37 +290,55 @@ const weakIdentityAliases = new Set([
   "infinite",
 ]);
 
-function identityKey(value: string, issuer: string): string {
-  return normalizedProduct(
+export function normalizedProductFamily(value: string, issuer: string): string {
+  const family = normalizedProduct(
     value.replace(
-      /\b(?:visa\s+(?:infinite|signature|platinum)|master\s*card\s+(?:world(?:\s+elite)?|signature|platinum)|rupay\s+platinum)\b/gi,
+      /\b(?:visa|master\s*card|rupay|american\s+express|amex|world\s+elite|infinite|signature|world|platinum|gold|select|classic)\b/gi,
       " ",
     ),
     issuer,
   );
+  return family || normalizedProduct(value, issuer);
+}
+
+function identityKey(value: string, issuer: string): string {
+  return normalizedProductFamily(value, issuer);
+}
+
+function tierVariantKey(value: string): string | null {
+  const normalized = words(value).join(" ");
+  if (/\bworld elite\b/.test(normalized)) return "world-elite";
+  for (
+    const tier of [
+      "infinite",
+      "signature",
+      "world",
+      "platinum",
+      "gold",
+      "select",
+      "classic",
+    ]
+  ) {
+    if (new RegExp(`\\b${tier}\\b`).test(normalized)) return tier;
+  }
+  return null;
 }
 
 function networkVariantKey(value: string): string | null {
   const normalized = words(value).join(" ");
-  if (/\b(?:american express|amex)\b/.test(normalized)) return "amex";
-  if (/\bvisa infinite\b/.test(normalized)) return "visa:infinite";
-  if (/\bvisa signature\b/.test(normalized)) return "visa:signature";
-  if (/\bvisa platinum\b/.test(normalized)) return "visa:platinum";
-  if (/\bvisa\b/.test(normalized)) return "visa";
-  if (/\bmaster\s*card world elite\b/.test(normalized)) {
-    return "mastercard:world-elite";
-  }
-  if (/\bmaster\s*card world\b/.test(normalized)) return "mastercard:world";
-  if (/\bmaster\s*card signature\b/.test(normalized)) {
-    return "mastercard:signature";
-  }
-  if (/\bmaster\s*card platinum\b/.test(normalized)) {
-    return "mastercard:platinum";
-  }
-  if (/\bmaster\s*card\b/.test(normalized)) return "mastercard";
-  if (/\brupay platinum\b/.test(normalized)) return "rupay:platinum";
-  if (/\brupay select\b/.test(normalized)) return "rupay:select";
-  if (/\brupay\b/.test(normalized)) return "rupay";
+  const family = /\b(?:american express|amex)\b/.test(normalized)
+    ? "amex"
+    : /\bvisa\b/.test(normalized)
+    ? "visa"
+    : /\bmaster\s*card\b/.test(normalized)
+    ? "mastercard"
+    : /\brupay\b/.test(normalized)
+    ? "rupay"
+    : null;
+  const tier = tierVariantKey(value);
+  if (family && tier) return `${family}:${tier}`;
+  if (family) return family;
+  if (tier) return `tier:${tier}`;
   return null;
 }
 
@@ -324,10 +346,15 @@ function networkVariantsConflict(values: Array<string | null>): boolean {
   const signals = [
     ...new Set(values.filter((value): value is string => Boolean(value))),
   ];
-  const families = new Set(signals.map((value) => value.split(":")[0]));
+  const families = new Set(
+    signals.filter((value) => !value.startsWith("tier:"))
+      .map((value) => value.split(":")[0]),
+  );
   if (families.size > 1) return true;
-  const tiered = new Set(signals.filter((value) => value.includes(":")));
-  return tiered.size > 1;
+  const tiers = new Set(
+    signals.map((value) => value.split(":")[1]).filter(Boolean),
+  );
+  return tiers.size > 1;
 }
 
 function networkVariantMatches(
@@ -336,6 +363,12 @@ function networkVariantMatches(
 ): boolean {
   if (!expected || !actual) return true;
   if (actual === expected) return true;
+  if (expected.startsWith("tier:")) {
+    return actual.split(":")[1] === expected.slice(5);
+  }
+  if (actual.startsWith("tier:")) {
+    return expected.split(":")[1] === actual.slice(5);
+  }
   const [actualFamily] = actual.split(":");
   const [expectedFamily] = expected.split(":");
   return actualFamily === expectedFamily && !expected.includes(":");
@@ -343,8 +376,11 @@ function networkVariantMatches(
 
 function strongExpectedIdentity(value: string, issuer: string): boolean {
   const key = identityKey(value, issuer);
+  const variant = networkVariantKey(value);
   return key.length >= 4 &&
-    (!weakIdentityAliases.has(key) || networkVariantKey(value) !== null);
+    (!weakIdentityAliases.has(key) ||
+      (variant !== null && !variant.startsWith("tier:")) ||
+      issuer === "American Express");
 }
 
 function identityWords(value: string, issuer: string): string[] {
@@ -391,7 +427,7 @@ function identityFromLabel(
     identityKey(rawProduct, issuer).length < 4
   ) return null;
   const withoutNetworkVariant = rawProduct.replace(
-    /\b(?:visa\s+(?:infinite|signature|platinum)|master\s*card\s+(?:world(?:\s+elite)?|signature|platinum)|rupay\s+platinum)\b/gi,
+    /\b(?:visa|master\s*card|rupay|american\s+express|amex)\b/gi,
     " ",
   ).replace(/\s+/g, " ").trim();
   const identity = canonicalCardIdentity(issuer, withoutNetworkVariant);
@@ -404,7 +440,11 @@ function identityFromLabel(
     : /\b(?:american express|amex)\b/i.test(decodedLabel)
     ? "American Express"
     : identity.network;
-  return { ...identity, network };
+  return {
+    ...identity,
+    network,
+    aliases: rawProduct === identity.cardName ? [] : [rawProduct],
+  };
 }
 
 function strongIdentityLabels(content: string, issuer: string): string[] {
@@ -573,8 +613,9 @@ export function assessOfficialCardIdentity(
   );
   const actualVariants = candidates.map((candidate) => candidate.networkKey)
     .filter((value): value is string => value !== null);
-  const strongestVariantMatches = strongExpectedVariants.length === 0 ||
-    (actualVariants.length > 0 &&
+  const strongestVariantMatches = strongExpectedVariants.length === 0
+    ? actualVariants.length === 0
+    : (actualVariants.length > 0 &&
       actualVariants.every((actual) =>
         strongExpectedVariants.some((target) =>
           networkVariantMatches(actual, target.networkKey)
@@ -617,13 +658,10 @@ export function selectCatalogUrlIdentityMatch(
       candidate.issuer.trim().toLowerCase() !== issuer.trim().toLowerCase() ||
       candidate.cardType.trim().toLowerCase() !== "credit"
     ) continue;
-    const canonicalKey = identityKey(candidate.cardName, issuer);
-    const canonicalVariant = networkVariantKey(candidate.cardName);
     const expectedProducts = [
       candidate.cardName,
       ...candidate.aliases.filter((alias) =>
-        identityKey(alias, issuer) === canonicalKey &&
-        (!canonicalVariant || networkVariantKey(alias) === canonicalVariant)
+        strongExpectedIdentity(alias, issuer)
       ),
     ]
       .filter((value, index, all) => value && all.indexOf(value) === index);
@@ -633,9 +671,11 @@ export function selectCatalogUrlIdentityMatch(
         identity !== null
       );
     const storedNetwork = candidate.network?.trim().toLowerCase() ?? null;
+    const storedTier = tierVariantKey(candidate.cardName);
     const networkCompatible = identities.some((identity) =>
-      !storedNetwork ||
-      (identity.network?.trim().toLowerCase() ?? null) === storedNetwork
+      (!storedNetwork ||
+        (identity.network?.trim().toLowerCase() ?? null) === storedNetwork) &&
+      (!storedTier || tierVariantKey(identity.cardName) === storedTier)
     );
     if (identities.length > 0 && networkCompatible) {
       matchingIds.add(candidate.cardId);
@@ -761,12 +801,12 @@ export function evaluateAutomaticCatalogGate(
   }
   if (input.confidence < 0.9) reasons.push("low_confidence");
 
-  const official = identityKey(input.officialProduct, input.issuer);
+  const official = normalizedProduct(input.officialProduct, input.issuer);
   if (input.statementProducts.length === 0) {
     reasons.push("missing_statement_signal");
   } else if (
     !input.statementProducts.some((value) => {
-      const statement = identityKey(value, input.issuer);
+      const statement = normalizedProduct(value, input.issuer);
       return statement.length >= 4 && official === statement;
     })
   ) {

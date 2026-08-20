@@ -1564,32 +1564,41 @@ Deno.test("catalog identity requires an exact target match instead of a product-
   );
 });
 
-Deno.test("catalog identity rejects an alias shared by active issuer variants", () => {
+Deno.test("a shared generic alias cannot claim the more specific active tier", () => {
+  const catalog = [
+    { id: "regalia", card_name: "Regalia", card_type: "credit" },
+    {
+      id: "regalia-gold",
+      card_name: "Regalia Gold",
+      card_type: "credit",
+    },
+  ];
+  const aliases = [
+    { card_id: "regalia", alias: "Regalia Premium" },
+    { card_id: "regalia-gold", alias: "Regalia Premium" },
+  ];
+  requireExactCatalogIdentity(
+    "regalia",
+    "HDFC Bank",
+    "Regalia Premium",
+    catalog,
+    aliases,
+  );
   let error: unknown;
   try {
     requireExactCatalogIdentity(
-      "regalia",
+      "regalia-gold",
       "HDFC Bank",
       "Regalia Premium",
-      [
-        { id: "regalia", card_name: "Regalia", card_type: "credit" },
-        {
-          id: "regalia-gold",
-          card_name: "Regalia Gold",
-          card_type: "credit",
-        },
-      ],
-      [
-        { card_id: "regalia", alias: "Regalia Premium" },
-        { card_id: "regalia-gold", alias: "Regalia Premium" },
-      ],
+      catalog,
+      aliases,
     );
   } catch (caught) {
     error = caught;
   }
   assert(
-    error instanceof Error && error.message === "ambiguous_product",
-    "shared alias did not block ambiguous identity",
+    error instanceof Error && error.message === "identity_mismatch",
+    "generic shared alias claimed the more specific Gold tier",
   );
 });
 
@@ -1631,6 +1640,53 @@ Deno.test("catalog identity never accepts an absent or non-credit card type", ()
       `${cardType ?? "missing"} card type reached recurring extraction`,
     );
   }
+});
+
+Deno.test("recurring identity cannot use a generic historical alias to erase stored network or tier", () => {
+  const catalog = [{
+    id: "privilege-infinite",
+    card_name: "Privilege Infinite",
+    network: "Visa",
+    card_type: "credit",
+  }];
+  const aliases = [{
+    card_id: "privilege-infinite",
+    alias: "Legacy Privilege",
+  }];
+  for (
+    const [name, network] of [
+      ["Legacy Privilege", null],
+      ["Legacy Privilege", "Visa"],
+      ["Legacy Privilege Infinite", null],
+      ["Legacy Privilege Infinite", "Mastercard"],
+    ] as const
+  ) {
+    let error: unknown;
+    try {
+      requireExactCatalogIdentity(
+        "privilege-infinite",
+        "Axis Bank",
+        name,
+        catalog,
+        aliases,
+        network,
+      );
+    } catch (caught) {
+      error = caught;
+    }
+    assert(
+      error instanceof Error && error.message === "identity_mismatch",
+      `${name}/${network ?? "missing network"} weakened the stored variant`,
+    );
+  }
+  requireExactCatalogIdentity(
+    "privilege-infinite",
+    "Axis Bank",
+    "Legacy Privilege Infinite",
+    catalog,
+    [{ card_id: "privilege-infinite", alias: "Legacy Privilege Infinite" }],
+    "Visa",
+  );
 });
 
 Deno.test("catalog identity loading includes an actively held discontinued target with active variants", async () => {

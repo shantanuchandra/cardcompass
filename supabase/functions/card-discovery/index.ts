@@ -6,6 +6,7 @@ import {
   evaluateAutomaticCatalogGate,
   exactOfficialPageIdentity,
   normalizedProduct,
+  officialCardIdentityFromHtml,
   officialDomainsForIssuer,
   publicDiscoveryResult,
   publicReasonCode,
@@ -14,8 +15,8 @@ import {
   sanitizeDiscoveryEvidence,
   sanitizeEvidence,
   selectBoundCatalogResourceIdentity,
-  selectCatalogUrlIdentityMatch,
   selectSubmittedUrlIdentity,
+  terminalDiscoveryStatus,
 } from "../_shared/card_discovery.ts";
 import {
   approvedStoredQueryParameters,
@@ -222,7 +223,16 @@ async function upsertDiscoveryJob(
       normalizedProduct(product, evidence.issuer) || "unknown"
     }:${submittedResource?.urlHash ?? "product-discovery"}`,
   );
-  const { data, error } = await db.from("card_discovery_jobs").upsert({
+  const { data: existing, error: existingError } = await db
+    .from("card_discovery_jobs")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("dedupe_key", dedupeKey)
+    .maybeSingle();
+  if (existingError) throw existingError;
+  if (existing && terminalDiscoveryStatus(existing.status)) return existing;
+  if (existing) return existing;
+  const payload = {
     user_id: userId,
     issuer: evidence.issuer,
     proposed_product: product === "unknown" ? null : product,
@@ -235,10 +245,18 @@ async function upsertDiscoveryJob(
       : evidence,
     dedupe_key: dedupeKey,
     updated_at: new Date().toISOString(),
-  }, { onConflict: "user_id,dedupe_key", ignoreDuplicates: false })
+  };
+  const { data, error } = await db.from("card_discovery_jobs").insert(payload)
     .select("*")
-    .single();
-  if (error) throw error;
+    .maybeSingle();
+  if (error && error.code !== "23505") throw error;
+  if (!data) {
+    const { data: raced, error: racedError } = await db
+      .from("card_discovery_jobs").select("*")
+      .eq("user_id", userId).eq("dedupe_key", dedupeKey).single();
+    if (racedError || !raced) throw racedError ?? error;
+    return raced;
+  }
   return data;
 }
 
@@ -249,6 +267,9 @@ async function observeExistingCard(
   publicationEvidence: Record<string, unknown>,
   sourceKind: string,
 ) {
+  if (job.review_item_id || job.status === "review_required") {
+    throw new Error("existing_observation_requires_review");
+  }
   const { data: card, error: cardError } = await db.from("card_catalog")
     .select("id, bank, card_name, network, card_type")
     .eq("id", cardId)
@@ -287,6 +308,62 @@ async function observeExistingCard(
   return data;
 }
 
+async function resolveBoundIdentityOrReview(
+  db: UntypedSupabaseClient,
+  job: Record<string, any>,
+  content: string,
+  publicationEvidence: Record<string, unknown>,
+  submittedHash: string,
+  finalHash: string,
+  sourceKind: string,
+): Promise<{ cardId: string | null; reviewed: boolean }> {
+  const [submittedCardIds, finalCardIds] = await Promise.all([
+    findCatalogCardsByUrlHash(db, submittedHash),
+    findCatalogCardsByUrlHash(db, finalHash),
+  ]);
+  try {
+    const cardId = await selectBoundCatalogResourceIdentity({
+      submittedResourceIdentityHash: submittedHash,
+      finalResourceIdentityHash: finalHash,
+      issuer: job.issuer,
+      content,
+      lookupCardIds: async (hash) =>
+        hash === submittedHash ? submittedCardIds : finalCardIds,
+      loadCandidates: (ids) => loadCatalogUrlIdentityCandidates(db, ids),
+    });
+    return { cardId, reviewed: false };
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== "identity_conflict") {
+      throw error;
+    }
+    const boundIds = [...new Set([...submittedCardIds, ...finalCardIds])];
+    const candidates = await loadCatalogUrlIdentityCandidates(db, boundIds);
+    const observed = officialCardIdentityFromHtml(content, job.issuer) ??
+      canonicalCardIdentity(
+        job.issuer,
+        String(job.proposed_product ?? "Unknown"),
+      );
+    const boundResourceIdentities = {
+      submitted: { hash: submittedHash, card_ids: submittedCardIds },
+      final: { hash: finalHash, card_ids: finalCardIds },
+    };
+    await putInReview(
+      db,
+      job,
+      { ...observed, ...publicationEvidence },
+      {
+        ...publicationEvidence,
+        source_observation: { kind: sourceKind, identity_validated: false },
+        bound_resource_identities: boundResourceIdentities,
+      },
+      ["conflicting_url_identity"],
+      Number(job.evidence?.confidence ?? 0),
+      candidates,
+    );
+    return { cardId: null, reviewed: true };
+  }
+}
+
 async function processSubmittedUrl(
   db: UntypedSupabaseClient,
   job: Record<string, any>,
@@ -318,48 +395,49 @@ async function processSubmittedUrl(
       finalResourceIdentityHash: finalHash,
     }),
   };
-  const exactKnownIdentity = await selectBoundCatalogResourceIdentity({
-    submittedResourceIdentityHash: page.sourceIdentityHash,
-    finalResourceIdentityHash: page.finalResourceIdentityHash,
-    issuer: job.issuer,
-    content: page.text,
-    lookupCardIds: (hash) => findCatalogCardsByUrlHash(db, hash),
-    loadCandidates: (ids) => loadCatalogUrlIdentityCandidates(db, ids),
-  });
-  if (exactKnownIdentity) {
+  const opaqueBinding = await resolveBoundIdentityOrReview(
+    db,
+    job,
+    page.text,
+    publicationEvidence,
+    submittedHash,
+    finalHash,
+    "bound_resource_identity_conflict",
+  );
+  if (opaqueBinding.reviewed) {
+    return (await db.from("card_discovery_jobs").select("*").eq("id", job.id)
+      .single()).data;
+  }
+  if (opaqueBinding.cardId) {
     return observeExistingCard(
       db,
       job,
-      exactKnownIdentity,
+      opaqueBinding.cardId,
       publicationEvidence,
       "bound_official_card_observation",
     );
   }
-  const opaqueHashes = new Set(
-    [page.sourceIdentityHash, page.finalResourceIdentityHash].filter(
-      (hash): hash is string => Boolean(hash),
-    ),
-  );
-  const legacyHashes = [...new Set([legacySubmittedHash, legacyFinalHash])]
-    .filter((hash) => !opaqueHashes.has(hash));
-  const legacyCardIds = [
-    ...new Set(
-      (await Promise.all(
-        legacyHashes.map((hash) => findCatalogCardsByUrlHash(db, hash)),
-      )).flat(),
-    ),
-  ];
-  if (legacyCardIds.length > 0) {
-    const compatibleLegacyIdentity = selectCatalogUrlIdentityMatch(
+  if (
+    legacySubmittedHash !== submittedHash || legacyFinalHash !== finalHash
+  ) {
+    const legacyBinding = await resolveBoundIdentityOrReview(
+      db,
+      job,
       page.text,
-      job.issuer,
-      await loadCatalogUrlIdentityCandidates(db, legacyCardIds),
+      publicationEvidence,
+      legacySubmittedHash,
+      legacyFinalHash,
+      "legacy_bound_resource_identity_conflict",
     );
-    if (compatibleLegacyIdentity) {
+    if (legacyBinding.reviewed) {
+      return (await db.from("card_discovery_jobs").select("*").eq("id", job.id)
+        .single()).data;
+    }
+    if (legacyBinding.cardId) {
       return observeExistingCard(
         db,
         job,
-        compatibleLegacyIdentity,
+        legacyBinding.cardId,
         publicationEvidence,
         "legacy_bound_official_card_observation",
       );
@@ -525,7 +603,6 @@ async function putInReview(
   warnings: string[],
   confidence: number,
   existingCandidates: unknown[] = [],
-  preserveTerminal = false,
 ) {
   const reviewIssuer = typeof job.issuer === "string" ? job.issuer : "";
   if (!reviewIssuer) throw new Error("issuer_mismatch");
@@ -574,95 +651,102 @@ async function putInReview(
   existingCandidates = sanitizeDiscoveryEvidence(
     existingCandidates,
   ) as unknown[];
-  if (preserveTerminal) {
-    const { data: currentReview, error: currentReviewError } = await db
-      .from("card_catalog_review_queue")
-      .select("id, status")
-      .eq("discovery_job_id", job.id)
-      .maybeSingle();
-    if (currentReviewError) throw currentReviewError;
-    if (
-      currentReview &&
-      ["approved", "merged", "rejected"].includes(currentReview.status)
-    ) {
-      return;
-    }
-
-    let review = currentReview;
-    if (!review) {
-      const { data, error } = await db.from("card_catalog_review_queue")
-        .insert({
-          discovery_job_id: job.id,
-          proposed_fields: proposedFields,
-          source_evidence: sourceEvidence,
-          existing_candidates: existingCandidates,
-          validation_warnings: warnings,
-          confidence,
-          status: "pending",
-          updated_at: new Date().toISOString(),
-        })
-        .select("id, status")
-        .single();
-      if (!error) {
-        review = data;
-      } else {
-        const { data: racedReview, error: racedReviewError } = await db
-          .from("card_catalog_review_queue")
-          .select("id, status")
-          .eq("discovery_job_id", job.id)
-          .maybeSingle();
-        if (racedReviewError || !racedReview) throw error;
-        if (["approved", "merged", "rejected"].includes(racedReview.status)) {
-          return;
-        }
-        review = racedReview;
-      }
-    } else {
-      const { data, error } = await db.from("card_catalog_review_queue")
-        .update({
-          proposed_fields: proposedFields,
-          source_evidence: sourceEvidence,
-          existing_candidates: existingCandidates,
-          validation_warnings: warnings,
-          confidence,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", currentReview.id)
-        .eq("status", "pending")
-        .select("id, status")
-        .maybeSingle();
-      if (error || !data) throw error ?? new Error("catalog_review_race");
-      review = data;
-    }
-    const { error: updateError } = await db.from("card_discovery_jobs").update(
-      reviewRequiredJobPatch(review.id, new Date().toISOString()),
-    ).eq("id", job.id).in("status", [
-      "queued",
-      "discovering",
-      "failed",
-      "review_required",
-    ]);
-    if (updateError) throw updateError;
+  const { data: currentReview, error: currentReviewError } = await db
+    .from("card_catalog_review_queue")
+    .select(
+      "id, status, proposed_fields, source_evidence, existing_candidates, validation_warnings, confidence, updated_at",
+    )
+    .eq("discovery_job_id", job.id)
+    .maybeSingle();
+  if (currentReviewError) throw currentReviewError;
+  if (
+    currentReview &&
+    ["approved", "merged", "rejected"].includes(currentReview.status)
+  ) {
     return;
   }
 
-  const { data: review, error } = await db.from("card_catalog_review_queue")
-    .upsert({
-      discovery_job_id: job.id,
-      proposed_fields: proposedFields,
-      source_evidence: sourceEvidence,
-      existing_candidates: existingCandidates,
-      validation_warnings: warnings,
-      confidence,
-      status: "pending",
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "discovery_job_id" })
-    .select("id")
-    .single();
-  if (error) throw error;
-  await db.from("card_discovery_jobs").update(
+  let review = currentReview;
+  if (!review) {
+    const { data, error } = await db.from("card_catalog_review_queue")
+      .insert({
+        discovery_job_id: job.id,
+        proposed_fields: proposedFields,
+        source_evidence: sourceEvidence,
+        existing_candidates: existingCandidates,
+        validation_warnings: warnings,
+        confidence,
+        status: "pending",
+        updated_at: new Date().toISOString(),
+      })
+      .select("id, status")
+      .single();
+    if (!error) {
+      review = data;
+    } else {
+      const { data: racedReview, error: racedReviewError } = await db
+        .from("card_catalog_review_queue")
+        .select("id, status")
+        .eq("discovery_job_id", job.id)
+        .maybeSingle();
+      if (racedReviewError || !racedReview) throw error;
+      if (["approved", "merged", "rejected"].includes(racedReview.status)) {
+        return;
+      }
+      review = racedReview;
+    }
+  } else {
+    const observedAt = new Date().toISOString();
+    const history =
+      Array.isArray(currentReview.source_evidence?.observation_history)
+        ? currentReview.source_evidence.observation_history.slice(-15)
+        : [];
+    if (history.length === 0 && currentReview.source_evidence) {
+      history.push({
+        observed_at: currentReview.source_evidence.retrieved_at ??
+          currentReview.updated_at,
+        content_hash: currentReview.source_evidence.content_hash ?? null,
+        submitted_url_hash: currentReview.source_evidence.submitted_url_hash ??
+          null,
+        final_url_hash: currentReview.source_evidence.final_url_hash ?? null,
+        source_status: currentReview.source_evidence.source_status ?? null,
+      });
+    }
+    const updatedSourceEvidence = {
+      ...sourceEvidence,
+      observation_history: [...history.slice(-14), {
+        observed_at: sourceEvidence.retrieved_at ?? observedAt,
+        content_hash: sourceEvidence.content_hash ?? null,
+      }],
+    };
+    let update = db.from("card_catalog_review_queue")
+      .update({
+        proposed_fields: proposedFields,
+        source_evidence: updatedSourceEvidence,
+        existing_candidates: existingCandidates,
+        validation_warnings: warnings,
+        confidence,
+        updated_at: observedAt,
+      })
+      .eq("id", currentReview.id)
+      .eq("status", "pending");
+    update = currentReview.updated_at
+      ? update.eq("updated_at", currentReview.updated_at)
+      : update.is("updated_at", null);
+    const { data, error } = await update.select("id, status").maybeSingle();
+    if (error || !data) throw error ?? new Error("catalog_review_race");
+    review = data;
+  }
+  const { error: updateError } = await db.from("card_discovery_jobs").update(
     reviewRequiredJobPatch(review.id, new Date().toISOString()),
-  ).eq("id", job.id);
+  ).eq("id", job.id).in("status", [
+    "queued",
+    "discovering",
+    "failed",
+    "review_required",
+  ]);
+  if (updateError) throw updateError;
+  return;
 }
 
 async function processDiscoveryJob(
@@ -708,7 +792,6 @@ async function processDiscoveryJob(
       warnings,
       evidence.confidence ?? 0,
       existingCandidates,
-      true,
     );
     return;
   }
@@ -799,19 +882,21 @@ async function processDiscoveryJob(
       return;
     }
     const officialProduct = officialIdentity.cardName;
-    const boundCardId = await selectBoundCatalogResourceIdentity({
-      submittedResourceIdentityHash: page.sourceIdentityHash,
-      finalResourceIdentityHash: page.finalResourceIdentityHash,
-      issuer: job.issuer,
-      content: page.text,
-      lookupCardIds: (hash) => findCatalogCardsByUrlHash(db, hash),
-      loadCandidates: (ids) => loadCatalogUrlIdentityCandidates(db, ids),
-    });
-    if (boundCardId) {
+    const bound = await resolveBoundIdentityOrReview(
+      db,
+      job,
+      page.text,
+      publicationEvidence,
+      submittedHash,
+      finalHash,
+      "discovered_bound_resource_identity_conflict",
+    );
+    if (bound.reviewed) return;
+    if (bound.cardId) {
       await observeExistingCard(
         db,
         job,
-        boundCardId,
+        bound.cardId,
         publicationEvidence,
         "discovered_bound_official_card_observation",
       );
@@ -952,6 +1037,9 @@ serve(async (request) => {
         evidence,
         body.source_url,
       );
+      if (terminalDiscoveryStatus(job.status)) {
+        return json(publicDiscoveryResult(job));
+      }
       try {
         const result = await processSubmittedUrl(
           db,
@@ -989,27 +1077,12 @@ serve(async (request) => {
     }
     if (action === "discover") {
       const evidence = safeEvidence(body.evidence);
-      const product = evidence.product_signals?.[0] ?? "unknown";
-      const dedupeKey = await sha256(
-        `${evidence.issuer}:${
-          normalizedProduct(product, evidence.issuer) || "unknown"
-        }`,
-      );
-      const { data: job, error } = await db.from("card_discovery_jobs").upsert({
-        user_id: user.id,
-        issuer: evidence.issuer,
-        proposed_product: product === "unknown" ? null : product,
-        evidence,
-        dedupe_key: dedupeKey,
-        status: "queued",
-        updated_at: new Date().toISOString(),
-      }, { onConflict: "user_id,dedupe_key", ignoreDuplicates: false })
-        .select("id, status, resolved_card_id, next_retry_at")
-        .single();
-      if (error) throw error;
-      EdgeRuntime.waitUntil(
-        processDiscoveryJob(db, job.id, invocationDeadlineAt),
-      );
+      const job = await upsertDiscoveryJob(db, user.id, evidence);
+      if (!terminalDiscoveryStatus(job.status)) {
+        EdgeRuntime.waitUntil(
+          processDiscoveryJob(db, job.id, invocationDeadlineAt),
+        );
+      }
       return json({
         job_id: job.id,
         status: job.status,

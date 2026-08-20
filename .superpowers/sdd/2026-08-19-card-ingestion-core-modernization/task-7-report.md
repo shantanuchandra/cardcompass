@@ -10,7 +10,11 @@ strong identity resolution, URL keys, append-only provenance, audit, lifecycle
 state, and the exactly-one benefits-v6 recurring job outcome. The review
 hardening pass also removes existing-card bypasses, binds reviewed changes to a
 catalog baseline, and turns recurring 410/explicit-discontinuation/reappearance
-observations into bounded review work without changing acquisition state.
+observations into bounded review work without changing acquisition state. The
+second hardening pass versions review work by resource/content identity, keeps
+terminal decisions immutable, serializes identity at issuer/product-family
+scope, and preserves network/tier variants throughout discovery, recurrence,
+and publication.
 
 Live applied: **no**.
 
@@ -34,8 +38,10 @@ Modified:
 - `supabase/functions/admin-catalog-entry/benefit_admin_test.ts`
 - `supabase/functions/benefit-enrichment-batch/index.ts`
 - `supabase/functions/benefit-enrichment-batch/index_test.ts`
+- `supabase/functions/benefit-enrichment-batch/supporting_documents_test.ts`
 - `supabase/functions/card-discovery/index.ts`
 - `supabase/functions/catalog-enrichment/index.ts`
+- `supabase/functions/catalog-enrichment/index_test.ts`
 - `test/supabase/card_catalog_enrichment_rules.test.mjs`
 - `test/supabase/card_discovery_rules.test.mjs`
 - `test/supabase/issuer_card_discovery_rules.test.mjs`
@@ -46,7 +52,7 @@ No earlier migration was modified.
 ## Migration
 
 - File: `20260819231435_publish_reviewed_card_identity.sql`
-- SHA-256: `76864ea6770e89786a964175c20fb1000377de21bce66596f6eb6707606e4d83`
+- SHA-256: `fe6a51daf34fdb1d0cc83582e11c60e48892d1b1635247dab87a9b1de827ae22`
 - Created with `supabase migration new publish_reviewed_card_identity`.
 - Project-ref preflight remained exactly `prbcoxqobhjnnfnxevxf`.
 
@@ -89,6 +95,15 @@ No earlier migration was modified.
 - Bound URLs are revalidated against issuer, normalized product/tier, and
   payment network. Weak standalone aliases such as Visa, Gold, Platinum,
   Infinite, Signature, and World cannot resolve or create a product.
+- Identity resolution takes its advisory lock at issuer/product-family scope,
+  independently of whether the request supplied a network or tier. If a
+  same-issuer/family candidate exists but no candidate is compatible with all
+  authoritative network/tier/type evidence, resolution raises
+  `strong_catalog_identity_conflict`; it never inserts a weaker duplicate.
+- Product classification retains family variants such as Gold, Platinum,
+  World, World Elite, Signature, and Infinite end to end. Historical aliases
+  may prove family membership without matching the current display name, but
+  they cannot weaken a stored network/tier or the credit-card type constraint.
 - Production loaders now carry stored network evidence and fail closed on
   absent-network, absent-tier, non-credit, cross-network, or ambiguous hash/body
   matches. Ordinary fees/terms/benefits prose is excluded from competing title
@@ -111,9 +126,18 @@ No earlier migration was modified.
 - Crawler deduplication includes both the exact submitted selector identity and
   final resource identity. Two submitted selectors that share one redirect
   remain separate review jobs. Submitted and final domains are each validated.
+- Submitted and final legacy bindings are reconciled independently before body
+  selection. If they bind different cards, discovery produces one bounded,
+  actionable conflict review carrying both identities and their evidence; it
+  cannot degrade into a status-only failure.
 - Replayed exact trusted observations re-enter publication, deduplicate only the
   exact same provenance observation, and still verify the existing v6 job.
   Changed retrieval/content evidence appends history; it is never rewritten.
+- Issuer-crawl and legacy catalog-enrichment work is versioned by submitted and
+  final resource identity, content identity, sanitized source observation, and
+  catalog baseline. A pending review may refresh only through a null-safe
+  optimistic compare-and-set and appends observation history. A terminal review
+  is immutable; materially new evidence creates a new service job/review unit.
 
 ## Lock order and page moves
 
@@ -165,6 +189,10 @@ For a reviewed same-card page move:
   evidence may suggest discontinuation. 404, redirect, and identity failures
   produce weaker retained review evidence and cannot authorize a lifecycle
   action. No HTTP status directly mutates acquisition state.
+- Explicit current discontinuation evidence always takes precedence over a
+  nominal 200 reappearance. Reactivation requires positive exact-card
+  reappearance evidence and the explicit absence of discontinuation language,
+  consistently across issuer crawl, recurring ingestion, and publication.
 - Actively held discontinued cards continue through the Task 6 recurring
   eligibility boundary.
 - Recurring benefits-v6 410 and strong explicit discontinuation observations
@@ -174,11 +202,20 @@ For a reviewed same-card page move:
   cannot authorize lifecycle publication.
 - Every edit/lifecycle proposal stores the old mutable fields, acquisition
   state, canonical URL, and `updated_at` (nullable for legacy rows). Publication
-  compares that full snapshot again under the card lock and returns
+  stores retrieval-time evidence when legacy `updated_at` is null, compares the
+  null-aware full snapshot again under the card lock, and returns
   `stale_catalog_baseline` without mutation if another review won first.
-- `retry` can reopen retained pending or rejected review work, preserves its
-  audit history, and keeps the same review identifier. Approved/merged work is
-  not reopened. Replay equality includes reason and merge target.
+- Normal user resubmission never resets a terminal review/job to pending. An
+  explicit admin `retry` with a non-empty reason may reopen only the retained
+  retryable review unit and appends audit history; approved/merged work remains
+  immutable. Replay equality includes reason and merge target.
+- `observe_existing` rejects any discovery job already connected to review work
+  or marked review-required, even when the card otherwise has a strong official
+  binding.
+- The only reviewed publication that intentionally yields zero recurring v6
+  jobs is an unheld card's approved discontinuation. That exception is assigned
+  explicitly and audited; every other publication must retain or enqueue the
+  exact one eligible recurring job.
 - Calculator cleanup now terminalizes and audits review/job rows instead of
   deleting them. Review/audit/provenance/URL/enrichment foreign keys no longer
   cascade-delete identity history; user deletion de-identifies statement jobs.
@@ -215,20 +252,36 @@ The review-hardening red run then produced the required exact failures:
   and exact catalog lifecycle-evidence tests each failed before their bounded
   implementations were added.
 
+The second hardening pass began from another exact red TypeScript run:
+
+- `TS2305` proved that the shared bounded catalog-source sanitizer did not yet
+  exist;
+- `TS2353` proved that nullable legacy catalog baselines did not carry the
+  retrieval-time fallback needed for optimistic comparison;
+- the new behavioral overlays then failed on terminal review reuse, URL-pair-
+  only crawler deduplication, generic aliases claiming network/tier variants,
+  reactivation despite explicit discontinuation, user resubmission reopening
+  terminal work, and status-only bound-URL conflict handling.
+
+Those reds were kept as behavioral regression tests. The green implementation
+adds content/resource-versioned review units, compare-and-set evidence refresh,
+strict family/network/tier/type resolution, lifecycle precedence, explicit
+admin retry, and independently evidenced submitted/final conflicts.
+
 ## Green verification
 
 - `deno test --node-modules-dir=auto --allow-env --frozen` across every Edge
-  test except the separately permissioned admin listener suite: **200 passed,
+  test except the separately permissioned admin listener suite: **203 passed,
   0 failed**.
 - `deno test --node-modules-dir=auto --allow-env
   --allow-net=0.0.0.0:8000 --frozen
   supabase/functions/admin-catalog-entry/benefit_admin_test.ts`: **41 passed,
   0 failed**. The only network permission is the unchanged local test listener.
 - `node --test` across every `test/supabase/*_test.js` and
-  `test/supabase/*.test.mjs`: **237 passed, 0 failed**.
+  `test/supabase/*.test.mjs`: **247 passed, 0 failed**.
 - `flutter test --no-pub test/supabase/card_catalog_url_identity_test.dart`:
   **2 passed, 0 failed**.
-- Total unique named offline tests: **480 passed, 0 failed**.
+- Total unique named offline tests: **493 passed, 0 failed**.
 - `deno check --node-modules-dir=auto --frozen` on all changed production
   TypeScript: passed.
 - `deno fmt --check` on the complete changed TypeScript/JavaScript test surface:

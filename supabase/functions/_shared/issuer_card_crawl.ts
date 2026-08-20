@@ -3,6 +3,7 @@ import {
   canonicalCardIdentity,
   canonicalOfficialUrl,
   normalizedProduct,
+  normalizedProductFamily,
   officialCardIdentityFromHtml,
 } from "./card_discovery.ts";
 import {
@@ -20,6 +21,7 @@ import {
 } from "./benefit_source_privacy.ts";
 import {
   canonicalPublicationResource,
+  hasStrongExplicitCardDiscontinuation,
   proposeCatalogLifecycleReview,
   publishReviewedCardIdentity,
 } from "./catalog_identity_publication.ts";
@@ -45,6 +47,7 @@ export type PageClassification = {
   contentHash?: string;
   retrievedAt?: string;
   sourceStatus?: number;
+  explicitDiscontinuation?: boolean;
 };
 
 export type IssuerCrawlResult = {
@@ -379,6 +382,7 @@ function sanitizeClassification(page: PageClassification): PageClassification {
     contentHash,
     retrievedAt,
     sourceStatus,
+    explicitDiscontinuation,
     ...classification
   } = page;
   const validHash = (value: string | undefined): value is string =>
@@ -424,6 +428,9 @@ function sanitizeClassification(page: PageClassification): PageClassification {
     ...(Number.isInteger(sourceStatus) && sourceStatus! >= 100 &&
         sourceStatus! <= 599
       ? { sourceStatus }
+      : {}),
+    ...(explicitDiscontinuation === true
+      ? { explicitDiscontinuation: true }
       : {}),
   };
 }
@@ -507,6 +514,7 @@ async function findCrawlerCatalogCandidates(
   supabase: UntypedSupabaseClient,
   issuer: string,
   normalizedNames: string[],
+  normalizedFamilies: string[],
 ): Promise<Array<Record<string, unknown>>> {
   const { data: catalogRows, error: catalogError } = await supabase
     .from("card_catalog")
@@ -529,6 +537,8 @@ async function findCrawlerCatalogCandidates(
     if (
       normalizedNames.includes(
         normalizedProduct(String(row.card_name ?? ""), issuer),
+      ) || normalizedFamilies.includes(
+        normalizedProductFamily(String(row.card_name ?? ""), issuer),
       )
     ) {
       matches.set(String(row.id), row);
@@ -538,16 +548,18 @@ async function findCrawlerCatalogCandidates(
   if (normalizedNames.length > 0) {
     const { data: aliasRows, error: aliasError } = await supabase
       .from("card_catalog_aliases")
-      .select("card_id, normalized_alias")
-      .in("normalized_alias", normalizedNames);
+      .select("card_id, alias, normalized_alias")
+      .in("card_id", [...byId.keys()]);
     if (aliasError) throw aliasError;
     for (const alias of aliasRows ?? []) {
       const card = byId.get(String(alias.card_id));
-      if (
-        card &&
-        normalizedProduct(String(card.card_name ?? ""), issuer) ===
-          String(alias.normalized_alias ?? "")
-      ) matches.set(String(alias.card_id), card);
+      const normalizedAlias = normalizedProduct(
+        String(alias.alias ?? alias.normalized_alias ?? ""),
+        issuer,
+      );
+      if (card && normalizedNames.includes(normalizedAlias)) {
+        matches.set(String(alias.card_id), card);
+      }
     }
   }
 
@@ -618,19 +630,48 @@ export async function persistCrawlerCandidate(
       .map((value) => normalizedProduct(value, issuer))),
   ]
     .filter((value) => value.length >= 2);
+  const normalizedFamilies = [
+    ...new Set([canonical.cardName, ...aliases]
+      .map((value) => normalizedProductFamily(value, issuer))),
+  ].filter((value) => value.length >= 2);
   const candidates = await findCrawlerCatalogCandidates(
     supabase,
     issuer,
     normalizedNames,
+    normalizedFamilies,
   );
   const proposedNetwork = (canonical.network ?? candidate.network)?.trim()
     .toLowerCase() ?? null;
+  const tierKey = (value: unknown): string | null => {
+    const normalized = String(value ?? "").toLowerCase().replace(
+      /[^a-z0-9]+/g,
+      " ",
+    );
+    if (/\bworld elite\b/.test(normalized)) return "world-elite";
+    for (
+      const tier of [
+        "infinite",
+        "signature",
+        "world",
+        "platinum",
+        "gold",
+        "select",
+        "classic",
+      ]
+    ) {
+      if (new RegExp(`\\b${tier}\\b`).test(normalized)) return tier;
+    }
+    return null;
+  };
+  const proposedTier = tierKey(canonical.cardName);
   const networkCompatibleCandidates = candidates.filter((row) => {
     const storedNetwork = typeof row.network === "string"
       ? row.network.trim().toLowerCase()
       : "";
-    return !storedNetwork ||
-      Boolean(proposedNetwork && storedNetwork === proposedNetwork);
+    const storedTier = tierKey(row.card_name);
+    return (!storedNetwork ||
+      Boolean(proposedNetwork && storedNetwork === proposedNetwork)) &&
+      (!storedTier || storedTier === proposedTier);
   });
   const exactExisting = candidates.length === 1 &&
       networkCompatibleCandidates.length === 1 &&
@@ -646,13 +687,22 @@ export async function persistCrawlerCandidate(
         networkCompatibleCandidates.length === 0
       ? ["conflicting_network_identity"]
       : []),
+    ...(candidates.length > 0 && networkCompatibleCandidates.length === 0
+      ? ["conflicting_strong_identity"]
+      : []),
   ]);
   const safeEvidence = uniqueStrings(candidate.sanitizedEvidence, 300).slice(
     0,
     3,
   );
+  const contentIdentity = validOpaqueHash(candidate.contentHash)
+    ? candidate.contentHash.toLowerCase()
+    : await sha256(JSON.stringify({
+      evidence: safeEvidence,
+      source_status: candidate.sourceStatus ?? 200,
+    }));
   const dedupeKey = await sha256(
-    `${issuer.trim().toLowerCase()}:${submittedHash}:${finalHash}`,
+    `${issuer.trim().toLowerCase()}:${submittedHash}:${finalHash}:${contentIdentity}`,
   );
 
   const sourceObservation = {
@@ -663,8 +713,14 @@ export async function persistCrawlerCandidate(
       : 200,
     submitted_url_hash: submittedHash,
     final_url_hash: finalHash,
+    content_hash: contentIdentity,
+    explicit_discontinuation: candidate.explicitDiscontinuation === true,
+    ...(candidate.retrievedAt ? { retrieved_at: candidate.retrievedAt } : {}),
   };
-  if (exactExisting?.is_discontinued === true) {
+  if (
+    exactExisting?.is_discontinued === true &&
+    candidate.explicitDiscontinuation !== true
+  ) {
     const reviewId = await proposeCatalogLifecycleReview(supabase, {
       cardId: String(exactExisting.id),
       suggestedAction: "reactivate",
@@ -679,6 +735,15 @@ export async function persistCrawlerCandidate(
       },
     });
     return { outcome: "review", reviewId };
+  }
+  if (
+    exactExisting?.is_discontinued === true &&
+    candidate.explicitDiscontinuation === true
+  ) {
+    return {
+      outcome: "duplicate",
+      catalogCardId: String(exactExisting.id),
+    };
   }
 
   const { data: existingJob, error: existingJobError } = await supabase
@@ -818,7 +883,9 @@ export async function persistCrawlerCandidate(
 
   const { data: existingReview, error: existingReviewError } = await supabase
     .from("card_catalog_review_queue")
-    .select("id, status")
+    .select(
+      "id, status, proposed_fields, source_evidence, existing_candidates, validation_warnings, confidence, updated_at",
+    )
     .eq("discovery_job_id", job.id)
     .maybeSingle();
   if (existingReviewError) throw existingReviewError;
@@ -827,6 +894,61 @@ export async function persistCrawlerCandidate(
     ["approved", "merged", "rejected"].includes(existingReview.status)
   ) {
     return { outcome: "duplicate", reviewId: existingReview.id };
+  }
+
+  if (existingReview?.status === "pending") {
+    const history =
+      Array.isArray(existingReview.source_evidence?.observation_history)
+        ? existingReview.source_evidence.observation_history.slice(-15)
+        : [];
+    if (history.length === 0 && existingReview.source_evidence) {
+      history.push({
+        observed_at: existingReview.source_evidence.retrieved_at ??
+          existingReview.updated_at,
+        content_hash: existingReview.source_evidence.content_hash ??
+          contentIdentity,
+        submitted_url_hash:
+          existingReview.source_evidence.submitted_resource_identity_hash ??
+            submittedHash,
+        final_url_hash:
+          existingReview.source_evidence.final_resource_identity_hash ??
+            finalHash,
+        source_status: existingReview.source_evidence.source_status ?? 200,
+      });
+    }
+    const refreshedAt = new Date().toISOString();
+    const refreshedEvidence = {
+      ...evidence.crawler_source_evidence,
+      observation_history: [
+        ...history.slice(-14),
+        {
+          observed_at: candidate.retrievedAt ?? refreshedAt,
+          content_hash: contentIdentity,
+          source_status: candidate.sourceStatus ?? 200,
+        },
+      ],
+    };
+    const update = supabase.from("card_catalog_review_queue")
+      .update({
+        proposed_fields: proposal,
+        source_evidence: refreshedEvidence,
+        existing_candidates: candidates,
+        validation_warnings: warnings,
+        confidence: evidence.confidence,
+        updated_at: refreshedAt,
+      })
+      .eq("id", existingReview.id)
+      .eq("status", "pending");
+    const { data: refreshedReview, error: refreshError } =
+      existingReview.updated_at
+        ? await update.eq("updated_at", existingReview.updated_at).select(
+          "id, status",
+        ).maybeSingle()
+        : await update.is("updated_at", null).select("id, status")
+          .maybeSingle();
+    if (refreshError || !refreshedReview) {
+      throw refreshError ?? new Error("catalog_review_race");
+    }
   }
 
   let review = existingReview;
@@ -908,6 +1030,9 @@ export function classifyIssuerPage(
     ...(input.contentHash ? { contentHash: input.contentHash } : {}),
     ...(input.retrievedAt ? { retrievedAt: input.retrievedAt } : {}),
     ...(input.sourceStatus ? { sourceStatus: input.sourceStatus } : {}),
+    ...(hasStrongExplicitCardDiscontinuation(html)
+      ? { explicitDiscontinuation: true }
+      : {}),
   };
 
   if (
