@@ -36,17 +36,24 @@ Created:
 Modified:
 
 - `.github/workflows/benefit-enrichment-schedule.yml`
+- `lib/features/admin/screens/card_catalog_review_screen.dart`
 - `supabase/functions/benefit-enrichment-batch/index.ts`
 - `supabase/functions/benefit-enrichment-batch/index_test.ts`
 - `supabase/functions/_shared/issuer_card_crawl.ts`
 - `supabase/functions/_shared/catalog_identity_publication.ts`
 - `supabase/functions/_shared/catalog_identity_publication_test.ts`
+- `supabase/migrations/20260819231435_publish_reviewed_card_identity.sql`
+- `test/features/admin/benefit_enrichment_review_test.dart`
 - `test/gtm/benefit-enrichment-schedule.test.js`
 - `test/supabase/card_discovery_rules.test.mjs`
 - `test/supabase/issuer_card_crawl_rules.test.mjs`
 - `test/supabase/issuer_card_discovery_rules.test.mjs`
+- `test/supabase/publish_reviewed_card_identity_migration_test.js`
 
-No schema or migration file changed.
+No table, column, index, constraint, or new migration was added. The existing
+unapplied Task 7 publication migration was updated in place to make quarantine
+retry/reject transactional. Its reviewed SHA-256 is
+`d7a1323ef0c2fc2e6020a791a51462afc0e311f6424745d8e0defac5bae47755`.
 
 ## Scheduler and action boundary
 
@@ -86,11 +93,12 @@ No schema or migration file changed.
   Evidence records the current slot, attempt, and sanitized newest-24 run
   history; candidate progress resets only for a new positively completed slot.
 - Legacy date-keyed rows are scanned separately from candidate-outcome jobs in
-  deterministic 100-row pages, up to 1,000 rows. One due row is migrated by CAS
-  to the stable key; an active row blocks a new-day claim; multiple rows fail
-  closed into exact linked review work. A completed reconciliation marker avoids
-  rescanning historical rows, while a late legacy backlog row explicitly forces
-  reconciliation. An exhausted 1,000-row scan fails closed without crawling.
+  deterministic 100-row pages, up to 1,000 rows, on every issuer claim. The
+  query is case-insensitive and results are normalized again in process; no
+  permanent reconciliation marker is trusted during mixed deployment. One due
+  row is migrated by CAS to the stable key, any active legacy lease blocks the
+  stable holder, and multiple due rows fail closed into review work. An
+  exhausted 1,000-row scan fails closed without crawling.
 - Before selecting the current UTC day slot, the scheduler scans eligible
   service-owned failed/budget-exhausted and expired-discovering runs in stable
   `created_at,id` pages, then orders the bounded result by persisted run date.
@@ -99,7 +107,8 @@ No schema or migration file changed.
   order without a manual action. Five unsuccessful attempts terminalize a run as
   operator-visible `resume_attempts_exhausted`, so permanently bad work cannot
   starve fresh day-slot rotation forever. Legacy conflict review creation is
-  capped at 20 exact linked jobs per invocation and drains later.
+  capped at 20 separate exact-anchor-reference jobs per invocation and drains
+  later.
 - Each claim installs an opaque UUID lease token inside the existing bounded run
   evidence. Every progress/final compare-and-set requires the exact current
   token and rotates it, returning the next token to the holder. An expired
@@ -115,12 +124,27 @@ No schema or migration file changed.
   lease finalizes as failed with retained evidence and exponential five-minute
   to six-hour backoff. Exact token loss returns `lost_lease` without a stale
   write.
-- Attempt-ceiling, invalid retained evidence, and legacy-anchor conflicts use
-  Task 7's transactional `stage_card_catalog_identity_review` boundary with
-  classification `issuer_discovery_quarantine`, a deterministic semantic hash,
-  bounded private evidence, and the exact discovery-job link. They never mutate
-  `card_catalog`; operators receive pending work that can be inspected, retried,
-  or rejected.
+- A failed anchor with a future `next_retry_at` returns `backoff` from backlog,
+  fresh-slot, and manual claim paths without incrementing attempts or mutating
+  its lease.
+- Attempt-ceiling, invalid retained evidence, anchor identity disagreement, and
+  legacy-anchor conflicts keep the private producer row `failed` with explicit
+  `issuer_discovery_quarantined` state. Task 7's transactional staging boundary
+  creates a separate deterministic service job/review containing only bounded
+  classification, reason, issuer, and anchor ID. It never carries a lease token,
+  outcome history, producer evidence, or an admin link on the anchor.
+- Admin `retry` locks both review and referenced producer in the unapplied Task 7
+  RPC, audits an explicit `attempt_count = 0` policy, makes the producer due, and
+  resolves the operator item atomically. The next claim starts attempt one.
+  Admin `reject` rejects only the separate review job and leaves the producer
+  failed/quarantined and unclaimable. The admin card shows only retry/keep
+  actions for this classification.
+- Stable anchor validation derives authority from the locked row issuer and
+  requires normalized selected issuer, evidence issuer, stable dedupe hash, and
+  approved official URL issuer to agree. A mismatch quarantines that exact row;
+  it cannot route or create a crawl for another issuer.
+- Discovery responses always return `staged`, `quarantined`, and `conflicts`
+  counts. Review-only work sets `noWork=false` even when no crawl seed is issued.
 
 ## Deadline, resume, and completeness decisions
 
@@ -155,6 +179,10 @@ No schema or migration file changed.
   redirect to a generic sitemap, home page, unrelated directory, or product
   detail child adds bounded `product_directory_scope_mismatch` evidence and
   cannot prove absence.
+- Explicit approved layouts `/credit-card-sitemap.xml`,
+  `/credit-cards-sitemap.xml`, and `/cards/credit-cards.xml` are recognized as
+  product-directory sources, but redirects from any of them to a generic
+  sitemap/home scope remain incomplete.
 - Incomplete issuer work does not alter or suppress Task 6 recurring benefit
   scheduling.
 
@@ -178,6 +206,10 @@ No schema or migration file changed.
   Notice` remain normal target sections. Comparison/versus/replacement/
   successor/alternative prose, related-product anaphora without the literal word
   `card`, and multi-product status rows fail closed.
+- Status evidence is additionally clause-bound: same-cell `Neo and My Zone` or
+  comma variants, competitor-named status/availability elements, and generic
+  `this card` after a competing product subject are rejected. Target-only
+  status cells, elements, and scoped containers remain valid.
 
 ## Red-to-green evidence
 
@@ -211,22 +243,50 @@ Initial RED checkpoints:
   reds covered malformed retained attempts/counters, unknown history fields,
   legacy rows hidden beyond two pages or behind 200 candidate outcomes, bounded
   conflict draining, and retry-stable quarantine identity.
+- Fix-round-3 RED tests reproduced all eight findings: immediate workflow retry
+  reclaimed a future-backoff anchor; mixed-case late legacy leases bypassed the
+  stable holder; quarantine exposed the producer row; stable issuer/dedupe/URL
+  mismatches spawned or routed crawls; handler review work reported no-work;
+  competitor-bound discontinuation clauses matched; common product-sitemap
+  filenames were rejected; and the Task 7 RPC had no quarantine retry contract.
+  A separate widget RED showed generic catalog approval actions for quarantine.
 
 Final GREEN commands:
 
-- Plan Task 8 command (`2` workflow plus `45` issuer-crawl tests): **47 passed,
-  0 failed**.
-- Batch/Task 6 Deno suite (`recurrence`, `batch`, `crawl`, supporting documents,
-  and batch entry): **205 passed, 0 failed**.
-- Shared publication, shared issuer crawl, and card-discovery Deno suites: **32
-  passed, 0 failed**.
-- Repository-wide Node static and migration suite: **291 passed, 0 failed**.
-- The four reported local gate executions cover **575 passing checks, 0
-  failures**.
-- Production `deno check` passed for the batch function, card discovery, issuer
-  crawler, and catalog identity publication.
-- Changed-surface `deno fmt --check`: passed.
-- `git diff --check`: passed.
+```sh
+node --test test/gtm/card-discovery-schedule.test.js test/gtm/benefit-enrichment-schedule.test.js test/supabase/issuer_card_crawl_rules.test.mjs
+```
+
+Plan Task 8 workflow plus issuer-crawl checks: **48 passed, 0 failed**.
+
+```sh
+deno test supabase/functions/benefit-enrichment-batch/index_test.ts supabase/functions/benefit-enrichment-batch/recurrence_policy_test.ts supabase/functions/benefit-enrichment-batch/batch_policy_test.ts supabase/functions/benefit-enrichment-batch/crawl_policy_test.ts supabase/functions/benefit-enrichment-batch/supporting_documents_test.ts
+```
+
+Batch/Task 6 checks: **212 passed, 0 failed**.
+
+```sh
+deno test supabase/functions/_shared/catalog_identity_publication_test.ts supabase/functions/_shared/issuer_card_crawl_test.ts supabase/functions/card-discovery/index_test.ts
+```
+
+Shared publication, issuer crawl, and card discovery: **33 passed, 0 failed**.
+
+```sh
+node --test --test-concurrency=1 $(find test -type f \( -name '*.test.js' -o -name '*.test.mjs' -o -name '*_test.js' \) -print | sort)
+```
+
+Repository-wide Node/static/migration checks: **386 passed, 0 failed**.
+
+```sh
+flutter test --no-pub test/features/admin/benefit_enrichment_review_test.dart
+```
+
+Focused admin presentation checks: **11 passed, 0 failed**.
+
+The five reported local gate executions cover **690 passing checks, 0
+failures**. Production `deno check` passed for the batch function, card
+discovery, issuer crawler, catalog identity publication, and admin entry point.
+Changed-surface Deno/Dart formatting checks and `git diff --check` passed.
 
 All verification used local mocks/static files only. No Docker, local or linked
 Supabase/Postgres, issuer/network request, production data, secret mutation,

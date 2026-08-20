@@ -662,6 +662,35 @@ export function cardDiscontinuationEvidence(
     return distinctive.length > 0 &&
       (hasIssuerIdentity || (tokens.length <= 6 && value.length <= 96));
   };
+  const lifecycleBindingTokens = new Set([
+    ...sectionHeadingTokens,
+    "and",
+    "available",
+    "been",
+    "discontinued",
+    "effective",
+    "from",
+    "has",
+    "immediate",
+    "immediately",
+    "is",
+    "issued",
+    "longer",
+    "no",
+    "not",
+    "of",
+    "on",
+    "the",
+    "this",
+    "withdrawn",
+  ]);
+  const hasCompetingProductIdentity = (value: string) => {
+    const remaining = meaningful(value).filter((token) =>
+      !targetTokens.includes(token) && !issuerTokens.has(token) &&
+      !lifecycleBindingTokens.has(token)
+    );
+    return remaining.length > 0;
+  };
   const competingContext = (value: string) =>
     /\b(?:alternative|compare|comparison|related|successor|replacement|replaces?|replaced|versus|vs\.?)\b/i
       .test(value);
@@ -680,7 +709,8 @@ export function cardDiscontinuationEvidence(
     );
     if (
       containsTarget(rowText) && structuredStatus.test(rowText) &&
-      !competingCell && !competingContext(rowText) &&
+      !competingCell && !hasCompetingProductIdentity(rowText) &&
+      !competingContext(rowText) &&
       !/\bnot\s+(?:discontinued|withdrawn)\b/i.test(rowText)
     ) {
       return { explicit: true, matchedExcerpt: boundedExcerpt(rowText) };
@@ -725,7 +755,8 @@ export function cardDiscontinuationEvidence(
       if (
         /\b(?:alternative|compare|comparison|instead|other|related|replacement|replaces?|successor|versus|vs\.?|while|whereas)\b/i
           .test(remainder) ||
-        /\b(?:credit\s+)?card\b/i.test(remainder)
+        /\b(?:credit\s+)?card\b/i.test(remainder) ||
+        hasCompetingProductIdentity(remainder)
       ) continue;
       return sentence;
     }
@@ -762,6 +793,7 @@ export function cardDiscontinuationEvidence(
       /<(?:div|span|p|td)\b[^>]*(?:class|data-status|aria-label)\s*=\s*["'][^"']*(?:status|availability)[^"']*["'][^>]*>([\s\S]*?)<\/(?:div|span|p|td)>/gi,
     )].map((match) => clean(match[1] ?? "")).find((value) =>
       structuredStatus.test(value) &&
+      !hasCompetingProductIdentity(value) &&
       !/\bnot\s+(?:discontinued|withdrawn)\b/i.test(value)
     );
     if (statusElement) {
@@ -773,7 +805,9 @@ export function cardDiscontinuationEvidence(
     const anaphoricMatch = anaphoric.exec(scoped);
     if (anaphoricMatch) {
       const prior = scoped.slice(0, anaphoricMatch.index);
-      const refersToOtherProduct = competingContext(prior);
+      const immediatePrior = boundedSentences(prior).at(-1) ?? "";
+      const refersToOtherProduct = competingContext(prior) ||
+        hasCompetingProductIdentity(immediatePrior);
       if (!refersToOtherProduct) {
         return {
           explicit: true,

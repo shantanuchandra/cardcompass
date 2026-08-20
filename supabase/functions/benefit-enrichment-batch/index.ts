@@ -2411,10 +2411,51 @@ export type IssuerDiscoveryClaim = {
     | "empty"
     | "already_running"
     | "already_completed"
+    | "backoff"
+    | "quarantined"
     | "resume_exhausted"
     | "legacy_conflict";
   seed: IssuerDiscoverySeed | null;
+  reviewSummary?: IssuerDiscoveryReviewSummary;
 };
+
+type IssuerDiscoveryReviewSummary = {
+  staged: number;
+  quarantined: number;
+  conflicts: number;
+};
+
+const emptyIssuerDiscoveryReviewSummary = (): IssuerDiscoveryReviewSummary => ({
+  staged: 0,
+  quarantined: 0,
+  conflicts: 0,
+});
+
+function addIssuerDiscoveryReviewSummary(
+  left: IssuerDiscoveryReviewSummary,
+  right?: IssuerDiscoveryReviewSummary,
+): IssuerDiscoveryReviewSummary {
+  return {
+    staged: left.staged + (right?.staged ?? 0),
+    quarantined: left.quarantined + (right?.quarantined ?? 0),
+    conflicts: left.conflicts + (right?.conflicts ?? 0),
+  };
+}
+
+export function issuerDiscoveryResponseSummary(
+  claim: Pick<IssuerDiscoveryClaim, "seed" | "reviewSummary">,
+): IssuerDiscoveryReviewSummary & { noWork: boolean } {
+  const review = claim.reviewSummary ?? emptyIssuerDiscoveryReviewSummary();
+  return {
+    ...review,
+    noWork: !claim.seed && review.staged === 0 && review.quarantined === 0 &&
+      review.conflicts === 0,
+  };
+}
+
+function normalizedIssuerKey(value: unknown): string {
+  return String(value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+}
 
 function utcIssuerRunDate(now: Date): string {
   if (!Number.isFinite(now.getTime())) {
@@ -2583,7 +2624,9 @@ function issuerRunIdentity(row: Record<string, any>): {
   const runDate = String(evidence.run_date ?? "");
   const attemptCount = Number(row.attempt_count ?? 0);
   if (
-    !issuer || !/^\d{4}-\d{2}-\d{2}$/.test(runDate) ||
+    !issuer ||
+    normalizedIssuerKey(row.issuer) !== normalizedIssuerKey(issuer) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(runDate) ||
     !Number.isFinite(Date.parse(`${runDate}T00:00:00.000Z`)) ||
     !Number.isInteger(attemptCount) || attemptCount < 0 ||
     attemptCount > ISSUER_DISCOVERY_MAX_ATTEMPTS ||
@@ -2596,6 +2639,27 @@ function issuerRunIdentity(row: Record<string, any>): {
     },
     runDate,
   };
+}
+
+async function issuerAnchorIdentityValid(
+  row: Record<string, any>,
+  selected: Pick<EnrichmentJob, "issuer" | "canonical_url">,
+): Promise<boolean> {
+  const evidence = issuerRunEvidence(row);
+  const rowIssuer = String(row.issuer ?? "").trim().replace(/\s+/g, " ");
+  const evidenceIssuer = String(evidence.issuer ?? "").trim().replace(
+    /\s+/g,
+    " ",
+  );
+  const evidenceUrl = String(evidence.canonical_url ?? "").trim();
+  const expectedAnchorKey = await sha256Text(
+    `issuer-directory-anchor:${normalizedIssuerKey(rowIssuer)}`,
+  );
+  return String(evidence.kind ?? "") === "issuer_directory_anchor" &&
+    normalizedIssuerKey(rowIssuer) === normalizedIssuerKey(selected.issuer) &&
+    normalizedIssuerKey(rowIssuer) === normalizedIssuerKey(evidenceIssuer) &&
+    String(row.dedupe_key ?? "") === expectedAnchorKey &&
+    allowedOfficialUrl(rowIssuer, evidenceUrl);
 }
 
 function issuerDiscoverySeedFromRow(
@@ -2628,36 +2692,65 @@ async function terminalizeIssuerDiscoveryBacklog(
   reason:
     | "resume_attempts_exhausted"
     | "invalid_run_evidence"
-    | "legacy_anchor_conflict",
-): Promise<boolean> {
+    | "legacy_anchor_conflict"
+    | "anchor_identity_conflict",
+): Promise<IssuerDiscoveryReviewSummary> {
   const previousEvidence = issuerRunEvidence(row);
-  const issuer = String(row.issuer ?? previousEvidence.issuer ?? "").trim();
+  const issuer = String(row.issuer ?? "").trim().replace(/\s+/g, " ");
   if (issuer.length < 2 || issuer.length > 120) {
     throw new Error("invalid_issuer_quarantine_identity");
   }
-  const retainedAttempt = Number(row.attempt_count ?? 0);
+  const nowIso = now.toISOString();
+  let quarantinedRow = row;
+  if (
+    String(row.status) !== "failed" ||
+    String(row.failure_category ?? "") !== "issuer_discovery_quarantined"
+  ) {
+    let update = db.from("card_discovery_jobs").update({
+      status: "failed",
+      next_retry_at: nowIso,
+      failure_category: "issuer_discovery_quarantined",
+      review_item_id: null,
+      evidence: {
+        ...previousEvidence,
+        last_outcome: reason,
+        quarantine_reason: reason,
+      },
+      updated_at: nowIso,
+    }).eq("id", row.id).eq("status", row.status);
+    const leaseToken = String(previousEvidence.lease_token ?? "");
+    if (issuerLeaseTokenPattern.test(leaseToken)) {
+      update = update.contains("evidence", { lease_token: leaseToken });
+    } else if (row.updated_at) {
+      update = update.eq("updated_at", row.updated_at);
+    }
+    const transitioned = await update.select(
+      "id,user_id,discovery_source,issuer,evidence,status,updated_at,next_retry_at,attempt_count,dedupe_key,created_at,failure_category,review_item_id",
+    ).maybeSingle();
+    if (transitioned.error) throw transitioned.error;
+    if (!transitioned.data) return emptyIssuerDiscoveryReviewSummary();
+    quarantinedRow = transitioned.data;
+  }
   const sourceObservation = {
     kind: "issuer_discovery_quarantine",
     classification: "issuer_discovery_quarantine",
     reason,
-    discovery_job_id: String(row.id).slice(0, 64),
-    run_date: /^\d{4}-\d{2}-\d{2}$/.test(
-        String(previousEvidence.run_date ?? ""),
-      )
-      ? String(previousEvidence.run_date)
-      : null,
-    attempt_count: Number.isInteger(retainedAttempt) && retainedAttempt >= 0
-      ? Math.min(ISSUER_DISCOVERY_MAX_ATTEMPTS, retainedAttempt)
-      : 0,
+    anchor_job_id: String(row.id).slice(0, 64),
+    issuer,
   };
   const semanticHash = await sha256Text(JSON.stringify(sourceObservation));
+  const reviewDedupeKey = await sha256Text(
+    `issuer-discovery-quarantine:${String(row.id)}:${
+      String(quarantinedRow.updated_at ?? nowIso)
+    }:${reason}`,
+  );
   const staged = await stageCatalogIdentityReview(db, {
-    discoveryJobId: String(row.id),
+    discoveryJobId: null,
     discoverySource: "issuer_crawl",
     userId: null,
     issuer,
     proposedProduct: "Issuer discovery quarantine",
-    dedupeKey: String(row.dedupe_key),
+    dedupeKey: reviewDedupeKey,
     semanticHash,
     proposedFields: {
       issuer,
@@ -2669,11 +2762,30 @@ async function terminalizeIssuerDiscoveryBacklog(
     existingCandidates: [],
     validationWarnings: ["issuer_discovery_quarantine", reason],
     confidence: 0,
-    expectedJobStatus: String(row.status),
-    expectedJobUpdatedAt: row.updated_at ? String(row.updated_at) : null,
+    expectedJobStatus: null,
+    expectedJobUpdatedAt: null,
   });
-  return staged.jobId === String(row.id) &&
-    staged.resultingStatus === "review_required";
+  if (
+    staged.jobId === String(row.id) ||
+    staged.resultingStatus !== "review_required"
+  ) throw new Error("invalid_issuer_quarantine_review_stage");
+  const cleared = await db.from("card_discovery_jobs").update({
+    next_retry_at: null,
+    updated_at: nowIso,
+  }).eq("id", row.id).eq("status", "failed")
+    .eq("failure_category", "issuer_discovery_quarantined")
+    .select("id").maybeSingle();
+  if (cleared.error) throw cleared.error;
+  if (!cleared.data) throw new Error("issuer_discovery_quarantine_race");
+  return {
+    staged: 1,
+    quarantined: 1,
+    conflicts: ["legacy_anchor_conflict", "anchor_identity_conflict"].includes(
+        reason,
+      )
+      ? 1
+      : 0,
+  };
 }
 
 function issuerRunHistoryEntry(
@@ -2726,7 +2838,7 @@ async function loadLegacyIssuerDiscoveryRows(
         "id,issuer,evidence,status,updated_at,next_retry_at,attempt_count,dedupe_key,created_at,review_item_id",
       )
       .eq("discovery_source", "issuer_crawl")
-      .eq("issuer", issuer)
+      .ilike("issuer", issuer)
       .is("user_id", null)
       .contains("evidence", { kind: "issuer_directory_run" })
       .order("created_at", { ascending: true })
@@ -2734,7 +2846,11 @@ async function loadLegacyIssuerDiscoveryRows(
       .range(offset, offset + pageSize - 1);
     if (query.error) throw query.error;
     const pageRows = (query.data ?? []) as Array<Record<string, any>>;
-    rows.push(...pageRows);
+    rows.push(
+      ...pageRows.filter((row) =>
+        normalizedIssuerKey(row.issuer) === normalizedIssuerKey(issuer)
+      ),
+    );
     if (pageRows.length < pageSize) return { rows, complete: true };
   }
   return { rows, complete: false };
@@ -2749,6 +2865,15 @@ async function claimExistingIssuerDiscoveryRow(
 ): Promise<IssuerDiscoveryClaim> {
   const rowStatus = String(row.status);
   const previousEvidence = issuerRunEvidence(row);
+  if (!await issuerAnchorIdentityValid(row, selected)) {
+    const reviewSummary = await terminalizeIssuerDiscoveryBacklog(
+      db,
+      row,
+      now,
+      "anchor_identity_conflict",
+    );
+    return { status: "quarantined", seed: null, reviewSummary };
+  }
   const previousRunDate = String(previousEvidence.run_date ?? "");
   const startsNewSlot = rowStatus === "resolved" &&
     previousRunDate !== runDate;
@@ -2760,6 +2885,30 @@ async function claimExistingIssuerDiscoveryRow(
   }
   const leaseUntil = Date.parse(String(row.next_retry_at ?? ""));
   if (
+    rowStatus === "failed" &&
+    String(row.failure_category ?? "") === "issuer_discovery_quarantined"
+  ) {
+    if (row.next_retry_at === null || row.next_retry_at === undefined) {
+      return { status: "quarantined", seed: null };
+    }
+    const reviewSummary = await terminalizeIssuerDiscoveryBacklog(
+      db,
+      row,
+      now,
+      previousEvidence.quarantine_reason === "resume_attempts_exhausted" ||
+        previousEvidence.quarantine_reason === "invalid_run_evidence" ||
+        previousEvidence.quarantine_reason === "legacy_anchor_conflict" ||
+        previousEvidence.quarantine_reason === "anchor_identity_conflict"
+        ? previousEvidence.quarantine_reason
+        : "invalid_run_evidence",
+    );
+    return { status: "quarantined", seed: null, reviewSummary };
+  }
+  if (
+    rowStatus === "failed" &&
+    (!Number.isFinite(leaseUntil) || leaseUntil > now.getTime())
+  ) return { status: "backoff", seed: null };
+  if (
     rowStatus === "discovering" && Number.isFinite(leaseUntil) &&
     leaseUntil > now.getTime()
   ) return { status: "already_running", seed: null };
@@ -2767,13 +2916,13 @@ async function claimExistingIssuerDiscoveryRow(
     !startsNewSlot &&
     Number(row.attempt_count ?? 0) >= ISSUER_DISCOVERY_MAX_ATTEMPTS
   ) {
-    await terminalizeIssuerDiscoveryBacklog(
+    const reviewSummary = await terminalizeIssuerDiscoveryBacklog(
       db,
       row,
       now,
       "resume_attempts_exhausted",
     );
-    return { status: "resume_exhausted", seed: null };
+    return { status: "resume_exhausted", seed: null, reviewSummary };
   }
   const previousLeaseToken = String(previousEvidence.lease_token ?? "");
   const nextLeaseToken = crypto.randomUUID();
@@ -2895,11 +3044,10 @@ export async function claimIssuerDiscoveryRun(
   db: UntypedSupabaseClient,
   selected: Pick<EnrichmentJob, "issuer" | "canonical_url">,
   now = new Date(),
-  options: { forceLegacyReconciliation?: boolean } = {},
 ): Promise<IssuerDiscoveryClaim> {
   const runDate = utcIssuerRunDate(now);
   const key = await sha256Text(
-    `issuer-directory-anchor:${selected.issuer.trim().toLowerCase()}`,
+    `issuer-directory-anchor:${normalizedIssuerKey(selected.issuer)}`,
   );
   const loadExisting = async (): Promise<Record<string, any> | null> => {
     const existing = await db.from("card_discovery_jobs")
@@ -2914,38 +3062,44 @@ export async function claimIssuerDiscoveryRun(
     return existing.data ?? null;
   };
   let previous = await loadExisting();
-  const previousEvidence = previous ? issuerRunEvidence(previous) : {};
-  const legacyScan = !options.forceLegacyReconciliation &&
-      previousEvidence.legacy_reconciliation_complete === true
-    ? { rows: [], complete: true }
-    : await loadLegacyIssuerDiscoveryRows(db, selected.issuer);
+  const legacyScan = await loadLegacyIssuerDiscoveryRows(db, selected.issuer);
   if (!legacyScan.complete) {
     throw new Error("issuer_discovery_legacy_scan_exhausted");
   }
   const issuerRows = legacyScan.rows;
   const legacyRows = issuerRows.filter((row) => String(row.dedupe_key) !== key);
-  const unfinishedLegacy = legacyRows.filter((row) =>
-    ["failed", "discovering"].includes(String(row.status))
-  );
+  const activeLegacy = legacyRows.filter((row) => {
+    const retryAt = Date.parse(String(row.next_retry_at ?? ""));
+    return String(row.status) === "discovering" &&
+      Number.isFinite(retryAt) && retryAt > now.getTime();
+  });
+  if (activeLegacy.length > 0) {
+    return { status: "already_running", seed: null };
+  }
+  const unfinishedLegacy = legacyRows.filter((row) => {
+    const status = String(row.status);
+    const retryAt = Date.parse(String(row.next_retry_at ?? ""));
+    return (status === "failed" || status === "discovering") &&
+      Number.isFinite(retryAt) && retryAt <= now.getTime();
+  });
 
   if (previous && unfinishedLegacy.length > 0) {
-    const conflictRows = [
-      ...(["failed", "discovering"].includes(String(previous.status))
-        ? [previous]
-        : []),
-      ...unfinishedLegacy,
-    ];
+    const conflictRows = unfinishedLegacy;
+    let reviewSummary = emptyIssuerDiscoveryReviewSummary();
     for (
       const row of conflictRows.slice(0, ISSUER_DISCOVERY_QUARANTINE_BATCH)
     ) {
-      await terminalizeIssuerDiscoveryBacklog(
-        db,
-        row,
-        now,
-        "legacy_anchor_conflict",
+      reviewSummary = addIssuerDiscoveryReviewSummary(
+        reviewSummary,
+        await terminalizeIssuerDiscoveryBacklog(
+          db,
+          row,
+          now,
+          "legacy_anchor_conflict",
+        ),
       );
     }
-    return { status: "legacy_conflict", seed: null };
+    return { status: "legacy_conflict", seed: null, reviewSummary };
   }
   if (previous) {
     return await claimExistingIssuerDiscoveryRow(
@@ -2958,20 +3112,24 @@ export async function claimIssuerDiscoveryRun(
   }
 
   if (unfinishedLegacy.length > 1) {
+    let reviewSummary = emptyIssuerDiscoveryReviewSummary();
     for (
       const row of unfinishedLegacy.slice(
         0,
         ISSUER_DISCOVERY_QUARANTINE_BATCH,
       )
     ) {
-      await terminalizeIssuerDiscoveryBacklog(
-        db,
-        row,
-        now,
-        "legacy_anchor_conflict",
+      reviewSummary = addIssuerDiscoveryReviewSummary(
+        reviewSummary,
+        await terminalizeIssuerDiscoveryBacklog(
+          db,
+          row,
+          now,
+          "legacy_anchor_conflict",
+        ),
       );
     }
-    return { status: "legacy_conflict", seed: null };
+    return { status: "legacy_conflict", seed: null, reviewSummary };
   }
   if (unfinishedLegacy.length === 1) {
     const legacy = unfinishedLegacy[0];
@@ -3091,30 +3249,60 @@ export async function loadDiscoverySeed(
   now = new Date(),
   pageSize = 200,
 ): Promise<IssuerDiscoveryClaim> {
+  let reviewSummary = emptyIssuerDiscoveryReviewSummary();
   const backlog = await loadIssuerDiscoveryBacklog(db, now);
   for (const row of backlog) {
     const identity = issuerRunIdentity(row);
     if (!identity) {
-      await terminalizeIssuerDiscoveryBacklog(
-        db,
-        row,
-        now,
-        "invalid_run_evidence",
+      reviewSummary = addIssuerDiscoveryReviewSummary(
+        reviewSummary,
+        await terminalizeIssuerDiscoveryBacklog(
+          db,
+          row,
+          now,
+          "invalid_run_evidence",
+        ),
       );
       continue;
     }
-    const claim = await claimIssuerDiscoveryRun(db, identity.selected, now, {
-      forceLegacyReconciliation:
-        String(issuerRunEvidence(row).kind ?? "") === "issuer_directory_run",
-    });
-    if (claim.seed) return claim;
-    if (claim.status === "legacy_conflict") return claim;
+    if (
+      String(issuerRunEvidence(row).kind ?? "") ===
+        "issuer_directory_anchor" &&
+      !await issuerAnchorIdentityValid(row, identity.selected)
+    ) {
+      reviewSummary = addIssuerDiscoveryReviewSummary(
+        reviewSummary,
+        await terminalizeIssuerDiscoveryBacklog(
+          db,
+          row,
+          now,
+          "anchor_identity_conflict",
+        ),
+      );
+      return { status: "quarantined", seed: null, reviewSummary };
+    }
+    const claim = await claimIssuerDiscoveryRun(db, identity.selected, now);
+    reviewSummary = addIssuerDiscoveryReviewSummary(
+      reviewSummary,
+      claim.reviewSummary,
+    );
+    if (claim.seed) return { ...claim, reviewSummary };
+    if (claim.status === "legacy_conflict") {
+      return { ...claim, reviewSummary };
+    }
     if (claim.status === "already_completed") continue;
   }
   const rows = await loadApprovedIssuerCatalog(db, pageSize);
   const selected = selectIssuerDiscoveryCandidate(rows, now);
-  if (!selected) return { status: "empty", seed: null };
-  return await claimIssuerDiscoveryRun(db, selected, now);
+  if (!selected) return { status: "empty", seed: null, reviewSummary };
+  const claim = await claimIssuerDiscoveryRun(db, selected, now);
+  return {
+    ...claim,
+    reviewSummary: addIssuerDiscoveryReviewSummary(
+      reviewSummary,
+      claim.reviewSummary,
+    ),
+  };
 }
 
 export async function handleBenefitEnrichmentBatch(
@@ -3148,13 +3336,14 @@ export async function handleBenefitEnrichmentBatch(
         return json({ error: "invalid_issuer_discovery_request" }, 400);
       }
       const claim = await loadDiscoverySeed(db, new Date(), 200);
+      const discoveryState = issuerDiscoveryResponseSummary(claim);
       if (!claim.seed) {
         return json({
           runId,
           action: "issuer_discovery",
           runMode: issuerMode,
           claimed: 0,
-          noWork: true,
+          ...discoveryState,
           claimStatus: claim.status,
         });
       }
@@ -3168,6 +3357,7 @@ export async function handleBenefitEnrichmentBatch(
         action: "issuer_discovery",
         runMode: issuerMode,
         claimed: 1,
+        ...discoveryState,
         noWork: false,
         claimStatus: claim.status,
         summary,

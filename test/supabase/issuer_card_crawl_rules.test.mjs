@@ -1016,6 +1016,50 @@ test("product-directory completeness requires requested, final, and canonical sc
   assert.equal(sameScope.complete, true);
 });
 
+test("common approved credit-card sitemap filenames prove only their exact product scope", async () => {
+  for (
+    const directoryUrl of [
+      "https://www.axis.bank.in/credit-card-sitemap.xml",
+      "https://www.axis.bank.in/credit-cards-sitemap.xml",
+      "https://www.axis.bank.in/cards/credit-cards.xml",
+    ]
+  ) {
+    const exact = await discoverIssuerCardCandidates({
+      issuer,
+      sitemapUrl: directoryUrl,
+      fetchOfficialIssuerResource: async (input) =>
+        resource(input.url, sitemap([]), "application/xml"),
+      delay: async () => {},
+    });
+    assert.equal(
+      exact.complete,
+      true,
+      `${directoryUrl} was not recognized as an explicit product directory`,
+    );
+
+    const redirected = await discoverIssuerCardCandidates({
+      issuer,
+      sitemapUrl: directoryUrl,
+      fetchOfficialIssuerResource: async (input) => ({
+        ...resource(input.url, sitemap([]), "application/xml"),
+        finalUrl: "https://www.axis.bank.in/sitemap.xml",
+        canonicalUrl: "https://www.axis.bank.in/sitemap.xml",
+      }),
+      delay: async () => {},
+    });
+    assert.equal(
+      redirected.complete,
+      false,
+      `${directoryUrl} accepted a generic redirect as product proof`,
+    );
+    assert.ok(
+      redirected.incompleteReasons.includes(
+        "product_directory_scope_mismatch",
+      ),
+    );
+  }
+});
+
 test("a malformed nested sitemap prevents directory absence review", async () => {
   const child = "https://www.axis.bank.in/sitemaps/cards.xml";
   const result = await discoverIssuerCardCandidates({

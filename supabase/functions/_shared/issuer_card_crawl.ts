@@ -493,6 +493,20 @@ function productDirectoryScope(url: string): string | null {
       .replace(/credit[-_]cards/g, "credit-card")
       .replace(/credit\/cards/g, "credit-card")
       .replace(/cards[-_](?:products?|catalog)/g, "cards-catalog");
+    const basename = pathname.split("/").filter(Boolean).at(-1) ?? "";
+    if (
+      /^(?:credit-card(?:[-_.]sitemap)?|cards?[-_.]credit-card)(?:[-_.](?:index|sitemap))?\.xml$/
+        .test(
+          basename,
+        ) ||
+      (basename === "credit-card.xml" && /\/cards\/$/.test(
+        pathname.slice(0, pathname.length - basename.length),
+      ))
+    ) {
+      return `${
+        pathname.slice(0, pathname.length - basename.length)
+      }credit-card`.replace(/\/{2,}/g, "/");
+    }
     const scoped = /(?:^|\/)(?:credit-card|cards-catalog)(?:\/|$)/.exec(
       pathname,
     );
@@ -511,7 +525,6 @@ function productDirectoryScope(url: string): string | null {
       ) return scope;
       return null;
     }
-    const basename = pathname.split("/").filter(Boolean).at(-1) ?? "";
     if (
       /^(?:sitemap|index)[-_.]?(?:credit[-_]?cards?|cards?)(?:[-_.].*)?$/.test(
         basename,

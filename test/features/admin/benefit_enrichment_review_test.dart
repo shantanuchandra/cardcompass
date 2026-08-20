@@ -70,6 +70,9 @@ const _jobJson = <String, dynamic>{
   },
 };
 
+void _noop() {}
+void _noopValue(String _) {}
+
 BenefitEnrichmentReviewPage _page() =>
     BenefitEnrichmentReviewPage.fromJson(const {
       'counts': {
@@ -206,6 +209,57 @@ void main() {
       expect(find.text('Merge with existing'), findsOneWidget);
       expect(find.text('Retry discovery'), findsOneWidget);
       expect(find.text('Reject proposal'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'issuer discovery quarantine exposes only retry or keep actions',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: CatalogIdentityReviewCard(
+              item: const {
+                'status': 'pending',
+                'proposed_fields': {
+                  'issuer': 'Axis Bank',
+                  'cardName': 'Issuer discovery quarantine',
+                  'source_observation': {
+                    'kind': 'issuer_discovery_quarantine',
+                    'classification': 'issuer_discovery_quarantine',
+                    'anchor_job_id': 'anchor-123',
+                    'issuer': 'Axis Bank',
+                    'reason': 'resume_attempts_exhausted',
+                  },
+                },
+                'validation_warnings': ['issuer_discovery_quarantine'],
+                'existing_candidates': [],
+                'card_discovery_jobs': {
+                  'issuer': 'Axis Bank',
+                  'evidence': {
+                    'source_observation': {
+                      'kind': 'issuer_discovery_quarantine',
+                    },
+                  },
+                },
+              },
+              onApprove: _noop,
+              onEditApprove: _noop,
+              onMerge: _noopValue,
+              onRetry: _noop,
+              onReject: _noop,
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('Issuer discovery quarantine'), findsOneWidget);
+      expect(find.textContaining('anchor-123'), findsOneWidget);
+      expect(find.text('Retry issuer discovery'), findsOneWidget);
+      expect(find.text('Keep quarantined'), findsOneWidget);
+      expect(find.text('Approve as new card'), findsNothing);
+      expect(find.text('Edit and approve'), findsNothing);
+      expect(find.textContaining('lease_token'), findsNothing);
     },
   );
 

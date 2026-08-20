@@ -391,6 +391,43 @@ test("review retry is an audited retained-review reopen and never queues in-flig
   );
 });
 
+test("issuer discovery quarantine retry atomically resets only its referenced producer", async () => {
+  const publish = functionBody(
+    await migrationSql(),
+    "publish_card_catalog_identity",
+  );
+  assert.match(
+    publish,
+    /issuer_discovery_quarantine[\s\S]*source_observation[\s\S]*anchor_job_id/i,
+    "quarantine classification is not server-bound to an anchor reference",
+  );
+  assert.match(
+    publish,
+    /anchor_job_id[\s\S]*card_discovery_jobs[\s\S]*FOR UPDATE/i,
+    "retry does not lock the referenced issuer producer",
+  );
+  assert.match(
+    publish,
+    /_action = 'retry'[\s\S]*attempt_count = 0[\s\S]*next_retry_at = statement_timestamp\(\)[\s\S]*failure_category = 'issuer_discovery_operator_retry'/i,
+    "retry does not apply the explicit fresh-attempt/backoff policy",
+  );
+  assert.match(
+    publish,
+    /issuer_discovery_quarantine[\s\S]*card_catalog_review_audit[\s\S]*_action[\s\S]*status = 'resolved'/i,
+    "quarantine retry is not auditable or terminal for the operator item",
+  );
+  assert.match(
+    publish,
+    /_action NOT IN \('retry', 'reject'\)[\s\S]*idempotent_publication_replay/i,
+    "generic approval replay intercepts quarantine retry replay",
+  );
+  assert.match(
+    publish,
+    /_action = 'reject'[\s\S]*status = 'rejected'[\s\S]*issuer_discovery_quarantined/i,
+    "reject does not keep the issuer producer quarantined",
+  );
+});
+
 test("edit destination conflict distinguishes strong-compatible duplicates from sibling variants", async () => {
   const publish = functionBody(
     await migrationSql(),

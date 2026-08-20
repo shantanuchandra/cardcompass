@@ -1654,6 +1654,9 @@ DECLARE
   latest_lifecycle_job_id uuid;
   latest_lifecycle_state text;
   enrichment_exception text;
+  issuer_quarantine_review boolean := false;
+  issuer_quarantine_anchor_id uuid;
+  issuer_quarantine_anchor public.card_discovery_jobs%ROWTYPE;
 BEGIN
   IF _discovery_job_id IS NULL OR jsonb_typeof(fields) <> 'object'
      OR _parser_version <> 'benefits-v6'
@@ -1808,6 +1811,12 @@ BEGIN
        review_row.proposed_fields->'catalog_baseline' THEN
     RAISE EXCEPTION 'stale_catalog_baseline';
   END IF;
+  issuer_quarantine_review :=
+    review_row.proposed_fields->'source_observation'->>'classification' =
+      'issuer_discovery_quarantine';
+  IF issuer_quarantine_review AND _action NOT IN ('retry', 'reject') THEN
+    RAISE EXCEPTION 'issuer_discovery_quarantine_action_required';
+  END IF;
 
   PERFORM pg_advisory_xact_lock(hashtextextended(
     'card_catalog_publication:job:' || _discovery_job_id::text, 0
@@ -1840,6 +1849,7 @@ BEGIN
   END IF;
 
   IF _review_item_id IS NOT NULL
+     AND _action NOT IN ('retry', 'reject')
      AND observed_job.status = 'resolved'
      AND review_row.status IN ('approved', 'merged')
      AND review_row.reviewed_by = _actor_id
@@ -1876,6 +1886,135 @@ BEGIN
       AND review.discovery_job_id = job_row.id FOR UPDATE;
     IF NOT FOUND THEN
       RAISE EXCEPTION 'stale_catalog_review';
+    END IF;
+    IF issuer_quarantine_review THEN
+      IF review_row.proposed_fields->'source_observation' IS DISTINCT FROM
+           review_row.source_evidence->'source_observation'
+         OR review_row.proposed_fields->'source_observation'->>'kind' IS DISTINCT FROM
+           'issuer_discovery_quarantine'
+         OR EXISTS (
+           SELECT 1
+           FROM jsonb_object_keys(
+             review_row.proposed_fields->'source_observation'
+           ) AS quarantine_field(key)
+           WHERE quarantine_field.key NOT IN (
+             'anchor_job_id', 'classification', 'issuer', 'kind', 'reason'
+           )
+         ) THEN
+        RAISE EXCEPTION 'invalid_issuer_discovery_quarantine';
+      END IF;
+      issuer_quarantine_anchor_id := nullif(
+        review_row.proposed_fields->'source_observation'->>'anchor_job_id', ''
+      )::uuid;
+      SELECT anchor.* INTO issuer_quarantine_anchor
+      FROM public.card_discovery_jobs AS anchor
+      WHERE anchor.id = issuer_quarantine_anchor_id
+      FOR UPDATE;
+      IF NOT FOUND
+         OR issuer_quarantine_anchor.id = job_row.id
+         OR issuer_quarantine_anchor.user_id IS NOT NULL
+         OR issuer_quarantine_anchor.discovery_source <> 'issuer_crawl'
+         OR lower(trim(issuer_quarantine_anchor.issuer)) IS DISTINCT FROM
+           lower(trim(review_row.proposed_fields->'source_observation'->>'issuer'))
+         OR lower(trim(job_row.issuer)) IS DISTINCT FROM
+           lower(trim(issuer_quarantine_anchor.issuer)) THEN
+        RAISE EXCEPTION 'invalid_issuer_discovery_quarantine';
+      END IF;
+      IF EXISTS (
+        SELECT 1 FROM public.card_catalog_review_audit AS replay_audit
+        WHERE replay_audit.review_item_id = review_row.id
+          AND replay_audit.actor_id = _actor_id
+          AND replay_audit.action = _action
+          AND replay_audit.details->>'reason' IS NOT DISTINCT FROM _reason
+      ) AND (
+        (_action = 'retry' AND review_row.status = 'approved'
+          AND job_row.status = 'resolved')
+        OR (_action = 'reject' AND review_row.status = 'rejected'
+          AND job_row.status = 'rejected')
+      ) THEN
+        card_id := NULL;
+        job_id := job_row.id;
+        resulting_status := CASE
+          WHEN _action = 'retry' THEN 'resolved' ELSE 'rejected'
+        END;
+        RETURN NEXT;
+        RETURN;
+      END IF;
+      IF review_row.status <> 'pending'
+         OR job_row.status <> 'review_required'
+         OR review_row.proposed_fields IS DISTINCT FROM observed_review.proposed_fields
+         OR review_row.source_evidence IS DISTINCT FROM observed_review.source_evidence
+         OR review_row.updated_at IS DISTINCT FROM observed_review.updated_at
+         OR job_row.evidence IS DISTINCT FROM observed_job.evidence
+         OR job_row.updated_at IS DISTINCT FROM observed_job.updated_at
+         OR issuer_quarantine_anchor.status <> 'failed'
+         OR issuer_quarantine_anchor.failure_category IS DISTINCT FROM
+           'issuer_discovery_quarantined'
+         OR issuer_quarantine_anchor.next_retry_at IS NOT NULL THEN
+        RAISE EXCEPTION 'stale_catalog_review';
+      END IF;
+      INSERT INTO public.card_catalog_review_audit(
+        review_item_id, actor_id, action, details
+      ) VALUES (
+        review_row.id, _actor_id, _action,
+        jsonb_build_object(
+          'reason', _reason,
+          'anchor_job_id', issuer_quarantine_anchor.id,
+          'attempt_count_policy', CASE
+            WHEN _action = 'retry' THEN 'reset_to_zero' ELSE 'retain'
+          END,
+          'retained_history', true
+        )
+      );
+      IF _action = 'retry' THEN
+        UPDATE public.card_discovery_jobs SET
+          status = 'failed',
+          attempt_count = 0,
+          next_retry_at = statement_timestamp(),
+          failure_category = 'issuer_discovery_operator_retry',
+          updated_at = statement_timestamp()
+        WHERE id = issuer_quarantine_anchor.id
+          AND status = 'failed'
+          AND failure_category = 'issuer_discovery_quarantined'
+          AND next_retry_at IS NULL
+          AND updated_at IS NOT DISTINCT FROM issuer_quarantine_anchor.updated_at;
+        IF NOT FOUND THEN RAISE EXCEPTION 'stale_catalog_review'; END IF;
+        UPDATE public.card_catalog_review_queue SET
+          status = 'approved', reviewed_by = _actor_id,
+          review_reason = _reason, reviewed_at = statement_timestamp(),
+          updated_at = statement_timestamp()
+        WHERE id = review_row.id AND status = 'pending'
+          AND updated_at IS NOT DISTINCT FROM review_row.updated_at;
+        IF NOT FOUND THEN RAISE EXCEPTION 'stale_catalog_review'; END IF;
+        UPDATE public.card_discovery_jobs SET
+          status = 'resolved', failure_category = NULL,
+          next_retry_at = NULL, updated_at = statement_timestamp()
+        WHERE id = job_row.id AND status = 'review_required'
+          AND updated_at IS NOT DISTINCT FROM job_row.updated_at;
+        IF NOT FOUND THEN RAISE EXCEPTION 'stale_catalog_review'; END IF;
+        resulting_status := 'resolved';
+      ELSE
+        UPDATE public.card_catalog_review_queue SET
+          status = 'rejected', reviewed_by = _actor_id,
+          review_reason = _reason, reviewed_at = statement_timestamp(),
+          updated_at = statement_timestamp()
+        WHERE id = review_row.id AND status = 'pending'
+          AND updated_at IS NOT DISTINCT FROM review_row.updated_at;
+        IF NOT FOUND THEN RAISE EXCEPTION 'stale_catalog_review'; END IF;
+        UPDATE public.card_discovery_jobs SET
+          status = 'rejected', next_retry_at = NULL,
+          updated_at = statement_timestamp()
+        WHERE id = job_row.id AND status = 'review_required'
+          AND updated_at IS NOT DISTINCT FROM job_row.updated_at;
+        IF NOT FOUND THEN RAISE EXCEPTION 'stale_catalog_review'; END IF;
+        -- The separate private producer remains failed and explicitly
+        -- issuer_discovery_quarantined; reject never makes it claimable.
+        resulting_status := 'rejected';
+      END IF;
+      card_id := NULL;
+      job_id := job_row.id;
+      RETURN NEXT;
+      RETURN;
     END IF;
     -- idempotent_retry_reject_replay: compare the exact retained decision
     -- before treating its already-applied state as stale.

@@ -640,7 +640,7 @@ class _IdentityReviewPanel extends StatelessWidget {
                 padding: const EdgeInsets.all(24),
                 itemCount: items.length,
                 separatorBuilder: (_, _) => const SizedBox(height: 16),
-                itemBuilder: (context, index) => _ReviewCard(
+                itemBuilder: (context, index) => CatalogIdentityReviewCard(
                   item: items[index],
                   onApprove: () => onApprove(items[index]),
                   onEditApprove: () => onEditApprove(items[index]),
@@ -657,8 +657,9 @@ class _IdentityReviewPanel extends StatelessWidget {
   }
 }
 
-class _ReviewCard extends StatelessWidget {
-  const _ReviewCard({
+class CatalogIdentityReviewCard extends StatelessWidget {
+  const CatalogIdentityReviewCard({
+    super.key,
     required this.item,
     required this.onApprove,
     required this.onEditApprove,
@@ -685,6 +686,12 @@ class _ReviewCard extends StatelessWidget {
     final evidence = Map<String, dynamic>.from(
       job['evidence'] as Map? ?? const {},
     );
+    final sourceObservation = Map<String, dynamic>.from(
+      fields['source_observation'] as Map? ?? const {},
+    );
+    final issuerDiscoveryQuarantine =
+        sourceObservation['classification'] == 'issuer_discovery_quarantine' &&
+        sourceObservation['kind'] == 'issuer_discovery_quarantine';
     final warnings = (item['validation_warnings'] as List? ?? const [])
         .map((warning) => _identityWarningLabel(warning.toString()))
         .toList(growable: false);
@@ -697,64 +704,93 @@ class _ReviewCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              '${fields['issuer'] ?? job['issuer'] ?? 'Unknown issuer'} · '
-              '${fields['cardName'] ?? fields['card_name'] ?? job['proposed_product'] ?? 'Unknown variant'}',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 10),
-            Text(
-              'Proposed identity',
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
-            _line('Subject', evidence['subject_product']),
-            _line('PDF filename', evidence['filename_product']),
-            _line('PDF header', evidence['pdf_header_product']),
-            _line('Network', fields['network'] ?? evidence['network']),
-            _line('Masked last four', evidence['last_four']),
-            _line('Official source', fields['official_url']),
-            const SizedBox(height: 10),
-            Text(
-              'Evidence and risk',
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
-            _line('Confidence', _confidenceLabel(item['confidence'])),
-            if (warnings.isNotEmpty) _line('Warnings', warnings.join(' · ')),
-            if (evidence['pdf_header_excerpt'] != null)
-              _line('Sanitized evidence', evidence['pdf_header_excerpt']),
-            if (pending) ...[
-              const SizedBox(height: 16),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  FilledButton(
-                    onPressed: onApprove,
-                    child: const Text('Approve as new card'),
-                  ),
-                  OutlinedButton(
-                    onPressed: onEditApprove,
-                    child: const Text('Edit and approve'),
-                  ),
-                  for (final candidate in candidates.whereType<Map>())
-                    OutlinedButton(
-                      onPressed: candidate['id'] is String
-                          ? () => onMerge(candidate['id'] as String)
-                          : null,
-                      child: Text(
-                        'Merge with ${candidate['card_name'] ?? 'existing card'}',
-                      ),
-                    ),
-                  TextButton(
-                    onPressed: onRetry,
-                    child: const Text('Retry discovery'),
-                  ),
-                  TextButton(
-                    onPressed: onReject,
-                    child: const Text('Reject proposal'),
-                  ),
-                ],
+            if (issuerDiscoveryQuarantine) ...[
+              Text(
+                'Issuer discovery quarantine',
+                style: Theme.of(context).textTheme.titleLarge,
               ),
+              _line('Issuer', sourceObservation['issuer']),
+              _line('Producer anchor', sourceObservation['anchor_job_id']),
+              _line(
+                'Reason',
+                _identityWarningLabel(sourceObservation['reason'].toString()),
+              ),
+              if (pending) ...[
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    FilledButton(
+                      onPressed: onRetry,
+                      child: const Text('Retry issuer discovery'),
+                    ),
+                    TextButton(
+                      onPressed: onReject,
+                      child: const Text('Keep quarantined'),
+                    ),
+                  ],
+                ),
+              ],
+            ] else ...[
+              Text(
+                '${fields['issuer'] ?? job['issuer'] ?? 'Unknown issuer'} · '
+                '${fields['cardName'] ?? fields['card_name'] ?? job['proposed_product'] ?? 'Unknown variant'}',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Proposed identity',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              _line('Subject', evidence['subject_product']),
+              _line('PDF filename', evidence['filename_product']),
+              _line('PDF header', evidence['pdf_header_product']),
+              _line('Network', fields['network'] ?? evidence['network']),
+              _line('Masked last four', evidence['last_four']),
+              _line('Official source', fields['official_url']),
+              const SizedBox(height: 10),
+              Text(
+                'Evidence and risk',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              _line('Confidence', _confidenceLabel(item['confidence'])),
+              if (warnings.isNotEmpty) _line('Warnings', warnings.join(' · ')),
+              if (evidence['pdf_header_excerpt'] != null)
+                _line('Sanitized evidence', evidence['pdf_header_excerpt']),
+              if (pending) ...[
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    FilledButton(
+                      onPressed: onApprove,
+                      child: const Text('Approve as new card'),
+                    ),
+                    OutlinedButton(
+                      onPressed: onEditApprove,
+                      child: const Text('Edit and approve'),
+                    ),
+                    for (final candidate in candidates.whereType<Map>())
+                      OutlinedButton(
+                        onPressed: candidate['id'] is String
+                            ? () => onMerge(candidate['id'] as String)
+                            : null,
+                        child: Text(
+                          'Merge with ${candidate['card_name'] ?? 'existing card'}',
+                        ),
+                      ),
+                    TextButton(
+                      onPressed: onRetry,
+                      child: const Text('Retry discovery'),
+                    ),
+                    TextButton(
+                      onPressed: onReject,
+                      child: const Text('Reject proposal'),
+                    ),
+                  ],
+                ),
+              ],
             ],
           ],
         ),

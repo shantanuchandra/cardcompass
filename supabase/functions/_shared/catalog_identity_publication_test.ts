@@ -741,6 +741,42 @@ Deno.test("lifecycle scoping keeps notice/status headings and rejects ambiguous 
   );
 });
 
+Deno.test("discontinuation status binds to its immediate product subject and target-only container", () => {
+  for (
+    const html of [
+      `<table><tr><td>Axis Neo Credit Card and My Zone — My Zone discontinued</td></tr></table>`,
+      `<table><tr><td>Axis Neo Credit Card, My Zone discontinued</td></tr></table>`,
+      `<h2>Axis Neo Credit Card</h2><div class="status">My Zone discontinued</div>`,
+      `<h2>Axis Neo Credit Card</h2><p>My Zone. This card has been discontinued.</p>`,
+    ]
+  ) {
+    const evidence = cardDiscontinuationEvidence(
+      html,
+      "Axis Bank",
+      "Axis Neo Credit Card",
+    );
+    assert(
+      !evidence.explicit,
+      `competitor-bound status was attributed to the target: ${html}`,
+    );
+  }
+
+  for (
+    const html of [
+      `<table><tr><td>Axis Neo Credit Card</td><td>Status: discontinued</td></tr></table>`,
+      `<h2>Axis Neo Credit Card</h2><div class="status">Discontinued</div>`,
+      `<h2>Axis Neo Credit Card</h2><p>This card has been discontinued.</p>`,
+    ]
+  ) {
+    const evidence = cardDiscontinuationEvidence(
+      html,
+      "Axis Bank",
+      "Axis Neo Credit Card",
+    );
+    assert(evidence.explicit, `target-specific status was rejected: ${html}`);
+  }
+});
+
 Deno.test("reviewed catalog fields enforce a strict private bounded whole-envelope contract", () => {
   const valid = boundedReviewedCatalogFields({
     issuer: "Axis Bank",
