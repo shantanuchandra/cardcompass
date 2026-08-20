@@ -159,9 +159,10 @@ test("falls back from unavailable sitemaps to same-host credit-card indexes", as
   assert.equal(result.fetchedCount, 1);
   assert.deepEqual(requested, [
     ...seeds.sitemapUrls,
-    seeds.indexUrls[0],
+    ...seeds.indexUrls,
     product,
   ]);
+  assert.equal(result.complete, false);
 });
 
 test("caps sitemap URLs at 200 and candidate page requests at 40", async () => {

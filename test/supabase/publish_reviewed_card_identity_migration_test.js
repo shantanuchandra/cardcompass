@@ -755,6 +755,16 @@ test("lifecycle evidence is chronological, semantic, bounded, and supersedes sta
     lifecycle,
     /catalog_lifecycle_semantic_observation[\s\S]*source_observation_semantic_hash/i,
   );
+  assert.doesNotMatch(
+    lifecycle,
+    /lifecycle_dedupe_key[\s\S]{0,500}coalesce\(lower\(_content_hash\)/i,
+    "raw response hash incorrectly versions semantic lifecycle work",
+  );
+  assert.match(
+    lifecycle,
+    /catalog_baseline\s*-\s*array\['updated_at',\s*'version_observed_at'\]/i,
+    "transport/version timestamps incorrectly version lifecycle work",
+  );
   assert.match(
     lifecycle,
     /append_catalog_observation_history/i,

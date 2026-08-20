@@ -26,6 +26,12 @@ provenance; and keeps user URL request anchors stable across identical replay,
 content change, and fetch failure. Complete issuer-directory absence is now
 review evidence only when directory completeness is proven, while issuers whose
 known cards are all discontinued remain discoverable for reappearance.
+The final hardening pass scopes discontinuation evidence to one product block,
+requires every selected directory source and candidate to terminate positively,
+rotates issuer discovery fairly through retained attempt evidence, distinguishes
+absent tier/network variants, removes transport/raw-body churn from lifecycle
+version identity, and reconciles all current and legacy resource bindings before
+any existing-card result can return.
 
 Live applied: **no**.
 
@@ -56,6 +62,7 @@ Modified:
 - `supabase/functions/catalog-enrichment/index_test.ts`
 - `test/supabase/card_catalog_enrichment_rules.test.mjs`
 - `test/supabase/card_discovery_rules.test.mjs`
+- `test/supabase/issuer_card_crawl_rules.test.mjs`
 - `test/supabase/issuer_card_discovery_rules.test.mjs`
 - `test/supabase/official_issuer_fetch_rules.test.mjs`
 
@@ -64,7 +71,7 @@ No earlier migration was modified.
 ## Migration
 
 - File: `20260819231435_publish_reviewed_card_identity.sql`
-- SHA-256: `fc41f4d7d1bfab96536bc04197321130f640aa9c1094725c6e22de306daca631`
+- SHA-256: `55dcb907e7b373b2b8e3704762d2c867d95edc4f94dbf9d2e65f8ea7c03b334d`
 - Created with `supabase migration new publish_reviewed_card_identity`.
 - Project-ref preflight remained exactly `prbcoxqobhjnnfnxevxf`.
 
@@ -398,20 +405,40 @@ The green implementation retains all of those as behavioral or apply-time
 regressions. No terminal artifact is deleted or reopened by a stale worker, and
 no review/job linkage depends on an Edge multi-write sequence.
 
+The fifth hardening pass began with exact behavioral reds:
+
+- sibling product text leaked into the preceding card's discontinuation scope;
+- a family-only absence comparison let one sibling mask a missing tier/network
+  variant;
+- multi-source timeout, quarantined candidate, cap, and partial fallback cases
+  could still claim a complete directory;
+- pending directory-absence evidence suppressed eligible Task 6 recurrence;
+- current bindings returned before conflicting legacy bindings were reconciled;
+- lifecycle semantic identity included raw response and retrieval-time churn.
+
+Those reds are retained. Product block boundaries own bounded matched excerpts;
+incomplete reasons fail closed; absence is keyed by family, tier, effective
+network, and credit type; Task 6 ignores directory-observation-only reviews; all
+four URL bindings resolve together; and raw hashes remain provenance/history,
+not lifecycle version identity. Issuer selection now uses a stable
+null/oldest/tie-break order over retained attempt jobs, persists the attempt
+before background work, records its outcome with CAS, includes all-discontinued
+issuers, and searches beyond 100 catalog rows.
+
 ## Green verification
 
 - `deno test --node-modules-dir=auto --allow-env --frozen` across every Edge
-  test except the separately permissioned admin listener suite: **214 passed,
+  test except the separately permissioned admin listener suite: **222 passed,
   0 failed**.
 - `deno test --node-modules-dir=auto --allow-env
   --allow-net=0.0.0.0:8000 --frozen
   supabase/functions/admin-catalog-entry/benefit_admin_test.ts`: **43 passed,
   0 failed**. The only network permission is the unchanged local test listener.
 - `node --test` across every `test/supabase/*_test.js` and
-  `test/supabase/*.test.mjs`: **265 passed, 0 failed**.
+  `test/supabase/*.test.mjs`: **268 passed, 0 failed**.
 - `flutter test --no-pub test/supabase/card_catalog_url_identity_test.dart`:
   **2 passed, 0 failed**.
-- Total unique named offline tests: **524 passed, 0 failed**.
+- Total unique named offline tests: **535 passed, 0 failed**.
 - `deno check --node-modules-dir=auto --frozen` on all changed production
   TypeScript: passed.
 - `deno fmt --check` on the complete changed TypeScript/JavaScript test surface:

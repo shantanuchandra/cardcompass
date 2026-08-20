@@ -566,6 +566,58 @@ Deno.test("explicit discontinuation evidence is target scoped and retains its ma
   );
 });
 
+Deno.test("discontinuation scope stops at sibling products and accepts only target-specific structured status", () => {
+  const adjacent = cardDiscontinuationEvidence(
+    `<h2>Axis Neo Credit Card</h2>
+     <h3>Axis MyZone Credit Card</h3>
+     <p>This card has been discontinued.</p>`,
+    "Axis Bank",
+    "Neo",
+  );
+  assert(!adjacent.explicit, "a sibling h3 notice leaked into the target h2");
+
+  const table = cardDiscontinuationEvidence(
+    `<table><tr><th>Axis Neo Credit Card</th><td>Status</td><td>Discontinued</td></tr>
+     <tr><th>Axis MyZone Credit Card</th><td>Status</td><td>Available</td></tr></table>`,
+    "Axis Bank",
+    "Neo",
+  );
+  assert(table.explicit, "target-specific table status was not recognized");
+  assert(
+    table.matchedExcerpt !== null &&
+      /neo.*discontinued/i.test(table.matchedExcerpt),
+    "structured evidence did not retain the target and decisive status",
+  );
+
+  const card = cardDiscontinuationEvidence(
+    `<div class="product-card"><h3>Axis Neo Credit Card</h3>
+       <div class="status">No longer available</div></div>
+     <div class="product-card"><h3>Axis MyZone Credit Card</h3>
+       <div class="status">Available</div></div>`,
+    "Axis Bank",
+    "Neo",
+  );
+  assert(card.explicit, "target-specific card status was not recognized");
+
+  const generic = cardDiscontinuationEvidence(
+    `<h2>Axis Neo Credit Card</h2><p>Axis Bank has discontinued selected cards.</p>`,
+    "Axis Bank",
+    "Neo",
+  );
+  assert(!generic.explicit, "issuer-generic prose discontinued one product");
+
+  const successor = cardDiscontinuationEvidence(
+    `<h2>Axis Neo Credit Card</h2>
+     <p>Meet MyZone, the successor to Rewards Credit Card. This card has been discontinued.</p>`,
+    "Axis Bank",
+    "Neo",
+  );
+  assert(
+    !successor.explicit,
+    "successor prose attributed another card's notice to Neo",
+  );
+});
+
 Deno.test("reviewed catalog fields enforce a strict private bounded whole-envelope contract", () => {
   const valid = boundedReviewedCatalogFields({
     issuer: "Axis Bank",

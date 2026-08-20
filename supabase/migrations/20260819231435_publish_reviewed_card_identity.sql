@@ -1344,9 +1344,8 @@ BEGIN
   ), 'hex');
   lifecycle_dedupe_key := encode(extensions.digest(convert_to(
     'catalog-lifecycle:' || card_row.id::text || ':' || _suggested_action || ':' ||
-    (catalog_baseline - 'version_observed_at')::text || ':' ||
-    lower(_source_url_hash) || ':' || coalesce(lower(_content_hash), '') ||
-    ':' || source_observation_semantic_hash,
+    (catalog_baseline - ARRAY['updated_at', 'version_observed_at'])::text || ':' ||
+    lower(_source_url_hash) || ':' || source_observation_semantic_hash,
     'UTF8'
   ), 'sha256'), 'hex');
   history_entry := jsonb_build_object(
@@ -3041,6 +3040,9 @@ BEGIN
   IF strpos(lifecycle_definition, 'observe_current') = 0
      OR strpos(lifecycle_definition, 'latest_lifecycle_job_id') = 0
      OR strpos(lifecycle_definition, 'source_observation_semantic_hash') = 0
+     OR strpos(lifecycle_definition, $contract$catalog_baseline - ARRAY['updated_at', 'version_observed_at']$contract$) = 0
+     OR strpos(lifecycle_definition, $contract$lower(_source_url_hash) || ':' || source_observation_semantic_hash$contract$) = 0
+     OR strpos(lifecycle_definition, $contract$coalesce(lower(_content_hash), '')$contract$) > 0
      OR strpos(lifecycle_definition, 'append_catalog_observation_history') = 0
      OR strpos(lifecycle_definition, 'superseded_by_newer_lifecycle_observation') = 0
      OR strpos(publication_definition, 'stale_catalog_lifecycle_review') = 0 THEN

@@ -1,6 +1,7 @@
 import {
   classifyIssuerPage,
   discoverIssuerCardCandidates,
+  MAX_CANDIDATE_FETCHES,
 } from "./issuer_card_crawl.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -159,5 +160,127 @@ Deno.test("issuer traversal carries exact functional fetch resources into public
     result.candidates[0].submittedUrl === exact &&
       result.candidates[0].finalUrl === exact,
     "exact functional resources were replaced by display URLs",
+  );
+});
+
+Deno.test("directory completeness requires every selected sitemap source to terminate positively", async () => {
+  const first = "https://www.axis.bank.in/sitemap.xml";
+  const second = "https://www.axis.bank.in/cards-sitemap.xml";
+  const product = "https://www.axis.bank.in/cards/credit-card/neo-credit-card";
+  const result = await discoverIssuerCardCandidates({
+    issuer: "Axis Bank",
+    sitemapUrls: [first, second],
+    delay: () => {},
+    fetchOfficialIssuerResource: async (input) => {
+      if (input.url === second) throw new Error("timeout");
+      if (input.url === first) {
+        return resource(
+          first,
+          `<urlset><url><loc>${product}</loc></url></urlset>`,
+          "application/xml",
+        );
+      }
+      return resource(product, "<h1>Axis Neo Credit Card</h1>");
+    },
+  });
+  assert(!result.complete, "one successful sitemap masked another failure");
+  assert(
+    result.incompleteReasons.includes("directory_source_fetch_failed"),
+    "the failed selected source reason was not retained",
+  );
+});
+
+Deno.test("an empty successful directory cannot mask a timed-out selected source", async () => {
+  const first = "https://www.axis.bank.in/sitemap.xml";
+  const second = "https://www.axis.bank.in/cards-sitemap.xml";
+  const result = await discoverIssuerCardCandidates({
+    issuer: "Axis Bank",
+    sitemapUrls: [first, second],
+    delay: () => {},
+    fetchOfficialIssuerResource: async (input) => {
+      if (input.url === second) throw new Error("timeout");
+      return resource(first, "<urlset></urlset>", "application/xml");
+    },
+  });
+  assert(!result.complete, "empty success hid a selected-source timeout");
+});
+
+Deno.test("a selected card-like candidate must classify positively for directory completeness", async () => {
+  const sitemap = "https://www.axis.bank.in/sitemap.xml";
+  const product = "https://www.axis.bank.in/cards/credit-card/neo-credit-card";
+  const result = await discoverIssuerCardCandidates({
+    issuer: "Axis Bank",
+    sitemapUrls: [sitemap],
+    delay: () => {},
+    fetchOfficialIssuerResource: async (input) =>
+      input.url === sitemap
+        ? resource(
+          sitemap,
+          `<urlset><url><loc>${product}</loc></url></urlset>`,
+          "application/xml",
+        )
+        : resource(product, "<h1>Compare all credit cards</h1>"),
+  });
+  assert(!result.complete, "quarantined candidate established completeness");
+  assert(
+    result.incompleteReasons.includes("candidate_not_positive"),
+    "quarantined candidate reason was not retained",
+  );
+});
+
+Deno.test("candidate cap overflow is explicit incomplete evidence", async () => {
+  const sitemap = "https://www.axis.bank.in/sitemap.xml";
+  const products = Array.from(
+    { length: MAX_CANDIDATE_FETCHES + 1 },
+    (_, index) =>
+      `https://www.axis.bank.in/cards/credit-card/card-${index + 1}`,
+  );
+  const result = await discoverIssuerCardCandidates({
+    issuer: "Axis Bank",
+    sitemapUrls: [sitemap],
+    delay: () => {},
+    fetchOfficialIssuerResource: async (input) =>
+      input.url === sitemap
+        ? resource(
+          sitemap,
+          `<urlset>${
+            products.map((url) => `<url><loc>${url}</loc></url>`).join("")
+          }</urlset>`,
+          "application/xml",
+        )
+        : resource(
+          input.url,
+          `<h1>Axis ${
+            new URL(input.url).pathname.split("/").at(-1)
+          } Credit Card</h1>`,
+        ),
+  });
+  assert(!result.complete, "unattempted candidate overflow was complete");
+  assert(
+    result.incompleteReasons.includes("candidate_fetch_cap_exceeded"),
+    "candidate cap reason was not retained",
+  );
+});
+
+Deno.test("fallback completeness evaluates every selected index source", async () => {
+  const first = "https://www.axis.bank.in/cards/credit-cards";
+  const second = "https://www.axis.bank.in/personal/cards/credit-cards";
+  const product = "https://www.axis.bank.in/cards/credit-card/neo-credit-card";
+  const result = await discoverIssuerCardCandidates({
+    issuer: "Axis Bank",
+    indexUrls: [first, second],
+    delay: () => {},
+    fetchOfficialIssuerResource: async (input) => {
+      if (input.url === first) {
+        return resource(first, `<a href="${product}">Neo</a>`);
+      }
+      if (input.url === second) throw new Error("timeout");
+      return resource(product, "<h1>Axis Neo Credit Card</h1>");
+    },
+  });
+  assert(!result.complete, "one fallback index masked another partial source");
+  assert(
+    result.incompleteReasons.includes("directory_source_fetch_failed"),
+    "fallback failure reason was not retained",
   );
 });

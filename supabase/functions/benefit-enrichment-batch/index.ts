@@ -927,6 +927,26 @@ export async function seedScheduledQueueIfAllowed(
     if (reviewError) throw reviewError;
     const rows = (reviewRows ?? []) as Array<Record<string, unknown>>;
     for (const review of rows) {
+      const proposed = review.proposed_fields &&
+          typeof review.proposed_fields === "object" &&
+          !Array.isArray(review.proposed_fields)
+        ? review.proposed_fields as Record<string, unknown>
+        : null;
+      const sourceEvidence = review.source_evidence &&
+          typeof review.source_evidence === "object" &&
+          !Array.isArray(review.source_evidence)
+        ? review.source_evidence as Record<string, unknown>
+        : null;
+      const sourceObservation = sourceEvidence?.source_observation;
+      if (
+        proposed?.suggested_action === "observe_directory_absence" &&
+        sourceObservation && typeof sourceObservation === "object" &&
+        !Array.isArray(sourceObservation) &&
+        (sourceObservation as Record<string, unknown>).kind ===
+          "complete_issuer_directory_absence"
+      ) {
+        continue;
+      }
       const candidates = Array.isArray(review.existing_candidates)
         ? review.existing_candidates
         : [];
@@ -940,12 +960,16 @@ export async function seedScheduledQueueIfAllowed(
         review.proposed_fields && typeof review.proposed_fields === "object" &&
         !Array.isArray(review.proposed_fields)
       ) {
-        const proposed = review.proposed_fields as Record<string, unknown>;
-        const id = proposed.card_id ?? proposed.cardId ??
-          proposed.existing_card_id;
+        const proposedFields = review.proposed_fields as Record<
+          string,
+          unknown
+        >;
+        const id = proposedFields.card_id ?? proposedFields.cardId ??
+          proposedFields.existing_card_id;
         if (typeof id === "string" && id) unresolvedIdentityCardIds.add(id);
         const proposedUrl = identityUrlKey(
-          proposed.official_url ?? proposed.card_url ?? proposed.source_url,
+          proposedFields.official_url ?? proposedFields.card_url ??
+            proposedFields.source_url,
         );
         if (proposedUrl) unresolvedIdentityUrls.add(proposedUrl);
       }
@@ -1864,16 +1888,24 @@ export async function processJob(
 
 async function runIssuerDiscovery(
   db: UntypedSupabaseClient,
-  job: Pick<EnrichmentJob, "issuer" | "canonical_url">,
+  job: IssuerDiscoverySeed,
   deadlineAt: number,
 ): Promise<void> {
-  const fallback = issuerDiscoveryFallbackUrls(job.canonical_url);
-  const result = await discoverIssuerCardCandidates({
-    issuer: job.issuer,
-    sitemapUrls: fallback.sitemapUrls,
-    indexUrls: fallback.indexUrls,
-    deadlineAt,
-  });
+  let result;
+  try {
+    const fallback = issuerDiscoveryFallbackUrls(job.canonical_url);
+    result = await discoverIssuerCardCandidates({
+      issuer: job.issuer,
+      sitemapUrls: fallback.sitemapUrls,
+      indexUrls: fallback.indexUrls,
+      deadlineAt,
+    });
+  } catch (error) {
+    await recordIssuerDiscoveryOutcome(db, job, false, [
+      safeFailureCategory(error),
+    ]);
+    throw error;
+  }
   for (const candidate of result.candidates) {
     if (candidate.kind === "card_product") {
       await persistCrawlerCandidate(db, job.issuer, candidate);
@@ -1893,28 +1925,179 @@ async function runIssuerDiscovery(
       knownCards ?? [],
     );
   }
+  await recordIssuerDiscoveryOutcome(
+    db,
+    job,
+    result.complete,
+    result.incompleteReasons,
+  );
+}
+
+export type IssuerDiscoverySeed =
+  & Pick<
+    EnrichmentJob,
+    "issuer" | "canonical_url"
+  >
+  & {
+    rotationJobId: string;
+    rotationStatus: string;
+    rotationUpdatedAt: string | null;
+    rotationEvidence: Record<string, unknown>;
+  };
+
+export function selectIssuerDiscoveryCandidate(
+  catalogRows: Array<Record<string, unknown>>,
+  rotationRows: Array<Record<string, unknown>>,
+): Pick<EnrichmentJob, "issuer" | "canonical_url"> | null {
+  const attempts = new Map<string, number>();
+  for (const row of rotationRows) {
+    const evidence = row.evidence;
+    if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) {
+      continue;
+    }
+    const object = evidence as Record<string, unknown>;
+    if (object.kind !== "issuer_directory_rotation") continue;
+    const issuer = String(object.issuer ?? row.issuer ?? "").trim()
+      .toLowerCase();
+    const instant = Date.parse(
+      String(object.last_attempt_at ?? row.updated_at ?? ""),
+    );
+    if (issuer && Number.isFinite(instant)) {
+      attempts.set(
+        issuer,
+        Math.max(attempts.get(issuer) ?? -Infinity, instant),
+      );
+    }
+  }
+  const issuers = new Map<
+    string,
+    Pick<EnrichmentJob, "issuer" | "canonical_url">
+  >();
+  for (const row of catalogRows) {
+    const issuer = String(row.bank ?? "").trim();
+    const url = String(row.card_url ?? "").trim();
+    const key = issuer.toLowerCase();
+    if (
+      !issuers.has(key) &&
+      String(row.card_type ?? "").trim().toLowerCase() === "credit" &&
+      allowedOfficialUrl(issuer, url)
+    ) {
+      issuers.set(key, {
+        issuer,
+        canonical_url: canonicalOfficialUrl(issuer, url),
+      });
+    }
+  }
+  return [...issuers.entries()].sort(([leftKey, left], [rightKey, right]) => {
+    const leftAttempt = attempts.get(leftKey) ?? -Infinity;
+    const rightAttempt = attempts.get(rightKey) ?? -Infinity;
+    return leftAttempt - rightAttempt || leftKey.localeCompare(rightKey) ||
+      left.canonical_url.localeCompare(right.canonical_url);
+  })[0]?.[1] ?? null;
+}
+
+async function recordIssuerDiscoveryOutcome(
+  db: UntypedSupabaseClient,
+  seed: IssuerDiscoverySeed,
+  complete: boolean,
+  reasons: string[],
+): Promise<void> {
+  const now = new Date().toISOString();
+  const evidence = {
+    ...seed.rotationEvidence,
+    last_outcome: complete ? "complete" : "incomplete",
+    ...(complete ? { last_complete_at: now } : {}),
+    incomplete_reasons: reasons.slice(0, 32).map((reason) =>
+      reason.slice(0, 64)
+    ),
+  };
+  let update = db.from("card_discovery_jobs").update({
+    evidence,
+    updated_at: now,
+  })
+    .eq("id", seed.rotationJobId).eq("status", seed.rotationStatus);
+  if (seed.rotationUpdatedAt) {
+    update = update.eq("updated_at", seed.rotationUpdatedAt);
+  }
+  const { data, error } = await update.select("id").maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("issuer_discovery_rotation_race");
 }
 
 export async function loadDiscoverySeed(
   db: UntypedSupabaseClient,
-): Promise<Pick<EnrichmentJob, "issuer" | "canonical_url"> | null> {
+  now = new Date(),
+): Promise<IssuerDiscoverySeed | null> {
   const { data, error } = await db.from("card_catalog")
     .select("bank,card_url,card_type,is_discontinued")
     .not("card_url", "is", null)
     .order("bank", { ascending: true })
-    .limit(100);
+    .order("id", { ascending: true })
+    .limit(1000);
   if (error) throw error;
-  for (const row of data ?? []) {
-    const issuer = String(row.bank ?? "");
-    const url = String(row.card_url ?? "");
-    if (
-      String(row.card_type ?? "").trim().toLowerCase() === "credit" &&
-      allowedOfficialUrl(issuer, url)
-    ) {
-      return { issuer, canonical_url: canonicalOfficialUrl(issuer, url) };
+  const rotation = await db.from("card_discovery_jobs")
+    .select("id,issuer,evidence,status,updated_at")
+    .eq("discovery_source", "issuer_crawl")
+    .limit(1000);
+  if (rotation.error) throw rotation.error;
+  const selected = selectIssuerDiscoveryCandidate(
+    data ?? [],
+    rotation.data ?? [],
+  );
+  if (!selected) return null;
+  const key = await sha256Text(
+    `issuer-directory-rotation:${selected.issuer.toLowerCase()}`,
+  );
+  const previous = (rotation.data ?? []).find((row: Record<string, unknown>) =>
+    row.evidence && typeof row.evidence === "object" &&
+    (row.evidence as Record<string, unknown>).kind ===
+      "issuer_directory_rotation" &&
+    String(row.issuer ?? "").trim().toLowerCase() ===
+      selected.issuer.toLowerCase()
+  ) as Record<string, unknown> | undefined;
+  const evidence = {
+    ...((previous?.evidence as Record<string, unknown> | undefined) ?? {}),
+    kind: "issuer_directory_rotation",
+    issuer: selected.issuer,
+    canonical_url: selected.canonical_url,
+    last_attempt_at: now.toISOString(),
+  };
+  let claimed: any;
+  if (previous) {
+    let update = db.from("card_discovery_jobs").update({
+      evidence,
+      updated_at: now.toISOString(),
+    })
+      .eq("id", previous.id).eq("status", previous.status);
+    if (previous.updated_at) {
+      update = update.eq("updated_at", previous.updated_at);
     }
+    const updated = await update.select("id,status,updated_at,evidence")
+      .maybeSingle();
+    if (updated.error) throw updated.error;
+    claimed = updated.data;
+  } else {
+    const inserted = await db.from("card_discovery_jobs").insert({
+      user_id: null,
+      discovery_source: "issuer_crawl",
+      issuer: selected.issuer,
+      proposed_product: "issuer directory rotation",
+      evidence,
+      dedupe_key: key,
+      status: "resolved",
+      updated_at: now.toISOString(),
+    }).select("id,status,updated_at,evidence").maybeSingle();
+    if (inserted.error) throw inserted.error;
+    claimed = inserted.data;
   }
-  return null;
+  if (!claimed) throw new Error("issuer_discovery_rotation_race");
+  return {
+    ...selected,
+    rotationJobId: String(claimed.id),
+    rotationStatus: String(claimed.status),
+    rotationUpdatedAt: claimed.updated_at ? String(claimed.updated_at) : null,
+    rotationEvidence: claimed.evidence as Record<string, unknown>,
+  };
 }
 
 export async function handleBenefitEnrichmentBatch(

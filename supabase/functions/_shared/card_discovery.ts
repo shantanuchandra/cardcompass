@@ -771,6 +771,7 @@ export function selectCatalogUrlIdentityMatch(
 export async function selectBoundCatalogResourceIdentity(input: {
   submittedResourceIdentityHash?: string;
   finalResourceIdentityHash?: string;
+  resourceIdentityHashes?: string[];
   issuer: string;
   content: string;
   lookupCardIds: (resourceIdentityHash: string) => Promise<string[]>;
@@ -779,6 +780,7 @@ export async function selectBoundCatalogResourceIdentity(input: {
   ) => Promise<CatalogUrlIdentityCandidate[]>;
 }): Promise<string | null> {
   const hashes = [
+    ...(input.resourceIdentityHashes ?? []),
     input.submittedResourceIdentityHash,
     input.finalResourceIdentityHash,
   ].filter((value): value is string => Boolean(value));

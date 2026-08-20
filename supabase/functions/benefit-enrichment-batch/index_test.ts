@@ -7,7 +7,6 @@ import {
   currentBenefitProposal,
   initializePilotJobs,
   loadCatalogIdentity,
-  loadDiscoverySeed,
   networkWorkMayStart,
   newestValidCrawlObservations,
   observationValidatedAt,
@@ -21,6 +20,7 @@ import {
   requeueDueJobs,
   requireExactCatalogIdentity,
   seedScheduledQueueIfAllowed,
+  selectIssuerDiscoveryCandidate,
   shouldStageMaterialProposal,
   sourceObservationReviewSummary,
   sourceObservationSummary,
@@ -38,46 +38,61 @@ function assert(condition: unknown, message: string): asserts condition {
 }
 
 Deno.test("issuer discovery remains schedulable when every known card is discontinued", async () => {
-  const filters: string[] = [];
-  const query = {
-    select() {
-      return query;
-    },
-    eq(key: string) {
-      filters.push(key);
-      return query;
-    },
-    not() {
-      return query;
-    },
-    order() {
-      return query;
-    },
-    then(resolve: (value: unknown) => unknown) {
-      return Promise.resolve({
-        data: [{
-          bank: "Axis Bank",
-          card_url:
-            "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
-          card_type: "credit",
-          is_discontinued: true,
-        }],
-        error: null,
-      }).then(resolve);
-    },
-    limit() {
-      return query;
-    },
-  };
-  const seed = await loadDiscoverySeed({ from: () => query });
+  const seed = selectIssuerDiscoveryCandidate([{
+    bank: "Axis Bank",
+    card_url: "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+    card_type: "credit",
+    is_discontinued: true,
+  }], []);
   assert(
     seed?.issuer === "Axis Bank",
     "discontinued issuer disappeared from discovery",
   );
+});
+
+Deno.test("issuer discovery rotates null and oldest attempts fairly beyond 100 catalog rows", () => {
+  const catalog = Array.from({ length: 120 }, (_, index) => ({
+    bank: index < 118
+      ? "Axis Bank"
+      : index === 118
+      ? "HDFC Bank"
+      : "ICICI Bank",
+    card_url: index < 118
+      ? `https://www.axis.bank.in/cards/credit-card/card-${index}`
+      : index === 118
+      ? "https://www.hdfcbank.com/personal/pay/cards/credit-cards/regalia"
+      : "https://www.icicibank.com/personal-banking/cards/credit-card/coral",
+    card_type: "credit",
+    is_discontinued: true,
+  }));
+  const rotations: Array<Record<string, unknown>> = [];
+  const first = selectIssuerDiscoveryCandidate(catalog, rotations);
+  assert(first?.issuer === "Axis Bank", "stable null-attempt tie break failed");
+  rotations.push({
+    issuer: first.issuer,
+    evidence: {
+      kind: "issuer_directory_rotation",
+      issuer: first.issuer,
+      last_attempt_at: "2026-08-20T00:00:00.000Z",
+      last_outcome: "incomplete",
+    },
+  });
+  const second = selectIssuerDiscoveryCandidate(catalog, rotations);
   assert(
-    !filters.includes("is_discontinued"),
-    "issuer discovery retained an active-acquisition filter",
+    second?.issuer === "HDFC Bank",
+    "failed attempt did not rotate issuer",
   );
+  rotations.push({
+    issuer: second.issuer,
+    evidence: {
+      kind: "issuer_directory_rotation",
+      issuer: second.issuer,
+      last_attempt_at: "2026-08-20T00:01:00.000Z",
+      last_outcome: "complete",
+    },
+  });
+  const third = selectIssuerDiscoveryCandidate(catalog, rotations);
+  assert(third?.issuer === "ICICI Bank", "third issuer was starved");
 });
 
 Deno.test("pilot API refuses catalog-v1 before selecting or writing jobs", async () => {
@@ -2177,6 +2192,31 @@ Deno.test("scheduled seeding excludes cards named by an unresolved official-URL 
 
   assert(seeded === 0, "unresolved URL identity reached recurring seeding");
   assert(db.jobs.size === 0, "unresolved URL identity created a job");
+});
+
+Deno.test("directory absence evidence never suppresses Task6 recurring refresh", async () => {
+  const db = scheduledSeederDb(
+    [validCatalogCard],
+    [],
+    [],
+    [{
+      id: "absence-review",
+      status: "pending",
+      existing_candidates: [{ card_id: validCatalogCard.id }],
+      proposed_fields: {
+        card_id: validCatalogCard.id,
+        suggested_action: "observe_directory_absence",
+      },
+      source_evidence: {
+        source_observation: { kind: "complete_issuer_directory_absence" },
+      },
+    }],
+  );
+
+  const seeded = await seedScheduledQueueIfAllowed(db, "scheduled", true);
+
+  assert(seeded === 1, "absence observation suppressed recurring refresh");
+  assert(db.jobs.size === 1, "absence observation blocked the Task6 job");
 });
 
 Deno.test("acquisition discontinuation never suppresses refresh for an actively held card", () => {

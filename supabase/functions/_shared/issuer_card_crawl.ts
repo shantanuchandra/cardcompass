@@ -61,6 +61,7 @@ export type IssuerCrawlResult = {
   consideredCount: number;
   fetchedCount: number;
   complete: boolean;
+  incompleteReasons: string[];
 };
 
 export type PersistCrawlerCandidateResult = {
@@ -125,6 +126,7 @@ export type ClassifyIssuerPageInput = {
 type SitemapDocument = {
   isIndex: boolean;
   locations: string[];
+  valid: boolean;
 };
 
 const unsafePagePattern =
@@ -349,6 +351,28 @@ function candidateUrlScore(url: string): number {
   return 0;
 }
 
+function cardTierKey(value: unknown): string | null {
+  const normalized = String(value ?? "").toLowerCase().replace(
+    /[^a-z0-9]+/g,
+    " ",
+  );
+  if (/\bworld elite\b/.test(normalized)) return "world-elite";
+  for (
+    const tier of [
+      "infinite",
+      "signature",
+      "world",
+      "platinum",
+      "gold",
+      "select",
+      "classic",
+    ]
+  ) {
+    if (new RegExp(`\\b${tier}\\b`).test(normalized)) return tier;
+  }
+  return null;
+}
+
 function isSitemapUrl(url: string): boolean {
   try {
     const pathname = new URL(url).pathname.toLowerCase();
@@ -360,12 +384,15 @@ function isSitemapUrl(url: string): boolean {
 
 function parseSitemap(xml: string): SitemapDocument {
   const isIndex = /<\s*sitemapindex(?:\s|>)/i.test(xml);
+  const isUrlSet = /<\s*urlset(?:\s|>)/i.test(xml);
+  const valid = (isIndex && /<\/\s*sitemapindex\s*>/i.test(xml)) ||
+    (isUrlSet && /<\/\s*urlset\s*>/i.test(xml));
   const locations: string[] = [];
   for (const match of xml.matchAll(linkPattern)) {
     const location = decodeXml(match[1] ?? "");
     if (location) locations.push(location);
   }
-  return { isIndex, locations };
+  return { isIndex, locations, valid };
 }
 
 function emptyClassification(url: string, warning: string): PageClassification {
@@ -665,28 +692,7 @@ export async function persistCrawlerCandidate(
   } catch {
     proposedNetworkConflict = true;
   }
-  const tierKey = (value: unknown): string | null => {
-    const normalized = String(value ?? "").toLowerCase().replace(
-      /[^a-z0-9]+/g,
-      " ",
-    );
-    if (/\bworld elite\b/.test(normalized)) return "world-elite";
-    for (
-      const tier of [
-        "infinite",
-        "signature",
-        "world",
-        "platinum",
-        "gold",
-        "select",
-        "classic",
-      ]
-    ) {
-      if (new RegExp(`\\b${tier}\\b`).test(normalized)) return tier;
-    }
-    return null;
-  };
-  const proposedTier = tierKey(canonical.cardName);
+  const proposedTier = cardTierKey(canonical.cardName);
   const networkCompatibleCandidates = candidates.filter((row) => {
     let storedNetwork: string | null;
     try {
@@ -698,7 +704,7 @@ export async function persistCrawlerCandidate(
     } catch {
       return false;
     }
-    const storedTier = tierKey(row.card_name);
+    const storedTier = cardTierKey(row.card_name);
     return (!proposedNetworkConflict && (!storedNetwork ||
       Boolean(proposedNetwork && storedNetwork === proposedNetwork)) &&
       (!storedTier || storedTier === proposedTier));
@@ -1103,6 +1109,10 @@ export async function discoverIssuerCardCandidates(
   let crawlHadFailure = false;
   let anchorHost: string | null = null;
   const now = input.now ?? Date.now;
+  const incompleteReasons = new Set<string>();
+  const markIncomplete = (reason: string) => {
+    if (incompleteReasons.size < 32) incompleteReasons.add(reason.slice(0, 64));
+  };
 
   const request = async (
     url: string,
@@ -1138,13 +1148,25 @@ export async function discoverIssuerCardCandidates(
     );
   };
 
+  if (sitemapStarts.length > MAX_SITEMAP_URLS) {
+    markIncomplete("directory_source_cap_exceeded");
+  }
   for (const rawUrl of sitemapStarts) {
-    if (seenSitemaps.size >= MAX_SITEMAP_URLS) break;
+    if (seenSitemaps.size >= MAX_SITEMAP_URLS) {
+      markIncomplete("directory_source_cap_exceeded");
+      break;
+    }
     const url = requestForIssuer(input.issuer, rawUrl);
     const hostname = url ? hostnameOf(url) : null;
-    if (!url || !hostname) continue;
+    if (!url || !hostname) {
+      markIncomplete("directory_source_invalid");
+      continue;
+    }
     if (!anchorHost) anchorHost = hostname;
-    if (hostname !== anchorHost) continue;
+    if (hostname !== anchorHost) {
+      markIncomplete("directory_source_cross_host");
+      continue;
+    }
     if (!seenSitemaps.has(url)) {
       seenSitemaps.add(url);
       sitemapQueue.push({ url, depth: 0 });
@@ -1157,16 +1179,23 @@ export async function discoverIssuerCardCandidates(
     try {
       response = await request(current.url, "sitemap");
     } catch {
+      crawlHadFailure = true;
+      markIncomplete("directory_source_fetch_failed");
       continue;
     }
-    directorySourceSucceeded = true;
     if (
       !anchorHost || !isAnchoredToHost(response.finalUrl, anchorHost) ||
       !isAnchoredToHost(response.canonicalUrl, anchorHost)
     ) {
+      markIncomplete("directory_source_cross_host");
       continue;
     }
     const document = parseSitemap(response.text ?? "");
+    if (!document.valid) {
+      markIncomplete("directory_source_malformed");
+      continue;
+    }
+    directorySourceSucceeded = true;
     for (const rawLocation of document.locations) {
       const location = requestForIssuer(input.issuer, rawLocation);
       if (!location) {
@@ -1177,10 +1206,12 @@ export async function discoverIssuerCardCandidates(
         ) {
           seenCandidates.add(display);
           rejectedCandidateUrls.push(display);
+          markIncomplete("candidate_resource_invalid");
         }
         continue;
       }
       if (!anchorHost || !isAnchoredToHost(location, anchorHost)) {
+        markIncomplete("directory_location_cross_host");
         continue;
       }
 
@@ -1192,12 +1223,22 @@ export async function discoverIssuerCardCandidates(
         ) {
           seenSitemaps.add(location);
           sitemapQueue.push({ url: location, depth: current.depth + 1 });
+        } else if (current.depth >= MAX_SITEMAP_DEPTH) {
+          markIncomplete("sitemap_depth_exceeded");
+        } else if (seenSitemaps.size >= MAX_SITEMAP_URLS) {
+          markIncomplete("directory_source_cap_exceeded");
         }
         continue;
       }
 
       if (
-        candidateUrls.length >= MAX_SITEMAP_URLS || seenCandidates.has(location)
+        candidateUrls.length >= MAX_SITEMAP_URLS
+      ) {
+        markIncomplete("candidate_source_cap_exceeded");
+        continue;
+      }
+      if (
+        seenCandidates.has(location)
       ) continue;
       seenCandidates.add(location);
       candidateUrls.push(location);
@@ -1205,23 +1246,40 @@ export async function discoverIssuerCardCandidates(
   }
 
   if (candidateUrls.length === 0) {
-    for (const rawIndexUrl of (input.indexUrls ?? []).slice(0, 8)) {
+    const indexUrls = input.indexUrls ?? [];
+    if (indexUrls.length > 8) markIncomplete("directory_source_cap_exceeded");
+    for (const rawIndexUrl of indexUrls.slice(0, 8)) {
       const indexUrl = requestForIssuer(input.issuer, rawIndexUrl);
       const hostname = indexUrl ? hostnameOf(indexUrl) : null;
-      if (!indexUrl || !hostname) continue;
+      if (!indexUrl || !hostname) {
+        markIncomplete("directory_source_invalid");
+        continue;
+      }
       if (!anchorHost) anchorHost = hostname;
-      if (hostname !== anchorHost) continue;
+      if (hostname !== anchorHost) {
+        markIncomplete("directory_source_cross_host");
+        continue;
+      }
       let response: OfficialFetchResult;
       try {
         response = await request(indexUrl, "html");
       } catch {
+        crawlHadFailure = true;
+        markIncomplete("directory_source_fetch_failed");
         continue;
       }
-      directorySourceSucceeded = true;
       if (
         !isAnchoredToHost(response.finalUrl, anchorHost) ||
         !isAnchoredToHost(response.canonicalUrl, anchorHost)
-      ) continue;
+      ) {
+        markIncomplete("directory_source_cross_host");
+        continue;
+      }
+      if (!/<(?:html|body|a)\b/i.test(response.text ?? "")) {
+        markIncomplete("directory_source_malformed");
+        continue;
+      }
+      directorySourceSucceeded = true;
       for (const match of (response.text ?? "").matchAll(htmlLinkPattern)) {
         let linked: string;
         try {
@@ -1241,6 +1299,7 @@ export async function discoverIssuerCardCandidates(
           ) {
             seenCandidates.add(display);
             rejectedCandidateUrls.push(display);
+            markIncomplete("candidate_resource_invalid");
           }
           continue;
         }
@@ -1250,9 +1309,11 @@ export async function discoverIssuerCardCandidates(
         ) continue;
         seenCandidates.add(location);
         candidateUrls.push(location);
-        if (candidateUrls.length >= MAX_SITEMAP_URLS) break;
+        if (candidateUrls.length >= MAX_SITEMAP_URLS) {
+          markIncomplete("candidate_source_cap_exceeded");
+          break;
+        }
       }
-      if (candidateUrls.length > 0) break;
     }
   }
 
@@ -1269,12 +1330,16 @@ export async function discoverIssuerCardCandidates(
     .filter((candidate) => {
       if (candidate.classification.kind !== "not_a_card") return true;
       quarantined.push(candidate.classification);
+      markIncomplete("candidate_not_positive");
       return false;
     })
     .sort((left, right) =>
       right.positive - left.positive || left.index - right.index
     );
   let fetchedCount = 0;
+  if (fetchableCandidates.length > MAX_CANDIDATE_FETCHES) {
+    markIncomplete("candidate_fetch_cap_exceeded");
+  }
   for (const { url } of fetchableCandidates.slice(0, MAX_CANDIDATE_FETCHES)) {
     fetchedCount += 1;
     try {
@@ -1287,6 +1352,8 @@ export async function discoverIssuerCardCandidates(
         !isAnchoredToHost(response.canonicalUrl, anchorHost)
       ) {
         quarantined.push(emptyClassification(url, "cross_host_response"));
+        markIncomplete("candidate_cross_host_response");
+        markIncomplete("candidate_not_positive");
         continue;
       }
       if (
@@ -1303,6 +1370,8 @@ export async function discoverIssuerCardCandidates(
         quarantined.push(
           emptyClassification(url, "redirect_identity_mismatch"),
         );
+        markIncomplete("candidate_identity_mismatch");
+        markIncomplete("candidate_not_positive");
         continue;
       }
       const page = classifyIssuerPage({
@@ -1318,14 +1387,25 @@ export async function discoverIssuerCardCandidates(
         retrievedAt: response.retrievedAt,
         sourceStatus: response.status,
       });
-      (page.kind === "card_product" || page.kind === "supporting_document"
-        ? candidates
-        : quarantined)
-        .push(page);
+      if (page.kind === "card_product" || page.kind === "supporting_document") {
+        candidates.push(page);
+      } else {
+        quarantined.push(page);
+        markIncomplete("candidate_not_positive");
+      }
     } catch {
       crawlHadFailure = true;
+      markIncomplete("candidate_fetch_failed");
       quarantined.push(emptyClassification(url, "candidate_fetch_failed"));
     }
+  }
+
+  if (!directorySourceSucceeded) markIncomplete("directory_source_missing");
+  if (rejectedCandidateUrls.length > 0) {
+    markIncomplete("candidate_resource_invalid");
+  }
+  if (fetchedCount !== fetchableCandidates.length) {
+    markIncomplete("candidate_unattempted");
   }
 
   return {
@@ -1334,9 +1414,10 @@ export async function discoverIssuerCardCandidates(
     consideredCount: candidateUrls.length + rejectedCandidateUrls.length,
     fetchedCount,
     complete: directorySourceSucceeded && !crawlHadFailure &&
-      rejectedCandidateUrls.length === 0 &&
-      fetchableCandidates.length <= MAX_CANDIDATE_FETCHES &&
-      fetchedCount === fetchableCandidates.length,
+      incompleteReasons.size === 0 &&
+      fetchedCount === fetchableCandidates.length &&
+      candidates.length === fetchableCandidates.length,
+    incompleteReasons: [...incompleteReasons].sort().slice(0, 32),
   };
 }
 
@@ -1346,26 +1427,60 @@ export async function stageCompleteIssuerDirectoryAbsenceReviews(
   result: IssuerCrawlResult,
   knownCards: Array<Record<string, unknown>>,
 ): Promise<string[]> {
-  if (!result.complete || knownCards.length === 0) return [];
-  const observedFamilies = new Set(
-    result.candidates.filter((candidate) => candidate.kind === "card_product")
-      .flatMap((candidate) => [
-        candidate.proposedName ?? "",
-        ...candidate.aliases,
-      ])
-      .map((value) => normalizedProductFamily(value, issuer))
-      .filter(Boolean),
-  );
-  const observedProducts = [...observedFamilies].sort();
+  if (
+    !result.complete || result.incompleteReasons.length > 0 ||
+    knownCards.length === 0
+  ) return [];
+  const identityKey = (
+    name: string,
+    network: unknown,
+    cardType: unknown = "credit",
+  ): { key: string; network: string | null } | null => {
+    if (String(cardType).trim().toLowerCase() !== "credit") return null;
+    const family = normalizedProductFamily(name, issuer);
+    if (!family) return null;
+    let effectiveNetwork: string | null;
+    try {
+      effectiveNetwork = effectiveCatalogNetwork(name, network, issuer) ?? null;
+    } catch {
+      return null;
+    }
+    return {
+      key: [
+        family,
+        cardTierKey(name) ?? "",
+        effectiveNetwork?.toLowerCase() ?? "",
+        "credit",
+      ]
+        .join(":"),
+      network: effectiveNetwork,
+    };
+  };
+  const observedIdentities = new Set<string>();
+  for (
+    const candidate of result.candidates.filter((item) =>
+      item.kind === "card_product"
+    )
+  ) {
+    for (const name of [candidate.proposedName ?? "", ...candidate.aliases]) {
+      const identity = identityKey(name, candidate.network);
+      if (identity) observedIdentities.add(identity.key);
+    }
+  }
+  const observedProducts = [...observedIdentities].sort();
   const reviewIds: string[] = [];
   for (const card of knownCards) {
     const cardId = String(card.id ?? "");
     const cardName = String(card.card_name ?? "");
+    const cardIdentity = identityKey(
+      cardName,
+      card.network,
+      card.card_type,
+    );
     if (
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
         .test(cardId) ||
-      String(card.card_type ?? "").trim().toLowerCase() !== "credit" ||
-      observedFamilies.has(normalizedProductFamily(cardName, issuer))
+      !cardIdentity || observedIdentities.has(cardIdentity.key)
     ) continue;
     const sourceObservation = {
       kind: "complete_issuer_directory_absence",
@@ -1373,7 +1488,7 @@ export async function stageCompleteIssuerDirectoryAbsenceReviews(
       directory_complete: true,
       considered_count: result.consideredCount,
       fetched_count: result.fetchedCount,
-      observed_product_families: observedProducts.slice(0, 40),
+      observed_product_identities: observedProducts.slice(0, 40),
     };
     const semanticHash = await semanticProductEnvelopeHash({
       issuer,
@@ -1402,7 +1517,7 @@ export async function stageCompleteIssuerDirectoryAbsenceReviews(
       existingCandidates: [{
         card_id: cardId,
         card_name: cardName,
-        network: card.network ?? null,
+        network: cardIdentity.network,
         card_type: "credit",
       }],
       validationWarnings: ["complete_directory_absence_requires_review"],

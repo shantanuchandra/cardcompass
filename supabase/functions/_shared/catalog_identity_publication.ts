@@ -568,50 +568,104 @@ export function cardDiscontinuationEvidence(
         "with",
       ]).has(token)
     );
-  const targetTokens = meaningful(`${issuer} ${cardName}`);
+  const targetTokens = meaningful(cardName);
   if (targetTokens.length === 0) {
     return { explicit: false, matchedExcerpt: null };
   }
-  const decisive =
-    /\b(?:this\s+)?(?:credit\s+)?card\s+(?:has\s+been\s+|is\s+)(?:discontinued|withdrawn)\b|\b(?:this\s+)?(?:credit\s+)?card\s+is\s+no\s+longer\s+(?:available|issued)\b/i;
-  const blocks = [
-    ...html.slice(0, 120_000).matchAll(
-      /<(title|h1|h2|h3|p|li|section|article)\b[^>]*>([\s\S]*?)<\/\1>/gi,
-    ),
-  ].map((match) => clean(match[2] ?? "")).filter(Boolean);
-  for (let index = 0; index < blocks.length; index += 1) {
-    const heading = blocks[index];
-    const headingTokens = new Set(meaningful(heading));
-    const isTargetHeading = targetTokens.every((token) =>
-      headingTokens.has(token)
-    );
-    const scoped = clean(blocks.slice(index, index + 3).join(" ")).slice(
-      0,
-      1_200,
-    );
-    if (isTargetHeading && decisive.test(scoped)) {
-      const match = scoped.match(decisive)?.[0] ?? scoped;
-      const start = Math.max(
-        0,
-        scoped.toLowerCase().indexOf(match.toLowerCase()) - 180,
-      );
-      return {
-        explicit: true,
-        matchedExcerpt: scoped.slice(start, start + 512),
-      };
+  const boundedHtml = html.slice(0, 120_000).replace(
+    /<script\b[^>]*>[\s\S]*?<\/script>|<style\b[^>]*>[\s\S]*?<\/style>/gi,
+    " ",
+  );
+  const containsTarget = (value: string) => {
+    const tokens = new Set(meaningful(value));
+    return targetTokens.every((token) => tokens.has(token));
+  };
+  const boundedExcerpt = (value: string) => clean(value).slice(0, 512);
+  const structuredStatus =
+    /\b(?:status\s*:?\s*)?(?:discontinued|withdrawn|no\s+longer\s+(?:available|issued))\b/i;
+
+  // A table row is an explicit product/status association and does not borrow
+  // a status cell from an adjacent product row.
+  for (const row of boundedHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)) {
+    const rowText = clean(row[1] ?? "");
+    if (
+      containsTarget(rowText) && structuredStatus.test(rowText) &&
+      !/\bnot\s+(?:discontinued|withdrawn)\b/i.test(rowText)
+    ) {
+      return { explicit: true, matchedExcerpt: boundedExcerpt(rowText) };
     }
   }
-  const plain = clean(html.slice(0, 120_000));
+
+  const headings = [...boundedHtml.matchAll(
+    /<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1>/gi,
+  )].map((match) => ({
+    start: match.index ?? 0,
+    end: (match.index ?? 0) + match[0].length,
+    text: clean(match[2] ?? ""),
+  }));
+  const productHeading = (value: string) =>
+    /\b(?:credit\s+)?card\b/i.test(value) || meaningful(value).length > 0;
+  const anaphoric =
+    /\b(?:this|the)\s+(?:credit\s+)?card\s+(?:has\s+been\s+|is\s+)(?:discontinued|withdrawn)\b|\b(?:this|the)\s+(?:credit\s+)?card\s+is\s+no\s+longer\s+(?:available|issued)\b/i;
   const targetPhrase = meaningful(cardName).join("[\\s\\W_]*");
   const direct = targetPhrase
     ? new RegExp(
       `\\b${targetPhrase}\\b(?:[\\s\\W_]*(?:credit[\\s\\W_]*)?card)?[\\s\\W_]*(?:has[\\s\\W_]*been|is)[\\s\\W_]*(?:discontinued|withdrawn|no[\\s\\W_]*longer[\\s\\W_]*(?:available|issued))\\b`,
       "i",
     )
-      .exec(plain)
     : null;
-  return direct
-    ? { explicit: true, matchedExcerpt: direct[0].slice(0, 512) }
+
+  for (let index = 0; index < headings.length; index += 1) {
+    const heading = headings[index];
+    if (!containsTarget(heading.text)) continue;
+    const sibling = headings.slice(index + 1).find((candidate) =>
+      productHeading(candidate.text) && !containsTarget(candidate.text)
+    );
+    const scopeEnd = Math.min(
+      sibling?.start ?? boundedHtml.length,
+      heading.end + 12_000,
+    );
+    const rawScope = boundedHtml.slice(heading.end, scopeEnd);
+    const scoped = clean(rawScope).slice(0, 2_000);
+    const directMatch = direct?.exec(scoped) ?? null;
+    if (directMatch) {
+      return {
+        explicit: true,
+        matchedExcerpt: boundedExcerpt(`${heading.text} ${directMatch[0]}`),
+      };
+    }
+    const statusElement = [...rawScope.matchAll(
+      /<(?:div|span|p|td)\b[^>]*(?:class|data-status|aria-label)\s*=\s*["'][^"']*(?:status|availability)[^"']*["'][^>]*>([\s\S]*?)<\/(?:div|span|p|td)>/gi,
+    )].map((match) => clean(match[1] ?? "")).find((value) =>
+      structuredStatus.test(value) &&
+      !/\bnot\s+(?:discontinued|withdrawn)\b/i.test(value)
+    );
+    if (statusElement) {
+      return {
+        explicit: true,
+        matchedExcerpt: boundedExcerpt(`${heading.text} ${statusElement}`),
+      };
+    }
+    const anaphoricMatch = anaphoric.exec(scoped);
+    if (anaphoricMatch) {
+      const prior = scoped.slice(0, anaphoricMatch.index);
+      const refersToSuccessor =
+        /\b(?:successor|replacement|replaces?|replaced)\b/i.test(prior) &&
+        /\b(?:credit\s+)?card\b/i.test(prior);
+      if (!refersToSuccessor) {
+        return {
+          explicit: true,
+          matchedExcerpt: boundedExcerpt(
+            `${heading.text} ${anaphoricMatch[0]}`,
+          ),
+        };
+      }
+    }
+  }
+  const plain = clean(html.slice(0, 120_000));
+  const directAnywhere = direct?.exec(plain) ?? null;
+  return directAnywhere
+    ? { explicit: true, matchedExcerpt: directAnywhere[0].slice(0, 512) }
     : { explicit: false, matchedExcerpt: null };
 }
 

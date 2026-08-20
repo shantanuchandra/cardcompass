@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 
 import {
   persistCrawlerCandidate,
@@ -8,6 +9,39 @@ import {
 } from "../../supabase/functions/_shared/issuer_card_crawl.ts";
 
 const hashUrl = (value) => createHash("sha256").update(value).digest("hex");
+
+test("issuer rotation persists a CAS attempt before background crawl and records failure", async () => {
+  const source = await readFile(
+    new URL(
+      "../../supabase/functions/benefit-enrichment-batch/index.ts",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const load = source.slice(
+    source.indexOf("export async function loadDiscoverySeed"),
+    source.indexOf("export async function handleBenefitEnrichmentBatch"),
+  );
+  const run = source.slice(
+    source.indexOf("async function runIssuerDiscovery"),
+    source.indexOf("export type IssuerDiscoverySeed"),
+  );
+  assert.match(load, /kind:\s*"issuer_directory_rotation"/);
+  assert.match(load, /last_attempt_at:\s*now\.toISOString\(\)/);
+  assert.match(
+    load,
+    /\.eq\("id", previous\.id\)\.eq\("status", previous\.status\)/,
+  );
+  assert.match(
+    run,
+    /catch \(error\)[\s\S]*recordIssuerDiscoveryOutcome\(db, job, false/,
+  );
+  assert.ok(
+    source.indexOf("const discoverySeed = await loadDiscoverySeed(db)") <
+      source.indexOf("EdgeRuntime.waitUntil("),
+    "attempt was not persisted before background work",
+  );
+});
 
 function candidate(overrides = {}) {
   return {
@@ -1065,11 +1099,31 @@ test("complete issuer directory absence is bounded review evidence and incomplet
       consideredCount: 40,
       fetchedCount: 39,
       complete: false,
+      incompleteReasons: ["candidate_fetch_failed"],
     },
     knownCards,
   );
   assert.deepEqual(incomplete, []);
   assert.equal(db.state.rpcCalls.length, 0, "partial crawl staged absence");
+  const inconsistent = await stageCompleteIssuerDirectoryAbsenceReviews(
+    db,
+    "Axis Bank",
+    {
+      candidates: [candidate()],
+      quarantined: [],
+      consideredCount: 1,
+      fetchedCount: 1,
+      complete: true,
+      incompleteReasons: ["candidate_not_positive"],
+    },
+    knownCards,
+  );
+  assert.deepEqual(inconsistent, []);
+  assert.equal(
+    db.state.rpcCalls.length,
+    0,
+    "incomplete reasons staged absence",
+  );
   const staged = await stageCompleteIssuerDirectoryAbsenceReviews(
     db,
     "Axis Bank",
@@ -1079,6 +1133,7 @@ test("complete issuer directory absence is bounded review evidence and incomplet
       consideredCount: 1,
       fetchedCount: 1,
       complete: true,
+      incompleteReasons: [],
     },
     knownCards,
   );
@@ -1092,5 +1147,55 @@ test("complete issuer directory absence is bounded review evidence and incomplet
   assert.equal(
     call.args._validation_warnings[0],
     "complete_directory_absence_requires_review",
+  );
+});
+
+test("directory absence distinguishes family siblings by tier and effective network", async () => {
+  const visaId = "11111111-1111-4111-8111-111111111111";
+  const mastercardId = "22222222-2222-4222-8222-222222222222";
+  const knownCards = [
+    {
+      id: visaId,
+      bank: "Axis Bank",
+      card_name: "Privilege Visa Infinite Credit Card",
+      network: null,
+      card_type: "credit",
+    },
+    {
+      id: mastercardId,
+      bank: "Axis Bank",
+      card_name: "Privilege Mastercard World Credit Card",
+      network: "Mastercard",
+      card_type: "credit",
+    },
+  ];
+  const db = createDb({ catalogRows: knownCards });
+  const staged = await stageCompleteIssuerDirectoryAbsenceReviews(
+    db,
+    "Axis Bank",
+    {
+      candidates: [candidate({
+        proposedName: "Privilege Visa Infinite Credit Card",
+        aliases: ["Axis Privilege Visa Infinite Credit Card"],
+        network: "Visa",
+      })],
+      quarantined: [],
+      consideredCount: 1,
+      fetchedCount: 1,
+      complete: true,
+      incompleteReasons: [],
+    },
+    knownCards,
+  );
+
+  assert.deepEqual(staged, ["review-1"]);
+  assert.equal(
+    db.state.rpcCalls[0].args._proposed_fields.card_id,
+    mastercardId,
+    "present Visa Infinite masked the absent Mastercard World sibling",
+  );
+  assert.equal(
+    db.state.rpcCalls[0].args._existing_candidates[0].network,
+    "Mastercard",
   );
 });

@@ -583,6 +583,48 @@ test("reconciles submitted and final opaque bindings with separate lookups befor
   assert.equal(same, "gold");
 });
 
+test("reconciles current and legacy submitted/final bindings before any early resolution", async () => {
+  const currentSubmitted = "1".repeat(64);
+  const currentFinal = "2".repeat(64);
+  const legacySubmitted = "3".repeat(64);
+  const legacyFinal = "4".repeat(64);
+  const calls = [];
+  let loaded = false;
+  await assert.rejects(
+    cardDiscovery.selectBoundCatalogResourceIdentity({
+      resourceIdentityHashes: [
+        currentSubmitted,
+        currentFinal,
+        legacySubmitted,
+        legacyFinal,
+      ],
+      issuer: "HDFC Bank",
+      content: "<h1>Regalia Gold Credit Card</h1>",
+      lookupCardIds: async (hash) => {
+        calls.push(hash);
+        if (hash === currentSubmitted) return ["gold"];
+        if (hash === legacyFinal) return ["platinum"];
+        return [];
+      },
+      loadCandidates: async () => {
+        loaded = true;
+        return [];
+      },
+    }),
+    /identity_conflict/,
+  );
+  assert.deepEqual(
+    calls.sort(),
+    [
+      currentSubmitted,
+      currentFinal,
+      legacySubmitted,
+      legacyFinal,
+    ].sort(),
+  );
+  assert.equal(loaded, false, "cross-pair conflict reached body resolution");
+});
+
 test("opaque resource lookup fails closed on a non-unique binding or body mismatch", async () => {
   const hash = "d".repeat(64);
   await assert.rejects(

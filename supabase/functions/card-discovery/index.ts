@@ -381,19 +381,29 @@ async function resolveBoundIdentityOrReview(
   submittedHash: string,
   finalHash: string,
   sourceKind: string,
+  legacyHashes: { submitted: string; final: string } | null = null,
 ): Promise<{ cardId: string | null; reviewed: boolean }> {
-  const [submittedCardIds, finalCardIds] = await Promise.all([
-    findCatalogCardsByUrlHash(db, submittedHash),
-    findCatalogCardsByUrlHash(db, finalHash),
-  ]);
+  const labeledHashes = [
+    ["submitted", submittedHash],
+    ["final", finalHash],
+    ...(legacyHashes
+      ? [["legacy_submitted", legacyHashes.submitted], [
+        "legacy_final",
+        legacyHashes.final,
+      ]]
+      : []),
+  ] as Array<[string, string]>;
+  const idsByHash = new Map<string, string[]>();
+  await Promise.all([...new Set(labeledHashes.map(([, hash]) => hash))].map(
+    async (hash) =>
+      idsByHash.set(hash, await findCatalogCardsByUrlHash(db, hash)),
+  ));
   try {
     const cardId = await selectBoundCatalogResourceIdentity({
-      submittedResourceIdentityHash: submittedHash,
-      finalResourceIdentityHash: finalHash,
+      resourceIdentityHashes: labeledHashes.map(([, hash]) => hash),
       issuer: job.issuer,
       content,
-      lookupCardIds: async (hash) =>
-        hash === submittedHash ? submittedCardIds : finalCardIds,
+      lookupCardIds: async (hash) => idsByHash.get(hash) ?? [],
       loadCandidates: (ids) => loadCatalogUrlIdentityCandidates(db, ids),
     });
     return { cardId, reviewed: false };
@@ -401,17 +411,16 @@ async function resolveBoundIdentityOrReview(
     if (!(error instanceof Error) || error.message !== "identity_conflict") {
       throw error;
     }
-    const boundIds = [...new Set([...submittedCardIds, ...finalCardIds])];
+    const boundIds = [...new Set([...idsByHash.values()].flat())];
     const candidates = await loadCatalogUrlIdentityCandidates(db, boundIds);
     const observed = officialCardIdentityFromHtml(content, job.issuer) ??
       canonicalCardIdentity(
         job.issuer,
         String(job.proposed_product ?? "Unknown"),
       );
-    const boundResourceIdentities = {
-      submitted: { hash: submittedHash, card_ids: submittedCardIds },
-      final: { hash: finalHash, card_ids: finalCardIds },
-    };
+    const boundResourceIdentities = Object.fromEntries(labeledHashes.map(
+      ([label, hash]) => [label, { hash, card_ids: idsByHash.get(hash) ?? [] }],
+    ));
     await putInReview(
       db,
       job,
@@ -571,6 +580,7 @@ async function processSubmittedUrlObservation(
     submittedHash,
     finalHash,
     "bound_resource_identity_conflict",
+    { submitted: legacySubmittedHash, final: legacyFinalHash },
   );
   if (opaqueBinding.reviewed) {
     return (await db.from("card_discovery_jobs").select("*").eq("id", job.id)
@@ -585,33 +595,6 @@ async function processSubmittedUrlObservation(
       "bound_official_card_observation",
     );
   }
-  if (
-    legacySubmittedHash !== submittedHash || legacyFinalHash !== finalHash
-  ) {
-    const legacyBinding = await resolveBoundIdentityOrReview(
-      db,
-      job,
-      page.text,
-      publicationEvidence,
-      legacySubmittedHash,
-      legacyFinalHash,
-      "legacy_bound_resource_identity_conflict",
-    );
-    if (legacyBinding.reviewed) {
-      return (await db.from("card_discovery_jobs").select("*").eq("id", job.id)
-        .single()).data;
-    }
-    if (legacyBinding.cardId) {
-      return observeExistingCard(
-        db,
-        job,
-        legacyBinding.cardId,
-        publicationEvidence,
-        "legacy_bound_official_card_observation",
-      );
-    }
-  }
-
   if (page.contentType === "application/pdf") {
     const product = evidence.product_signals?.find((value) =>
       normalizedProduct(value, job.issuer).length >= 4
