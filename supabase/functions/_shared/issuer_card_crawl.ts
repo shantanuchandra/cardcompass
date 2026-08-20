@@ -60,8 +60,17 @@ export type IssuerCrawlResult = {
   quarantined: PageClassification[];
   consideredCount: number;
   fetchedCount: number;
+  resumedCount: number;
+  budgetExhausted: boolean;
   complete: boolean;
   incompleteReasons: string[];
+};
+
+export type IssuerCandidateOutcome = {
+  candidateKey: string;
+  classification: PageClassification;
+  disposition: "candidate" | "quarantined" | "rejected";
+  attempted: boolean;
 };
 
 export type PersistCrawlerCandidateResult = {
@@ -86,6 +95,10 @@ export type DiscoverIssuerCardCandidatesInput = {
   delayMs?: number;
   deadlineAt?: number;
   now?: () => number;
+  completedCandidateOutcomes?: IssuerCandidateOutcome[];
+  onCandidateOutcome?: (
+    outcome: IssuerCandidateOutcome,
+  ) => Promise<boolean | void>;
 };
 
 export function issuerDiscoveryFallbackUrls(originUrl: string): {
@@ -128,6 +141,13 @@ type SitemapDocument = {
   locations: string[];
   valid: boolean;
 };
+
+class IssuerDeadlineBeforeRequestError extends Error {
+  constructor() {
+    super("deadline_exceeded");
+    this.name = "IssuerDeadlineBeforeRequestError";
+  }
+}
 
 const unsafePagePattern =
   /(?:^|[/?=&_.-])(?:login|log-in|apply|application|track|tracking|blog|stories?|story|protection|insurance|generic|help|support|learning-centre)(?:$|[/?=&_.-])/i;
@@ -371,15 +391,6 @@ function cardTierKey(value: unknown): string | null {
     if (new RegExp(`\\b${tier}\\b`).test(normalized)) return tier;
   }
   return null;
-}
-
-function isSitemapUrl(url: string): boolean {
-  try {
-    const pathname = new URL(url).pathname.toLowerCase();
-    return /(?:^|[-_/])sitemap(?:[-_.]|$)|\.xml(?:\.gz)?$/.test(pathname);
-  } catch {
-    return false;
-  }
 }
 
 function parseSitemap(xml: string): SitemapDocument {
@@ -651,7 +662,23 @@ export async function persistCrawlerCandidate(
     submittedHash !== submittedResource.urlHash ||
     finalHash !== finalResource.urlHash
   ) throw new Error("identity_conflict");
-  const resourceHashes = [...new Set([submittedHash, finalHash])];
+  const submittedDisplay = safeHttpsDisplayUrl(
+    candidate.submittedUrl ?? canonicalUrl,
+  );
+  const finalDisplay = safeHttpsDisplayUrl(
+    candidate.finalUrl ?? candidate.submittedUrl ?? canonicalUrl,
+  );
+  if (!submittedDisplay || !finalDisplay) throw new Error("identity_conflict");
+  const legacySubmittedHash = await sha256(submittedDisplay);
+  const legacyFinalHash = await sha256(finalDisplay);
+  const resourceHashes = [
+    ...new Set([
+      submittedHash,
+      finalHash,
+      legacySubmittedHash,
+      legacyFinalHash,
+    ]),
+  ];
   const boundCardIds = [
     ...new Set(
       (await Promise.all(
@@ -1107,12 +1134,27 @@ export async function discoverIssuerCardCandidates(
   let hasRequested = false;
   let directorySourceSucceeded = false;
   let crawlHadFailure = false;
+  let budgetExhausted = false;
   let anchorHost: string | null = null;
   const now = input.now ?? Date.now;
   const incompleteReasons = new Set<string>();
   const markIncomplete = (reason: string) => {
     if (incompleteReasons.size < 32) incompleteReasons.add(reason.slice(0, 64));
   };
+  const isDeadlineError = (error: unknown) =>
+    error instanceof Error && error.message === "deadline_exceeded";
+  const isDeadlineBeforeRequest = (error: unknown) =>
+    error instanceof IssuerDeadlineBeforeRequestError;
+  const completedOutcomes = new Map(
+    (input.completedCandidateOutcomes ?? [])
+      .filter((outcome) =>
+        !outcome.classification.warnings.includes("candidate_fetch_failed")
+      )
+      .map((outcome) => [outcome.candidateKey, outcome]),
+  );
+  const candidateKey = async (url: string) => await sha256(url);
+  const persistOutcome = async (outcome: IssuerCandidateOutcome) =>
+    (await input.onCandidateOutcome?.(outcome)) !== false;
 
   const request = async (
     url: string,
@@ -1124,14 +1166,14 @@ export async function discoverIssuerCardCandidates(
         input.deadlineAt !== undefined &&
         (now() >= input.deadlineAt ||
           intendedDelay > input.deadlineAt - now())
-      ) throw new Error("deadline_exceeded");
+      ) throw new IssuerDeadlineBeforeRequestError();
       await delay(intendedDelay);
     }
     if (
       input.deadlineAt !== undefined &&
       now() >= input.deadlineAt
     ) {
-      throw new Error("deadline_exceeded");
+      throw new IssuerDeadlineBeforeRequestError();
     }
     hasRequested = true;
     return requireOfficialFetchBody(
@@ -1175,10 +1217,16 @@ export async function discoverIssuerCardCandidates(
 
   for (let position = 0; position < sitemapQueue.length; position++) {
     const current = sitemapQueue[position];
-    let response: OfficialFetchResult;
+    let response: OfficialFetchResult & { text: string; contentHash: string };
     try {
       response = await request(current.url, "sitemap");
-    } catch {
+    } catch (error) {
+      if (isDeadlineError(error)) {
+        budgetExhausted = true;
+        markIncomplete("budget_exhausted");
+        markIncomplete("directory_source_unattempted");
+        break;
+      }
       crawlHadFailure = true;
       markIncomplete("directory_source_fetch_failed");
       continue;
@@ -1199,14 +1247,24 @@ export async function discoverIssuerCardCandidates(
     for (const rawLocation of document.locations) {
       const location = requestForIssuer(input.issuer, rawLocation);
       if (!location) {
+        if (document.isIndex) {
+          markIncomplete("directory_source_invalid");
+        }
         const display = canonicalForIssuer(input.issuer, rawLocation);
         if (
           display && anchorHost && isAnchoredToHost(display, anchorHost) &&
           !document.isIndex && !seenCandidates.has(display)
         ) {
-          seenCandidates.add(display);
-          rejectedCandidateUrls.push(display);
-          markIncomplete("candidate_resource_invalid");
+          if (
+            candidateUrls.length + rejectedCandidateUrls.length >=
+              MAX_SITEMAP_URLS
+          ) {
+            markIncomplete("candidate_source_cap_exceeded");
+          } else {
+            seenCandidates.add(display);
+            rejectedCandidateUrls.push(display);
+            markIncomplete("candidate_resource_invalid");
+          }
         }
         continue;
       }
@@ -1215,7 +1273,7 @@ export async function discoverIssuerCardCandidates(
         continue;
       }
 
-      if (document.isIndex && isSitemapUrl(location)) {
+      if (document.isIndex) {
         if (
           current.depth < MAX_SITEMAP_DEPTH &&
           seenSitemaps.size < MAX_SITEMAP_URLS &&
@@ -1232,7 +1290,8 @@ export async function discoverIssuerCardCandidates(
       }
 
       if (
-        candidateUrls.length >= MAX_SITEMAP_URLS
+        candidateUrls.length + rejectedCandidateUrls.length >=
+          MAX_SITEMAP_URLS
       ) {
         markIncomplete("candidate_source_cap_exceeded");
         continue;
@@ -1245,7 +1304,7 @@ export async function discoverIssuerCardCandidates(
     }
   }
 
-  if (candidateUrls.length === 0) {
+  if (candidateUrls.length === 0 && !budgetExhausted) {
     const indexUrls = input.indexUrls ?? [];
     if (indexUrls.length > 8) markIncomplete("directory_source_cap_exceeded");
     for (const rawIndexUrl of indexUrls.slice(0, 8)) {
@@ -1260,10 +1319,16 @@ export async function discoverIssuerCardCandidates(
         markIncomplete("directory_source_cross_host");
         continue;
       }
-      let response: OfficialFetchResult;
+      let response: OfficialFetchResult & { text: string; contentHash: string };
       try {
         response = await request(indexUrl, "html");
-      } catch {
+      } catch (error) {
+        if (isDeadlineError(error)) {
+          budgetExhausted = true;
+          markIncomplete("budget_exhausted");
+          markIncomplete("directory_source_unattempted");
+          break;
+        }
         crawlHadFailure = true;
         markIncomplete("directory_source_fetch_failed");
         continue;
@@ -1297,9 +1362,16 @@ export async function discoverIssuerCardCandidates(
             display && isAnchoredToHost(display, anchorHost) &&
             !seenCandidates.has(display) && candidateUrlScore(display) > 0
           ) {
-            seenCandidates.add(display);
-            rejectedCandidateUrls.push(display);
-            markIncomplete("candidate_resource_invalid");
+            if (
+              candidateUrls.length + rejectedCandidateUrls.length >=
+                MAX_SITEMAP_URLS
+            ) {
+              markIncomplete("candidate_source_cap_exceeded");
+            } else {
+              seenCandidates.add(display);
+              rejectedCandidateUrls.push(display);
+              markIncomplete("candidate_resource_invalid");
+            }
           }
           continue;
         }
@@ -1309,7 +1381,10 @@ export async function discoverIssuerCardCandidates(
         ) continue;
         seenCandidates.add(location);
         candidateUrls.push(location);
-        if (candidateUrls.length >= MAX_SITEMAP_URLS) {
+        if (
+          candidateUrls.length + rejectedCandidateUrls.length >=
+            MAX_SITEMAP_URLS
+        ) {
           markIncomplete("candidate_source_cap_exceeded");
           break;
         }
@@ -1318,85 +1393,200 @@ export async function discoverIssuerCardCandidates(
   }
 
   const candidates: PageClassification[] = [];
-  const quarantined: PageClassification[] = rejectedCandidateUrls.map((url) =>
-    emptyClassification(url, "unapproved_query")
-  );
+  const quarantined: PageClassification[] = [];
+  let fetchedCount = 0;
+  let resumedCount = 0;
+  let terminalCandidateCount = 0;
+  for (const url of rejectedCandidateUrls) {
+    const key = await candidateKey(url);
+    const completed = completedOutcomes.get(key);
+    if (completed) {
+      resumedCount += 1;
+      quarantined.push(completed.classification);
+      continue;
+    }
+    const classification = emptyClassification(url, "unapproved_query");
+    quarantined.push(classification);
+    await persistOutcome({
+      candidateKey: key,
+      classification,
+      disposition: "rejected",
+      attempted: false,
+    });
+  }
   const rankedCandidates = candidateUrls
     .map((url, index) => {
       const classification = classifyIssuerPage({ issuer: input.issuer, url });
       return { url, index, classification, positive: candidateUrlScore(url) };
     });
-  const fetchableCandidates = rankedCandidates
-    .filter((candidate) => {
-      if (candidate.classification.kind !== "not_a_card") return true;
-      quarantined.push(candidate.classification);
+  const fetchableCandidates = [] as typeof rankedCandidates;
+  for (const ranked of rankedCandidates) {
+    if (ranked.classification.kind !== "not_a_card") {
+      fetchableCandidates.push(ranked);
+      continue;
+    }
+    const key = await candidateKey(ranked.url);
+    const completed = completedOutcomes.get(key);
+    if (completed) {
+      resumedCount += 1;
+      quarantined.push(completed.classification);
       markIncomplete("candidate_not_positive");
-      return false;
-    })
-    .sort((left, right) =>
-      right.positive - left.positive || left.index - right.index
-    );
-  let fetchedCount = 0;
-  if (fetchableCandidates.length > MAX_CANDIDATE_FETCHES) {
-    markIncomplete("candidate_fetch_cap_exceeded");
+      continue;
+    }
+    quarantined.push(ranked.classification);
+    markIncomplete("candidate_not_positive");
+    await persistOutcome({
+      candidateKey: key,
+      classification: ranked.classification,
+      disposition: "rejected",
+      attempted: false,
+    });
   }
-  for (const { url } of fetchableCandidates.slice(0, MAX_CANDIDATE_FETCHES)) {
-    fetchedCount += 1;
+  fetchableCandidates.sort((left, right) =>
+    right.positive - left.positive || left.index - right.index
+  );
+  for (const { url } of fetchableCandidates) {
+    const key = await candidateKey(url);
+    const completed = completedOutcomes.get(key);
+    if (completed) {
+      resumedCount += 1;
+      terminalCandidateCount += 1;
+      if (completed.disposition === "candidate") {
+        candidates.push(completed.classification);
+      } else {
+        quarantined.push(completed.classification);
+        markIncomplete("candidate_not_positive");
+      }
+      continue;
+    }
+    if (fetchedCount >= MAX_CANDIDATE_FETCHES) {
+      markIncomplete("candidate_fetch_cap_exceeded");
+      markIncomplete("candidate_unattempted");
+      break;
+    }
+    let response: OfficialFetchResult & { text: string; contentHash: string };
     try {
-      const response = await request(
+      response = await request(
         url,
         /\.pdf(?:$|\?)/i.test(url) ? "document" : "html",
       );
-      if (
-        !anchorHost || !isAnchoredToHost(response.finalUrl, anchorHost) ||
-        !isAnchoredToHost(response.canonicalUrl, anchorHost)
-      ) {
-        quarantined.push(emptyClassification(url, "cross_host_response"));
-        markIncomplete("candidate_cross_host_response");
-        markIncomplete("candidate_not_positive");
-        continue;
-      }
-      if (
-        !redirectPreservesProductIdentity(
+      fetchedCount += 1;
+    } catch (error) {
+      if (isDeadlineError(error)) {
+        budgetExhausted = true;
+        markIncomplete("budget_exhausted");
+        markIncomplete("candidate_unattempted");
+        if (isDeadlineBeforeRequest(error)) break;
+        fetchedCount += 1;
+        crawlHadFailure = true;
+        markIncomplete("candidate_fetch_failed");
+        const classification = emptyClassification(
           url,
-          response.canonicalUrl,
-          input.issuer,
-        ) || !responseMatchesRequestedProduct(
-          url,
-          response.text,
-          input.issuer,
-        )
-      ) {
-        quarantined.push(
-          emptyClassification(url, "redirect_identity_mismatch"),
+          "candidate_fetch_failed",
         );
-        markIncomplete("candidate_identity_mismatch");
-        markIncomplete("candidate_not_positive");
-        continue;
+        quarantined.push(classification);
+        terminalCandidateCount += 1;
+        await persistOutcome({
+          candidateKey: key,
+          classification,
+          disposition: "quarantined",
+          attempted: true,
+        });
+        break;
       }
-      const page = classifyIssuerPage({
-        issuer: input.issuer,
-        url,
-        canonicalUrl: response.canonicalUrl,
-        html: response.text,
-        submittedResourceIdentityHash: response.sourceIdentityHash,
-        finalResourceIdentityHash: response.finalResourceIdentityHash,
-        submittedUrl: response.submittedResourceUrl ?? response.submittedUrl,
-        finalUrl: response.finalResourceUrl ?? response.finalUrl,
-        contentHash: response.contentHash,
-        retrievedAt: response.retrievedAt,
-        sourceStatus: response.status,
+      fetchedCount += 1;
+      crawlHadFailure = true;
+      markIncomplete("candidate_fetch_failed");
+      const classification = emptyClassification(url, "candidate_fetch_failed");
+      quarantined.push(classification);
+      terminalCandidateCount += 1;
+      await persistOutcome({
+        candidateKey: key,
+        classification,
+        disposition: "quarantined",
+        attempted: true,
       });
-      if (page.kind === "card_product" || page.kind === "supporting_document") {
+      continue;
+    }
+    let page: PageClassification;
+    if (
+      !anchorHost || !isAnchoredToHost(response.finalUrl, anchorHost) ||
+      !isAnchoredToHost(response.canonicalUrl, anchorHost)
+    ) {
+      page = emptyClassification(url, "cross_host_response");
+      quarantined.push(page);
+      markIncomplete("candidate_cross_host_response");
+      markIncomplete("candidate_not_positive");
+      terminalCandidateCount += 1;
+      await persistOutcome({
+        candidateKey: key,
+        classification: page,
+        disposition: "quarantined",
+        attempted: true,
+      });
+      continue;
+    }
+    if (
+      !redirectPreservesProductIdentity(
+        url,
+        response.canonicalUrl,
+        input.issuer,
+      ) || !responseMatchesRequestedProduct(
+        url,
+        response.text,
+        input.issuer,
+      )
+    ) {
+      page = emptyClassification(url, "redirect_identity_mismatch");
+      quarantined.push(page);
+      markIncomplete("candidate_identity_mismatch");
+      markIncomplete("candidate_not_positive");
+      terminalCandidateCount += 1;
+      await persistOutcome({
+        candidateKey: key,
+        classification: page,
+        disposition: "quarantined",
+        attempted: true,
+      });
+      continue;
+    }
+    page = classifyIssuerPage({
+      issuer: input.issuer,
+      url,
+      canonicalUrl: response.canonicalUrl,
+      html: response.text,
+      submittedResourceIdentityHash: response.sourceIdentityHash,
+      finalResourceIdentityHash: response.finalResourceIdentityHash,
+      submittedUrl: response.submittedResourceUrl ?? response.submittedUrl,
+      finalUrl: response.finalResourceUrl ?? response.finalUrl,
+      contentHash: response.contentHash,
+      retrievedAt: response.retrievedAt,
+      sourceStatus: response.status,
+    });
+    terminalCandidateCount += 1;
+    if (page.kind === "card_product" || page.kind === "supporting_document") {
+      const accepted = await persistOutcome({
+        candidateKey: key,
+        classification: page,
+        disposition: "candidate",
+        attempted: true,
+      });
+      if (accepted) {
         candidates.push(page);
       } else {
         quarantined.push(page);
+        markIncomplete("candidate_persistence_review_required");
         markIncomplete("candidate_not_positive");
       }
-    } catch {
-      crawlHadFailure = true;
-      markIncomplete("candidate_fetch_failed");
-      quarantined.push(emptyClassification(url, "candidate_fetch_failed"));
+    } else {
+      quarantined.push(page);
+      markIncomplete("candidate_not_positive");
+      await persistOutcome({
+        candidateKey: key,
+        classification: page,
+        disposition: "quarantined",
+        attempted: true,
+      });
     }
   }
 
@@ -1404,7 +1594,7 @@ export async function discoverIssuerCardCandidates(
   if (rejectedCandidateUrls.length > 0) {
     markIncomplete("candidate_resource_invalid");
   }
-  if (fetchedCount !== fetchableCandidates.length) {
+  if (terminalCandidateCount !== fetchableCandidates.length) {
     markIncomplete("candidate_unattempted");
   }
 
@@ -1413,9 +1603,11 @@ export async function discoverIssuerCardCandidates(
     quarantined,
     consideredCount: candidateUrls.length + rejectedCandidateUrls.length,
     fetchedCount,
+    resumedCount,
+    budgetExhausted,
     complete: directorySourceSucceeded && !crawlHadFailure &&
       incompleteReasons.size === 0 &&
-      fetchedCount === fetchableCandidates.length &&
+      terminalCandidateCount === fetchableCandidates.length &&
       candidates.length === fetchableCandidates.length,
     incompleteReasons: [...incompleteReasons].sort().slice(0, 32),
   };

@@ -777,9 +777,15 @@ test("benefit enrichment keeps initialization and issuer discovery off unsafe pa
   );
   assert.match(source, /source_documents/);
   assert.match(source, /issuerDiscoveryFallbackUrls\(/);
-  assert.match(source, /EdgeRuntime\.waitUntil\(\s*runIssuerDiscovery/s);
-  assert.match(source, /issuer_discovery_background_failed/);
-  assert.doesNotMatch(source, /await\s+runIssuerDiscovery/);
+  assert.match(source, /body\.action\s*===\s*["']issuer_discovery["']/);
+  assert.match(source, /const claim\s*=\s*await loadDiscoverySeed\(/);
+  assert.match(source, /const summary\s*=\s*await runIssuerDiscovery\(/);
+  assert.doesNotMatch(source, /EdgeRuntime\.waitUntil/);
+  assert.doesNotMatch(
+    source,
+    /jobs\.length\s*===\s*0[\s\S]{0,400}loadDiscoverySeed/,
+    "an empty benefit queue still triggers issuer discovery implicitly",
+  );
   assert.doesNotMatch(
     source,
     /\.from\(["']card_benefits_staging["']\)\s*\.select[\s\S]*?\.limit\(20\)/,

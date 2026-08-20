@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 
 import {
   classifyIssuerPage,
   discoverIssuerCardCandidates,
   issuerDiscoveryFallbackUrls,
+  persistCrawlerCandidate,
 } from "../../supabase/functions/_shared/issuer_card_crawl.ts";
 
 const issuer = "Axis Bank";
@@ -43,12 +45,10 @@ function everyReturnedString(value) {
   return [];
 }
 
-test("stops nested sitemap indexes at depth two and uses a same-domain page index as a candidate fallback", async () => {
+test("stops every nested sitemap-index child at depth two without treating it as a product", async () => {
   const depthOne = "https://www.axis.bank.in/sitemaps/one.xml";
   const depthTwo = "https://www.axis.bank.in/sitemaps/two.xml";
   const depthThree = "https://www.axis.bank.in/sitemaps/three.xml";
-  const fallbackProduct =
-    "https://www.axis.bank.in/cards/credit-card/privilege-credit-card";
   const requested = [];
   const result = await discoverIssuerCardCandidates({
     issuer,
@@ -72,14 +72,11 @@ test("stops nested sitemap indexes at depth two and uses a same-domain page inde
       if (input.url === depthTwo) {
         return resource(
           input.url,
-          sitemap([depthThree, fallbackProduct], true),
+          sitemap([depthThree], true),
           "application/xml",
         );
       }
-      if (input.url === fallbackProduct) {
-        return resource(input.url, "<h1>Axis Privilege Credit Card</h1>");
-      }
-      assert.fail(`depth-three sitemap must not be fetched: ${input.url}`);
+      assert.fail(`depth-three child must not be fetched: ${input.url}`);
     },
     delay: async () => {},
   });
@@ -88,11 +85,12 @@ test("stops nested sitemap indexes at depth two and uses a same-domain page inde
     rootSitemap,
     depthOne,
     depthTwo,
-    fallbackProduct,
   ]);
-  assert.equal(result.consideredCount, 1);
-  assert.equal(result.fetchedCount, 1);
-  assert.equal(result.candidates[0].kind, "card_product");
+  assert.equal(result.consideredCount, 0);
+  assert.equal(result.fetchedCount, 0);
+  assert.equal(result.candidates.length, 0);
+  assert.equal(result.complete, false);
+  assert.ok(result.incompleteReasons.includes("sitemap_depth_exceeded"));
 });
 
 test("builds conventional same-host sitemap and credit-card index fallbacks", () => {
@@ -441,7 +439,7 @@ test("ranks positives before the 40 fetch cap and quarantines hard-negative link
   assert.deepEqual(requested, [rootSitemap, product]);
 });
 
-test("anchors sitemap, candidate, and returned canonical URLs to the initial approved hostname", async () => {
+test("anchors sitemap-index children and returned directory URLs to the initial approved hostname", async () => {
   const crossHostSitemap = "https://www.axisbank.com/sitemap.xml";
   const crossHostCandidate =
     "https://www.axisbank.com/cards/credit-card/privilege-credit-card";
@@ -472,8 +470,9 @@ test("anchors sitemap, candidate, and returned canonical URLs to the initial app
 
   assert.deepEqual(requested, [rootSitemap, localProduct]);
   assert.equal(result.candidates.length, 0);
-  assert.equal(result.quarantined.length, 1);
-  assert.doesNotMatch(result.quarantined[0].canonicalUrl, /axisbank\.com/);
+  assert.equal(result.quarantined.length, 0);
+  assert.equal(result.complete, false);
+  assert.ok(result.incompleteReasons.includes("directory_source_cross_host"));
 });
 
 test("same-host candidate redirects stay bound to the discovered card identity", async () => {
@@ -835,4 +834,394 @@ test("passes a nonzero production default delay to an injected delay function", 
 
   assert.equal(delays.length, 1);
   assert.ok(delays[0] > 0);
+});
+
+test("a rejected nested sitemap child makes the directory observation incomplete", async () => {
+  const rejectedChild =
+    "https://www.axis.bank.in/sitemap.xml?session=not-approved";
+  const result = await discoverIssuerCardCandidates({
+    issuer,
+    sitemapUrl: rootSitemap,
+    fetchOfficialIssuerResource: async (input) => {
+      assert.equal(input.url, rootSitemap);
+      return resource(
+        input.url,
+        sitemap([rejectedChild], true),
+        "application/xml",
+      );
+    },
+    delay: async () => {},
+  });
+
+  assert.equal(result.complete, false);
+  assert.ok(result.incompleteReasons.includes("directory_source_invalid"));
+});
+
+test("only wholly positive directory sources allow an empty inventory to be complete", async () => {
+  const secondRoot = "https://www.axis.bank.in/sitemap-cards.xml";
+  const empty = await discoverIssuerCardCandidates({
+    issuer,
+    sitemapUrl: rootSitemap,
+    fetchOfficialIssuerResource: async (input) =>
+      resource(input.url, sitemap([]), "application/xml"),
+    delay: async () => {},
+  });
+  assert.equal(empty.complete, true);
+  assert.equal(empty.consideredCount, 0);
+
+  const partial = await discoverIssuerCardCandidates({
+    issuer,
+    sitemapUrls: [rootSitemap, secondRoot],
+    fetchOfficialIssuerResource: async (input) => {
+      if (input.url === secondRoot) throw new Error("timeout");
+      return resource(input.url, sitemap([]), "application/xml");
+    },
+    delay: async () => {},
+  });
+  assert.equal(partial.complete, false);
+  assert.ok(
+    partial.incompleteReasons.includes("directory_source_fetch_failed"),
+  );
+});
+
+test("a malformed nested sitemap prevents directory absence review", async () => {
+  const child = "https://www.axis.bank.in/sitemaps/cards.xml";
+  const result = await discoverIssuerCardCandidates({
+    issuer,
+    sitemapUrl: rootSitemap,
+    fetchOfficialIssuerResource: async (input) =>
+      input.url === rootSitemap
+        ? resource(input.url, sitemap([child], true), "application/xml")
+        : resource(input.url, "<urlset><url>", "application/xml"),
+    delay: async () => {},
+  });
+  assert.equal(result.complete, false);
+  assert.ok(result.incompleteReasons.includes("directory_source_malformed"));
+});
+
+test("every sitemap-index child is parsed as a directory source even without a sitemap-looking path", async () => {
+  const child = "https://www.axis.bank.in/directory-feed";
+  const purposes = [];
+  const result = await discoverIssuerCardCandidates({
+    issuer,
+    sitemapUrl: rootSitemap,
+    fetchOfficialIssuerResource: async (input) => {
+      purposes.push([input.url, input.contentPurpose]);
+      return input.url === rootSitemap
+        ? resource(input.url, sitemap([child], true), "application/xml")
+        : resource(input.url, "<directory>truncated", "application/xml");
+    },
+    delay: async () => {},
+  });
+  assert.deepEqual(purposes, [
+    [rootSitemap, "sitemap"],
+    [child, "sitemap"],
+  ]);
+  assert.equal(result.complete, false);
+  assert.ok(result.incompleteReasons.includes("directory_source_malformed"));
+});
+
+test("candidate outcomes finish persisting before the next candidate fetch starts", async () => {
+  const first =
+    "https://www.axis.bank.in/cards/credit-card/privilege-credit-card";
+  const second =
+    "https://www.axis.bank.in/cards/credit-card/select-credit-card";
+  const events = [];
+  let firstPersisted = false;
+  const result = await discoverIssuerCardCandidates({
+    issuer,
+    sitemapUrl: rootSitemap,
+    fetchOfficialIssuerResource: async (input) => {
+      events.push(`fetch:${input.url}`);
+      if (input.url === rootSitemap) {
+        return resource(input.url, sitemap([first, second]), "application/xml");
+      }
+      if (input.url === second) {
+        assert.equal(
+          firstPersisted,
+          true,
+          "second fetch started before the first outcome was durable",
+        );
+      }
+      return resource(
+        input.url,
+        `<h1>Axis ${
+          input.url === first ? "Privilege" : "Select"
+        } Credit Card</h1>`,
+      );
+    },
+    delay: async () => {},
+    onCandidateOutcome: async (outcome) => {
+      events.push(`persist:${outcome.classification.proposedName}`);
+      await Promise.resolve();
+      if (outcome.classification.proposedName === "Privilege") {
+        firstPersisted = true;
+      }
+    },
+  });
+
+  assert.equal(result.complete, true);
+  assert.deepEqual(events, [
+    `fetch:${rootSitemap}`,
+    `fetch:${first}`,
+    "persist:Privilege",
+    `fetch:${second}`,
+    "persist:Select",
+  ]);
+});
+
+test("deadline exhaustion stops before another network request and leaves resumable work incomplete", async () => {
+  const first =
+    "https://www.axis.bank.in/cards/credit-card/privilege-credit-card";
+  const second =
+    "https://www.axis.bank.in/cards/credit-card/select-credit-card";
+  const requested = [];
+  let now = 100;
+  const result = await discoverIssuerCardCandidates({
+    issuer,
+    sitemapUrl: rootSitemap,
+    deadlineAt: 1_000,
+    now: () => now,
+    fetchOfficialIssuerResource: async (input) => {
+      requested.push(input.url);
+      if (input.url === rootSitemap) {
+        return resource(input.url, sitemap([first, second]), "application/xml");
+      }
+      assert.equal(input.url, first);
+      return resource(input.url, "<h1>Axis Privilege Credit Card</h1>");
+    },
+    delay: async () => {},
+    onCandidateOutcome: async () => {
+      now = 1_000;
+    },
+  });
+
+  assert.deepEqual(requested, [rootSitemap, first]);
+  assert.equal(result.budgetExhausted, true);
+  assert.equal(result.complete, false);
+  assert.ok(result.incompleteReasons.includes("candidate_unattempted"));
+});
+
+test("a deadline raised by an in-flight candidate fetch persists that attempted outcome", async () => {
+  const product =
+    "https://www.axis.bank.in/cards/credit-card/privilege-credit-card";
+  const outcomes = [];
+  const result = await discoverIssuerCardCandidates({
+    issuer,
+    sitemapUrl: rootSitemap,
+    deadlineAt: 1_000,
+    now: () => 100,
+    fetchOfficialIssuerResource: async (input) => {
+      if (input.url === rootSitemap) {
+        return resource(input.url, sitemap([product]), "application/xml");
+      }
+      throw new Error("deadline_exceeded");
+    },
+    delay: async () => {},
+    onCandidateOutcome: async (outcome) => outcomes.push(outcome),
+  });
+
+  assert.equal(result.budgetExhausted, true);
+  assert.equal(result.fetchedCount, 1);
+  assert.equal(outcomes.length, 1);
+  assert.equal(outcomes[0].attempted, true);
+  assert.ok(
+    outcomes[0].classification.warnings.includes("candidate_fetch_failed"),
+  );
+});
+
+test("bounded persisted outcome keys resume beyond one 40-request candidate budget", async () => {
+  const urls = Array.from(
+    { length: 81 },
+    (_, index) => `https://www.axis.bank.in/cards/credit-card/product-${index}`,
+  );
+  const completedCandidateOutcomes = urls.slice(0, 80).map((url, index) => ({
+    candidateKey: createHash("sha256").update(url).digest("hex"),
+    disposition: "candidate",
+    attempted: true,
+    classification: {
+      kind: "card_product",
+      canonicalUrl: url,
+      proposedName: `Product ${index}`,
+      aliases: [`Axis Product ${index} Credit Card`],
+      confidence: 0.95,
+      warnings: [],
+      sanitizedEvidence: [`Axis Product ${index} Credit Card`],
+    },
+  }));
+  const requested = [];
+  const result = await discoverIssuerCardCandidates({
+    issuer,
+    sitemapUrl: rootSitemap,
+    completedCandidateOutcomes,
+    fetchOfficialIssuerResource: async (input) => {
+      requested.push(input.url);
+      return input.url === rootSitemap
+        ? resource(input.url, sitemap(urls), "application/xml")
+        : resource(input.url, "<h1>Axis Product 80 Credit Card</h1>");
+    },
+    delay: async () => {},
+  });
+
+  assert.deepEqual(requested, [rootSitemap, urls[80]]);
+  assert.equal(result.resumedCount, 80);
+  assert.equal(result.fetchedCount, 1);
+  assert.equal(result.candidates.length, 81);
+  assert.equal(result.complete, true);
+});
+
+test("resume skips a previously persisted rejected candidate without writing it again", async () => {
+  const rejected =
+    "https://www.axis.bank.in/cards/credit-card/eligibility-calculator";
+  const classification = classifyIssuerPage({ issuer, url: rejected });
+  assert.equal(classification.kind, "not_a_card");
+  const requested = [];
+  const persisted = [];
+  const result = await discoverIssuerCardCandidates({
+    issuer,
+    sitemapUrl: rootSitemap,
+    completedCandidateOutcomes: [{
+      candidateKey: createHash("sha256").update(rejected).digest("hex"),
+      disposition: "rejected",
+      attempted: false,
+      classification,
+    }],
+    fetchOfficialIssuerResource: async (input) => {
+      requested.push(input.url);
+      return resource(input.url, sitemap([rejected]), "application/xml");
+    },
+    delay: async () => {},
+    onCandidateOutcome: async (outcome) => persisted.push(outcome),
+  });
+
+  assert.deepEqual(requested, [rootSitemap]);
+  assert.deepEqual(persisted, []);
+  assert.equal(result.resumedCount, 1);
+  assert.equal(result.quarantined.length, 1);
+  assert.equal(result.complete, false);
+});
+
+test("resume retries a durably recorded fetch failure instead of treating it as complete", async () => {
+  const product =
+    "https://www.axis.bank.in/cards/credit-card/privilege-credit-card";
+  const priorFailure = {
+    candidateKey: createHash("sha256").update(product).digest("hex"),
+    disposition: "quarantined",
+    attempted: true,
+    classification: {
+      kind: "ambiguous",
+      canonicalUrl: product,
+      aliases: [],
+      confidence: 0,
+      warnings: ["candidate_fetch_failed"],
+      sanitizedEvidence: [],
+    },
+  };
+  const requested = [];
+  const result = await discoverIssuerCardCandidates({
+    issuer,
+    sitemapUrl: rootSitemap,
+    completedCandidateOutcomes: [priorFailure],
+    fetchOfficialIssuerResource: async (input) => {
+      requested.push(input.url);
+      return input.url === rootSitemap
+        ? resource(input.url, sitemap([product]), "application/xml")
+        : resource(input.url, "<h1>Axis Privilege Credit Card</h1>");
+    },
+    delay: async () => {},
+  });
+
+  assert.deepEqual(requested, [rootSitemap, product]);
+  assert.equal(result.resumedCount, 0);
+  assert.equal(result.fetchedCount, 1);
+  assert.equal(result.complete, true);
+});
+
+test("normal availability headings remain inside the target product discontinuation scope", () => {
+  const current = classifyIssuerPage({
+    issuer,
+    url: "https://www.axis.bank.in/cards/credit-card/privilege-credit-card",
+    html: `<h1>Axis Privilege Credit Card</h1>
+      <h2>Availability</h2>
+      <p>This credit card has been discontinued and is no longer issued.</p>`,
+  });
+  const sibling = classifyIssuerPage({
+    issuer,
+    url: "https://www.axis.bank.in/cards/credit-card/privilege-credit-card",
+    html: `<h1>Axis Privilege Credit Card</h1>
+      <h2>Axis MyZone Credit Card</h2>
+      <p>This credit card has been discontinued.</p>`,
+  });
+
+  assert.equal(current.explicitDiscontinuation, true);
+  assert.match(
+    current.matchedDiscontinuationExcerpt ?? "",
+    /privilege.*discontinued/i,
+  );
+  assert.notEqual(current.matchedDiscontinuationExcerpt, null);
+  assert.equal(sibling.explicitDiscontinuation, undefined);
+});
+
+test("crawler identity reconciliation fails closed across exact and legacy display URL bindings", async () => {
+  const exact =
+    "https://www.axis.bank.in/cards/credit-card/privilege?variant=infinite";
+  const display = "https://www.axis.bank.in/cards/credit-card/privilege";
+  const digest = (value) => createHash("sha256").update(value).digest("hex");
+  const exactHash = digest(exact);
+  const displayHash = digest(display);
+  const db = {
+    from(table) {
+      if (
+        !["card_catalog_url_keys", "card_catalog_provenance"].includes(table)
+      ) {
+        throw new Error("unexpected_non_identity_query");
+      }
+      let hash = "";
+      const query = {
+        select() {
+          return this;
+        },
+        eq(column, value) {
+          assert.equal(column, "url_hash");
+          hash = value;
+          return this;
+        },
+        or(filter) {
+          hash = filter.match(/\.eq\.([0-9a-f]{64})/)?.[1] ?? "";
+          return this;
+        },
+        then(resolve) {
+          const data = table === "card_catalog_provenance"
+            ? []
+            : hash === exactHash
+            ? [{ card_id: "00000000-0000-4000-8000-000000000001" }]
+            : hash === displayHash
+            ? [{ card_id: "00000000-0000-4000-8000-000000000002" }]
+            : [];
+          return Promise.resolve({ data, error: null }).then(resolve);
+        },
+      };
+      return query;
+    },
+  };
+  await assert.rejects(
+    persistCrawlerCandidate(db, issuer, {
+      kind: "card_product",
+      canonicalUrl: display,
+      submittedUrl: exact,
+      finalUrl: exact,
+      submittedResourceIdentityHash: exactHash,
+      finalResourceIdentityHash: exactHash,
+      proposedName: "Privilege Infinite",
+      aliases: ["Axis Privilege Infinite Credit Card"],
+      network: "Visa",
+      confidence: 0.95,
+      warnings: [],
+      sanitizedEvidence: ["Axis Privilege Infinite Credit Card"],
+      contentHash: "c".repeat(64),
+      retrievedAt: "2026-08-20T00:00:00.000Z",
+      sourceStatus: 200,
+    }),
+    /identity_conflict/,
+  );
 });

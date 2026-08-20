@@ -604,7 +604,7 @@ export function cardDiscontinuationEvidence(
     text: clean(match[2] ?? ""),
   }));
   const productHeading = (value: string) =>
-    /\b(?:credit\s+)?card\b/i.test(value) || meaningful(value).length > 0;
+    /\b(?:credit\s+)?card\b/i.test(value);
   const anaphoric =
     /\b(?:this|the)\s+(?:credit\s+)?card\s+(?:has\s+been\s+|is\s+)(?:discontinued|withdrawn)\b|\b(?:this|the)\s+(?:credit\s+)?card\s+is\s+no\s+longer\s+(?:available|issued)\b/i;
   const targetPhrase = meaningful(cardName).join("[\\s\\W_]*");

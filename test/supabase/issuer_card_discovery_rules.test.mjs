@@ -10,7 +10,7 @@ import {
 
 const hashUrl = (value) => createHash("sha256").update(value).digest("hex");
 
-test("issuer rotation persists a CAS attempt before background crawl and records failure", async () => {
+test("issuer day-run claims use a unique lease before explicit synchronous crawl and persist failure", async () => {
   const source = await readFile(
     new URL(
       "../../supabase/functions/benefit-enrichment-batch/index.ts",
@@ -19,28 +19,31 @@ test("issuer rotation persists a CAS attempt before background crawl and records
     "utf8",
   );
   const load = source.slice(
-    source.indexOf("export async function loadDiscoverySeed"),
+    source.indexOf("export async function claimIssuerDiscoveryRun"),
     source.indexOf("export async function handleBenefitEnrichmentBatch"),
   );
   const run = source.slice(
-    source.indexOf("async function runIssuerDiscovery"),
+    source.indexOf("export async function runIssuerDiscovery"),
     source.indexOf("export type IssuerDiscoverySeed"),
   );
-  assert.match(load, /kind:\s*"issuer_directory_rotation"/);
+  assert.match(load, /issuer-directory-run:\$\{runDate\}/);
+  assert.match(load, /kind:\s*"issuer_directory_run"/);
   assert.match(load, /last_attempt_at:\s*now\.toISOString\(\)/);
   assert.match(
     load,
-    /\.eq\("id", previous\.id\)\.eq\("status", previous\.status\)/,
+    /status:\s*"discovering"[\s\S]*next_retry_at:/,
   );
+  assert.match(load, /inserted\.error\?\.code\s*!==\s*"23505"/);
   assert.match(
     run,
-    /catch \(error\)[\s\S]*recordIssuerDiscoveryOutcome\(db, job, false/,
+    /catch \(error\)[\s\S]*recordIssuerDiscoveryOutcome\(db, job,/,
   );
   assert.ok(
-    source.indexOf("const discoverySeed = await loadDiscoverySeed(db)") <
-      source.indexOf("EdgeRuntime.waitUntil("),
-    "attempt was not persisted before background work",
+    source.indexOf("const claim = await loadDiscoverySeed(db") <
+      source.indexOf("const summary = await runIssuerDiscovery("),
+    "claim was not persisted before explicit crawl",
   );
+  assert.doesNotMatch(source, /EdgeRuntime\.waitUntil/);
 });
 
 function candidate(overrides = {}) {

@@ -20,6 +20,7 @@ import {
 import {
   classifyIssuerPage,
   discoverIssuerCardCandidates,
+  type IssuerCandidateOutcome,
   issuerDiscoveryFallbackUrls,
   persistCrawlerCandidate,
   stageCompleteIssuerDirectoryAbsenceReviews,
@@ -28,6 +29,7 @@ import {
   cardDiscontinuationEvidence,
   catalogLifecycleObservationAction,
   proposeCatalogLifecycleReview,
+  stageCatalogIdentityReview,
 } from "../_shared/catalog_identity_publication.ts";
 import {
   approvedStoredQueryParameters,
@@ -65,8 +67,6 @@ import {
   type SourceAttemptInput,
   utcInstant,
 } from "./crawl_policy.ts";
-
-declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 
 type UntypedSupabaseClient = any;
 
@@ -240,7 +240,7 @@ function json(body: unknown, status = 200): Response {
   return Response.json(body, { status });
 }
 
-async function authorized(
+export async function authorizedSchedulerRequest(
   request: Request,
   serviceKey: string,
   cronSecret: string,
@@ -263,6 +263,14 @@ function runModeFromRequest(value: unknown): RunMode | null {
   return value === "pilot" || value === "scheduled" || value === "manual"
     ? value
     : null;
+}
+
+export function issuerDiscoveryRunMode(
+  body: Record<string, unknown>,
+): "scheduled" | "manual" | null {
+  if (body.action !== "issuer_discovery") return null;
+  const runMode = body.runMode ?? body.run_mode;
+  return runMode === "scheduled" || runMode === "manual" ? runMode : null;
 }
 
 function pilotJob(row: Record<string, any>): PilotJob {
@@ -1886,11 +1894,317 @@ export async function processJob(
   }
 }
 
-async function runIssuerDiscovery(
+type IssuerDiscoveryRunSummary = {
+  issuer: string;
+  runDate: string;
+  status: "complete" | "incomplete" | "budget_exhausted";
+  complete: boolean;
+  budgetExhausted: boolean;
+  considered: number;
+  fetched: number;
+  resumed: number;
+  outcomes: Record<string, number>;
+  lastProcessedCandidateIdentity: string | null;
+  incompleteReasons: string[];
+};
+
+export function upsertBoundedIssuerOutcomeSummary<
+  T extends Record<string, unknown>,
+>(summaries: T[], summary: T): T[] {
+  const candidateKey = String(summary.candidate_key ?? "");
+  return [
+    ...summaries.filter((existing) =>
+      String(existing.candidate_key ?? "") !== candidateKey
+    ),
+    summary,
+  ].slice(-200);
+}
+
+function storedIssuerCandidateOutcomes(
+  seed: IssuerDiscoverySeed,
+): IssuerCandidateOutcome[] {
+  const summaries = Array.isArray(seed.rotationEvidence.outcome_summaries)
+    ? seed.rotationEvidence.outcome_summaries
+    : [];
+  const outcomes: IssuerCandidateOutcome[] = [];
+  for (const value of summaries.slice(-200)) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const item = value as Record<string, unknown>;
+    const candidateKey = String(item.candidate_key ?? "");
+    const classification = item.classification;
+    const disposition = item.disposition;
+    if (
+      !/^[0-9a-f]{64}$/i.test(candidateKey) ||
+      !classification || typeof classification !== "object" ||
+      Array.isArray(classification) ||
+      !["candidate", "quarantined", "rejected"].includes(
+        String(disposition),
+      )
+    ) continue;
+    outcomes.push({
+      candidateKey: candidateKey.toLowerCase(),
+      classification:
+        classification as IssuerCandidateOutcome["classification"],
+      disposition: disposition as IssuerCandidateOutcome["disposition"],
+      attempted: item.attempted === true,
+    });
+  }
+  return outcomes;
+}
+
+function boundedIssuerCandidateClassification(
+  classification: IssuerCandidateOutcome["classification"],
+): Record<string, unknown> {
+  return {
+    kind: classification.kind,
+    canonicalUrl: classification.canonicalUrl,
+    ...(classification.proposedName
+      ? { proposedName: classification.proposedName.slice(0, 160) }
+      : {}),
+    aliases: classification.aliases.slice(0, 12),
+    ...(classification.network
+      ? { network: classification.network.slice(0, 64) }
+      : {}),
+    confidence: classification.confidence,
+    warnings: classification.warnings.slice(0, 12),
+    sanitizedEvidence: classification.sanitizedEvidence.slice(0, 3),
+    ...(classification.submittedResourceIdentityHash
+      ? {
+        submittedResourceIdentityHash:
+          classification.submittedResourceIdentityHash,
+      }
+      : {}),
+    ...(classification.finalResourceIdentityHash
+      ? {
+        finalResourceIdentityHash: classification.finalResourceIdentityHash,
+      }
+      : {}),
+    ...(classification.submittedUrl
+      ? { submittedUrl: classification.submittedUrl }
+      : {}),
+    ...(classification.finalUrl ? { finalUrl: classification.finalUrl } : {}),
+    ...(classification.contentHash
+      ? { contentHash: classification.contentHash }
+      : {}),
+    ...(classification.retrievedAt
+      ? { retrievedAt: classification.retrievedAt }
+      : {}),
+    ...(classification.sourceStatus
+      ? { sourceStatus: classification.sourceStatus }
+      : {}),
+    ...(classification.explicitDiscontinuation
+      ? { explicitDiscontinuation: true }
+      : {}),
+    ...(classification.matchedDiscontinuationExcerpt
+      ? {
+        matchedDiscontinuationExcerpt: classification
+          .matchedDiscontinuationExcerpt.slice(0, 300),
+      }
+      : {}),
+  };
+}
+
+export async function persistNonProductIssuerOutcome(
+  db: UntypedSupabaseClient,
+  issuer: string,
+  outcome: IssuerCandidateOutcome,
+  reason: string,
+): Promise<"duplicate" | "quarantined" | "rejected" | "supporting"> {
+  const classification = boundedIssuerCandidateClassification(
+    outcome.classification,
+  );
+  const semanticHash = await sha256Text(JSON.stringify({
+    candidate_key: outcome.candidateKey,
+    disposition: outcome.disposition,
+    classification,
+    reason,
+  }));
+  const dedupeKey = await sha256Text(
+    `issuer-candidate-outcome:${issuer.trim().toLowerCase()}:${outcome.candidateKey}:${semanticHash}`,
+  );
+  if (
+    reason === "conflicting_url_identity" &&
+    outcome.classification.proposedName?.trim()
+  ) {
+    await stageCatalogIdentityReview(db, {
+      discoveryJobId: null,
+      discoverySource: "issuer_crawl",
+      userId: null,
+      issuer,
+      proposedProduct: outcome.classification.proposedName,
+      dedupeKey,
+      semanticHash,
+      proposedFields: {
+        issuer,
+        cardName: outcome.classification.proposedName,
+        aliases: outcome.classification.aliases,
+        network: outcome.classification.network ?? null,
+        official_url: outcome.classification.canonicalUrl,
+        ...(outcome.classification.submittedUrl
+          ? { submitted_url: outcome.classification.submittedUrl }
+          : {}),
+        ...(outcome.classification.finalUrl
+          ? { final_url: outcome.classification.finalUrl }
+          : {}),
+        ...(outcome.classification.submittedResourceIdentityHash
+          ? {
+            submitted_url_hash:
+              outcome.classification.submittedResourceIdentityHash,
+          }
+          : {}),
+        ...(outcome.classification.finalResourceIdentityHash
+          ? {
+            final_url_hash: outcome.classification.finalResourceIdentityHash,
+          }
+          : {}),
+        ...(outcome.classification.contentHash
+          ? { content_hash: outcome.classification.contentHash }
+          : {}),
+        ...(outcome.classification.retrievedAt
+          ? { retrieved_at: outcome.classification.retrievedAt }
+          : {}),
+        ...(outcome.classification.sourceStatus
+          ? { source_status: outcome.classification.sourceStatus }
+          : {}),
+      },
+      sourceEvidence: {
+        source_observation: {
+          kind: "conflicting_url_identity",
+          identity_validated: false,
+          candidate_key: outcome.candidateKey,
+          classification,
+        },
+      },
+      existingCandidates: [],
+      validationWarnings: ["conflicting_url_identity"],
+      confidence: outcome.classification.confidence,
+      expectedJobStatus: null,
+      expectedJobUpdatedAt: null,
+    });
+    return "quarantined";
+  }
+  const existing = await db.from("card_discovery_jobs")
+    .select("id,status")
+    .eq("discovery_source", "issuer_crawl")
+    .eq("dedupe_key", dedupeKey)
+    .is("user_id", null)
+    .maybeSingle();
+  if (existing.error) throw existing.error;
+  if (existing.data) return "duplicate";
+  const supporting = outcome.classification.kind === "supporting_document";
+  const rejected = outcome.disposition === "rejected" ||
+    outcome.classification.kind === "not_a_card";
+  const inserted = await db.from("card_discovery_jobs").insert({
+    user_id: null,
+    discovery_source: "issuer_crawl",
+    issuer,
+    proposed_product:
+      outcome.classification.proposedName?.trim().slice(0, 160) ||
+      null,
+    evidence: {
+      kind: "issuer_candidate_outcome",
+      candidate_key: outcome.candidateKey,
+      disposition: outcome.disposition,
+      attempted: outcome.attempted,
+      reason: reason.slice(0, 64),
+      classification,
+    },
+    dedupe_key: dedupeKey,
+    status: supporting ? "resolved" : rejected ? "rejected" : "review_required",
+    updated_at: new Date().toISOString(),
+  }).select("id,status").maybeSingle();
+  if (!inserted.error && inserted.data) {
+    return supporting ? "supporting" : rejected ? "rejected" : "quarantined";
+  }
+  if (inserted.error?.code !== "23505") {
+    throw inserted.error ?? new Error("issuer_candidate_persistence_failed");
+  }
+  const raced = await db.from("card_discovery_jobs")
+    .select("id,status")
+    .eq("discovery_source", "issuer_crawl")
+    .eq("dedupe_key", dedupeKey)
+    .is("user_id", null)
+    .maybeSingle();
+  if (raced.error || !raced.data) {
+    throw raced.error ?? new Error("issuer_candidate_persistence_race");
+  }
+  return "duplicate";
+}
+
+async function persistIssuerRunProgress(
+  db: UntypedSupabaseClient,
+  seed: IssuerDiscoverySeed,
+  summaries: Array<Record<string, unknown>>,
+  counts: Record<string, number>,
+): Promise<void> {
+  const last = summaries.at(-1);
+  const evidence = {
+    ...seed.rotationEvidence,
+    outcome_summaries: summaries.slice(-200),
+    outcome_counts: counts,
+    last_processed_candidate_identity: last?.candidate_key ?? null,
+  };
+  const updated = await db.from("card_discovery_jobs").update({
+    evidence,
+    updated_at: new Date().toISOString(),
+  }).eq("id", seed.rotationJobId).eq("status", "discovering")
+    .select("id,evidence,updated_at").maybeSingle();
+  if (updated.error || !updated.data) {
+    throw updated.error ?? new Error("issuer_discovery_progress_race");
+  }
+  seed.rotationEvidence = evidence;
+  seed.rotationUpdatedAt = updated.data.updated_at
+    ? String(updated.data.updated_at)
+    : seed.rotationUpdatedAt;
+}
+
+async function loadKnownIssuerCards(
+  db: UntypedSupabaseClient,
+  issuer: string,
+  pageSize = 200,
+): Promise<Array<Record<string, unknown>>> {
+  const rows: Array<Record<string, unknown>> = [];
+  for (let offset = 0;; offset += pageSize) {
+    const query = await db.from("card_catalog")
+      .select("id,bank,card_name,network,card_type,is_discontinued")
+      .ilike("bank", issuer)
+      .ilike("card_type", "credit")
+      .order("id", { ascending: true })
+      .range(offset, offset + pageSize - 1);
+    if (query.error) throw query.error;
+    const page = (query.data ?? []) as Array<Record<string, unknown>>;
+    rows.push(...page);
+    if (page.length < pageSize) return rows;
+  }
+}
+
+export async function runIssuerDiscovery(
   db: UntypedSupabaseClient,
   job: IssuerDiscoverySeed,
   deadlineAt: number,
-): Promise<void> {
+): Promise<IssuerDiscoveryRunSummary> {
+  const priorOutcomes = storedIssuerCandidateOutcomes(job);
+  let summaries = priorOutcomes.map((outcome) => ({
+    candidate_key: outcome.candidateKey,
+    disposition: outcome.disposition,
+    attempted: outcome.attempted,
+    classification: boundedIssuerCandidateClassification(
+      outcome.classification,
+    ),
+    persistence_outcome: "resumed",
+  }));
+  const counts: Record<string, number> = Object.fromEntries(
+    Object.entries(
+      job.rotationEvidence.outcome_counts &&
+        typeof job.rotationEvidence.outcome_counts === "object" &&
+        !Array.isArray(job.rotationEvidence.outcome_counts)
+        ? job.rotationEvidence.outcome_counts as Record<string, unknown>
+        : {},
+    ).filter((entry): entry is [string, number] =>
+      /^[a-z_]{1,32}$/.test(entry[0]) && Number.isInteger(entry[1]) &&
+      Number(entry[1]) >= 0 && Number(entry[1]) <= 200
+    ),
+  );
   let result;
   try {
     const fallback = issuerDiscoveryFallbackUrls(job.canonical_url);
@@ -1899,38 +2213,115 @@ async function runIssuerDiscovery(
       sitemapUrls: fallback.sitemapUrls,
       indexUrls: fallback.indexUrls,
       deadlineAt,
+      completedCandidateOutcomes: priorOutcomes,
+      onCandidateOutcome: async (outcome) => {
+        let persistenceOutcome: string;
+        let accepted = true;
+        if (outcome.classification.kind === "card_product") {
+          try {
+            persistenceOutcome = (await persistCrawlerCandidate(
+              db,
+              job.issuer,
+              outcome.classification,
+            )).outcome;
+          } catch (error) {
+            if (
+              !(error instanceof Error) ||
+              !["identity_conflict", "conflicting_url_identity"].includes(
+                error.message,
+              )
+            ) throw error;
+            persistenceOutcome = await persistNonProductIssuerOutcome(
+              db,
+              job.issuer,
+              {
+                ...outcome,
+                classification: {
+                  ...outcome.classification,
+                  warnings: [
+                    ...outcome.classification.warnings,
+                    "conflicting_url_identity",
+                  ],
+                },
+                disposition: "quarantined",
+              },
+              "conflicting_url_identity",
+            );
+            accepted = false;
+          }
+        } else {
+          persistenceOutcome = await persistNonProductIssuerOutcome(
+            db,
+            job.issuer,
+            outcome,
+            outcome.classification.warnings[0] ?? outcome.classification.kind,
+          );
+          accepted = outcome.classification.kind === "supporting_document";
+        }
+        counts[persistenceOutcome] = (counts[persistenceOutcome] ?? 0) + 1;
+        summaries = upsertBoundedIssuerOutcomeSummary(summaries, {
+          candidate_key: outcome.candidateKey,
+          disposition: accepted ? outcome.disposition : "quarantined",
+          attempted: outcome.attempted,
+          classification: boundedIssuerCandidateClassification(
+            outcome.classification,
+          ),
+          persistence_outcome: persistenceOutcome,
+        });
+        await persistIssuerRunProgress(db, job, summaries, counts);
+        return accepted;
+      },
     });
   } catch (error) {
-    await recordIssuerDiscoveryOutcome(db, job, false, [
-      safeFailureCategory(error),
-    ]);
+    await recordIssuerDiscoveryOutcome(db, job, {
+      complete: false,
+      budgetExhausted: safeFailureCategory(error) === "deadline_exceeded",
+      reasons: [safeFailureCategory(error)],
+      counts,
+      summaries,
+      considered: 0,
+      fetched: 0,
+      resumed: priorOutcomes.length,
+    });
     throw error;
   }
-  for (const candidate of result.candidates) {
-    if (candidate.kind === "card_product") {
-      await persistCrawlerCandidate(db, job.issuer, candidate);
-    }
-  }
   if (result.complete) {
-    const { data: knownCards, error } = await db.from("card_catalog")
-      .select("id,bank,card_name,network,card_type,is_discontinued")
-      .ilike("bank", job.issuer)
-      .ilike("card_type", "credit")
-      .limit(200);
-    if (error) throw error;
+    const knownCards = await loadKnownIssuerCards(db, job.issuer);
     await stageCompleteIssuerDirectoryAbsenceReviews(
       db,
       job.issuer,
       result,
-      knownCards ?? [],
+      knownCards,
     );
   }
-  await recordIssuerDiscoveryOutcome(
-    db,
-    job,
-    result.complete,
-    result.incompleteReasons,
-  );
+  await recordIssuerDiscoveryOutcome(db, job, {
+    complete: result.complete,
+    budgetExhausted: result.budgetExhausted,
+    reasons: result.incompleteReasons,
+    counts,
+    summaries,
+    considered: result.consideredCount,
+    fetched: result.fetchedCount,
+    resumed: result.resumedCount,
+  });
+  return {
+    issuer: job.issuer,
+    runDate: job.runDate,
+    status: result.complete
+      ? "complete"
+      : result.budgetExhausted
+      ? "budget_exhausted"
+      : "incomplete",
+    complete: result.complete,
+    budgetExhausted: result.budgetExhausted,
+    considered: result.consideredCount,
+    fetched: result.fetchedCount,
+    resumed: result.resumedCount,
+    outcomes: counts,
+    lastProcessedCandidateIdentity:
+      String(summaries.at(-1)?.candidate_key ?? "") || null,
+    incompleteReasons: result.incompleteReasons,
+  };
 }
 
 export type IssuerDiscoverySeed =
@@ -1939,36 +2330,58 @@ export type IssuerDiscoverySeed =
     "issuer" | "canonical_url"
   >
   & {
+    runDate: string;
+    runKey: string;
     rotationJobId: string;
     rotationStatus: string;
     rotationUpdatedAt: string | null;
     rotationEvidence: Record<string, unknown>;
   };
 
+export type IssuerDiscoveryClaim = {
+  status: "claimed" | "empty" | "already_running" | "already_completed";
+  seed: IssuerDiscoverySeed | null;
+};
+
+function utcIssuerRunDate(now: Date): string {
+  if (!Number.isFinite(now.getTime())) {
+    throw new Error("invalid_discovery_time");
+  }
+  return now.toISOString().slice(0, 10);
+}
+
+function issuerRowIsApproved(row: Record<string, unknown>): boolean {
+  return !["approved", "is_approved", "enabled", "is_enabled"].some(
+    (key) => Object.hasOwn(row, key) && row[key] === false,
+  );
+}
+
+export async function loadApprovedIssuerCatalog(
+  db: UntypedSupabaseClient,
+  pageSize = 200,
+): Promise<Array<Record<string, unknown>>> {
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 500) {
+    throw new Error("invalid_issuer_page_size");
+  }
+  const rows: Array<Record<string, unknown>> = [];
+  for (let offset = 0;; offset += pageSize) {
+    const { data, error } = await db.from("card_catalog")
+      .select("id,bank,card_url,card_type,is_discontinued")
+      .order("bank", { ascending: true })
+      .order("id", { ascending: true })
+      .range(offset, offset + pageSize - 1);
+    if (error) throw error;
+    const page = (data ?? []) as Array<Record<string, unknown>>;
+    rows.push(...page);
+    if (page.length < pageSize) return rows;
+  }
+}
+
 export function selectIssuerDiscoveryCandidate(
   catalogRows: Array<Record<string, unknown>>,
-  rotationRows: Array<Record<string, unknown>>,
+  now = new Date(),
 ): Pick<EnrichmentJob, "issuer" | "canonical_url"> | null {
-  const attempts = new Map<string, number>();
-  for (const row of rotationRows) {
-    const evidence = row.evidence;
-    if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) {
-      continue;
-    }
-    const object = evidence as Record<string, unknown>;
-    if (object.kind !== "issuer_directory_rotation") continue;
-    const issuer = String(object.issuer ?? row.issuer ?? "").trim()
-      .toLowerCase();
-    const instant = Date.parse(
-      String(object.last_attempt_at ?? row.updated_at ?? ""),
-    );
-    if (issuer && Number.isFinite(instant)) {
-      attempts.set(
-        issuer,
-        Math.max(attempts.get(issuer) ?? -Infinity, instant),
-      );
-    }
-  }
+  const runDate = utcIssuerRunDate(now);
   const issuers = new Map<
     string,
     Pick<EnrichmentJob, "issuer" | "canonical_url">
@@ -1978,126 +2391,209 @@ export function selectIssuerDiscoveryCandidate(
     const url = String(row.card_url ?? "").trim();
     const key = issuer.toLowerCase();
     if (
-      !issuers.has(key) &&
-      String(row.card_type ?? "").trim().toLowerCase() === "credit" &&
-      allowedOfficialUrl(issuer, url)
-    ) {
-      issuers.set(key, {
-        issuer,
-        canonical_url: canonicalOfficialUrl(issuer, url),
-      });
+      !issuerRowIsApproved(row) ||
+      String(row.card_type ?? "").trim().toLowerCase() !== "credit" ||
+      !allowedOfficialUrl(issuer, url)
+    ) continue;
+    const candidate = {
+      issuer,
+      canonical_url: canonicalOfficialUrl(issuer, url),
+    };
+    const current = issuers.get(key);
+    if (!current || candidate.canonical_url < current.canonical_url) {
+      issuers.set(key, candidate);
     }
   }
-  return [...issuers.entries()].sort(([leftKey, left], [rightKey, right]) => {
-    const leftAttempt = attempts.get(leftKey) ?? -Infinity;
-    const rightAttempt = attempts.get(rightKey) ?? -Infinity;
-    return leftAttempt - rightAttempt || leftKey.localeCompare(rightKey) ||
-      left.canonical_url.localeCompare(right.canonical_url);
-  })[0]?.[1] ?? null;
+  const sorted = [...issuers.entries()].sort((
+    [leftKey, left],
+    [rightKey, right],
+  ) =>
+    leftKey.localeCompare(rightKey) ||
+    left.canonical_url.localeCompare(right.canonical_url)
+  ).map(([, issuer]) => issuer);
+  if (sorted.length === 0) return null;
+  const daySlot = Math.floor(
+    Date.parse(`${runDate}T00:00:00.000Z`) / 86_400_000,
+  );
+  return sorted[daySlot % sorted.length];
 }
 
 async function recordIssuerDiscoveryOutcome(
   db: UntypedSupabaseClient,
   seed: IssuerDiscoverySeed,
-  complete: boolean,
-  reasons: string[],
+  outcome: {
+    complete: boolean;
+    budgetExhausted: boolean;
+    reasons: string[];
+    counts: Record<string, number>;
+    summaries: Array<Record<string, unknown>>;
+    considered: number;
+    fetched: number;
+    resumed: number;
+  },
 ): Promise<void> {
   const now = new Date().toISOString();
+  const resumable = outcome.budgetExhausted ||
+    outcome.reasons.some((reason) =>
+      [
+        "candidate_unattempted",
+        "candidate_fetch_cap_exceeded",
+        "candidate_fetch_failed",
+        "directory_source_fetch_failed",
+        "directory_source_unattempted",
+        "deadline_exceeded",
+      ].includes(reason)
+    );
+  const status = resumable ? "failed" : "resolved";
   const evidence = {
     ...seed.rotationEvidence,
-    last_outcome: complete ? "complete" : "incomplete",
-    ...(complete ? { last_complete_at: now } : {}),
-    incomplete_reasons: reasons.slice(0, 32).map((reason) =>
+    last_outcome: outcome.complete
+      ? "complete"
+      : outcome.budgetExhausted
+      ? "budget_exhausted"
+      : "incomplete",
+    ...(outcome.complete ? { last_complete_at: now } : {}),
+    budget_exhausted: outcome.budgetExhausted,
+    considered_count: outcome.considered,
+    fetched_count: outcome.fetched,
+    resumed_count: outcome.resumed,
+    outcome_counts: outcome.counts,
+    outcome_summaries: outcome.summaries.slice(-200),
+    last_processed_candidate_identity:
+      outcome.summaries.at(-1)?.candidate_key ?? null,
+    incomplete_reasons: outcome.reasons.slice(0, 32).map((reason) =>
       reason.slice(0, 64)
     ),
   };
-  let update = db.from("card_discovery_jobs").update({
+  const update = db.from("card_discovery_jobs").update({
+    status,
+    next_retry_at: resumable ? now : null,
+    failure_category: resumable
+      ? (outcome.budgetExhausted
+        ? "budget_exhausted"
+        : outcome.reasons[0]?.slice(0, 64) ?? "incomplete")
+      : null,
     evidence,
     updated_at: now,
   })
-    .eq("id", seed.rotationJobId).eq("status", seed.rotationStatus);
-  if (seed.rotationUpdatedAt) {
-    update = update.eq("updated_at", seed.rotationUpdatedAt);
-  }
+    .eq("id", seed.rotationJobId).eq("status", "discovering");
   const { data, error } = await update.select("id").maybeSingle();
   if (error) throw error;
-  if (!data) throw new Error("issuer_discovery_rotation_race");
+  if (!data) throw new Error("issuer_discovery_finalize_race");
+}
+
+export async function claimIssuerDiscoveryRun(
+  db: UntypedSupabaseClient,
+  selected: Pick<EnrichmentJob, "issuer" | "canonical_url">,
+  now = new Date(),
+): Promise<IssuerDiscoveryClaim> {
+  const runDate = utcIssuerRunDate(now);
+  const key = await sha256Text(
+    `issuer-directory-run:${runDate}:${selected.issuer.trim().toLowerCase()}`,
+  );
+  const loadExisting = async (): Promise<Record<string, any> | null> => {
+    const existing = await db.from("card_discovery_jobs")
+      .select(
+        "id,issuer,evidence,status,updated_at,next_retry_at,attempt_count,dedupe_key",
+      )
+      .eq("discovery_source", "issuer_crawl")
+      .eq("dedupe_key", key)
+      .is("user_id", null)
+      .maybeSingle();
+    if (existing.error) throw existing.error;
+    return existing.data ?? null;
+  };
+  const asSeed = (row: Record<string, any>): IssuerDiscoverySeed => ({
+    ...selected,
+    runDate,
+    runKey: key,
+    rotationJobId: String(row.id),
+    rotationStatus: String(row.status),
+    rotationUpdatedAt: row.updated_at ? String(row.updated_at) : null,
+    rotationEvidence: row.evidence && typeof row.evidence === "object"
+      ? row.evidence as Record<string, unknown>
+      : {},
+  });
+  const existingClaim = async (
+    row: Record<string, any>,
+  ): Promise<IssuerDiscoveryClaim> => {
+    if (["resolved", "rejected"].includes(String(row.status))) {
+      return { status: "already_completed", seed: null };
+    }
+    const leaseUntil = Date.parse(String(row.next_retry_at ?? ""));
+    if (
+      row.status === "discovering" && Number.isFinite(leaseUntil) &&
+      leaseUntil > now.getTime()
+    ) return { status: "already_running", seed: null };
+    const evidence = {
+      ...(row.evidence && typeof row.evidence === "object" ? row.evidence : {}),
+      kind: "issuer_directory_run",
+      issuer: selected.issuer,
+      canonical_url: selected.canonical_url,
+      run_date: runDate,
+      last_attempt_at: now.toISOString(),
+    };
+    let update = db.from("card_discovery_jobs").update({
+      status: "discovering",
+      attempt_count: Number(row.attempt_count ?? 0) + 1,
+      next_retry_at: new Date(now.getTime() + 300_000).toISOString(),
+      failure_category: null,
+      evidence,
+      updated_at: now.toISOString(),
+    }).eq("id", row.id).eq("status", row.status);
+    if (row.updated_at) update = update.eq("updated_at", row.updated_at);
+    const claimed = await update.select(
+      "id,issuer,evidence,status,updated_at,next_retry_at,attempt_count,dedupe_key",
+    ).maybeSingle();
+    if (claimed.error) throw claimed.error;
+    return claimed.data
+      ? { status: "claimed", seed: asSeed(claimed.data) }
+      : { status: "already_running", seed: null };
+  };
+  const previous = await loadExisting();
+  if (previous) return await existingClaim(previous);
+  const evidence = {
+    kind: "issuer_directory_run",
+    issuer: selected.issuer,
+    canonical_url: selected.canonical_url,
+    run_date: runDate,
+    last_attempt_at: now.toISOString(),
+    outcome_summaries: [],
+  };
+  const inserted = await db.from("card_discovery_jobs").insert({
+    user_id: null,
+    discovery_source: "issuer_crawl",
+    issuer: selected.issuer,
+    proposed_product: "issuer directory run",
+    evidence,
+    dedupe_key: key,
+    status: "discovering",
+    attempt_count: 1,
+    next_retry_at: new Date(now.getTime() + 300_000).toISOString(),
+    updated_at: now.toISOString(),
+  }).select(
+    "id,issuer,evidence,status,updated_at,next_retry_at,attempt_count,dedupe_key",
+  ).maybeSingle();
+  if (!inserted.error && inserted.data) {
+    return { status: "claimed", seed: asSeed(inserted.data) };
+  }
+  if (inserted.error?.code !== "23505") {
+    throw inserted.error ?? new Error("issuer_discovery_claim_failed");
+  }
+  const raced = await loadExisting();
+  if (!raced) throw new Error("issuer_discovery_claim_race");
+  return await existingClaim(raced);
 }
 
 export async function loadDiscoverySeed(
   db: UntypedSupabaseClient,
   now = new Date(),
-): Promise<IssuerDiscoverySeed | null> {
-  const { data, error } = await db.from("card_catalog")
-    .select("bank,card_url,card_type,is_discontinued")
-    .not("card_url", "is", null)
-    .order("bank", { ascending: true })
-    .order("id", { ascending: true })
-    .limit(1000);
-  if (error) throw error;
-  const rotation = await db.from("card_discovery_jobs")
-    .select("id,issuer,evidence,status,updated_at")
-    .eq("discovery_source", "issuer_crawl")
-    .limit(1000);
-  if (rotation.error) throw rotation.error;
-  const selected = selectIssuerDiscoveryCandidate(
-    data ?? [],
-    rotation.data ?? [],
-  );
-  if (!selected) return null;
-  const key = await sha256Text(
-    `issuer-directory-rotation:${selected.issuer.toLowerCase()}`,
-  );
-  const previous = (rotation.data ?? []).find((row: Record<string, unknown>) =>
-    row.evidence && typeof row.evidence === "object" &&
-    (row.evidence as Record<string, unknown>).kind ===
-      "issuer_directory_rotation" &&
-    String(row.issuer ?? "").trim().toLowerCase() ===
-      selected.issuer.toLowerCase()
-  ) as Record<string, unknown> | undefined;
-  const evidence = {
-    ...((previous?.evidence as Record<string, unknown> | undefined) ?? {}),
-    kind: "issuer_directory_rotation",
-    issuer: selected.issuer,
-    canonical_url: selected.canonical_url,
-    last_attempt_at: now.toISOString(),
-  };
-  let claimed: any;
-  if (previous) {
-    let update = db.from("card_discovery_jobs").update({
-      evidence,
-      updated_at: now.toISOString(),
-    })
-      .eq("id", previous.id).eq("status", previous.status);
-    if (previous.updated_at) {
-      update = update.eq("updated_at", previous.updated_at);
-    }
-    const updated = await update.select("id,status,updated_at,evidence")
-      .maybeSingle();
-    if (updated.error) throw updated.error;
-    claimed = updated.data;
-  } else {
-    const inserted = await db.from("card_discovery_jobs").insert({
-      user_id: null,
-      discovery_source: "issuer_crawl",
-      issuer: selected.issuer,
-      proposed_product: "issuer directory rotation",
-      evidence,
-      dedupe_key: key,
-      status: "resolved",
-      updated_at: now.toISOString(),
-    }).select("id,status,updated_at,evidence").maybeSingle();
-    if (inserted.error) throw inserted.error;
-    claimed = inserted.data;
-  }
-  if (!claimed) throw new Error("issuer_discovery_rotation_race");
-  return {
-    ...selected,
-    rotationJobId: String(claimed.id),
-    rotationStatus: String(claimed.status),
-    rotationUpdatedAt: claimed.updated_at ? String(claimed.updated_at) : null,
-    rotationEvidence: claimed.evidence as Record<string, unknown>,
-  };
+  pageSize = 200,
+): Promise<IssuerDiscoveryClaim> {
+  const rows = await loadApprovedIssuerCatalog(db, pageSize);
+  const selected = selectIssuerDiscoveryCandidate(rows, now);
+  if (!selected) return { status: "empty", seed: null };
+  return await claimIssuerDiscoveryRun(db, selected, now);
 }
 
 export async function handleBenefitEnrichmentBatch(
@@ -2109,7 +2605,7 @@ export async function handleBenefitEnrichmentBatch(
   }
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
   const cronSecret = Deno.env.get("BENEFIT_ENRICHMENT_CRON_SECRET") ?? "";
-  if (!await authorized(request, serviceKey, cronSecret)) {
+  if (!await authorizedSchedulerRequest(request, serviceKey, cronSecret)) {
     return json({ error: "authentication_required" }, 401);
   }
 
@@ -2125,6 +2621,37 @@ export async function handleBenefitEnrichmentBatch(
   const db = createClient(Deno.env.get("SUPABASE_URL") ?? "", serviceKey);
   const runId = crypto.randomUUID();
   try {
+    if (body.action === "issuer_discovery") {
+      const issuerMode = issuerDiscoveryRunMode(body);
+      if (!issuerMode) {
+        return json({ error: "invalid_issuer_discovery_request" }, 400);
+      }
+      const claim = await loadDiscoverySeed(db, new Date(), 200);
+      if (!claim.seed) {
+        return json({
+          runId,
+          action: "issuer_discovery",
+          runMode: issuerMode,
+          claimed: 0,
+          noWork: true,
+          claimStatus: claim.status,
+        });
+      }
+      const summary = await runIssuerDiscovery(
+        db,
+        claim.seed,
+        invocationStartedAt + INVOCATION_DEADLINE_MS,
+      );
+      return json({
+        runId,
+        action: "issuer_discovery",
+        runMode: issuerMode,
+        claimed: 1,
+        noWork: false,
+        claimStatus: claim.status,
+        summary,
+      });
+    }
     if (body.action === "initialize_pilot") {
       if (!Array.isArray(body.candidates)) {
         return json({ error: "invalid_pilot_candidates" }, 400);
@@ -2205,30 +2732,6 @@ export async function handleBenefitEnrichmentBatch(
         }
       },
     );
-    // Issuer-wide discovery can inspect dozens of pages. Run it only on an
-    // otherwise idle invocation so it cannot compete with card enrichment for
-    // the Edge worker's compute and memory budget.
-    if (
-      jobs.length === 0 && Number(queued ?? 0) === 0 &&
-      networkWorkMayStart(invocationStartedAt)
-    ) {
-      const discoverySeed = await loadDiscoverySeed(db);
-      if (discoverySeed) {
-        EdgeRuntime.waitUntil(
-          runIssuerDiscovery(
-            db,
-            discoverySeed,
-            invocationStartedAt + INVOCATION_DEADLINE_MS,
-          ).catch((error) => {
-            console.error(JSON.stringify({
-              event: "issuer_discovery_background_failed",
-              run_id: runId,
-              category: safeFailureCategory(error),
-            }));
-          }),
-        );
-      }
-    }
     const finalPilot = await readPilotStatus(db);
     return json({
       runId,

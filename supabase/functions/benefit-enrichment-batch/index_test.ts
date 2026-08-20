@@ -1,15 +1,20 @@
 import {
   applyRemovalPolicy,
+  authorizedSchedulerRequest,
   buildCrawlObservation,
+  claimIssuerDiscoveryRun,
   claimLimitForInvocation,
   computeSourceManifestHash,
   crawlProposalDisposition,
   currentBenefitProposal,
   initializePilotJobs,
+  issuerDiscoveryRunMode,
+  loadApprovedIssuerCatalog,
   loadCatalogIdentity,
   networkWorkMayStart,
   newestValidCrawlObservations,
   observationValidatedAt,
+  persistNonProductIssuerOutcome,
   previousFetchValidators,
   processJob,
   promoteQualifiedPilotJobs,
@@ -25,6 +30,7 @@ import {
   sourceObservationReviewSummary,
   sourceObservationSummary,
   stagingContentHashForObservation,
+  upsertBoundedIssuerOutcomeSummary,
 } from "./index.ts";
 import * as batchModule from "./index.ts";
 import {
@@ -37,62 +43,349 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 
-Deno.test("issuer discovery remains schedulable when every known card is discontinued", async () => {
-  const seed = selectIssuerDiscoveryCandidate([{
+Deno.test("issuer discovery includes all-discontinued approved issuers and excludes disabled or unapproved rows", () => {
+  const rows = [{
     bank: "Axis Bank",
     card_url: "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
     card_type: "credit",
     is_discontinued: true,
-  }], []);
+  }, {
+    bank: "HDFC Bank",
+    card_url:
+      "https://www.hdfcbank.com/personal/pay/cards/credit-cards/regalia",
+    card_type: "credit",
+    enabled: false,
+  }, {
+    bank: "ICICI Bank",
+    card_url:
+      "https://www.icicibank.com/personal-banking/cards/credit-card/coral",
+    card_type: "credit",
+    approved: false,
+  }, {
+    bank: "Unknown Issuer",
+    card_url: "https://unknown.example/credit-card",
+    card_type: "credit",
+  }];
+  const seed = selectIssuerDiscoveryCandidate(
+    rows,
+    new Date("2026-08-20T12:00:00.000Z"),
+  );
   assert(
     seed?.issuer === "Axis Bank",
-    "discontinued issuer disappeared from discovery",
+    "approved all-discontinued issuer disappeared from discovery",
   );
 });
 
-Deno.test("issuer discovery rotates null and oldest attempts fairly beyond 100 catalog rows", () => {
-  const catalog = Array.from({ length: 120 }, (_, index) => ({
-    bank: index < 118
-      ? "Axis Bank"
-      : index === 118
-      ? "HDFC Bank"
-      : "ICICI Bank",
-    card_url: index < 118
+Deno.test("issuer discovery rotates a sorted issuer set by UTC day with restart stability", () => {
+  const catalog = [{
+    bank: "ICICI Bank",
+    card_url:
+      "https://www.icicibank.com/personal-banking/cards/credit-card/coral",
+    card_type: "credit",
+  }, {
+    bank: "Axis Bank",
+    card_url: "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+    card_type: "credit",
+  }, {
+    bank: "HDFC Bank",
+    card_url:
+      "https://www.hdfcbank.com/personal/pay/cards/credit-cards/regalia",
+    card_type: "credit",
+  }];
+  const expected = ["Axis Bank", "HDFC Bank", "ICICI Bank", "Axis Bank"];
+  for (let offset = 0; offset < expected.length; offset += 1) {
+    const now = new Date(Date.UTC(2026, 7, 20 + offset, 23, 59));
+    const first = selectIssuerDiscoveryCandidate(catalog, now);
+    const restarted = selectIssuerDiscoveryCandidate([...catalog], now);
+    assert(first?.issuer === expected[offset], `wrong UTC slot ${offset}`);
+    assert(
+      restarted?.issuer === expected[offset],
+      `restart changed UTC slot ${offset}`,
+    );
+  }
+  assert(
+    selectIssuerDiscoveryCandidate([], new Date("2026-08-20T00:00:00Z")) ===
+      null,
+    "empty approved issuer set did not become no-work",
+  );
+  const changed = [catalog[1], catalog[2]];
+  assert(
+    selectIssuerDiscoveryCandidate(
+      changed,
+      new Date("2026-08-20T12:00:00Z"),
+    )?.issuer === "HDFC Bank",
+    "changed issuer set was not deterministically re-slotted",
+  );
+});
+
+Deno.test("issuer run progress replaces a retried candidate without evicting another completed key", () => {
+  const existing = Array.from({ length: 200 }, (_, index) => ({
+    candidate_key: index.toString(16).padStart(64, "0"),
+    disposition: index === 42 ? "quarantined" : "candidate",
+  }));
+  const retriedKey = existing[42].candidate_key;
+  const updated = upsertBoundedIssuerOutcomeSummary(existing, {
+    candidate_key: retriedKey,
+    disposition: "candidate",
+  });
+
+  assert(
+    updated.length === 200,
+    "retry grew or truncated the unique summary set",
+  );
+  assert(
+    new Set(updated.map((item) => item.candidate_key)).size === 200,
+    "retry left duplicate candidate progress",
+  );
+  assert(
+    updated.at(-1)?.candidate_key === retriedKey &&
+      updated.at(-1)?.disposition === "candidate",
+    "latest terminal outcome did not replace the older candidate failure",
+  );
+  assert(
+    updated.some((item) => item.candidate_key === existing[0].candidate_key),
+    "replacing one candidate evicted unrelated resumable progress",
+  );
+});
+
+Deno.test("approved issuer loading explicitly paginates beyond the Data API default window", async () => {
+  const rows = Array.from({ length: 1_205 }, (_, index) => ({
+    id: `card-${String(index).padStart(4, "0")}`,
+    bank: index < 1_204 ? "Axis Bank" : "ICICI Bank",
+    card_url: index < 1_204
       ? `https://www.axis.bank.in/cards/credit-card/card-${index}`
-      : index === 118
-      ? "https://www.hdfcbank.com/personal/pay/cards/credit-cards/regalia"
       : "https://www.icicibank.com/personal-banking/cards/credit-card/coral",
     card_type: "credit",
     is_discontinued: true,
   }));
-  const rotations: Array<Record<string, unknown>> = [];
-  const first = selectIssuerDiscoveryCandidate(catalog, rotations);
-  assert(first?.issuer === "Axis Bank", "stable null-attempt tie break failed");
-  rotations.push({
-    issuer: first.issuer,
-    evidence: {
-      kind: "issuer_directory_rotation",
-      issuer: first.issuer,
-      last_attempt_at: "2026-08-20T00:00:00.000Z",
-      last_outcome: "incomplete",
+  const ranges: Array<[number, number]> = [];
+  const db = {
+    from(table: string) {
+      assert(table === "card_catalog", "issuer loader read the wrong table");
+      const query = {
+        select() {
+          return this;
+        },
+        order() {
+          return this;
+        },
+        range(from: number, to: number) {
+          ranges.push([from, to]);
+          return Promise.resolve({
+            data: rows.slice(from, to + 1),
+            error: null,
+          });
+        },
+      };
+      return query;
     },
-  });
-  const second = selectIssuerDiscoveryCandidate(catalog, rotations);
+  };
+  const loaded = await loadApprovedIssuerCatalog(db, 200);
+  assert(loaded.length === 1_205, "later catalog pages were truncated");
   assert(
-    second?.issuer === "HDFC Bank",
-    "failed attempt did not rotate issuer",
+    JSON.stringify(ranges) === JSON.stringify([
+      [0, 199],
+      [200, 399],
+      [400, 599],
+      [600, 799],
+      [800, 999],
+      [1000, 1199],
+      [1200, 1399],
+    ]),
+    "issuer catalog pagination was not explicit and exhaustive",
   );
-  rotations.push({
-    issuer: second.issuer,
-    evidence: {
-      kind: "issuer_directory_rotation",
-      issuer: second.issuer,
-      last_attempt_at: "2026-08-20T00:01:00.000Z",
-      last_outcome: "complete",
+  assert(
+    selectIssuerDiscoveryCandidate(
+      loaded,
+      new Date("2026-08-20T00:00:00Z"),
+    )?.issuer === "ICICI Bank",
+    "an early issuer's 1,000+ cards hid a later issuer",
+  );
+});
+
+Deno.test("issuer discovery action accepts only bounded scheduled or manual modes", () => {
+  assert(
+    issuerDiscoveryRunMode({
+      action: "issuer_discovery",
+      runMode: "scheduled",
+    }) === "scheduled",
+    "scheduled issuer action was rejected",
+  );
+  assert(
+    issuerDiscoveryRunMode({
+      action: "issuer_discovery",
+      runMode: "manual",
+    }) ===
+      "manual",
+    "manual issuer action was rejected",
+  );
+  for (
+    const body of [
+      { action: "issuer_discovery", runMode: "pilot" },
+      { action: "other", runMode: "scheduled" },
+      { runMode: "scheduled" },
+    ]
+  ) {
+    assert(
+      issuerDiscoveryRunMode(body) === null,
+      "invalid action was accepted",
+    );
+  }
+});
+
+Deno.test("issuer discovery scheduler requests reuse the constant-time cron or service credential boundary", async () => {
+  const request = (headers: HeadersInit) =>
+    new Request("https://edge.example/benefit-enrichment-batch", {
+      method: "POST",
+      headers,
+    });
+  assert(
+    await authorizedSchedulerRequest(
+      request({ "x-cardcompass-cron-secret": "cron-secret" }),
+      "service-secret",
+      "cron-secret",
+    ),
+    "existing cron credential was rejected",
+  );
+  assert(
+    await authorizedSchedulerRequest(
+      request({ authorization: "Bearer service-secret" }),
+      "service-secret",
+      "cron-secret",
+    ),
+    "bounded manual service credential was rejected",
+  );
+  assert(
+    !await authorizedSchedulerRequest(
+      request({ "x-cardcompass-cron-secret": "wrong" }),
+      "service-secret",
+      "cron-secret",
+    ),
+    "wrong issuer scheduler credential was accepted",
+  );
+});
+
+Deno.test("same-day issuer discovery claims are idempotent under a unique-insert race", async () => {
+  const jobs: Array<Record<string, unknown>> = [];
+  let sequence = 0;
+  const db = {
+    from(table: string) {
+      assert(
+        table === "card_discovery_jobs",
+        "issuer claim touched an unrelated table",
+      );
+      let operation: "select" | "insert" = "select";
+      let payload: Record<string, unknown> | null = null;
+      const filters = new Map<string, unknown>();
+      const query = {
+        select() {
+          return this;
+        },
+        eq(column: string, value: unknown) {
+          filters.set(column, value);
+          return this;
+        },
+        is(column: string, value: unknown) {
+          filters.set(column, value);
+          return this;
+        },
+        insert(value: Record<string, unknown>) {
+          operation = "insert";
+          payload = value;
+          return this;
+        },
+        async maybeSingle() {
+          if (operation === "insert") {
+            const duplicate = jobs.some((row) =>
+              row.discovery_source === payload?.discovery_source &&
+              row.dedupe_key === payload?.dedupe_key && row.user_id === null
+            );
+            if (duplicate) {
+              return { data: null, error: { code: "23505" } };
+            }
+            const row = {
+              ...payload,
+              id: `run-${++sequence}`,
+              updated_at: "2026-08-20T00:00:00.000Z",
+            };
+            jobs.push(row);
+            return { data: row, error: null };
+          }
+          const row =
+            jobs.find((candidate) =>
+              [...filters].every(([key, value]) => candidate[key] === value)
+            ) ?? null;
+          return { data: row, error: null };
+        },
+      };
+      return query;
     },
-  });
-  const third = selectIssuerDiscoveryCandidate(catalog, rotations);
-  assert(third?.issuer === "ICICI Bank", "third issuer was starved");
+  };
+  const selected = {
+    issuer: "Axis Bank",
+    canonical_url: "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+  };
+  const now = new Date("2026-08-20T00:00:00.000Z");
+  const [left, right] = await Promise.all([
+    claimIssuerDiscoveryRun(db, selected, now),
+    claimIssuerDiscoveryRun(db, selected, now),
+  ]);
+  assert(jobs.length === 1, "same UTC-day run inserted duplicate rows");
+  assert(
+    [left.status, right.status].sort().join(",") ===
+      "already_running,claimed",
+    "concurrent same-day claim did not become claimed plus no-work",
+  );
+});
+
+Deno.test("cross-class crawler URL conflicts become actionable bounded review work", async () => {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const db = {
+    async rpc(name: string, args: Record<string, unknown>) {
+      calls.push({ name, args });
+      return {
+        data: [{
+          job_id: "job-1",
+          review_item_id: "review-1",
+          resulting_status: "review_required",
+          created: true,
+        }],
+        error: null,
+      };
+    },
+    from() {
+      throw new Error("conflict review bypassed the central staging RPC");
+    },
+  };
+  const result = await persistNonProductIssuerOutcome(
+    db,
+    "Axis Bank",
+    {
+      candidateKey: "a".repeat(64),
+      disposition: "quarantined",
+      attempted: true,
+      classification: {
+        kind: "card_product",
+        canonicalUrl:
+          "https://www.axis.bank.in/cards/credit-card/privilege-credit-card",
+        proposedName: "Privilege",
+        aliases: ["Axis Privilege Credit Card"],
+        confidence: 0.95,
+        warnings: ["conflicting_url_identity"],
+        sanitizedEvidence: ["Axis Privilege Credit Card"],
+      },
+    },
+    "conflicting_url_identity",
+  );
+  assert(result === "quarantined", "conflict review outcome was lost");
+  assert(
+    calls.length === 1 &&
+      calls[0].name === "stage_card_catalog_identity_review" &&
+      (calls[0].args._validation_warnings as string[]).includes(
+        "conflicting_url_identity",
+      ),
+    "URL conflict did not reach central actionable review",
+  );
 });
 
 Deno.test("pilot API refuses catalog-v1 before selecting or writing jobs", async () => {
