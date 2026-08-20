@@ -217,22 +217,45 @@ class BenefitEnrichmentReview {
     }
     final diff = staging.extractedData.diff;
     final digest = RegExp(r'^[0-9a-f]{64}$', caseSensitive: false);
+    final cardScopedPrefix = 'card-benefit-v2:$cardId:';
+    String? cardScopedDigest(String value) {
+      if (!value.startsWith(cardScopedPrefix)) return null;
+      final valueDigest = value.substring(cardScopedPrefix.length);
+      return digest.hasMatch(valueDigest) ? valueDigest : null;
+    }
+
     for (final proposal in diff.canonicalProposals) {
+      final conditionHash = proposal.conditionHash;
+      final expectedBenefitId = conditionHash == null
+          ? null
+          : '$cardScopedPrefix$conditionHash';
       if (proposal.benefitId == null ||
           proposal.dedupeKey == null ||
           proposal.benefitId != proposal.dedupeKey ||
-          proposal.conditionHash == null ||
-          !digest.hasMatch(proposal.conditionHash!)) {
+          proposal.benefitId != expectedBenefitId ||
+          conditionHash == null ||
+          !digest.hasMatch(conditionHash)) {
         throw const FormatException('Malformed required v6 benefit identity.');
       }
     }
     for (final current in diff.currentProposals) {
+      final dedupeKey = current.dedupeKey;
+      final benefitId = current.benefitId;
+      final conditionHash = current.conditionHash;
+      final dedupeIsCardScoped =
+          dedupeKey?.startsWith('card-benefit-v2:') == true;
+      final benefitDigest = benefitId == null
+          ? null
+          : cardScopedDigest(benefitId);
       if (current.liveBenefitId == null ||
-          current.dedupeKey == null ||
-          (current.benefitId != null &&
-              current.benefitId != current.dedupeKey) ||
-          (current.conditionHash != null &&
-              !digest.hasMatch(current.conditionHash!))) {
+          dedupeKey == null ||
+          (benefitId == null && dedupeIsCardScoped) ||
+          (benefitId != null && benefitDigest == null) ||
+          (dedupeIsCardScoped && benefitId != dedupeKey) ||
+          (conditionHash != null && !digest.hasMatch(conditionHash)) ||
+          (conditionHash != null &&
+              benefitDigest != null &&
+              conditionHash != benefitDigest)) {
         throw const FormatException('Malformed current v6 benefit identity.');
       }
     }

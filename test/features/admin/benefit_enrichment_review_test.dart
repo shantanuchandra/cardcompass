@@ -80,7 +80,7 @@ final _v6JobJson = <String, dynamic>{
     'parser_version': 'benefits-v6',
     'source_evidence': [
       {
-        'dedupe_key': 'card-benefit-v2:card-1:new-hash',
+        'dedupe_key': 'card-benefit-v2:card-1:${'a' * 64}',
         'offer_subject': 'dining-points',
         'source_identity': 'd' * 64,
         'source_identities': ['d' * 64, 'e' * 64],
@@ -94,11 +94,11 @@ final _v6JobJson = <String, dynamic>{
       {
         'action': 'approve',
         'change_type': 'identity_migration',
-        'dedupe_key': 'card-benefit-v2:card-1:new-hash',
+        'dedupe_key': 'card-benefit-v2:card-1:${'a' * 64}',
         'benefit_id': '11111111-1111-4111-8111-111111111111',
         'proposed': {
-          'benefitId': 'card-benefit-v2:card-1:new-hash',
-          'dedupeKey': 'card-benefit-v2:card-1:new-hash',
+          'benefitId': 'card-benefit-v2:card-1:${'a' * 64}',
+          'dedupeKey': 'card-benefit-v2:card-1:${'a' * 64}',
           'conditionHash': 'a' * 64,
           'title': 'Dining points',
           'description': '10 points per ₹100',
@@ -137,15 +137,15 @@ final _v6JobJson = <String, dynamic>{
             'changeType': 'identity_migration',
             'current': {
               'liveBenefitId': '11111111-1111-4111-8111-111111111111',
-              'benefitId': 'card-benefit-v2:card-1:old-hash',
-              'dedupeKey': 'card-benefit-v2:card-1:old-hash',
+              'benefitId': 'card-benefit-v2:card-1:${'b' * 64}',
+              'dedupeKey': 'card-benefit-v2:card-1:${'b' * 64}',
               'conditionHash': 'b' * 64,
               'title': 'Dining points',
               'rate': 5,
             },
             'proposed': {
-              'benefitId': 'card-benefit-v2:card-1:new-hash',
-              'dedupeKey': 'card-benefit-v2:card-1:new-hash',
+              'benefitId': 'card-benefit-v2:card-1:${'a' * 64}',
+              'dedupeKey': 'card-benefit-v2:card-1:${'a' * 64}',
               'conditionHash': 'a' * 64,
               'title': 'Dining points',
               'rate': 10,
@@ -156,9 +156,8 @@ final _v6JobJson = <String, dynamic>{
           {
             'benefit': {
               'liveBenefitId': '22222222-2222-4222-8222-222222222222',
-              'benefitId': 'card-benefit-v2:card-1:retire-hash',
-              'dedupeKey': 'card-benefit-v2:card-1:retire-hash',
-              'conditionHash': 'c' * 64,
+              'benefitId': 'card-benefit-v2:card-1:${'c' * 64}',
+              'dedupeKey': 'legacy:approved:lounge-visit',
               'title': 'Legacy lounge visit',
             },
             'informational': true,
@@ -181,6 +180,31 @@ Map<String, dynamic> get _stagingOnlyV6Corruption => <String, dynamic>{
     ...(_jobJson['staging'] as Map<String, dynamic>),
     'card_id': 'card-1',
     'parser_version': 'benefits-v6',
+  },
+};
+
+Map<String, dynamic> _v6AdditionWithIdentity({
+  required String benefitId,
+  required String conditionHash,
+}) => <String, dynamic>{
+  ..._v6JobJson,
+  'staging': {
+    ...(_v6JobJson['staging'] as Map<String, dynamic>),
+    'benefit_decisions': const [],
+    'extracted_data': {
+      ...((_v6JobJson['staging'] as Map<String, dynamic>)['extracted_data']
+          as Map<String, dynamic>),
+      'diff': {
+        'additions': [
+          {
+            'benefitId': benefitId,
+            'dedupeKey': benefitId,
+            'conditionHash': conditionHash,
+            'title': 'Canonical test proposal',
+          },
+        ],
+      },
+    },
   },
 };
 
@@ -320,7 +344,10 @@ void main() {
     expect(review.staging.sourceEvidence.single.sourceIdentities, hasLength(2));
     expect(review.staging.sourceEvidence.single.contentHash, 'f' * 64);
     expect(modification.changeType, 'identity_migration');
-    expect(modification.proposed.benefitId, 'card-benefit-v2:card-1:new-hash');
+    expect(
+      modification.proposed.benefitId,
+      'card-benefit-v2:card-1:${'a' * 64}',
+    );
     expect(modification.proposed.conditionHash, 'a' * 64);
     expect(edited.changeType, decision.changeType);
     expect(edited.liveBenefitId, decision.liveBenefitId);
@@ -328,7 +355,7 @@ void main() {
     expect(edited.toJson()['benefit_id'], decision.liveBenefitId);
     expect(
       (edited.toJson()['edited_benefit'] as Map)['benefitId'],
-      'card-benefit-v2:card-1:new-hash',
+      'card-benefit-v2:card-1:${'a' * 64}',
     );
   });
 
@@ -348,14 +375,14 @@ void main() {
                 {
                   'current': {
                     'liveBenefitId': '11111111-1111-4111-8111-111111111111',
-                    'benefitId': 'card-benefit-v2:card-1:approved-current',
-                    'dedupeKey': 'card-benefit-v2:card-1:approved-current',
+                    'benefitId': 'card-benefit-v2:card-1:${'4' * 64}',
+                    'dedupeKey': 'card-benefit-v2:card-1:${'4' * 64}',
                     'title': 'Approved dining benefit',
                     'parserVersion': 'current-approved-benefit',
                   },
                   'proposed': {
-                    'benefitId': 'card-benefit-v2:card-1:proposed-change',
-                    'dedupeKey': 'card-benefit-v2:card-1:proposed-change',
+                    'benefitId': 'card-benefit-v2:card-1:${'1' * 64}',
+                    'dedupeKey': 'card-benefit-v2:card-1:${'1' * 64}',
                     'conditionHash': '1' * 64,
                     'title': 'Updated dining benefit',
                   },
@@ -370,8 +397,8 @@ void main() {
                     'parserVersion': 'current-approved-benefit',
                   },
                   'proposed': {
-                    'benefitId': 'card-benefit-v2:card-1:unchanged',
-                    'dedupeKey': 'card-benefit-v2:card-1:unchanged',
+                    'benefitId': 'card-benefit-v2:card-1:${'2' * 64}',
+                    'dedupeKey': 'card-benefit-v2:card-1:${'2' * 64}',
                     'conditionHash': '2' * 64,
                     'title': 'Legacy lounge benefit',
                   },
@@ -381,6 +408,7 @@ void main() {
                 {
                   'benefit': {
                     'liveBenefitId': '33333333-3333-4333-8333-333333333333',
+                    'benefitId': 'card-benefit-v2:card-1:${'3' * 64}',
                     'dedupeKey': 'legacy-movie-benefit',
                     'title': 'Legacy movie benefit',
                     'parserVersion': 'current-approved-benefit',
@@ -407,6 +435,10 @@ void main() {
       expect(
         diff.possibleRemovals.single.benefit.dedupeKey,
         'legacy-movie-benefit',
+      );
+      expect(
+        diff.possibleRemovals.single.benefit.benefitId,
+        'card-benefit-v2:card-1:${'3' * 64}',
       );
     },
   );
@@ -464,6 +496,32 @@ void main() {
           ..._v6JobJson,
           'staging': {
             ...(_v6JobJson['staging'] as Map<String, dynamic>),
+            'extracted_data': {
+              ...((_v6JobJson['staging']
+                      as Map<String, dynamic>)['extracted_data']
+                  as Map<String, dynamic>),
+              'diff': {
+                'possibleRemovals': [
+                  {
+                    'benefit': {
+                      'liveBenefitId': '33333333-3333-4333-8333-333333333333',
+                      'benefitId': 'card-benefit-v2:different-card:${'3' * 64}',
+                      'dedupeKey': 'legacy-movie-benefit',
+                      'title': 'Malformed decorated legacy removal',
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        }),
+        throwsA(isA<FormatException>()),
+      );
+      expect(
+        () => BenefitEnrichmentReview.fromJson({
+          ..._v6JobJson,
+          'staging': {
+            ...(_v6JobJson['staging'] as Map<String, dynamic>),
             'card_id': 'different-card',
           },
         }),
@@ -476,6 +534,39 @@ void main() {
       expect(() => BenefitEnrichmentReview.fromJson(_jobJson), returnsNormally);
     },
   );
+
+  test('v6 proposed identity is the exact review-card condition key', () {
+    expect(
+      () => BenefitEnrichmentReview.fromJson(
+        _v6AdditionWithIdentity(
+          benefitId: 'card-benefit-v2:card-1:${'d' * 64}',
+          conditionHash: 'd' * 64,
+        ),
+      ),
+      returnsNormally,
+    );
+
+    final malformed = [
+      _v6AdditionWithIdentity(
+        benefitId: 'card-benefit-v2:other-card:${'d' * 64}',
+        conditionHash: 'd' * 64,
+      ),
+      _v6AdditionWithIdentity(
+        benefitId: 'card-benefit-v2:card-1:${'e' * 64}',
+        conditionHash: 'd' * 64,
+      ),
+      _v6AdditionWithIdentity(
+        benefitId: 'benefit-v2:card-1:${'d' * 64}',
+        conditionHash: 'd' * 64,
+      ),
+    ];
+    for (final row in malformed) {
+      expect(
+        () => BenefitEnrichmentReview.fromJson(row),
+        throwsA(isA<FormatException>()),
+      );
+    }
+  });
 
   test('admin reauthorization clears the stale session before login', () async {
     final events = <String>[];
@@ -1190,9 +1281,18 @@ void main() {
       retirementDecision['benefit_id'],
       '22222222-2222-4222-8222-222222222222',
     );
+    expect(retirementDecision['dedupe_key'], 'legacy:approved:lounge-visit');
     expect(
-      retirementDecision['dedupe_key'],
-      'card-benefit-v2:card-1:retire-hash',
+      (retirementDecision['benefit'] as Map)['benefitId'],
+      'card-benefit-v2:card-1:${'c' * 64}',
+    );
+    expect(
+      (retirementDecision['benefit'] as Map)['dedupeKey'],
+      'legacy:approved:lounge-visit',
+    );
+    expect(
+      (retirementDecision['benefit'] as Map)['liveBenefitId'],
+      '22222222-2222-4222-8222-222222222222',
     );
     expect(retirementDecision['reason'], 'Issuer corroborated retirement');
 
@@ -1208,7 +1308,7 @@ void main() {
     expect(editDecision['dedupe_key'], decision.dedupeKey);
     expect(
       (editDecision['edited_benefit'] as Map)['benefitId'],
-      'card-benefit-v2:card-1:new-hash',
+      'card-benefit-v2:card-1:${'a' * 64}',
     );
     expect(editDecision, isNot(contains('change_type')));
   });
@@ -1292,7 +1392,7 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.textContaining('card-benefit-v2:card-1:new-hash'),
+        find.textContaining('card-benefit-v2:card-1:${'a' * 64}'),
         findsWidgets,
       );
       expect(find.textContaining('Condition hash: ${'a' * 64}'), findsWidgets);
@@ -1336,9 +1436,8 @@ void main() {
               {
                 'benefit': {
                   'liveBenefitId': '22222222-2222-4222-8222-222222222222',
-                  'benefitId': 'card-benefit-v2:card-1:retire-hash',
-                  'dedupeKey': 'card-benefit-v2:card-1:retire-hash',
-                  'conditionHash': 'c' * 64,
+                  'benefitId': 'card-benefit-v2:card-1:${'c' * 64}',
+                  'dedupeKey': 'legacy:approved:lounge-visit',
                   'title': 'Legacy lounge visit',
                 },
                 'informational': true,
@@ -1418,6 +1517,45 @@ void main() {
     expect(find.textContaining('repaired'), findsOneWidget);
     expect(find.text('Approved dining benefit'), findsNothing);
   });
+
+  testWidgets(
+    'malformed proposed v6 identities reach the visible repair state',
+    (tester) async {
+      final malformed = [
+        _v6AdditionWithIdentity(
+          benefitId: 'card-benefit-v2:other-card:${'d' * 64}',
+          conditionHash: 'd' * 64,
+        ),
+        _v6AdditionWithIdentity(
+          benefitId: 'card-benefit-v2:card-1:${'e' * 64}',
+          conditionHash: 'd' * 64,
+        ),
+        _v6AdditionWithIdentity(
+          benefitId: 'benefit-v2:card-1:${'d' * 64}',
+          conditionHash: 'd' * 64,
+        ),
+      ];
+
+      for (final row in malformed) {
+        final response = AdminCatalogEntryResponse(200, {
+          'items': [row],
+          'counts': {'total': 1, 'by_status': {}, 'by_run_mode': {}},
+          'page': 1,
+          'limit': 25,
+          'has_more': false,
+        });
+
+        await _pumpPanel(tester, AdminCatalogRepository(_FakeApi(response)));
+
+        expect(find.textContaining('Malformed v6 review data'), findsOneWidget);
+        expect(find.textContaining('repaired'), findsOneWidget);
+        expect(find.text('Added dining benefit'), findsNothing);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pumpAndSettle();
+      }
+    },
+  );
 
   testWidgets('benefit approval explains its consequence before applying', (
     tester,

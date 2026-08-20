@@ -299,3 +299,70 @@ remains SHA-256
 The auth-matrix HTTP server bound only to ephemeral `127.0.0.1`; no external
 network, Docker, local/linked/live Supabase/Postgres, production data/write,
 secret, or workflow action was used. Live applied: **no**.
+
+## Fresh-review fix round 2
+
+The second post-implementation review found that Flutter still conflated the
+canonical proposed identity contract with the producer's decorated legacy
+removal contract, and did not bind canonical proposal IDs to the review card
+and condition hash. Both failures were reproduced before production changes:
+
+```sh
+flutter test --no-pub test/features/admin/benefit_enrichment_review_test.dart
+# RED: 23 passed, 7 failed
+# - withCardScopedRemovalIds-shaped legacy removals were rejected as malformed
+#   current identity in DTO, repository, and widget paths
+# - cross-card, mismatched-hash, and malformed-prefix canonical proposal IDs
+#   parsed successfully instead of throwing FormatException
+# - those malformed proposals rendered through the real repository/panel path
+#   instead of showing the visible malformed-data repair state
+```
+
+Corrections:
+
+- Canonical proposed additions and the proposed sides of modification,
+  unchanged, and conflict rows now require the exact identity
+  `card-benefit-v2:<review.cardId>:<conditionHash>`, with
+  `benefitId == dedupeKey` and a 64-hex condition hash. Cross-card IDs,
+  digest mismatches, and malformed prefixes fail closed in both DTO and visible
+  repository/panel tests.
+- Current/live validation remains a separate structural lane. Every row still
+  requires its server-issued live ID and dedupe key. Canonical current rows
+  require an exact card-scoped v2 ID equal to their dedupe key. Legacy current
+  rows may omit canonical identity, while `withCardScopedRemovalIds` output may
+  retain its legacy dedupe key and carry the server-decorated exact card-scoped
+  v2 benefit ID. Malformed/cross-card decorated IDs and inconsistent supplied
+  condition hashes still fail closed.
+- Retirement serialization is exercised with the producer-equivalent decorated
+  removal and preserves the exact live UUID, legacy dedupe key, and decorated
+  benefit ID; Flutter neither reconstructs nor normalizes those server values.
+- Non-production fake suffixes in v6 fixtures were replaced with canonical
+  64-hex production-shape identities so validation tests exercise the real
+  contract rather than a weakened test-only format.
+
+Fresh full GREEN results after this correction:
+
+```text
+Flutter admin review                         30 passed, 0 failed
+Flutter movie consumer                       15 passed, 0 failed
+Edge admin (includes loopback auth matrix)   48 passed, 0 failed
+Ingestion + publication Deno regressions    153 passed, 0 failed
+Node active/security/catalog/migrations      85 passed, 0 failed
+Total                                       331 passed, 0 failed
+Deno production checks                        passed
+Dart and Deno format checks                   passed
+Flutter analysis (infos non-fatal)            passed; same 12 baseline infos
+git diff --check                              passed
+```
+
+No migration was created or modified relative to fix-round-1 commit
+`eae56443a645de7f6e4e679e3f7b85a07a4250d9`. The existing admin-hardening
+migration remains SHA-256
+`82df4f501eb24f5e88be6080b66c5c296f95bb4d68a7cd4b5f3c1a44a015980e`.
+The round-2 pre-commit production/test hashes were respectively
+`6135918e68ef5abc6f9edfcfc17a9ab30ec3bb62f91a3213879b5956b2e8da17` and
+`4195a9b4efa9555c1b21cfa5a2919b751864c4ba549294cf21110385f7b1e260`.
+
+Only the existing auth-matrix test used an ephemeral `127.0.0.1` listener. No
+external network, Docker, local/linked/live Supabase/Postgres, production
+data/write, secret, or workflow action was used. Live applied: **no**.
