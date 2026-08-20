@@ -40,6 +40,30 @@ type PublicationClient = {
   ): PromiseLike<{ data?: unknown; error: unknown }>;
 };
 
+export type CatalogIdentityReviewStageInput = {
+  discoveryJobId?: string | null;
+  discoverySource: "statement" | "issuer_crawl";
+  userId?: string | null;
+  issuer: string;
+  proposedProduct?: string | null;
+  dedupeKey: string;
+  semanticHash: string;
+  proposedFields: Record<string, unknown>;
+  sourceEvidence: Record<string, unknown>;
+  existingCandidates: Array<Record<string, unknown>>;
+  validationWarnings: string[];
+  confidence: number;
+  expectedJobStatus?: string | null;
+  expectedJobUpdatedAt?: string | null;
+};
+
+export type CatalogIdentityReviewStageResult = {
+  jobId: string;
+  reviewItemId: string;
+  resultingStatus: string;
+  created: boolean;
+};
+
 export type CatalogLifecycleAction = "mark_discontinued" | "reactivate";
 export type CatalogLifecycleObservationAction =
   | CatalogLifecycleAction
@@ -125,6 +149,9 @@ const TRANSPORT_ONLY_OBSERVATION_KEYS = new Set([
   "retry_after_ms",
   "request_started_at",
   "request_completed_at",
+  "nonce",
+  "footer",
+  "generated_at",
 ]);
 
 function nonEmpty(value: unknown): value is string {
@@ -303,6 +330,26 @@ function stableJsonValue(value: unknown): unknown {
   return value;
 }
 
+export async function semanticProductEnvelopeHash(
+  input: Record<string, unknown>,
+): Promise<string> {
+  const stripTransport = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(stripTransport);
+    if (value !== null && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>)
+          .filter(([key]) => !TRANSPORT_ONLY_OBSERVATION_KEYS.has(key))
+          .map(([key, entry]) => [key, stripTransport(entry)]),
+      );
+    }
+    return typeof value === "string"
+      ? value.trim().replace(/\s+/g, " ")
+      : value;
+  };
+  const bounded = boundedCatalogSourceObservation(input);
+  return await sha256(JSON.stringify(stableJsonValue(stripTransport(bounded))));
+}
+
 export function semanticCatalogSourceObservation(
   input: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -436,6 +483,12 @@ export function boundedReviewedCatalogFields(
     throw new Error("invalid_reviewed_field");
   };
   const bounded = bound(input, 0) as Record<string, unknown>;
+  const privacyProbe = { ...bounded };
+  for (const key of RESOURCE_FIELD_KEYS) delete privacyProbe[key];
+  if (
+    JSON.stringify(redactSensitiveUrlsInValue(privacyProbe)) !==
+      JSON.stringify(privacyProbe)
+  ) throw new Error("unsafe_reviewed_resource");
   const sanitized = redactSensitiveUrlsInValue(bounded) as Record<
     string,
     unknown
@@ -487,6 +540,135 @@ export function catalogPublicationBaseline(
 export function hasStrongExplicitCardDiscontinuation(text: string): boolean {
   return /\b(?:this\s+)?(?:credit\s+)?card\s+(?:has\s+been\s+|is\s+)(?:discontinued|withdrawn)\b|\b(?:this\s+)?(?:credit\s+)?card\s+is\s+no\s+longer\s+(?:available|issued)\b/i
     .test(text.slice(0, 120_000));
+}
+
+export function cardDiscontinuationEvidence(
+  html: string,
+  issuer: string,
+  cardName: string,
+): { explicit: boolean; matchedExcerpt: string | null } {
+  const clean = (value: string) =>
+    redactSensitiveUrlsInValue(
+      value.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+        .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/&(?:nbsp|amp);/gi, " ")
+        .replace(/\s+/g, " ")
+        .trim(),
+    ) as string;
+  const meaningful = (value: string) =>
+    value.toLowerCase().split(/[^a-z0-9]+/).filter((token) =>
+      token.length > 1 && !new Set([
+        "bank",
+        "credit",
+        "card",
+        "cards",
+        "the",
+        "and",
+        "with",
+      ]).has(token)
+    );
+  const targetTokens = meaningful(`${issuer} ${cardName}`);
+  if (targetTokens.length === 0) {
+    return { explicit: false, matchedExcerpt: null };
+  }
+  const decisive =
+    /\b(?:this\s+)?(?:credit\s+)?card\s+(?:has\s+been\s+|is\s+)(?:discontinued|withdrawn)\b|\b(?:this\s+)?(?:credit\s+)?card\s+is\s+no\s+longer\s+(?:available|issued)\b/i;
+  const blocks = [
+    ...html.slice(0, 120_000).matchAll(
+      /<(title|h1|h2|h3|p|li|section|article)\b[^>]*>([\s\S]*?)<\/\1>/gi,
+    ),
+  ].map((match) => clean(match[2] ?? "")).filter(Boolean);
+  for (let index = 0; index < blocks.length; index += 1) {
+    const heading = blocks[index];
+    const headingTokens = new Set(meaningful(heading));
+    const isTargetHeading = targetTokens.every((token) =>
+      headingTokens.has(token)
+    );
+    const scoped = clean(blocks.slice(index, index + 3).join(" ")).slice(
+      0,
+      1_200,
+    );
+    if (isTargetHeading && decisive.test(scoped)) {
+      const match = scoped.match(decisive)?.[0] ?? scoped;
+      const start = Math.max(
+        0,
+        scoped.toLowerCase().indexOf(match.toLowerCase()) - 180,
+      );
+      return {
+        explicit: true,
+        matchedExcerpt: scoped.slice(start, start + 512),
+      };
+    }
+  }
+  const plain = clean(html.slice(0, 120_000));
+  const targetPhrase = meaningful(cardName).join("[\\s\\W_]*");
+  const direct = targetPhrase
+    ? new RegExp(
+      `\\b${targetPhrase}\\b(?:[\\s\\W_]*(?:credit[\\s\\W_]*)?card)?[\\s\\W_]*(?:has[\\s\\W_]*been|is)[\\s\\W_]*(?:discontinued|withdrawn|no[\\s\\W_]*longer[\\s\\W_]*(?:available|issued))\\b`,
+      "i",
+    )
+      .exec(plain)
+    : null;
+  return direct
+    ? { explicit: true, matchedExcerpt: direct[0].slice(0, 512) }
+    : { explicit: false, matchedExcerpt: null };
+}
+
+export async function stageCatalogIdentityReview(
+  db: PublicationClient,
+  input: CatalogIdentityReviewStageInput,
+): Promise<CatalogIdentityReviewStageResult> {
+  if (
+    !["statement", "issuer_crawl"].includes(input.discoverySource) ||
+    !nonEmpty(input.issuer) || !nonEmpty(input.dedupeKey) ||
+    !/^[0-9a-f]{64}$/i.test(input.semanticHash) ||
+    !input.proposedFields || Array.isArray(input.proposedFields) ||
+    !input.sourceEvidence || Array.isArray(input.sourceEvidence) ||
+    !Array.isArray(input.existingCandidates) ||
+    !Array.isArray(input.validationWarnings) ||
+    !Number.isFinite(input.confidence) || input.confidence < 0 ||
+    input.confidence > 1
+  ) throw new Error("invalid_catalog_review_stage");
+  const proposedFields = boundedReviewedCatalogFields(input.proposedFields);
+  const sourceEvidence = boundedCatalogSourceObservation(input.sourceEvidence);
+  const existingCandidates = boundedCatalogSourceObservation({
+    candidates: input.existingCandidates,
+  }).candidates;
+  if (!Array.isArray(existingCandidates)) {
+    throw new Error("invalid_catalog_review_stage");
+  }
+  const { data, error } = await db.rpc("stage_card_catalog_identity_review", {
+    _discovery_job_id: input.discoveryJobId ?? null,
+    _discovery_source: input.discoverySource,
+    _user_id: input.userId ?? null,
+    _issuer: input.issuer.trim(),
+    _proposed_product: input.proposedProduct?.trim() || null,
+    _dedupe_key: input.dedupeKey,
+    _semantic_hash: input.semanticHash.toLowerCase(),
+    _proposed_fields: proposedFields,
+    _source_evidence: sourceEvidence,
+    _existing_candidates: existingCandidates,
+    _validation_warnings: input.validationWarnings.slice(0, 32),
+    _confidence: input.confidence,
+    _expected_job_status: input.expectedJobStatus ?? null,
+    _expected_job_updated_at: input.expectedJobUpdatedAt ?? null,
+  });
+  if (error) throw error;
+  if (!Array.isArray(data) || data.length !== 1) {
+    throw new Error("invalid_catalog_review_stage_outcome");
+  }
+  const row = data[0] as Record<string, unknown>;
+  if (
+    !nonEmpty(row.job_id) || !nonEmpty(row.review_item_id) ||
+    !nonEmpty(row.resulting_status) || typeof row.created !== "boolean"
+  ) throw new Error("invalid_catalog_review_stage_outcome");
+  return {
+    jobId: row.job_id,
+    reviewItemId: row.review_item_id,
+    resultingStatus: row.resulting_status,
+    created: row.created,
+  };
 }
 
 export async function proposeCatalogLifecycleReview(
@@ -570,11 +752,8 @@ export async function publishReviewedCardIdentity(
     ) &&
     !nonEmpty(input.reason)
   ) throw new Error("reason_required");
-  if (
-    ["mark_discontinued", "reactivate"].includes(input.action) &&
-    (!input.reviewedFields.source_observation ||
-      typeof input.reviewedFields.source_observation !== "object")
-  ) throw new Error("source_observation_required");
+  // Reviewed immutable evidence is reconstructed from the locked review row
+  // by SQL. The caller may only send edit_approve catalog-field overrides.
   const parserVersion = input.parserVersion?.trim() || "benefits-v6";
   if (parserVersion !== "benefits-v6") {
     throw new Error("invalid_publication_parser");
@@ -599,7 +778,9 @@ export async function publishReviewedCardIdentity(
   if (!nonEmpty(row.job_id) || !nonEmpty(row.resulting_status)) {
     throw new Error("invalid_catalog_publication_outcome");
   }
-  const mayOmitCard = ["queued", "rejected"].includes(row.resulting_status);
+  const mayOmitCard = ["queued", "review_required", "rejected"].includes(
+    row.resulting_status,
+  );
   if (!mayOmitCard && !nonEmpty(row.card_id)) {
     throw new Error("invalid_catalog_publication_outcome");
   }

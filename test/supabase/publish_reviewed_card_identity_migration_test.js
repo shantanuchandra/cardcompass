@@ -54,6 +54,50 @@ test("publication migration exposes exact invoker-only interfaces", async () => 
   );
 });
 
+test("review staging is one service-only transaction with canonical lock order and CAS ownership", async () => {
+  const sql = await migrationSql();
+  const stage = functionBody(sql, "stage_card_catalog_identity_review");
+  assert.match(stage, /SECURITY INVOKER/i);
+  assert.match(stage, /card_catalog_review_stage:/i);
+  const stageLock = stage.indexOf("card_catalog_review_stage:");
+  const jobLock = stage.indexOf("card_catalog_publication:job:", stageLock);
+  const jobRowLock = stage.indexOf("card_discovery_jobs", jobLock);
+  const jobForUpdate = stage.indexOf("FOR UPDATE", jobRowLock);
+  const reviewRowLock = stage.indexOf(
+    "card_catalog_review_queue",
+    jobForUpdate,
+  );
+  const reviewForUpdate = stage.indexOf("FOR UPDATE", reviewRowLock);
+  assert.ok(stageLock >= 0, "review stage advisory lock missing");
+  assert.ok(
+    jobLock > stageLock,
+    "job advisory lock precedes stage identity lock",
+  );
+  assert.ok(
+    jobForUpdate > jobLock,
+    "job row is not locked after its advisory lock",
+  );
+  assert.ok(
+    reviewForUpdate > jobForUpdate,
+    "review row is not locked after the job row",
+  );
+  assert.match(stage, /expected_job_updated_at/i);
+  assert.match(stage, /expected_job_status/i);
+  assert.match(stage, /append_catalog_observation_history/i);
+  assert.match(stage, /approved|merged|rejected/i);
+  assert.match(stage, /material.*semantic|semantic.*material/i);
+  assert.match(
+    sql,
+    /REVOKE ALL ON FUNCTION public\.stage_card_catalog_identity_review\([\s\S]*?FROM PUBLIC, anon, authenticated/i,
+  );
+  assert.match(
+    sql,
+    /GRANT EXECUTE ON FUNCTION public\.stage_card_catalog_identity_review\([\s\S]*?TO service_role/i,
+  );
+  assert.match(sql, /review_stage_lock_order_assertion_failed/i);
+  assert.match(sql, /review_stage_authority_assertion_failed/i);
+});
+
 test("resolver independently reconciles submitted and final hash bindings before mutation", async () => {
   const resolver = functionBody(
     await migrationSql(),
@@ -291,6 +335,77 @@ test("reviewed fields and lifecycle actions fail closed", async () => {
   );
 });
 
+test("reviewed admin inputs are server-bound and edit baselines apply only to existing targets", async () => {
+  const publish = functionBody(
+    await migrationSql(),
+    "publish_card_catalog_identity",
+  );
+  assert.match(
+    publish,
+    /review_row\.proposed_fields[\s\S]*_action = 'edit_approve'[\s\S]*annual_fee[\s\S]*joining_fee[\s\S]*apr/i,
+    "publication does not reconstruct reviewed fields from the locked proposal",
+  );
+  assert.match(publish, /immutable_reviewed_field_override/i);
+  assert.match(
+    publish,
+    /edit_target_card_id IS NOT NULL[\s\S]*catalog_baseline_required/i,
+    "new-card edit approval still requires a live-card baseline",
+  );
+  assert.match(
+    publish,
+    /edit_target_card_id IS NULL[\s\S]*stored_proposal_binding/i,
+    "new-card edits are not bound to stored proposal evidence",
+  );
+});
+
+test("review retry is an audited retained-review reopen and never queues in-flight producer work", async () => {
+  const publish = functionBody(
+    await migrationSql(),
+    "publish_card_catalog_identity",
+  );
+  assert.match(
+    publish,
+    /_action = 'retry'[\s\S]*status = 'review_required'[\s\S]*review_item_id = review_row\.id/i,
+  );
+  assert.doesNotMatch(
+    publish,
+    /_action = 'retry'[\s\S]{0,1800}status = 'queued'/i,
+    "review retry requeued work without a typed producer",
+  );
+  assert.match(
+    publish,
+    /job_row\.status = 'discovering'[\s\S]*stale_catalog_review|stale_catalog_review[\s\S]*job_row\.status = 'discovering'/i,
+    "retry can reopen an in-flight discovery job",
+  );
+  assert.match(
+    publish,
+    /review_row\.updated_at IS DISTINCT FROM observed_review\.updated_at[\s\S]*job_row\.updated_at IS DISTINCT FROM observed_job\.updated_at/i,
+  );
+  assert.match(
+    publish,
+    /WHERE id = review_row\.id[\s\S]*status IS NOT DISTINCT FROM review_row\.status[\s\S]*updated_at IS NOT DISTINCT FROM review_row\.updated_at/i,
+  );
+  assert.match(
+    publish,
+    /WHERE id = job_row\.id[\s\S]*status IS NOT DISTINCT FROM job_row\.status[\s\S]*updated_at IS NOT DISTINCT FROM job_row\.updated_at/i,
+  );
+});
+
+test("edit destination conflict distinguishes strong-compatible duplicates from sibling variants", async () => {
+  const publish = functionBody(
+    await migrationSql(),
+    "publish_card_catalog_identity",
+  );
+  assert.match(
+    publish,
+    /new_family_conflict[\s\S]*card_catalog_effective_network[\s\S]*normalize_card_catalog_tier/i,
+  );
+  assert.match(
+    publish,
+    /new_family_conflict[\s\S]*reviewed_network[\s\S]*reviewed_tier/i,
+  );
+});
+
 test("reviewed edit and lifecycle proposals are optimistically bound to the live catalog", async () => {
   const sql = await migrationSql();
   const baseline = functionBody(sql, "card_catalog_baseline_matches");
@@ -339,6 +454,9 @@ test("terminal cleanup requires authoritative database admin membership", async 
   );
   assert.match(terminalize, /public\.users[\s\S]*is_admin/i);
   assert.match(terminalize, /administrator_required/i);
+  assert.doesNotMatch(terminalize, /LIKE\s+'%calculator%'/i);
+  assert.match(terminalize, /non_product_calculator_resource/i);
+  assert.match(terminalize, /explicit_admin_confirmation/i);
 });
 
 test("reviewed unheld discontinuation documents the sole zero-v6 acquisition exception", async () => {
@@ -510,6 +628,67 @@ test("production entry paths cannot bypass reviewed publication", async () => {
   assert.match(sources.discovery, /authenticated_source_requires_admin_review/);
   assert.match(sources.enrichment, /catalog_review_context_required/);
   assert.doesNotMatch(sources.crawler, /resolve_card_catalog_identity/);
+  for (const name of ["discovery", "crawler", "enrichment"]) {
+    assert.match(
+      sources[name],
+      /stageCatalogIdentityReview\(/,
+      `${name} does not use transactional review staging`,
+    );
+    assert.doesNotMatch(
+      sources[name],
+      /from\(["']card_catalog_review_queue["']\)[\s\S]{0,120}\.(?:insert|update|upsert)\(/,
+      `${name} still writes a review outside the staging transaction`,
+    );
+    assert.doesNotMatch(
+      sources[name],
+      /from\(["']card_discovery_jobs["']\)[\s\S]{0,160}\.update\(\{[\s\S]{0,160}review_item_id/i,
+      `${name} still links review work outside the staging transaction`,
+    );
+  }
+});
+
+test("submitted URL discovery fetches before version creation and preserves a prior terminal result on timeout", async () => {
+  const source = await readFile(
+    new URL(
+      "../../supabase/functions/card-discovery/index.ts",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const branch = source.slice(source.indexOf('if (action === "resolve_url")'));
+  const findPrior = branch.indexOf("findPriorSubmittedRequestJob(");
+  const fetch = branch.indexOf("fetchSubmittedUrlObservation(");
+  const version = branch.indexOf("versionSubmittedObservationJob(");
+  const failure = branch.indexOf("catch (error)", version);
+  const failureAnchorInsert = branch.indexOf("upsertDiscoveryJob(", failure);
+  assert.ok(
+    findPrior >= 0 && fetch > findPrior,
+    "prior terminal anchor is not loaded before fetch",
+  );
+  assert.ok(
+    version > fetch,
+    "a persisted content job is created before successful fetch",
+  );
+  assert.ok(
+    failureAnchorInsert > failure,
+    "failure work is inserted before fetch outcome exists",
+  );
+  assert.match(
+    branch.slice(failure, failureAnchorInsert),
+    /priorJob[\s\S]*terminalDiscoveryStatus[\s\S]*publicDiscoveryResult\(priorJob/i,
+    "fetch failure does not preserve the prior terminal outcome",
+  );
+  const versionFunction = source.slice(
+    source.indexOf("export async function versionSubmittedObservationJob"),
+    source.indexOf("async function claimSubmittedObservationJob"),
+  );
+  assert.doesNotMatch(
+    versionFunction,
+    /\.update\(/,
+    "immutable observation versioning rewrites an anchor/job",
+  );
+  assert.match(versionFunction, /request_anchor_key/i);
+  assert.match(versionFunction, /semantic_product_hash/i);
 });
 
 test("trusted observation authority is revalidated under the publication locks before mutation", async () => {
@@ -612,7 +791,7 @@ test("retry and reject exact replays return their retained terminal/current stat
   );
   assert.match(
     publish,
-    /_action = 'retry'[\s\S]*review_row\.status = 'pending'[\s\S]*job_row\.status = 'queued'/i,
+    /_action = 'retry'[\s\S]*review_row\.status = 'pending'[\s\S]*job_row\.status = 'review_required'/i,
   );
   assert.match(
     publish,
@@ -627,11 +806,27 @@ test("reviewed fields have an exact whole-envelope allowlist, privacy, and recur
   assert.match(sql, /card_catalog_json_envelope_valid\(jsonb, integer\)/i);
   assert.match(sql, /card_catalog_json_contains_sensitive_url\(jsonb\)/i);
   assert.match(
+    sql,
+    /FOR ascii_code IN 32\.\.126 LOOP[\s\S]*to_hex\(ascii_code\)/i,
+    "SQL privacy scan does not decode percent-encoded sensitive-key letters",
+  );
+  assert.match(
     publish,
     /jsonb_object_keys\(fields\)[\s\S]*reviewed_field_allowlist[\s\S]*unknown_reviewed_field/i,
   );
   assert.match(publish, /octet_length\(fields::text\)[\s\S]*16384/i);
-  assert.match(sql, /reviewed_fields_envelope_assertion_failed/i);
+  assert.match(
+    sql,
+    /https%253A%252F%252Fuser%253Apass%2540example\.com%252Fcard%253Ftoken%253Dsecret/i,
+  );
+  assert.match(
+    sql,
+    /%2574%256f%256b%2565%256e%253dsecret/i,
+  );
+  assert.match(
+    sql,
+    /reviewed_fields_envelope_multilayer_privacy_assertion_failed/i,
+  );
 });
 
 test("resource canonicalization fails closed on empty query separators in SQL and TypeScript parity assertions", async () => {

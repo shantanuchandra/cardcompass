@@ -7,6 +7,7 @@ import {
   currentBenefitProposal,
   initializePilotJobs,
   loadCatalogIdentity,
+  loadDiscoverySeed,
   networkWorkMayStart,
   newestValidCrawlObservations,
   observationValidatedAt,
@@ -35,6 +36,49 @@ import {
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
+
+Deno.test("issuer discovery remains schedulable when every known card is discontinued", async () => {
+  const filters: string[] = [];
+  const query = {
+    select() {
+      return query;
+    },
+    eq(key: string) {
+      filters.push(key);
+      return query;
+    },
+    not() {
+      return query;
+    },
+    order() {
+      return query;
+    },
+    then(resolve: (value: unknown) => unknown) {
+      return Promise.resolve({
+        data: [{
+          bank: "Axis Bank",
+          card_url:
+            "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+          card_type: "credit",
+          is_discontinued: true,
+        }],
+        error: null,
+      }).then(resolve);
+    },
+    limit() {
+      return query;
+    },
+  };
+  const seed = await loadDiscoverySeed({ from: () => query });
+  assert(
+    seed?.issuer === "Axis Bank",
+    "discontinued issuer disappeared from discovery",
+  );
+  assert(
+    !filters.includes("is_discontinued"),
+    "issuer discovery retained an active-acquisition filter",
+  );
+});
 
 Deno.test("pilot API refuses catalog-v1 before selecting or writing jobs", async () => {
   let rpcCalls = 0;

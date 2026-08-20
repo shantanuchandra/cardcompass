@@ -192,9 +192,15 @@ test("catalog conflicts stage a versioned approvable job instead of reusing term
   )?.[0] ?? "";
   assert.match(
     queue,
-    /content_hash[\s\S]*submitted_url_hash[\s\S]*final_url_hash/i,
+    /submitted_url_hash[\s\S]*final_url_hash[\s\S]*semanticProductHash/i,
   );
-  assert.match(queue, /from\(["']card_discovery_jobs["']\)[\s\S]*\.insert\(/i);
+  assert.match(queue, /content_hash:\s*contentHash/i);
+  assert.match(queue, /stageCatalogIdentityReview\(db/i);
+  assert.doesNotMatch(
+    queue,
+    /from\(["'](?:card_discovery_jobs|card_catalog_review_queue)["']\)[\s\S]*\.(?:insert|update)\(/i,
+    "catalog review staging is split across Edge writes",
+  );
   assert.doesNotMatch(
     queue,
     /discovery_job_id:\s*job\.discovery_job_id/,
@@ -205,9 +211,7 @@ test("catalog conflicts stage a versioned approvable job instead of reusing term
     /includes\(message\)\s*&&\s*claimed\.discovery_job_id/,
     "lifecycle evidence still depends on a stale legacy discovery link",
   );
-  assert.match(queue, /observation_history/i);
-  assert.match(
-    queue,
-    /\.eq\(["']updated_at["'],\s*existingReview\.updated_at\)/i,
-  );
+  assert.match(queue, /semantic_product_hash:\s*semanticProductHash/i);
+  assert.match(queue, /expectedJobStatus:\s*null/i);
+  assert.match(queue, /expectedJobUpdatedAt:\s*null/i);
 });

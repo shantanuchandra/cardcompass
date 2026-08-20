@@ -68,10 +68,13 @@ export function createAdminAuthClient(
 export async function terminalizeCalculatorReviewRows(
   db: UntypedSupabaseClient,
   actorId: string,
+  confirmed: boolean,
 ): Promise<number> {
+  if (!confirmed) throw new Error("explicit_admin_confirmation_required");
   const { data, error } = await db.rpc("terminalize_calculator_review_rows", {
     _actor_id: actorId,
     _limit: 1000,
+    _confirmed: true,
   });
   if (error) throw error;
   if (!Number.isInteger(data) || Number(data) < 0) {
@@ -136,8 +139,11 @@ export async function handleAdminCatalogEntry(
     if (action === "access") return json({ is_admin: true });
 
     if (action === "purge-calculator-reviews") {
+      if (body.confirm !== "non_product_calculator_resource") {
+        return json({ error: "explicit_admin_confirmation_required" }, 400);
+      }
       return json({
-        transitioned: await terminalizeCalculatorReviewRows(db, user.id),
+        transitioned: await terminalizeCalculatorReviewRows(db, user.id, true),
       });
     }
 
@@ -146,9 +152,6 @@ export async function handleAdminCatalogEntry(
     }
 
     if (action === "list") {
-      if (body.status === "pending") {
-        await terminalizeCalculatorReviewRows(db, user.id);
-      }
       let query = db.from("card_catalog_review_queue").select(`
         id, proposed_fields, source_evidence, existing_candidates,
         validation_warnings, confidence, status, review_reason, created_at,
@@ -185,6 +188,31 @@ export async function handleAdminCatalogEntry(
     ) {
       return json({ error: "review_item_id is required" }, 400);
     }
+    const editFieldAllowlist = new Set([
+      "cardName",
+      "card_name",
+      "network",
+      "annual_fee",
+      "joining_fee",
+      "apr",
+    ]);
+    let reviewedFields: Record<string, unknown> = {};
+    if (body.proposed_fields !== undefined) {
+      if (
+        action !== "edit_approve" || !body.proposed_fields ||
+        typeof body.proposed_fields !== "object" ||
+        Array.isArray(body.proposed_fields) ||
+        Object.keys(body.proposed_fields).some((key) =>
+          !editFieldAllowlist.has(key)
+        )
+      ) {
+        return json({ error: "immutable_reviewed_field_override" }, 400);
+      }
+      reviewedFields = { ...body.proposed_fields };
+    }
+    if (action !== "merge" && body.merge_card_id !== undefined) {
+      return json({ error: "invalid_merge_target" }, 400);
+    }
     const { data: review, error: reviewError } = await db
       .from("card_catalog_review_queue")
       .select("discovery_job_id,proposed_fields,source_evidence")
@@ -193,19 +221,6 @@ export async function handleAdminCatalogEntry(
     if (reviewError || !review) {
       throw reviewError ?? new Error("review_not_found");
     }
-    const reviewedFields = {
-      ...(review.proposed_fields && typeof review.proposed_fields === "object"
-        ? review.proposed_fields
-        : {}),
-      ...(body.proposed_fields && typeof body.proposed_fields === "object" &&
-          !Array.isArray(body.proposed_fields)
-        ? body.proposed_fields
-        : {}),
-    } as Record<string, unknown>;
-    if (
-      !reviewedFields.source_observation && review.source_evidence &&
-      typeof review.source_evidence === "object"
-    ) reviewedFields.source_observation = review.source_evidence;
     const data = await publishReviewedCardIdentity(db, {
       discoveryJobId: review.discovery_job_id,
       reviewItemId: body.review_item_id,

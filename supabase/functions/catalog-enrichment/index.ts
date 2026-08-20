@@ -13,14 +13,15 @@ import {
 } from "../_shared/official_issuer_fetch.ts";
 import { safeHttpsDisplayUrl } from "../_shared/benefit_source_privacy.ts";
 import {
-  appendCatalogObservationHistory,
   boundedCatalogSourceObservation,
+  cardDiscontinuationEvidence,
   catalogLifecycleObservationAction,
   catalogPublicationBaseline,
-  hasStrongExplicitCardDiscontinuation,
   proposeCatalogLifecycleReview,
   publicationFieldsFromFetch,
   semanticCatalogSourceObservation,
+  semanticProductEnvelopeHash,
+  stageCatalogIdentityReview,
 } from "../_shared/catalog_identity_publication.ts";
 
 type UntypedSupabaseClient = any;
@@ -82,151 +83,65 @@ export async function queueConflictReview(
   const baselineCardName =
     (proposedFields.catalog_baseline as Record<string, unknown> | undefined)
       ?.card_name;
-  const dedupeKey = await digest(
-    `catalog-review:${job.card_id}:${submittedHash}:${finalHash}:${contentHash}:${sourceObservationHash}:${baselineHash}`,
-  );
-  const discoveryEvidence = {
+  const semanticProductHash = await semanticProductEnvelopeHash({
     card_id: job.card_id,
     issuer: job.issuer,
-    catalog_enrichment_parent_job_id: job.id,
-    submitted_url_hash: submittedHash || null,
-    final_url_hash: finalHash || null,
-    content_hash: contentHash,
-    source_observation_hash: sourceObservationHash,
-    source_observation: boundedObservation,
-  };
-  let { data: reviewJob, error: reviewJobError } = await db
-    .from("card_discovery_jobs")
-    .insert({
-      user_id: null,
-      discovery_source: "issuer_crawl",
-      issuer: job.issuer,
-      proposed_product: baselineCardName ?? job.card_name ?? null,
-      evidence: discoveryEvidence,
-      dedupe_key: dedupeKey,
-      status: "queued",
-      updated_at: new Date().toISOString(),
-    }).select("id,status,review_item_id").maybeSingle();
-  if (reviewJobError && reviewJobError.code !== "23505") throw reviewJobError;
-  if (!reviewJob) {
-    const raced = await db.from("card_discovery_jobs")
-      .select("id,status,review_item_id")
-      .eq("discovery_source", "issuer_crawl")
-      .eq("dedupe_key", dedupeKey).is("user_id", null).single();
-    if (raced.error || !raced.data) throw raced.error ?? reviewJobError;
-    reviewJob = raced.data;
-  }
-  const { data: existingReview, error: existingReviewError } = await db
-    .from("card_catalog_review_queue")
-    .select(
-      "id,status,proposed_fields,source_evidence,existing_candidates,validation_warnings,confidence,updated_at",
-    )
-    .eq("discovery_job_id", reviewJob.id)
-    .maybeSingle();
-  if (existingReviewError) throw existingReviewError;
-  if (
-    existingReview &&
-    ["approved", "merged", "rejected"].includes(existingReview.status)
-  ) return existingReview.id;
-  const reviewPayload = {
-    discovery_job_id: reviewJob.id,
-    proposed_fields: {
+    cardName: baselineCardName ?? job.card_name ?? null,
+    proposed_fields: proposedFields,
+    field_conflicts: conflicts,
+    source_observation: semanticCatalogSourceObservation(boundedObservation),
+  });
+  const dedupeKey = await digest(
+    `catalog-review:${job.card_id}:${submittedHash}:${finalHash}:${semanticProductHash}:${baselineHash}`,
+  );
+  const staged = await stageCatalogIdentityReview(db, {
+    discoveryJobId: null,
+    discoverySource: "issuer_crawl",
+    userId: null,
+    issuer: job.issuer,
+    proposedProduct: baselineCardName ?? job.card_name ?? null,
+    dedupeKey,
+    semanticHash: semanticProductHash,
+    proposedFields: {
       card_id: job.card_id,
       issuer: job.issuer,
       cardName: baselineCardName ?? job.card_name ?? null,
       ...proposedFields,
-      ...boundedObservation,
     },
-    source_evidence: {
+    sourceEvidence: {
       official_url: safeHttpsDisplayUrl(job.canonical_url) ??
-        "invalid-source",
+        "https://invalid.invalid/source",
       content_hash: contentHash,
       source_observation_hash: sourceObservationHash,
+      semantic_product_hash: semanticProductHash,
       ...boundedObservation,
       field_conflicts: conflicts,
-      observation_history: [{
-        observed_at: boundedObservation.retrieved_at ??
-          new Date().toISOString(),
-        content_hash: contentHash,
-        semantic_hash: sourceObservationHash,
-      }],
     },
-    existing_candidates: [{ card_id: job.card_id }],
-    validation_warnings: ["catalog_field_conflict"],
+    existingCandidates: [{ card_id: job.card_id }],
+    validationWarnings: ["catalog_field_conflict"],
     confidence: 0.9,
-    status: "pending",
-    updated_at: new Date().toISOString(),
-  };
-  let review = existingReview;
-  if (existingReview) {
-    const refreshed = {
-      ...reviewPayload,
-      source_evidence: {
-        ...reviewPayload.source_evidence,
-        observation_history: appendCatalogObservationHistory(
-          existingReview.source_evidence?.observation_history,
-          reviewPayload.source_evidence.observation_history[0],
-        ),
-      },
-    };
-    let update = db.from("card_catalog_review_queue").update(refreshed)
-      .eq("id", existingReview.id)
-      .eq("status", "pending");
-    update = existingReview.updated_at
-      ? update.eq("updated_at", existingReview.updated_at)
-      : update.is("updated_at", null);
-    const { data, error } = await update.select("id,status").maybeSingle();
-    if (error) throw error;
-    review = data;
-  } else {
-    const { data, error } = await db.from("card_catalog_review_queue")
-      .insert(reviewPayload).select("id,status").maybeSingle();
-    if (error && error.code !== "23505") throw error;
-    review = data;
-  }
-  if (!review) {
-    const { data, error } = await db.from("card_catalog_review_queue")
-      .select("id,status")
-      .eq("discovery_job_id", reviewJob.id)
-      .single();
-    if (error || !data) throw error ?? new Error("catalog_review_race");
-    review = data;
-  }
-  if (["approved", "merged", "rejected"].includes(review.status)) {
-    return review.id;
-  }
-  const { data: linkedJob, error: linkedJobError } = await db.from(
-    "card_discovery_jobs",
-  ).update({
-    status: "review_required",
-    review_item_id: review.id,
-    failure_category: null,
-    next_retry_at: null,
-    updated_at: new Date().toISOString(),
-  }).eq("id", reviewJob.id).in("status", [
-    "queued",
-    "discovering",
-    "failed",
-    "review_required",
-  ]).select("id").maybeSingle();
-  if (linkedJobError || !linkedJob) {
-    throw linkedJobError ?? new Error("catalog_review_job_race");
-  }
-  return review.id;
+    expectedJobStatus: null,
+    expectedJobUpdatedAt: null,
+  });
+  return staged.reviewItemId;
 }
 
 async function finalizeOwnedCatalogJob(
   db: UntypedSupabaseClient,
-  jobId: string,
+  job: Record<string, any>,
   patch: Record<string, unknown>,
 ): Promise<void> {
-  const { data, error } = await db.from("card_catalog_enrichment_jobs")
+  let update = db.from("card_catalog_enrichment_jobs")
     .update(patch)
-    .eq("id", jobId)
+    .eq("id", job.id)
     .eq("status", "processing")
     .eq("run_mode", "manual")
     .eq("parser_version", "catalog-v1")
-    .select("id")
+    .eq("updated_at", job.updated_at);
+  update = job.lease_token
+    ? update.eq("lease_token", job.lease_token)
+    : update.is("lease_token", null);
+  const { data, error } = await update.select("id")
     .maybeSingle();
   if (error) throw error;
   if (!data) throw new Error("job_not_owned");
@@ -261,6 +176,7 @@ export async function processCatalogEnrichmentJob(
     .eq("run_mode", "manual")
     .eq("parser_version", "catalog-v1")
     .in("status", ["queued", "failed"])
+    .eq("updated_at", current.updated_at)
     .select("*")
     .maybeSingle();
   if (claimError) throw claimError;
@@ -332,9 +248,12 @@ export async function processCatalogEnrichmentJob(
         proposal.value,
       ]),
     );
-    const explicitDiscontinuation = hasStrongExplicitCardDiscontinuation(
+    const discontinuationEvidence = cardDiscontinuationEvidence(
       page.text,
+      String(catalog.bank),
+      String(catalog.card_name),
     );
+    const explicitDiscontinuation = discontinuationEvidence.explicit;
     const lifecycleAction = catalogLifecycleObservationAction({
       isDiscontinued: catalog.is_discontinued === true,
       httpStatus: page.status,
@@ -353,6 +272,7 @@ export async function processCatalogEnrichmentJob(
         : "exact_card_reappearance",
       identity_validated: true,
       explicit_discontinuation: explicitDiscontinuation,
+      matched_excerpt: discontinuationEvidence.matchedExcerpt,
       retrieved_at: page.retrievedAt,
     };
     const lifecycleSourceUrl = page.finalResourceUrl ?? page.finalUrl;
@@ -397,7 +317,7 @@ export async function processCatalogEnrichmentJob(
         lifecycleAction !== "observe_current"
       ? "review_required"
       : "completed";
-    await finalizeOwnedCatalogJob(db, claimed.id, {
+    await finalizeOwnedCatalogJob(db, claimed, {
       status,
       normalized_fields: normalized.patch,
       validation_warnings: reviewChanges.map((item) => ({
@@ -485,7 +405,7 @@ export async function processCatalogEnrichmentJob(
         );
       }
     }
-    await finalizeOwnedCatalogJob(db, claimed.id, {
+    await finalizeOwnedCatalogJob(db, claimed, {
       status: terminal ? "review_required" : "failed",
       failure_category: message,
       next_retry_at: terminal

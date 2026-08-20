@@ -319,8 +319,25 @@ Deno.test("admin cleanup terminalizes calculator reviews without deleting histor
     },
   };
   try {
-    const response = await handle(
+    const unconfirmed = await handle(
       request({ action: "purge-calculator-reviews" }),
+      serviceDb,
+      authenticatedDb({
+        id: "admin-1",
+        email: "admin@example.com",
+        email_confirmed_at: "2026-08-17T00:00:00.000Z",
+      }),
+    );
+    assert(
+      unconfirmed.status === 400,
+      "unconfirmed cleanup mutated review work",
+    );
+    assert(calls.length === 0, "unconfirmed cleanup reached SQL");
+    const response = await handle(
+      request({
+        action: "purge-calculator-reviews",
+        confirm: "non_product_calculator_resource",
+      }),
       serviceDb,
       authenticatedDb({
         id: "admin-1",
@@ -335,10 +352,154 @@ Deno.test("admin cleanup terminalizes calculator reviews without deleting histor
       "cleanup returned the wrong transition count",
     );
     assert(
-      calls.length === 1 &&
+      Number(calls.length) === 1 &&
         calls[0].name === "terminalize_calculator_review_rows" &&
-        calls[0].args._actor_id === "admin-1",
+        calls[0].args._actor_id === "admin-1" &&
+        calls[0].args._confirmed === true,
       "cleanup bypassed the retained-history transition boundary",
+    );
+  } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  }
+});
+
+Deno.test("listing pending catalog reviews is read-only", async () => {
+  const handle = await handler();
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
+  let rpcCalls = 0;
+  const query = {
+    select() {
+      return query;
+    },
+    order() {
+      return query;
+    },
+    eq() {
+      return query;
+    },
+    async limit() {
+      return { data: [], error: null };
+    },
+  };
+  const serviceDb = {
+    rpc() {
+      rpcCalls += 1;
+      return Promise.resolve({ data: 0, error: null });
+    },
+    from() {
+      return query;
+    },
+  };
+  try {
+    const response = await handle(
+      request({ action: "list", status: "pending" }),
+      serviceDb,
+      authenticatedDb({
+        id: "admin-1",
+        email: "admin@example.com",
+        email_confirmed_at: "2026-08-17T00:00:00.000Z",
+      }),
+    );
+    assert(response.status === 200, "pending list failed");
+    assert(rpcCalls === 0, "read-only listing terminalized review work");
+  } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  }
+});
+
+Deno.test("identity admin actions reject immutable client overrides and allow only edit catalog fields", async () => {
+  const handle = await handler();
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
+  const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const review = {
+    discovery_job_id: "11111111-1111-4111-8111-111111111111",
+    proposed_fields: {
+      issuer: "Axis Bank",
+      cardName: "Privilege Infinite",
+      final_url: "https://www.axis.bank.in/card?variant=infinite",
+      content_hash: "a".repeat(64),
+    },
+    source_evidence: {
+      retrieved_at: "2026-08-20T00:00:00.000Z",
+    },
+  };
+  const query = {
+    select() {
+      return query;
+    },
+    eq() {
+      return query;
+    },
+    async single() {
+      return { data: review, error: null };
+    },
+  };
+  const serviceDb = {
+    from() {
+      return query;
+    },
+    async rpc(name: string, args: Record<string, unknown>) {
+      rpcCalls.push({ name, args });
+      return {
+        data: [{
+          card_id: "22222222-2222-4222-8222-222222222222",
+          job_id: review.discovery_job_id,
+          resulting_status: "approved",
+        }],
+        error: null,
+      };
+    },
+  };
+  const auth = authenticatedDb({
+    id: "admin-1",
+    email: "admin@example.com",
+    email_confirmed_at: "2026-08-17T00:00:00.000Z",
+  });
+  try {
+    const approveOverride = await handle(
+      request({
+        action: "approve",
+        review_item_id: "review-1",
+        proposed_fields: { final_url: "https://evil.example/card" },
+      }),
+      serviceDb,
+      auth,
+    );
+    assert(
+      approveOverride.status === 400,
+      "approve accepted a client proposal",
+    );
+    const editImmutable = await handle(
+      request({
+        action: "edit_approve",
+        review_item_id: "review-1",
+        proposed_fields: { content_hash: "b".repeat(64) },
+      }),
+      serviceDb,
+      auth,
+    );
+    assert(editImmutable.status === 400, "edit accepted immutable evidence");
+    const editAllowed = await handle(
+      request({
+        action: "edit_approve",
+        review_item_id: "review-1",
+        proposed_fields: { card_name: "Privilege Reserve", annual_fee: 2500 },
+      }),
+      serviceDb,
+      auth,
+    );
+    assert(editAllowed.status === 200, "allowed catalog edit was rejected");
+    assert(rpcCalls.length === 1, "rejected override reached publication");
+    assert(
+      JSON.stringify(rpcCalls[0].args._reviewed_fields) ===
+        JSON.stringify({ card_name: "Privilege Reserve", annual_fee: 2500 }),
+      "immutable review proposal was copied into client edit overrides",
     );
   } finally {
     if (originalAllowlist === undefined) {

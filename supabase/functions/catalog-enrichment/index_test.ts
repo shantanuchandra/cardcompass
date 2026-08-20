@@ -38,9 +38,95 @@ function reviewDb() {
   const state: {
     jobs: Array<Record<string, unknown>>;
     reviews: Array<Record<string, unknown>>;
-  } = { jobs: [], reviews: [] };
+    rpcCalls: Array<Record<string, unknown>>;
+  } = { jobs: [], reviews: [], rpcCalls: [] };
   const db = {
     state,
+    async rpc(name: string, args: Record<string, any>) {
+      assert(
+        name === "stage_card_catalog_identity_review",
+        `unexpected RPC ${name}`,
+      );
+      state.rpcCalls.push({ name, args });
+      let job = state.jobs.find((row) =>
+        row.discovery_source === args._discovery_source &&
+        row.dedupe_key === args._dedupe_key
+      );
+      if (!job) {
+        job = {
+          id: `job-${state.jobs.length + 1}`,
+          discovery_source: args._discovery_source,
+          user_id: null,
+          dedupe_key: args._dedupe_key,
+          status: "queued",
+          updated_at: "2026-08-20T00:00:00.000Z",
+        };
+        state.jobs.push(job);
+      }
+      let review = state.reviews.find((row) =>
+        row.discovery_job_id === job?.id
+      );
+      if (
+        review &&
+        ["approved", "merged", "rejected"].includes(String(review.status))
+      ) {
+        return {
+          data: [{
+            job_id: job.id,
+            review_item_id: review.id,
+            resulting_status: job.status,
+            created: false,
+          }],
+          error: null,
+        };
+      }
+      const historyEntry = {
+        observed_at: args._source_evidence.retrieved_at,
+        content_hash: args._source_evidence.content_hash,
+        semantic_hash: args._semantic_hash,
+      };
+      let created = false;
+      if (!review) {
+        review = {
+          id: `review-${state.reviews.length + 1}`,
+          discovery_job_id: job.id,
+          status: "pending",
+          proposed_fields: args._proposed_fields,
+          source_evidence: {
+            ...args._source_evidence,
+            semantic_product_hash: args._semantic_hash,
+            observation_history: [historyEntry],
+          },
+        };
+        state.reviews.push(review);
+        created = true;
+      } else {
+        const history = (review.source_evidence as Record<string, any>)
+          .observation_history as Array<Record<string, unknown>>;
+        review.proposed_fields = args._proposed_fields;
+        review.source_evidence = {
+          ...args._source_evidence,
+          semantic_product_hash: args._semantic_hash,
+          observation_history: [
+            historyEntry,
+            ...history.filter((entry) =>
+              entry.semantic_hash !== args._semantic_hash
+            ),
+          ].slice(0, 24),
+        };
+      }
+      job.status = "review_required";
+      job.review_item_id = review.id;
+      return {
+        data: [{
+          job_id: job.id,
+          review_item_id: review.id,
+          resulting_status: "review_required",
+          created,
+        }],
+        error: null,
+      };
+    },
     from(table: string) {
       let action = "select";
       let payload: Record<string, unknown> | null = null;
@@ -119,7 +205,7 @@ function reviewDb() {
   return db;
 }
 
-Deno.test("catalog conflict reviews version material content while keeping terminal rows immutable", async () => {
+Deno.test("catalog conflict reviews version semantic field changes while keeping terminal rows immutable", async () => {
   const db = reviewDb();
   const catalogJob = {
     id: "catalog-job",
@@ -176,10 +262,10 @@ Deno.test("catalog conflict reviews version material content while keeping termi
     db,
     catalogJob,
     [{ field: "annual_fee" }],
-    proposed,
+    { ...proposed, annual_fee: 2000 },
     observation("d".repeat(64), "2026-08-20T01:00:00.000Z"),
   );
-  assert(next !== first, "new content reused a terminal decision");
+  assert(next !== first, "semantic field change reused a terminal decision");
   assert(
     Number(db.state.jobs.length) === 2 && Number(db.state.reviews.length) === 2,
     "new content was not reviewable",
@@ -254,6 +340,10 @@ Deno.test("legacy claim loses ownership safely if a manual job changes lanes", a
           return this;
         },
         eq(column: string, value: unknown) {
+          equalFilters.set(column, value);
+          return this;
+        },
+        is(column: string, value: unknown) {
           equalFilters.set(column, value);
           return this;
         },
@@ -335,6 +425,10 @@ Deno.test("legacy finalization cannot overwrite a post-claim lane change", async
           return this;
         },
         eq(column: string, value: unknown) {
+          equalFilters.set(column, value);
+          return this;
+        },
+        is(column: string, value: unknown) {
           equalFilters.set(column, value);
           return this;
         },

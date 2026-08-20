@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
 
-import { persistCrawlerCandidate } from "../../supabase/functions/_shared/issuer_card_crawl.ts";
+import {
+  persistCrawlerCandidate,
+  stageCompleteIssuerDirectoryAbsenceReviews,
+} from "../../supabase/functions/_shared/issuer_card_crawl.ts";
 
 const hashUrl = (value) => createHash("sha256").update(value).digest("hex");
 
@@ -190,6 +193,123 @@ function createDb(
     },
     async rpc(name, args) {
       state.rpcCalls.push({ name, args });
+      if (name === "stage_card_catalog_identity_review") {
+        let job = args._discovery_job_id
+          ? state.jobs.find((row) => row.id === args._discovery_job_id)
+          : state.jobs.find((row) =>
+            row.discovery_source === args._discovery_source &&
+            row.dedupe_key === args._dedupe_key && row.user_id === null
+          );
+        if (!job) {
+          job = {
+            id: `job-${state.jobs.length + 1}`,
+            user_id: args._user_id,
+            discovery_source: args._discovery_source,
+            issuer: args._issuer,
+            proposed_product: args._proposed_product,
+            evidence: {
+              ...args._source_evidence,
+              semantic_product_hash: args._semantic_hash,
+            },
+            dedupe_key: args._dedupe_key,
+            status: "queued",
+            updated_at: "2026-08-20T00:00:00.000Z",
+          };
+          state.jobs.push(job);
+        }
+        if (
+          args._expected_job_status !== null &&
+          (job.status !== args._expected_job_status ||
+            job.updated_at !== args._expected_job_updated_at)
+        ) {
+          return { data: null, error: { message: "catalog_review_job_race" } };
+        }
+        let review = state.reviews.find((row) =>
+          row.discovery_job_id === job.id
+        );
+        const semantic = args._semantic_hash;
+        if (
+          review && ["approved", "merged", "rejected"].includes(review.status)
+        ) {
+          if (review.source_evidence.semantic_product_hash !== semantic) {
+            return {
+              data: null,
+              error: {
+                message: "terminal_catalog_review_requires_new_version",
+              },
+            };
+          }
+          return {
+            data: [{
+              job_id: job.id,
+              review_item_id: review.id,
+              resulting_status: job.status,
+              created: false,
+            }],
+            error: null,
+          };
+        }
+        const historyEntry = {
+          observed_at: args._source_evidence.retrieved_at ??
+            "2026-08-20T00:00:00.000Z",
+          content_hash: args._source_evidence.content_hash ?? null,
+          semantic_hash: semantic,
+        };
+        let created = false;
+        if (!review) {
+          review = {
+            id: `review-${state.reviews.length + 1}`,
+            discovery_job_id: job.id,
+            proposed_fields: args._proposed_fields,
+            source_evidence: {
+              ...args._source_evidence,
+              semantic_product_hash: semantic,
+              observation_history: [historyEntry],
+            },
+            existing_candidates: args._existing_candidates,
+            validation_warnings: args._validation_warnings,
+            confidence: args._confidence,
+            status: "pending",
+            updated_at: "2026-08-20T00:00:00.000Z",
+          };
+          state.reviews.push(review);
+          created = true;
+        } else {
+          const history = review.source_evidence.observation_history ?? [];
+          const withoutReplay = history.filter((entry) =>
+            entry.semantic_hash !== semantic
+          );
+          Object.assign(review, {
+            proposed_fields: args._proposed_fields,
+            source_evidence: {
+              ...args._source_evidence,
+              semantic_product_hash: semantic,
+              observation_history: [historyEntry, ...withoutReplay].slice(
+                0,
+                24,
+              ),
+            },
+            existing_candidates: args._existing_candidates,
+            validation_warnings: args._validation_warnings,
+            confidence: args._confidence,
+          });
+        }
+        job.status = "review_required";
+        job.review_item_id = review.id;
+        job.evidence = {
+          ...job.evidence,
+          semantic_product_hash: semantic,
+        };
+        return {
+          data: [{
+            job_id: job.id,
+            review_item_id: review.id,
+            resulting_status: "review_required",
+            created,
+          }],
+          error: null,
+        };
+      }
       if (name === "publish_card_catalog_identity") {
         const job = state.jobs.find((row) => row.id === args._discovery_job_id);
         if (job) {
@@ -332,7 +452,9 @@ test("does not bind a crawler candidate when observed network is absent but stor
 
   assert.deepEqual(result, { outcome: "review", reviewId: "review-1" });
   assert.equal(
-    db.state.rpcCalls.length,
+    db.state.rpcCalls.filter((call) =>
+      call.name === "publish_card_catalog_identity"
+    ).length,
     0,
     "weak observation reached publication",
   );
@@ -356,7 +478,9 @@ test("does not treat a null network column as wildcard when the stored card name
 
   assert.deepEqual(result, { outcome: "review", reviewId: "review-1" });
   assert.equal(
-    db.state.rpcCalls.length,
+    db.state.rpcCalls.filter((call) =>
+      call.name === "publish_card_catalog_identity"
+    ).length,
     0,
     "name-derived Mastercard was ignored",
   );
@@ -552,7 +676,7 @@ test("queues a genuinely new crawler product for review and reuses that service 
   assert.equal(proposed.final_url_hash, proposed.submitted_url_hash);
 });
 
-test("material crawler content creates a new immutable review version after a terminal decision", async () => {
+test("a semantic crawler product change creates a new immutable review version after a terminal decision", async () => {
   const db = createDb();
   const first = await persistCrawlerCandidate(
     db,
@@ -568,6 +692,8 @@ test("material crawler content creates a new immutable review version after a te
     db,
     "Axis Bank",
     candidate({
+      proposedName: "Neo Gold Credit Card",
+      aliases: ["Axis Neo Gold Credit Card"],
       contentHash: "b".repeat(64),
       retrievedAt: "2026-08-20T01:00:00.000Z",
     }),
@@ -609,11 +735,12 @@ test("same-content pending crawler refresh deduplicates history under the review
     "2026-08-20T01:00:00.000Z",
     "newest replay timestamp was not retained",
   );
-  assert.ok(
-    db.state.calls.some((call) =>
-      call.table === "card_catalog_review_queue" && call.action === "update"
-    ),
-    "pending evidence was returned without a CAS refresh",
+  assert.equal(
+    db.state.rpcCalls.filter((call) =>
+      call.name === "stage_card_catalog_identity_review"
+    ).length,
+    2,
+    "pending evidence was returned without transactional CAS refresh",
   );
 });
 
@@ -916,4 +1043,54 @@ test("does not reopen a terminal crawler review when its job status is stale", a
   assert.deepEqual(db.state.reviews[0].proposed_fields, { locked: "approved" });
   assert.equal(db.state.jobs[0].status, "review_required");
   assert.equal(db.state.calls.length, callCount);
+});
+
+test("complete issuer directory absence is bounded review evidence and incomplete crawls do nothing", async () => {
+  const cardId = "11111111-1111-4111-8111-111111111111";
+  const knownCards = [{
+    id: cardId,
+    bank: "Axis Bank",
+    card_name: "Legacy Privilege",
+    network: "Visa",
+    card_type: "credit",
+    is_discontinued: true,
+  }];
+  const db = createDb({ catalogRows: knownCards });
+  const incomplete = await stageCompleteIssuerDirectoryAbsenceReviews(
+    db,
+    "Axis Bank",
+    {
+      candidates: [candidate()],
+      quarantined: [],
+      consideredCount: 40,
+      fetchedCount: 39,
+      complete: false,
+    },
+    knownCards,
+  );
+  assert.deepEqual(incomplete, []);
+  assert.equal(db.state.rpcCalls.length, 0, "partial crawl staged absence");
+  const staged = await stageCompleteIssuerDirectoryAbsenceReviews(
+    db,
+    "Axis Bank",
+    {
+      candidates: [candidate()],
+      quarantined: [],
+      consideredCount: 1,
+      fetchedCount: 1,
+      complete: true,
+    },
+    knownCards,
+  );
+  assert.deepEqual(staged, ["review-1"]);
+  const call = db.state.rpcCalls[0];
+  assert.equal(call.name, "stage_card_catalog_identity_review");
+  assert.equal(
+    call.args._source_evidence.source_observation.kind,
+    "complete_issuer_directory_absence",
+  );
+  assert.equal(
+    call.args._validation_warnings[0],
+    "complete_directory_absence_requires_review",
+  );
 });

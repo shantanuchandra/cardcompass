@@ -3,6 +3,7 @@ import {
   boundedCatalogSourceObservation,
   boundedReviewedCatalogFields,
   canonicalPublicationResource,
+  cardDiscontinuationEvidence,
   catalogLifecycleObservationAction,
   catalogLifecycleSuggestion,
   catalogPublicationBaseline,
@@ -10,6 +11,8 @@ import {
   publicationFieldsFromFetch,
   publishReviewedCardIdentity,
   semanticCatalogSourceObservation,
+  semanticProductEnvelopeHash,
+  stageCatalogIdentityReview,
 } from "./catalog_identity_publication.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -196,6 +199,58 @@ Deno.test("central helper enforces source authority and calls exactly one public
     );
   }
   assert(calls.length === 1, "invalid request reached the database");
+});
+
+Deno.test("review staging delegates job creation, CAS refresh, and atomic link to one RPC", async () => {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const db = {
+    async rpc(name: string, args: Record<string, unknown>) {
+      calls.push({ name, args });
+      return {
+        data: [{
+          job_id: "11111111-1111-4111-8111-111111111111",
+          review_item_id: "22222222-2222-4222-8222-222222222222",
+          resulting_status: "review_required",
+          created: true,
+        }],
+        error: null,
+      };
+    },
+  };
+  const result = await stageCatalogIdentityReview(db, {
+    discoveryJobId: null,
+    discoverySource: "issuer_crawl",
+    userId: null,
+    issuer: "Axis Bank",
+    proposedProduct: "Privilege Infinite",
+    dedupeKey: "a".repeat(64),
+    semanticHash: "b".repeat(64),
+    proposedFields: { issuer: "Axis Bank", cardName: "Privilege Infinite" },
+    sourceEvidence: {
+      content_hash: "c".repeat(64),
+      retrieved_at: "2026-08-20T00:00:00.000Z",
+    },
+    existingCandidates: [],
+    validationWarnings: ["authenticated_source_requires_admin_review"],
+    confidence: 0.91,
+    expectedJobStatus: null,
+    expectedJobUpdatedAt: null,
+  });
+  assert(calls.length === 1, "review staging was split across calls");
+  assert(
+    calls[0].name === "stage_card_catalog_identity_review",
+    "wrong transactional review boundary",
+  );
+  assert(
+    calls[0].args._semantic_hash === "b".repeat(64) &&
+      calls[0].args._expected_job_status === null &&
+      calls[0].args._expected_job_updated_at === null,
+    "semantic identity or CAS token was dropped",
+  );
+  assert(
+    result.created && result.resultingStatus === "review_required",
+    "RPC outcome was inferred",
+  );
 });
 
 Deno.test("trusted existing-card observations use the same publication boundary without admin authority", async () => {
@@ -455,6 +510,62 @@ Deno.test("semantic lifecycle identity excludes transport time while bounded his
   );
 });
 
+Deno.test("semantic product envelope ignores transport churn but versions identity, field, and lifecycle changes", async () => {
+  const base = {
+    issuer: "Axis Bank",
+    cardName: "Privilege Infinite",
+    network: "Visa",
+    fields: { annual_fee: 1500 },
+    lifecycle: { explicit_discontinuation: false },
+    retrieved_at: "2026-08-20T00:00:00.000Z",
+    transport: { nonce: "first", footer: "generated at midnight" },
+  };
+  const first = await semanticProductEnvelopeHash(base);
+  const churn = await semanticProductEnvelopeHash({
+    ...base,
+    retrieved_at: "2026-08-20T01:00:00.000Z",
+    transport: { nonce: "second", footer: "generated at one" },
+  });
+  const fieldChange = await semanticProductEnvelopeHash({
+    ...base,
+    fields: { annual_fee: 2000 },
+  });
+  const lifecycleChange = await semanticProductEnvelopeHash({
+    ...base,
+    lifecycle: { explicit_discontinuation: true },
+  });
+  assert(first === churn, "nonce/footer churn versioned product review work");
+  assert(
+    first !== fieldChange,
+    "catalog field change reused stale review work",
+  );
+  assert(
+    first !== lifecycleChange,
+    "lifecycle change reused stale review work",
+  );
+});
+
+Deno.test("explicit discontinuation evidence is target scoped and retains its matched excerpt", () => {
+  const unrelated = cardDiscontinuationEvidence(
+    "<h1>Axis Neo Credit Card</h1><aside>Axis MyZone Credit Card has been discontinued</aside>",
+    "Axis Bank",
+    "Neo",
+  );
+  assert(!unrelated.explicit, "another product discontinued the target card");
+  const targeted = cardDiscontinuationEvidence(
+    "<h1>Axis Neo Credit Card</h1><p>This credit card has been discontinued and is no longer issued.</p>",
+    "Axis Bank",
+    "Neo",
+  );
+  assert(targeted.explicit, "targeted discontinuation was missed");
+  assert(
+    typeof targeted.matchedExcerpt === "string" &&
+      /discontinued/i.test(targeted.matchedExcerpt) &&
+      targeted.matchedExcerpt.length <= 512,
+    "decisive excerpt was not retained safely",
+  );
+});
+
 Deno.test("reviewed catalog fields enforce a strict private bounded whole-envelope contract", () => {
   const valid = boundedReviewedCatalogFields({
     issuer: "Axis Bank",
@@ -472,7 +583,7 @@ Deno.test("reviewed catalog fields enforce a strict private bounded whole-envelo
     source_type: "official_html",
     source_observation: {
       kind: "reviewed_identity",
-      note: "https://user:pass@evil.example/card?token=secret#private",
+      note: "issuer product page verified",
     },
   });
   const serialized = JSON.stringify(valid);
@@ -499,6 +610,13 @@ Deno.test("reviewed catalog fields enforce a strict private bounded whole-envelo
       {
         issuer: "Axis Bank",
         source_observation: { ["https://evil.example/?token=secret"]: true },
+      },
+      {
+        issuer: "Axis Bank",
+        source_observation: {
+          nested:
+            "https%253A%252F%252Fuser%253Apass%2540evil.example%252Fcard%253Ftoken%253Dsecret",
+        },
       },
     ]
   ) {

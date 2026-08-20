@@ -22,10 +22,11 @@ import {
   discoverIssuerCardCandidates,
   issuerDiscoveryFallbackUrls,
   persistCrawlerCandidate,
+  stageCompleteIssuerDirectoryAbsenceReviews,
 } from "../_shared/issuer_card_crawl.ts";
 import {
+  cardDiscontinuationEvidence,
   catalogLifecycleObservationAction,
-  hasStrongExplicitCardDiscontinuation,
   proposeCatalogLifecycleReview,
 } from "../_shared/catalog_identity_publication.ts";
 import {
@@ -1540,9 +1541,12 @@ export async function processJob(
       throw error;
     }
     fetchSummary.card_identity_validated = true;
-    const explicitDiscontinuation = hasStrongExplicitCardDiscontinuation(
+    const discontinuationEvidence = cardDiscontinuationEvidence(
       page.text,
+      job.issuer,
+      String(card.card_name),
     );
+    const explicitDiscontinuation = discontinuationEvidence.explicit;
     const lifecycleAction = catalogLifecycleObservationAction({
       isDiscontinued: card.is_discontinued === true,
       httpStatus: page.status,
@@ -1566,6 +1570,7 @@ export async function processJob(
           source_status: page.status,
           identity_validated: true,
           explicit_discontinuation: explicitDiscontinuation,
+          matched_excerpt: discontinuationEvidence.matchedExcerpt,
           retrieved_at: page.retrievedAt,
         },
       });
@@ -1874,14 +1879,27 @@ async function runIssuerDiscovery(
       await persistCrawlerCandidate(db, job.issuer, candidate);
     }
   }
+  if (result.complete) {
+    const { data: knownCards, error } = await db.from("card_catalog")
+      .select("id,bank,card_name,network,card_type,is_discontinued")
+      .ilike("bank", job.issuer)
+      .ilike("card_type", "credit")
+      .limit(200);
+    if (error) throw error;
+    await stageCompleteIssuerDirectoryAbsenceReviews(
+      db,
+      job.issuer,
+      result,
+      knownCards ?? [],
+    );
+  }
 }
 
-async function loadDiscoverySeed(
+export async function loadDiscoverySeed(
   db: UntypedSupabaseClient,
 ): Promise<Pick<EnrichmentJob, "issuer" | "canonical_url"> | null> {
   const { data, error } = await db.from("card_catalog")
-    .select("bank,card_url,card_type")
-    .eq("is_discontinued", false)
+    .select("bank,card_url,card_type,is_discontinued")
     .not("card_url", "is", null)
     .order("bank", { ascending: true })
     .limit(100);

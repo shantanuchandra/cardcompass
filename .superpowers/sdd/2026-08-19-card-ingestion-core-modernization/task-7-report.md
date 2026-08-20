@@ -19,6 +19,13 @@ fetch-first and observation-versioned, puts every worker state transition behind
 compare-and-set ownership, revalidates trusted observations under publication
 locks, and makes every authoritative lifecycle observation advance one
 chronological per-card latest-evidence contract.
+The fourth hardening pass moves all non-lifecycle review creation, refresh, and
+job linkage into one service-only transaction; makes reviewed inputs
+server-authoritative; separates semantic product versions from raw transport
+provenance; and keeps user URL request anchors stable across identical replay,
+content change, and fetch failure. Complete issuer-directory absence is now
+review evidence only when directory completeness is proven, while issuers whose
+known cards are all discontinued remain discoverable for reappearance.
 
 Live applied: **no**.
 
@@ -29,6 +36,7 @@ Created:
 - `supabase/migrations/20260819231435_publish_reviewed_card_identity.sql`
 - `supabase/functions/_shared/catalog_identity_publication.ts`
 - `supabase/functions/_shared/catalog_identity_publication_test.ts`
+- `supabase/functions/card-discovery/index_test.ts`
 - `test/supabase/publish_reviewed_card_identity_migration_test.js`
 - this report
 
@@ -56,7 +64,7 @@ No earlier migration was modified.
 ## Migration
 
 - File: `20260819231435_publish_reviewed_card_identity.sql`
-- SHA-256: `9a5b91e9866af4af5113f5df1233657415b98ff0293e7ced74251709a38add6e`
+- SHA-256: `fc41f4d7d1bfab96536bc04197321130f640aa9c1094725c6e22de306daca631`
 - Created with `supabase migration new publish_reviewed_card_identity`.
 - Project-ref preflight remained exactly `prbcoxqobhjnnfnxevxf`.
 
@@ -72,11 +80,13 @@ No earlier migration was modified.
   30-day compatibility wrapper.
 - Added the internal page-move boundary
   `adopt_reviewed_card_enrichment_source(uuid,text,text,text,text,text)` and the
+  service-only, transactional non-lifecycle review boundary
+  `stage_card_catalog_identity_review(uuid,text,uuid,text,text,text,text,jsonb,jsonb,jsonb,jsonb,numeric,text,timestamptz)`,
   service-only lifecycle-review boundary
   `stage_card_catalog_lifecycle_review(uuid,text,jsonb,text,text,text,text)` and
   a nullable-version-safe full catalog snapshot comparator, plus the
   retained-history cleanup boundary
-  `terminalize_calculator_review_rows(uuid,integer)`.
+  `terminalize_calculator_review_rows(uuid,integer,boolean)`.
 - Resolver, publisher, wrapper, and internal helpers are `SECURITY INVOKER`,
   have fixed search paths, are revoked from public application roles, and are
   executable only by `service_role` where needed.
@@ -143,28 +153,51 @@ No earlier migration was modified.
   exact same provenance observation, and still verify the existing v6 job.
   Changed retrieval/content evidence appends history; it is never rewritten.
 - Issuer-crawl and legacy catalog-enrichment work is versioned by submitted and
-  final resource identity, content identity, sanitized source observation, and
-  catalog baseline. A pending review may refresh only through a null-safe
-  optimistic compare-and-set and appends observation history. A terminal review
-  is immutable; materially new evidence creates a new service job/review unit.
+  final resource identity, semantic product identity, sanitized source
+  observation, and catalog baseline. Raw content hashes remain provenance but
+  retrieval time, nonces, and footer churn do not manufacture a new review. A
+  pending review may refresh only through a null-safe optimistic compare-and-set
+  and appends bounded observation history. A terminal review is immutable;
+  materially new identity, field, or lifecycle evidence creates a new service
+  job/review unit.
 - User `resolve_url` submissions also fetch and revalidate before returning a
-  terminal result. The submitted resource, final resource, and content hashes
-  form the immutable observation version; retrieval/transport timestamps do
-  not. An identical observation returns the existing terminal work, while a
-  corrected rejected page or a repurposed resolved URL creates a new reviewable
+  terminal result. The submitted resource, final resource, and semantic product
+  hash form the immutable observation version; retrieval/transport timestamps
+  and raw page churn do not. The request anchor remains stable and is not a
+  queued per-call artifact. An identical observation returns the existing
+  terminal work, a fetch failure returns the retained terminal result, and a
+  corrected rejected page or repurposed resolved URL creates a new reviewable
   version without rewriting the old job, review, or provenance.
+
+## Transactional review staging
+
+- User discovery, issuer crawling, and catalog enrichment call one shared Edge
+  helper that invokes `stage_card_catalog_identity_review(...)`; none performs
+  review-insert followed by discovery-job update/link writes.
+- The RPC takes the canonical review-stage advisory lock, the publication-job
+  advisory lock, the job row `FOR UPDATE`, and then the review row `FOR UPDATE`.
+  It owns job creation, exact status/`updated_at` CAS, bounded history refresh,
+  terminal immutability, version-conflict signaling, pending review creation,
+  and the final `review_required` job link in one transaction.
+- Apply-time assertions prove the signature, invoker mode, service-only grant,
+  and lock order. Mock databases implement the RPC result/CAS behavior instead
+  of emulating the removed split Edge writes.
+- The specialized lifecycle RPC remains separate because it also owns the
+  chronological per-card latest-evidence/supersession contract; it is likewise
+  service-only and transactional.
 
 ## Lock order and page moves
 
 The shared order is:
 
-1. publication-job advisory lock;
-2. ordered submitted/final URL advisory locks;
-3. strong identity advisory lock;
-4. Task 6 card/parser advisory lock;
-5. catalog card row;
-6. discovery job and review row;
-7. v6 enqueue/adoption, which re-enters the same Task 6 advisory lock.
+1. review-stage identity advisory lock when staging review work;
+2. publication-job advisory lock;
+3. review staging locks the discovery job row and then review row;
+4. reviewed publication takes ordered submitted/final URL advisory locks;
+5. strong identity advisory lock;
+6. Task 6 card/parser advisory lock;
+7. catalog card row, discovery job, and review row;
+8. v6 enqueue/adoption, which re-enters the same Task 6 advisory lock.
 
 Rows are first observed without locks and then re-read/revalidated under the
 canonical locks. Stale job evidence, stale review evidence, and stale terminal
@@ -237,7 +270,12 @@ For a reviewed same-card page move:
 - Normal user resubmission never resets a terminal review/job to pending. An
   explicit admin `retry` with a non-empty reason may reopen only the retained
   retryable review unit and appends audit history; approved/merged work remains
-  immutable. Replay equality includes reason and merge target.
+  immutable. Retry intentionally leaves the job in `review_required` because no
+  universal producer can safely reconstruct arbitrary catalog work; the admin
+  can immediately re-evaluate the retained pending review. It never requeues a
+  discovering/in-flight job. Retry/reject mutation uses exact locked status and
+  `updated_at` predicates, and replay equality includes actor, reason, merge
+  target, action, and current state.
 - `observe_existing` rejects any discovery job already connected to review work
   or marked review-required, even when the card otherwise has a strong official
   binding.
@@ -246,8 +284,23 @@ For a reviewed same-card page move:
   explicitly and audited; every other publication must retain or enqueue the
   exact one eligible recurring job.
 - Calculator cleanup now terminalizes and audits review/job rows instead of
-  deleting them. Review/audit/provenance/URL/enrichment foreign keys no longer
+  deleting them. Listing reviews is read-only; cleanup requires an explicit
+  admin confirmation and exact calculator classification rather than URL
+  `LIKE`. Review/audit/provenance/URL/enrichment foreign keys no longer
   cascade-delete identity history; user deletion de-identifies statement jobs.
+- Admin publication ignores no stored authority: `approve`, lifecycle, reject,
+  retry, and merge derive immutable proposal/source fields from the locked
+  review. Only `edit_approve` accepts the documented mutable catalog fields.
+  Existing-card edits require their locked catalog baseline; edited new-card
+  proposals require stored semantic/content evidence instead.
+- Explicit discontinuation matching is card-heading scoped and retains the
+  decisive excerpt. Directory absence never changes lifecycle state; a bounded
+  absence review is created only after a proven complete issuer directory and a
+  known issuer catalog comparison. Discovery seed selection includes issuers
+  with only discontinued cards so later reappearance remains observable.
+- Recursive Edge and SQL envelope checks reject credentials, fragments, and
+  sensitive query keys even when URLs and key letters are percent-encoded
+  through multiple layers.
 
 ## Red evidence
 
@@ -317,20 +370,48 @@ terminal catches, review links, and failure writes use non-terminal/status and
 version compare-and-set predicates so an admin-approved, rejected, or resolved
 row cannot be reopened by a stale worker.
 
+The fourth hardening pass started with exact failures for the remaining review
+coordination and authority gaps:
+
+- the migration suite failed five focused contracts because review creation,
+  refresh, and job linkage were still split across Edge writes; admin inputs
+  could override immutable proposal evidence; retry requeued an unowned producer
+  lane; edit conflict checks collapsed sibling variants; and calculator cleanup
+  was implicitly triggered while listing;
+- the shared helper suite failed three missing exports for transactional review
+  staging, semantic product envelopes, and target-scoped discontinuation
+  evidence;
+- issuer-crawl mocks failed 17 cases until they modeled the central staging RPC,
+  its CAS result, terminal immutability, bounded history, and content versions;
+- catalog enrichment failed its missing staging-RPC behavior and then one stale
+  source-shape assertion, which was replaced by the stronger no-split-write
+  transactional contract;
+- admin tests failed listing-read-only, explicit cleanup confirmation, and
+  immutable override cases;
+- user URL tests exposed per-call anchor jobs, raw-content versioning, and a
+  transient failure hiding a retained terminal result;
+- final migration reds proved retry/reject lacked exact status/timestamp CAS,
+  the staging grant was not apply-asserted, and nested SQL privacy decoding did
+  not yet decode percent-encoded sensitive-key letters.
+
+The green implementation retains all of those as behavioral or apply-time
+regressions. No terminal artifact is deleted or reopened by a stale worker, and
+no review/job linkage depends on an Edge multi-write sequence.
+
 ## Green verification
 
 - `deno test --node-modules-dir=auto --allow-env --frozen` across every Edge
-  test except the separately permissioned admin listener suite: **208 passed,
+  test except the separately permissioned admin listener suite: **214 passed,
   0 failed**.
 - `deno test --node-modules-dir=auto --allow-env
   --allow-net=0.0.0.0:8000 --frozen
-  supabase/functions/admin-catalog-entry/benefit_admin_test.ts`: **41 passed,
+  supabase/functions/admin-catalog-entry/benefit_admin_test.ts`: **43 passed,
   0 failed**. The only network permission is the unchanged local test listener.
 - `node --test` across every `test/supabase/*_test.js` and
-  `test/supabase/*.test.mjs`: **259 passed, 0 failed**.
+  `test/supabase/*.test.mjs`: **265 passed, 0 failed**.
 - `flutter test --no-pub test/supabase/card_catalog_url_identity_test.dart`:
   **2 passed, 0 failed**.
-- Total unique named offline tests: **510 passed, 0 failed**.
+- Total unique named offline tests: **524 passed, 0 failed**.
 - `deno check --node-modules-dir=auto --frozen` on all changed production
   TypeScript: passed.
 - `deno fmt --check` on the complete changed TypeScript/JavaScript test surface:
