@@ -83,6 +83,52 @@ export async function terminalizeCalculatorReviewRows(
   return Number(data);
 }
 
+const catalogReviewProjection = `
+  id, proposed_fields, source_evidence, existing_candidates,
+  validation_warnings, confidence, status, review_reason, created_at,
+  updated_at, reviewed_at,
+  card_discovery_jobs!card_catalog_review_queue_discovery_job_id_fkey!inner(
+    id, issuer, proposed_product, evidence, status, attempt_count,
+    failure_category, resolved_card_id, created_at, updated_at
+  )
+`;
+
+function issuerQuarantineCursor(row: Record<string, unknown>): string {
+  const encoded = btoa(JSON.stringify({
+    created_at: row.created_at,
+    id: row.id,
+  }));
+  return encoded.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function parseIssuerQuarantineCursor(value: unknown): {
+  createdAt: string;
+  id: string;
+} | null {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string" || value.length > 512) {
+    throw new Error("invalid_quarantine_cursor");
+  }
+  try {
+    const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
+    const parsed = JSON.parse(atob(padded));
+    const createdAt = String(parsed?.created_at ?? "");
+    const id = String(parsed?.id ?? "");
+    const date = new Date(createdAt);
+    if (
+      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/
+        .test(createdAt) ||
+      !Number.isFinite(date.getTime()) ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+        .test(id)
+    ) throw new Error("invalid_quarantine_cursor");
+    return { createdAt: date.toISOString(), id };
+  } catch {
+    throw new Error("invalid_quarantine_cursor");
+  }
+}
+
 export async function handleAdminCatalogEntry(
   request: Request,
   providedDb?: UntypedSupabaseClient,
@@ -151,16 +197,48 @@ export async function handleAdminCatalogEntry(
       return json(await handleBenefitAdminAction(db, body, { id: user.id }));
     }
 
+    if (action === "issuer-quarantine-list") {
+      const limit = body.limit === undefined ? 25 : Number(body.limit);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+        return json({ error: "invalid_quarantine_limit" }, 400);
+      }
+      const cursor = parseIssuerQuarantineCursor(body.cursor);
+      let query = db.from("card_catalog_review_queue")
+        .select(catalogReviewProjection)
+        .contains("proposed_fields", {
+          source_observation: {
+            kind: "issuer_discovery_quarantine",
+            classification: "issuer_discovery_quarantine",
+          },
+        })
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false });
+      if (typeof body.status === "string" && body.status.length > 0) {
+        query = query.eq("status", body.status);
+      }
+      if (cursor) {
+        query = query.or(
+          `created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`,
+        );
+      }
+      const { data, error } = await query.limit(limit + 1);
+      if (error) throw error;
+      const rows = (data ?? []) as Array<Record<string, unknown>>;
+      const hasMore = rows.length > limit;
+      const items = rows.slice(0, limit);
+      return json({
+        items,
+        has_more: hasMore,
+        next_cursor: hasMore
+          ? issuerQuarantineCursor(items[items.length - 1])
+          : null,
+      });
+    }
+
     if (action === "list") {
-      let query = db.from("card_catalog_review_queue").select(`
-        id, proposed_fields, source_evidence, existing_candidates,
-        validation_warnings, confidence, status, review_reason, created_at,
-        updated_at, reviewed_at,
-        card_discovery_jobs!card_catalog_review_queue_discovery_job_id_fkey!inner(
-          id, issuer, proposed_product, evidence, status, attempt_count,
-          failure_category, resolved_card_id, created_at, updated_at
-        )
-      `).order("created_at", { ascending: true });
+      let query = db.from("card_catalog_review_queue")
+        .select(catalogReviewProjection)
+        .order("created_at", { ascending: true });
       if (typeof body.status === "string" && body.status.length > 0) {
         query = query.eq("status", body.status);
       }
@@ -241,4 +319,6 @@ export async function handleAdminCatalogEntry(
   }
 }
 
-serve((request) => handleAdminCatalogEntry(request));
+if (import.meta.main) {
+  serve((request) => handleAdminCatalogEntry(request));
+}

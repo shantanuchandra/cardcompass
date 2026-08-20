@@ -700,7 +700,24 @@ export function cardDiscontinuationEvidence(
     "to",
     "withdrawn",
   ]);
+  const targetStrongIdentity = targetTokens.filter((token) =>
+    !issuerTokens.has(token)
+  );
+  const hasForeignExplicitCardSubject = (value: string) => {
+    const subjects = [...value.matchAll(
+      /(?:^|[,:;.!?\u2013\u2014-]\s*)((?:[a-z0-9&+'\u2019.-]+\s+){1,16}(?:credit\s+)?card)\b/gi,
+    )].map((match) => match[1] ?? "");
+    return subjects.some((subject) => {
+      const identity = meaningful(subject).filter((token) =>
+        token !== "this" && !issuerTokens.has(token)
+      );
+      if (identity.length === 0) return false;
+      return identity.length !== targetStrongIdentity.length ||
+        identity.some((token) => !targetStrongIdentity.includes(token));
+    });
+  };
   const hasCompetingProductIdentity = (value: string) => {
+    if (hasForeignExplicitCardSubject(value)) return true;
     const remaining = meaningful(value).filter((token) =>
       !targetTokens.includes(token) && !issuerTokens.has(token) &&
       !lifecycleBindingTokens.has(token) && !/^\d{1,4}$/.test(token)

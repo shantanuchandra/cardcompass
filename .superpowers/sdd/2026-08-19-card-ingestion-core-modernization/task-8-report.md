@@ -406,3 +406,116 @@ Live applied: **no**. No Docker, database/Postgres/Supabase runtime, linked or
 live command, issuer/external network, production data, secret change, remote
 workflow enablement/dispatch, or live write was used. The existing live-only
 rollout gates above remain pending.
+
+## Final fix round 5/5 — exhaustive anchor identity and visible quarantine work
+
+The final scoped review closed four remaining fail-open or operator-visibility
+edges without adding a schema object or business column.
+
+- Lifecycle evidence now recognizes an explicit named `(Credit) Card` subject
+  before applying neutral status/date/section vocabulary. A named Rewards,
+  Access, Status, or month-like card family cannot inherit the target card's
+  lifecycle scope merely because every distinctive word was previously in an
+  allowlist. Exact target subjects, generic `this/the credit card`, target-only
+  structured status, and the bounded no-heading target sentence remain valid.
+- Every selected issuer now performs a deadline-bounded, exhaustively paginated
+  PostgREST `or` scan across normalized row issuer, evidence issuer, and the
+  expected stable dedupe key. The query has no evidence-kind filter. Exact
+  normalized post-filtering catches kind/key/issuer combinations that previously
+  hid future or resolved corrupt producers, including rows beyond 1,000. A
+  deadline reached before exhaustion fails closed before quarantine or claim
+  mutation. Separate quarantine-review service jobs and structurally complete
+  historical candidate-outcome rows remain non-producer records; anchor-like
+  identity evidence is still fenced regardless of its claimed kind.
+- The producer's first quarantine transition now persists a versioned immutable
+  fence containing the stable producer identity, bounded issuer, reason,
+  retryability, and retryability policy. Later staging or clear retries use that
+  persisted fence and ignore a caller's new classification. The operator review
+  dedupe is stable producer ID plus the fixed quarantine classification, so one
+  producer has one review even when staging/clear partially fails. The final
+  clear is also fenced by the exact persisted JSON decision.
+- The protected admin Edge endpoint now exposes a dedicated
+  `issuer-quarantine-list` read path with a 1–100 limit, newest-first stable
+  ordering, a validated opaque `(created_at,id)` cursor, and an exact nested
+  quarantine classification filter. The Flutter identity loader explicitly
+  fetches that newest quarantine page and merges it ahead of the preserved
+  general review list by review ID. A new quarantine therefore remains visible
+  and actionable even when 100 older general reviews fill the legacy response.
+
+### Final-round red and regression evidence
+
+Strict focused reds reproduced each reported failure before production edits:
+
+- the named-subject lifecycle test reported **0 passed / 1 failed**, accepting
+  `Axis Rewards Credit Card` as Neo discontinuation evidence;
+- three focused issuer tests each reported **0 passed / 1 failed** for a
+  combined-corrupt anchor, a 1,005-row combined-corrupt scan, and a clear retry
+  restaged under a different classification;
+- the protected admin API test reported **0 passed / 1 failed** because the
+  quarantine-specific paginated action did not exist;
+- the Flutter test failed compilation because no explicit quarantine-merging
+  loader existed.
+
+The first full batch integration run after the focused greens reported **218
+passed / 2 failed**. It exposed that unrelated historical candidate outcomes
+must not hide an active legacy lease and that the new scan consumes its own
+deadline checkpoint. The final implementation distinguishes only the exact
+bounded non-producer outcome shape and adds a separate partial-scan fail-closed
+test; the corrected full batch suite is green below.
+
+### Final-round authoritative local gates
+
+```sh
+node --test test/gtm/card-discovery-schedule.test.js test/gtm/benefit-enrichment-schedule.test.js test/supabase/issuer_card_crawl_rules.test.mjs
+```
+
+Workflow/crawler checks: **48 passed, 0 failed**.
+
+```sh
+deno test supabase/functions/benefit-enrichment-batch/index_test.ts supabase/functions/benefit-enrichment-batch/recurrence_policy_test.ts supabase/functions/benefit-enrichment-batch/batch_policy_test.ts supabase/functions/benefit-enrichment-batch/crawl_policy_test.ts supabase/functions/benefit-enrichment-batch/supporting_documents_test.ts
+```
+
+Batch/Task 6 checks: **221 passed, 0 failed**.
+
+```sh
+deno test supabase/functions/_shared/catalog_identity_publication_test.ts supabase/functions/_shared/issuer_card_crawl_test.ts supabase/functions/card-discovery/index_test.ts
+```
+
+Shared publication, issuer crawl, and card discovery: **35 passed, 0 failed**.
+
+```sh
+deno test --allow-env --allow-read --node-modules-dir=auto supabase/functions/admin-catalog-entry/benefit_admin_test.ts
+```
+
+Protected admin Edge/API checks: **44 passed, 0 failed**.
+
+```sh
+node --test --test-concurrency=1 $(find test -type f \( -name '*.test.js' -o -name '*.test.mjs' -o -name '*_test.js' \) -print | sort)
+```
+
+Repository Node/static/migration checks: **386 passed, 0 failed**.
+
+```sh
+flutter test --no-pub test/features/admin/benefit_enrichment_review_test.dart
+```
+
+Focused admin presentation checks: **13 passed, 0 failed**.
+
+These six non-overlapping executions cover **747 passing checks, 0 failures**.
+For comparison with the prior five-command 698 baseline, those same five suites
+now total **703**; the separately reported admin Edge suite contains 43 existing
+checks plus the new pagination/filter contract test.
+
+Production `deno check --node-modules-dir=auto --frozen` passed for the batch
+function, catalog publication, issuer crawler, card discovery, and protected
+admin entry point. Focused `flutter analyze --no-pub` returned no issues.
+Changed-surface Deno/Dart format checks and `git diff --check` passed.
+
+The existing unapplied Task 7 migration remains byte-identical at SHA-256
+`8e0dd3ac01346d5ec7531be906bc974480e0e93c8f8d9f482b6010323e06a3a7`.
+No migration or schema object was added.
+
+Live applied: **no**. No Docker, database/Postgres/Supabase runtime, linked or
+live command, issuer/external network, production data, secret change, remote
+workflow enablement/dispatch, or live write was used. The existing live-only
+rollout gates above remain pending.

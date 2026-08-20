@@ -63,12 +63,27 @@ function issuerSchedulerStore(input: {
   const jobs = input.jobs ?? [];
   const catalog = input.catalog ?? [];
   const backlogRanges: Array<[number, number]> = [];
+  const orCalls: string[] = [];
   const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
   let sequence = jobs.length;
   const matches = (
     row: Record<string, any>,
     filters: Array<(row: Record<string, any>) => boolean>,
   ) => filters.every((filter) => filter(row));
+  const containsValue = (actual: unknown, expected: unknown): boolean => {
+    if (
+      expected === null || typeof expected !== "object" ||
+      Array.isArray(expected)
+    ) return actual === expected;
+    if (
+      actual === null || typeof actual !== "object" || Array.isArray(actual)
+    ) {
+      return false;
+    }
+    return Object.entries(expected).every(([key, value]) =>
+      containsValue((actual as Record<string, unknown>)[key], value)
+    );
+  };
   const db = {
     async rpc(name: string, args: Record<string, unknown>) {
       rpcCalls.push({ name, args });
@@ -170,6 +185,51 @@ function issuerSchedulerStore(input: {
           filters.push((row) => matcher.test(String(row[column] ?? "")));
           return this;
         },
+        or(expression: string) {
+          orCalls.push(expression);
+          const clauses = expression.split(",").map((clause) => clause.trim());
+          const wildcardMatcher = (value: string) => {
+            const unquoted = value.startsWith('"') && value.endsWith('"')
+              ? value.slice(1, -1)
+              : value;
+            const pattern = unquoted.replace(
+              /\\([%_\\])/g,
+              (_, literal) =>
+                `\u0000${literal.charCodeAt(0).toString(16)}\u0000`,
+            ).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+              .replace(/%/g, "[\\s\\S]*").replace(/_/g, "[\\s\\S]")
+              .replace(
+                /\u0000([0-9a-f]+)\u0000/g,
+                (_, code) =>
+                  `\\${String.fromCharCode(Number.parseInt(code, 16))}`,
+              );
+            return new RegExp(`^${pattern}$`, "i");
+          };
+          filters.push((row) =>
+            clauses.some((clause) => {
+              const issuer = clause.match(/^issuer\.ilike\.(.+)$/);
+              if (issuer) {
+                return wildcardMatcher(issuer[1]).test(
+                  String(row.issuer ?? ""),
+                );
+              }
+              const evidenceIssuer = clause.match(
+                /^evidence->>issuer\.ilike\.(.+)$/,
+              );
+              if (evidenceIssuer) {
+                return wildcardMatcher(evidenceIssuer[1]).test(
+                  String(row.evidence?.issuer ?? ""),
+                );
+              }
+              const dedupe = clause.match(/^dedupe_key\.eq\.(.+)$/);
+              return dedupe
+                ? String(row.dedupe_key ?? "") ===
+                  dedupe[1].replace(/^"|"$/g, "")
+                : false;
+            })
+          );
+          return this;
+        },
         is(column: string, value: unknown) {
           filters.push((row) => row[column] === value);
           return this;
@@ -185,12 +245,7 @@ function issuerSchedulerStore(input: {
           return this;
         },
         contains(column: string, value: Record<string, unknown>) {
-          filters.push((row) =>
-            row[column] && typeof row[column] === "object" &&
-            Object.entries(value).every(([key, expected]) =>
-              row[column][key] === expected
-            )
-          );
+          filters.push((row) => containsValue(row[column], value));
           return this;
         },
         order(column: string, options?: { ascending?: boolean }) {
@@ -265,7 +320,7 @@ function issuerSchedulerStore(input: {
       return query;
     },
   };
-  return { db, jobs, backlogRanges, rpcCalls };
+  return { db, jobs, backlogRanges, orCalls, rpcCalls };
 }
 
 function projectIssuerSchedulerRow(
@@ -976,16 +1031,33 @@ Deno.test("quarantine clear failure remains self-fenced and reuses the staged re
       store.jobs[0].next_retry_at !== null,
     "clear failure removed the persistent producer fence",
   );
-  await loadDiscoverySeed(
+  const firstObservation = structuredClone(
+    store.rpcCalls[0].args._source_evidence,
+  );
+  Object.assign(store.jobs[0].evidence, {
+    kind: "issuer_directory_anchor",
+    canonical_url: "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+    run_date: "2026-08-19",
+  });
+  await claimIssuerDiscoveryRun(
     store.db,
+    {
+      issuer: "Axis Bank",
+      canonical_url:
+        "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+    },
     new Date("2026-08-20T00:00:01.000Z"),
-    200,
   );
   assert(
     store.rpcCalls.length === 2 &&
       store.rpcCalls[0].args._dedupe_key ===
         store.rpcCalls[1].args._dedupe_key,
-    "clear retry did not reuse its exact semantic review",
+    "caller reclassification changed the producer-stable review identity",
+  );
+  assert(
+    JSON.stringify(store.rpcCalls[1].args._source_evidence) ===
+      JSON.stringify(firstObservation),
+    "caller reclassification overrode the immutable persisted fence",
   );
   assert(
     store.jobs.filter((row) => row.status === "review_required").length === 1,
@@ -2211,6 +2283,159 @@ Deno.test("one invocation quarantines at most twenty of one thousand corrupt sta
   );
 });
 
+Deno.test("issuer anchor scan catches combined kind key and issuer corruption through every identity field", async () => {
+  const canonicalUrl =
+    "https://www.axis.bank.in/cards/credit-card/neo-credit-card";
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode("issuer-directory-anchor:axis bank"),
+  );
+  const expectedKey = [...new Uint8Array(digest)].map((byte) =>
+    byte.toString(16).padStart(2, "0")
+  ).join("");
+  const fixtures = [
+    {
+      id: "evidence-issuer-match",
+      issuer: "Wrong Bank",
+      dedupe_key: "corrupt-key",
+      evidence: {
+        kind: "untrusted-kind",
+        issuer: " Axis   Bank ",
+        canonical_url: canonicalUrl,
+        run_date: "2026-08-19",
+      },
+    },
+    {
+      id: "expected-key-match",
+      issuer: "Wrong Bank",
+      dedupe_key: expectedKey,
+      evidence: {
+        kind: "untrusted-kind",
+        issuer: "Another Bank",
+        canonical_url: canonicalUrl,
+        run_date: "2026-08-19",
+      },
+    },
+  ];
+  for (const fixture of fixtures) {
+    const store = issuerSchedulerStore({
+      jobs: [{
+        ...fixture,
+        user_id: null,
+        discovery_source: "issuer_crawl",
+        status: "resolved",
+        failure_category: null,
+        attempt_count: 1,
+        next_retry_at: null,
+        created_at: "2026-08-19T00:00:00.000Z",
+        updated_at: "2026-08-19T00:00:00.000Z",
+      }],
+    });
+    const claim = await claimIssuerDiscoveryRun(
+      store.db,
+      { issuer: "Axis Bank", canonical_url: canonicalUrl },
+      new Date("2026-08-20T00:00:00.000Z"),
+    );
+    assert(claim.status === "quarantined", `${fixture.id} escaped quarantine`);
+    assert(claim.seed === null, `${fixture.id} returned crawl work`);
+    assert(
+      store.jobs.filter((row) => row.status === "discovering").length === 0,
+      `${fixture.id} allowed a replacement stable anchor`,
+    );
+    assert(
+      store.orCalls.length > 0,
+      `${fixture.id} skipped the all-field scan`,
+    );
+  }
+});
+
+Deno.test("issuer anchor scan paginates past one thousand combined-corrupt rows", async () => {
+  const canonicalUrl =
+    "https://www.axis.bank.in/cards/credit-card/neo-credit-card";
+  const jobs = Array.from({ length: 1005 }, (_, index) => ({
+    id: `combined-corrupt-${String(index).padStart(4, "0")}`,
+    user_id: null,
+    discovery_source: "issuer_crawl",
+    issuer: "Wrong Bank",
+    dedupe_key: `corrupt-${index}`,
+    status: "resolved",
+    failure_category: null,
+    attempt_count: 1,
+    next_retry_at: null,
+    created_at: `2026-01-01T00:${String(index % 60).padStart(2, "0")}:00.000Z`,
+    updated_at: "2026-08-19T00:00:00.000Z",
+    evidence: {
+      kind: "untrusted-kind",
+      issuer: "AXIS    BANK",
+      canonical_url: canonicalUrl,
+      run_date: "2026-08-19",
+    },
+  }));
+  const store = issuerSchedulerStore({ jobs });
+  const claim = await claimIssuerDiscoveryRun(
+    store.db,
+    { issuer: "Axis Bank", canonical_url: canonicalUrl },
+    new Date("2026-08-20T00:00:00.000Z"),
+  );
+  assert(claim.status === "quarantined", "large corrupt scan was not fenced");
+  assert(
+    (claim as any).reviewSummary?.remaining === 985,
+    "scan stopped at the former 1,000-row window",
+  );
+  assert(
+    store.backlogRanges.some(([from]) => from >= 1000),
+    "stable scan did not paginate beyond one thousand rows",
+  );
+});
+
+Deno.test("issuer anchor scan fails closed when its deadline prevents exhaustive pagination", async () => {
+  const canonicalUrl =
+    "https://www.axis.bank.in/cards/credit-card/neo-credit-card";
+  const jobs = Array.from({ length: 101 }, (_, index) => ({
+    id: `deadline-scan-${String(index).padStart(3, "0")}`,
+    user_id: null,
+    discovery_source: "issuer_crawl",
+    issuer: "Axis Bank",
+    dedupe_key: `deadline-scan-key-${index}`,
+    status: "resolved",
+    failure_category: null,
+    attempt_count: 1,
+    next_retry_at: null,
+    created_at: `2026-01-01T00:00:${String(index % 60).padStart(2, "0")}.000Z`,
+    updated_at: "2026-08-19T00:00:00.000Z",
+    evidence: {
+      kind: "untrusted-kind",
+      issuer: "Axis Bank",
+      canonical_url: canonicalUrl,
+      run_date: "2026-08-19",
+    },
+  }));
+  const store = issuerSchedulerStore({ jobs });
+  let deadlineChecks = 0;
+  let failedClosed = false;
+  try {
+    await claimIssuerDiscoveryRun(
+      store.db,
+      { issuer: "Axis Bank", canonical_url: canonicalUrl },
+      new Date("2026-08-20T00:00:00.000Z"),
+      {
+        deadlineAt: 50,
+        nowMs: () => deadlineChecks++ === 0 ? 0 : 100,
+      },
+    );
+  } catch (error) {
+    failedClosed = String(error).includes(
+      "issuer_discovery_stable_scan_exhausted",
+    );
+  }
+  assert(failedClosed, "partial anchor scan continued into a claim");
+  assert(store.rpcCalls.length === 0, "partial scan mutated quarantine state");
+  assert(
+    !store.jobs.some((row) => row.status === "discovering"),
+    "partial scan inserted a replacement anchor",
+  );
+});
+
 Deno.test("quarantine staging checks the invocation deadline before every transition", async () => {
   const canonicalUrl =
     "https://www.axis.bank.in/cards/credit-card/neo-credit-card";
@@ -2241,7 +2466,7 @@ Deno.test("quarantine staging checks the invocation deadline before every transi
     new Date("2026-08-20T00:00:00.000Z"),
     {
       deadlineAt: 50,
-      nowMs: () => deadlineChecks++ === 0 ? 0 : 100,
+      nowMs: () => deadlineChecks++ < 2 ? 0 : 100,
     },
   );
   assert(store.rpcCalls.length === 1, "deadline allowed another transition");

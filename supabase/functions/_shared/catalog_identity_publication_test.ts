@@ -812,6 +812,45 @@ Deno.test("neutral lifecycle wording remains target-bound while proper competing
   }
 });
 
+Deno.test("explicit named card subjects outrank neutral lifecycle vocabulary", () => {
+  for (
+    const html of [
+      `<h2>Axis Neo Credit Card</h2><p>Status: Axis Rewards Credit Card discontinued effective August 2026.</p>`,
+      `<h2>Axis Neo Credit Card</h2><div class="availability">Axis Access Credit Card is no longer issued</div>`,
+      `<h2>Axis Neo Credit Card</h2><div class="status">Axis Status Credit Card has been withdrawn</div>`,
+      `<table><tr><td>Axis Neo Credit Card — Axis May Credit Card discontinued May 2026</td></tr></table>`,
+    ]
+  ) {
+    const evidence = cardDiscontinuationEvidence(
+      html,
+      "Axis Bank",
+      "Axis Neo Credit Card",
+    );
+    assert(
+      !evidence.explicit,
+      `neutral-looking competitor card subject was attributed to Neo: ${html}`,
+    );
+  }
+
+  for (
+    const html of [
+      `<h2>Axis Neo Credit Card</h2><p>Axis Neo Credit Card has been discontinued.</p>`,
+      `<h2>Axis Neo Credit Card</h2><div class="status">The credit card is no longer issued</div>`,
+      `<h2>Axis Neo Credit Card</h2><p>Status: discontinued effective August 2026.</p>`,
+    ]
+  ) {
+    const evidence = cardDiscontinuationEvidence(
+      html,
+      "Axis Bank",
+      "Axis Neo Credit Card",
+    );
+    assert(
+      evidence.explicit,
+      `target-only lifecycle proof was rejected: ${html}`,
+    );
+  }
+});
+
 Deno.test("reviewed catalog fields enforce a strict private bounded whole-envelope contract", () => {
   const valid = boundedReviewedCatalogFields({
     issuer: "Axis Bank",

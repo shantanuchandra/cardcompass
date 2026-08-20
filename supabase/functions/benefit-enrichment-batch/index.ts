@@ -2776,10 +2776,85 @@ async function terminalizeIssuerDiscoveryBacklog(
   ) {
     return emptyIssuerDiscoveryReviewSummary();
   }
+  const buildFence = (fenceReason: IssuerDiscoveryQuarantineReason) => {
+    const retryable = [
+      "resume_attempts_exhausted",
+      "transient_producer_state",
+    ].includes(fenceReason);
+    return {
+      version: 1,
+      classification: "issuer_discovery_quarantine",
+      semantic_identity: `issuer-discovery-quarantine-v1:${
+        String(row.id).slice(0, 64)
+      }`,
+      anchor_job_id: String(row.id).slice(0, 64),
+      issuer,
+      reason: fenceReason,
+      retryable,
+      retryability_reason: retryable
+        ? "attempt_budget_reset_allowed"
+        : "manual_repair_required",
+    };
+  };
+  const readFence = (evidence: Record<string, unknown>) => {
+    const value = evidence.quarantine_fence;
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const fence = value as Record<string, unknown>;
+      const fenceReason = String(fence.reason ?? "");
+      const fenceIssuer = String(fence.issuer ?? "").trim().replace(
+        /\s+/g,
+        " ",
+      );
+      if (
+        fence.version === 1 &&
+        fence.classification === "issuer_discovery_quarantine" &&
+        fence.semantic_identity ===
+          `issuer-discovery-quarantine-v1:${String(row.id).slice(0, 64)}` &&
+        fence.anchor_job_id === String(row.id).slice(0, 64) &&
+        fenceIssuer.length >= 2 && fenceIssuer.length <= 120 &&
+        [
+          "resume_attempts_exhausted",
+          "transient_producer_state",
+          "invalid_run_evidence",
+          "legacy_anchor_conflict",
+          "anchor_identity_conflict",
+        ].includes(fenceReason)
+      ) {
+        const expectedPolicy = buildFence(
+          fenceReason as IssuerDiscoveryQuarantineReason,
+        );
+        if (
+          fence.retryable === expectedPolicy.retryable &&
+          fence.retryability_reason === expectedPolicy.retryability_reason
+        ) {
+          return {
+            ...expectedPolicy,
+            issuer: fenceIssuer,
+          };
+        }
+      }
+      throw new Error("invalid_persisted_issuer_quarantine_fence");
+    }
+    const legacyReason = String(evidence.quarantine_reason ?? "");
+    if (
+      [
+        "resume_attempts_exhausted",
+        "transient_producer_state",
+        "invalid_run_evidence",
+        "legacy_anchor_conflict",
+        "anchor_identity_conflict",
+      ].includes(legacyReason)
+    ) {
+      return buildFence(legacyReason as IssuerDiscoveryQuarantineReason);
+    }
+    return null;
+  };
+  let fence = readFence(previousEvidence);
   if (
     String(row.status) !== "failed" ||
     String(row.failure_category ?? "") !== "issuer_discovery_quarantined"
   ) {
+    fence = buildFence(reason);
     let update = db.from("card_discovery_jobs").update({
       status: "failed",
       next_retry_at: nowIso,
@@ -2789,6 +2864,7 @@ async function terminalizeIssuerDiscoveryBacklog(
         ...previousEvidence,
         last_outcome: reason,
         quarantine_reason: reason,
+        quarantine_fence: fence,
       },
       updated_at: nowIso,
     }).eq("id", row.id).eq("status", row.status);
@@ -2803,27 +2879,31 @@ async function terminalizeIssuerDiscoveryBacklog(
     ).maybeSingle();
     if (transitioned.error) throw transitioned.error;
     if (!transitioned.data) return emptyIssuerDiscoveryReviewSummary();
+  } else if (!previousEvidence.quarantine_fence && fence) {
+    let update = db.from("card_discovery_jobs").update({
+      evidence: { ...previousEvidence, quarantine_fence: fence },
+      updated_at: nowIso,
+    }).eq("id", row.id).eq("status", "failed")
+      .eq("failure_category", "issuer_discovery_quarantined");
+    if (row.updated_at) update = update.eq("updated_at", row.updated_at);
+    const persisted = await update.select("id,evidence,failure_category")
+      .maybeSingle();
+    if (persisted.error) throw persisted.error;
+    if (!persisted.data) return emptyIssuerDiscoveryReviewSummary();
   }
+  if (!fence) throw new Error("missing_persisted_issuer_quarantine_fence");
   const sourceObservation = {
     kind: "issuer_discovery_quarantine",
     classification: "issuer_discovery_quarantine",
-    reason,
-    retryable: [
-      "resume_attempts_exhausted",
-      "transient_producer_state",
-    ].includes(reason),
-    retryability_reason: [
-        "resume_attempts_exhausted",
-        "transient_producer_state",
-      ].includes(reason)
-      ? "attempt_budget_reset_allowed"
-      : "manual_repair_required",
-    anchor_job_id: String(row.id).slice(0, 64),
-    issuer,
+    reason: fence.reason,
+    retryable: fence.retryable,
+    retryability_reason: fence.retryability_reason,
+    anchor_job_id: fence.anchor_job_id,
+    issuer: fence.issuer,
   };
   const semanticHash = await sha256Text(JSON.stringify(sourceObservation));
   const reviewDedupeKey = await sha256Text(
-    `issuer-discovery-quarantine:${String(row.id)}:${reason}`,
+    `issuer-discovery-quarantine:${String(row.id)}:issuer_discovery_quarantine`,
   );
   const staged = await stageCatalogIdentityReview(db, {
     discoveryJobId: null,
@@ -2841,7 +2921,7 @@ async function terminalizeIssuerDiscoveryBacklog(
     },
     sourceEvidence: { source_observation: sourceObservation },
     existingCandidates: [],
-    validationWarnings: ["issuer_discovery_quarantine", reason],
+    validationWarnings: ["issuer_discovery_quarantine", fence.reason],
     confidence: 0,
     expectedJobStatus: null,
     expectedJobUpdatedAt: null,
@@ -2855,6 +2935,7 @@ async function terminalizeIssuerDiscoveryBacklog(
     updated_at: nowIso,
   }).eq("id", row.id).eq("status", "failed")
     .eq("failure_category", "issuer_discovery_quarantined")
+    .contains("evidence", { quarantine_fence: fence })
     .select("id,failure_category").maybeSingle();
   if (cleared.error) throw cleared.error;
   if (!cleared.data) throw new Error("issuer_discovery_quarantine_race");
@@ -2945,37 +3026,64 @@ function issuerDiscoveryIssuerPattern(issuer: string): string {
 async function loadStableIssuerDiscoveryRows(
   db: UntypedSupabaseClient,
   issuer: string,
+  expectedAnchorKey: string,
+  budget: IssuerDiscoveryQuarantineBudget,
   pageSize = 100,
-  maxRows = 1_000,
 ): Promise<{
   rows: Array<Record<string, any>>;
   complete: boolean;
 }> {
   const rows: Array<Record<string, any>> = [];
-  for (let offset = 0; offset <= maxRows; offset += pageSize) {
-    const probe = offset === maxRows;
+  const issuerPattern = issuerDiscoveryIssuerPattern(issuer);
+  const normalizedIssuer = normalizedIssuerKey(issuer);
+  for (let offset = 0;; offset += pageSize) {
+    if (budget.nowMs() >= budget.deadlineAt) {
+      return { rows, complete: false };
+    }
     const query = await db.from("card_discovery_jobs")
       .select(
         "id,issuer,evidence,status,failure_category,updated_at,next_retry_at,attempt_count,dedupe_key,created_at,review_item_id",
       )
       .eq("discovery_source", "issuer_crawl")
-      .ilike("issuer", issuerDiscoveryIssuerPattern(issuer))
       .is("user_id", null)
-      .contains("evidence", { kind: "issuer_directory_anchor" })
+      .or(
+        `issuer.ilike."${issuerPattern}",evidence->>issuer.ilike."${issuerPattern}",dedupe_key.eq.${expectedAnchorKey}`,
+      )
       .order("created_at", { ascending: true })
       .order("id", { ascending: true })
-      .range(offset, probe ? offset : offset + pageSize - 1);
+      .range(offset, offset + pageSize - 1);
     if (query.error) throw query.error;
     const pageRows = (query.data ?? []) as Array<Record<string, any>>;
-    if (probe) return { rows, complete: pageRows.length === 0 };
     rows.push(
-      ...pageRows.filter((row) =>
-        normalizedIssuerKey(row.issuer) === normalizedIssuerKey(issuer)
-      ),
+      ...pageRows.filter((row) => {
+        const evidence = issuerRunEvidence(row);
+        return normalizedIssuerKey(row.issuer) === normalizedIssuer ||
+          normalizedIssuerKey(evidence.issuer) === normalizedIssuer ||
+          String(row.dedupe_key ?? "") === expectedAnchorKey;
+      }),
     );
     if (pageRows.length < pageSize) return { rows, complete: true };
   }
-  return { rows, complete: false };
+}
+
+function issuerQuarantineServiceReview(row: Record<string, any>): boolean {
+  const evidence = issuerRunEvidence(row);
+  const observation = evidence.source_observation;
+  return typeof row.review_item_id === "string" &&
+    row.review_item_id.length > 0 &&
+    observation !== null && typeof observation === "object" &&
+    !Array.isArray(observation) &&
+    String((observation as Record<string, unknown>).classification ?? "") ===
+      "issuer_discovery_quarantine";
+}
+
+function issuerCandidateOutcomeRow(row: Record<string, any>): boolean {
+  const evidence = issuerRunEvidence(row);
+  return String(evidence.kind ?? "") === "issuer_candidate_outcome" &&
+    String(row.status ?? "") === "resolved" &&
+    Number(row.attempt_count ?? -1) === 0 &&
+    !evidence.issuer && !evidence.canonical_url && !evidence.run_date &&
+    !evidence.lease_token;
 }
 
 async function loadLegacyIssuerDiscoveryRows(
@@ -3224,13 +3332,25 @@ export async function claimIssuerDiscoveryRun(
     if (existing.error) throw existing.error;
     return existing.data ?? null;
   };
-  const stableScan = await loadStableIssuerDiscoveryRows(db, selected.issuer);
+  const stableScan = await loadStableIssuerDiscoveryRows(
+    db,
+    selected.issuer,
+    key,
+    budget,
+  );
   if (!stableScan.complete) {
     throw new Error("issuer_discovery_stable_scan_exhausted");
   }
   const corruptStableRows: Array<Record<string, any>> = [];
   const validStableRows: Array<Record<string, any>> = [];
-  for (const row of stableScan.rows) {
+  const stableRows = stableScan.rows.filter((row) => {
+    if (
+      issuerQuarantineServiceReview(row) || issuerCandidateOutcomeRow(row)
+    ) return false;
+    return String(row.dedupe_key ?? "") === key ||
+      String(issuerRunEvidence(row).kind ?? "") !== "issuer_directory_run";
+  });
+  for (const row of stableRows) {
     if (await issuerAnchorIdentityValid(row, selected)) {
       validStableRows.push(row);
     } else {

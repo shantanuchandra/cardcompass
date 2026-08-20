@@ -7,6 +7,34 @@ import '../../../core/theme/brand_tokens.dart';
 import '../data/admin_catalog_repository.dart';
 import '../widgets/benefit_enrichment_review_panel.dart';
 
+typedef CatalogIdentityReviewInvoker =
+    Future<Map<String, dynamic>> Function(Map<String, dynamic> body);
+
+Future<List<Map<String, dynamic>>> loadCatalogIdentityReviewItems({
+  required String status,
+  required CatalogIdentityReviewInvoker invoke,
+}) async {
+  List<Map<String, dynamic>> parse(Map<String, dynamic> response) =>
+      (response['items'] as List? ?? const [])
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(growable: false);
+
+  final general = parse(await invoke({'action': 'list', 'status': status}));
+  final quarantines = parse(
+    await invoke({
+      'action': 'issuer-quarantine-list',
+      'status': status,
+      'limit': 25,
+    }),
+  );
+  final seen = <Object?>{};
+  return [
+    ...quarantines,
+    ...general,
+  ].where((item) => seen.add(item['id'])).toList(growable: false);
+}
+
 Future<void> requestAdminReauthorization({
   required Future<void> Function() clearSession,
   required VoidCallback showLogin,
@@ -73,11 +101,7 @@ class _CardCatalogReviewScreenState extends State<CardCatalogReviewScreen> {
   }
 
   Future<List<Map<String, dynamic>>> _load() async {
-    final data = await _invoke({'action': 'list', 'status': _status});
-    return (data['items'] as List? ?? const [])
-        .whereType<Map>()
-        .map((item) => Map<String, dynamic>.from(item))
-        .toList(growable: false);
+    return loadCatalogIdentityReviewItems(status: _status, invoke: _invoke);
   }
 
   void _reload() => setState(() => _items = _load());

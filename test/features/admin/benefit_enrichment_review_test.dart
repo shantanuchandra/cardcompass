@@ -302,6 +302,73 @@ void main() {
     },
   );
 
+  testWidgets(
+    'identity loader explicitly merges newest quarantine beyond one hundred older reviews',
+    (tester) async {
+      final calls = <Map<String, dynamic>>[];
+      final older = List.generate(
+        100,
+        (index) => <String, dynamic>{
+          'id': 'older-$index',
+          'status': 'pending',
+          'proposed_fields': const {'cardName': 'Older review'},
+        },
+      );
+      final newest = <String, dynamic>{
+        'id': 'newest-quarantine',
+        'status': 'pending',
+        'proposed_fields': const {
+          'source_observation': {
+            'kind': 'issuer_discovery_quarantine',
+            'classification': 'issuer_discovery_quarantine',
+            'anchor_job_id': 'anchor-newest',
+            'issuer': 'Axis Bank',
+            'reason': 'resume_attempts_exhausted',
+            'retryable': true,
+            'retryability_reason': 'attempt_budget_reset_allowed',
+          },
+        },
+      };
+      final items = await loadCatalogIdentityReviewItems(
+        status: 'pending',
+        invoke: (body) async {
+          calls.add(Map<String, dynamic>.from(body));
+          return body['action'] == 'issuer-quarantine-list'
+              ? {
+                  'items': [newest],
+                  'next_cursor': null,
+                }
+              : {'items': older};
+        },
+      );
+
+      expect(calls.map((call) => call['action']), [
+        'list',
+        'issuer-quarantine-list',
+      ]);
+      expect(items.length, 101);
+      expect(items.first['id'], 'newest-quarantine');
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: CatalogIdentityReviewCard(
+              item: items.first,
+              onApprove: _noop,
+              onEditApprove: _noop,
+              onMerge: _noopValue,
+              onRetry: _noop,
+              onReject: _noop,
+            ),
+          ),
+        ),
+      );
+      expect(find.text('Issuer discovery quarantine'), findsOneWidget);
+      expect(find.text('Retry issuer discovery'), findsOneWidget);
+      expect(find.text('Keep quarantined'), findsOneWidget);
+    },
+  );
+
   test('issuer quarantine action requests require a nonempty reason', () {
     expect(
       () => catalogIdentityReviewActionBody(

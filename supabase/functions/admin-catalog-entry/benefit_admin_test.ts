@@ -412,6 +412,157 @@ Deno.test("listing pending catalog reviews is read-only", async () => {
   }
 });
 
+Deno.test("issuer quarantine listing is newest-first filtered and cursor-paginated", async () => {
+  const handle = await handler();
+  const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
+  Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", "admin@example.com");
+  const rows = [
+    {
+      id: "33333333-3333-4333-8333-333333333333",
+      status: "pending",
+      created_at: "2026-08-20T00:00:03+00:00",
+      proposed_fields: {
+        source_observation: {
+          classification: "issuer_discovery_quarantine",
+        },
+      },
+    },
+    {
+      id: "22222222-2222-4222-8222-222222222222",
+      status: "pending",
+      created_at: "2026-08-20T00:00:02+00:00",
+      proposed_fields: {
+        source_observation: {
+          classification: "issuer_discovery_quarantine",
+        },
+      },
+    },
+    {
+      id: "11111111-1111-4111-8111-111111111111",
+      status: "pending",
+      created_at: "2026-08-20T00:00:01+00:00",
+      proposed_fields: {
+        source_observation: {
+          classification: "issuer_discovery_quarantine",
+        },
+      },
+    },
+  ];
+  const queryRecords: Array<{
+    contains?: Record<string, unknown>;
+    cursor?: string;
+    limit?: number;
+    orders?: Array<{ column: string; ascending: boolean }>;
+  }> = [];
+  const serviceDb = {
+    rpc() {
+      throw new Error("quarantine list must remain read-only");
+    },
+    from() {
+      const record: {
+        contains?: Record<string, unknown>;
+        cursor?: string;
+        limit?: number;
+        orders?: Array<{ column: string; ascending: boolean }>;
+      } = { orders: [] };
+      queryRecords.push(record);
+      const query = {
+        select() {
+          return query;
+        },
+        order(column: string, options?: { ascending?: boolean }) {
+          record.orders?.push({
+            column,
+            ascending: options?.ascending !== false,
+          });
+          return query;
+        },
+        eq() {
+          return query;
+        },
+        contains(_column: string, value: Record<string, unknown>) {
+          record.contains = value;
+          return query;
+        },
+        or(value: string) {
+          record.cursor = value;
+          return query;
+        },
+        async limit(value: number) {
+          record.limit = value;
+          return {
+            data: record.cursor ? rows.slice(2) : rows,
+            error: null,
+          };
+        },
+      };
+      return query;
+    },
+  };
+  const auth = authenticatedDb({
+    id: "admin-1",
+    email: "admin@example.com",
+    email_confirmed_at: "2026-08-17T00:00:00.000Z",
+  });
+  try {
+    const firstResponse = await handle(
+      request({
+        action: "issuer-quarantine-list",
+        status: "pending",
+        limit: 2,
+      }),
+      serviceDb,
+      auth,
+    );
+    const first = await firstResponse.json();
+    assert(firstResponse.status === 200, "quarantine list action failed");
+    assert(
+      first.items.length === 2 && first.items[0].id === rows[0].id,
+      "newest quarantine work was not returned first",
+    );
+    assert(
+      typeof first.next_cursor === "string" && first.next_cursor.length > 0,
+      "bounded quarantine page omitted its cursor",
+    );
+    assert(
+      JSON.stringify(queryRecords[0].contains).includes(
+        "issuer_discovery_quarantine",
+      ) && queryRecords[0].limit === 3 &&
+        JSON.stringify(queryRecords[0].orders) === JSON.stringify([
+            { column: "created_at", ascending: false },
+            { column: "id", ascending: false },
+          ]),
+      "quarantine classification or bounded lookahead was not applied",
+    );
+
+    const secondResponse = await handle(
+      request({
+        action: "issuer-quarantine-list",
+        status: "pending",
+        limit: 2,
+        cursor: first.next_cursor,
+      }),
+      serviceDb,
+      auth,
+    );
+    const second = await secondResponse.json();
+    assert(
+      secondResponse.status === 200 && second.items.length === 1 &&
+        second.items[0].id === rows[2].id,
+      "cursor did not continue after the prior quarantine page",
+    );
+    assert(
+      typeof queryRecords[1].cursor === "string" &&
+        queryRecords[1].cursor.length > 0,
+      "cursor was not enforced by the database query",
+    );
+  } finally {
+    if (originalAllowlist === undefined) {
+      Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
+    } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
+  }
+});
+
 Deno.test("identity admin actions reject immutable client overrides and allow only edit catalog fields", async () => {
   const handle = await handler();
   const originalAllowlist = Deno.env.get("CARD_CATALOG_ADMIN_EMAILS");
