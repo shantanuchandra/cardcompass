@@ -58,6 +58,14 @@ async function sha256Fixture(value: unknown): Promise<string> {
     .map((part) => part.toString(16).padStart(2, "0")).join("");
 }
 
+async function sha256TextFixture(value: string): Promise<string> {
+  const bytes = new TextEncoder().encode(value);
+  return Array.from(
+    new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
+  )
+    .map((part) => part.toString(16).padStart(2, "0")).join("");
+}
+
 Deno.test("pilot replay canonicalizes the same immutable documents twice without a second fetch", async () => {
   const compute = task10BatchModule.computePilotReplayEvidence;
   assert(typeof compute === "function", "computed pilot replay is missing");
@@ -196,6 +204,13 @@ Deno.test("pilot safety validation is an explicit pre-write boundary", () => {
       { source_excerpt: "Authorization: Bearer abcdefgh.secret" },
       { evidence: { customer_email: "person@example.com" } },
       { source_excerpt: encodeURIComponent("access_token=abcdefgh-secret") },
+      {
+        replay_input: {
+          public_text: encodeURIComponent(
+            "customer_email=person@example.com",
+          ),
+        },
+      },
     ]
   ) {
     let error: unknown;
@@ -301,6 +316,48 @@ Deno.test("pilot replay rejects retained input overflow instead of silently trun
   );
 });
 
+Deno.test("pilot replay retains bounded plain issuer text larger than a log field", async () => {
+  const compute = task10BatchModule.computePilotReplayEvidence;
+  assert(typeof compute === "function", "computed pilot replay is missing");
+  const attempts = [{
+    url: "https://issuer.example/card",
+    role: "primary",
+    status: "success",
+    httpStatus: 200,
+    contentHash: "a".repeat(64),
+    finalResourceIdentityHash: sourceIdentityDigest(
+      "https://issuer.example/card",
+    ),
+    attemptedAt: "2026-08-20T00:00:00.000Z",
+    logicalSourceKey: sourceIdentityDigest("https://issuer.example/card"),
+  }];
+  const longPublicText = `${"Issuer terms and conditions. ".repeat(400)}
+Get 10% cashback on dining spends.`;
+  const replay = await compute({
+    jobId: "11111111-1111-4111-8111-111111111111",
+    cardId: "22222222-2222-4222-8222-222222222222",
+    parserVersion: "benefits-v6",
+    runMode: "pilot",
+    sourceManifestHash: await computeSourceManifestHash(attempts as never),
+    expectedRequiredSourceKeys: [],
+    requiredSourceSelectionOverflow: false,
+    attempts,
+    documents: [{
+      sourceUrl: "https://issuer.example/card",
+      text: longPublicText,
+      contentHash: "a".repeat(64),
+    }],
+  });
+  assert(
+    replay.proposals.length === 1 &&
+      new TextEncoder().encode(
+          (replay as any).replayInput.documents[0]
+            .public_text,
+        ).byteLength > 8_000,
+    "bounded public replay text was treated like a truncated log field",
+  );
+});
+
 type Task10BatchModule = typeof batchModule & {
   computePilotReplayEvidence?: (input: Record<string, unknown>) => Promise<{
     proposals: Array<Record<string, unknown>>;
@@ -338,6 +395,7 @@ const task10BatchModule = batchModule as Task10BatchModule;
 
 async function withComputedPilotEvidence<T extends Record<string, any>>(
   row: T,
+  options: { proposalCount?: 0 | 1 } | number = {},
 ): Promise<T> {
   const fixtureIndex = Number(String(row.id).match(/(\d+)$/)?.[1] ?? 0);
   const observedAt = "2026-08-20T00:00:00.000Z";
@@ -359,11 +417,16 @@ async function withComputedPilotEvidence<T extends Record<string, any>>(
   const disposition = reviewed || row.status === "staged"
     ? "material"
     : "no_change";
-  const proposalCount = disposition === "material" ? 1 : 0;
+  const proposalCount =
+    (typeof options === "object" ? options.proposalCount : undefined) ??
+      (disposition === "material" ? 1 : 0);
   const stagingId = disposition === "material"
     ? `33333333-3333-4333-8333-${String(fixtureIndex + 1).padStart(12, "0")}`
     : null;
   const stagingContentHash = disposition === "material" ? "f".repeat(64) : null;
+  const retainedText = proposalCount === 0
+    ? "No qualifying card benefits are listed."
+    : "Get 10% cashback on dining spends.";
   const replay = await task10BatchModule.computePilotReplayEvidence!({
     jobId: String(row.id),
     cardId: row.card_id ?? `card-${row.id}`,
@@ -376,11 +439,32 @@ async function withComputedPilotEvidence<T extends Record<string, any>>(
     documents: [{
       sourceUrl: "https://issuer.example/card",
       finalUrl: "https://issuer.example/card",
-      text: "retained pilot fixture",
+      text: retainedText,
       contentHash: "9".repeat(64),
     }],
-    extract: async () => proposalCount === 0 ? [] : [{ fixture: "proposal" }],
+    ...(proposalCount === 0 ? { extract: async () => [] } : {}),
   });
+  const canonicalBenefitHash = await sha256TextFixture(
+    replay.proposals.map((proposal) =>
+      "conditionHash" in proposal ? proposal.conditionHash : proposal.dedupeKey
+    ).sort().join("\n"),
+  );
+  const replayInput = (replay as Record<string, any>).replayInput ?? {
+    version: 1,
+    documents: [{
+      requested_source_url: "https://issuer.example/card",
+      final_source_url: "https://issuer.example/card",
+      requested_resource_identity_hash: sourceIdentityDigest(
+        "https://issuer.example/card",
+      ),
+      final_resource_identity_hash: sourceIdentityDigest(
+        "https://issuer.example/card",
+      ),
+      content_hash: "9".repeat(64),
+      public_text: retainedText,
+    }],
+    required_resources: [],
+  };
   const summary = {
     unsafe_mutation_count: 0,
     idempotency_passed: true,
@@ -433,6 +517,7 @@ async function withComputedPilotEvidence<T extends Record<string, any>>(
           replay.requiredSourceSelectionOverflow,
         verification_envelope: replay.verificationEnvelope,
         repeat_verification_envelope: replay.repeatVerificationEnvelope,
+        replay_input: replayInput,
         crawl_complete: true,
         suppressed_removal_count: 0,
         unsafe_mutation_count: 0,
@@ -445,6 +530,10 @@ async function withComputedPilotEvidence<T extends Record<string, any>>(
         catalog_identity_conflict_count: 0,
         proposal_count: proposalCount,
         proposal_disposition: disposition,
+        canonical_benefit_hash: canonicalBenefitHash,
+        previous_canonical_benefit_hash: disposition === "no_change"
+          ? canonicalBenefitHash
+          : null,
         staging_id: stagingId,
         staging_content_hash: stagingContentHash,
       },
@@ -452,22 +541,52 @@ async function withComputedPilotEvidence<T extends Record<string, any>>(
   };
 }
 
-function pilotStagingRows(rows: Array<Record<string, any>>) {
+function pilotStagingRows(
+  rows: Array<Record<string, any>>,
+): Array<Record<string, any>> {
   return rows.flatMap((row) => {
     const evidence = row.normalized_fields?.pilot_evidence;
     if (typeof evidence?.staging_id !== "string") return [];
     const summary = row.result_summary ?? {};
     let proposalIndex = 0;
     let removalIndex = 0;
+    const proposals = evidence.verification_envelope.canonical_proposals;
     const decisionsFor = (action: string, value: unknown) =>
       Number.isInteger(value) && Number(value) >= 0 && Number(value) <= 64
-        ? Array.from({ length: Number(value) }, () => ({
-          action,
-          ...(action === "approve" || action === "edit" || action === "reject"
-            ? { proposal_index: proposalIndex++ }
-            : { benefit_id: `removed-${removalIndex++}` }),
-          reviewed_at: "2026-08-20T00:01:00.000Z",
-        }))
+        ? Array.from({ length: Number(value) }, () => {
+          if (action === "approve" || action === "edit") {
+            const index = proposalIndex++;
+            const proposal = proposals[index];
+            return {
+              action,
+              proposal_index: index,
+              benefit_id: `44444444-4444-4444-8444-${
+                String(index + 1).padStart(12, "0")
+              }`,
+              dedupe_key: proposal?.dedupeKey,
+              condition_hash: proposal?.conditionHash,
+              reviewed_at: "2026-08-20 00:01:00.123456+00",
+            };
+          }
+          if (action === "reject") {
+            const index = proposalIndex++;
+            const proposal = proposals[index];
+            return {
+              action,
+              proposal_index: index,
+              dedupe_key: proposal?.dedupeKey,
+              condition_hash: proposal?.conditionHash,
+              reviewed_at: "2026-08-20 00:01:00.123456+00",
+            };
+          }
+          return {
+            action,
+            benefit_id: `55555555-5555-4555-8555-${
+              String(++removalIndex).padStart(12, "0")
+            }`,
+            reviewed_at: "2026-08-20 00:01:00.123456+00",
+          };
+        })
         : [];
     const decisions = [
       ...decisionsFor("approve", summary.approved_count ?? 0),
@@ -484,13 +603,16 @@ function pilotStagingRows(rows: Array<Record<string, any>>) {
       benefit_decisions: decisions,
       extracted_data: {
         proposals: structuredClone(
-          evidence.verification_envelope.canonical_proposals,
+          proposals,
         ),
         retained_documents: structuredClone(
           evidence.verification_envelope.retained_documents,
         ),
         ...(row.status === "completed"
           ? {
+            review_pre_live_state: structuredClone(
+              evidence.live_state_after,
+            ),
             published_live_state: structuredClone(
               evidence.live_state_after,
             ),
@@ -500,7 +622,11 @@ function pilotStagingRows(rows: Array<Record<string, any>>) {
           possibleRemovals: Array.from(
             { length: removalIndex },
             (_, index) => ({
-              benefit: { benefitId: `removed-${index}` },
+              benefit: {
+                benefitId: `55555555-5555-4555-8555-${
+                  String(index + 1).padStart(12, "0")
+                }`,
+              },
             }),
           ),
         },
@@ -538,7 +664,7 @@ Deno.test("pilot live-state proof hashes the exact card, mapping, and mapped ben
       bank: "Fixture Bank",
       network: "Visa",
       annual_fee: 500,
-      updated_at: "2026-08-20T00:00:00.000Z",
+      updated_at: "2026-08-20 00:00:00.1234+00",
     }],
     card_benefit_mapping: [{
       mapping_id: "33333333-3333-4333-8333-333333333333",
@@ -586,11 +712,28 @@ Deno.test("pilot live-state proof hashes the exact card, mapping, and mapped ben
     },
   };
   const before = await capture(db, "22222222-2222-4222-8222-222222222222");
+  assert(
+    before.card_catalog.row_hash === await sha256Fixture([{
+      ...state.card_catalog[0],
+      updated_at: "2026-08-20T00:00:00.123400Z",
+    }]),
+    "Postgres timestamptz text did not hash like SQL UTC microseconds",
+  );
   const unchanged = await capture(
     db,
     "22222222-2222-4222-8222-222222222222",
   );
   assert(mutations(before, unchanged) === 0, "unchanged live state failed");
+  state.card_catalog[0].updated_at = "2026-08-20 00:00:00.1235+00";
+  const timestampMutation = await capture(
+    db,
+    "22222222-2222-4222-8222-222222222222",
+  );
+  assert(
+    before.card_catalog.row_hash !== timestampMutation.card_catalog.row_hash,
+    "microsecond timestamp mutation was erased",
+  );
+  state.card_catalog[0].updated_at = "2026-08-20 00:00:00.1234+00";
   state.benefits[0].value_config = { rate: 12 };
   const after = await capture(db, "22222222-2222-4222-8222-222222222222");
   assert(
@@ -986,6 +1129,92 @@ Deno.test("pilot no-change proof is bound to proposal disposition and absence of
     projected.computedEvidenceValid === false &&
       projected.successfulNoChange === false,
     "summary-only no-change bypassed an attached staging row",
+  );
+});
+
+Deno.test("pilot no-change is recomputed from canonical equality for nonempty and complete-zero sets", async () => {
+  const project = task10BatchModule.projectPilotJobEvidence;
+  assert(typeof project === "function", "pilot evidence boundary is missing");
+  const nonempty = await withComputedPilotEvidence({
+    id: "pilot-canonical-no-change-0",
+    card_id: "22222222-2222-4222-8222-222222222222",
+    run_mode: "pilot",
+    parser_version: "benefits-v6",
+    status: "completed",
+  }, { proposalCount: 1 }) as Record<string, any>;
+  const nonemptySnapshot = nonempty.normalized_fields.pilot_evidence
+    .live_state_after;
+  const validNonempty = await project(nonempty, {
+    currentLiveState: nonemptySnapshot,
+  });
+  assert(
+    validNonempty.computedEvidenceValid === true &&
+      validNonempty.successfulNoChange === true,
+    "unchanged nonempty canonical proposal set did not qualify as no-change",
+  );
+  const mismatched = structuredClone(nonempty);
+  mismatched.normalized_fields.pilot_evidence
+    .previous_canonical_benefit_hash = "0".repeat(64);
+  const forgedDisposition = await project(mismatched, {
+    currentLiveState: nonemptySnapshot,
+  });
+  assert(
+    forgedDisposition.computedEvidenceValid === false,
+    "caller-supplied no-change disposition bypassed canonical inequality",
+  );
+
+  const zero = await withComputedPilotEvidence({
+    id: "pilot-canonical-no-change-1",
+    card_id: "33333333-3333-4333-8333-333333333333",
+    run_mode: "pilot",
+    parser_version: "benefits-v6",
+    status: "completed",
+  }, { proposalCount: 0 }) as Record<string, any>;
+  zero.normalized_fields.pilot_evidence.previous_canonical_benefit_hash = null;
+  const validZero = await project(zero, {
+    currentLiveState: zero.normalized_fields.pilot_evidence.live_state_after,
+  });
+  assert(
+    validZero.computedEvidenceValid === true &&
+      validZero.successfulNoChange === true,
+    "complete canonical zero set did not qualify as no-change",
+  );
+});
+
+Deno.test("pilot qualification reruns the actual v6 extractor from bounded replay input", async () => {
+  const project = task10BatchModule.projectPilotJobEvidence;
+  assert(typeof project === "function", "pilot evidence boundary is missing");
+  const row = await withComputedPilotEvidence({
+    id: "pilot-rerun-input-0",
+    card_id: "22222222-2222-4222-8222-222222222222",
+    run_mode: "pilot",
+    parser_version: "benefits-v6",
+    status: "completed",
+  }, { proposalCount: 1 }) as Record<string, any>;
+  const currentLiveState =
+    row.normalized_fields.pilot_evidence.live_state_after;
+  const valid = await project(row, { currentLiveState });
+  assert(
+    valid.computedEvidenceValid === true,
+    "bounded canonical replay input could not reproduce authoritative proposals",
+  );
+
+  const changedInput = structuredClone(row);
+  changedInput.normalized_fields.pilot_evidence.replay_input.documents[0]
+    .public_text = "Get 1% cashback on fuel spends.";
+  const forgedEnvelope = await project(changedInput, { currentLiveState });
+  assert(
+    forgedEnvelope.computedEvidenceValid === false,
+    "equal self-attested envelope hashes bypassed the actual extractor rerun",
+  );
+
+  const omittedRequired = structuredClone(row);
+  omittedRequired.normalized_fields.pilot_evidence.replay_input
+    .required_resources = [{ logical_source_key: "7".repeat(64) }];
+  const omitted = await project(omittedRequired, { currentLiveState });
+  assert(
+    omitted.computedEvidenceValid === false,
+    "required replay resource omitted from attempts still qualified",
   );
 });
 
@@ -5405,6 +5634,7 @@ Deno.test("pilot review accepts PostgreSQL UTC microseconds for reviewed decisio
   const staging = pilotStagingRows([row])[0];
   for (
     const reviewedAt of [
+      "2026-08-20 00:01:00.123456+00",
       "2026-08-20T00:01:00.123456+00:00",
       "2026-08-20T00:01:00.123456Z",
     ]
@@ -5419,6 +5649,187 @@ Deno.test("pilot review accepts PostgreSQL UTC microseconds for reviewed decisio
       `valid PostgreSQL UTC review timestamp was rejected: ${reviewedAt}`,
     );
   }
+});
+
+Deno.test("pilot review validates real Task4 resolved proposal pairs and exact reject lanes", async () => {
+  const project = task10BatchModule.projectPilotJobEvidence;
+  assert(typeof project === "function", "pilot evidence boundary is missing");
+  const row = await withComputedPilotEvidence({
+    id: "pilot-sql-review-shape-0",
+    card_id: "22222222-2222-4222-8222-222222222222",
+    run_mode: "pilot",
+    parser_version: "benefits-v6",
+    status: "completed",
+    result_summary: {
+      review_status: "approved",
+      approved_count: 1,
+      retained_count: 0,
+      retired_count: 0,
+      rejected_count: 1,
+    },
+  }) as Record<string, any>;
+  const staging = pilotStagingRows([row])[0];
+  const proposal = staging.extracted_data.proposals[0];
+  staging.extracted_data.diff.possibleRemovals = [{
+    benefit: { benefitId: "55555555-5555-4555-8555-555555555555" },
+  }];
+  staging.benefit_decisions = [{
+    action: "approve",
+    proposal_index: 0,
+    benefit_id: "44444444-4444-4444-8444-444444444444",
+    dedupe_key: proposal.dedupeKey,
+    condition_hash: proposal.conditionHash,
+    reviewed_at: "2026-08-20 00:01:00.123456+00",
+  }, {
+    action: "reject",
+    benefit_id: "55555555-5555-4555-8555-555555555555",
+    reason: "retain existing terms",
+    reviewed_at: "2026-08-20 00:01:00.123456+00",
+  }];
+  const currentLiveState =
+    row.normalized_fields.pilot_evidence.live_state_after;
+  const valid = await project(row, { staging, currentLiveState });
+  assert(
+    valid.computedEvidenceValid === true,
+    "actual Task4 approve audit pair plus removal reject lane was rejected",
+  );
+
+  const editedPair = structuredClone(staging);
+  editedPair.benefit_decisions[0].action = "edit";
+  const validEdit = await project(row, {
+    staging: editedPair,
+    currentLiveState,
+  });
+  assert(
+    validEdit.computedEvidenceValid === true,
+    "actual Task4 edit audit pair was rejected",
+  );
+
+  const mismatchedPair = structuredClone(staging);
+  mismatchedPair.benefit_decisions[0].condition_hash = "0".repeat(64);
+  const mismatched = await project(row, {
+    staging: mismatchedPair,
+    currentLiveState,
+  });
+  assert(
+    mismatched.computedEvidenceValid === false,
+    "resolved benefit audit was not bound to its exact staged proposal",
+  );
+
+  const wrongLane = structuredClone(staging);
+  delete wrongLane.benefit_decisions[1].benefit_id;
+  wrongLane.benefit_decisions[1].proposal_index = 0;
+  const rejectedWrongLane = await project(row, {
+    staging: wrongLane,
+    currentLiveState,
+  });
+  assert(
+    rejectedWrongLane.computedEvidenceValid === false,
+    "removal reject was accepted in the proposal lane",
+  );
+
+  const malformedExtraTarget = structuredClone(staging);
+  malformedExtraTarget.benefit_decisions[1].proposal_index = "0";
+  const rejectedMalformedExtra = await project(row, {
+    staging: malformedExtraTarget,
+    currentLiveState,
+  });
+  assert(
+    rejectedMalformedExtra.computedEvidenceValid === false,
+    "a live reject accepted a malformed extra proposal target",
+  );
+});
+
+Deno.test("pilot keep-existing audit resolves the exact paired modification proposal", async () => {
+  const project = task10BatchModule.projectPilotJobEvidence;
+  assert(typeof project === "function", "pilot evidence boundary is missing");
+  const row = await withComputedPilotEvidence({
+    id: "pilot-sql-keep-shape-0",
+    card_id: "22222222-2222-4222-8222-222222222222",
+    run_mode: "pilot",
+    parser_version: "benefits-v6",
+    status: "completed",
+    result_summary: {
+      review_status: "approved",
+      approved_count: 0,
+      retained_count: 1,
+      retired_count: 0,
+      rejected_count: 0,
+    },
+  }) as Record<string, any>;
+  const staging = pilotStagingRows([row])[0];
+  const liveBenefitId = "55555555-5555-4555-8555-555555555555";
+  staging.extracted_data.diff = {
+    modifications: [{
+      current: { liveBenefitId },
+      proposed: structuredClone(staging.extracted_data.proposals[0]),
+    }],
+    possibleRemovals: [],
+  };
+  staging.benefit_decisions = [{
+    action: "keep_existing",
+    benefit_id: liveBenefitId,
+    reviewed_at: "2026-08-20 00:01:00.123456+00",
+  }];
+  const projected = await project(row, {
+    staging,
+    currentLiveState: row.normalized_fields.pilot_evidence.live_state_after,
+  });
+  assert(
+    projected.computedEvidenceValid === true,
+    "keep-existing audit did not cover its exact paired modification proposal",
+  );
+});
+
+Deno.test("pilot review binds extraction state to Task4 pre-mutation and reviewed post-state", async () => {
+  const project = task10BatchModule.projectPilotJobEvidence;
+  assert(typeof project === "function", "pilot evidence boundary is missing");
+  const row = await withComputedPilotEvidence({
+    id: "pilot-review-transaction-state-0",
+    card_id: "22222222-2222-4222-8222-222222222222",
+    run_mode: "pilot",
+    parser_version: "benefits-v6",
+    status: "completed",
+    result_summary: {
+      review_status: "approved",
+      approved_count: 1,
+      retained_count: 0,
+      retired_count: 0,
+      rejected_count: 0,
+    },
+  }) as Record<string, any>;
+  const staging = pilotStagingRows([row])[0];
+  const preMutation = row.normalized_fields.pilot_evidence.live_state_after;
+  const reviewedPostState = structuredClone(preMutation);
+  reviewedPostState.benefits = { count: 1, row_hash: "a".repeat(64) };
+  reviewedPostState.card_benefit_mapping = {
+    count: 1,
+    row_hash: "b".repeat(64),
+  };
+  staging.extracted_data.review_pre_live_state = structuredClone(preMutation);
+  staging.extracted_data.published_live_state = structuredClone(
+    reviewedPostState,
+  );
+  const valid = await project(row, {
+    staging,
+    currentLiveState: reviewedPostState,
+  });
+  assert(
+    valid.computedEvidenceValid === true,
+    "expected Task4 reviewed mutation did not qualify",
+  );
+
+  const unrelatedMutation = structuredClone(staging);
+  unrelatedMutation.extracted_data.review_pre_live_state.card_catalog.row_hash =
+    "0".repeat(64);
+  const raced = await project(row, {
+    staging: unrelatedMutation,
+    currentLiveState: reviewedPostState,
+  });
+  assert(
+    raced.computedEvidenceValid === false,
+    "unrelated pre-review live-state mutation qualified",
+  );
 });
 
 Deno.test("pilot review requires exactly one known decision for every staged target", async () => {

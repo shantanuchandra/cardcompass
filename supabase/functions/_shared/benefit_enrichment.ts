@@ -316,6 +316,11 @@ function readableText(value: string): string {
     .trim();
 }
 
+/** Exact privacy-redacted plain text retained as the v6 pilot replay input. */
+export function canonicalBenefitReplayText(value: string): string {
+  return readableText(value);
+}
+
 function decimal(value: string | undefined): number | undefined {
   if (!value) return undefined;
   const parsed = Number(value.replace(/,/g, ""));
@@ -1123,7 +1128,10 @@ export async function extractGroundedBenefitsV6(
         finalUrl,
         text: document.text,
         contentHash: document.contentHash,
-        sourceIdentity: await sha256SourceIdentity(requestedUrl),
+        sourceIdentity:
+          /^[0-9a-f]{64}$/.test(document.requestedResourceIdentityHash ?? "")
+            ? document.requestedResourceIdentityHash!
+            : await sha256SourceIdentity(requestedUrl),
       };
     },
   ))).filter((document): document is TrustedBenefitDocument =>

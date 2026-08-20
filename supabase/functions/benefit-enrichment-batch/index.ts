@@ -5,6 +5,7 @@ import {
   type BenefitComparisonProposal,
   type BenefitDiff,
   type BenefitDocument,
+  canonicalBenefitReplayText,
   currentBenefitProposal,
   diffBenefits,
   extractGroundedBenefits,
@@ -412,6 +413,7 @@ const pilotEvidenceKeys = new Set([
   "required_source_selection_overflow",
   "verification_envelope",
   "repeat_verification_envelope",
+  "replay_input",
   "crawl_complete",
   "suppressed_removal_count",
   "unsafe_mutation_count",
@@ -424,6 +426,8 @@ const pilotEvidenceKeys = new Set([
   "catalog_identity_conflict_count",
   "proposal_count",
   "proposal_disposition",
+  "canonical_benefit_hash",
+  "previous_canonical_benefit_hash",
   "staging_id",
   "staging_content_hash",
 ]);
@@ -438,6 +442,7 @@ const pilotVerificationEnvelopeKeys = new Set([
   "retained_documents",
   "expected_required_source_keys",
   "required_source_selection_overflow",
+  "replay_input_hash",
   "canonical_proposals",
 ]);
 
@@ -521,6 +526,7 @@ function validPilotVerificationEnvelope(
     expectedRequiredSourceKeys: readonly string[];
     requiredSourceSelectionOverflow: boolean;
     retainedDocuments: readonly Record<string, unknown>[];
+    replayInputHash: string;
   },
 ): value is Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -551,6 +557,7 @@ function validPilotVerificationEnvelope(
       stableCanonicalJson(binding.expectedRequiredSourceKeys) &&
     envelope.required_source_selection_overflow ===
       binding.requiredSourceSelectionOverflow &&
+    envelope.replay_input_hash === binding.replayInputHash &&
     !rawBodyWouldBeStored(envelope);
 }
 
@@ -564,15 +571,30 @@ type PilotStagingEvidence = {
   extracted_data?: unknown;
 };
 
-function reviewedDecisionInstant(value: unknown): number | null {
+function canonicalPilotUtcTimestamp(value: unknown): {
+  canonical: string;
+  instant: number;
+} | null {
   if (typeof value !== "string") return null;
   const match = value.match(
-    /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(?:Z|\+00:00)$/,
+    /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(?:Z|\+00(?::00)?)$/,
   );
   if (!match) return null;
-  const fractional = match[2] ? `.${match[2].slice(0, 3).padEnd(3, "0")}` : "";
-  const normalized = `${match[1]}${fractional}Z`;
-  const parsed = utcInstant(normalized);
+  const milliseconds = (match[3] ?? "").slice(0, 3).padEnd(3, "0");
+  const instant = Date.parse(`${match[1]}T${match[2]}.${milliseconds}Z`);
+  if (
+    !Number.isFinite(instant) ||
+    new Date(instant).toISOString().slice(0, 19) !==
+      `${match[1]}T${match[2]}`
+  ) return null;
+  return {
+    canonical: `${match[1]}T${match[2]}.${(match[3] ?? "").padEnd(6, "0")}Z`,
+    instant,
+  };
+}
+
+function reviewedDecisionInstant(value: unknown): number | null {
+  const parsed = canonicalPilotUtcTimestamp(value)?.instant ?? null;
   return parsed !== null && parsed >= Date.UTC(2000, 0, 1) &&
       parsed <= Date.now() + MAX_EVIDENCE_CLOCK_SKEW_MS
     ? parsed
@@ -612,7 +634,8 @@ function exactReviewedStagingCounts(
 ): ReturnType<typeof reviewedStagingCounts> {
   const counts = reviewedStagingCounts(decisions);
   if (!counts || !extracted || !Array.isArray(extracted.proposals)) return null;
-  const proposalTargets = extracted.proposals.map((_, index) =>
+  const stagedProposals = extracted.proposals as unknown[];
+  const proposalTargets = stagedProposals.map((_, index) =>
     `proposal:${index}`
   );
   const diff = extracted.diff && typeof extracted.diff === "object" &&
@@ -622,6 +645,36 @@ function exactReviewedStagingCounts(
   const removals = Array.isArray(diff.possibleRemovals)
     ? diff.possibleRemovals
     : [];
+  const pairedCurrentTargets = new Map<string, string>();
+  for (const laneName of ["modifications", "unchanged"] as const) {
+    const lane = Array.isArray(diff[laneName])
+      ? diff[laneName] as unknown[]
+      : [];
+    for (const item of lane) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+      const pair = item as Record<string, unknown>;
+      const current = pair.current && typeof pair.current === "object" &&
+          !Array.isArray(pair.current)
+        ? pair.current as Record<string, unknown>
+        : {};
+      const proposed = pair.proposed;
+      if (
+        !proposed || typeof proposed !== "object" || Array.isArray(proposed)
+      ) {
+        return null;
+      }
+      const liveId = current.liveBenefitId ?? current.benefitId ??
+        current.dedupeKey;
+      const proposalIndex = stagedProposals.findIndex((candidate) =>
+        stableCanonicalJson(candidate) === stableCanonicalJson(proposed)
+      );
+      if (
+        typeof liveId !== "string" || liveId.length === 0 ||
+        proposalIndex < 0 || pairedCurrentTargets.has(liveId)
+      ) return null;
+      pairedCurrentTargets.set(liveId, `proposal:${proposalIndex}`);
+    }
+  }
   const removalTargets = removals.map((item) => {
     const removal = item && typeof item === "object" && !Array.isArray(item)
       ? item as Record<string, unknown>
@@ -630,28 +683,72 @@ function exactReviewedStagingCounts(
         !Array.isArray(removal.benefit)
       ? removal.benefit as Record<string, unknown>
       : {};
-    const id = benefit.benefitId ?? benefit.dedupeKey;
+    const id = benefit.liveBenefitId ?? benefit.benefitId ?? benefit.dedupeKey;
     return typeof id === "string" && id.length > 0 ? `benefit:${id}` : "";
   });
   if (removalTargets.includes("")) return null;
   const expected = [...proposalTargets, ...removalTargets];
   const actual = (decisions as Record<string, unknown>[]).map((decision) => {
+    const hasProposalField = Object.hasOwn(decision, "proposal_index");
+    const hasBenefitField = Object.hasOwn(decision, "benefit_id");
     const hasProposal = Number.isInteger(decision.proposal_index) &&
       Number(decision.proposal_index) >= 0;
     const hasBenefit = typeof decision.benefit_id === "string" &&
-      decision.benefit_id.length > 0;
-    if (hasProposal === hasBenefit) return "";
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+        .test(
+          decision.benefit_id,
+        );
+    const action = String(decision.action);
+    if (action === "approve" || action === "edit") {
+      if (
+        !hasProposalField || !hasBenefitField || !hasProposal || !hasBenefit
+      ) return "";
+      const proposal = stagedProposals[Number(decision.proposal_index)];
+      if (
+        !proposal || typeof proposal !== "object" || Array.isArray(proposal)
+      ) {
+        return "";
+      }
+      const bound = proposal as Record<string, unknown>;
+      if (
+        decision.dedupe_key !== bound.dedupeKey ||
+        decision.condition_hash !== bound.conditionHash
+      ) return "";
+      return `proposal:${decision.proposal_index}`;
+    }
     if (
-      hasProposal &&
-      !["approve", "edit", "reject"].includes(String(decision.action))
-    ) return "";
+      action === "reject" && hasProposalField && !hasBenefitField &&
+      hasProposal
+    ) {
+      const proposal = stagedProposals[Number(decision.proposal_index)];
+      if (
+        !proposal || typeof proposal !== "object" || Array.isArray(proposal)
+      ) {
+        return "";
+      }
+      const bound = proposal as Record<string, unknown>;
+      return decision.dedupe_key === bound.dedupeKey &&
+          decision.condition_hash === bound.conditionHash
+        ? `proposal:${decision.proposal_index}`
+        : "";
+    }
     if (
-      hasBenefit &&
-      !["retire", "keep_existing", "reject"].includes(String(decision.action))
-    ) return "";
-    return hasProposal
-      ? `proposal:${decision.proposal_index}`
-      : `benefit:${decision.benefit_id}`;
+      action === "retire" && hasBenefitField && !hasProposalField &&
+      hasBenefit
+    ) {
+      const target = `benefit:${decision.benefit_id}`;
+      return removalTargets.includes(target) ? target : "";
+    }
+    if (
+      ["keep_existing", "reject"].includes(action) && hasBenefitField &&
+      !hasProposalField && hasBenefit
+    ) {
+      const removalTarget = `benefit:${decision.benefit_id}`;
+      return removalTargets.includes(removalTarget)
+        ? removalTarget
+        : pairedCurrentTargets.get(String(decision.benefit_id)) ?? "";
+    }
+    return "";
   });
   return actual.length === expected.length && !actual.includes("") &&
       new Set(actual).size === actual.length &&
@@ -740,11 +837,15 @@ export async function projectPilotJobEvidence(
   const requiredAttempts = sourceAttempts.filter((attempt) =>
     attempt.role === "required_supporting"
   );
-  const expectedRequiredSourceKeys = validPilotRequiredSourceKeys(
+  const persistedExpectedRequiredSourceKeys = validPilotRequiredSourceKeys(
       evidence?.expected_required_source_keys,
     )
     ? evidence!.expected_required_source_keys as string[]
     : null;
+  const replayInput = parsePilotReplayInput(evidence?.replay_input);
+  const replayExpectedRequiredSourceKeys = replayInput?.required_resources.map(
+    (resource) => resource.logical_source_key,
+  ) ?? null;
   const requiredSourceSelectionOverflow =
     typeof evidence?.required_source_selection_overflow === "boolean"
       ? evidence.required_source_selection_overflow
@@ -752,10 +853,13 @@ export async function projectPilotJobEvidence(
   const actualRequiredSourceKeys = pilotRequiredSourceKeys(sourceAttempts);
   const decisiveSourcesComplete = primaryAttempts.length === 1 &&
     decisivePilotSourceSucceeded(primaryAttempts[0]) &&
-    expectedRequiredSourceKeys !== null &&
-    stableCanonicalJson(expectedRequiredSourceKeys) ===
+    persistedExpectedRequiredSourceKeys !== null &&
+    replayExpectedRequiredSourceKeys !== null &&
+    stableCanonicalJson(persistedExpectedRequiredSourceKeys) ===
+      stableCanonicalJson(replayExpectedRequiredSourceKeys) &&
+    stableCanonicalJson(replayExpectedRequiredSourceKeys) ===
       stableCanonicalJson(actualRequiredSourceKeys) &&
-    expectedRequiredSourceKeys.every((key) => {
+    replayExpectedRequiredSourceKeys.every((key) => {
       const matches = requiredAttempts.filter((attempt) =>
         attempt.logicalSourceKey === key
       );
@@ -763,9 +867,8 @@ export async function projectPilotJobEvidence(
     }) &&
     requiredAttempts.every(decisivePilotSourceSucceeded) &&
     sourceAttempts.every((attempt) => attempt.attemptHistoryOverflow !== true);
-  const observedAt = typeof evidence?.observed_at === "string"
-    ? utcInstant(evidence.observed_at)
-    : null;
+  const observedAt = canonicalPilotUtcTimestamp(evidence?.observed_at)
+    ?.instant ?? null;
   const currentTime = Date.now();
   const observedAtValid = observedAt !== null &&
     observedAt >= Date.UTC(2000, 0, 1) &&
@@ -775,7 +878,7 @@ export async function projectPilotJobEvidence(
       attempt.attemptedAt,
       ...(attempt.attemptHistory ?? []).map((event) => event.attemptedAt),
     ]).every((timestamp) => {
-      const parsed = utcInstant(timestamp);
+      const parsed = canonicalPilotUtcTimestamp(timestamp)?.instant ?? null;
       return parsed !== null && parsed >= Date.UTC(2000, 0, 1) &&
         parsed <= currentTime + MAX_EVIDENCE_CLOCK_SKEW_MS &&
         parsed <= observedAt + MAX_EVIDENCE_CLOCK_SKEW_MS;
@@ -789,6 +892,9 @@ export async function projectPilotJobEvidence(
     : "";
   const verificationEnvelope = evidence?.verification_envelope;
   const repeatVerificationEnvelope = evidence?.repeat_verification_envelope;
+  const replayInputHash = replayInput
+    ? await sha256Text(stableCanonicalJson(replayInput))
+    : "";
   const retainedDocuments = verificationEnvelope &&
       typeof verificationEnvelope === "object" &&
       !Array.isArray(verificationEnvelope) &&
@@ -806,11 +912,13 @@ export async function projectPilotJobEvidence(
     runMode: evidence?.run_mode,
     sourceManifestHash: evidence?.source_manifest_hash,
     sourceAttempts,
-    expectedRequiredSourceKeys: expectedRequiredSourceKeys ?? [],
+    expectedRequiredSourceKeys: persistedExpectedRequiredSourceKeys ?? [],
     requiredSourceSelectionOverflow: requiredSourceSelectionOverflow === true,
     retainedDocuments,
+    replayInputHash,
   };
-  const envelopesValid = expectedRequiredSourceKeys !== null &&
+  const envelopesValid = persistedExpectedRequiredSourceKeys !== null &&
+    replayInput !== null && lowercaseSha256.test(replayInputHash) &&
     requiredSourceSelectionOverflow !== null &&
     validPilotVerificationEnvelope(
       verificationEnvelope,
@@ -825,11 +933,43 @@ export async function projectPilotJobEvidence(
   const recomputedRepeatCanonicalHash = envelopesValid
     ? await sha256Text(stableCanonicalJson(repeatVerificationEnvelope))
     : "";
+  let independentlyRecomputedReplay:
+    | Awaited<ReturnType<typeof computePilotReplayEvidence>>
+    | null = null;
+  if (
+    replayInput && persistedExpectedRequiredSourceKeys &&
+    requiredSourceSelectionOverflow !== null &&
+    typeof evidence?.source_manifest_hash === "string"
+  ) {
+    try {
+      independentlyRecomputedReplay = await computePilotReplayEvidence({
+        jobId: String(row.id),
+        cardId: String(row.card_id),
+        parserVersion: String(row.parser_version),
+        runMode: "pilot",
+        sourceManifestHash: evidence.source_manifest_hash,
+        expectedRequiredSourceKeys: replayExpectedRequiredSourceKeys ?? [],
+        requiredSourceSelectionOverflow,
+        attempts: sourceAttempts,
+        documents: pilotReplayDocuments(replayInput),
+      });
+    } catch {
+      independentlyRecomputedReplay = null;
+    }
+  }
   const replayPassed = lowercaseSha256.test(canonicalHash) &&
     lowercaseSha256.test(repeatCanonicalHash) &&
     canonicalHash === repeatCanonicalHash &&
     canonicalHash === recomputedCanonicalHash &&
-    repeatCanonicalHash === recomputedRepeatCanonicalHash;
+    repeatCanonicalHash === recomputedRepeatCanonicalHash &&
+    independentlyRecomputedReplay !== null &&
+    stableCanonicalJson(independentlyRecomputedReplay.replayInput) ===
+      stableCanonicalJson(replayInput) &&
+    stableCanonicalJson(independentlyRecomputedReplay.verificationEnvelope) ===
+      stableCanonicalJson(verificationEnvelope) &&
+    stableCanonicalJson(
+        independentlyRecomputedReplay.repeatVerificationEnvelope,
+      ) === stableCanonicalJson(repeatVerificationEnvelope);
   const mutationCount = before && after
     ? liveStateMutationCount(before, after)
     : -1;
@@ -862,6 +1002,38 @@ export async function projectPilotJobEvidence(
       Array.isArray(verificationEnvelope.canonical_proposals)
     ? verificationEnvelope.canonical_proposals.length
     : -1;
+  const proposalIdentityValues = envelopesValid &&
+      Array.isArray(verificationEnvelope.canonical_proposals)
+    ? verificationEnvelope.canonical_proposals.map((proposal: unknown) => {
+      if (
+        !proposal || typeof proposal !== "object" || Array.isArray(proposal)
+      ) {
+        return "";
+      }
+      const value = proposal as Record<string, unknown>;
+      return typeof value.conditionHash === "string"
+        ? value.conditionHash
+        : typeof value.dedupeKey === "string"
+        ? value.dedupeKey
+        : "";
+    })
+    : [];
+  const recomputedCanonicalBenefitHash =
+    proposalIdentityValues.length === envelopeProposalCount &&
+      !proposalIdentityValues.includes("")
+      ? await sha256Text([...proposalIdentityValues].sort().join("\n"))
+      : "";
+  const canonicalBenefitHash = typeof evidence?.canonical_benefit_hash ===
+        "string" && lowercaseSha256.test(evidence.canonical_benefit_hash)
+    ? evidence.canonical_benefit_hash
+    : null;
+  const previousCanonicalBenefitHash =
+    evidence?.previous_canonical_benefit_hash === null
+      ? null
+      : typeof evidence?.previous_canonical_benefit_hash === "string" &&
+          lowercaseSha256.test(evidence.previous_canonical_benefit_hash)
+      ? evidence.previous_canonical_benefit_hash
+      : undefined;
   const proposalDisposition = evidence?.proposal_disposition === "material" ||
       evidence?.proposal_disposition === "removal_review" ||
       evidence?.proposal_disposition === "no_change"
@@ -882,10 +1054,17 @@ export async function projectPilotJobEvidence(
     : undefined;
   const proposalBindingValid = proposalCount !== null &&
     proposalCount === envelopeProposalCount &&
+    canonicalBenefitHash === recomputedCanonicalBenefitHash &&
+    previousCanonicalBenefitHash !== undefined &&
     (promotedEvidence ||
       (summary.proposals === proposalCount &&
         summary.proposal_disposition === proposalDisposition));
   const noChangeBindingValid = proposalDisposition === "no_change" &&
+    canonicalBenefitHash !== null &&
+    (previousCanonicalBenefitHash === canonicalBenefitHash ||
+      (previousCanonicalBenefitHash === null && proposalCount === 0 &&
+        after?.benefits.count === 0 &&
+        after?.card_benefit_mapping.count === 0)) &&
     evidenceStagingId === null && evidenceStagingContentHash === null &&
     (promotedEvidence ||
       (row.staging_id == null && summary.successful_no_change === true &&
@@ -906,6 +1085,9 @@ export async function projectPilotJobEvidence(
   const publishedLiveState = validatedPilotSnapshot(
     stagingExtraction?.published_live_state,
   );
+  const reviewPreLiveState = validatedPilotSnapshot(
+    stagingExtraction?.review_pre_live_state,
+  );
   const stagingIdentityValid = proposalDisposition !== "no_change" &&
     typeof evidenceStagingId === "string" &&
     typeof evidenceStagingContentHash === "string" &&
@@ -920,6 +1102,17 @@ export async function projectPilotJobEvidence(
       (promotedEvidence || row.status === "completed")
     ? exactReviewedStagingCounts(staging?.benefit_decisions, stagingExtraction)
     : null;
+  const stagingReviewTimesValid = Array.isArray(staging?.benefit_decisions) &&
+    observedAt !== null && staging.benefit_decisions.every((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        return false;
+      }
+      const reviewedAt = reviewedDecisionInstant(
+        (item as Record<string, unknown>).reviewed_at,
+      );
+      return reviewedAt !== null &&
+        reviewedAt >= observedAt - MAX_EVIDENCE_CLOCK_SKEW_MS;
+    });
   const stagingReviewStatus = staging?.status === "approved" ||
       staging?.status === "rejected"
     ? staging.status
@@ -927,11 +1120,11 @@ export async function projectPilotJobEvidence(
   const stagingStateValid = noChangeBindingValid ||
     (promotedEvidence
       ? stagingIdentityValid && stagingReviewStatus !== null &&
-        stagingCounts !== null
+        stagingCounts !== null && stagingReviewTimesValid
       : stagingIdentityValid &&
         ((row.status === "staged" && staging?.status === "pending") ||
           (row.status === "completed" && staging?.status === reviewStatus &&
-            stagingCounts !== null &&
+            stagingCounts !== null && stagingReviewTimesValid &&
             stagingCounts.approved === count(summary.approved_count) &&
             stagingCounts.retained === count(summary.retained_count) &&
             stagingCounts.retired === count(summary.retired_count) &&
@@ -944,7 +1137,8 @@ export async function projectPilotJobEvidence(
       ? true
       : prePublicationState || proposalDisposition === "no_change"
       ? liveStateMutationCount(after, currentLiveState) === 0
-      : publishedLiveState !== null &&
+      : reviewPreLiveState !== null && publishedLiveState !== null &&
+        liveStateMutationCount(after, reviewPreLiveState) === 0 &&
         liveStateMutationCount(publishedLiveState, currentLiveState) === 0);
   const suppressedRemovalCount = count(evidence?.suppressed_removal_count);
   const conflictCount = count(evidence?.conflict_count);
@@ -1270,6 +1464,7 @@ export async function computeSourceManifestHash(
 }
 
 const lowercaseSha256 = /^[0-9a-f]{64}$/;
+const MAX_PILOT_REPLAY_TEXT_BYTES = 65_536;
 const pilotSnapshotTables = [
   "card_catalog",
   "benefits",
@@ -1374,6 +1569,150 @@ function pilotVerificationSourceAttempts(
   ) => structuredClone(attempt));
 }
 
+type PilotReplayInputDocument = {
+  requested_source_url: string;
+  final_source_url: string;
+  requested_resource_identity_hash: string;
+  final_resource_identity_hash: string;
+  content_hash: string;
+  public_text: string;
+};
+
+type PilotReplayInput = {
+  version: 1;
+  documents: PilotReplayInputDocument[];
+  required_resources: Array<{ logical_source_key: string }>;
+};
+
+function pilotReplayDocuments(input: PilotReplayInput): BenefitDocument[] {
+  return input.documents.map((document) => ({
+    sourceUrl: document.requested_source_url,
+    finalUrl: document.final_source_url,
+    requestedResourceIdentityHash: document.requested_resource_identity_hash,
+    finalResourceIdentityHash: document.final_resource_identity_hash,
+    contentHash: document.content_hash,
+    text: document.public_text,
+  }));
+}
+
+function parsePilotReplayInput(value: unknown): PilotReplayInput | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const input = value as Record<string, unknown>;
+  if (
+    Object.keys(input).length !== 3 || input.version !== 1 ||
+    !Array.isArray(input.documents) || input.documents.length < 1 ||
+    input.documents.length > 9 || !Array.isArray(input.required_resources) ||
+    input.required_resources.length > 8
+  ) return null;
+  const documentKeys = new Set([
+    "requested_source_url",
+    "final_source_url",
+    "requested_resource_identity_hash",
+    "final_resource_identity_hash",
+    "content_hash",
+    "public_text",
+  ]);
+  const documents: PilotReplayInputDocument[] = [];
+  for (const value of input.documents) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return null;
+    }
+    const document = value as Record<string, unknown>;
+    if (
+      Object.keys(document).length !== documentKeys.size ||
+      !Object.keys(document).every((key) => documentKeys.has(key)) ||
+      safeHttpsDisplayUrl(document.requested_source_url) !==
+        document.requested_source_url ||
+      safeHttpsDisplayUrl(document.final_source_url) !==
+        document.final_source_url ||
+      !lowercaseSha256.test(
+        String(document.requested_resource_identity_hash),
+      ) ||
+      !lowercaseSha256.test(String(document.final_resource_identity_hash)) ||
+      !lowercaseSha256.test(String(document.content_hash)) ||
+      typeof document.public_text !== "string" ||
+      document.public_text.length === 0 ||
+      new TextEncoder().encode(document.public_text).byteLength >
+        MAX_PILOT_REPLAY_TEXT_BYTES ||
+      redactSensitiveUrlsInText(document.public_text) !== document.public_text
+    ) return null;
+    documents.push(document as PilotReplayInputDocument);
+  }
+  const requiredResources: Array<{ logical_source_key: string }> = [];
+  for (const value of input.required_resources) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return null;
+    }
+    const resource = value as Record<string, unknown>;
+    if (
+      Object.keys(resource).length !== 1 ||
+      !lowercaseSha256.test(String(resource.logical_source_key))
+    ) return null;
+    requiredResources.push({
+      logical_source_key: String(resource.logical_source_key),
+    });
+  }
+  const requiredKeys = requiredResources.map((resource) =>
+    resource.logical_source_key
+  );
+  if (
+    new Set(requiredKeys).size !== requiredKeys.length ||
+    requiredKeys.some((key, index) =>
+      index > 0 && requiredKeys[index - 1] >= key
+    )
+  ) return null;
+  const parsed: PilotReplayInput = {
+    version: 1,
+    documents,
+    required_resources: requiredResources,
+  };
+  try {
+    assertSafePersistedEvidence(parsed);
+  } catch {
+    return null;
+  }
+  return parsed;
+}
+
+function buildPilotReplayInput(
+  documents: readonly BenefitDocument[],
+  expectedRequiredSourceKeys: readonly string[],
+): PilotReplayInput {
+  const value: PilotReplayInput = {
+    version: 1,
+    documents: documents.map((document) => {
+      const requestedSourceUrl = safeHttpsDisplayUrl(document.sourceUrl);
+      const finalSourceUrl = safeHttpsDisplayUrl(
+        document.finalUrl ?? document.sourceUrl,
+      );
+      const requestedResourceIdentityHash =
+        document.requestedResourceIdentityHash ??
+          sourceIdentityDigest(document.sourceUrl);
+      const finalResourceIdentityHash = document.finalResourceIdentityHash ??
+        sourceIdentityDigest(
+          document.finalUrl ?? document.sourceUrl,
+        );
+      if (!requestedSourceUrl || !finalSourceUrl) {
+        throw new Error("invalid_pilot_replay_input");
+      }
+      return {
+        requested_source_url: requestedSourceUrl,
+        final_source_url: finalSourceUrl,
+        requested_resource_identity_hash: requestedResourceIdentityHash,
+        final_resource_identity_hash: finalResourceIdentityHash,
+        content_hash: String(document.contentHash ?? ""),
+        public_text: canonicalBenefitReplayText(String(document.text)),
+      };
+    }),
+    required_resources: expectedRequiredSourceKeys.map((logicalSourceKey) => ({
+      logical_source_key: logicalSourceKey,
+    })),
+  };
+  const parsed = parsePilotReplayInput(value);
+  if (!parsed) throw new Error("unsafe_persisted_evidence");
+  return parsed;
+}
+
 export async function computePilotReplayEvidence(input: {
   jobId: string;
   cardId: string;
@@ -1397,6 +1736,7 @@ export async function computePilotReplayEvidence(input: {
   requiredSourceSelectionOverflow: boolean;
   sourceAttempts: SourceAttempt[];
   retainedDocuments: Record<string, unknown>[];
+  replayInput: PilotReplayInput;
 }> {
   if (
     input.parserVersion !== CURRENT_BENEFIT_PARSER_VERSION ||
@@ -1406,12 +1746,18 @@ export async function computePilotReplayEvidence(input: {
     typeof input.requiredSourceSelectionOverflow !== "boolean" ||
     input.attempts.length < 1 || input.attempts.length > 9
   ) throw new Error("invalid_pilot_replay_binding");
+  if (input.documents.length > 9) throw new Error("pilot_evidence_unbounded");
   const sourceAttempts = pilotVerificationSourceAttempts(input.attempts);
   const sourceManifestHash = await computeSourceManifestHash(sourceAttempts);
   if (sourceManifestHash !== input.sourceManifestHash) {
     throw new Error("pilot_source_manifest_mismatch");
   }
-  const retained = immutableDocumentSnapshot(input.documents);
+  const replayInput = buildPilotReplayInput(
+    input.documents,
+    input.expectedRequiredSourceKeys,
+  );
+  const replayInputHash = await sha256Text(stableCanonicalJson(replayInput));
+  const retained = immutableDocumentSnapshot(pilotReplayDocuments(replayInput));
   const retainedDocuments = await retainedDocumentEnvelope(retained);
   const extract = input.extract ?? extractGroundedBenefitsV6;
   const first = await extract(
@@ -1435,6 +1781,7 @@ export async function computePilotReplayEvidence(input: {
     retained_documents: retainedDocuments,
     expected_required_source_keys: expectedRequiredSourceKeys,
     required_source_selection_overflow: input.requiredSourceSelectionOverflow,
+    replay_input_hash: replayInputHash,
     canonical_proposals: proposals,
   });
   const verificationEnvelope = envelope(first);
@@ -1457,6 +1804,7 @@ export async function computePilotReplayEvidence(input: {
     requiredSourceSelectionOverflow: input.requiredSourceSelectionOverflow,
     sourceAttempts,
     retainedDocuments,
+    replayInput,
   };
 }
 
@@ -1472,10 +1820,10 @@ async function snapshotRows(
           ["created_at", "updated_at", "retired_at"].includes(key) &&
           typeof value === "string"
         ) {
-          const instant = utcInstant(value);
+          const timestamp = canonicalPilotUtcTimestamp(value);
           return [
             key,
-            instant === null ? value : new Date(instant).toISOString(),
+            timestamp === null ? value : timestamp.canonical,
           ];
         }
         return [key, value];
@@ -2720,6 +3068,26 @@ function sourceAttemptInputs(
 const forbiddenStoredEvidenceKey =
   /(?:^|_)(?:raw_?body|response_?body|page_?html|document_?text|statement|customer|email|phone|last_?four|card_?number|lease_?token|access_?token|refresh_?token|password|secret|credential)(?:_|$)/i;
 
+function safePilotReplayText(value: unknown): value is string {
+  if (
+    typeof value !== "string" || value.length === 0 ||
+    new TextEncoder().encode(value).byteLength > MAX_PILOT_REPLAY_TEXT_BYTES ||
+    redactSensitiveUrlsInText(value) !== value
+  ) return false;
+  let probe = value;
+  for (let pass = 0; pass < 3; pass += 1) {
+    try {
+      const decoded = decodeURIComponent(probe);
+      if (decoded === probe) break;
+      probe = decoded;
+    } catch {
+      break;
+    }
+  }
+  return !/(?:authorization\s*:\s*bearer|bearer\s+[a-z0-9._~-]{8,}|(?:access[_ -]?token|refresh[_ -]?token|lease[_ -]?token|password|secret|credential|customer[_ -]?(?:name|id|email|phone)|statement[_ -]?(?:id|header)|last[_ -]?four|card[_ -]?number)\s*[:=]\s*\S+)/i
+    .test(probe);
+}
+
 function rawBodyWouldBeStored(value: unknown, depth = 0): boolean {
   if (depth > 12) return true;
   if (typeof value === "string") {
@@ -2736,7 +3104,7 @@ function rawBodyWouldBeStored(value: unknown, depth = 0): boolean {
         break;
       }
     }
-    return /(?:authorization\s*:\s*bearer|bearer\s+[a-z0-9._~-]{8,}|(?:access[_ -]?token|refresh[_ -]?token|lease[_ -]?token|password|secret|credential)\s*[:=]\s*\S+)/i
+    return /(?:authorization\s*:\s*bearer|bearer\s+[a-z0-9._~-]{8,}|(?:access[_ -]?token|refresh[_ -]?token|lease[_ -]?token|password|secret|credential|customer[_ -]?(?:name|id|email|phone)|statement[_ -]?(?:id|header)|last[_ -]?four|card[_ -]?number)\s*[:=]\s*\S+)/i
       .test(probe);
   }
   if (Array.isArray(value)) {
@@ -2747,12 +3115,14 @@ function rawBodyWouldBeStored(value: unknown, depth = 0): boolean {
   const entries = Object.entries(value as Record<string, unknown>);
   return entries.length > 512 ||
     entries.some(([key, item]) =>
-      (key === "raw_body_stored"
-        ? item !== false
-        : key === "document_text_hash"
-        ? !(typeof item === "string" && lowercaseSha256.test(item))
-        : forbiddenStoredEvidenceKey.test(key)) ||
-      rawBodyWouldBeStored(item, depth + 1)
+      key === "public_text"
+        ? !safePilotReplayText(item)
+        : (key === "raw_body_stored"
+          ? item !== false
+          : key === "document_text_hash"
+          ? !(typeof item === "string" && lowercaseSha256.test(item))
+          : forbiddenStoredEvidenceKey.test(key)) ||
+          rawBodyWouldBeStored(item, depth + 1)
     );
 }
 
@@ -2799,6 +3169,7 @@ export async function processJob(
     | null = null;
   let pilotObservedAt: string | null = null;
   let pilotStagingContentHash: string | null = null;
+  let pilotPreviousCanonicalBenefitHash: string | null = null;
   let metricCatalogIdentityConflictCount = -1;
   const persistedArtifacts: unknown[] = [];
   let resultSummary: Record<string, unknown> = {
@@ -3291,6 +3662,9 @@ export async function processJob(
         ?.canonical_benefit_hash === "string"
       ? previousObservation.canonical_benefit_hash
       : null;
+    if (job.run_mode === "pilot") {
+      pilotPreviousCanonicalBenefitHash = previousCanonicalHash;
+    }
     const materialProposal = proposalDisposition === "removal_review" ||
       (proposalDisposition === "material" && shouldStageMaterialProposal(
         previousCanonicalHash,
@@ -3504,6 +3878,7 @@ export async function processJob(
           pilotReplay.requiredSourceSelectionOverflow,
         verification_envelope: pilotReplay.verificationEnvelope,
         repeat_verification_envelope: pilotReplay.repeatVerificationEnvelope,
+        replay_input: pilotReplay.replayInput,
         crawl_complete: metricCrawlComplete,
         suppressed_removal_count: metricSuppressedRemovalCount,
         unsafe_mutation_count: unsafeMutationCount,
@@ -3516,6 +3891,8 @@ export async function processJob(
         catalog_identity_conflict_count: metricCatalogIdentityConflictCount,
         proposal_count: resultSummary.proposals,
         proposal_disposition: resultSummary.proposal_disposition,
+        canonical_benefit_hash: resultSummary.canonical_benefit_hash,
+        previous_canonical_benefit_hash: pilotPreviousCanonicalBenefitHash,
         staging_id: stagingId,
         staging_content_hash: stagingId ? pilotStagingContentHash : null,
       };

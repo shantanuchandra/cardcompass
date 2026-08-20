@@ -301,19 +301,22 @@ test('pilot qualification atomically promotes the existing exact five identities
   assert.doesNotMatch(validateEnvelope, /role' = 'primary'\)[\s\S]{0,120}url'[\s\S]*_job\.canonical_url/i);
   assert.match(validateEnvelope, /required_source_selection_overflow[\s\S]*IS DISTINCT FROM 'false'::jsonb/i);
   assert.match(validateEnvelope, /expected_required_source_keys[\s\S]*required_supporting/i);
+  assert.match(validateEnvelope, /replay_input[\s\S]*replay_input_hash/i);
+  assert.match(validateEnvelope, /required_resources[\s\S]*logical_source_key/i);
   assert.match(validateEnvelope, /role' IN \('primary','required_supporting'\)[\s\S]*status' NOT IN \('success','not_modified'\)/i);
   assert.match(validateEnvelope, /attemptHistoryOverflow[\s\S]*= 'true'::jsonb/i);
   assert.match(validateEnvelope, /retained_documents[\s\S]*document_text_hash/i);
   assert.match(validateEnvelope, /verification_envelope\s+IS DISTINCT FROM repeat_verification_envelope/i);
   assert.match(validateEnvelope, /current_live_state[\s\S]*published_live_state/i);
-  assert.match(validateEnvelope, /proposal_index[\s\S]*benefit_id[\s\S]*HAVING count\(\*\) <> 1/i);
+  assert.match(validateEnvelope, /action' IN \('approve','edit'\)[\s\S]*proposal_index[\s\S]*benefit_id[\s\S]*dedupe_key[\s\S]*condition_hash/i);
+  assert.match(validateEnvelope, /review_pre_live_state[\s\S]*live_state_after/i);
   assert.match(validateEnvelope, /count\(\*\) FILTER \(WHERE value->>'action' IN \('approve','edit'\)\)/i);
   assert.match(sourceManifest, /attemptedAt/i);
   assert.match(sourceManifest, /attemptHistory/i);
   assert.match(sourceManifest, /string_agg[\s\S]*ORDER BY public\.canonical_json_text/i);
   assert.match(sourceIdentity, /regexp_match[\s\S]*extensions\.digest/i);
   assert.match(liveSnapshot, /card_catalog[\s\S]*card_benefit_mapping[\s\S]*public\.benefits/i);
-  assert.match(liveSnapshot, /canonical_card_enrichment_timestamp/i);
+  assert.match(liveSnapshot, /canonical_card_benefit_row_timestamp/i);
   assert.match(capturePublished, /OLD\.status IS DISTINCT FROM 'approved'/i);
   assert.match(capturePublished, /pilot_evidence'[\s\S]*staging_id/i);
   assert.match(sql, /CREATE TRIGGER capture_card_enrichment_pilot_publication_snapshot[\s\S]*BEFORE UPDATE OF status ON public\.card_benefits_staging/i);
@@ -330,8 +333,18 @@ test('pilot qualification atomically promotes the existing exact five identities
   );
   assert.match(
     promote,
-    /promoted_count = 5[\s\S]*status = 'completed'[\s\S]*NOT public\.card_enrichment_pilot_evidence_is_qualified[\s\S]*RAISE EXCEPTION 'pilot_not_qualified'/i,
+    /promoted_count = 5[\s\S]*NOT public\.card_enrichment_pilot_evidence_is_qualified[\s\S]*RAISE EXCEPTION 'pilot_not_qualified'/i,
   );
+  assert.doesNotMatch(
+    promote,
+    /promoted_count = 5[\s\S]{0,800}status = 'completed'/i,
+    'idempotent promotion must validate immutable original proof after later scheduled status changes',
+  );
+  assert.match(promote, /count\(DISTINCT[\s\S]*pilot_profile[\s\S]*\<\> 5/i);
+  for (const profile of ['straightforward', 'redirect_or_js', 'terms_linked', 'known_invalid', 'additional_valid']) {
+    assert.match(promote, new RegExp(profile, 'i'));
+  }
+  assert.match(promote, /count\(DISTINCT lower\(trim\([\s\S]*issuer[\s\S]*\)\)[\s\S]*< 3/i);
   assert.match(
     promote,
     /pilot_count <> 5 OR promoted_count <> 0 OR NOT all_qualified/i,
@@ -408,4 +421,20 @@ test('canonical recurrence timestamps and history normalization have apply-time 
   assert.match(sql, /2026-02-30T00:00:00\.000Z[\s\S]*2026-02-20T05:30:00\.000\+05:30/i);
   assert.match(sql, /America\/New_York[\s\S]*2026-04-09T07:30:00\+00:00/i);
   assert.match(sql, /legacy-root[\s\S]*legacy-history/i);
+});
+
+test('pilot SQL validates real timestamptz text, attempt history, and HTTP status bounds', async () => {
+  const sql = await migrationSql();
+  const validateEnvelope = functionBody(sql, 'card_enrichment_pilot_evidence_is_qualified');
+  const pilotTimestamp = functionBody(sql, 'card_enrichment_pilot_timestamp');
+  const liveTimestamp = functionBody(sql, 'card_enrichment_pilot_live_state_snapshot');
+  assert.match(pilotTimestamp, /(?:T|\\s)[\s\S]*(?:Z|\+00(?::00)?)/i);
+  assert.match(pilotTimestamp, /2000-01-01[\s\S]*clock_timestamp/i);
+  assert.match(liveTimestamp, /canonical_card_benefit_row_timestamp/i);
+  assert.match(validateEnvelope, /observed_at[\s\S]*card_enrichment_pilot_timestamp/i);
+  assert.match(validateEnvelope, /attemptedAt[\s\S]*card_enrichment_pilot_timestamp/i);
+  assert.match(validateEnvelope, /attemptHistory[\s\S]*jsonb_array_length[\s\S]*> 6/i);
+  assert.match(validateEnvelope, /httpStatus[\s\S]*100[\s\S]*599/i);
+  assert.match(sql, /2026-08-20 00:00:00\.1234\+00[\s\S]*2026-08-20T00:00:00\.123400Z/i);
+  assert.match(sql, /\.123500Z/i);
 });

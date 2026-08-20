@@ -39,6 +39,106 @@ BEGIN
 END;
 $$;
 
+-- Live-state rows use a six-microsecond UTC form shared exactly with the Edge
+-- snapshot serializer. Accepting timestamptz (rather than timestamptz::text)
+-- avoids DateStyle and fractional-width differences.
+CREATE OR REPLACE FUNCTION public.canonical_card_benefit_row_timestamp(
+  _value timestamptz
+) RETURNS text
+LANGUAGE sql
+IMMUTABLE
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+  SELECT CASE WHEN _value IS NULL THEN NULL ELSE
+    to_char(
+      _value AT TIME ZONE 'UTC',
+      'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+    )
+  END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.card_benefit_review_snapshot_rows(
+  _rows jsonb
+) RETURNS jsonb
+LANGUAGE sql
+IMMUTABLE
+SECURITY INVOKER
+SET search_path = public, extensions, pg_temp
+AS $$
+  SELECT jsonb_build_object(
+    'count', jsonb_array_length(_rows),
+    'row_hash', encode(extensions.digest(
+      convert_to(public.canonical_json_text(_rows), 'UTF8'), 'sha256'
+    ), 'hex')
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION public.card_benefit_review_live_state_snapshot(
+  _card_id uuid
+) RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY INVOKER
+SET search_path = public, extensions, pg_temp
+AS $$
+DECLARE
+  catalog_rows jsonb;
+  mapping_rows jsonb;
+  benefit_rows jsonb;
+BEGIN
+  SELECT coalesce(jsonb_agg(jsonb_build_object(
+    'id', card.id, 'card_name', card.card_name, 'bank', card.bank,
+    'network', card.network, 'card_type', card.card_type,
+    'annual_fee', card.annual_fee, 'joining_fee', card.joining_fee,
+    'apr', card.apr, 'card_url', card.card_url,
+    'is_discontinued', card.is_discontinued,
+    'created_at', public.canonical_card_benefit_row_timestamp(card.created_at),
+    'updated_at', public.canonical_card_benefit_row_timestamp(card.updated_at)
+  ) ORDER BY card.id), '[]'::jsonb) INTO catalog_rows
+  FROM public.card_catalog AS card WHERE card.id = _card_id;
+
+  SELECT coalesce(jsonb_agg(jsonb_build_object(
+    'mapping_id', mapping.mapping_id, 'card_id', mapping.card_id,
+    'benefit_id', mapping.benefit_id,
+    'display_priority', mapping.display_priority,
+    'is_primary', mapping.is_primary, 'category_codes', mapping.category_codes,
+    'retired_at', public.canonical_card_benefit_row_timestamp(mapping.retired_at),
+    'created_at', public.canonical_card_benefit_row_timestamp(mapping.created_at)
+  ) ORDER BY mapping.mapping_id), '[]'::jsonb) INTO mapping_rows
+  FROM public.card_benefit_mapping AS mapping WHERE mapping.card_id = _card_id;
+
+  SELECT coalesce(jsonb_agg(benefit.row_value ORDER BY benefit.benefit_id), '[]'::jsonb)
+    INTO benefit_rows
+  FROM (
+    SELECT DISTINCT ON (stored.benefit_id) stored.benefit_id,
+      jsonb_build_object(
+        'benefit_id', stored.benefit_id, 'dedupe_key', stored.dedupe_key,
+        'title', stored.title, 'description', stored.description,
+        'benefit_category', stored.benefit_category,
+        'benefit_type', stored.benefit_type, 'value_config', stored.value_config,
+        'partners', stored.partners, 'exclusions', stored.exclusions,
+        'regions', stored.regions, 'source_url', stored.source_url,
+        'valid_from', stored.valid_from, 'valid_until', stored.valid_until,
+        'is_active', stored.is_active,
+        'created_at', public.canonical_card_benefit_row_timestamp(stored.created_at),
+        'updated_at', public.canonical_card_benefit_row_timestamp(stored.updated_at)
+      ) AS row_value
+    FROM public.benefits AS stored
+    JOIN public.card_benefit_mapping AS mapping
+      ON mapping.benefit_id = stored.benefit_id
+    WHERE mapping.card_id = _card_id
+    ORDER BY stored.benefit_id
+  ) AS benefit;
+
+  RETURN jsonb_build_object(
+    'card_catalog', public.card_benefit_review_snapshot_rows(catalog_rows),
+    'benefits', public.card_benefit_review_snapshot_rows(benefit_rows),
+    'card_benefit_mapping', public.card_benefit_review_snapshot_rows(mapping_rows)
+  );
+END;
+$$;
+
 -- A deliberately conservative number domain shared with the Edge validator.
 -- It avoids JSON exponent spelling and unsafe coefficient differences between
 -- JavaScript JSON.stringify and PostgreSQL jsonb text.
@@ -954,6 +1054,23 @@ BEGIN
     RAISE EXCEPTION 'invalid_staged_authority';
   END IF;
 
+  -- v6 pilot qualification must prove that no unrelated live mutation landed
+  -- between extraction and this locked review transaction. Seal the exact
+  -- pre-publication state while the shared card advisory lock is held. v5 is
+  -- deliberately unchanged for rollback.
+  IF staging_row.parser_version = 'benefits-v6' THEN
+    staging_row.extracted_data := jsonb_set(
+      staging_row.extracted_data,
+      '{review_pre_live_state}',
+      public.card_benefit_review_live_state_snapshot(staging_row.card_id),
+      true
+    );
+    UPDATE public.card_benefits_staging
+    SET extracted_data = staging_row.extracted_data,
+        updated_at = statement_timestamp()
+    WHERE id = staging_row.id;
+  END IF;
+
   -- Validate every identity and duplicate before the first live mutation.
   FOR decision IN SELECT item.value FROM jsonb_array_elements(_decisions) AS item(value)
   LOOP
@@ -1100,6 +1217,8 @@ BEGIN
   FOR decision IN SELECT item.value FROM jsonb_array_elements(_decisions) AS item(value)
   LOOP
     decision_action := lower(trim(decision->>'action'));
+    decision_proposal_index := NULL;
+    existing_benefit_id := NULL;
     IF decision_action IN ('approve', 'edit') THEN
       decision_proposal_index := (decision->>'proposal_index')::integer;
       staged_proposal := staging_row.extracted_data->'proposals'->decision_proposal_index;
@@ -1219,10 +1338,36 @@ BEGIN
       );
     ELSE
       rejected_count := rejected_count + 1;
-      audit_decision := jsonb_build_object(
-        'action', decision_action,
-        'reason', nullif(trim(decision->>'reason'), '')
-      );
+      IF (decision->>'proposal_index') ~ '^[0-9]+$' THEN
+        decision_proposal_index := (decision->>'proposal_index')::integer;
+        staged_proposal := staging_row.extracted_data->'proposals'->decision_proposal_index;
+      ELSIF nullif(coalesce(
+        decision->>'benefit_id', decision->>'current_benefit_id'
+      ), '') IS NOT NULL THEN
+        existing_benefit_id := coalesce(
+          decision->>'benefit_id', decision->>'current_benefit_id'
+        )::uuid;
+      END IF;
+      IF decision_proposal_index IS NOT NULL THEN
+        audit_decision := jsonb_build_object(
+          'action', decision_action,
+          'proposal_index', decision_proposal_index,
+          'dedupe_key', staged_proposal->>'dedupeKey',
+          'condition_hash', staged_proposal->>'conditionHash',
+          'reason', nullif(trim(decision->>'reason'), '')
+        );
+      ELSIF existing_benefit_id IS NOT NULL THEN
+        audit_decision := jsonb_build_object(
+          'action', decision_action,
+          'benefit_id', existing_benefit_id,
+          'reason', nullif(trim(decision->>'reason'), '')
+        );
+      ELSE
+        audit_decision := jsonb_build_object(
+          'action', decision_action,
+          'reason', nullif(trim(decision->>'reason'), '')
+        );
+      END IF;
     END IF;
     audit_decision := jsonb_strip_nulls(audit_decision || jsonb_build_object(
       'reviewed_by', _reviewed_by,
@@ -1673,6 +1818,9 @@ END;
 $publication_envelope_v2_assertions$;
 
 REVOKE ALL ON FUNCTION public.canonical_json_text(jsonb) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.canonical_card_benefit_row_timestamp(timestamptz) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.card_benefit_review_snapshot_rows(jsonb) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.card_benefit_review_live_state_snapshot(uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.canonical_json_numbers_are_safe(jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.canonical_json_shape_is_bounded(jsonb, integer, integer, integer, integer, integer) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.validate_locked_benefit_proposals(jsonb, text) FROM PUBLIC, anon, authenticated;
@@ -1683,6 +1831,9 @@ REVOKE ALL ON FUNCTION public.validate_locked_retirement_evidence(jsonb, uuid) F
 REVOKE ALL ON FUNCTION public.approve_card_benefit_enrichment(uuid, uuid, jsonb) FROM PUBLIC, anon, authenticated;
 
 GRANT EXECUTE ON FUNCTION public.canonical_json_text(jsonb) TO service_role;
+GRANT EXECUTE ON FUNCTION public.canonical_card_benefit_row_timestamp(timestamptz) TO service_role;
+GRANT EXECUTE ON FUNCTION public.card_benefit_review_snapshot_rows(jsonb) TO service_role;
+GRANT EXECUTE ON FUNCTION public.card_benefit_review_live_state_snapshot(uuid) TO service_role;
 GRANT EXECUTE ON FUNCTION public.canonical_json_numbers_are_safe(jsonb) TO service_role;
 GRANT EXECUTE ON FUNCTION public.canonical_json_shape_is_bounded(jsonb, integer, integer, integer, integer, integer) TO service_role;
 GRANT EXECUTE ON FUNCTION public.validate_locked_benefit_proposals(jsonb, text) TO service_role;
@@ -1704,6 +1855,9 @@ DECLARE
 BEGIN
   FOREACH protected_oid IN ARRAY ARRAY[
     'public.canonical_json_text(jsonb)'::regprocedure,
+    'public.canonical_card_benefit_row_timestamp(timestamptz)'::regprocedure,
+    'public.card_benefit_review_snapshot_rows(jsonb)'::regprocedure,
+    'public.card_benefit_review_live_state_snapshot(uuid)'::regprocedure,
     'public.canonical_json_numbers_are_safe(jsonb)'::regprocedure,
     'public.canonical_json_shape_is_bounded(jsonb,integer,integer,integer,integer,integer)'::regprocedure,
     'public.validate_locked_benefit_proposals(jsonb,text)'::regprocedure,

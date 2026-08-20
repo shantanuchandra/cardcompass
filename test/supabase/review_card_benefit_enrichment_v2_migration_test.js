@@ -131,6 +131,31 @@ test('retirement, audit append, replay, and linked-job completion fail closed', 
   assert.match(approval, /staging_id\s*=\s*staging_row\.id/i);
 });
 
+test('v6 review seals pre-mutation live state and audits exact proposal or removal targets', async () => {
+  const sql = await migrationSql();
+  const approval = functionBody(sql, 'approve_card_benefit_enrichment');
+  const snapshot = functionBody(sql, 'card_benefit_review_live_state_snapshot');
+  const timestamp = functionBody(sql, 'canonical_card_benefit_row_timestamp');
+  assert.match(timestamp, /timestamptz/i);
+  assert.match(timestamp, /AT TIME ZONE 'UTC'[\s\S]*YYYY-MM-DD"T"HH24:MI:SS\.US"Z"/i);
+  assert.match(snapshot, /card_catalog[\s\S]*card_benefit_mapping[\s\S]*public\.benefits/i);
+  assert.match(snapshot, /canonical_card_benefit_row_timestamp/i);
+  assert.match(approval, /parser_version\s*=\s*'benefits-v6'[\s\S]*review_pre_live_state[\s\S]*card_benefit_review_live_state_snapshot/i);
+  assert.ok(
+    approval.indexOf('review_pre_live_state') < approval.indexOf('INSERT INTO public.benefits'),
+    'review pre-state must be sealed before the first live publication mutation',
+  );
+  assert.match(
+    approval,
+    /decision_action\s*=\s*'reject'[\s\S]*decision_proposal_index IS NOT NULL[\s\S]*'proposal_index'[\s\S]*'dedupe_key'[\s\S]*'condition_hash'/i,
+  );
+  assert.match(
+    approval,
+    /decision_action\s*=\s*'reject'[\s\S]*existing_benefit_id IS NOT NULL[\s\S]*'benefit_id'/i,
+  );
+  assert.doesNotMatch(approval, /parser_version\s*=\s*'benefits-v5'[\s\S]{0,160}review_pre_live_state/i);
+});
+
 test('canonical helpers validate commercial shapes, dates, arrays, and stable SHA-256 identity', async () => {
   const sql = await migrationSql();
   const envelope = functionBody(sql, 'validate_benefit_publication_envelope');
