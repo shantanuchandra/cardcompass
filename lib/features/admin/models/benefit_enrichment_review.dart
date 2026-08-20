@@ -216,7 +216,7 @@ class BenefitEnrichmentReview {
       throw const FormatException('Malformed v6 review identity.');
     }
     final diff = staging.extractedData.diff;
-    final digest = RegExp(r'^[0-9a-f]{64}$', caseSensitive: false);
+    final digest = RegExp(r'^[0-9a-f]{64}$');
     final cardScopedPrefix = 'card-benefit-v2:$cardId:';
     String? cardScopedDigest(String value) {
       if (!value.startsWith(cardScopedPrefix)) return null;

@@ -208,6 +208,41 @@ Map<String, dynamic> _v6AdditionWithIdentity({
   },
 };
 
+Map<String, dynamic> _v6CurrentWithIdentity({
+  required String benefitId,
+  required String conditionHash,
+}) {
+  final staging = _v6JobJson['staging'] as Map<String, dynamic>;
+  final extractedData = staging['extracted_data'] as Map<String, dynamic>;
+  final diff = extractedData['diff'] as Map<String, dynamic>;
+  final modification =
+      (diff['modifications'] as List).single as Map<String, dynamic>;
+  final current = modification['current'] as Map<String, dynamic>;
+  return <String, dynamic>{
+    ..._v6JobJson,
+    'staging': {
+      ...staging,
+      'extracted_data': {
+        ...extractedData,
+        'diff': {
+          ...diff,
+          'modifications': [
+            {
+              ...modification,
+              'current': {
+                ...current,
+                'benefitId': benefitId,
+                'dedupeKey': benefitId,
+                'conditionHash': conditionHash,
+              },
+            },
+          ],
+        },
+      },
+    },
+  };
+}
+
 void _noop() {}
 void _noopValue(String _) {}
 
@@ -563,6 +598,48 @@ void main() {
     for (final row in malformed) {
       expect(
         () => BenefitEnrichmentReview.fromJson(row),
+        throwsA(isA<FormatException>()),
+      );
+    }
+  });
+
+  test('v6 canonical proposal and current digests are lowercase only', () {
+    expect(
+      () => BenefitEnrichmentReview.fromJson(
+        _v6AdditionWithIdentity(
+          benefitId: 'card-benefit-v2:card-1:${'d' * 64}',
+          conditionHash: 'd' * 64,
+        ),
+      ),
+      returnsNormally,
+    );
+    expect(
+      () => BenefitEnrichmentReview.fromJson(
+        _v6CurrentWithIdentity(
+          benefitId: 'card-benefit-v2:card-1:${'b' * 64}',
+          conditionHash: 'b' * 64,
+        ),
+      ),
+      returnsNormally,
+    );
+
+    for (final digest in ['D' * 64, 'dD' * 32]) {
+      expect(
+        () => BenefitEnrichmentReview.fromJson(
+          _v6AdditionWithIdentity(
+            benefitId: 'card-benefit-v2:card-1:$digest',
+            conditionHash: digest,
+          ),
+        ),
+        throwsA(isA<FormatException>()),
+      );
+      expect(
+        () => BenefitEnrichmentReview.fromJson(
+          _v6CurrentWithIdentity(
+            benefitId: 'card-benefit-v2:card-1:$digest',
+            conditionHash: digest,
+          ),
+        ),
         throwsA(isA<FormatException>()),
       );
     }
@@ -1550,6 +1627,44 @@ void main() {
         expect(find.textContaining('Malformed v6 review data'), findsOneWidget);
         expect(find.textContaining('repaired'), findsOneWidget);
         expect(find.text('Added dining benefit'), findsNothing);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pumpAndSettle();
+      }
+    },
+  );
+
+  testWidgets(
+    'non-lowercase canonical v6 digests reach the visible repair state',
+    (tester) async {
+      final malformed = <Map<String, dynamic>>[];
+      for (final digest in ['D' * 64, 'dD' * 32]) {
+        malformed.addAll([
+          _v6AdditionWithIdentity(
+            benefitId: 'card-benefit-v2:card-1:$digest',
+            conditionHash: digest,
+          ),
+          _v6CurrentWithIdentity(
+            benefitId: 'card-benefit-v2:card-1:$digest',
+            conditionHash: digest,
+          ),
+        ]);
+      }
+
+      for (final row in malformed) {
+        final response = AdminCatalogEntryResponse(200, {
+          'items': [row],
+          'counts': {'total': 1, 'by_status': {}, 'by_run_mode': {}},
+          'page': 1,
+          'limit': 25,
+          'has_more': false,
+        });
+
+        await _pumpPanel(tester, AdminCatalogRepository(_FakeApi(response)));
+
+        expect(find.textContaining('Malformed v6 review data'), findsOneWidget);
+        expect(find.textContaining('repaired'), findsOneWidget);
+        expect(find.text('Canonical test proposal'), findsNothing);
 
         await tester.pumpWidget(const SizedBox.shrink());
         await tester.pumpAndSettle();

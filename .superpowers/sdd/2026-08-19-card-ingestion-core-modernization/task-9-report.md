@@ -366,3 +366,54 @@ The round-2 pre-commit production/test hashes were respectively
 Only the existing auth-matrix test used an ephemeral `127.0.0.1` listener. No
 external network, Docker, local/linked/live Supabase/Postgres, production
 data/write, secret, or workflow action was used. Live applied: **no**.
+
+## Fresh-review fix round 3
+
+The third post-implementation review found that Flutter's 64-hex identity
+predicate was case-insensitive even though both the producer and locked server
+canonicalize SHA-256 output to lowercase. The defect was reproduced through the
+DTO and real repository/widget paths before changing production code:
+
+```sh
+flutter test --no-pub test/features/admin/benefit_enrichment_review_test.dart
+# RED: 30 passed, 2 failed
+# - an uppercase canonical proposal condition hash and matching ID returned a
+#   review instead of throwing FormatException
+# - the real repository/panel rendered that row instead of showing the visible
+#   malformed-v6 repair state
+```
+
+The focused fixtures include valid lowercase proposed/current controls and
+all-uppercase plus mixed-case canonical proposal/current rows. Production now
+accepts only `[0-9a-f]{64}` for the condition-hash/ID digest lane. The exact
+card/condition identity rules from round 2 remain unchanged, as do legacy
+dedupe and live UUID handling. All four uppercase/mixed-case proposal/current
+rows fail closed visibly, while lowercase producer shapes and the decorated
+legacy removal remain valid.
+
+Fresh full GREEN results after this correction:
+
+```text
+Flutter admin review                         32 passed, 0 failed
+Flutter movie consumer                       15 passed, 0 failed
+Edge admin (includes loopback auth matrix)   48 passed, 0 failed
+Ingestion + publication Deno regressions    153 passed, 0 failed
+Node active/security/catalog/migrations      85 passed, 0 failed
+Total                                       333 passed, 0 failed
+Deno production checks                        passed
+Dart and Deno format checks                   passed
+Flutter analysis (infos non-fatal)            passed; same 12 baseline infos
+git diff --check                              passed
+```
+
+No migration was created or modified relative to fix-round-2 commit
+`e9acf7d23f82fb9fbd1b573a84f20f97de598029`. The existing admin-hardening
+migration remains SHA-256
+`82df4f501eb24f5e88be6080b66c5c296f95bb4d68a7cd4b5f3c1a44a015980e`.
+The round-3 pre-commit production/test hashes were respectively
+`5f5ba13b313ac84a9992b1b3b7d717e7b02b2ece02aa993cd69df849dc797588` and
+`2c88f13ebc06a304e9ceeb5b2b19768d4df53fa524c4d8a1b97dad442fd40ea9`.
+
+Only the existing auth-matrix test used an ephemeral `127.0.0.1` listener. No
+external network, Docker, local/linked/live Supabase/Postgres, production
+data/write, secret, or workflow action was used. Live applied: **no**.
