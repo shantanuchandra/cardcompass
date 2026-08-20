@@ -175,7 +175,7 @@ class BenefitEnrichmentReview {
     if (review.parserVersion == 'benefits-v6' ||
         review.staging.parserVersion == 'benefits-v6' ||
         review.staging.extractedData.parserVersion == 'benefits-v6') {
-      review._validateV6();
+      review._validateV6(catalogCardId: _text(card['id']));
     }
     return review;
   }
@@ -203,13 +203,31 @@ class BenefitEnrichmentReview {
   bool get canQuarantine =>
       status == 'queued' || status == 'failed' || status == 'review_required';
 
-  void _validateV6() {
-    if (id.isEmpty ||
-        cardId.isEmpty ||
-        stagingId == null ||
-        staging.id == null ||
-        stagingId != staging.id ||
-        staging.cardId != cardId ||
+  void _validateV6({required String? catalogCardId}) {
+    final uuid = RegExp(
+      r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+    );
+    bool invalidOptionalUuid(String? value) =>
+        value != null && !uuid.hasMatch(value);
+    bool invalidProposalLiveUuid(BenefitProposal? proposal) =>
+        invalidOptionalUuid(proposal?.liveBenefitId);
+    final jobStagingId = stagingId;
+    final nestedStagingId = staging.id;
+    final nestedCardId = staging.cardId;
+
+    if (!uuid.hasMatch(id) ||
+        !uuid.hasMatch(cardId) ||
+        catalogCardId == null ||
+        !uuid.hasMatch(catalogCardId) ||
+        catalogCardId != cardId ||
+        jobStagingId == null ||
+        !uuid.hasMatch(jobStagingId) ||
+        nestedStagingId == null ||
+        !uuid.hasMatch(nestedStagingId) ||
+        jobStagingId != nestedStagingId ||
+        nestedCardId == null ||
+        !uuid.hasMatch(nestedCardId) ||
+        nestedCardId != cardId ||
         parserVersion != 'benefits-v6' ||
         staging.parserVersion != 'benefits-v6' ||
         staging.extractedData.parserVersion != 'benefits-v6') {
@@ -231,6 +249,7 @@ class BenefitEnrichmentReview {
           : '$cardScopedPrefix$conditionHash';
       if (proposal.benefitId == null ||
           proposal.dedupeKey == null ||
+          invalidProposalLiveUuid(proposal) ||
           proposal.benefitId != proposal.dedupeKey ||
           proposal.benefitId != expectedBenefitId ||
           conditionHash == null ||
@@ -248,6 +267,7 @@ class BenefitEnrichmentReview {
           ? null
           : cardScopedDigest(benefitId);
       if (current.liveBenefitId == null ||
+          !uuid.hasMatch(current.liveBenefitId!) ||
           dedupeKey == null ||
           (benefitId == null && dedupeIsCardScoped) ||
           (benefitId != null && benefitDigest == null) ||
@@ -256,6 +276,14 @@ class BenefitEnrichmentReview {
           (conditionHash != null &&
               benefitDigest != null &&
               conditionHash != benefitDigest)) {
+        throw const FormatException('Malformed current v6 benefit identity.');
+      }
+    }
+    for (final decision in staging.decisions) {
+      if (invalidOptionalUuid(decision.liveBenefitId) ||
+          invalidProposalLiveUuid(decision.benefit) ||
+          invalidProposalLiveUuid(decision.proposed) ||
+          invalidProposalLiveUuid(decision.editedBenefit)) {
         throw const FormatException('Malformed current v6 benefit identity.');
       }
     }

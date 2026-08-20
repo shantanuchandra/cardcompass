@@ -417,3 +417,81 @@ The round-3 pre-commit production/test hashes were respectively
 Only the existing auth-matrix test used an ephemeral `127.0.0.1` listener. No
 external network, Docker, local/linked/live Supabase/Postgres, production
 data/write, secret, or workflow action was used. Live applied: **no**.
+
+## Fresh-review fix round 4
+
+The fourth post-implementation review found that v6 Flutter DTOs treated
+database UUID identities as arbitrary nonempty strings. This permitted colon
+ambiguity in card-scoped IDs and deferred non-UUID failures until mutation.
+Schema and producer inspection established the boundary before test changes:
+
+- `20260817030000_card_catalog_url_identity.sql` defines enrichment job `id`
+  and `card_id` as `uuid`; `20260817040000_automated_benefit_enrichment.sql`
+  adds its `staging_id uuid` foreign key.
+- `20260712030000_card_benefits_staging.sql` defines staging `id` and `card_id`
+  as `uuid`; the base benefit schema defines `benefit_id` as `uuid`.
+- The enrichment producer converts returned `benefit_id` directly with
+  `String(...)`, and the admin presenter forwards job/staging/benefit identity
+  text without case rewriting. PostgreSQL/PostgREST therefore supplies the
+  canonical lowercase hyphenated 8-4-4-4-12 UUID representation.
+
+The defect was then reproduced before changing production code:
+
+```sh
+flutter test --no-pub test/features/admin/benefit_enrichment_review_test.dart
+# RED: 32 passed, 2 failed
+# - a colon-bearing non-UUID v6 job identity returned a review instead of
+#   throwing FormatException
+# - the real repository/panel rendered that row instead of showing the visible
+#   malformed-v6 repair state
+```
+
+The complete red matrix also included a consistent colon-bearing card ID and
+matching canonical benefit ID, non-UUID and uppercase staging IDs, colon and
+non-UUID current live-benefit IDs, and an uppercase staged-decision live UUID.
+
+Corrections:
+
+- Required v6 job ID, job/card/catalog-card identity, job/nested staging IDs,
+  and nested staging card ID now require exact matching canonical lowercase
+  PostgreSQL UUID text before any card-scoped ID construction is trusted.
+- Every required diff-current live benefit UUID is validated, as is any
+  optional live-benefit UUID appearing on canonical proposal or staged
+  decision benefit/proposed/edited rows. Malformed identity now reaches the
+  existing visible repair state instead of a later RPC/SQL UUID cast failure.
+- This rule is v6-only. The legacy fixture deliberately retains
+  `job-1/card-1/staging-1` and remains readable.
+- Primary v6 fixtures now use production-shaped UUID values for job, card,
+  staging, current/live, identity-migration, and decorated legacy-removal
+  identities. Exact retirement/edit serialization and server-issued identity
+  preservation remain covered.
+- `card-benefit-v2:<card UUID>:<lowercase SHA-256>` benefit IDs and dedupe keys
+  remain governed by their existing grammar; they are not incorrectly parsed
+  as UUID fields.
+
+Fresh full GREEN results after this correction:
+
+```text
+Flutter admin review                         34 passed, 0 failed
+Flutter movie consumer                       15 passed, 0 failed
+Edge admin (includes loopback auth matrix)   48 passed, 0 failed
+Ingestion + publication Deno regressions    153 passed, 0 failed
+Node active/security/catalog/migrations      85 passed, 0 failed
+Total                                       335 passed, 0 failed
+Deno production checks                        passed
+Dart and Deno format checks                   passed
+Flutter analysis (infos non-fatal)            passed; same 12 baseline infos
+git diff --check                              passed
+```
+
+No migration was created or modified relative to fix-round-3 commit
+`1a759b038f0215b1d0fdbc8a04c9443b329b4f05`. The existing admin-hardening
+migration remains SHA-256
+`82df4f501eb24f5e88be6080b66c5c296f95bb4d68a7cd4b5f3c1a44a015980e`.
+The round-4 pre-commit production/test hashes were respectively
+`def0f2da23aee50220351fc020f1bcf7a24109b3f6ca2f69731d205c00cb04a6` and
+`f320b865713d0d6ac3975b47e14e4d93c42cdd7eb3eb9c957480ab318d0493a0`.
+
+Only the existing auth-matrix test used an ephemeral `127.0.0.1` listener. No
+external network, Docker, local/linked/live Supabase/Postgres, production
+data/write, secret, or workflow action was used. Live applied: **no**.
