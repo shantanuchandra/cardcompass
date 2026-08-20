@@ -162,23 +162,24 @@ test("catalog enrichment passes an invocation deadline to its official fetch", a
 
 test("catalog lifecycle observations create review evidence without directly changing acquisition state", async () => {
   const source = await readFile(catalogEntrypoint, "utf8");
-  assert.match(source, /suggested_action:\s*["']mark_discontinued["']/);
+  assert.match(source, /catalogLifecycleObservationAction\(/);
+  assert.match(source, /proposeCatalogLifecycleReview\(/);
   assert.match(
     source,
-    /catalog\.is_discontinued\s*===\s*true[\s\S]*["']reactivate["']/,
+    /suggestedAction:\s*lifecycleAction/,
   );
-  assert.match(source, /suggested_action:\s*lifecycleSuggestion/);
+  assert.match(source, /lifecycleAction\s*!==\s*["']observe_current["']/);
   assert.match(source, /source_status:\s*410/);
   assert.match(
     source,
-    /kind:\s*lifecycleSuggestion\s*===\s*["']reactivate["']/,
+    /lifecycleAction\s*===\s*["']reactivate["']/,
   );
   assert.match(source, /["']exact_card_reappearance["']/);
   assert.match(source, /["']strong_explicit_discontinuation["']/);
   assert.match(source, /identity_validated:\s*true/);
   assert.match(
     source,
-    /kind:\s*strongGoneObservation[\s\S]*["']strong_gone_observation["'][\s\S]*source_status:\s*strongGoneObservation\s*\?\s*410/,
+    /strongGoneObservation[\s\S]*proposeCatalogLifecycleReview[\s\S]*["']strong_gone_observation["'][\s\S]*source_status:\s*410/,
   );
   assert.doesNotMatch(source, /is_discontinued\s*:/);
   assert.doesNotMatch(source, /\.update\(\{[\s\S]{0,180}is_discontinued/);

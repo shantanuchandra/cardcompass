@@ -206,6 +206,12 @@ function createDb(
         };
       }
       if (name === "stage_card_catalog_lifecycle_review") {
+        if (args._suggested_action === "observe_current") {
+          return {
+            data: "44444444-4444-4444-8444-444444444444",
+            error: null,
+          };
+        }
         const card = state.catalogRows.find((row) => row.id === args._card_id);
         const review = {
           id: "33333333-3333-4333-8333-333333333333",
@@ -329,6 +335,35 @@ test("does not bind a crawler candidate when observed network is absent but stor
     db.state.rpcCalls.length,
     0,
     "weak observation reached publication",
+  );
+});
+
+test("does not treat a null network column as wildcard when the stored card name encodes a network", async () => {
+  const db = createDb({
+    catalogRows: [{
+      id: "card-mastercard",
+      bank: "Axis Bank",
+      card_name: "Neo Mastercard World",
+      network: null,
+    }],
+  });
+
+  const result = await persistCrawlerCandidate(
+    db,
+    "Axis Bank",
+    candidate({ proposedName: "Neo Visa World Credit Card", network: "Visa" }),
+  );
+
+  assert.deepEqual(result, { outcome: "review", reviewId: "review-1" });
+  assert.equal(
+    db.state.rpcCalls.length,
+    0,
+    "name-derived Mastercard was ignored",
+  );
+  assert.ok(
+    db.state.reviews[0].validation_warnings.includes(
+      "conflicting_network_identity",
+    ),
   );
 });
 
@@ -549,21 +584,30 @@ test("material crawler content creates a new immutable review version after a te
   assert.equal(db.state.reviews[0].status, "approved");
 });
 
-test("same-content pending crawler refresh appends history under the review CAS", async () => {
+test("same-content pending crawler refresh deduplicates history under the review CAS", async () => {
   const db = createDb();
   const observed = candidate({
     contentHash: "e".repeat(64),
     retrievedAt: "2026-08-20T00:00:00.000Z",
   });
   await persistCrawlerCandidate(db, "Axis Bank", observed);
-  await persistCrawlerCandidate(db, "Axis Bank", observed);
+  await persistCrawlerCandidate(db, "Axis Bank", {
+    ...observed,
+    retrievedAt: "2026-08-20T01:00:00.000Z",
+  });
 
   assert.equal(db.state.jobs.length, 1);
   assert.equal(db.state.reviews.length, 1);
   assert.equal(db.state.reviews[0].status, "pending");
   assert.equal(
     db.state.reviews[0].source_evidence.observation_history.length,
-    2,
+    1,
+    "retrieval timestamp duplicated one semantic observation",
+  );
+  assert.equal(
+    db.state.reviews[0].source_evidence.observation_history[0].observed_at,
+    "2026-08-20T01:00:00.000Z",
+    "newest replay timestamp was not retained",
   );
   assert.ok(
     db.state.calls.some((call) =>
@@ -740,10 +784,47 @@ test("discontinued exact identity is staged as reviewed reactivation", async () 
   );
 });
 
-test("current explicit discontinuation blocks crawler reactivation despite a matching 200 page", async () => {
+test("active exact identity with explicit discontinuation stages mark-discontinued review", async () => {
+  const cardId = "11111111-1111-4111-8111-111111111111";
   const db = createDb({
     catalogRows: [{
-      id: "card-neo",
+      id: cardId,
+      bank: "Axis Bank",
+      card_name: "Neo",
+      network: "Visa",
+      is_discontinued: false,
+      updated_at: "2026-08-19T00:00:00.000Z",
+    }],
+  });
+
+  const result = await persistCrawlerCandidate(
+    db,
+    "Axis Bank",
+    candidate({
+      explicitDiscontinuation: true,
+      contentHash: "f".repeat(64),
+      retrievedAt: "2026-08-20T00:00:00.000Z",
+      sourceStatus: 200,
+    }),
+  );
+
+  assert.deepEqual(result, {
+    outcome: "review",
+    reviewId: "33333333-3333-4333-8333-333333333333",
+  });
+  assert.equal(db.state.rpcCalls.length, 1);
+  assert.equal(
+    db.state.rpcCalls[0].args._suggested_action,
+    "mark_discontinued",
+  );
+  assert.equal(db.state.rpcCalls[0].args._card_id, cardId);
+});
+
+test("current explicit discontinuation blocks crawler reactivation despite a matching 200 page", async () => {
+  const cardId = "11111111-1111-4111-8111-111111111111";
+  const db = createDb({
+    catalogRows: [{
+      id: cardId,
       bank: "Axis Bank",
       card_name: "Neo",
       network: "Visa",
@@ -772,6 +853,11 @@ test("current explicit discontinuation blocks crawler reactivation despite a mat
     result.outcome,
     "existing",
     "discontinued card was published active",
+  );
+  assert.equal(
+    db.state.rpcCalls[0]?.args?._suggested_action,
+    "observe_current",
+    "explicit current-state evidence did not supersede stale reactivation work",
   );
 });
 

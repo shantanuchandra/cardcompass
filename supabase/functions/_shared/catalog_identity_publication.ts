@@ -41,10 +41,13 @@ type PublicationClient = {
 };
 
 export type CatalogLifecycleAction = "mark_discontinued" | "reactivate";
+export type CatalogLifecycleObservationAction =
+  | CatalogLifecycleAction
+  | "observe_current";
 
 export type CatalogLifecycleReviewInput = {
   cardId: string;
-  suggestedAction: CatalogLifecycleAction;
+  suggestedAction: CatalogLifecycleObservationAction;
   sourceObservation: Record<string, unknown>;
   sourceUrl: string;
   sourceUrlHash: string;
@@ -73,6 +76,55 @@ const REVIEWED_ACTIONS = new Set<CatalogPublicationAction>([
   "reject",
   "mark_discontinued",
   "reactivate",
+]);
+
+const REVIEWED_FIELD_ALLOWLIST = new Set([
+  "issuer",
+  "bank",
+  "cardName",
+  "card_name",
+  "network",
+  "aliases",
+  "official_url",
+  "card_url",
+  "submitted_url",
+  "final_url",
+  "submitted_url_hash",
+  "final_url_hash",
+  "submitted_resource_identity_hash",
+  "final_resource_identity_hash",
+  "content_hash",
+  "retrieved_at",
+  "source_status",
+  "source_type",
+  "source_observation",
+  "confidence",
+  "validation_version",
+  "card_id",
+  "cardId",
+  "annual_fee",
+  "joining_fee",
+  "apr",
+  "catalog_baseline",
+  "suggested_action",
+]);
+
+const RESOURCE_FIELD_KEYS = new Set([
+  "official_url",
+  "card_url",
+  "submitted_url",
+  "final_url",
+]);
+
+const TRANSPORT_ONLY_OBSERVATION_KEYS = new Set([
+  "retrieved_at",
+  "attempted_at",
+  "observed_at",
+  "transport",
+  "duration_ms",
+  "retry_after_ms",
+  "request_started_at",
+  "request_completed_at",
 ]);
 
 function nonEmpty(value: unknown): value is string {
@@ -178,6 +230,24 @@ export function catalogLifecycleSuggestion(input: {
   return null;
 }
 
+export function catalogLifecycleObservationAction(input: {
+  isDiscontinued: boolean;
+  httpStatus: number | null;
+  identityValidated: boolean;
+  explicitDiscontinuation: boolean;
+}): CatalogLifecycleObservationAction | null {
+  const mutable = catalogLifecycleSuggestion(input);
+  if (mutable) return mutable;
+  if (input.httpStatus === 410 && input.isDiscontinued) {
+    return "observe_current";
+  }
+  if (input.httpStatus !== 200 || !input.identityValidated) return null;
+  if (input.isDiscontinued === input.explicitDiscontinuation) {
+    return "observe_current";
+  }
+  return null;
+}
+
 export function boundedCatalogSourceObservation(
   input: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -219,6 +289,164 @@ export function boundedCatalogSourceObservation(
       : "observation",
     truncated: true,
   };
+}
+
+function stableJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableJsonValue);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, stableJsonValue(entry)]),
+    );
+  }
+  return value;
+}
+
+export function semanticCatalogSourceObservation(
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  const sanitized = boundedCatalogSourceObservation(input);
+  const strip = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(strip);
+    if (value !== null && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>)
+          .filter(([key]) => !TRANSPORT_ONLY_OBSERVATION_KEYS.has(key))
+          .map(([key, entry]) => [key, strip(entry)]),
+      );
+    }
+    return value;
+  };
+  return stableJsonValue(strip(sanitized)) as Record<string, unknown>;
+}
+
+function observationHistoryKey(entry: Record<string, unknown>): string {
+  if (nonEmpty(entry.semantic_hash)) return entry.semantic_hash;
+  const semantic = semanticCatalogSourceObservation(entry);
+  return JSON.stringify(stableJsonValue(semantic));
+}
+
+export function appendCatalogObservationHistory(
+  existing: unknown,
+  next: Record<string, unknown>,
+  limit = 24,
+): Array<Record<string, unknown>> {
+  const entries = [
+    ...(Array.isArray(existing)
+      ? existing.filter((entry): entry is Record<string, unknown> =>
+        entry !== null && typeof entry === "object" && !Array.isArray(entry)
+      )
+      : []),
+    boundedCatalogSourceObservation(next),
+  ];
+  const newestByIdentity = new Map<string, Record<string, unknown>>();
+  for (const entry of entries) {
+    const key = observationHistoryKey(entry);
+    const prior = newestByIdentity.get(key);
+    const observed = nonEmpty(entry.observed_at)
+      ? Date.parse(entry.observed_at)
+      : nonEmpty(entry.retrieved_at)
+      ? Date.parse(entry.retrieved_at)
+      : Number.NEGATIVE_INFINITY;
+    const priorObserved = prior && nonEmpty(prior.observed_at)
+      ? Date.parse(prior.observed_at)
+      : prior && nonEmpty(prior.retrieved_at)
+      ? Date.parse(prior.retrieved_at)
+      : Number.NEGATIVE_INFINITY;
+    if (!prior || observed >= priorObserved) newestByIdentity.set(key, entry);
+  }
+  return [...newestByIdentity.values()].sort((left, right) => {
+    const time = (entry: Record<string, unknown>) =>
+      nonEmpty(entry.observed_at)
+        ? Date.parse(entry.observed_at)
+        : nonEmpty(entry.retrieved_at)
+        ? Date.parse(entry.retrieved_at)
+        : Number.NEGATIVE_INFINITY;
+    return time(right) - time(left) ||
+      observationHistoryKey(left).localeCompare(observationHistoryKey(right));
+  }).slice(0, Math.max(1, Math.min(24, limit)));
+}
+
+function validReviewedResourceUrl(value: string): boolean {
+  if (value.length > 2_048) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && Boolean(url.hostname) &&
+      !url.username && !url.password && !url.hash &&
+      ![...url.searchParams.keys()].some((key) =>
+        /(token|session|secret|password|passwd|credential|auth|signature|sig|key|code|state|nonce)/i
+          .test(key)
+      );
+  } catch {
+    return false;
+  }
+}
+
+export function boundedReviewedCatalogFields(
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  const utf8Length = (value: string) => new TextEncoder().encode(value).length;
+  const unknown = Object.keys(input).find((key) =>
+    !REVIEWED_FIELD_ALLOWLIST.has(key)
+  );
+  if (unknown) throw new Error("unknown_reviewed_field");
+
+  const bound = (
+    value: unknown,
+    depth: number,
+    parentKey = "",
+  ): unknown => {
+    if (depth > 6) throw new Error("reviewed_fields_too_deep");
+    if (
+      value === null || typeof value === "boolean" || typeof value === "number"
+    ) return value;
+    if (typeof value === "string") {
+      const max = RESOURCE_FIELD_KEYS.has(parentKey) || /_url$/.test(parentKey)
+        ? 2_048
+        : 512;
+      if (utf8Length(value) > max) throw new Error("reviewed_field_too_long");
+      if (
+        RESOURCE_FIELD_KEYS.has(parentKey) && !validReviewedResourceUrl(value)
+      ) {
+        throw new Error("unsafe_reviewed_resource");
+      }
+      return value;
+    }
+    if (Array.isArray(value)) {
+      if (value.length > 32) throw new Error("reviewed_fields_array_too_large");
+      return value.map((entry) => bound(entry, depth + 1, parentKey));
+    }
+    if (typeof value === "object") {
+      const entries = Object.entries(value);
+      if (entries.length > 32) {
+        throw new Error("reviewed_fields_object_too_large");
+      }
+      const output: Record<string, unknown> = {};
+      for (const [key, entry] of entries) {
+        if (utf8Length(key) > 64) {
+          throw new Error("reviewed_field_key_too_long");
+        }
+        const sanitizedKey = redactSensitiveUrlsInValue(key);
+        if (sanitizedKey !== key) throw new Error("unsafe_reviewed_field_key");
+        output[key] = bound(entry, depth + 1, key);
+      }
+      return output;
+    }
+    throw new Error("invalid_reviewed_field");
+  };
+  const bounded = bound(input, 0) as Record<string, unknown>;
+  const sanitized = redactSensitiveUrlsInValue(bounded) as Record<
+    string,
+    unknown
+  >;
+  for (const key of RESOURCE_FIELD_KEYS) {
+    if (typeof bounded[key] === "string") sanitized[key] = bounded[key];
+  }
+  if (new TextEncoder().encode(JSON.stringify(sanitized)).length > 16_384) {
+    throw new Error("reviewed_fields_too_large");
+  }
+  return sanitized;
 }
 
 export function catalogPublicationBaseline(
@@ -269,7 +497,9 @@ export async function proposeCatalogLifecycleReview(
   if (
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
       .test(input.cardId) ||
-    !["mark_discontinued", "reactivate"].includes(input.suggestedAction) ||
+    !["mark_discontinued", "reactivate", "observe_current"].includes(
+      input.suggestedAction,
+    ) ||
     !input.sourceObservation || Array.isArray(input.sourceObservation) ||
     typeof input.sourceObservation !== "object" ||
     !nonEmpty(input.sourceUrl) ||
@@ -350,16 +580,7 @@ export async function publishReviewedCardIdentity(
     throw new Error("invalid_publication_parser");
   }
 
-  const reviewedFields = { ...input.reviewedFields };
-  if (
-    reviewedFields.source_observation &&
-    typeof reviewedFields.source_observation === "object" &&
-    !Array.isArray(reviewedFields.source_observation)
-  ) {
-    reviewedFields.source_observation = boundedCatalogSourceObservation(
-      reviewedFields.source_observation as Record<string, unknown>,
-    );
-  }
+  const reviewedFields = boundedReviewedCatalogFields(input.reviewedFields);
   const { data, error } = await db.rpc("publish_card_catalog_identity", {
     _discovery_job_id: input.discoveryJobId,
     _review_item_id: input.reviewItemId ?? null,

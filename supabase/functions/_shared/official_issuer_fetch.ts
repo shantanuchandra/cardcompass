@@ -587,6 +587,11 @@ function validateRawQueryEncoding(value: string): void {
     queryStart + 1,
     fragmentStart < 0 ? undefined : fragmentStart,
   );
+  if (
+    query.length === 0 || query.split("&").some((part) => part.length === 0)
+  ) {
+    throw fetchError("unapproved_query");
+  }
   for (const component of query.split(/[&=]/)) {
     if (/%(?![0-9a-f]{2})/i.test(component)) {
       throw fetchError("unapproved_query");

@@ -13,11 +13,14 @@ import {
 } from "../_shared/official_issuer_fetch.ts";
 import { safeHttpsDisplayUrl } from "../_shared/benefit_source_privacy.ts";
 import {
+  appendCatalogObservationHistory,
   boundedCatalogSourceObservation,
-  catalogLifecycleSuggestion,
+  catalogLifecycleObservationAction,
   catalogPublicationBaseline,
   hasStrongExplicitCardDiscontinuation,
+  proposeCatalogLifecycleReview,
   publicationFieldsFromFetch,
+  semanticCatalogSourceObservation,
 } from "../_shared/catalog_identity_publication.ts";
 
 type UntypedSupabaseClient = any;
@@ -25,6 +28,16 @@ const CATALOG_FETCH_DEADLINE_MS = 25_000;
 
 function json(body: unknown, status = 200): Response {
   return Response.json(body, { status });
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const bytes = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  );
+  return [...new Uint8Array(bytes)].map((byte) =>
+    byte.toString(16).padStart(2, "0")
+  ).join("");
 }
 
 export async function queueConflictReview(
@@ -56,7 +69,7 @@ export async function queueConflictReview(
       boundedObservation.final_resource_identity_hash ?? submittedHash,
   ).toLowerCase();
   const sourceObservationHash = await digest(
-    JSON.stringify(boundedObservation),
+    JSON.stringify(semanticCatalogSourceObservation(boundedObservation)),
   );
   const contentHash =
     /^[0-9a-f]{64}$/.test(String(boundedObservation.content_hash ?? ""))
@@ -135,7 +148,7 @@ export async function queueConflictReview(
         observed_at: boundedObservation.retrieved_at ??
           new Date().toISOString(),
         content_hash: contentHash,
-        source_observation_hash: sourceObservationHash,
+        semantic_hash: sourceObservationHash,
       }],
     },
     existing_candidates: [{ card_id: job.card_id }],
@@ -146,18 +159,14 @@ export async function queueConflictReview(
   };
   let review = existingReview;
   if (existingReview) {
-    const history =
-      Array.isArray(existingReview.source_evidence?.observation_history)
-        ? existingReview.source_evidence.observation_history.slice(-15)
-        : [];
     const refreshed = {
       ...reviewPayload,
       source_evidence: {
         ...reviewPayload.source_evidence,
-        observation_history: [
-          ...history,
-          ...reviewPayload.source_evidence.observation_history,
-        ],
+        observation_history: appendCatalogObservationHistory(
+          existingReview.source_evidence?.observation_history,
+          reviewPayload.source_evidence.observation_history[0],
+        ),
       },
     };
     let update = db.from("card_catalog_review_queue").update(refreshed)
@@ -326,11 +335,37 @@ export async function processCatalogEnrichmentJob(
     const explicitDiscontinuation = hasStrongExplicitCardDiscontinuation(
       page.text,
     );
-    const lifecycleSuggestion = catalogLifecycleSuggestion({
+    const lifecycleAction = catalogLifecycleObservationAction({
       isDiscontinued: catalog.is_discontinued === true,
       httpStatus: page.status,
       identityValidated: true,
       explicitDiscontinuation,
+    });
+    if (!lifecycleAction) throw new Error("invalid_catalog_lifecycle_evidence");
+    const lifecycleObservation = {
+      source_status: page.status,
+      kind: lifecycleAction === "reactivate"
+        ? "exact_card_reappearance"
+        : lifecycleAction === "mark_discontinued"
+        ? "strong_explicit_discontinuation"
+        : catalog.is_discontinued === true
+        ? "strong_explicit_discontinuation"
+        : "exact_card_reappearance",
+      identity_validated: true,
+      explicit_discontinuation: explicitDiscontinuation,
+      retrieved_at: page.retrievedAt,
+    };
+    const lifecycleSourceUrl = page.finalResourceUrl ?? page.finalUrl;
+    const lifecycleSourceHash = page.finalResourceIdentityHash ??
+      await sha256Hex(lifecycleSourceUrl);
+    await proposeCatalogLifecycleReview(db, {
+      cardId: String(claimed.card_id),
+      suggestedAction: lifecycleAction,
+      sourceObservation: lifecycleObservation,
+      sourceUrl: lifecycleSourceUrl,
+      sourceUrlHash: lifecycleSourceHash,
+      contentHash: page.contentHash,
+      parserVersion: "benefits-v6",
     });
     const reviewChanges = [
       ...compared.conflicts,
@@ -340,14 +375,6 @@ export async function processCatalogEnrichmentJob(
         proposed,
         kind: "reviewed_backfill",
       })),
-      ...(lifecycleSuggestion
-        ? [{
-          field: "is_discontinued",
-          existing: catalog.is_discontinued === true,
-          proposed: lifecycleSuggestion === "mark_discontinued",
-          kind: "lifecycle_observation",
-        }]
-        : []),
     ];
     if (reviewChanges.length > 0) {
       await queueConflictReview(
@@ -357,29 +384,19 @@ export async function processCatalogEnrichmentJob(
         {
           ...proposedCatalogFields,
           catalog_baseline: catalogBaseline,
-          ...(lifecycleSuggestion
-            ? { suggested_action: lifecycleSuggestion }
-            : {}),
         },
         {
           ...publicationEvidence,
           source_type: "official_html",
-          source_observation: {
-            source_status: page.status,
-            kind: lifecycleSuggestion === "reactivate"
-              ? "exact_card_reappearance"
-              : lifecycleSuggestion === "mark_discontinued"
-              ? "strong_explicit_discontinuation"
-              : "catalog_enrichment",
-            identity_validated: true,
-            explicit_discontinuation: explicitDiscontinuation,
-            retrieved_at: page.retrievedAt,
-          },
+          source_observation: lifecycleObservation,
           catalog_baseline: catalogBaseline,
         },
       );
     }
-    const status = reviewChanges.length > 0 ? "review_required" : "completed";
+    const status = reviewChanges.length > 0 ||
+        lifecycleAction !== "observe_current"
+      ? "review_required"
+      : "completed";
     await finalizeOwnedCatalogJob(db, claimed.id, {
       status,
       normalized_fields: normalized.patch,
@@ -406,46 +423,67 @@ export async function processCatalogEnrichmentJob(
       const catalogBaseline = catalogSnapshot
         ? catalogPublicationBaseline(catalogSnapshot as never)
         : null;
-      await queueConflictReview(
-        db,
-        claimed,
-        [{
-          field: "is_discontinued",
-          existing: false,
-          proposed: true,
-          kind: strongGoneObservation
-            ? "http_lifecycle_observation"
-            : "weak_source_absence_observation",
-        }],
-        {
-          ...(strongGoneObservation
-            ? { suggested_action: "mark_discontinued" }
-            : {}),
-          ...(catalogBaseline ? { catalog_baseline: catalogBaseline } : {}),
-        },
-        {
-          official_url: claimed.canonical_url,
-          ...(message === "http_404"
-            ? { source_status: 404 }
-            : message === "http_410"
-            ? { source_status: 410 }
-            : {}),
-          source_type: "official_html",
-          source_observation: {
+      const observedAt = new Date().toISOString();
+      if (strongGoneObservation && catalogSnapshot) {
+        const lifecycleAction = catalogLifecycleObservationAction({
+          isDiscontinued: catalogSnapshot.is_discontinued === true,
+          httpStatus: 410,
+          identityValidated: false,
+          explicitDiscontinuation: false,
+        });
+        if (!lifecycleAction) {
+          throw new Error("invalid_catalog_lifecycle_evidence");
+        }
+        await proposeCatalogLifecycleReview(db, {
+          cardId: String(claimed.card_id),
+          suggestedAction: lifecycleAction,
+          sourceObservation: {
             failure: message,
-            kind: strongGoneObservation
-              ? "strong_gone_observation"
-              : "weak_source_absence_observation",
-            source_status: strongGoneObservation
-              ? 410
-              : message === "http_404"
-              ? 404
-              : null,
+            kind: "strong_gone_observation",
+            source_status: 410,
             identity_validated: false,
+            explicit_discontinuation: false,
+            retrieved_at: observedAt,
           },
-          ...(catalogBaseline ? { catalog_baseline: catalogBaseline } : {}),
-        },
-      );
+          sourceUrl: String(claimed.canonical_url),
+          sourceUrlHash: /^[0-9a-f]{64}$/.test(
+              String(claimed.final_url_hash ?? "").toLowerCase(),
+            )
+            ? String(claimed.final_url_hash).toLowerCase()
+            : await sha256Hex(String(claimed.canonical_url)),
+          contentHash: /^[0-9a-f]{64}$/.test(
+              String(claimed.content_hash ?? "").toLowerCase(),
+            )
+            ? String(claimed.content_hash).toLowerCase()
+            : null,
+          parserVersion: "benefits-v6",
+        });
+      } else {
+        await queueConflictReview(
+          db,
+          claimed,
+          [{
+            field: "is_discontinued",
+            existing: catalogSnapshot?.is_discontinued === true,
+            proposed: true,
+            kind: "weak_source_absence_observation",
+          }],
+          catalogBaseline ? { catalog_baseline: catalogBaseline } : {},
+          {
+            official_url: claimed.canonical_url,
+            ...(message === "http_404" ? { source_status: 404 } : {}),
+            source_type: "official_html",
+            source_observation: {
+              failure: message,
+              kind: "weak_source_absence_observation",
+              source_status: message === "http_404" ? 404 : null,
+              identity_validated: false,
+              retrieved_at: observedAt,
+            },
+            ...(catalogBaseline ? { catalog_baseline: catalogBaseline } : {}),
+          },
+        );
+      }
     }
     await finalizeOwnedCatalogJob(db, claimed.id, {
       status: terminal ? "review_required" : "failed",

@@ -1,11 +1,15 @@
 import {
+  appendCatalogObservationHistory,
   boundedCatalogSourceObservation,
+  boundedReviewedCatalogFields,
   canonicalPublicationResource,
+  catalogLifecycleObservationAction,
   catalogLifecycleSuggestion,
   catalogPublicationBaseline,
   proposeCatalogLifecycleReview,
   publicationFieldsFromFetch,
   publishReviewedCardIdentity,
+  semanticCatalogSourceObservation,
 } from "./catalog_identity_publication.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -67,6 +71,28 @@ Deno.test("publication URL identity rejects credentials and non-approved functio
       error = caught;
     }
     assert(error instanceof Error, `${url} was accepted`);
+  }
+});
+
+Deno.test("publication URL identity rejects empty query separators consistently with SQL", async () => {
+  for (
+    const url of [
+      "https://www.axis.bank.in/card?",
+      "https://www.axis.bank.in/card?variant=gold&",
+      "https://www.axis.bank.in/card?&variant=gold",
+      "https://www.axis.bank.in/card?variant=gold&&lang=en",
+    ]
+  ) {
+    let error: unknown;
+    try {
+      await canonicalPublicationResource("Axis Bank", url);
+    } catch (caught) {
+      error = caught;
+    }
+    assert(
+      error instanceof Error && error.message === "unapproved_query",
+      `empty query separator was accepted: ${url}`,
+    );
   }
 });
 
@@ -305,6 +331,53 @@ Deno.test("catalog lifecycle suggestions require strong evidence and exact reapp
   );
 });
 
+Deno.test("every authoritative lifecycle observation advances an explicit current-state action", () => {
+  const cases = [
+    {
+      input: {
+        isDiscontinued: false,
+        httpStatus: 200,
+        identityValidated: true,
+        explicitDiscontinuation: false,
+      },
+      expected: "observe_current",
+    },
+    {
+      input: {
+        isDiscontinued: true,
+        httpStatus: 200,
+        identityValidated: true,
+        explicitDiscontinuation: true,
+      },
+      expected: "observe_current",
+    },
+    {
+      input: {
+        isDiscontinued: true,
+        httpStatus: 410,
+        identityValidated: false,
+        explicitDiscontinuation: false,
+      },
+      expected: "observe_current",
+    },
+  ] as const;
+  for (const { input, expected } of cases) {
+    assert(
+      catalogLifecycleObservationAction(input) === expected,
+      `${JSON.stringify(input)} did not advance current lifecycle evidence`,
+    );
+  }
+  assert(
+    catalogLifecycleObservationAction({
+      isDiscontinued: false,
+      httpStatus: 404,
+      identityValidated: false,
+      explicitDiscontinuation: false,
+    }) === null,
+    "weak absence advanced authoritative lifecycle state",
+  );
+});
+
 Deno.test("catalog source observations are recursively private and structurally bounded", () => {
   const observation = boundedCatalogSourceObservation({
     kind: "catalog_conflict",
@@ -329,6 +402,117 @@ Deno.test("catalog source observations are recursively private and structurally 
           .length <= 32,
     "recursive array bound was not enforced",
   );
+});
+
+Deno.test("semantic lifecycle identity excludes transport time while bounded history deduplicates and caps newest", () => {
+  const first = semanticCatalogSourceObservation({
+    kind: "exact_card_reappearance",
+    source_status: 200,
+    identity_validated: true,
+    retrieved_at: "2026-08-20T00:00:00.000Z",
+    transport: { attempted_at: "2026-08-20T00:00:01.000Z", duration_ms: 20 },
+  });
+  const replay = semanticCatalogSourceObservation({
+    kind: "exact_card_reappearance",
+    source_status: 200,
+    identity_validated: true,
+    retrieved_at: "2026-08-20T01:00:00.000Z",
+    transport: { attempted_at: "2026-08-20T01:00:01.000Z", duration_ms: 90 },
+  });
+  assert(
+    JSON.stringify(first) === JSON.stringify(replay),
+    "transport timestamps changed semantic lifecycle identity",
+  );
+
+  let history: unknown[] = [];
+  for (let index = 0; index < 30; index += 1) {
+    history = appendCatalogObservationHistory(history, {
+      semantic_hash: index === 29 ? "same" : `hash-${index}`,
+      observed_at: `2026-08-${
+        String(index + 1).padStart(2, "0")
+      }T00:00:00.000Z`,
+      retrieved_at: `2026-08-${
+        String(index + 1).padStart(2, "0")
+      }T00:00:00.000Z`,
+    });
+  }
+  history = appendCatalogObservationHistory(history, {
+    semantic_hash: "same",
+    observed_at: "2026-08-30T00:00:00.000Z",
+    retrieved_at: "2026-08-30T00:00:00.000Z",
+  });
+  assert(history.length === 24, `history retained ${history.length} entries`);
+  assert(
+    history.filter((entry) =>
+      (entry as Record<string, unknown>).semantic_hash === "same"
+    ).length === 1,
+    "exact semantic replay duplicated observation history",
+  );
+  assert(
+    (history[0] as Record<string, unknown>).observed_at ===
+      "2026-08-30T00:00:00.000Z",
+    "history did not retain newest evidence first",
+  );
+});
+
+Deno.test("reviewed catalog fields enforce a strict private bounded whole-envelope contract", () => {
+  const valid = boundedReviewedCatalogFields({
+    issuer: "Axis Bank",
+    cardName: "Privilege Infinite",
+    network: "Visa",
+    aliases: ["Axis Privilege Visa Infinite Credit Card"],
+    submitted_url:
+      "https://www.axis.bank.in/card?variant=infinite&utm_source=ignored",
+    final_url: "https://www.axis.bank.in/card?variant=infinite",
+    submitted_url_hash: "a".repeat(64),
+    final_url_hash: "b".repeat(64),
+    content_hash: "c".repeat(64),
+    retrieved_at: "2026-08-20T00:00:00.000Z",
+    source_status: 200,
+    source_type: "official_html",
+    source_observation: {
+      kind: "reviewed_identity",
+      note: "https://user:pass@evil.example/card?token=secret#private",
+    },
+  });
+  const serialized = JSON.stringify(valid);
+  assert(!/user:pass|token=secret|#private/.test(serialized), serialized);
+  assert(
+    valid.submitted_url ===
+      "https://www.axis.bank.in/card?variant=infinite&utm_source=ignored",
+    "validated resource identity was redacted instead of preserved",
+  );
+
+  for (
+    const invalid of [
+      { issuer: "Axis Bank", raw_body: "issuer HTML" },
+      { issuer: "Axis Bank", aliases: ["x".repeat(513)] },
+      { issuer: "Axis Bank", aliases: ["é".repeat(300)] },
+      {
+        issuer: "Axis Bank",
+        catalog_baseline: { ["k".repeat(65)]: true },
+      },
+      {
+        issuer: "Axis Bank",
+        catalog_baseline: { ["é".repeat(33)]: true },
+      },
+      {
+        issuer: "Axis Bank",
+        source_observation: { ["https://evil.example/?token=secret"]: true },
+      },
+    ]
+  ) {
+    let error: unknown;
+    try {
+      boundedReviewedCatalogFields(invalid);
+    } catch (caught) {
+      error = caught;
+    }
+    assert(
+      error instanceof Error,
+      `invalid envelope was accepted: ${JSON.stringify(invalid)}`,
+    );
+  }
 });
 
 Deno.test("lifecycle proposal delegates one bounded exact-card review RPC", async () => {

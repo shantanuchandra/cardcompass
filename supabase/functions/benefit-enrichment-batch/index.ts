@@ -24,7 +24,7 @@ import {
   persistCrawlerCandidate,
 } from "../_shared/issuer_card_crawl.ts";
 import {
-  catalogLifecycleSuggestion,
+  catalogLifecycleObservationAction,
   hasStrongExplicitCardDiscontinuation,
   proposeCatalogLifecycleReview,
 } from "../_shared/catalog_identity_publication.ts";
@@ -1435,7 +1435,7 @@ export async function processJob(
         },
       };
       failureCategory = errorCode;
-      const lifecycleAction = catalogLifecycleSuggestion({
+      const lifecycleAction = catalogLifecycleObservationAction({
         isDiscontinued: card.is_discontinued === true,
         httpStatus: Number(fetchSummary.http_status ?? 0) || null,
         identityValidated: false,
@@ -1453,6 +1453,7 @@ export async function processJob(
             kind: "strong_gone_observation",
             source_status: fetchSummary.http_status,
             identity_validated: false,
+            retrieved_at: attemptedAt,
           },
         });
       }
@@ -1542,7 +1543,7 @@ export async function processJob(
     const explicitDiscontinuation = hasStrongExplicitCardDiscontinuation(
       page.text,
     );
-    const lifecycleAction = catalogLifecycleSuggestion({
+    const lifecycleAction = catalogLifecycleObservationAction({
       isDiscontinued: card.is_discontinued === true,
       httpStatus: page.status,
       identityValidated: true,
@@ -1559,9 +1560,9 @@ export async function processJob(
         contentHash: page.contentHash,
         sourceObservation: {
           ...fetchSummary,
-          kind: lifecycleAction === "reactivate"
-            ? "exact_card_reappearance"
-            : "strong_explicit_discontinuation",
+          kind: explicitDiscontinuation
+            ? "strong_explicit_discontinuation"
+            : "exact_card_reappearance",
           source_status: page.status,
           identity_validated: true,
           explicit_discontinuation: explicitDiscontinuation,

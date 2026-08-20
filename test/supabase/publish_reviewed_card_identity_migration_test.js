@@ -319,7 +319,7 @@ test("recurring lifecycle review staging is bounded, idempotent, and excludes we
   assert.doesNotMatch(lifecycle, /http_404/i);
   assert.match(
     lifecycle,
-    /content_hash[\s\S]*source_observation_hash[\s\S]*dedupe/i,
+    /content_hash[\s\S]*source_observation_(?:semantic_)?hash[\s\S]*dedupe/i,
     "material lifecycle evidence is not versioned",
   );
   assert.match(
@@ -505,9 +505,138 @@ test("production entry paths cannot bypass reviewed publication", async () => {
   assert.match(sources.discovery, /action:\s*["']observe_existing["']/);
   assert.match(sources.crawler, /action:\s*["']observe_existing["']/);
   assert.match(sources.recurring, /proposeCatalogLifecycleReview\(/);
-  assert.match(sources.recurring, /catalogLifecycleSuggestion\(/);
+  assert.match(sources.recurring, /catalogLifecycleObservationAction\(/);
   assert.doesNotMatch(sources.discovery, /function markResolved\(/);
   assert.match(sources.discovery, /authenticated_source_requires_admin_review/);
   assert.match(sources.enrichment, /catalog_review_context_required/);
   assert.doesNotMatch(sources.crawler, /resolve_card_catalog_identity/);
+});
+
+test("trusted observation authority is revalidated under the publication locks before mutation", async () => {
+  const sql = await migrationSql();
+  const publish = functionBody(sql, "publish_card_catalog_identity");
+  const jobLock = publish.indexOf("card_catalog_publication:job:");
+  const lockedObserve = publish.indexOf("observe_existing_locked_revalidation");
+  const resolver = publish.indexOf("resolve_card_catalog_identity(");
+  assert.ok(jobLock >= 0, "publication job advisory lock missing");
+  assert.ok(
+    lockedObserve > jobLock && resolver > lockedObserve,
+    "observe_existing can mutate identity before locked review/status revalidation",
+  );
+  assert.match(
+    publish.slice(lockedObserve, resolver),
+    /FOR UPDATE[\s\S]*review_item_id[\s\S]*status[\s\S]*pending_review/i,
+  );
+  assert.match(sql, /observe_existing_locked_revalidation_assertion_failed/i);
+});
+
+test("reviewed rename locks old and new identity families and rejects a conflicting destination", async () => {
+  const sql = await migrationSql();
+  const publish = functionBody(sql, "publish_card_catalog_identity");
+  assert.match(
+    publish,
+    /edit_old_identity_lock[\s\S]*edit_new_identity_lock[\s\S]*least\([\s\S]*greatest\([\s\S]*pg_advisory_xact_lock/i,
+  );
+  assert.match(
+    publish,
+    /new_family_conflict[\s\S]*edit_target_conflict/i,
+    "rename does not recheck the destination family under both locks",
+  );
+  assert.match(sql, /rename_dual_family_lock_assertion_failed/i);
+});
+
+test("legacy URL backfill always has a nonnull deterministic observation timestamp", async () => {
+  const sql = await migrationSql();
+  const publish = functionBody(sql, "publish_card_catalog_identity");
+  assert.match(
+    publish,
+    /legacy_provenance_retrieved_at[\s\S]*coalesce\([\s\S]*card_row\.updated_at[\s\S]*retrieved_at[\s\S]*statement_timestamp\(\)/i,
+  );
+  assert.doesNotMatch(
+    publish,
+    /'legacy_catalog_url_backfill'[\s\S]{0,180}'admin',\s*card_row\.updated_at/i,
+  );
+  assert.match(sql, /legacy_provenance_timestamp_assertion_failed/i);
+});
+
+test("lifecycle evidence is chronological, semantic, bounded, and supersedes stale opposite work", async () => {
+  const sql = await migrationSql();
+  const lifecycle = functionBody(sql, "stage_card_catalog_lifecycle_review");
+  const publisher = functionBody(sql, "publish_card_catalog_identity");
+  assert.match(lifecycle, /observe_current/i);
+  assert.match(
+    lifecycle,
+    /lifecycle_observed_at[\s\S]*interval '5 minutes'[\s\S]*stale_catalog_lifecycle_observation/i,
+  );
+  assert.match(
+    lifecycle,
+    /latest_lifecycle_job_id[\s\S]*lifecycle_state[\s\S]*superseded_by_newer_lifecycle_observation[\s\S]*status = 'rejected'/i,
+  );
+  assert.match(
+    lifecycle,
+    /catalog_lifecycle_semantic_observation[\s\S]*source_observation_semantic_hash/i,
+  );
+  assert.match(
+    lifecycle,
+    /append_catalog_observation_history/i,
+    "lifecycle history is still unbounded or duplicate-appending",
+  );
+  assert.match(
+    publisher,
+    /latest_lifecycle_job_id[\s\S]*stale_catalog_lifecycle_review/i,
+    "admin lifecycle approval does not prove its review is latest",
+  );
+  assert.match(sql, /lifecycle_latest_evidence_assertion_failed/i);
+});
+
+test("network authority combines stored column and product name without a legacy wildcard", async () => {
+  const sql = await migrationSql();
+  const resolver = functionBody(sql, "resolve_card_catalog_identity");
+  const publisher = functionBody(sql, "publish_card_catalog_identity");
+  assert.match(sql, /card_catalog_effective_network\(text, text, text\)/i);
+  assert.match(
+    resolver,
+    /card_catalog_effective_network\(catalog\.network, catalog\.card_name, catalog\.bank\)/i,
+  );
+  assert.match(publisher, /card_catalog_effective_network/i);
+  assert.match(sql, /stored_network_conflict/i);
+  assert.match(sql, /amex_tier_identity_assertion_failed/i);
+});
+
+test("retry and reject exact replays return their retained terminal/current state without duplicate audit", async () => {
+  const sql = await migrationSql();
+  const publish = functionBody(sql, "publish_card_catalog_identity");
+  assert.match(
+    publish,
+    /idempotent_retry_reject_replay[\s\S]*replay_audit\.actor_id[\s\S]*replay_audit\.action[\s\S]*reason[\s\S]*merge_card_id/i,
+  );
+  assert.match(
+    publish,
+    /_action = 'retry'[\s\S]*review_row\.status = 'pending'[\s\S]*job_row\.status = 'queued'/i,
+  );
+  assert.match(
+    publish,
+    /_action = 'reject'[\s\S]*review_row\.status = 'rejected'[\s\S]*job_row\.status = 'rejected'/i,
+  );
+  assert.match(sql, /retry_reject_replay_assertion_failed/i);
+});
+
+test("reviewed fields have an exact whole-envelope allowlist, privacy, and recursive SQL bounds", async () => {
+  const sql = await migrationSql();
+  const publish = functionBody(sql, "publish_card_catalog_identity");
+  assert.match(sql, /card_catalog_json_envelope_valid\(jsonb, integer\)/i);
+  assert.match(sql, /card_catalog_json_contains_sensitive_url\(jsonb\)/i);
+  assert.match(
+    publish,
+    /jsonb_object_keys\(fields\)[\s\S]*reviewed_field_allowlist[\s\S]*unknown_reviewed_field/i,
+  );
+  assert.match(publish, /octet_length\(fields::text\)[\s\S]*16384/i);
+  assert.match(sql, /reviewed_fields_envelope_assertion_failed/i);
+});
+
+test("resource canonicalization fails closed on empty query separators in SQL and TypeScript parity assertions", async () => {
+  const sql = await migrationSql();
+  const canonical = functionBody(sql, "canonical_card_resource_url");
+  assert.match(canonical, /query_part\.part = ''[\s\S]*unapproved_query/i);
+  assert.match(sql, /empty_query_separator_parity_assertion_failed/i);
 });

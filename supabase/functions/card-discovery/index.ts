@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.110.2";
 import {
   allowedOfficialUrl,
   canonicalCardIdentity,
+  discoveryObservationVersionKey,
   evaluateAutomaticCatalogGate,
   exactOfficialPageIdentity,
   normalizedProduct,
@@ -22,10 +23,12 @@ import {
   approvedStoredQueryParameters,
   createOfficialRobotsCache,
   fetchOfficialIssuerResource,
+  type OfficialFetchResult,
   type OfficialRobotsCache,
   requireOfficialFetchBody,
 } from "../_shared/official_issuer_fetch.ts";
 import {
+  appendCatalogObservationHistory,
   canonicalPublicationResource,
   publicationFieldsFromFetch,
   publishReviewedCardIdentity,
@@ -34,6 +37,12 @@ import {
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 type UntypedSupabaseClient = any;
 const DISCOVERY_FETCH_DEADLINE_MS = 25_000;
+const DISCOVERY_MUTABLE_STATUSES = [
+  "queued",
+  "discovering",
+  "failed",
+  "review_required",
+];
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -364,14 +373,21 @@ async function resolveBoundIdentityOrReview(
   }
 }
 
-async function processSubmittedUrl(
-  db: UntypedSupabaseClient,
+type SubmittedUrlObservation = {
+  page: OfficialFetchResult & { text: string; contentHash: string };
+  submittedHash: string;
+  finalHash: string;
+  legacySubmittedHash: string;
+  legacyFinalHash: string;
+  publicationEvidence: Record<string, unknown>;
+};
+
+async function fetchSubmittedUrlObservation(
   job: Record<string, any>,
   rawUrl: string,
   deadlineAt: number,
-) {
+): Promise<SubmittedUrlObservation> {
   const robotsCache = createOfficialRobotsCache();
-  const evidence = job.evidence as SafeEvidence;
   const page = requireOfficialFetchBody(
     await fetchOfficialIssuerResource({
       issuer: job.issuer,
@@ -395,6 +411,165 @@ async function processSubmittedUrl(
       finalResourceIdentityHash: finalHash,
     }),
   };
+  return {
+    page,
+    submittedHash,
+    finalHash,
+    legacySubmittedHash,
+    legacyFinalHash,
+    publicationEvidence,
+  };
+}
+
+async function terminalJobMatchesSubmittedObservation(
+  db: UntypedSupabaseClient,
+  job: Record<string, any>,
+  observation: SubmittedUrlObservation,
+): Promise<boolean> {
+  const matches = (evidence: Record<string, unknown> | null | undefined) =>
+    evidence?.submitted_url_hash === observation.submittedHash &&
+    evidence?.final_url_hash === observation.finalHash &&
+    evidence?.content_hash === observation.page.contentHash;
+  if (job.review_item_id) {
+    const { data, error } = await db.from("card_catalog_review_queue")
+      .select("source_evidence")
+      .eq("id", job.review_item_id)
+      .eq("discovery_job_id", job.id)
+      .maybeSingle();
+    if (error) throw error;
+    if (matches(data?.source_evidence)) return true;
+  }
+  if (job.resolved_card_id) {
+    const { data, error } = await db.from("card_catalog_provenance")
+      .select("id")
+      .eq("card_id", job.resolved_card_id)
+      .eq("submitted_url_hash", observation.submittedHash)
+      .eq("final_url_hash", observation.finalHash)
+      .eq("content_hash", observation.page.contentHash)
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    if (data) return true;
+  }
+  return matches(job.evidence);
+}
+
+async function versionSubmittedObservationJob(
+  db: UntypedSupabaseClient,
+  job: Record<string, any>,
+  observation: SubmittedUrlObservation,
+): Promise<Record<string, any>> {
+  const evidence = job.evidence as SafeEvidence;
+  const versionKey = await discoveryObservationVersionKey({
+    issuer: String(job.issuer ?? evidence.issuer),
+    product: String(
+      job.proposed_product ?? evidence.product_signals?.[0] ?? "unknown",
+    ),
+    submittedUrlHash: observation.submittedHash,
+    finalUrlHash: observation.finalHash,
+    contentHash: observation.page.contentHash,
+    retrievedAt: observation.page.retrievedAt,
+  });
+  if (job.dedupe_key === versionKey) return job;
+  const existing = await db.from("card_discovery_jobs").select("*")
+    .eq("user_id", job.user_id).eq("dedupe_key", versionKey).maybeSingle();
+  if (existing.error) throw existing.error;
+  if (existing.data) return existing.data;
+  if (
+    terminalDiscoveryStatus(job.status) &&
+    await terminalJobMatchesSubmittedObservation(db, job, observation)
+  ) return job;
+
+  const now = new Date().toISOString();
+  const versionEvidence = {
+    ...evidence,
+    ...observation.publicationEvidence,
+    observation_version_key: versionKey,
+  };
+  if (!terminalDiscoveryStatus(job.status)) {
+    let update = db.from("card_discovery_jobs").update({
+      evidence: versionEvidence,
+      dedupe_key: versionKey,
+      updated_at: now,
+    }).eq("id", job.id).eq("user_id", job.user_id)
+      .in("status", DISCOVERY_MUTABLE_STATUSES);
+    update = job.updated_at ? update.eq("updated_at", job.updated_at) : update;
+    const changed = await update.select("*").maybeSingle();
+    if (changed.error && changed.error.code !== "23505") throw changed.error;
+    if (changed.data) return changed.data;
+    const raced = await db.from("card_discovery_jobs").select("*")
+      .eq("user_id", job.user_id).eq("dedupe_key", versionKey).maybeSingle();
+    if (raced.error) throw raced.error;
+    if (raced.data) return raced.data;
+    const current = await db.from("card_discovery_jobs").select("*")
+      .eq("id", job.id).eq("user_id", job.user_id).single();
+    if (current.error || !current.data) throw current.error;
+    if (
+      terminalDiscoveryStatus(current.data.status) &&
+      await terminalJobMatchesSubmittedObservation(
+        db,
+        current.data,
+        observation,
+      )
+    ) return current.data;
+    job = current.data;
+  }
+
+  const inserted = await db.from("card_discovery_jobs").insert({
+    user_id: job.user_id,
+    discovery_source: job.discovery_source ?? "statement",
+    issuer: job.issuer,
+    proposed_product: job.proposed_product,
+    evidence: versionEvidence,
+    dedupe_key: versionKey,
+    status: "queued",
+    updated_at: now,
+  }).select("*").maybeSingle();
+  if (inserted.error && inserted.error.code !== "23505") throw inserted.error;
+  if (inserted.data) return inserted.data;
+  const raced = await db.from("card_discovery_jobs").select("*")
+    .eq("user_id", job.user_id).eq("dedupe_key", versionKey).single();
+  if (raced.error || !raced.data) throw raced.error ?? inserted.error;
+  return raced.data;
+}
+
+async function claimSubmittedObservationJob(
+  db: UntypedSupabaseClient,
+  job: Record<string, any>,
+): Promise<{ job: Record<string, any>; claimed: boolean }> {
+  if (terminalDiscoveryStatus(job.status)) return { job, claimed: false };
+  const now = new Date().toISOString();
+  let update = db.from("card_discovery_jobs").update({
+    status: "discovering",
+    attempt_count: Number(job.attempt_count ?? 0) + 1,
+    updated_at: now,
+  }).eq("id", job.id).eq("user_id", job.user_id)
+    .in("status", ["queued", "failed", "review_required"]);
+  update = job.updated_at ? update.eq("updated_at", job.updated_at) : update;
+  const claimed = await update.select("*").maybeSingle();
+  if (claimed.error) throw claimed.error;
+  if (claimed.data) return { job: claimed.data, claimed: true };
+  const current = await db.from("card_discovery_jobs").select("*")
+    .eq("id", job.id).eq("user_id", job.user_id).single();
+  if (current.error || !current.data) throw current.error;
+  return { job: current.data, claimed: false };
+}
+
+async function processSubmittedUrlObservation(
+  db: UntypedSupabaseClient,
+  job: Record<string, any>,
+  observation: SubmittedUrlObservation,
+) {
+  const evidence = job.evidence as SafeEvidence;
+  const {
+    page,
+    submittedHash,
+    finalHash,
+    legacySubmittedHash,
+    legacyFinalHash,
+    publicationEvidence,
+  } = observation;
+  const finalUrl = page.canonicalUrl;
   const opaqueBinding = await resolveBoundIdentityOrReview(
     db,
     job,
@@ -697,12 +872,9 @@ async function putInReview(
     }
   } else {
     const observedAt = new Date().toISOString();
-    const history =
-      Array.isArray(currentReview.source_evidence?.observation_history)
-        ? currentReview.source_evidence.observation_history.slice(-15)
-        : [];
-    if (history.length === 0 && currentReview.source_evidence) {
-      history.push({
+    let history = currentReview.source_evidence?.observation_history;
+    if (!Array.isArray(history) && currentReview.source_evidence) {
+      history = [{
         observed_at: currentReview.source_evidence.retrieved_at ??
           currentReview.updated_at,
         content_hash: currentReview.source_evidence.content_hash ?? null,
@@ -710,14 +882,21 @@ async function putInReview(
           null,
         final_url_hash: currentReview.source_evidence.final_url_hash ?? null,
         source_status: currentReview.source_evidence.source_status ?? null,
-      });
+        semantic_hash: currentReview.source_evidence.content_hash ??
+          currentReview.source_evidence.final_url_hash ?? null,
+      }];
     }
     const updatedSourceEvidence = {
       ...sourceEvidence,
-      observation_history: [...history.slice(-14), {
+      observation_history: appendCatalogObservationHistory(history, {
         observed_at: sourceEvidence.retrieved_at ?? observedAt,
         content_hash: sourceEvidence.content_hash ?? null,
-      }],
+        submitted_url_hash: sourceEvidence.submitted_url_hash ?? null,
+        final_url_hash: sourceEvidence.final_url_hash ?? null,
+        source_status: sourceEvidence.source_status ?? null,
+        semantic_hash: sourceEvidence.content_hash ??
+          sourceEvidence.final_url_hash ?? null,
+      }),
     };
     let update = db.from("card_catalog_review_queue")
       .update({
@@ -737,15 +916,22 @@ async function putInReview(
     if (error || !data) throw error ?? new Error("catalog_review_race");
     review = data;
   }
-  const { error: updateError } = await db.from("card_discovery_jobs").update(
+  let jobUpdate = db.from("card_discovery_jobs").update(
     reviewRequiredJobPatch(review.id, new Date().toISOString()),
-  ).eq("id", job.id).in("status", [
-    "queued",
-    "discovering",
-    "failed",
-    "review_required",
-  ]);
+  ).eq("id", job.id).in("status", DISCOVERY_MUTABLE_STATUSES);
+  jobUpdate = job.updated_at
+    ? jobUpdate.eq("updated_at", job.updated_at)
+    : jobUpdate;
+  const { data: linkedJob, error: updateError } = await jobUpdate.select("id")
+    .maybeSingle();
   if (updateError) throw updateError;
+  if (!linkedJob) {
+    const current = await db.from("card_discovery_jobs")
+      .select("status,review_item_id").eq("id", job.id).single();
+    if (current.error) throw current.error;
+    if (terminalDiscoveryStatus(current.data?.status)) return;
+    throw new Error("catalog_review_job_race");
+  }
   return;
 }
 
@@ -757,7 +943,7 @@ async function processDiscoveryJob(
   const { data: rawJob, error } = await db.from("card_discovery_jobs")
     .select("*").eq("id", jobId).single();
   if (error || !rawJob) return;
-  const job = rawJob as Record<string, any>;
+  let job = rawJob as Record<string, any>;
   const evidence = job.evidence as SafeEvidence;
   if (job.discovery_source === "issuer_crawl") {
     if (["resolved", "rejected"].includes(job.status)) return;
@@ -803,11 +989,14 @@ async function processDiscoveryJob(
     return;
   }
 
-  await db.from("card_discovery_jobs").update({
+  const claimed = await db.from("card_discovery_jobs").update({
     status: "discovering",
     attempt_count: Number(job.attempt_count ?? 0) + 1,
     updated_at: new Date().toISOString(),
-  }).eq("id", jobId);
+  }).eq("id", jobId).in("status", ["queued", "failed"])
+    .eq("updated_at", job.updated_at).select("*").maybeSingle();
+  if (claimed.error || !claimed.data) return;
+  job = claimed.data;
 
   try {
     const canonical = canonicalCardIdentity(job.issuer, product);
@@ -971,7 +1160,7 @@ async function processDiscoveryJob(
       existing,
     );
   } catch (error) {
-    const attempt = Number(job.attempt_count ?? 0) + 1;
+    const attempt = Number(job.attempt_count ?? 1);
     const failure = error instanceof Error
       ? error.message.slice(0, 120)
       : "discovery_failed";
@@ -987,13 +1176,15 @@ async function processDiscoveryJob(
       );
       return;
     }
-    await db.from("card_discovery_jobs").update({
+    const failed = await db.from("card_discovery_jobs").update({
       status: "failed",
       failure_category: failure,
       next_retry_at: new Date(Date.now() + Math.min(60, 2 ** attempt) * 60_000)
         .toISOString(),
       updated_at: new Date().toISOString(),
-    }).eq("id", jobId);
+    }).eq("id", jobId).eq("status", "discovering")
+      .eq("updated_at", job.updated_at).select("id").maybeSingle();
+    if (failed.error) throw failed.error;
   }
 }
 
@@ -1031,42 +1222,58 @@ serve(async (request) => {
       ) {
         return json({ error: "invalid_url", reason_code: "invalid_url" }, 400);
       }
-      const job = await upsertDiscoveryJob(
+      let job = await upsertDiscoveryJob(
         db,
         user.id,
         evidence,
         body.source_url,
       );
-      if (terminalDiscoveryStatus(job.status)) {
-        return json(publicDiscoveryResult(job));
-      }
       try {
-        const result = await processSubmittedUrl(
-          db,
+        const observation = await fetchSubmittedUrlObservation(
           job,
           body.source_url,
           invocationDeadlineAt,
         );
+        job = await versionSubmittedObservationJob(db, job, observation);
+        const claim = await claimSubmittedObservationJob(db, job);
+        job = claim.job;
+        if (!claim.claimed || terminalDiscoveryStatus(job.status)) {
+          return json(publicDiscoveryResult(job));
+        }
+        const result = await processSubmittedUrlObservation(
+          db,
+          job,
+          observation,
+        );
         return json(publicDiscoveryResult(result));
       } catch (error) {
         const reason = publicReasonCode(error);
-        await db.from("card_discovery_jobs").update({
+        const retryAt = reason === "fetch_timeout"
+          ? new Date(Date.now() + 120_000).toISOString()
+          : null;
+        const failed = await db.from("card_discovery_jobs").update({
           status: reason === "fetch_timeout" ? "failed" : "review_required",
           failure_category: reason,
-          next_retry_at: reason === "fetch_timeout"
-            ? new Date(Date.now() + 120_000).toISOString()
-            : null,
+          next_retry_at: retryAt,
           updated_at: new Date().toISOString(),
-        }).eq("id", job.id);
+        }).eq("id", job.id).eq("user_id", user.id)
+          .in("status", DISCOVERY_MUTABLE_STATUSES)
+          .select("*").maybeSingle();
+        if (failed.error) throw failed.error;
+        const responseJob = failed.data ??
+          (await db.from("card_discovery_jobs").select("*")
+            .eq("id", job.id).eq("user_id", user.id).single()).data ??
+          job;
+        if (terminalDiscoveryStatus(responseJob.status)) {
+          return json(publicDiscoveryResult(responseJob));
+        }
         return json(
           {
             ...publicDiscoveryResult({
-              id: job.id,
+              id: responseJob.id,
               status: reason === "fetch_timeout" ? "failed" : "review_required",
               failure_category: reason,
-              next_retry_at: reason === "fetch_timeout"
-                ? new Date(Date.now() + 120_000).toISOString()
-                : null,
+              next_retry_at: retryAt,
             }),
           },
           reason === "invalid_url" || reason === "unapproved_domain"

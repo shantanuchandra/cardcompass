@@ -152,14 +152,23 @@ Deno.test("catalog conflict reviews version material content while keeping termi
     catalogJob,
     [{ field: "annual_fee" }],
     proposed,
-    observation("c".repeat(64), "2026-08-20T00:00:00.000Z"),
+    observation("c".repeat(64), "2026-08-20T00:30:00.000Z"),
   );
-  assert(first === refreshed, "same material evidence created a second review");
+  assert(
+    first === refreshed,
+    "transport-only retrieval time created a second review",
+  );
   assert(db.state.jobs.length === 1, "same content created a second job");
   assert(
     ((db.state.reviews[0].source_evidence as Record<string, unknown>)
-      .observation_history as unknown[]).length === 2,
-    "pending refresh did not append history",
+      .observation_history as unknown[]).length === 1,
+    "exact semantic refresh duplicated history",
+  );
+  assert(
+    (((db.state.reviews[0].source_evidence as Record<string, unknown>)
+      .observation_history as Array<Record<string, unknown>>)[0]
+      .observed_at) === "2026-08-20T00:30:00.000Z",
+    "pending refresh did not retain the newest retrieval evidence",
   );
   db.state.reviews[0].status = "approved";
   db.state.jobs[0].status = "resolved";

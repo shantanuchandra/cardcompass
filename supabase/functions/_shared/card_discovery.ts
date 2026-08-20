@@ -244,9 +244,75 @@ export function canonicalCardIdentity(
   return {
     issuer,
     cardName,
-    network: hasAmex ? "American Express" : null,
+    network: hasAmex || issuer.trim().toLowerCase() === "american express"
+      ? "American Express"
+      : null,
     aliases: rawProduct.trim() === cardName ? [] : [rawProduct.trim()],
   };
+}
+
+function networkFromIdentityText(value: unknown): string | null {
+  const text = String(value ?? "");
+  if (/\b(?:american\s+express|amex)\b/i.test(text)) {
+    return "American Express";
+  }
+  if (/\bmaster\s*card\b/i.test(text)) return "Mastercard";
+  if (/\brupay\b/i.test(text)) return "RuPay";
+  if (/\bvisa\b/i.test(text)) return "Visa";
+  return null;
+}
+
+export function effectiveCatalogNetwork(
+  cardName: unknown,
+  network: unknown,
+  issuer = "",
+): string | null {
+  const signals = [
+    networkFromIdentityText(network),
+    networkFromIdentityText(cardName),
+    issuer.trim().toLowerCase() === "american express"
+      ? "American Express"
+      : null,
+  ].filter((value): value is string => value !== null);
+  const distinct = [...new Set(signals.map((value) => value.toLowerCase()))];
+  if (distinct.length > 1) throw new Error("identity_conflict");
+  if (signals.length === 0) return null;
+  return signals[0];
+}
+
+export async function discoveryObservationVersionKey(input: {
+  issuer: string;
+  product: string;
+  submittedUrlHash: string;
+  finalUrlHash: string;
+  contentHash: string;
+  retrievedAt?: string;
+}): Promise<string> {
+  for (
+    const value of [
+      input.submittedUrlHash,
+      input.finalUrlHash,
+      input.contentHash,
+    ]
+  ) {
+    if (!/^[0-9a-f]{64}$/i.test(value)) {
+      throw new Error("invalid_observation_identity");
+    }
+  }
+  const identity = [
+    input.issuer.trim().toLowerCase(),
+    normalizedProduct(input.product, input.issuer) || "unknown",
+    input.submittedUrlHash.toLowerCase(),
+    input.finalUrlHash.toLowerCase(),
+    input.contentHash.toLowerCase(),
+  ].join(":");
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(identity),
+  );
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 function decodeHtmlText(value: string): string {
@@ -670,13 +736,31 @@ export function selectCatalogUrlIdentityMatch(
       .filter((identity): identity is CanonicalCardIdentity =>
         identity !== null
       );
-    const storedNetwork = candidate.network?.trim().toLowerCase() ?? null;
+    let storedNetwork: string | null;
+    try {
+      storedNetwork = effectiveCatalogNetwork(
+        candidate.cardName,
+        candidate.network,
+        candidate.issuer,
+      )?.toLowerCase() ?? null;
+    } catch {
+      continue;
+    }
     const storedTier = tierVariantKey(candidate.cardName);
-    const networkCompatible = identities.some((identity) =>
-      (!storedNetwork ||
-        (identity.network?.trim().toLowerCase() ?? null) === storedNetwork) &&
-      (!storedTier || tierVariantKey(identity.cardName) === storedTier)
-    );
+    const networkCompatible = identities.some((identity) => {
+      let observedNetwork: string | null;
+      try {
+        observedNetwork = effectiveCatalogNetwork(
+          identity.cardName,
+          identity.network,
+          identity.issuer,
+        )?.toLowerCase() ?? null;
+      } catch {
+        return false;
+      }
+      return (!storedNetwork || observedNetwork === storedNetwork) &&
+        (!storedTier || tierVariantKey(identity.cardName) === storedTier);
+    });
     if (identities.length > 0 && networkCompatible) {
       matchingIds.add(candidate.cardId);
     }

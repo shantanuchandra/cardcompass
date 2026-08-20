@@ -556,6 +556,34 @@ Deno.test("an exact recurring reappearance stages reviewed reactivation", async 
   );
 });
 
+Deno.test("an exact active-card observation advances current lifecycle evidence without mutation", async () => {
+  const { lifecycleCalls, finalization } = await stableCanonicalProcessFixture(
+    null,
+    false,
+    false,
+  );
+  assert(
+    lifecycleCalls.length === 1,
+    "active exact observation did not advance the lifecycle evidence clock",
+  );
+  const call = lifecycleCalls[0];
+  assert(
+    call._suggested_action === "observe_current",
+    "active exact observation created a mutable lifecycle action",
+  );
+  const observation = call._source_observation as Record<string, unknown>;
+  assert(
+    observation.kind === "exact_card_reappearance" &&
+      observation.identity_validated === true &&
+      observation.explicit_discontinuation === false,
+    "current-state observation lost exact positive evidence",
+  );
+  assert(
+    finalization?._status === "completed",
+    "current-state evidence blocked ordinary benefit finalization",
+  );
+});
+
 Deno.test("stable canonical 200 delegates pending reviewability to the locked finalizer", async () => {
   for (
     const [statusAtFinalize, expectedEffectiveStatus] of [

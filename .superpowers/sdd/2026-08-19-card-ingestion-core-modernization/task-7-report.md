@@ -14,7 +14,11 @@ observations into bounded review work without changing acquisition state. The
 second hardening pass versions review work by resource/content identity, keeps
 terminal decisions immutable, serializes identity at issuer/product-family
 scope, and preserves network/tier variants throughout discovery, recurrence,
-and publication.
+and publication. The third hardening pass makes terminal user-URL submissions
+fetch-first and observation-versioned, puts every worker state transition behind
+compare-and-set ownership, revalidates trusted observations under publication
+locks, and makes every authoritative lifecycle observation advance one
+chronological per-card latest-evidence contract.
 
 Live applied: **no**.
 
@@ -52,7 +56,7 @@ No earlier migration was modified.
 ## Migration
 
 - File: `20260819231435_publish_reviewed_card_identity.sql`
-- SHA-256: `fe6a51daf34fdb1d0cc83582e11c60e48892d1b1635247dab87a9b1de827ae22`
+- SHA-256: `9a5b91e9866af4af5113f5df1233657415b98ff0293e7ced74251709a38add6e`
 - Created with `supabase migration new publish_reviewed_card_identity`.
 - Project-ref preflight remained exactly `prbcoxqobhjnnfnxevxf`.
 
@@ -108,6 +112,11 @@ No earlier migration was modified.
   absent-network, absent-tier, non-credit, cross-network, or ambiguous hash/body
   matches. Ordinary fees/terms/benefits prose is excluded from competing title
   identity.
+- Stored network authority is derived from both the catalog network column and
+  the product name. A disagreement is a hard identity conflict; a null legacy
+  column cannot make a name-encoded Visa/Mastercard/RuPay/Amex variant a
+  wildcard. American Express tier-only products retain the same strong
+  issuer/network/tier treatment as other network variants.
 - SQL and TypeScript retain only approved functional query keys, preserve
   query ordering/duplicates/encoding, remove tracking and fragments, reject
   credentials/sensitive keys, and enforce issuer-domain ownership and the
@@ -138,6 +147,12 @@ No earlier migration was modified.
   catalog baseline. A pending review may refresh only through a null-safe
   optimistic compare-and-set and appends observation history. A terminal review
   is immutable; materially new evidence creates a new service job/review unit.
+- User `resolve_url` submissions also fetch and revalidate before returning a
+  terminal result. The submitted resource, final resource, and content hashes
+  form the immutable observation version; retrieval/transport timestamps do
+  not. An identical observation returns the existing terminal work, while a
+  corrected rejected page or a repurposed resolved URL creates a new reviewable
+  version without rewriting the old job, review, or provenance.
 
 ## Lock order and page moves
 
@@ -155,6 +170,12 @@ Rows are first observed without locks and then re-read/revalidated under the
 canonical locks. Stale job evidence, stale review evidence, and stale terminal
 state fail the transaction. Apply-time assertions verify signatures, grants,
 lock namespaces/order, invoker mode, and presence of the Task 6 enqueue lane.
+`observe_existing` rechecks the job status, review link, and pending-review
+absence only after taking the shared job advisory and row locks. A reviewed
+rename takes the old and new family advisory locks in lexical order and rechecks
+the destination family before resolver/catalog mutation. Legacy page-move
+backfill always records a deterministic non-null observation timestamp while
+the optimistic baseline comparison remains null-aware.
 
 For a reviewed same-card page move:
 
@@ -205,6 +226,14 @@ For a reviewed same-card page move:
   stores retrieval-time evidence when legacy `updated_at` is null, compares the
   null-aware full snapshot again under the card lock, and returns
   `stale_catalog_baseline` without mutation if another review won first.
+- Strong lifecycle evidence now has a per-card chronological contract covering
+  both change proposals and no-change current-state observations. Semantic
+  identity excludes retrieval and transport time, exact history is
+  hash-deduplicated and capped at the newest 24 entries, timestamps more than
+  five minutes in the future fail closed, and older evidence cannot supersede a
+  newer observation. A newer opposite-state observation rejects pending stale
+  work; lifecycle approval proves its job is still the latest under the card
+  lock before changing acquisition state.
 - Normal user resubmission never resets a terminal review/job to pending. An
   explicit admin `retry` with a non-empty reason may reopen only the retained
   retryable review unit and appends audit history; approved/merged work remains
@@ -268,20 +297,40 @@ adds content/resource-versioned review units, compare-and-set evidence refresh,
 strict family/network/tier/type resolution, lifecycle precedence, explicit
 admin retry, and independently evidenced submitted/final conflicts.
 
+The third hardening pass began with exact focused reds:
+
+- shared TypeScript failed with three `TS2305` errors and one missing-helper
+  export for lifecycle observation actions, semantic history, reviewed-envelope
+  bounds, effective network authority, and user observation versioning;
+- terminal `resolve_url` still returned before fetch/version comparison;
+- an active exact 200 did not record current lifecycle evidence, and a
+  retrieval-time-only catalog observation created a second review unit;
+- the catalog lifecycle producer failed its new central-boundary test, and the
+  migration suite was **20 passed / 8 failed** for locked observation
+  revalidation, dual-family rename locks, legacy timestamp fallback,
+  chronological lifecycle evidence, effective network/Amex parity,
+  retry/reject replay, reviewed-envelope bounds, and empty-query parity.
+
+Those reds are now retained in the affected shared, discovery, crawler,
+catalog, recurring, and migration suites. All asynchronous job claims,
+terminal catches, review links, and failure writes use non-terminal/status and
+version compare-and-set predicates so an admin-approved, rejected, or resolved
+row cannot be reopened by a stale worker.
+
 ## Green verification
 
 - `deno test --node-modules-dir=auto --allow-env --frozen` across every Edge
-  test except the separately permissioned admin listener suite: **203 passed,
+  test except the separately permissioned admin listener suite: **208 passed,
   0 failed**.
 - `deno test --node-modules-dir=auto --allow-env
   --allow-net=0.0.0.0:8000 --frozen
   supabase/functions/admin-catalog-entry/benefit_admin_test.ts`: **41 passed,
   0 failed**. The only network permission is the unchanged local test listener.
 - `node --test` across every `test/supabase/*_test.js` and
-  `test/supabase/*.test.mjs`: **247 passed, 0 failed**.
+  `test/supabase/*.test.mjs`: **259 passed, 0 failed**.
 - `flutter test --no-pub test/supabase/card_catalog_url_identity_test.dart`:
   **2 passed, 0 failed**.
-- Total unique named offline tests: **493 passed, 0 failed**.
+- Total unique named offline tests: **510 passed, 0 failed**.
 - `deno check --node-modules-dir=auto --frozen` on all changed production
   TypeScript: passed.
 - `deno fmt --check` on the complete changed TypeScript/JavaScript test surface:

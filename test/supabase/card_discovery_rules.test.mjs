@@ -314,6 +314,75 @@ test("requires the strongest stored network and tier variant", () => {
   );
 });
 
+test("derives authoritative stored networks from both column and card name and rejects disagreement", () => {
+  assert.equal(
+    cardDiscovery.effectiveCatalogNetwork(
+      "Privilege Mastercard World Elite",
+      null,
+      "Axis Bank",
+    ),
+    "Mastercard",
+  );
+  assert.equal(
+    cardDiscovery.effectiveCatalogNetwork(
+      "The Platinum Card",
+      null,
+      "American Express",
+    ),
+    "American Express",
+    "tier-only Amex identity did not inherit its issuer-specific network",
+  );
+  assert.throws(
+    () =>
+      cardDiscovery.effectiveCatalogNetwork(
+        "Privilege Mastercard World",
+        "Visa",
+        "Axis Bank",
+      ),
+    /identity_conflict/,
+    "conflicting stored column/name networks were treated as wildcard",
+  );
+});
+
+test("user URL observation version identity ignores retrieval time but changes with content or resource", async () => {
+  const base = {
+    issuer: "Axis Bank",
+    product: "Privilege Visa Infinite",
+    submittedUrlHash: "a".repeat(64),
+    finalUrlHash: "b".repeat(64),
+    contentHash: "c".repeat(64),
+  };
+  const first = await cardDiscovery.discoveryObservationVersionKey({
+    ...base,
+    retrievedAt: "2026-08-20T00:00:00.000Z",
+  });
+  const replay = await cardDiscovery.discoveryObservationVersionKey({
+    ...base,
+    retrievedAt: "2026-08-20T01:00:00.000Z",
+  });
+  const changedContent = await cardDiscovery.discoveryObservationVersionKey({
+    ...base,
+    contentHash: "d".repeat(64),
+    retrievedAt: "2026-08-20T01:00:00.000Z",
+  });
+  const changedSelector = await cardDiscovery.discoveryObservationVersionKey({
+    ...base,
+    submittedUrlHash: "e".repeat(64),
+    retrievedAt: "2026-08-20T01:00:00.000Z",
+  });
+  assert.equal(first, replay, "retrieval time churned immutable user work");
+  assert.notEqual(
+    first,
+    changedContent,
+    "corrected content reused terminal work",
+  );
+  assert.notEqual(
+    first,
+    changedSelector,
+    "repurposed resource reused terminal work",
+  );
+});
+
 test("uses target-aware body evidence without treating relationship card prose as product identity", () => {
   const terms = `
     <p>Privilege Credit Card terms apply to the Primary Card and each
@@ -597,13 +666,23 @@ test("authenticated discovery retains publication evidence for central admin rev
   );
   assert.match(
     source,
-    /terminalDiscoveryStatus\([^)]+\)[\s\S]*return existing/i,
-    "terminal resubmission does not return its immutable outcome",
+    /versionSubmittedObservationJob/i,
+    "submitted fetches do not select immutable content/resource review versions",
+  );
+  const resolveUrlHandler = source.slice(
+    source.indexOf('if (action === "resolve_url")'),
+    source.indexOf('if (action === "discover")'),
+  );
+  assert.ok(
+    resolveUrlHandler.indexOf("fetchSubmittedUrlObservation") >= 0 &&
+      resolveUrlHandler.indexOf("fetchSubmittedUrlObservation") <
+        resolveUrlHandler.indexOf("terminalDiscoveryStatus(job.status)"),
+    "resolve_url still returns terminal state before revalidating the URL",
   );
   assert.match(
     source,
-    /terminalDiscoveryStatus\(job\.status\)[\s\S]*return json\(publicDiscoveryResult\(job\)\)[\s\S]*processSubmittedUrl/i,
-    "resolve_url still refetches or mutates terminal reviewed work",
+    /fetchSubmittedUrlObservation[\s\S]*versionSubmittedObservationJob[\s\S]*processSubmittedUrlObservation/i,
+    "resolve_url does not fetch, version, then process the exact observation",
   );
   assert.doesNotMatch(
     source.match(/async function putInReview[\s\S]*?\n\}/)?.[0] ?? "",
@@ -614,6 +693,25 @@ test("authenticated discovery retains publication evidence for central admin rev
     source,
     /bound_resource_identities[\s\S]*submitted[\s\S]*final[\s\S]*putInReview/i,
     "bound URL/body conflict is not materialized as actionable review evidence",
+  );
+  assert.match(
+    source,
+    /\.in\(["']status["'],\s*DISCOVERY_MUTABLE_STATUSES\)/i,
+    "discovery job writes can overwrite an admin terminal decision",
+  );
+  const submittedClaim = source.match(
+    /async function claimSubmittedObservationJob[\s\S]*?\n\}/,
+  )?.[0] ?? "";
+  assert.match(submittedClaim, /\["queued",\s*"failed",\s*"review_required"\]/);
+  assert.doesNotMatch(
+    submittedClaim,
+    /DISCOVERY_MUTABLE_STATUSES/,
+    "a second resolve_url request can claim work already being discovered",
+  );
+  assert.match(
+    resolveUrlHandler,
+    /claim\.claimed[\s\S]*publicDiscoveryResult/i,
+    "a losing resolve_url claim still processes the same observation concurrently",
   );
 });
 

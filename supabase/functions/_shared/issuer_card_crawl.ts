@@ -2,6 +2,7 @@ import {
   assessOfficialCardIdentity,
   canonicalCardIdentity,
   canonicalOfficialUrl,
+  effectiveCatalogNetwork,
   normalizedProduct,
   normalizedProductFamily,
   officialCardIdentityFromHtml,
@@ -20,7 +21,9 @@ import {
   safeHttpsDisplayUrl,
 } from "./benefit_source_privacy.ts";
 import {
+  appendCatalogObservationHistory,
   canonicalPublicationResource,
+  catalogLifecycleObservationAction,
   hasStrongExplicitCardDiscontinuation,
   proposeCatalogLifecycleReview,
   publishReviewedCardIdentity,
@@ -640,8 +643,17 @@ export async function persistCrawlerCandidate(
     normalizedNames,
     normalizedFamilies,
   );
-  const proposedNetwork = (canonical.network ?? candidate.network)?.trim()
-    .toLowerCase() ?? null;
+  let proposedNetwork: string | null = null;
+  let proposedNetworkConflict = false;
+  try {
+    proposedNetwork = effectiveCatalogNetwork(
+      canonical.cardName,
+      canonical.network ?? candidate.network,
+      issuer,
+    )?.toLowerCase() ?? null;
+  } catch {
+    proposedNetworkConflict = true;
+  }
   const tierKey = (value: unknown): string | null => {
     const normalized = String(value ?? "").toLowerCase().replace(
       /[^a-z0-9]+/g,
@@ -665,13 +677,20 @@ export async function persistCrawlerCandidate(
   };
   const proposedTier = tierKey(canonical.cardName);
   const networkCompatibleCandidates = candidates.filter((row) => {
-    const storedNetwork = typeof row.network === "string"
-      ? row.network.trim().toLowerCase()
-      : "";
+    let storedNetwork: string | null;
+    try {
+      storedNetwork = effectiveCatalogNetwork(
+        row.card_name,
+        row.network,
+        String(row.bank ?? issuer),
+      )?.toLowerCase() ?? null;
+    } catch {
+      return false;
+    }
     const storedTier = tierKey(row.card_name);
-    return (!storedNetwork ||
+    return (!proposedNetworkConflict && (!storedNetwork ||
       Boolean(proposedNetwork && storedNetwork === proposedNetwork)) &&
-      (!storedTier || storedTier === proposedTier);
+      (!storedTier || storedTier === proposedTier));
   });
   const exactExisting = candidates.length === 1 &&
       networkCompatibleCandidates.length === 1 &&
@@ -687,6 +706,7 @@ export async function persistCrawlerCandidate(
         networkCompatibleCandidates.length === 0
       ? ["conflicting_network_identity"]
       : []),
+    ...(proposedNetworkConflict ? ["conflicting_network_identity"] : []),
     ...(candidates.length > 0 && networkCompatibleCandidates.length === 0
       ? ["conflicting_strong_identity"]
       : []),
@@ -717,13 +737,24 @@ export async function persistCrawlerCandidate(
     explicit_discontinuation: candidate.explicitDiscontinuation === true,
     ...(candidate.retrievedAt ? { retrieved_at: candidate.retrievedAt } : {}),
   };
+  const lifecycleObservationAction = exactExisting
+    ? catalogLifecycleObservationAction({
+      isDiscontinued: exactExisting.is_discontinued === true,
+      httpStatus: Number.isInteger(candidate.sourceStatus)
+        ? Number(candidate.sourceStatus)
+        : 200,
+      identityValidated: true,
+      explicitDiscontinuation: candidate.explicitDiscontinuation === true,
+    })
+    : null;
   if (
-    exactExisting?.is_discontinued === true &&
-    candidate.explicitDiscontinuation !== true
+    exactExisting && lifecycleObservationAction &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      .test(String(exactExisting.id))
   ) {
-    const reviewId = await proposeCatalogLifecycleReview(supabase, {
+    const lifecycleId = await proposeCatalogLifecycleReview(supabase, {
       cardId: String(exactExisting.id),
-      suggestedAction: "reactivate",
+      suggestedAction: lifecycleObservationAction,
       sourceUrl: finalResource.canonicalUrl,
       sourceUrlHash: finalHash,
       contentHash: validOpaqueHash(candidate.contentHash)
@@ -731,24 +762,22 @@ export async function persistCrawlerCandidate(
         : null,
       sourceObservation: {
         ...sourceObservation,
-        kind: "exact_card_reappearance",
+        kind: candidate.explicitDiscontinuation === true
+          ? "strong_explicit_discontinuation"
+          : "exact_card_reappearance",
       },
     });
-    return { outcome: "review", reviewId };
-  }
-  if (
-    exactExisting?.is_discontinued === true &&
-    candidate.explicitDiscontinuation === true
-  ) {
-    return {
-      outcome: "duplicate",
-      catalogCardId: String(exactExisting.id),
-    };
+    if (lifecycleObservationAction !== "observe_current") {
+      return { outcome: "review", reviewId: lifecycleId };
+    }
+    if (exactExisting.is_discontinued === true) {
+      return { outcome: "duplicate", catalogCardId: String(exactExisting.id) };
+    }
   }
 
   const { data: existingJob, error: existingJobError } = await supabase
     .from("card_discovery_jobs")
-    .select("id, review_item_id, status")
+    .select("id, review_item_id, status, updated_at")
     .eq("discovery_source", "issuer_crawl")
     .eq("dedupe_key", dedupeKey)
     .is("user_id", null)
@@ -840,14 +869,14 @@ export async function persistCrawlerCandidate(
         status: "queued",
         updated_at: new Date().toISOString(),
       })
-      .select("id")
+      .select("id, status, updated_at")
       .single();
     if (!error) {
       job = data;
     } else {
       const { data: racedJob, error: racedJobError } = await supabase
         .from("card_discovery_jobs")
-        .select("id, review_item_id")
+        .select("id, review_item_id, status, updated_at")
         .eq("discovery_source", "issuer_crawl")
         .eq("dedupe_key", dedupeKey)
         .is("user_id", null)
@@ -897,12 +926,9 @@ export async function persistCrawlerCandidate(
   }
 
   if (existingReview?.status === "pending") {
-    const history =
-      Array.isArray(existingReview.source_evidence?.observation_history)
-        ? existingReview.source_evidence.observation_history.slice(-15)
-        : [];
-    if (history.length === 0 && existingReview.source_evidence) {
-      history.push({
+    let history = existingReview.source_evidence?.observation_history;
+    if (!Array.isArray(history) && existingReview.source_evidence) {
+      history = [{
         observed_at: existingReview.source_evidence.retrieved_at ??
           existingReview.updated_at,
         content_hash: existingReview.source_evidence.content_hash ??
@@ -914,19 +940,19 @@ export async function persistCrawlerCandidate(
           existingReview.source_evidence.final_resource_identity_hash ??
             finalHash,
         source_status: existingReview.source_evidence.source_status ?? 200,
-      });
+        semantic_hash: existingReview.source_evidence.content_hash ??
+          contentIdentity,
+      }];
     }
     const refreshedAt = new Date().toISOString();
     const refreshedEvidence = {
       ...evidence.crawler_source_evidence,
-      observation_history: [
-        ...history.slice(-14),
-        {
-          observed_at: candidate.retrievedAt ?? refreshedAt,
-          content_hash: contentIdentity,
-          source_status: candidate.sourceStatus ?? 200,
-        },
-      ],
+      observation_history: appendCatalogObservationHistory(history, {
+        observed_at: candidate.retrievedAt ?? refreshedAt,
+        content_hash: contentIdentity,
+        source_status: candidate.sourceStatus ?? 200,
+        semantic_hash: contentIdentity,
+      }),
     };
     const update = supabase.from("card_catalog_review_queue")
       .update({
@@ -983,7 +1009,7 @@ export async function persistCrawlerCandidate(
     }
   }
 
-  const { error: updateError } = await supabase.from("card_discovery_jobs")
+  let linkJob = supabase.from("card_discovery_jobs")
     .update({
       status: "review_required",
       review_item_id: review.id,
@@ -993,7 +1019,24 @@ export async function persistCrawlerCandidate(
     })
     .eq("id", job.id)
     .in("status", ["queued", "discovering", "failed", "review_required"]);
+  linkJob = job.updated_at ? linkJob.eq("updated_at", job.updated_at) : linkJob;
+  const { data: linkedJob, error: updateError } = await linkJob.select("id")
+    .maybeSingle();
   if (updateError) throw updateError;
+  if (!linkedJob) {
+    const current = await supabase.from("card_discovery_jobs")
+      .select("status,review_item_id").eq("id", job.id).single();
+    if (current.error) throw current.error;
+    if (["resolved", "rejected"].includes(current.data?.status)) {
+      return {
+        outcome: "duplicate",
+        ...(current.data?.review_item_id
+          ? { reviewId: current.data.review_item_id }
+          : {}),
+      };
+    }
+    throw new Error("catalog_review_job_race");
+  }
   return { outcome: duplicate ? "duplicate" : "review", reviewId: review.id };
 }
 

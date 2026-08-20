@@ -187,7 +187,13 @@ BEGIN
   raw_query := CASE WHEN position('?' IN without_fragment) > 0
     THEN substring(without_fragment FROM position('?' IN without_fragment) + 1)
     ELSE '' END;
-  IF raw_query = '' THEN RETURN base_url; END IF;
+  -- An explicit empty query separator is not the same resource spelling as a
+  -- URL with no query. Fail closed so Edge and SQL cannot bind different keys.
+  IF raw_query = '' AND position('?' IN without_fragment) > 0 THEN
+    RAISE EXCEPTION 'unapproved_query';
+  ELSIF raw_query = '' THEN
+    RETURN base_url;
+  END IF;
 
   retained_query := '';
   FOR query_part IN
@@ -389,6 +395,205 @@ AS $$
   END;
 $$;
 
+CREATE OR REPLACE FUNCTION public.card_catalog_effective_network(
+  _network text,
+  _card_name text,
+  _issuer text
+) RETURNS text
+LANGUAGE plpgsql
+IMMUTABLE
+SECURITY INVOKER
+SET search_path = public, extensions, pg_temp
+AS $$
+DECLARE
+  column_network text := public.normalize_card_catalog_network(_network);
+  name_network text := CASE
+    WHEN lower(coalesce(_card_name, '')) ~ '\m(american[[:space:]]+express|amex)\M'
+      THEN 'americanexpress'
+    WHEN lower(coalesce(_card_name, '')) ~ '\mmaster[[:space:]]*card\M'
+      THEN 'mastercard'
+    WHEN lower(coalesce(_card_name, '')) ~ '\mrupay\M' THEN 'rupay'
+    WHEN lower(coalesce(_card_name, '')) ~ '\mvisa\M' THEN 'visa'
+    ELSE NULL END;
+  issuer_network text := CASE
+    WHEN lower(trim(coalesce(_issuer, ''))) = 'american express'
+      THEN 'americanexpress'
+    ELSE NULL END;
+BEGIN
+  IF column_network IS NOT NULL AND name_network IS NOT NULL
+     AND column_network <> name_network THEN
+    RAISE EXCEPTION 'stored_network_conflict';
+  END IF;
+  IF coalesce(column_network, name_network) IS NOT NULL
+     AND issuer_network IS NOT NULL
+     AND coalesce(column_network, name_network) <> issuer_network THEN
+    RAISE EXCEPTION 'stored_network_conflict';
+  END IF;
+  RETURN coalesce(column_network, name_network, issuer_network);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.card_catalog_json_contains_sensitive_url(
+  _value jsonb
+) RETURNS boolean
+LANGUAGE plpgsql
+IMMUTABLE
+SECURITY INVOKER
+SET search_path = public, extensions, pg_temp
+AS $$
+DECLARE
+  item record;
+  scalar text;
+BEGIN
+  IF _value IS NULL THEN RETURN false; END IF;
+  IF jsonb_typeof(_value) = 'object' THEN
+    FOR item IN SELECT key, value FROM jsonb_each(_value) LOOP
+      IF public.card_catalog_json_contains_sensitive_url(to_jsonb(item.key))
+         OR public.card_catalog_json_contains_sensitive_url(item.value) THEN
+        RETURN true;
+      END IF;
+    END LOOP;
+    RETURN false;
+  ELSIF jsonb_typeof(_value) = 'array' THEN
+    FOR item IN SELECT value FROM jsonb_array_elements(_value) LOOP
+      IF public.card_catalog_json_contains_sensitive_url(item.value) THEN
+        RETURN true;
+      END IF;
+    END LOOP;
+    RETURN false;
+  ELSIF jsonb_typeof(_value) <> 'string' THEN
+    RETURN false;
+  END IF;
+  scalar := lower(_value #>> '{}');
+  RETURN scalar ~ 'https?://[^/[:space:]<>"'']+@'
+    OR scalar ~ '[?&](token|session|secret|password|passwd|credential|auth|signature|sig|key|code|state|nonce)='
+    OR scalar ~ 'https?://[^[:space:]<>"'']+#[^[:space:]<>"'']*'
+    OR scalar ~ '%3f[^[:space:]]*(token|session|secret|password|credential|auth|signature|nonce)%3d'
+    OR scalar ~ '%40[^[:space:]]*(%2f|/|%3f|\?)';
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.card_catalog_json_envelope_valid(
+  _value jsonb,
+  _depth integer DEFAULT 0
+) RETURNS boolean
+LANGUAGE plpgsql
+IMMUTABLE
+SECURITY INVOKER
+SET search_path = public, extensions, pg_temp
+AS $$
+DECLARE
+  item record;
+  object_count integer;
+BEGIN
+  IF _value IS NULL OR _depth > 6 THEN RETURN false; END IF;
+  IF jsonb_typeof(_value) = 'object' THEN
+    SELECT count(*) INTO object_count FROM jsonb_object_keys(_value);
+    IF object_count > 32 THEN RETURN false; END IF;
+    FOR item IN SELECT key, value FROM jsonb_each(_value) LOOP
+      IF octet_length(item.key) > 64
+         OR NOT public.card_catalog_json_envelope_valid(item.value, _depth + 1) THEN
+        RETURN false;
+      END IF;
+    END LOOP;
+    RETURN true;
+  ELSIF jsonb_typeof(_value) = 'array' THEN
+    IF jsonb_array_length(_value) > 32 THEN RETURN false; END IF;
+    FOR item IN SELECT value FROM jsonb_array_elements(_value) LOOP
+      IF NOT public.card_catalog_json_envelope_valid(item.value, _depth + 1) THEN
+        RETURN false;
+      END IF;
+    END LOOP;
+    RETURN true;
+  ELSIF jsonb_typeof(_value) = 'string' THEN
+    RETURN octet_length(_value #>> '{}') <= 2048;
+  END IF;
+  RETURN jsonb_typeof(_value) IN ('number', 'boolean', 'null');
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.catalog_lifecycle_semantic_observation(
+  _value jsonb
+) RETURNS jsonb
+LANGUAGE plpgsql
+IMMUTABLE
+SECURITY INVOKER
+SET search_path = public, extensions, pg_temp
+AS $$
+DECLARE
+  result jsonb;
+BEGIN
+  IF _value IS NULL THEN RETURN 'null'::jsonb; END IF;
+  IF jsonb_typeof(_value) = 'object' THEN
+    SELECT coalesce(jsonb_object_agg(entry.key,
+      public.catalog_lifecycle_semantic_observation(entry.value)
+      ORDER BY entry.key), '{}'::jsonb)
+    INTO result
+    FROM jsonb_each(_value) AS entry
+    WHERE entry.key NOT IN (
+      'retrieved_at', 'attempted_at', 'observed_at', 'transport',
+      'duration_ms', 'retry_after_ms', 'request_started_at',
+      'request_completed_at'
+    );
+    RETURN result;
+  ELSIF jsonb_typeof(_value) = 'array' THEN
+    SELECT coalesce(jsonb_agg(
+      public.catalog_lifecycle_semantic_observation(entry.value)
+      ORDER BY entry.ordinality
+    ), '[]'::jsonb)
+    INTO result
+    FROM jsonb_array_elements(_value) WITH ORDINALITY AS entry(value, ordinality);
+    RETURN result;
+  END IF;
+  RETURN _value;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.append_catalog_observation_history(
+  _history jsonb,
+  _entry jsonb
+) RETURNS jsonb
+LANGUAGE sql
+IMMUTABLE
+SECURITY INVOKER
+SET search_path = public, extensions, pg_temp
+AS $$
+  WITH entries AS (
+    SELECT value
+    FROM jsonb_array_elements(
+      CASE WHEN jsonb_typeof(_history) = 'array' THEN _history ELSE '[]'::jsonb END
+      || jsonb_build_array(_entry)
+    )
+    WHERE jsonb_typeof(value) = 'object'
+  ), ranked AS (
+    SELECT DISTINCT ON (coalesce(
+      value->>'semantic_hash', value->>'source_observation_semantic_hash',
+      value->>'source_observation_hash', value::text
+    )) value,
+      CASE
+        WHEN coalesce(value->>'observed_at', value->>'retrieved_at', '')
+          ~ '^20[0-9]{2}-[0-9]{2}-[0-9]{2}T'
+        THEN coalesce(value->>'observed_at', value->>'retrieved_at')::timestamptz
+        ELSE '-infinity'::timestamptz
+      END AS observed_at,
+      coalesce(
+        value->>'semantic_hash', value->>'source_observation_semantic_hash',
+        value->>'source_observation_hash', value::text
+      ) AS semantic_key
+    FROM entries
+    ORDER BY coalesce(
+      value->>'semantic_hash', value->>'source_observation_semantic_hash',
+      value->>'source_observation_hash', value::text
+    ), observed_at DESC
+  ), newest AS (
+    SELECT value, observed_at, semantic_key FROM ranked
+    ORDER BY observed_at DESC, semantic_key
+    LIMIT 24
+  )
+  SELECT coalesce(jsonb_agg(value ORDER BY observed_at DESC, semantic_key), '[]'::jsonb)
+  FROM newest;
+$$;
+
 CREATE OR REPLACE FUNCTION public.resolve_card_catalog_identity(
   _issuer text,
   _card_name text,
@@ -405,7 +610,7 @@ DECLARE
   normalized_issuer text := lower(trim(coalesce(_issuer, '')));
   normalized_name text := public.normalize_card_catalog_product(_card_name);
   normalized_family text;
-  normalized_network text := public.normalize_card_catalog_network(_network);
+  normalized_network text;
   normalized_tier text := public.normalize_card_catalog_tier(_card_name);
   submitted_bound_cards uuid[];
   final_bound_cards uuid[];
@@ -421,15 +626,23 @@ DECLARE
   resolved_tier text;
   resolved_card_type text;
 BEGIN
+  normalized_network := public.card_catalog_effective_network(
+    _network, _card_name, _issuer
+  );
   normalized_family := coalesce(
     nullif(public.normalize_card_catalog_family(_card_name), ''),
-    normalized_name
+    nullif(normalized_name, ''),
+    normalized_tier
   );
   IF length(normalized_issuer) < 2 OR length(normalized_name) < 2
-     OR normalized_name IN (
+     OR (normalized_name IN (
        'visa', 'mastercard', 'rupay', 'americanexpress',
        'gold', 'platinum', 'infinite', 'signature', 'world'
-     ) THEN
+     ) AND NOT (
+       normalized_issuer = 'american express'
+       AND normalized_network = 'americanexpress'
+       AND normalized_tier IS NOT NULL
+     )) THEN
     RAISE EXCEPTION 'invalid_catalog_identity';
   END IF;
   IF public.canonical_card_resource_url(_source_url) IS DISTINCT FROM trim(_source_url) THEN
@@ -490,7 +703,10 @@ BEGIN
     FROM public.card_catalog AS catalog
     WHERE lower(trim(catalog.bank)) = normalized_issuer
       AND lower(trim(coalesce(catalog.card_type, ''))) = 'credit'
-      AND public.normalize_card_catalog_family(catalog.card_name) = normalized_family
+      AND coalesce(
+        nullif(public.normalize_card_catalog_family(catalog.card_name), ''),
+        public.normalize_card_catalog_product(catalog.card_name)
+      ) = normalized_family
     UNION
     SELECT catalog.id
     FROM public.card_catalog AS catalog
@@ -507,7 +723,7 @@ BEGIN
 
   IF bound_card IS NOT NULL THEN
     SELECT catalog.bank, catalog.card_name,
-      public.normalize_card_catalog_network(catalog.network),
+      public.card_catalog_effective_network(catalog.network, catalog.card_name, catalog.bank),
       public.normalize_card_catalog_tier(catalog.card_name), catalog.card_type
     INTO resolved_bank, resolved_name, resolved_network, resolved_tier,
       resolved_card_type
@@ -532,20 +748,10 @@ BEGIN
     FROM public.card_catalog AS catalog
     WHERE catalog.id = ANY(coalesce(candidate_ids, ARRAY[]::uuid[]))
       AND lower(trim(coalesce(catalog.card_type, ''))) = 'credit'
-      AND (
-        public.normalize_card_catalog_network(catalog.network) IS NULL
-        OR (
-          normalized_network IS NOT NULL
-          AND public.normalize_card_catalog_network(catalog.network) = normalized_network
-        )
-      )
-      AND (
-        public.normalize_card_catalog_tier(catalog.card_name) IS NULL
-        OR (
-          normalized_tier IS NOT NULL
-          AND public.normalize_card_catalog_tier(catalog.card_name) = normalized_tier
-        )
-      );
+      AND public.card_catalog_effective_network(catalog.network, catalog.card_name, catalog.bank)
+        IS NOT DISTINCT FROM normalized_network
+      AND public.normalize_card_catalog_tier(catalog.card_name)
+        IS NOT DISTINCT FROM normalized_tier;
     IF coalesce(cardinality(compatible_candidate_ids), 0) > 1 THEN
       RAISE EXCEPTION 'ambiguous_catalog_identity';
     END IF;
@@ -765,18 +971,29 @@ DECLARE
   catalog_baseline jsonb;
   lifecycle_dedupe_key text;
   lifecycle_job_id uuid;
+  latest_lifecycle_job_id uuid;
+  latest_lifecycle_state text;
+  latest_lifecycle_observed_at timestamptz;
+  latest_lifecycle_semantic_hash text;
+  lifecycle_state text;
+  lifecycle_observed_at timestamptz;
   existing_review public.card_catalog_review_queue%ROWTYPE;
   lifecycle_review_id uuid;
   source_status integer;
   observation_kind text;
   identity_validated boolean;
-  source_observation_hash text;
+  explicit_discontinuation boolean;
+  semantic_observation jsonb;
+  source_observation_semantic_hash text;
+  history_entry jsonb;
   prior_review_updated_at timestamptz;
 BEGIN
   IF _card_id IS NULL
-     OR _suggested_action NOT IN ('mark_discontinued', 'reactivate')
+     OR _suggested_action NOT IN ('mark_discontinued', 'reactivate', 'observe_current')
      OR jsonb_typeof(_source_observation) IS DISTINCT FROM 'object'
      OR octet_length(_source_observation::text) > 16384
+     OR NOT public.card_catalog_json_envelope_valid(_source_observation, 0)
+     OR public.card_catalog_json_contains_sensitive_url(_source_observation)
      OR _parser_version IS DISTINCT FROM 'benefits-v6'
      OR lower(coalesce(_source_url_hash, '')) !~ '^[0-9a-f]{64}$'
      OR (_content_hash IS NOT NULL AND lower(_content_hash) !~ '^[0-9a-f]{64}$') THEN
@@ -804,9 +1021,21 @@ BEGIN
 
   BEGIN
     source_status := nullif(_source_observation->>'source_status', '')::integer;
-  EXCEPTION WHEN invalid_text_representation THEN
+    lifecycle_observed_at := coalesce(
+      nullif(_source_observation->>'retrieved_at', '')::timestamptz,
+      nullif(_source_observation->>'attempted_at', '')::timestamptz,
+      statement_timestamp()
+    );
+    explicit_discontinuation := coalesce(
+      nullif(_source_observation->>'explicit_discontinuation', '')::boolean,
+      false
+    );
+  EXCEPTION WHEN invalid_text_representation OR datetime_field_overflow THEN
     RAISE EXCEPTION 'invalid_catalog_lifecycle_review';
   END;
+  IF lifecycle_observed_at > statement_timestamp() + interval '5 minutes' THEN
+    RAISE EXCEPTION 'stale_catalog_lifecycle_observation';
+  END IF;
   observation_kind := _source_observation->>'kind';
   identity_validated := _source_observation->>'identity_validated' = 'true';
   IF _suggested_action = 'mark_discontinued' THEN
@@ -815,16 +1044,41 @@ BEGIN
       OR (
         observation_kind = 'strong_explicit_discontinuation'
         AND source_status = 200 AND identity_validated
+        AND explicit_discontinuation
       )
     ) THEN
       RAISE EXCEPTION 'invalid_catalog_lifecycle_review';
     END IF;
-  ELSIF card_row.is_discontinued IS DISTINCT FROM true
-     OR observation_kind IS DISTINCT FROM 'exact_card_reappearance'
-     OR source_status IS DISTINCT FROM 200
-     OR identity_validated IS DISTINCT FROM true
-     OR coalesce((_source_observation->>'explicit_discontinuation')::boolean, false) THEN
-    RAISE EXCEPTION 'invalid_catalog_lifecycle_review';
+    lifecycle_state := 'discontinued';
+  ELSIF _suggested_action = 'reactivate' THEN
+    IF card_row.is_discontinued IS DISTINCT FROM true
+       OR observation_kind IS DISTINCT FROM 'exact_card_reappearance'
+       OR source_status IS DISTINCT FROM 200
+       OR identity_validated IS DISTINCT FROM true
+       OR explicit_discontinuation THEN
+      RAISE EXCEPTION 'invalid_catalog_lifecycle_review';
+    END IF;
+    lifecycle_state := 'active';
+  ELSIF card_row.is_discontinued IS TRUE THEN
+    IF NOT (
+      (observation_kind = 'strong_gone_observation' AND source_status = 410)
+      OR (
+        observation_kind = 'strong_explicit_discontinuation'
+        AND source_status = 200 AND identity_validated
+        AND explicit_discontinuation
+      )
+    ) THEN
+      RAISE EXCEPTION 'invalid_catalog_lifecycle_review';
+    END IF;
+    lifecycle_state := 'discontinued';
+  ELSE
+    IF observation_kind IS DISTINCT FROM 'exact_card_reappearance'
+       OR source_status IS DISTINCT FROM 200
+       OR identity_validated IS DISTINCT FROM true
+       OR explicit_discontinuation THEN
+      RAISE EXCEPTION 'invalid_catalog_lifecycle_review';
+    END IF;
+    lifecycle_state := 'active';
   END IF;
 
   catalog_baseline := jsonb_build_object(
@@ -842,15 +1096,87 @@ BEGIN
       nullif(_source_observation->>'retrieved_at', '')::timestamptz
     )
   );
-  source_observation_hash := encode(extensions.digest(
-    convert_to(_source_observation::text, 'UTF8'), 'sha256'
+  semantic_observation := public.catalog_lifecycle_semantic_observation(
+    _source_observation
+  );
+  source_observation_semantic_hash := encode(extensions.digest(
+    convert_to(semantic_observation::text, 'UTF8'), 'sha256'
   ), 'hex');
   lifecycle_dedupe_key := encode(extensions.digest(convert_to(
     'catalog-lifecycle:' || card_row.id::text || ':' || _suggested_action || ':' ||
-    catalog_baseline::text || ':' || coalesce(lower(_content_hash), lower(_source_url_hash)) ||
-    ':' || source_observation_hash,
+    (catalog_baseline - 'version_observed_at')::text || ':' ||
+    lower(_source_url_hash) || ':' || coalesce(lower(_content_hash), '') ||
+    ':' || source_observation_semantic_hash,
     'UTF8'
-  ), 'sha256'), 'hex';
+  ), 'sha256'), 'hex');
+  history_entry := jsonb_build_object(
+    'source_observation_semantic_hash', source_observation_semantic_hash,
+    'semantic_hash', source_observation_semantic_hash,
+    'observed_at', lifecycle_observed_at,
+    'source_observation', _source_observation
+  );
+
+  -- latest_lifecycle_job_id is the serialized per-card evidence contract.
+  SELECT job.id, job.evidence->>'lifecycle_state',
+    nullif(job.evidence->>'lifecycle_observed_at', '')::timestamptz,
+    job.evidence->>'source_observation_semantic_hash'
+  INTO latest_lifecycle_job_id, latest_lifecycle_state,
+    latest_lifecycle_observed_at, latest_lifecycle_semantic_hash
+  FROM public.card_discovery_jobs AS job
+  WHERE job.user_id IS NULL
+    AND job.discovery_source = 'issuer_crawl'
+    AND job.evidence->>'card_id' = card_row.id::text
+    AND job.evidence ? 'lifecycle_state'
+  ORDER BY nullif(job.evidence->>'lifecycle_observed_at', '')::timestamptz DESC,
+    job.created_at DESC, job.id DESC
+  LIMIT 1
+  FOR UPDATE;
+  IF latest_lifecycle_observed_at IS NOT NULL AND (
+    lifecycle_observed_at < latest_lifecycle_observed_at
+    OR (
+      lifecycle_observed_at = latest_lifecycle_observed_at
+      AND source_observation_semantic_hash IS DISTINCT FROM latest_lifecycle_semantic_hash
+    )
+  ) THEN
+    RAISE EXCEPTION 'stale_catalog_lifecycle_observation';
+  END IF;
+
+  UPDATE public.card_catalog_review_queue AS stale_review
+  SET status = 'rejected',
+      review_reason = 'superseded_by_newer_lifecycle_observation',
+      reviewed_at = statement_timestamp(),
+      source_evidence = stale_review.source_evidence || jsonb_build_object(
+        'superseded_by_newer_lifecycle_observation', true,
+        'superseding_state', lifecycle_state,
+        'superseding_observed_at', lifecycle_observed_at
+      ),
+      updated_at = statement_timestamp()
+  FROM public.card_discovery_jobs AS stale_job
+  WHERE stale_review.discovery_job_id = stale_job.id
+    AND stale_review.status = 'pending'
+    AND stale_job.user_id IS NULL
+    AND stale_job.discovery_source = 'issuer_crawl'
+    AND stale_job.evidence->>'card_id' = card_row.id::text
+    AND stale_job.evidence->>'lifecycle_state' <> lifecycle_state
+    AND coalesce(
+      nullif(stale_job.evidence->>'lifecycle_observed_at', '')::timestamptz,
+      '-infinity'::timestamptz
+    ) <= lifecycle_observed_at;
+  UPDATE public.card_discovery_jobs AS stale_job
+  SET status = 'rejected', next_retry_at = NULL,
+      failure_category = 'superseded_by_newer_lifecycle_observation',
+      updated_at = statement_timestamp()
+  WHERE stale_job.user_id IS NULL
+    AND stale_job.discovery_source = 'issuer_crawl'
+    AND stale_job.evidence->>'card_id' = card_row.id::text
+    AND stale_job.evidence->>'lifecycle_state' <> lifecycle_state
+    AND stale_job.status = 'review_required'
+    AND EXISTS (
+      SELECT 1 FROM public.card_catalog_review_queue AS stale_review
+      WHERE stale_review.discovery_job_id = stale_job.id
+        AND stale_review.status = 'rejected'
+        AND stale_review.review_reason = 'superseded_by_newer_lifecycle_observation'
+    );
 
   SELECT job.id INTO lifecycle_job_id
   FROM public.card_discovery_jobs AS job
@@ -870,10 +1196,15 @@ BEGIN
         'source_url', _source_url,
         'source_url_hash', lower(_source_url_hash),
         'content_hash', coalesce(lower(_content_hash), lower(_source_url_hash)),
-        'source_observation_hash', source_observation_hash,
+        'source_observation_semantic_hash', source_observation_semantic_hash,
+        'lifecycle_state', lifecycle_state,
+        'lifecycle_observed_at', lifecycle_observed_at,
+        'observation_history', jsonb_build_array(history_entry),
         'catalog_baseline', catalog_baseline
       ),
-      lifecycle_dedupe_key, 'queued', statement_timestamp()
+      lifecycle_dedupe_key,
+      CASE WHEN _suggested_action = 'observe_current' THEN 'resolved' ELSE 'queued' END,
+      statement_timestamp()
     )
     ON CONFLICT (discovery_source, dedupe_key)
       WHERE user_id IS NULL AND discovery_source = 'issuer_crawl'
@@ -886,6 +1217,34 @@ BEGIN
         AND job.discovery_source = 'issuer_crawl'
         AND job.dedupe_key = lifecycle_dedupe_key;
     END IF;
+  END IF;
+
+  -- Transport-only re-observations keep one semantic unit, advance its latest
+  -- evidence time, and retain only the newest 24 distinct observations.
+  UPDATE public.card_discovery_jobs AS job
+  SET evidence = job.evidence || jsonb_build_object(
+        'source_observation', _source_observation,
+        'lifecycle_observed_at', greatest(
+          coalesce(nullif(job.evidence->>'lifecycle_observed_at', '')::timestamptz,
+            '-infinity'::timestamptz),
+          lifecycle_observed_at
+        ),
+        'observation_history', public.append_catalog_observation_history(
+          job.evidence->'observation_history', history_entry
+        )
+      ),
+      resolved_card_id = CASE WHEN _suggested_action = 'observe_current'
+        THEN card_row.id ELSE job.resolved_card_id END,
+      updated_at = CASE
+        WHEN lifecycle_observed_at > coalesce(
+          nullif(job.evidence->>'lifecycle_observed_at', '')::timestamptz,
+          '-infinity'::timestamptz
+        ) THEN statement_timestamp()
+        ELSE job.updated_at END
+  WHERE job.id = lifecycle_job_id;
+
+  IF _suggested_action = 'observe_current' THEN
+    RETURN lifecycle_job_id;
   END IF;
 
   SELECT review.* INTO existing_review
@@ -913,15 +1272,12 @@ BEGIN
         'source_url', _source_url,
         'source_url_hash', lower(_source_url_hash),
         'content_hash', coalesce(lower(_content_hash), lower(_source_url_hash)),
-        'source_observation_hash', source_observation_hash,
+        'source_observation_semantic_hash', source_observation_semantic_hash,
         'source_observation', _source_observation,
+        'lifecycle_state', lifecycle_state,
+        'lifecycle_observed_at', lifecycle_observed_at,
         'catalog_baseline', catalog_baseline,
-        'observation_history', jsonb_build_array(jsonb_build_object(
-          'source_observation_hash', source_observation_hash,
-          'observed_at', coalesce(
-            _source_observation->>'retrieved_at', statement_timestamp()::text
-          )
-        ))
+        'observation_history', jsonb_build_array(history_entry)
       ),
       jsonb_build_array(jsonb_build_object(
         'card_id', card_row.id,
@@ -951,17 +1307,14 @@ BEGIN
         'source_url', _source_url,
         'source_url_hash', lower(_source_url_hash),
         'content_hash', coalesce(lower(_content_hash), lower(_source_url_hash)),
-        'source_observation_hash', source_observation_hash,
+        'source_observation_semantic_hash', source_observation_semantic_hash,
         'source_observation', _source_observation,
+        'lifecycle_state', lifecycle_state,
+        'lifecycle_observed_at', lifecycle_observed_at,
         'catalog_baseline', catalog_baseline,
-        'observation_history', coalesce(
-          existing_review.source_evidence->'observation_history', '[]'::jsonb
-        ) || jsonb_build_array(jsonb_build_object(
-          'source_observation_hash', source_observation_hash,
-          'observed_at', coalesce(
-            _source_observation->>'retrieved_at', statement_timestamp()::text
-          )
-        ))
+        'observation_history', public.append_catalog_observation_history(
+          existing_review.source_evidence->'observation_history', history_entry
+        )
       ),
       updated_at = statement_timestamp()
     WHERE review.id = lifecycle_review_id AND review.status = 'pending'
@@ -1006,6 +1359,16 @@ DECLARE
   review_row public.card_catalog_review_queue%ROWTYPE;
   card_row public.card_catalog%ROWTYPE;
   fields jsonb := coalesce(_reviewed_fields, '{}'::jsonb);
+  reviewed_field_allowlist text[] := ARRAY[
+    'issuer', 'bank', 'cardName', 'card_name', 'network', 'aliases',
+    'official_url', 'card_url', 'submitted_url', 'final_url',
+    'submitted_url_hash', 'final_url_hash',
+    'submitted_resource_identity_hash', 'final_resource_identity_hash',
+    'content_hash', 'retrieved_at', 'source_status', 'source_type',
+    'source_observation', 'confidence', 'validation_version',
+    'card_id', 'cardId', 'annual_fee', 'joining_fee', 'apr',
+    'catalog_baseline', 'suggested_action'
+  ]::text[];
   issuer text;
   reviewed_name text;
   reviewed_network text;
@@ -1037,6 +1400,12 @@ DECLARE
   catalog_baseline jsonb;
   legacy_catalog_url text;
   legacy_catalog_url_hash text;
+  legacy_provenance_retrieved_at timestamptz;
+  edit_old_identity_lock text;
+  edit_new_identity_lock text;
+  new_family_conflict uuid;
+  latest_lifecycle_job_id uuid;
+  latest_lifecycle_state text;
   enrichment_exception text;
 BEGIN
   IF _discovery_job_id IS NULL OR jsonb_typeof(fields) <> 'object'
@@ -1046,6 +1415,17 @@ BEGIN
        'reject', 'mark_discontinued', 'reactivate'
      ) THEN
     RAISE EXCEPTION 'invalid_catalog_publication';
+  END IF;
+  IF octet_length(fields::text) > 16384
+     OR NOT public.card_catalog_json_envelope_valid(fields, 0)
+     OR public.card_catalog_json_contains_sensitive_url(fields) THEN
+    RAISE EXCEPTION 'invalid_reviewed_fields_envelope';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM jsonb_object_keys(fields) AS reviewed_field(key)
+    WHERE NOT (reviewed_field.key = ANY(reviewed_field_allowlist))
+  ) THEN
+    RAISE EXCEPTION 'unknown_reviewed_field';
   END IF;
   IF fields ? 'source_observation' AND (
     jsonb_typeof(fields->'source_observation') IS DISTINCT FROM 'object'
@@ -1104,6 +1484,19 @@ BEGIN
     review_row := observed_review;
     IF fields = '{}'::jsonb THEN fields := review_row.proposed_fields; END IF;
   END IF;
+  -- Recheck after substituting stored proposal fields. The RPC never trusts a
+  -- legacy review envelope merely because it was already persisted.
+  IF octet_length(fields::text) > 16384
+     OR NOT public.card_catalog_json_envelope_valid(fields, 0)
+     OR public.card_catalog_json_contains_sensitive_url(fields) THEN
+    RAISE EXCEPTION 'invalid_reviewed_fields_envelope';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM jsonb_object_keys(fields) AS reviewed_field(key)
+    WHERE NOT (reviewed_field.key = ANY(reviewed_field_allowlist))
+  ) THEN
+    RAISE EXCEPTION 'unknown_reviewed_field';
+  END IF;
   IF _action IN ('retry', 'reject', 'mark_discontinued', 'reactivate')
      AND length(trim(coalesce(_reason, ''))) < 2 THEN
     RAISE EXCEPTION 'reason_required';
@@ -1129,6 +1522,7 @@ BEGIN
       fields->'source_observation'->>'kind' = 'strong_explicit_discontinuation'
       AND fields->'source_observation'->>'source_status' = '200'
       AND fields->'source_observation'->>'identity_validated' = 'true'
+      AND fields->'source_observation'->>'explicit_discontinuation' = 'true'
     )
   ) THEN
     RAISE EXCEPTION 'lifecycle_action_mismatch';
@@ -1156,6 +1550,32 @@ BEGIN
   PERFORM pg_advisory_xact_lock(hashtextextended(
     'card_catalog_publication:job:' || _discovery_job_id::text, 0
   ));
+
+  IF _action = 'observe_existing' THEN
+    -- observe_existing_locked_revalidation: status and review authority are
+    -- checked under the same job advisory/row lock used for publication, and
+    -- immediately before the resolver can bind URL keys or mutate a card.
+    SELECT job.* INTO job_row
+    FROM public.card_discovery_jobs AS job
+    WHERE job.id = _discovery_job_id
+    FOR UPDATE;
+    IF NOT FOUND
+       OR job_row.discovery_source NOT IN ('statement', 'issuer_crawl')
+       OR job_row.review_item_id IS NOT NULL
+       OR job_row.status = 'review_required'
+       OR job_row.issuer IS DISTINCT FROM observed_job.issuer
+       OR job_row.proposed_product IS DISTINCT FROM observed_job.proposed_product
+       OR job_row.evidence IS DISTINCT FROM observed_job.evidence
+       OR EXISTS (
+         SELECT 1 FROM public.card_catalog_review_queue AS pending_review
+         WHERE pending_review.discovery_job_id = job_row.id
+           AND pending_review.status = 'pending'
+         FOR UPDATE
+       ) THEN
+      RAISE EXCEPTION 'existing_observation_requires_review';
+    END IF;
+    observed_job := job_row;
+  END IF;
 
   IF _review_item_id IS NOT NULL
      AND observed_job.status = 'resolved'
@@ -1192,8 +1612,33 @@ BEGIN
     SELECT review.* INTO review_row FROM public.card_catalog_review_queue AS review
     WHERE review.id = _review_item_id
       AND review.discovery_job_id = job_row.id FOR UPDATE;
-    IF NOT FOUND
-       OR (_action = 'reject' AND review_row.status <> 'pending')
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'stale_catalog_review';
+    END IF;
+    -- idempotent_retry_reject_replay: compare the exact retained decision
+    -- before treating its already-applied state as stale.
+    IF EXISTS (
+      SELECT 1 FROM public.card_catalog_review_audit AS replay_audit
+      WHERE replay_audit.review_item_id = review_row.id
+        AND replay_audit.actor_id = _actor_id
+        AND replay_audit.action = _action
+        AND replay_audit.details->>'reason' IS NOT DISTINCT FROM _reason
+        AND replay_audit.details->>'merge_card_id' IS NOT DISTINCT FROM
+          CASE WHEN _merge_card_id IS NULL THEN NULL ELSE _merge_card_id::text END
+    ) AND (
+      (_action = 'retry'
+        AND review_row.status = 'pending' AND job_row.status = 'queued')
+      OR (_action = 'reject'
+        AND review_row.status = 'rejected' AND job_row.status = 'rejected')
+    ) THEN
+      -- Exact current state returns without duplicate audit/timestamp mutation.
+      card_id := job_row.resolved_card_id;
+      job_id := job_row.id;
+      resulting_status := CASE WHEN _action = 'retry' THEN 'queued' ELSE 'rejected' END;
+      RETURN NEXT;
+      RETURN;
+    END IF;
+    IF (_action = 'reject' AND review_row.status <> 'pending')
        OR (_action = 'retry' AND review_row.status NOT IN ('pending', 'rejected'))
        OR review_row.proposed_fields IS DISTINCT FROM observed_review.proposed_fields
        OR review_row.source_evidence IS DISTINCT FROM observed_review.source_evidence
@@ -1261,7 +1706,11 @@ BEGIN
     reviewed_name := trim(coalesce(
       fields->>'cardName', fields->>'card_name', observed_job.proposed_product
     ));
-    reviewed_network := nullif(trim(coalesce(fields->>'network', '')), '');
+    reviewed_network := public.card_catalog_effective_network(
+      nullif(trim(coalesce(fields->>'network', '')), ''),
+      reviewed_name,
+      issuer
+    );
     final_url := public.canonical_card_resource_url(coalesce(
       fields->>'final_url', review_row.source_evidence->>'final_url',
       observed_job.evidence->>'final_url', fields->>'official_url',
@@ -1338,6 +1787,54 @@ BEGIN
         IF NOT FOUND OR lower(trim(coalesce(edit_target_bank, ''))) <> lower(trim(issuer)) THEN
           RAISE EXCEPTION 'edit_target_conflict';
         END IF;
+        -- A rename can move the row between resolver families. Take both old
+        -- and new family locks in sorted order after the sorted URL locks, then
+        -- reject a destination already owned by another credit card.
+        PERFORM pg_advisory_xact_lock(hashtextextended(
+          'card_catalog_publication:url:' || least(submitted_hash, final_hash), 0
+        ));
+        PERFORM pg_advisory_xact_lock(hashtextextended(
+          'card_catalog_publication:url:' || greatest(submitted_hash, final_hash), 0
+        ));
+        edit_old_identity_lock := 'card_catalog_identity:' ||
+          lower(trim(edit_target_bank)) || ':' || coalesce(
+            nullif(public.normalize_card_catalog_family(edit_target_name), ''),
+            public.normalize_card_catalog_product(edit_target_name)
+          );
+        edit_new_identity_lock := 'card_catalog_identity:' ||
+          lower(trim(issuer)) || ':' || coalesce(
+            nullif(public.normalize_card_catalog_family(reviewed_name), ''),
+            public.normalize_card_catalog_product(reviewed_name)
+          );
+        PERFORM pg_advisory_xact_lock(hashtextextended(
+          least(edit_old_identity_lock, edit_new_identity_lock), 0
+        ));
+        PERFORM pg_advisory_xact_lock(hashtextextended(
+          greatest(edit_old_identity_lock, edit_new_identity_lock), 0
+        ));
+        SELECT conflict.id INTO new_family_conflict
+        FROM public.card_catalog AS conflict
+        WHERE conflict.id <> edit_target_card_id
+          AND lower(trim(conflict.bank)) = lower(trim(issuer))
+          AND lower(trim(coalesce(conflict.card_type, ''))) = 'credit'
+          AND coalesce(
+            nullif(public.normalize_card_catalog_family(conflict.card_name), ''),
+            public.normalize_card_catalog_product(conflict.card_name)
+          ) = coalesce(
+            nullif(public.normalize_card_catalog_family(reviewed_name), ''),
+            public.normalize_card_catalog_product(reviewed_name)
+          )
+        ORDER BY conflict.id
+        LIMIT 1
+        FOR UPDATE;
+        IF new_family_conflict IS NOT NULL THEN
+          RAISE EXCEPTION 'edit_target_conflict';
+        END IF;
+        -- Validate stored column/name network agreement even if the review did
+        -- not explicitly change the network field.
+        PERFORM public.card_catalog_effective_network(
+          edit_target_network, edit_target_name, edit_target_bank
+        );
         -- Bind a reviewed rename/network/page move to the existing strong card
         -- before changing its mutable identity. Conflicting URL keys still fail.
         resolved_card_id := public.resolve_card_catalog_identity(
@@ -1400,6 +1897,25 @@ BEGIN
     RAISE EXCEPTION 'stale_catalog_publication';
   END IF;
 
+  IF _action IN ('mark_discontinued', 'reactivate') THEN
+    SELECT latest_job.id, latest_job.evidence->>'lifecycle_state'
+    INTO latest_lifecycle_job_id, latest_lifecycle_state
+    FROM public.card_discovery_jobs AS latest_job
+    WHERE latest_job.user_id IS NULL
+      AND latest_job.discovery_source = 'issuer_crawl'
+      AND latest_job.evidence->>'card_id' = resolved_card_id::text
+      AND latest_job.evidence ? 'lifecycle_state'
+    ORDER BY nullif(latest_job.evidence->>'lifecycle_observed_at', '')::timestamptz DESC,
+      latest_job.created_at DESC, latest_job.id DESC
+    LIMIT 1
+    FOR UPDATE;
+    IF latest_lifecycle_job_id IS DISTINCT FROM job_row.id
+       OR latest_lifecycle_state IS DISTINCT FROM CASE
+         WHEN _action = 'mark_discontinued' THEN 'discontinued' ELSE 'active' END THEN
+      RAISE EXCEPTION 'stale_catalog_lifecycle_review';
+    END IF;
+  END IF;
+
   catalog_baseline := fields->'catalog_baseline';
   IF _action IN ('edit_approve', 'mark_discontinued', 'reactivate')
      AND NOT public.card_catalog_baseline_matches(
@@ -1448,6 +1964,17 @@ BEGIN
       ) THEN
         RAISE EXCEPTION 'conflicting_url_identity';
       END IF;
+      BEGIN
+        legacy_provenance_retrieved_at := coalesce(
+          card_row.updated_at,
+          nullif(fields->>'retrieved_at', '')::timestamptz,
+          nullif(review_row.source_evidence->>'retrieved_at', '')::timestamptz,
+          nullif(observed_job.evidence->>'retrieved_at', '')::timestamptz,
+          statement_timestamp()
+        );
+      EXCEPTION WHEN invalid_text_representation OR datetime_field_overflow THEN
+        legacy_provenance_retrieved_at := statement_timestamp();
+      END;
       INSERT INTO public.card_catalog_provenance(
         card_id, source_url, canonical_submitted_url, canonical_final_url,
         submitted_url_hash, final_url_hash, source_type, content_hash,
@@ -1459,7 +1986,7 @@ BEGIN
         legacy_catalog_url, legacy_catalog_url_hash, legacy_catalog_url_hash,
         'official_html', legacy_catalog_url_hash, before_fields,
         jsonb_build_object('kind', 'legacy_catalog_url_backfill'),
-        'card-identity-v3', 1, 'admin', card_row.updated_at
+        'card-identity-v3', 1, 'admin', legacy_provenance_retrieved_at
       WHERE NOT EXISTS (
         SELECT 1 FROM public.card_catalog_provenance AS legacy_provenance
         WHERE legacy_provenance.card_id = resolved_card_id
@@ -1854,6 +2381,11 @@ REVOKE ALL ON FUNCTION public.normalize_card_catalog_product(text) FROM PUBLIC, 
 REVOKE ALL ON FUNCTION public.normalize_card_catalog_family(text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.normalize_card_catalog_network(text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.normalize_card_catalog_tier(text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.card_catalog_effective_network(text, text, text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.card_catalog_json_contains_sensitive_url(jsonb) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.card_catalog_json_envelope_valid(jsonb, integer) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.catalog_lifecycle_semantic_observation(jsonb) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.append_catalog_observation_history(jsonb, jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.resolve_card_catalog_identity(text, text, text, text, text, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.adopt_reviewed_card_enrichment_source(uuid, text, text, text, text, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.card_catalog_baseline_matches(jsonb, uuid, text, text, numeric, numeric, numeric, text, boolean, timestamptz) FROM PUBLIC, anon, authenticated;
@@ -1875,6 +2407,11 @@ GRANT EXECUTE ON FUNCTION public.normalize_card_catalog_product(text) TO service
 GRANT EXECUTE ON FUNCTION public.normalize_card_catalog_family(text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.normalize_card_catalog_network(text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.normalize_card_catalog_tier(text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.card_catalog_effective_network(text, text, text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.card_catalog_json_contains_sensitive_url(jsonb) TO service_role;
+GRANT EXECUTE ON FUNCTION public.card_catalog_json_envelope_valid(jsonb, integer) TO service_role;
+GRANT EXECUTE ON FUNCTION public.catalog_lifecycle_semantic_observation(jsonb) TO service_role;
+GRANT EXECUTE ON FUNCTION public.append_catalog_observation_history(jsonb, jsonb) TO service_role;
 GRANT EXECUTE ON FUNCTION public.resolve_card_catalog_identity(text, text, text, text, text, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.adopt_reviewed_card_enrichment_source(uuid, text, text, text, text, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.card_catalog_baseline_matches(jsonb, uuid, text, text, numeric, numeric, numeric, text, boolean, timestamptz) TO service_role;
@@ -2065,5 +2602,113 @@ BEGIN
   END IF;
 END;
 $catalog_baseline_behavior_assertions$;
+
+DO $task7_identity_hardening_assertions$
+DECLARE
+  publication_definition text := pg_get_functiondef(
+    'public.publish_card_catalog_identity(uuid,uuid,uuid,text,jsonb,uuid,text,text)'::regprocedure
+  );
+  lifecycle_definition text := pg_get_functiondef(
+    'public.stage_card_catalog_lifecycle_review(uuid,text,jsonb,text,text,text,text)'::regprocedure
+  );
+  rejected boolean := false;
+  history jsonb;
+BEGIN
+  IF strpos(publication_definition, 'observe_existing_locked_revalidation') = 0
+     OR strpos(publication_definition, 'card_catalog_publication:job:') >=
+       strpos(publication_definition, 'observe_existing_locked_revalidation')
+     OR strpos(publication_definition, 'observe_existing_locked_revalidation') >=
+       strpos(publication_definition, 'public.resolve_card_catalog_identity(') THEN
+    RAISE EXCEPTION 'observe_existing_locked_revalidation_assertion_failed';
+  END IF;
+  IF strpos(publication_definition, 'edit_old_identity_lock') = 0
+     OR strpos(publication_definition, 'edit_new_identity_lock') = 0
+     OR strpos(publication_definition, 'new_family_conflict') = 0
+     OR strpos(publication_definition, 'least(edit_old_identity_lock') = 0
+     OR strpos(publication_definition, 'greatest(edit_old_identity_lock') = 0 THEN
+    RAISE EXCEPTION 'rename_dual_family_lock_assertion_failed';
+  END IF;
+  IF strpos(publication_definition, 'legacy_provenance_retrieved_at') = 0
+     OR strpos(publication_definition, 'legacy_catalog_url_backfill') = 0
+     OR strpos(publication_definition, 'statement_timestamp()') = 0 THEN
+    RAISE EXCEPTION 'legacy_provenance_timestamp_assertion_failed';
+  END IF;
+  IF strpos(lifecycle_definition, 'observe_current') = 0
+     OR strpos(lifecycle_definition, 'latest_lifecycle_job_id') = 0
+     OR strpos(lifecycle_definition, 'source_observation_semantic_hash') = 0
+     OR strpos(lifecycle_definition, 'append_catalog_observation_history') = 0
+     OR strpos(lifecycle_definition, 'superseded_by_newer_lifecycle_observation') = 0
+     OR strpos(publication_definition, 'stale_catalog_lifecycle_review') = 0 THEN
+    RAISE EXCEPTION 'lifecycle_latest_evidence_assertion_failed';
+  END IF;
+  IF public.card_catalog_effective_network(
+       NULL, 'Platinum Credit Card', 'American Express'
+     ) IS DISTINCT FROM 'americanexpress'
+     OR public.normalize_card_catalog_tier('American Express Platinum Card')
+       IS DISTINCT FROM 'platinum' THEN
+    RAISE EXCEPTION 'amex_tier_identity_assertion_failed';
+  END IF;
+  BEGIN
+    PERFORM public.card_catalog_effective_network(
+      'Visa', 'Privilege Mastercard Credit Card', 'Axis Bank'
+    );
+  EXCEPTION WHEN OTHERS THEN
+    rejected := true;
+  END;
+  IF NOT rejected THEN
+    RAISE EXCEPTION 'amex_tier_identity_assertion_failed';
+  END IF;
+  IF strpos(publication_definition, 'idempotent_retry_reject_replay') = 0
+     OR strpos(publication_definition, 'replay_audit.actor_id') = 0
+     OR strpos(publication_definition, 'review_row.status = ''rejected''') = 0 THEN
+    RAISE EXCEPTION 'retry_reject_replay_assertion_failed';
+  END IF;
+  IF to_regprocedure('public.card_catalog_json_envelope_valid(jsonb,integer)') IS NULL
+     OR to_regprocedure('public.card_catalog_json_contains_sensitive_url(jsonb)') IS NULL
+     OR strpos(publication_definition, 'reviewed_field_allowlist') = 0
+     OR strpos(publication_definition, 'unknown_reviewed_field') = 0
+     OR NOT public.card_catalog_json_envelope_valid(
+       jsonb_build_object('source_observation', jsonb_build_object('kind', 'exact')), 0
+     )
+     OR public.card_catalog_json_envelope_valid(
+       jsonb_build_object('value', repeat('x', 2049)), 0
+     )
+     OR NOT public.card_catalog_json_contains_sensitive_url(
+       to_jsonb('https://user@example.com/card'::text)
+     ) THEN
+    RAISE EXCEPTION 'reviewed_fields_envelope_assertion_failed';
+  END IF;
+  history := public.append_catalog_observation_history(
+    jsonb_build_array(jsonb_build_object(
+      'semantic_hash', repeat('a', 64), 'observed_at', '2026-08-20T00:00:00Z'
+    )),
+    jsonb_build_object(
+      'semantic_hash', repeat('a', 64), 'observed_at', '2026-08-20T01:00:00Z'
+    )
+  );
+  IF jsonb_array_length(history) <> 1
+     OR history->0->>'observed_at' <> '2026-08-20T01:00:00Z' THEN
+    RAISE EXCEPTION 'lifecycle_latest_evidence_assertion_failed';
+  END IF;
+  rejected := false;
+  BEGIN
+    PERFORM public.canonical_card_resource_url('https://www.axis.bank.in/card?');
+  EXCEPTION WHEN OTHERS THEN rejected := true;
+  END;
+  IF NOT rejected THEN
+    RAISE EXCEPTION 'empty_query_separator_parity_assertion_failed';
+  END IF;
+  rejected := false;
+  BEGIN
+    PERFORM public.canonical_card_resource_url(
+      'https://www.axis.bank.in/card?variant=gold&'
+    );
+  EXCEPTION WHEN OTHERS THEN rejected := true;
+  END;
+  IF NOT rejected THEN
+    RAISE EXCEPTION 'empty_query_separator_parity_assertion_failed';
+  END IF;
+END;
+$task7_identity_hardening_assertions$;
 
 COMMIT;
