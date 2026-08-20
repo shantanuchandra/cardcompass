@@ -28,6 +28,7 @@ import {
   refreshEligibleCard,
   requeueDueJobs,
   requireExactCatalogIdentity,
+  runIssuerDiscovery,
   seedScheduledQueueIfAllowed,
   selectIssuerDiscoveryCandidate,
   shouldStageMaterialProposal,
@@ -50,16 +51,43 @@ function assert(condition: unknown, message: string): asserts condition {
 function issuerSchedulerStore(input: {
   jobs?: Array<Record<string, any>>;
   catalog?: Array<Record<string, any>>;
+  failUpdate?: (
+    payload: Record<string, any>,
+    matchingRows: Array<Record<string, any>>,
+  ) => unknown;
 }) {
   const jobs = input.jobs ?? [];
   const catalog = input.catalog ?? [];
   const backlogRanges: Array<[number, number]> = [];
+  const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
   let sequence = jobs.length;
   const matches = (
     row: Record<string, any>,
     filters: Array<(row: Record<string, any>) => boolean>,
   ) => filters.every((filter) => filter(row));
   const db = {
+    async rpc(name: string, args: Record<string, unknown>) {
+      rpcCalls.push({ name, args });
+      const job = jobs.find((row) => row.id === args._discovery_job_id);
+      if (!job) return { data: null, error: new Error("missing_review_job") };
+      const created = !job.review_item_id;
+      const reviewItemId = job.review_item_id ?? `review-${job.id}`;
+      Object.assign(job, {
+        status: "review_required",
+        review_item_id: reviewItemId,
+        next_retry_at: null,
+        updated_at: "2026-08-20T00:00:01.000Z",
+      });
+      return {
+        data: [{
+          job_id: job.id,
+          review_item_id: reviewItemId,
+          resulting_status: "review_required",
+          created,
+        }],
+        error: null,
+      };
+    },
     from(table: string) {
       if (table === "card_catalog") {
         const query = {
@@ -167,14 +195,35 @@ function issuerSchedulerStore(input: {
           }
           const row = jobs.find((candidate) => matches(candidate, filters));
           if (!row) return { data: null, error: null };
-          if (operation === "update") Object.assign(row, payload);
+          if (operation === "update") {
+            const error = input.failUpdate?.(
+              payload,
+              jobs.filter((candidate) => matches(candidate, filters)),
+            );
+            if (error) return { data: null, error };
+            Object.assign(row, payload);
+          }
           return { data: { ...row }, error: null };
         },
       };
       return query;
     },
   };
-  return { db, jobs, backlogRanges };
+  return { db, jobs, backlogRanges, rpcCalls };
+}
+
+function completeIssuerCrawl(overrides: Record<string, unknown> = {}) {
+  return {
+    candidates: [],
+    quarantined: [],
+    complete: true,
+    budgetExhausted: false,
+    incompleteReasons: [],
+    consideredCount: 0,
+    fetchedCount: 0,
+    resumedCount: 0,
+    ...overrides,
+  };
 }
 
 function persistedIssuerOutcomes(count: number) {
@@ -419,71 +468,17 @@ Deno.test("issuer discovery scheduler requests reuse the constant-time cron or s
 });
 
 Deno.test("same-day issuer discovery claims are idempotent under a unique-insert race", async () => {
-  const jobs: Array<Record<string, unknown>> = [];
-  let sequence = 0;
-  const db = {
-    from(table: string) {
-      assert(
-        table === "card_discovery_jobs",
-        "issuer claim touched an unrelated table",
-      );
-      let operation: "select" | "insert" = "select";
-      let payload: Record<string, unknown> | null = null;
-      const filters = new Map<string, unknown>();
-      const query = {
-        select() {
-          return this;
-        },
-        eq(column: string, value: unknown) {
-          filters.set(column, value);
-          return this;
-        },
-        is(column: string, value: unknown) {
-          filters.set(column, value);
-          return this;
-        },
-        insert(value: Record<string, unknown>) {
-          operation = "insert";
-          payload = value;
-          return this;
-        },
-        async maybeSingle() {
-          if (operation === "insert") {
-            const duplicate = jobs.some((row) =>
-              row.discovery_source === payload?.discovery_source &&
-              row.dedupe_key === payload?.dedupe_key && row.user_id === null
-            );
-            if (duplicate) {
-              return { data: null, error: { code: "23505" } };
-            }
-            const row = {
-              ...payload,
-              id: `run-${++sequence}`,
-              updated_at: "2026-08-20T00:00:00.000Z",
-            };
-            jobs.push(row);
-            return { data: row, error: null };
-          }
-          const row =
-            jobs.find((candidate) =>
-              [...filters].every(([key, value]) => candidate[key] === value)
-            ) ?? null;
-          return { data: row, error: null };
-        },
-      };
-      return query;
-    },
-  };
+  const store = issuerSchedulerStore({});
   const selected = {
     issuer: "Axis Bank",
     canonical_url: "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
   };
   const now = new Date("2026-08-20T00:00:00.000Z");
   const [left, right] = await Promise.all([
-    claimIssuerDiscoveryRun(db, selected, now),
-    claimIssuerDiscoveryRun(db, selected, now),
+    claimIssuerDiscoveryRun(store.db, selected, now),
+    claimIssuerDiscoveryRun(store.db, selected, now),
   ]);
-  assert(jobs.length === 1, "same UTC-day run inserted duplicate rows");
+  assert(store.jobs.length === 1, "same UTC-day run inserted duplicate rows");
   assert(
     [left.status, right.status].sort().join(",") ===
       "already_running,claimed",
@@ -634,8 +629,152 @@ Deno.test("exhausted oldest backlog is terminally quarantined so the next run ca
   const exhausted = store.jobs.find((row) => row.id === "exhausted")!;
   assert(
     exhausted.status === "review_required" &&
-      exhausted.failure_category === "resume_attempts_exhausted",
+      typeof exhausted.review_item_id === "string",
     "resume-attempt ceiling did not create terminal operator-visible work",
+  );
+  assert(
+    store.rpcCalls.length === 1 &&
+      store.rpcCalls[0].name === "stage_card_catalog_identity_review" &&
+      store.rpcCalls[0].args._discovery_job_id === "exhausted" &&
+      (store.rpcCalls[0].args._validation_warnings as string[]).includes(
+        "issuer_discovery_quarantine",
+      ),
+    "attempt ceiling bypassed the transactional Task7 staging RPC",
+  );
+  const stagedPayload = JSON.stringify(store.rpcCalls[0].args);
+  assert(
+    stagedPayload.length < 16_384 && !/token|secret/i.test(stagedPayload),
+    "quarantine review leaked unbounded or sensitive evidence",
+  );
+});
+
+Deno.test("invalid retained issuer evidence is quarantined once and linked to its exact job", async () => {
+  const store = issuerSchedulerStore({
+    jobs: [{
+      id: "invalid-run",
+      user_id: null,
+      discovery_source: "issuer_crawl",
+      issuer: "Axis Bank",
+      dedupe_key: "invalid-run-key",
+      status: "failed",
+      attempt_count: "malformed",
+      next_retry_at: "2026-08-19T00:00:00.000Z",
+      created_at: "2026-08-19T00:00:00.000Z",
+      updated_at: "2026-08-19T00:00:00.000Z",
+      evidence: {
+        kind: "issuer_directory_run",
+        issuer: "Axis Bank",
+        canonical_url: "https://evil.example/cards",
+        run_date: "2026-08-19",
+        lease_token: "private-lease-token-must-not-be-staged",
+      },
+    }],
+    catalog: [],
+  });
+  await loadDiscoverySeed(
+    store.db,
+    new Date("2026-08-20T00:00:00.000Z"),
+    200,
+  );
+  await loadDiscoverySeed(
+    store.db,
+    new Date("2026-08-20T00:00:01.000Z"),
+    200,
+  );
+
+  assert(
+    store.rpcCalls.length === 1,
+    "invalid evidence review was not idempotent",
+  );
+  const args = store.rpcCalls[0].args;
+  assert(
+    args._discovery_job_id === "invalid-run" &&
+      (args._validation_warnings as string[]).join(",") ===
+        "issuer_discovery_quarantine,invalid_run_evidence",
+    "invalid evidence review lost its exact job or classification",
+  );
+  assert(
+    (args._source_evidence as any).source_observation.attempt_count === 0,
+    "malformed retained attempt count escaped the bounded review",
+  );
+  assert(
+    !JSON.stringify(args).includes("private-lease-token-must-not-be-staged"),
+    "invalid retained evidence leaked into operator review",
+  );
+});
+
+Deno.test("issuer quarantine review identity is stable across retry time", async () => {
+  const invalidJob = {
+    id: "invalid-run",
+    user_id: null,
+    discovery_source: "issuer_crawl",
+    issuer: "Axis Bank",
+    dedupe_key: "invalid-run-key",
+    status: "failed",
+    attempt_count: 1,
+    next_retry_at: "2026-08-19T00:00:00.000Z",
+    created_at: "2026-08-19T00:00:00.000Z",
+    updated_at: "2026-08-19T00:00:00.000Z",
+    evidence: {
+      kind: "issuer_directory_run",
+      issuer: "Axis Bank",
+      canonical_url: "https://evil.example/cards",
+      run_date: "2026-08-19",
+    },
+  };
+  const hashes: string[] = [];
+  for (
+    const now of [
+      "2026-08-20T00:00:00.000Z",
+      "2026-08-20T06:00:00.000Z",
+    ]
+  ) {
+    const store = issuerSchedulerStore({
+      jobs: [structuredClone(invalidJob)],
+      catalog: [],
+    });
+    await loadDiscoverySeed(store.db, new Date(now), 200);
+    hashes.push(String(store.rpcCalls[0].args._semantic_hash));
+  }
+  assert(
+    hashes[0] === hashes[1],
+    "retry time changed the idempotent quarantine review identity",
+  );
+});
+
+Deno.test("malformed retained attempt state is quarantined before claim", async () => {
+  const store = issuerSchedulerStore({
+    jobs: [{
+      id: "invalid-attempt",
+      user_id: null,
+      discovery_source: "issuer_crawl",
+      issuer: "Axis Bank",
+      dedupe_key: "invalid-attempt-key",
+      status: "failed",
+      attempt_count: "not-a-number",
+      next_retry_at: "2026-08-19T00:00:00.000Z",
+      created_at: "2026-08-19T00:00:00.000Z",
+      updated_at: "2026-08-19T00:00:00.000Z",
+      evidence: {
+        kind: "issuer_directory_run",
+        issuer: "Axis Bank",
+        canonical_url:
+          "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+        run_date: "2026-08-19",
+      },
+    }],
+    catalog: [],
+  });
+  const claim = await loadDiscoverySeed(
+    store.db,
+    new Date("2026-08-20T00:00:00.000Z"),
+    200,
+  );
+  assert(claim.status === "empty", "malformed attempt state was claimed");
+  assert(
+    store.jobs[0].status === "review_required" &&
+      store.rpcCalls[0].args._discovery_job_id === "invalid-attempt",
+    "malformed attempt state did not create an exact linked review",
   );
 });
 
@@ -716,6 +855,683 @@ Deno.test("issuer lease token fences expired holders from progress and final wri
     live.evidence.last_processed_candidate_identity === "b".repeat(64),
     "stale holder overwrote B's durable candidate position",
   );
+});
+
+Deno.test("only a positively complete issuer run resolves; incomplete work backs off with evidence", async () => {
+  const store = issuerSchedulerStore({});
+  const claim = await claimIssuerDiscoveryRun(store.db, {
+    issuer: "Axis Bank",
+    canonical_url: "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+  });
+  assert(claim.seed, "issuer run was not claimed");
+  await recordIssuerDiscoveryOutcome(store.db, claim.seed, {
+    complete: false,
+    budgetExhausted: false,
+    reasons: ["product_inventory_unproven"],
+    counts: { supporting: 1 },
+    summaries: [{ candidate_key: "a".repeat(64) }],
+    considered: 1,
+    fetched: 1,
+    resumed: 0,
+  });
+
+  const row = store.jobs[0];
+  assert(row.status === "failed", "an incomplete run incorrectly resolved");
+  assert(
+    Date.parse(row.next_retry_at) > Date.parse(row.updated_at),
+    "failed run did not receive bounded retry backoff",
+  );
+  assert(
+    row.evidence.outcome_summaries[0].candidate_key === "a".repeat(64),
+    "failed finalization discarded persisted evidence",
+  );
+});
+
+Deno.test("a nominally complete issuer result with reasons or budget exhaustion stays resumable", async () => {
+  for (
+    const outcome of [{
+      complete: true,
+      budgetExhausted: false,
+      reasons: ["product_directory_scope_mismatch"],
+    }, {
+      complete: true,
+      budgetExhausted: true,
+      reasons: [],
+    }]
+  ) {
+    const store = issuerSchedulerStore({});
+    const claim = await claimIssuerDiscoveryRun(store.db, {
+      issuer: "Axis Bank",
+      canonical_url:
+        "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+    });
+    assert(claim.seed, "issuer run was not claimed");
+    await recordIssuerDiscoveryOutcome(store.db, claim.seed, {
+      ...outcome,
+      counts: {},
+      summaries: [],
+      considered: 0,
+      fetched: 0,
+      resumed: 0,
+    });
+    assert(
+      store.jobs[0].status === "failed",
+      "non-positive complete result incorrectly resolved",
+    );
+  }
+});
+
+Deno.test("candidate persistence, progress, publication, and final-write exceptions remain resumable", async () => {
+  const selected = {
+    issuer: "Axis Bank",
+    canonical_url: "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+  };
+  const candidate = {
+    candidateKey: "c".repeat(64),
+    disposition: "candidate",
+    attempted: true,
+    classification: {
+      kind: "card_product",
+      canonicalUrl:
+        "https://www.axis.bank.in/cards/credit-card/privilege-credit-card",
+      proposedName: "Privilege",
+      aliases: ["Axis Privilege Credit Card"],
+      confidence: 0.95,
+      warnings: [],
+      sanitizedEvidence: ["Axis Privilege Credit Card"],
+    },
+  };
+  const cases = [
+    {
+      name: "candidate persistence",
+      failUpdate: undefined,
+      dependencies: {
+        discover: async (input: any) => {
+          await input.onCandidateOutcome(candidate);
+          return completeIssuerCrawl({ consideredCount: 1, fetchedCount: 1 });
+        },
+        persistCrawlerCandidate: async () => {
+          throw new Error("candidate_persist_failed");
+        },
+      },
+    },
+    {
+      name: "progress PostgREST",
+      failUpdate: (payload: Record<string, any>) =>
+        payload.status === undefined && payload.evidence?.outcome_summaries
+          ? new Error("progress_postgrest_failed")
+          : null,
+      dependencies: {
+        discover: async (input: any) => {
+          await input.onCandidateOutcome(candidate);
+          return completeIssuerCrawl({ consideredCount: 1, fetchedCount: 1 });
+        },
+        persistCrawlerCandidate: async () => ({ outcome: "review" as const }),
+      },
+    },
+    {
+      name: "publication",
+      failUpdate: undefined,
+      dependencies: {
+        discover: async () => completeIssuerCrawl(),
+        loadKnownIssuerCards: async () => [],
+        stageCompleteAbsenceReviews: async () => {
+          throw new Error("publication_failed");
+        },
+      },
+    },
+    {
+      name: "final write",
+      failUpdate: (() => {
+        let failed = false;
+        return (payload: Record<string, any>) => {
+          if (!failed && payload.status === "resolved") {
+            failed = true;
+            return new Error("final_postgrest_failed");
+          }
+          return null;
+        };
+      })(),
+      dependencies: {
+        discover: async () => completeIssuerCrawl(),
+        loadKnownIssuerCards: async () => [],
+        stageCompleteAbsenceReviews: async () => [],
+      },
+    },
+  ];
+
+  for (const testCase of cases) {
+    const store = issuerSchedulerStore({ failUpdate: testCase.failUpdate });
+    const claim = await claimIssuerDiscoveryRun(store.db, selected);
+    assert(claim.seed, `${testCase.name} run was not claimed`);
+    let error: unknown;
+    try {
+      await runIssuerDiscovery(
+        store.db,
+        claim.seed,
+        Date.now() + 60_000,
+        testCase.dependencies,
+      );
+    } catch (caught) {
+      error = caught;
+    }
+    assert(error instanceof Error, `${testCase.name} did not surface failure`);
+    assert(
+      store.jobs[0].status === "failed",
+      `${testCase.name} exception left a falsely complete run`,
+    );
+    assert(
+      Date.parse(store.jobs[0].next_retry_at) >
+        Date.parse(store.jobs[0].updated_at),
+      `${testCase.name} exception did not back off`,
+    );
+  }
+});
+
+Deno.test("lease loss returns a harmless lost-lease summary without stale finalization", async () => {
+  const store = issuerSchedulerStore({});
+  const claim = await claimIssuerDiscoveryRun(store.db, {
+    issuer: "Axis Bank",
+    canonical_url: "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+  });
+  assert(claim.seed, "issuer run was not claimed");
+  const liveToken = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const summary = await runIssuerDiscovery(
+    store.db,
+    claim.seed,
+    Date.now() + 60_000,
+    {
+      discover: async (input: any) => {
+        await input.onCandidateOutcome({
+          candidateKey: "d".repeat(64),
+          disposition: "candidate",
+          attempted: true,
+          classification: {
+            kind: "card_product",
+            canonicalUrl:
+              "https://www.axis.bank.in/cards/credit-card/privilege-credit-card",
+            proposedName: "Privilege",
+            aliases: ["Axis Privilege Credit Card"],
+            confidence: 0.95,
+            warnings: [],
+            sanitizedEvidence: ["Axis Privilege Credit Card"],
+          },
+        });
+        return completeIssuerCrawl();
+      },
+      persistCrawlerCandidate: async () => {
+        store.jobs[0].evidence = {
+          ...store.jobs[0].evidence,
+          lease_token: liveToken,
+          last_processed_candidate_identity: "b".repeat(64),
+        };
+        return { outcome: "review" as const };
+      },
+    },
+  );
+
+  assert(summary.status === "lost_lease", "lease loss was not returned");
+  assert(
+    store.jobs[0].status === "discovering" &&
+      store.jobs[0].evidence.lease_token === liveToken,
+    "stale holder finalized or overwrote the new lease",
+  );
+});
+
+Deno.test("one stable issuer anchor is reused across UTC slots with bounded history", async () => {
+  const store = issuerSchedulerStore({});
+  const selected = {
+    issuer: "Axis Bank",
+    canonical_url: "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+  };
+  const first = await claimIssuerDiscoveryRun(
+    store.db,
+    selected,
+    new Date("2026-08-20T00:00:00.000Z"),
+  );
+  assert(first.seed, "first UTC slot was not claimed");
+  await recordIssuerDiscoveryOutcome(store.db, first.seed, {
+    complete: true,
+    budgetExhausted: false,
+    reasons: [],
+    counts: { existing: 1 },
+    summaries: [{ candidate_key: "e".repeat(64) }],
+    considered: 1,
+    fetched: 1,
+    resumed: 0,
+  });
+  const sameDay = await claimIssuerDiscoveryRun(
+    store.db,
+    selected,
+    new Date("2026-08-20T23:59:00.000Z"),
+  );
+  assert(sameDay.status === "already_completed", "same slot reran");
+  const nextDay = await claimIssuerDiscoveryRun(
+    store.db,
+    selected,
+    new Date("2026-08-21T00:00:00.000Z"),
+  );
+
+  assert(nextDay.seed, "next UTC slot did not reuse the anchor");
+  assert(store.jobs.length === 1, "cross-date duplicate issuer rows remain");
+  assert(
+    nextDay.seed.rotationJobId === first.seed.rotationJobId,
+    "next slot changed the persistent issuer anchor",
+  );
+  assert(
+    nextDay.seed.rotationEvidence.run_date === "2026-08-21" &&
+      nextDay.seed.rotationEvidence.rotation_slot === 20_686 &&
+      nextDay.seed.rotationEvidence.run_attempt === 1 &&
+      (nextDay.seed.rotationEvidence.outcome_summaries as unknown[]).length ===
+        0,
+    "new slot did not reset and persist its slot, attempt, and cursor",
+  );
+  const history = nextDay.seed.rotationEvidence.run_history as Array<
+    Record<string, unknown>
+  >;
+  assert(
+    history.length === 1 && history[0].run_date === "2026-08-20" &&
+      history[0].last_outcome === "complete",
+    "prior slot was not retained in bounded history",
+  );
+});
+
+Deno.test("a reconciled stable anchor does not rescan legacy history forever", async () => {
+  const store = issuerSchedulerStore({});
+  const selected = {
+    issuer: "Axis Bank",
+    canonical_url: "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+  };
+  const first = await claimIssuerDiscoveryRun(
+    store.db,
+    selected,
+    new Date("2026-08-20T00:00:00.000Z"),
+  );
+  assert(first.seed, "stable anchor was not created");
+  store.backlogRanges.length = 0;
+  const second = await claimIssuerDiscoveryRun(
+    store.db,
+    selected,
+    new Date("2026-08-20T00:01:00.000Z"),
+  );
+  assert(second.status === "already_running", "active anchor was not fenced");
+  assert(
+    store.backlogRanges.length === 0,
+    "reconciled anchor repeated the bounded legacy history scan",
+  );
+});
+
+Deno.test("a late legacy backlog row forces reconciliation despite the stable marker", async () => {
+  const store = issuerSchedulerStore({});
+  const selected = {
+    issuer: "Axis Bank",
+    canonical_url: "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+  };
+  const first = await claimIssuerDiscoveryRun(
+    store.db,
+    selected,
+    new Date("2026-08-20T00:00:00.000Z"),
+  );
+  assert(first.seed, "stable anchor was not created");
+  await recordIssuerDiscoveryOutcome(store.db, first.seed, {
+    complete: true,
+    budgetExhausted: false,
+    reasons: [],
+    counts: {},
+    summaries: [],
+    considered: 0,
+    fetched: 0,
+    resumed: 0,
+  });
+  store.jobs.push({
+    id: "late-legacy",
+    user_id: null,
+    discovery_source: "issuer_crawl",
+    issuer: "Axis Bank",
+    dedupe_key: "late-dated-key",
+    status: "failed",
+    attempt_count: 1,
+    next_retry_at: "2026-08-20T12:00:00.000Z",
+    created_at: "2026-08-20T00:00:00.000Z",
+    updated_at: "2026-08-20T12:00:00.000Z",
+    evidence: {
+      kind: "issuer_directory_run",
+      issuer: "Axis Bank",
+      canonical_url:
+        "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+      run_date: "2026-08-20",
+      lease_token: "11111111-1111-4111-8111-111111111111",
+    },
+  });
+  const claim = await loadDiscoverySeed(
+    store.db,
+    new Date("2026-08-21T00:00:00.000Z"),
+    200,
+  );
+  assert(claim.status === "legacy_conflict", "late legacy work was crawled");
+  assert(
+    store.jobs.find((row) => row.id === "late-legacy")?.status ===
+      "review_required",
+    "late legacy work did not receive an exact linked review",
+  );
+});
+
+Deno.test("new issuer slots sanitize malformed historical counters", async () => {
+  const store = issuerSchedulerStore({});
+  const selected = {
+    issuer: "Axis Bank",
+    canonical_url: "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+  };
+  const first = await claimIssuerDiscoveryRun(
+    store.db,
+    selected,
+    new Date("2026-08-20T00:00:00.000Z"),
+  );
+  assert(first.seed, "first slot was not claimed");
+  await recordIssuerDiscoveryOutcome(store.db, first.seed, {
+    complete: true,
+    budgetExhausted: false,
+    reasons: [],
+    counts: {},
+    summaries: [],
+    considered: 0,
+    fetched: 0,
+    resumed: 0,
+  });
+  store.jobs[0].evidence.considered_count = "malformed";
+  store.jobs[0].evidence.fetched_count = -99;
+  const next = await claimIssuerDiscoveryRun(
+    store.db,
+    selected,
+    new Date("2026-08-21T00:00:00.000Z"),
+  );
+  const history = next.seed?.rotationEvidence.run_history as Array<
+    Record<string, unknown>
+  >;
+  assert(
+    history[0].considered_count === 0 && history[0].fetched_count === 0,
+    "malformed historical counters escaped the bounded run history",
+  );
+});
+
+Deno.test("issuer run history strips unknown retained fields before carrying slots forward", async () => {
+  const store = issuerSchedulerStore({});
+  const selected = {
+    issuer: "Axis Bank",
+    canonical_url: "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+  };
+  const first = await claimIssuerDiscoveryRun(
+    store.db,
+    selected,
+    new Date("2026-08-20T00:00:00.000Z"),
+  );
+  assert(first.seed, "first slot was not claimed");
+  await recordIssuerDiscoveryOutcome(store.db, first.seed, {
+    complete: true,
+    budgetExhausted: false,
+    reasons: [],
+    counts: {},
+    summaries: [],
+    considered: 0,
+    fetched: 0,
+    resumed: 0,
+  });
+  store.jobs[0].evidence.run_history = [{
+    run_date: "2026-08-19",
+    last_outcome: "complete",
+    secret: "must-not-survive",
+  }];
+  const next = await claimIssuerDiscoveryRun(
+    store.db,
+    selected,
+    new Date("2026-08-21T00:00:00.000Z"),
+  );
+  const history = next.seed?.rotationEvidence.run_history as Array<
+    Record<string, unknown>
+  >;
+  assert(history.length === 2, "valid prior run history was discarded");
+  assert(
+    history.every((entry) => !Object.hasOwn(entry, "secret")),
+    "unknown retained history fields escaped the bounded schema",
+  );
+});
+
+Deno.test("an active legacy dated row fences a new-day claim for the same issuer", async () => {
+  const store = issuerSchedulerStore({
+    jobs: [{
+      id: "legacy-active",
+      user_id: null,
+      discovery_source: "issuer_crawl",
+      issuer: "Axis Bank",
+      dedupe_key: "dated-key",
+      status: "discovering",
+      attempt_count: 1,
+      next_retry_at: "2026-08-21T00:05:00.000Z",
+      created_at: "2026-08-20T00:00:00.000Z",
+      updated_at: "2026-08-20T00:00:00.000Z",
+      evidence: {
+        kind: "issuer_directory_run",
+        issuer: "Axis Bank",
+        canonical_url:
+          "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+        run_date: "2026-08-20",
+        lease_token: "11111111-1111-4111-8111-111111111111",
+      },
+    }],
+  });
+  const claim = await claimIssuerDiscoveryRun(
+    store.db,
+    {
+      issuer: "Axis Bank",
+      canonical_url:
+        "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+    },
+    new Date("2026-08-21T00:00:00.000Z"),
+  );
+  assert(claim.status === "already_running", "new day bypassed legacy lease");
+  assert(store.jobs.length === 1, "new day inserted a competing issuer row");
+});
+
+Deno.test("unrelated issuer outcome rows cannot hide a legacy issuer lease", async () => {
+  const unrelated = Array.from({ length: 200 }, (_, index) => ({
+    id: `candidate-${index}`,
+    user_id: null,
+    discovery_source: "issuer_crawl",
+    issuer: "Axis Bank",
+    dedupe_key: `candidate-key-${index}`,
+    status: "resolved",
+    attempt_count: 0,
+    created_at: `2026-08-19T00:${
+      String(Math.floor(index / 60)).padStart(2, "0")
+    }:${String(index % 60).padStart(2, "0")}.000Z`,
+    updated_at: "2026-08-19T00:00:00.000Z",
+    evidence: { kind: "issuer_candidate_outcome" },
+  }));
+  const active = {
+    id: "legacy-active",
+    user_id: null,
+    discovery_source: "issuer_crawl",
+    issuer: "Axis Bank",
+    dedupe_key: "dated-key",
+    status: "discovering",
+    attempt_count: 1,
+    next_retry_at: "2026-08-21T00:05:00.000Z",
+    created_at: "2026-08-20T00:00:00.000Z",
+    updated_at: "2026-08-20T00:00:00.000Z",
+    evidence: {
+      kind: "issuer_directory_run",
+      issuer: "Axis Bank",
+      canonical_url:
+        "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+      run_date: "2026-08-20",
+      lease_token: "11111111-1111-4111-8111-111111111111",
+    },
+  };
+  const store = issuerSchedulerStore({ jobs: [...unrelated, active] });
+  const claim = await claimIssuerDiscoveryRun(
+    store.db,
+    {
+      issuer: "Axis Bank",
+      canonical_url:
+        "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+    },
+    new Date("2026-08-21T00:00:00.000Z"),
+  );
+  assert(claim.status === "already_running", "legacy lease was hidden");
+  assert(store.jobs.length === 201, "a competing stable anchor was inserted");
+});
+
+Deno.test("bounded legacy pagination reaches an active lease beyond two pages", async () => {
+  const history = Array.from({ length: 200 }, (_, index) => ({
+    id: `history-${index}`,
+    user_id: null,
+    discovery_source: "issuer_crawl",
+    issuer: "Axis Bank",
+    dedupe_key: `dated-history-${index}`,
+    status: "resolved",
+    attempt_count: 1,
+    created_at: `2025-${String(1 + Math.floor(index / 28)).padStart(2, "0")}-${
+      String(1 + (index % 28)).padStart(2, "0")
+    }T00:00:00.000Z`,
+    updated_at: "2026-08-19T00:00:00.000Z",
+    evidence: {
+      kind: "issuer_directory_run",
+      issuer: "Axis Bank",
+      canonical_url:
+        "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+      run_date: "2026-08-19",
+      last_outcome: "complete",
+    },
+  }));
+  const active = {
+    id: "legacy-active-page-three",
+    user_id: null,
+    discovery_source: "issuer_crawl",
+    issuer: "Axis Bank",
+    dedupe_key: "dated-active-page-three",
+    status: "discovering",
+    attempt_count: 1,
+    next_retry_at: "2026-08-21T00:05:00.000Z",
+    created_at: "2026-08-20T00:00:00.000Z",
+    updated_at: "2026-08-20T00:00:00.000Z",
+    evidence: {
+      kind: "issuer_directory_run",
+      issuer: "Axis Bank",
+      canonical_url:
+        "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+      run_date: "2026-08-20",
+      lease_token: "11111111-1111-4111-8111-111111111111",
+    },
+  };
+  const store = issuerSchedulerStore({ jobs: [...history, active] });
+  const claim = await claimIssuerDiscoveryRun(
+    store.db,
+    {
+      issuer: "Axis Bank",
+      canonical_url:
+        "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+    },
+    new Date("2026-08-21T00:00:00.000Z"),
+  );
+  assert(claim.status === "already_running", "page-three lease was hidden");
+  assert(store.jobs.length === 201, "pagination inserted a competing anchor");
+});
+
+Deno.test("multiple due legacy rows fail closed into exact linked quarantine reviews", async () => {
+  const jobs = ["older", "newer"].map((id, index) => ({
+    id,
+    user_id: null,
+    discovery_source: "issuer_crawl",
+    issuer: "Axis Bank",
+    dedupe_key: `dated-${id}`,
+    status: "failed",
+    attempt_count: 1,
+    next_retry_at: `2026-08-${19 + index}T00:00:00.000Z`,
+    created_at: `2026-08-${19 + index}T00:00:00.000Z`,
+    updated_at: `2026-08-${19 + index}T00:00:00.000Z`,
+    evidence: {
+      kind: "issuer_directory_run",
+      issuer: "Axis Bank",
+      canonical_url:
+        "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+      run_date: `2026-08-${19 + index}`,
+      lease_token: index === 0
+        ? "11111111-1111-4111-8111-111111111111"
+        : "22222222-2222-4222-8222-222222222222",
+    },
+  }));
+  const store = issuerSchedulerStore({ jobs });
+  const claim = await claimIssuerDiscoveryRun(
+    store.db,
+    {
+      issuer: "Axis Bank",
+      canonical_url:
+        "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+    },
+    new Date("2026-08-21T00:00:00.000Z"),
+  );
+
+  assert(claim.status === "legacy_conflict", "duplicate legacy rows crawled");
+  assert(store.jobs.length === 2, "conflict created another issuer row");
+  assert(
+    store.rpcCalls.length === 2 &&
+      store.rpcCalls.every((call, index) =>
+        call.name === "stage_card_catalog_identity_review" &&
+        call.args._discovery_job_id === jobs[index].id &&
+        (call.args._validation_warnings as string[]).includes(
+          "issuer_discovery_quarantine",
+        )
+      ),
+    "legacy conflict did not create exact linked Task7 reviews",
+  );
+});
+
+Deno.test("legacy conflict quarantine is bounded and drains across invocations", async () => {
+  const jobs = Array.from({ length: 25 }, (_, index) => ({
+    id: `legacy-${String(index).padStart(2, "0")}`,
+    user_id: null,
+    discovery_source: "issuer_crawl",
+    issuer: "Axis Bank",
+    dedupe_key: `dated-legacy-${index}`,
+    status: "failed",
+    attempt_count: 1,
+    next_retry_at: "2026-08-19T00:00:00.000Z",
+    created_at: `2026-08-19T00:00:${String(index).padStart(2, "0")}.000Z`,
+    updated_at: "2026-08-19T00:00:00.000Z",
+    evidence: {
+      kind: "issuer_directory_run",
+      issuer: "Axis Bank",
+      canonical_url:
+        "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+      run_date: "2026-08-19",
+    },
+  }));
+  const store = issuerSchedulerStore({ jobs });
+  const selected = {
+    issuer: "Axis Bank",
+    canonical_url: "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+  };
+  const first = await claimIssuerDiscoveryRun(
+    store.db,
+    selected,
+    new Date("2026-08-20T00:00:00.000Z"),
+  );
+  assert(first.status === "legacy_conflict", "legacy conflict was not fenced");
+  assert(
+    store.rpcCalls.length === 20,
+    "one invocation staged an unbounded batch",
+  );
+  const second = await claimIssuerDiscoveryRun(
+    store.db,
+    selected,
+    new Date("2026-08-20T00:01:00.000Z"),
+  );
+  assert(second.status === "legacy_conflict", "remaining conflict was crawled");
+  assert(
+    Number(store.rpcCalls.length) === 25,
+    "bounded conflict backlog did not drain",
+  );
+  assert(store.jobs.length === 25, "conflict drain inserted a stable anchor");
 });
 
 Deno.test("cross-class crawler URL conflicts become actionable bounded review work", async () => {

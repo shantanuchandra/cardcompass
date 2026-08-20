@@ -584,18 +584,6 @@ export function cardDiscontinuationEvidence(
   const structuredStatus =
     /\b(?:status\s*:?\s*)?(?:discontinued|withdrawn|no\s+longer\s+(?:available|issued))\b/i;
 
-  // A table row is an explicit product/status association and does not borrow
-  // a status cell from an adjacent product row.
-  for (const row of boundedHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)) {
-    const rowText = clean(row[1] ?? "");
-    if (
-      containsTarget(rowText) && structuredStatus.test(rowText) &&
-      !/\bnot\s+(?:discontinued|withdrawn)\b/i.test(rowText)
-    ) {
-      return { explicit: true, matchedExcerpt: boundedExcerpt(rowText) };
-    }
-  }
-
   const headings = [...boundedHtml.matchAll(
     /<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1>/gi,
   )].map((match) => ({
@@ -640,6 +628,7 @@ export function cardDiscontinuationEvidence(
     "overview",
     "points",
     "pricing",
+    "product",
     "question",
     "questions",
     "rate",
@@ -649,6 +638,9 @@ export function cardDiscontinuationEvidence(
     "status",
     "term",
     "terms",
+    "update",
+    "notice",
+    "discontinuation",
     "welcome",
   ]);
   const issuerTokens = new Set(meaningful(issuer));
@@ -670,6 +662,30 @@ export function cardDiscontinuationEvidence(
     return distinctive.length > 0 &&
       (hasIssuerIdentity || (tokens.length <= 6 && value.length <= 96));
   };
+  const competingContext = (value: string) =>
+    /\b(?:alternative|compare|comparison|related|successor|replacement|replaces?|replaced|versus|vs\.?)\b/i
+      .test(value);
+
+  // A table row is accepted only when one product cell owns the status. A
+  // comparison row that contains another distinctive identity is ambiguous.
+  for (const row of boundedHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)) {
+    const rowHtml = row[1] ?? "";
+    const rowText = clean(rowHtml);
+    const cells = [...rowHtml.matchAll(
+      /<(?:td|th)\b[^>]*>([\s\S]*?)<\/(?:td|th)>/gi,
+    )].map((cell) => clean(cell[1] ?? "")).filter(Boolean);
+    const competingCell = cells.some((cell) =>
+      !containsTarget(cell) && !structuredStatus.test(cell) &&
+      productHeading(cell)
+    );
+    if (
+      containsTarget(rowText) && structuredStatus.test(rowText) &&
+      !competingCell && !competingContext(rowText) &&
+      !/\bnot\s+(?:discontinued|withdrawn)\b/i.test(rowText)
+    ) {
+      return { explicit: true, matchedExcerpt: boundedExcerpt(rowText) };
+    }
+  }
   const anaphoric =
     /\b(?:this|the)\s+(?:credit\s+)?card\s+(?:has\s+been\s+|is\s+)(?:discontinued|withdrawn)\b|\b(?:this|the)\s+(?:credit\s+)?card\s+is\s+no\s+longer\s+(?:available|issued)\b/i;
   const targetPhrase = meaningful(cardName).join("[\\s\\W_]*");
@@ -707,7 +723,7 @@ export function cardDiscontinuationEvidence(
         " ",
       );
       if (
-        /\b(?:compare|instead|other|related|replacement|replaces?|successor|while|whereas)\b/i
+        /\b(?:alternative|compare|comparison|instead|other|related|replacement|replaces?|successor|versus|vs\.?|while|whereas)\b/i
           .test(remainder) ||
         /\b(?:credit\s+)?card\b/i.test(remainder)
       ) continue;
@@ -757,10 +773,7 @@ export function cardDiscontinuationEvidence(
     const anaphoricMatch = anaphoric.exec(scoped);
     if (anaphoricMatch) {
       const prior = scoped.slice(0, anaphoricMatch.index);
-      const refersToOtherProduct =
-        /\b(?:alternative|compare|related|successor|replacement|replaces?|replaced)\b/i
-          .test(prior) &&
-        /\b(?:credit\s+)?card\b/i.test(prior);
+      const refersToOtherProduct = competingContext(prior);
       if (!refersToOtherProduct) {
         return {
           explicit: true,

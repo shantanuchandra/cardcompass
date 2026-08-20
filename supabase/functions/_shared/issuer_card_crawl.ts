@@ -487,14 +487,59 @@ function sanitizeClassification(page: PageClassification): PageClassification {
   };
 }
 
-function isExplicitProductDirectorySource(url: string): boolean {
+function productDirectoryScope(url: string): string | null {
   try {
-    const pathname = new URL(url).pathname.toLowerCase();
-    return /(?:^|[-_/])(?:credit[-_/]?cards?|cards?[-_/]?(?:products?|catalog)|sitemap[-_.]?(?:credit[-_]?cards?|cards?))(?:[-_/.]|$)/
-      .test(pathname);
+    const pathname = new URL(url).pathname.toLowerCase()
+      .replace(/credit[-_]cards/g, "credit-card")
+      .replace(/credit\/cards/g, "credit-card")
+      .replace(/cards[-_](?:products?|catalog)/g, "cards-catalog");
+    const scoped = /(?:^|\/)(?:credit-card|cards-catalog)(?:\/|$)/.exec(
+      pathname,
+    );
+    if (scoped) {
+      const end = (scoped.index ?? 0) + scoped[0].length;
+      const scope = pathname.slice(0, end).replace(/\/$/, "");
+      const remainder = pathname.slice(end).replace(/^\/+|\/+$/g, "");
+      if (
+        !remainder ||
+        remainder.split("/").every((segment) =>
+          /^(?:sitemap|index|catalog|directory|listing|products?)(?:[-_.].*)?$/
+            .test(
+              segment,
+            )
+        )
+      ) return scope;
+      return null;
+    }
+    const basename = pathname.split("/").filter(Boolean).at(-1) ?? "";
+    if (
+      /^(?:sitemap|index)[-_.]?(?:credit[-_]?cards?|cards?)(?:[-_.].*)?$/.test(
+        basename,
+      )
+    ) {
+      return `${
+        pathname.slice(0, pathname.length - basename.length)
+      }credit-card`
+        .replace(/\/{2,}/g, "/");
+    }
+    return null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+function isExplicitProductDirectorySource(url: string): boolean {
+  return productDirectoryScope(url) !== null;
+}
+
+function responsePreservesProductDirectoryScope(
+  requestedUrl: string,
+  response: Pick<OfficialFetchResult, "finalUrl" | "canonicalUrl">,
+): boolean {
+  const requestedScope = productDirectoryScope(requestedUrl);
+  return requestedScope !== null &&
+    productDirectoryScope(response.finalUrl) === requestedScope &&
+    productDirectoryScope(response.canonicalUrl) === requestedScope;
 }
 
 function safeApprovedResourceUrl(value: unknown): string | null {
@@ -1255,7 +1300,12 @@ export async function discoverIssuerCardCandidates(
       continue;
     }
     directorySourceSucceeded = true;
-    if (isExplicitProductDirectorySource(current.url)) {
+    if (
+      isExplicitProductDirectorySource(current.url) &&
+      !responsePreservesProductDirectoryScope(current.url, response)
+    ) {
+      markIncomplete("product_directory_scope_mismatch");
+    } else if (responsePreservesProductDirectoryScope(current.url, response)) {
       explicitProductDirectoryObserved = true;
     }
     for (const rawLocation of document.locations) {
@@ -1359,7 +1409,12 @@ export async function discoverIssuerCardCandidates(
         continue;
       }
       directorySourceSucceeded = true;
-      if (isExplicitProductDirectorySource(indexUrl)) {
+      if (
+        isExplicitProductDirectorySource(indexUrl) &&
+        !responsePreservesProductDirectoryScope(indexUrl, response)
+      ) {
+        markIncomplete("product_directory_scope_mismatch");
+      } else if (responsePreservesProductDirectoryScope(indexUrl, response)) {
         explicitProductDirectoryObserved = true;
       }
       for (const match of (response.text ?? "").matchAll(htmlLinkPattern)) {

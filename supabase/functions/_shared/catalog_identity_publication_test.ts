@@ -694,6 +694,53 @@ Deno.test("no-heading discontinuation requires one exact target-only sentence", 
   assert(!related.explicit, "related-card prose became target lifecycle proof");
 });
 
+Deno.test("lifecycle scoping keeps notice/status headings and rejects ambiguous competing identities", () => {
+  for (
+    const heading of [
+      "Product Status",
+      "Product Update",
+      "Important Notice",
+      "Discontinuation Notice",
+    ]
+  ) {
+    const evidence = cardDiscontinuationEvidence(
+      `<h2>Axis Neo Credit Card</h2><h3>${heading}</h3><p>This card has been discontinued.</p>`,
+      "Axis Bank",
+      "Axis Neo Credit Card",
+    );
+    assert(evidence.explicit, `${heading} incorrectly ended target scope`);
+  }
+
+  const relatedWithoutCard = cardDiscontinuationEvidence(
+    `<h2>Axis Neo Credit Card</h2>
+     <p>Related product: My Zone. This card has been discontinued.</p>`,
+    "Axis Bank",
+    "Axis Neo Credit Card",
+  );
+  assert(
+    !relatedWithoutCard.explicit,
+    "competitor anaphora without the word card was attributed to target",
+  );
+
+  const comparison = cardDiscontinuationEvidence(
+    `<h2>Axis Neo Credit Card</h2>
+     <p>Compare Neo versus My Zone replacement. This card has been discontinued.</p>`,
+    "Axis Bank",
+    "Axis Neo Credit Card",
+  );
+  assert(!comparison.explicit, "comparison/replacement prose marked target");
+
+  const multiProductRow = cardDiscontinuationEvidence(
+    `<table><tr><td>Axis Neo Credit Card</td><td>My Zone</td><td>Discontinued</td></tr></table>`,
+    "Axis Bank",
+    "Axis Neo Credit Card",
+  );
+  assert(
+    !multiProductRow.explicit,
+    "one multi-product status row marked the target discontinued",
+  );
+});
+
 Deno.test("reviewed catalog fields enforce a strict private bounded whole-envelope contract", () => {
   const valid = boundedReviewedCatalogFields({
     issuer: "Axis Bank",

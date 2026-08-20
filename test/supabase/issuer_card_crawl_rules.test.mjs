@@ -972,6 +972,50 @@ test("only an explicitly product-scoped empty source proves empty inventory", as
   assert.deepEqual(explicit.incompleteReasons, []);
 });
 
+test("product-directory completeness requires requested, final, and canonical scope to agree", async () => {
+  const productDirectory =
+    "https://www.axis.bank.in/cards/credit-card/sitemap.xml";
+  for (
+    const redirectedUrl of [
+      "https://www.axis.bank.in/sitemap.xml",
+      "https://www.axis.bank.in/",
+      "https://www.axis.bank.in/personal/loans/sitemap.xml",
+      "https://www.axis.bank.in/cards/credit-card/neo-credit-card",
+    ]
+  ) {
+    const result = await discoverIssuerCardCandidates({
+      issuer,
+      sitemapUrl: productDirectory,
+      fetchOfficialIssuerResource: async (input) => ({
+        ...resource(input.url, sitemap([]), "application/xml"),
+        finalUrl: redirectedUrl,
+        canonicalUrl: redirectedUrl,
+      }),
+      delay: async () => {},
+    });
+    assert.equal(
+      result.complete,
+      false,
+      `redirect to ${redirectedUrl} falsely proved product inventory`,
+    );
+    assert.ok(
+      result.incompleteReasons.includes("product_directory_scope_mismatch"),
+    );
+  }
+
+  const sameScope = await discoverIssuerCardCandidates({
+    issuer,
+    sitemapUrl: productDirectory,
+    fetchOfficialIssuerResource: async (input) => ({
+      ...resource(input.url, sitemap([]), "application/xml"),
+      finalUrl: "https://www.axis.bank.in/cards/credit-card/sitemap-v2.xml",
+      canonicalUrl: "https://www.axis.bank.in/cards/credit-cards/sitemap.xml",
+    }),
+    delay: async () => {},
+  });
+  assert.equal(sameScope.complete, true);
+});
+
 test("a malformed nested sitemap prevents directory absence review", async () => {
   const child = "https://www.axis.bank.in/sitemaps/cards.xml";
   const result = await discoverIssuerCardCandidates({

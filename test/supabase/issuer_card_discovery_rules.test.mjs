@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
 
 import {
   persistCrawlerCandidate,
@@ -9,42 +8,6 @@ import {
 } from "../../supabase/functions/_shared/issuer_card_crawl.ts";
 
 const hashUrl = (value) => createHash("sha256").update(value).digest("hex");
-
-test("issuer day-run claims use a unique lease before explicit synchronous crawl and persist failure", async () => {
-  const source = await readFile(
-    new URL(
-      "../../supabase/functions/benefit-enrichment-batch/index.ts",
-      import.meta.url,
-    ),
-    "utf8",
-  );
-  const load = source.slice(
-    source.indexOf("export async function claimIssuerDiscoveryRun"),
-    source.indexOf("export async function handleBenefitEnrichmentBatch"),
-  );
-  const run = source.slice(
-    source.indexOf("export async function runIssuerDiscovery"),
-    source.indexOf("export type IssuerDiscoverySeed"),
-  );
-  assert.match(load, /issuer-directory-run:\$\{runDate\}/);
-  assert.match(load, /kind:\s*"issuer_directory_run"/);
-  assert.match(load, /last_attempt_at:\s*now\.toISOString\(\)/);
-  assert.match(
-    load,
-    /status:\s*"discovering"[\s\S]*next_retry_at:/,
-  );
-  assert.match(load, /inserted\.error\?\.code\s*!==\s*"23505"/);
-  assert.match(
-    run,
-    /catch \(error\)[\s\S]*recordIssuerDiscoveryOutcome\(db, job,/,
-  );
-  assert.ok(
-    source.indexOf("const claim = await loadDiscoverySeed(db") <
-      source.indexOf("const summary = await runIssuerDiscovery("),
-    "claim was not persisted before explicit crawl",
-  );
-  assert.doesNotMatch(source, /EdgeRuntime\.waitUntil/);
-});
 
 function candidate(overrides = {}) {
   return {

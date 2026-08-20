@@ -101,6 +101,7 @@ const ISSUER_DISCOVERY_LEASE_MS = 300_000;
 const ISSUER_DISCOVERY_BACKLOG_PAGE_SIZE = 100;
 const ISSUER_DISCOVERY_BACKLOG_MAX_PAGES = 10;
 const ISSUER_DISCOVERY_MAX_ATTEMPTS = 5;
+const ISSUER_DISCOVERY_QUARANTINE_BATCH = 20;
 
 export function claimLimitForInvocation(_runMode: RunMode): 1 {
   return 1;
@@ -1901,7 +1902,7 @@ export async function processJob(
 type IssuerDiscoveryRunSummary = {
   issuer: string;
   runDate: string;
-  status: "complete" | "incomplete" | "budget_exhausted";
+  status: "complete" | "incomplete" | "budget_exhausted" | "lost_lease";
   complete: boolean;
   budgetExhausted: boolean;
   considered: number;
@@ -2192,7 +2193,27 @@ export async function runIssuerDiscovery(
   db: UntypedSupabaseClient,
   job: IssuerDiscoverySeed,
   deadlineAt: number,
+  injected: Partial<{
+    discover: typeof discoverIssuerCardCandidates;
+    persistCrawlerCandidate: typeof persistCrawlerCandidate;
+    persistNonProductIssuerOutcome: typeof persistNonProductIssuerOutcome;
+    persistProgress: typeof persistIssuerRunProgress;
+    loadKnownIssuerCards: typeof loadKnownIssuerCards;
+    stageCompleteAbsenceReviews:
+      typeof stageCompleteIssuerDirectoryAbsenceReviews;
+    recordOutcome: typeof recordIssuerDiscoveryOutcome;
+  }> = {},
 ): Promise<IssuerDiscoveryRunSummary> {
+  const dependencies = {
+    discover: discoverIssuerCardCandidates,
+    persistCrawlerCandidate,
+    persistNonProductIssuerOutcome,
+    persistProgress: persistIssuerRunProgress,
+    loadKnownIssuerCards,
+    stageCompleteAbsenceReviews: stageCompleteIssuerDirectoryAbsenceReviews,
+    recordOutcome: recordIssuerDiscoveryOutcome,
+    ...injected,
+  };
   const priorOutcomes = storedIssuerCandidateOutcomes(job);
   let summaries = priorOutcomes.map((outcome) => ({
     candidate_key: outcome.candidateKey,
@@ -2216,9 +2237,23 @@ export async function runIssuerDiscovery(
     ),
   );
   let result;
+  const lostLeaseSummary = (): IssuerDiscoveryRunSummary => ({
+    issuer: job.issuer,
+    runDate: job.runDate,
+    status: "lost_lease",
+    complete: false,
+    budgetExhausted: false,
+    considered: 0,
+    fetched: 0,
+    resumed: priorOutcomes.length,
+    outcomes: counts,
+    lastProcessedCandidateIdentity:
+      String(summaries.at(-1)?.candidate_key ?? "") || null,
+    incompleteReasons: ["issuer_discovery_lease_lost"],
+  });
   try {
     const fallback = issuerDiscoveryFallbackUrls(job.canonical_url);
-    result = await discoverIssuerCardCandidates({
+    result = await dependencies.discover({
       issuer: job.issuer,
       sitemapUrls: fallback.sitemapUrls,
       indexUrls: fallback.indexUrls,
@@ -2229,7 +2264,7 @@ export async function runIssuerDiscovery(
         let accepted = true;
         if (outcome.classification.kind === "card_product") {
           try {
-            persistenceOutcome = (await persistCrawlerCandidate(
+            persistenceOutcome = (await dependencies.persistCrawlerCandidate(
               db,
               job.issuer,
               outcome.classification,
@@ -2241,31 +2276,33 @@ export async function runIssuerDiscovery(
                 error.message,
               )
             ) throw error;
-            persistenceOutcome = await persistNonProductIssuerOutcome(
-              db,
-              job.issuer,
-              {
-                ...outcome,
-                classification: {
-                  ...outcome.classification,
-                  warnings: [
-                    ...outcome.classification.warnings,
-                    "conflicting_url_identity",
-                  ],
+            persistenceOutcome = await dependencies
+              .persistNonProductIssuerOutcome(
+                db,
+                job.issuer,
+                {
+                  ...outcome,
+                  classification: {
+                    ...outcome.classification,
+                    warnings: [
+                      ...outcome.classification.warnings,
+                      "conflicting_url_identity",
+                    ],
+                  },
+                  disposition: "quarantined",
                 },
-                disposition: "quarantined",
-              },
-              "conflicting_url_identity",
-            );
+                "conflicting_url_identity",
+              );
             accepted = false;
           }
         } else {
-          persistenceOutcome = await persistNonProductIssuerOutcome(
-            db,
-            job.issuer,
-            outcome,
-            outcome.classification.warnings[0] ?? outcome.classification.kind,
-          );
+          persistenceOutcome = await dependencies
+            .persistNonProductIssuerOutcome(
+              db,
+              job.issuer,
+              outcome,
+              outcome.classification.warnings[0] ?? outcome.classification.kind,
+            );
           accepted = outcome.classification.kind === "supporting_document";
         }
         counts[persistenceOutcome] = (counts[persistenceOutcome] ?? 0) + 1;
@@ -2278,60 +2315,78 @@ export async function runIssuerDiscovery(
           ),
           persistence_outcome: persistenceOutcome,
         });
-        await persistIssuerRunProgress(db, job, summaries, counts);
+        await dependencies.persistProgress(db, job, summaries, counts);
         return accepted;
       },
     });
-  } catch (error) {
-    await recordIssuerDiscoveryOutcome(db, job, {
-      complete: false,
-      budgetExhausted: safeFailureCategory(error) === "deadline_exceeded",
-      reasons: [safeFailureCategory(error)],
+    const positiveComplete = result.complete && !result.budgetExhausted &&
+      result.incompleteReasons.length === 0;
+    if (positiveComplete) {
+      const knownCards = await dependencies.loadKnownIssuerCards(
+        db,
+        job.issuer,
+      );
+      await dependencies.stageCompleteAbsenceReviews(
+        db,
+        job.issuer,
+        result,
+        knownCards,
+      );
+    }
+    await dependencies.recordOutcome(db, job, {
+      complete: positiveComplete,
+      budgetExhausted: result.budgetExhausted,
+      reasons: result.incompleteReasons,
       counts,
       summaries,
-      considered: 0,
-      fetched: 0,
-      resumed: priorOutcomes.length,
+      considered: result.consideredCount,
+      fetched: result.fetchedCount,
+      resumed: result.resumedCount,
     });
+    return {
+      issuer: job.issuer,
+      runDate: job.runDate,
+      status: positiveComplete
+        ? "complete"
+        : result.budgetExhausted
+        ? "budget_exhausted"
+        : "incomplete",
+      complete: positiveComplete,
+      budgetExhausted: result.budgetExhausted,
+      considered: result.consideredCount,
+      fetched: result.fetchedCount,
+      resumed: result.resumedCount,
+      outcomes: counts,
+      lastProcessedCandidateIdentity:
+        String(summaries.at(-1)?.candidate_key ?? "") || null,
+      incompleteReasons: result.incompleteReasons,
+    };
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === "issuer_discovery_lease_lost"
+    ) return lostLeaseSummary();
+    const category = safeFailureCategory(error);
+    try {
+      await dependencies.recordOutcome(db, job, {
+        complete: false,
+        budgetExhausted: category === "deadline_exceeded",
+        reasons: [category],
+        counts,
+        summaries,
+        considered: result?.consideredCount ?? 0,
+        fetched: result?.fetchedCount ?? 0,
+        resumed: result?.resumedCount ?? priorOutcomes.length,
+      });
+    } catch (finalError) {
+      if (
+        finalError instanceof Error &&
+        finalError.message === "issuer_discovery_lease_lost"
+      ) return lostLeaseSummary();
+      throw finalError;
+    }
     throw error;
   }
-  if (result.complete) {
-    const knownCards = await loadKnownIssuerCards(db, job.issuer);
-    await stageCompleteIssuerDirectoryAbsenceReviews(
-      db,
-      job.issuer,
-      result,
-      knownCards,
-    );
-  }
-  await recordIssuerDiscoveryOutcome(db, job, {
-    complete: result.complete,
-    budgetExhausted: result.budgetExhausted,
-    reasons: result.incompleteReasons,
-    counts,
-    summaries,
-    considered: result.consideredCount,
-    fetched: result.fetchedCount,
-    resumed: result.resumedCount,
-  });
-  return {
-    issuer: job.issuer,
-    runDate: job.runDate,
-    status: result.complete
-      ? "complete"
-      : result.budgetExhausted
-      ? "budget_exhausted"
-      : "incomplete",
-    complete: result.complete,
-    budgetExhausted: result.budgetExhausted,
-    considered: result.consideredCount,
-    fetched: result.fetchedCount,
-    resumed: result.resumedCount,
-    outcomes: counts,
-    lastProcessedCandidateIdentity:
-      String(summaries.at(-1)?.candidate_key ?? "") || null,
-    incompleteReasons: result.incompleteReasons,
-  };
 }
 
 export type IssuerDiscoverySeed =
@@ -2345,6 +2400,7 @@ export type IssuerDiscoverySeed =
     rotationJobId: string;
     rotationStatus: string;
     rotationUpdatedAt: string | null;
+    rotationAttemptCount: number;
     rotationLeaseToken: string;
     rotationEvidence: Record<string, unknown>;
   };
@@ -2355,7 +2411,8 @@ export type IssuerDiscoveryClaim = {
     | "empty"
     | "already_running"
     | "already_completed"
-    | "resume_exhausted";
+    | "resume_exhausted"
+    | "legacy_conflict";
   seed: IssuerDiscoverySeed | null;
 };
 
@@ -2448,30 +2505,28 @@ export async function recordIssuerDiscoveryOutcome(
     resumed: number;
   },
 ): Promise<string> {
-  const now = new Date().toISOString();
+  const nowDate = new Date();
+  const now = nowDate.toISOString();
   const previousLeaseToken = seed.rotationLeaseToken;
   const nextLeaseToken = crypto.randomUUID();
-  const resumable = outcome.budgetExhausted ||
-    outcome.reasons.some((reason) =>
-      [
-        "candidate_unattempted",
-        "candidate_fetch_cap_exceeded",
-        "candidate_fetch_failed",
-        "directory_source_fetch_failed",
-        "directory_source_unattempted",
-        "deadline_exceeded",
-      ].includes(reason)
-    );
-  const status = resumable ? "failed" : "resolved";
+  const positiveComplete = outcome.complete && !outcome.budgetExhausted &&
+    outcome.reasons.length === 0;
+  const status = positiveComplete ? "resolved" : "failed";
+  const retryDelayMs = Math.min(
+    6 * 60 * 60 * 1_000,
+    5 * 60 * 1_000 *
+      (2 ** Math.max(0, Math.min(10, seed.rotationAttemptCount - 1))),
+  );
   const evidence = {
     ...seed.rotationEvidence,
+    kind: "issuer_directory_anchor",
     lease_token: nextLeaseToken,
-    last_outcome: outcome.complete
+    last_outcome: positiveComplete
       ? "complete"
       : outcome.budgetExhausted
       ? "budget_exhausted"
       : "incomplete",
-    ...(outcome.complete ? { last_complete_at: now } : {}),
+    ...(positiveComplete ? { last_complete_at: now } : {}),
     budget_exhausted: outcome.budgetExhausted,
     considered_count: outcome.considered,
     fetched_count: outcome.fetched,
@@ -2486,8 +2541,10 @@ export async function recordIssuerDiscoveryOutcome(
   };
   const update = db.from("card_discovery_jobs").update({
     status,
-    next_retry_at: resumable ? now : null,
-    failure_category: resumable
+    next_retry_at: positiveComplete
+      ? null
+      : new Date(nowDate.getTime() + retryDelayMs).toISOString(),
+    failure_category: !positiveComplete
       ? (outcome.budgetExhausted
         ? "budget_exhausted"
         : outcome.reasons[0]?.slice(0, 64) ?? "incomplete")
@@ -2524,9 +2581,12 @@ function issuerRunIdentity(row: Record<string, any>): {
   const issuer = String(evidence.issuer ?? row.issuer ?? "").trim();
   const canonicalUrl = String(evidence.canonical_url ?? "").trim();
   const runDate = String(evidence.run_date ?? "");
+  const attemptCount = Number(row.attempt_count ?? 0);
   if (
     !issuer || !/^\d{4}-\d{2}-\d{2}$/.test(runDate) ||
     !Number.isFinite(Date.parse(`${runDate}T00:00:00.000Z`)) ||
+    !Number.isInteger(attemptCount) || attemptCount < 0 ||
+    attemptCount > ISSUER_DISCOVERY_MAX_ATTEMPTS ||
     !allowedOfficialUrl(issuer, canonicalUrl)
   ) return null;
   return {
@@ -2555,6 +2615,7 @@ function issuerDiscoverySeedFromRow(
     rotationJobId: String(row.id),
     rotationStatus: String(row.status),
     rotationUpdatedAt: row.updated_at ? String(row.updated_at) : null,
+    rotationAttemptCount: Math.max(1, Number(row.attempt_count ?? 1)),
     rotationLeaseToken: leaseToken,
     rotationEvidence: evidence,
   };
@@ -2564,34 +2625,119 @@ async function terminalizeIssuerDiscoveryBacklog(
   db: UntypedSupabaseClient,
   row: Record<string, any>,
   now: Date,
-  reason: "resume_attempts_exhausted" | "invalid_run_evidence",
+  reason:
+    | "resume_attempts_exhausted"
+    | "invalid_run_evidence"
+    | "legacy_anchor_conflict",
 ): Promise<boolean> {
   const previousEvidence = issuerRunEvidence(row);
-  const nextLeaseToken = crypto.randomUUID();
-  const evidence = {
-    ...previousEvidence,
-    lease_token: nextLeaseToken,
-    last_outcome: reason,
-    budget_exhausted: false,
-    incomplete_reasons: [reason],
-    terminalized_at: now.toISOString(),
-  };
-  let update = db.from("card_discovery_jobs").update({
-    status: "review_required",
-    next_retry_at: null,
-    failure_category: reason,
-    evidence,
-    updated_at: now.toISOString(),
-  }).eq("id", row.id).eq("status", row.status);
-  const previousLeaseToken = String(previousEvidence.lease_token ?? "");
-  if (issuerLeaseTokenPattern.test(previousLeaseToken)) {
-    update = update.contains("evidence", { lease_token: previousLeaseToken });
-  } else if (row.updated_at) {
-    update = update.eq("updated_at", row.updated_at);
+  const issuer = String(row.issuer ?? previousEvidence.issuer ?? "").trim();
+  if (issuer.length < 2 || issuer.length > 120) {
+    throw new Error("invalid_issuer_quarantine_identity");
   }
-  const terminal = await update.select("id").maybeSingle();
-  if (terminal.error) throw terminal.error;
-  return Boolean(terminal.data);
+  const retainedAttempt = Number(row.attempt_count ?? 0);
+  const sourceObservation = {
+    kind: "issuer_discovery_quarantine",
+    classification: "issuer_discovery_quarantine",
+    reason,
+    discovery_job_id: String(row.id).slice(0, 64),
+    run_date: /^\d{4}-\d{2}-\d{2}$/.test(
+        String(previousEvidence.run_date ?? ""),
+      )
+      ? String(previousEvidence.run_date)
+      : null,
+    attempt_count: Number.isInteger(retainedAttempt) && retainedAttempt >= 0
+      ? Math.min(ISSUER_DISCOVERY_MAX_ATTEMPTS, retainedAttempt)
+      : 0,
+  };
+  const semanticHash = await sha256Text(JSON.stringify(sourceObservation));
+  const staged = await stageCatalogIdentityReview(db, {
+    discoveryJobId: String(row.id),
+    discoverySource: "issuer_crawl",
+    userId: null,
+    issuer,
+    proposedProduct: "Issuer discovery quarantine",
+    dedupeKey: String(row.dedupe_key),
+    semanticHash,
+    proposedFields: {
+      issuer,
+      cardName: "Issuer discovery quarantine",
+      suggested_action: "retry",
+      source_observation: sourceObservation,
+    },
+    sourceEvidence: { source_observation: sourceObservation },
+    existingCandidates: [],
+    validationWarnings: ["issuer_discovery_quarantine", reason],
+    confidence: 0,
+    expectedJobStatus: String(row.status),
+    expectedJobUpdatedAt: row.updated_at ? String(row.updated_at) : null,
+  });
+  return staged.jobId === String(row.id) &&
+    staged.resultingStatus === "review_required";
+}
+
+function issuerRunHistoryEntry(
+  evidence: Record<string, unknown>,
+): Record<string, unknown> | null {
+  const runDate = String(evidence.run_date ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(runDate)) return null;
+  const boundedCount = (value: unknown) => {
+    const count = Number(value ?? 0);
+    return Number.isInteger(count) && count >= 0 ? Math.min(200, count) : 0;
+  };
+  return {
+    run_date: runDate,
+    last_outcome: String(evidence.last_outcome ?? "unknown").slice(0, 64),
+    considered_count: boundedCount(evidence.considered_count),
+    fetched_count: boundedCount(evidence.fetched_count),
+    budget_exhausted: evidence.budget_exhausted === true,
+  };
+}
+
+function boundedIssuerRunHistory(
+  evidence: Record<string, unknown>,
+  append?: Record<string, unknown> | null,
+): Array<Record<string, unknown>> {
+  const prior = Array.isArray(evidence.run_history)
+    ? evidence.run_history.map((entry) =>
+      entry && typeof entry === "object" && !Array.isArray(entry)
+        ? issuerRunHistoryEntry(entry as Record<string, unknown>)
+        : null
+    ).filter((entry): entry is Record<string, unknown> => Boolean(entry))
+    : [];
+  const combined = append ? [...prior, append] : prior;
+  return combined.slice(-24);
+}
+
+async function loadLegacyIssuerDiscoveryRows(
+  db: UntypedSupabaseClient,
+  issuer: string,
+  pageSize = 100,
+  maxPages = 10,
+): Promise<{
+  rows: Array<Record<string, any>>;
+  complete: boolean;
+}> {
+  const rows: Array<Record<string, any>> = [];
+  for (let page = 0; page < maxPages; page += 1) {
+    const offset = page * pageSize;
+    const query = await db.from("card_discovery_jobs")
+      .select(
+        "id,issuer,evidence,status,updated_at,next_retry_at,attempt_count,dedupe_key,created_at,review_item_id",
+      )
+      .eq("discovery_source", "issuer_crawl")
+      .eq("issuer", issuer)
+      .is("user_id", null)
+      .contains("evidence", { kind: "issuer_directory_run" })
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(offset, offset + pageSize - 1);
+    if (query.error) throw query.error;
+    const pageRows = (query.data ?? []) as Array<Record<string, any>>;
+    rows.push(...pageRows);
+    if (pageRows.length < pageSize) return { rows, complete: true };
+  }
+  return { rows, complete: false };
 }
 
 async function claimExistingIssuerDiscoveryRow(
@@ -2601,17 +2747,26 @@ async function claimExistingIssuerDiscoveryRow(
   runDate: string,
   now: Date,
 ): Promise<IssuerDiscoveryClaim> {
+  const rowStatus = String(row.status);
+  const previousEvidence = issuerRunEvidence(row);
+  const previousRunDate = String(previousEvidence.run_date ?? "");
+  const startsNewSlot = rowStatus === "resolved" &&
+    previousRunDate !== runDate;
   if (
-    ["resolved", "rejected", "review_required"].includes(String(row.status))
+    ["rejected", "review_required"].includes(rowStatus) ||
+    (rowStatus === "resolved" && !startsNewSlot)
   ) {
     return { status: "already_completed", seed: null };
   }
   const leaseUntil = Date.parse(String(row.next_retry_at ?? ""));
   if (
-    row.status === "discovering" && Number.isFinite(leaseUntil) &&
+    rowStatus === "discovering" && Number.isFinite(leaseUntil) &&
     leaseUntil > now.getTime()
   ) return { status: "already_running", seed: null };
-  if (Number(row.attempt_count ?? 0) >= ISSUER_DISCOVERY_MAX_ATTEMPTS) {
+  if (
+    !startsNewSlot &&
+    Number(row.attempt_count ?? 0) >= ISSUER_DISCOVERY_MAX_ATTEMPTS
+  ) {
     await terminalizeIssuerDiscoveryBacklog(
       db,
       row,
@@ -2620,28 +2775,55 @@ async function claimExistingIssuerDiscoveryRow(
     );
     return { status: "resume_exhausted", seed: null };
   }
-  const previousEvidence = issuerRunEvidence(row);
   const previousLeaseToken = String(previousEvidence.lease_token ?? "");
   const nextLeaseToken = crypto.randomUUID();
+  const activeRunDate = startsNewSlot
+    ? runDate
+    : /^\d{4}-\d{2}-\d{2}$/.test(previousRunDate)
+    ? previousRunDate
+    : runDate;
+  const previousHistoryEntry = startsNewSlot
+    ? issuerRunHistoryEntry(previousEvidence)
+    : null;
+  const runAttempt = startsNewSlot ? 1 : Number(row.attempt_count ?? 0) + 1;
   const evidence = {
-    ...previousEvidence,
-    kind: "issuer_directory_run",
+    ...(startsNewSlot
+      ? {
+        run_history: boundedIssuerRunHistory(
+          previousEvidence,
+          previousHistoryEntry,
+        ),
+        outcome_summaries: [],
+        outcome_counts: {},
+        last_processed_candidate_identity: null,
+        incomplete_reasons: [],
+        considered_count: 0,
+        fetched_count: 0,
+        resumed_count: 0,
+        budget_exhausted: false,
+      }
+      : previousEvidence),
+    kind: "issuer_directory_anchor",
     issuer: selected.issuer,
     canonical_url: selected.canonical_url,
-    run_date: runDate,
+    run_date: activeRunDate,
+    rotation_slot: Math.floor(
+      Date.parse(`${activeRunDate}T00:00:00.000Z`) / 86_400_000,
+    ),
+    run_attempt: runAttempt,
     lease_token: nextLeaseToken,
     last_attempt_at: now.toISOString(),
   };
   let update = db.from("card_discovery_jobs").update({
     status: "discovering",
-    attempt_count: Number(row.attempt_count ?? 0) + 1,
+    attempt_count: runAttempt,
     next_retry_at: new Date(
       now.getTime() + ISSUER_DISCOVERY_LEASE_MS,
     ).toISOString(),
     failure_category: null,
     evidence,
     updated_at: now.toISOString(),
-  }).eq("id", row.id).eq("status", row.status);
+  }).eq("id", row.id).eq("status", rowStatus);
   if (issuerLeaseTokenPattern.test(previousLeaseToken)) {
     update = update.contains("evidence", { lease_token: previousLeaseToken });
   }
@@ -2656,7 +2838,7 @@ async function claimExistingIssuerDiscoveryRow(
       seed: issuerDiscoverySeedFromRow(
         claimed.data,
         selected,
-        runDate,
+        activeRunDate,
       ),
     }
     : { status: "already_running", seed: null };
@@ -2684,13 +2866,18 @@ export async function loadIssuerDiscoveryBacklog(
       .is("user_id", null)
       .in("status", ["failed", "discovering"])
       .lte("next_retry_at", now.toISOString())
-      .contains("evidence", { kind: "issuer_directory_run" })
       .order("created_at", { ascending: true })
       .order("id", { ascending: true })
       .range(offset, offset + pageSize - 1);
     if (query.error) throw query.error;
     const page = (query.data ?? []) as Array<Record<string, any>>;
-    rows.push(...page);
+    rows.push(
+      ...page.filter((row) =>
+        ["issuer_directory_run", "issuer_directory_anchor"].includes(
+          String(issuerRunEvidence(row).kind ?? ""),
+        )
+      ),
+    );
     if (page.length < pageSize) break;
   }
   return rows.sort((left, right) => {
@@ -2708,10 +2895,11 @@ export async function claimIssuerDiscoveryRun(
   db: UntypedSupabaseClient,
   selected: Pick<EnrichmentJob, "issuer" | "canonical_url">,
   now = new Date(),
+  options: { forceLegacyReconciliation?: boolean } = {},
 ): Promise<IssuerDiscoveryClaim> {
   const runDate = utcIssuerRunDate(now);
   const key = await sha256Text(
-    `issuer-directory-run:${runDate}:${selected.issuer.trim().toLowerCase()}`,
+    `issuer-directory-anchor:${selected.issuer.trim().toLowerCase()}`,
   );
   const loadExisting = async (): Promise<Record<string, any> | null> => {
     const existing = await db.from("card_discovery_jobs")
@@ -2725,7 +2913,40 @@ export async function claimIssuerDiscoveryRun(
     if (existing.error) throw existing.error;
     return existing.data ?? null;
   };
-  const previous = await loadExisting();
+  let previous = await loadExisting();
+  const previousEvidence = previous ? issuerRunEvidence(previous) : {};
+  const legacyScan = !options.forceLegacyReconciliation &&
+      previousEvidence.legacy_reconciliation_complete === true
+    ? { rows: [], complete: true }
+    : await loadLegacyIssuerDiscoveryRows(db, selected.issuer);
+  if (!legacyScan.complete) {
+    throw new Error("issuer_discovery_legacy_scan_exhausted");
+  }
+  const issuerRows = legacyScan.rows;
+  const legacyRows = issuerRows.filter((row) => String(row.dedupe_key) !== key);
+  const unfinishedLegacy = legacyRows.filter((row) =>
+    ["failed", "discovering"].includes(String(row.status))
+  );
+
+  if (previous && unfinishedLegacy.length > 0) {
+    const conflictRows = [
+      ...(["failed", "discovering"].includes(String(previous.status))
+        ? [previous]
+        : []),
+      ...unfinishedLegacy,
+    ];
+    for (
+      const row of conflictRows.slice(0, ISSUER_DISCOVERY_QUARANTINE_BATCH)
+    ) {
+      await terminalizeIssuerDiscoveryBacklog(
+        db,
+        row,
+        now,
+        "legacy_anchor_conflict",
+      );
+    }
+    return { status: "legacy_conflict", seed: null };
+  }
   if (previous) {
     return await claimExistingIssuerDiscoveryRow(
       db,
@@ -2735,12 +2956,96 @@ export async function claimIssuerDiscoveryRun(
       now,
     );
   }
+
+  if (unfinishedLegacy.length > 1) {
+    for (
+      const row of unfinishedLegacy.slice(
+        0,
+        ISSUER_DISCOVERY_QUARANTINE_BATCH,
+      )
+    ) {
+      await terminalizeIssuerDiscoveryBacklog(
+        db,
+        row,
+        now,
+        "legacy_anchor_conflict",
+      );
+    }
+    return { status: "legacy_conflict", seed: null };
+  }
+  if (unfinishedLegacy.length === 1) {
+    const legacy = unfinishedLegacy[0];
+    const leaseUntil = Date.parse(String(legacy.next_retry_at ?? ""));
+    if (
+      legacy.status === "discovering" && Number.isFinite(leaseUntil) &&
+      leaseUntil > now.getTime()
+    ) return { status: "already_running", seed: null };
+    const legacyEvidence = issuerRunEvidence(legacy);
+    let migrate = db.from("card_discovery_jobs").update({
+      dedupe_key: key,
+      evidence: {
+        ...legacyEvidence,
+        kind: "issuer_directory_anchor",
+        issuer: selected.issuer,
+        canonical_url: selected.canonical_url,
+        legacy_reconciliation_complete: true,
+        run_history: [
+          ...boundedIssuerRunHistory(legacyEvidence),
+          ...legacyRows.filter((row) => row.id !== legacy.id).map((row) =>
+            issuerRunHistoryEntry(issuerRunEvidence(row))
+          ).filter((entry): entry is Record<string, unknown> => Boolean(entry)),
+        ].slice(-24),
+      },
+      updated_at: now.toISOString(),
+    }).eq("id", legacy.id).eq("dedupe_key", legacy.dedupe_key)
+      .eq("status", legacy.status);
+    if (legacy.updated_at) {
+      migrate = migrate.eq("updated_at", legacy.updated_at);
+    }
+    const migrated = await migrate.select(
+      "id,issuer,evidence,status,updated_at,next_retry_at,attempt_count,dedupe_key,created_at",
+    ).maybeSingle();
+    if (migrated.error?.code === "23505") {
+      previous = await loadExisting();
+      return previous
+        ? await claimExistingIssuerDiscoveryRow(
+          db,
+          previous,
+          selected,
+          runDate,
+          now,
+        )
+        : { status: "already_running", seed: null };
+    }
+    if (migrated.error) throw migrated.error;
+    if (!migrated.data) return { status: "already_running", seed: null };
+    const identity = issuerRunIdentity(migrated.data);
+    return await claimExistingIssuerDiscoveryRow(
+      db,
+      migrated.data,
+      selected,
+      identity?.runDate ?? runDate,
+      now,
+    );
+  }
+
   const leaseToken = crypto.randomUUID();
+  const legacyHistory = legacyRows.map((row) =>
+    issuerRunHistoryEntry(issuerRunEvidence(row))
+  ).filter((entry): entry is Record<string, unknown> => Boolean(entry)).slice(
+    -24,
+  );
   const evidence = {
-    kind: "issuer_directory_run",
+    kind: "issuer_directory_anchor",
     issuer: selected.issuer,
     canonical_url: selected.canonical_url,
     run_date: runDate,
+    rotation_slot: Math.floor(
+      Date.parse(`${runDate}T00:00:00.000Z`) / 86_400_000,
+    ),
+    run_attempt: 1,
+    run_history: legacyHistory,
+    legacy_reconciliation_complete: true,
     lease_token: leaseToken,
     last_attempt_at: now.toISOString(),
     outcome_summaries: [],
@@ -2798,14 +3103,12 @@ export async function loadDiscoverySeed(
       );
       continue;
     }
-    const claim = await claimExistingIssuerDiscoveryRow(
-      db,
-      row,
-      identity.selected,
-      identity.runDate,
-      now,
-    );
+    const claim = await claimIssuerDiscoveryRun(db, identity.selected, now, {
+      forceLegacyReconciliation:
+        String(issuerRunEvidence(row).kind ?? "") === "issuer_directory_run",
+    });
     if (claim.seed) return claim;
+    if (claim.status === "legacy_conflict") return claim;
     if (claim.status === "already_completed") continue;
   }
   const rows = await loadApprovedIssuerCatalog(db, pageSize);

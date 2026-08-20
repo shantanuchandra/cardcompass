@@ -10,9 +10,10 @@ discovery share one non-cancelling repository concurrency lane.
 
 Issuer selection is deterministic by UTC date over a sorted, distinct issuer set
 loaded from the complete reviewed credit-card catalog with explicit pagination.
-The existing service-owned `card_discovery_jobs` unique boundary provides the
-same-day run identity, lease, progress, retry, and completion record. No cursor
-table, issuer business column, or migration was added.
+One stable service-owned `card_discovery_jobs` anchor per normalized issuer now
+provides cross-day run identity, lease, progress, retry, bounded history, and
+completion state. No cursor table, issuer business column, or migration was
+added.
 
 Every candidate reaches durable central publication/review or a bounded
 sanitized terminal outcome before the crawler requests the next candidate.
@@ -77,11 +78,19 @@ No schema or migration file changed.
   URL is the lexical minimum approved URL, and issuer keys are sorted once.
   Selection is `UTC epoch day modulo issuer count`, providing restart stability
   and consecutive-day rotation without mutable cursor state.
-- A SHA-256 key over run date and normalized issuer uses the existing unique
-  service-owned `(discovery_source, dedupe_key)` boundary. Insert races recover
-  by loading the winner; an active five-minute lease returns `already_running`;
-  a terminal same-day run returns `already_completed`; failed or
-  budget-exhausted work is safely reclaimed.
+- A SHA-256 key over normalized issuer, independent of run date, uses the
+  existing unique service-owned `(discovery_source, dedupe_key)` boundary.
+  Insert races recover by loading the winner; an active five-minute lease fences
+  every UTC date and manual invocation for that issuer. A resolved anchor is
+  same-slot idempotent and starts the next selected UTC slot on that same row.
+  Evidence records the current slot, attempt, and sanitized newest-24 run
+  history; candidate progress resets only for a new positively completed slot.
+- Legacy date-keyed rows are scanned separately from candidate-outcome jobs in
+  deterministic 100-row pages, up to 1,000 rows. One due row is migrated by CAS
+  to the stable key; an active row blocks a new-day claim; multiple rows fail
+  closed into exact linked review work. A completed reconciliation marker avoids
+  rescanning historical rows, while a late legacy backlog row explicitly forces
+  reconciliation. An exhausted 1,000-row scan fails closed without crawling.
 - Before selecting the current UTC day slot, the scheduler scans eligible
   service-owned failed/budget-exhausted and expired-discovering runs in stable
   `created_at,id` pages, then orders the bounded result by persisted run date.
@@ -89,7 +98,8 @@ No schema or migration file changed.
   candidate summaries, and last position. Multiple unfinished dates drain in
   order without a manual action. Five unsuccessful attempts terminalize a run as
   operator-visible `resume_attempts_exhausted`, so permanently bad work cannot
-  starve fresh day-slot rotation forever.
+  starve fresh day-slot rotation forever. Legacy conflict review creation is
+  capped at 20 exact linked jobs per invocation and drains later.
 - Each claim installs an opaque UUID lease token inside the existing bounded run
   evidence. Every progress/final compare-and-set requires the exact current
   token and rotates it, returning the next token to the holder. An expired
@@ -99,6 +109,18 @@ No schema or migration file changed.
   cap. A retried candidate replaces its old summary and moves to the end, so one
   retry cannot evict unrelated completed progress and cause an oscillating
   recrawl.
+- Only a positively complete result (`complete`, no budget exhaustion, and no
+  incomplete reasons) resolves. Every crawler, candidate-persistence,
+  progress-PostgREST, publication, or final-write exception that still owns the
+  lease finalizes as failed with retained evidence and exponential five-minute
+  to six-hour backoff. Exact token loss returns `lost_lease` without a stale
+  write.
+- Attempt-ceiling, invalid retained evidence, and legacy-anchor conflicts use
+  Task 7's transactional `stage_card_catalog_identity_review` boundary with
+  classification `issuer_discovery_quarantine`, a deterministic semantic hash,
+  bounded private evidence, and the exact discovery-job link. They never mutate
+  `card_catalog`; operators receive pending work that can be inspected, retried,
+  or rejected.
 
 ## Deadline, resume, and completeness decisions
 
@@ -128,6 +150,11 @@ No schema or migration file changed.
   listing can be complete. Only proven inventory then loads all known issuer
   cards with pagination and passes them to the existing exact
   family+tier+effective-network/card-type absence review boundary.
+- Product-directory proof requires the requested URL and both fetched final and
+  canonical URLs to remain on the same approved issuer directory scope. A
+  redirect to a generic sitemap, home page, unrelated directory, or product
+  detail child adds bounded `product_directory_scope_mismatch` evidence and
+  cannot prove absence.
 - Incomplete issuer work does not alter or suppress Task 6 recurring benefit
   scheduling.
 
@@ -147,6 +174,10 @@ No schema or migration file changed.
   table/card evidence and bounded matched excerpts remain intact. Headingless
   evidence is accepted only when one bounded sentence contains the exact target
   discontinuation and no competing/related/successor product context.
+- `Product Status`, `Product Update`, `Important Notice`, and `Discontinuation
+  Notice` remain normal target sections. Comparison/versus/replacement/
+  successor/alternative prose, related-product anaphora without the literal word
+  `card`, and multi-product status rows fail closed.
 
 ## Red-to-green evidence
 
@@ -171,16 +202,27 @@ Initial RED checkpoints:
   `card` did not end target scope, global fallback crossed sibling sections, and
   competing/related product sentences were accepted. The exact behavioral tests
   were green only after their production boundaries changed.
+- Fix-round-2 RED tests reproduced all five new findings: incomplete outcomes
+  resolved; injected candidate/progress/publication/final failures were not
+  resumable; lease loss attempted stale finalization; cross-date and late legacy
+  rows bypassed issuer fencing; product-directory redirects proved empty
+  inventory; common lifecycle headings ended target scope while ambiguous
+  competitor evidence matched; and attempt ceilings had no review item. Extra
+  reds covered malformed retained attempts/counters, unknown history fields,
+  legacy rows hidden beyond two pages or behind 200 candidate outcomes, bounded
+  conflict draining, and retry-stable quarantine identity.
 
 Final GREEN commands:
 
-- Plan Task 8 command (`2` workflow plus `44` issuer-crawl tests): **46 passed,
+- Plan Task 8 command (`2` workflow plus `45` issuer-crawl tests): **47 passed,
   0 failed**.
 - Batch/Task 6 Deno suite (`recurrence`, `batch`, `crawl`, supporting documents,
-  and batch entry): **188 passed, 0 failed**.
-- Shared publication, shared issuer crawl, and card-discovery Deno suites: **31
+  and batch entry): **205 passed, 0 failed**.
+- Shared publication, shared issuer crawl, and card-discovery Deno suites: **32
   passed, 0 failed**.
-- Affected Supabase static and migration Node suites: **283 passed, 0 failed**.
+- Repository-wide Node static and migration suite: **291 passed, 0 failed**.
+- The four reported local gate executions cover **575 passing checks, 0
+  failures**.
 - Production `deno check` passed for the batch function, card discovery, issuer
   crawler, and catalog identity publication.
 - Changed-surface `deno fmt --check`: passed.
