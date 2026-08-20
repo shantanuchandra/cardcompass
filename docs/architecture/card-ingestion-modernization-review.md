@@ -1,6 +1,6 @@
 # Card Ingestion Modernization Review
 
-**Reviewed:** 2026-08-19  
+**Reviewed:** 2026-08-20
 **Basis:** effective schema reconstructed from ordered migrations plus current Edge Function code  
 **Constraint:** improve reliability and coverage with the smallest practical database change
 
@@ -16,7 +16,7 @@ The system is nevertheless not a functioning continuous catalog-enrichment archi
 4. Benefit identity is global across all cards. Approving one card can update a `benefits` row shared by other cards, including its source URL, description, dates, and terms.
 5. Crawler review approval bypasses the canonical URL resolver, provenance write, URL-key write, and benefit-job enqueue path promised by the design.
 6. One automatic discovery path writes a nonexistent `card_catalog_aliases.discovery_job_id` column.
-7. The pilot gate largely validates values that the worker sets about itself; it does not measure extraction precision or actually rerun work to prove idempotency.
+7. The Edge pilot gate now recomputes replay/source/live-state evidence and rejects pending or partially rejected review, but the service-role SQL promotion RPC retains its older self-attested checks. Production promotion must remain behind the Edge pre-gate until that RPC is hardened in a later migration.
 8. Public reference tables are exposed by the Data API without RLS, and the migration chain does not explicitly revoke default write grants before granting read access.
 
 These are P0/P1 issues. Expanding the parser or adding an LLM before fixing them would create more proposals on top of unreliable identity, persistence, and recrawl semantics.
@@ -29,7 +29,7 @@ These are P0/P1 issues. Expanding the parser or adding an LLM before fixing them
 | P0 | Card-scope automated benefit keys | Prevents one card approval mutating another card | Data migration only; no schema alteration |
 | P0 | One catalog identity resolver | Prevents duplicate/orphan card identities and missing enrichment jobs | None |
 | P0 | Fix alias write to nonexistent column | Prevents automatic submitted-URL resolution from failing after partial work | None |
-| P0 | Real pilot verification | Prevents unsafe parser rollout based on self-reported flags | None |
+| P0 | Real pilot verification | Edge pre-gate implemented; direct SQL promotion remains a controlled Task 11 residual | None |
 | P1 | Recurring refresh | Turns one-shot enrichment into continuous freshness | One column: `next_run_at` + index |
 | P1 | Rotating independent discovery | Prevents permanent first-issuer bias and backlog starvation | None |
 | P1 | RLS, grants, JSON shape constraints | Closes exposed-schema and silent-contract risks | Constraints/policies only |
@@ -234,33 +234,195 @@ The last two can bypass URL identity and provenance. Crawler approval also fails
 
 This is a code/RPC consolidation, not a schema redesign.
 
-### 5. Replace the self-attested pilot gate
+### 5. Computed pilot evidence and rollout gate
 
-#### Current failure
+Task 10 replaces the Edge/API self-attestation path with computed evidence. It
+uses the existing `normalized_fields` JSONB because the current database
+finalizer deliberately sanitizes `result_summary` to an older allowlist. No
+table, column, constraint, index, or RPC signature changed.
 
-The worker sets:
+The remaining control boundary is explicit: `promoteQualifiedPilotJobs`
+recomputes the gate before calling
+`promote_qualified_card_benefit_enrichment_pilot`. The RPC itself still contains
+the older checks, so direct service-role invocation is not an approved rollout
+path. Hardening that database boundary would require a later migration.
+The gate's trust boundary is the deployed worker plus database access controls:
+fabricating `normalized_fields` or staging rows with direct `service_role` SQL
+is out of scope for this no-migration phase and remains the Task 11 residual.
 
-- `unsafe_mutation_count = 0`
-- `raw_body_stored = false`
-- `idempotency_passed = conflicts.length === 0`
-- `evidence_passed = every populated field has a nonempty evidence string`
+#### Depth 1 — operator flow
 
-Those are useful assertions, but they do not prove what their names claim. In particular, “idempotency” never performs a second run and evidence presence does not establish that the excerpt entails the extracted value.
+```mermaid
+flowchart LR
+    S["Select five profiles across 3+ issuers"] --> D["Classify required sources before fetch"]
+    D --> F["Fetch each selected resource once"]
+    F --> R1["Extract pass 1 from retained documents"]
+    F --> R2["Independent extract pass 2 from a clone"]
+    R1 --> H["Compare canonical verification hashes"]
+    R2 --> H
+    F --> M["Recompute exact source-manifest hash"]
+    B["Hash live card, mapping, and mapped-benefit rows before"] --> P["Stage or observe only"]
+    P --> A["Hash the same live rows after"]
+    A --> C["Re-read current live rows at qualification"]
+    P --> T["Bind proposal disposition to exact staging + reviewed decisions"]
+    H --> G["Fail-closed pilot gate"]
+    M --> G
+    C --> G
+    T --> G
+    V["Admin verifies every proposed value"] --> G
+    G -->|"all thresholds pass"| O["Promote the same five jobs"]
+    G -->|"anything missing or inconsistent"| X["Keep scheduled rollout blocked"]
+```
 
-#### Fix without schema change
+`staged` means review is still pending; it does not unlock rollout. A
+`completed` no-change observation may pass without review decisions. A
+`completed` proposal requires bounded approved/retained/retired counts, zero
+rejects, and no malformed or partial review metadata.
 
-The pilot should require:
+#### Depth 2 — persisted evidence contract
 
-1. A second extraction of the exact same source manifest produces byte-equivalent canonical proposals.
-2. A curated expected-output fixture passes for each pilot card.
-3. An admin samples every proposed field and records accepted/rejected counts.
-4. Zero unexpected live-table mutations are verified by database snapshots or audit queries, not a hard-coded counter.
-5. Parser rollout requires precision and critical-field recall thresholds, not merely terminal job statuses.
+`normalized_fields.pilot_profile` retains the initializer’s database-validated
+profile. `normalized_fields.pilot_evidence` contains only bounded computed
+proof:
 
-Store these metrics in the existing `result_summary` JSONB; no new table is needed for the initial rollout.
+| Field                                               | How it is produced                                                                                   | Qualification rule                                                                                                                    |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `parser_version`, `job_id`, `card_id`, `run_mode`   | Copied from the claimed job                                                                          | Exact match to the row; a promoted scheduled row must still carry original `pilot` evidence                                           |
+| `canonical_hash`, `repeat_canonical_hash`           | SHA-256 of two retained verification envelopes from independent parses                               | Recompute both hashes at the boundary; both lowercase SHA-256 and byte-equal                                                          |
+| `source_manifest_hash`                              | Recomputed from bounded sanitized attempts                                                           | Must equal the stored manifest and primary logical-source hash for `canonical_url`                                                    |
+| `source_attempts`                                   | Sanitized primary/supporting outcomes, maximum 9 resources and 6 retry-history entries each          | Exactly one decisive primary; every required source decisive; validators/query strings/credential fields are not retained            |
+| `expected_required_source_keys`                     | Sorted logical identities discovered as required during the bounded crawl                            | Exact set equality with required attempts; each key has exactly one decisive result; empty is valid only for a true HTML-only source  |
+| `required_source_selection_overflow`                 | Set by the pre-fetch/depth-discovery classifier when more required identities exist than the bounded set can retain | Exactly `false`; the fact is hashed into both replay envelopes, so a capped manifest cannot appear complete                           |
+| `verification_envelope`, `repeat_verification_envelope` | Separate retained parser/job/card/mode/source/proposal outputs                                    | Exact shape and 256 KiB maximum; resource/required-source lists bind to attempts; boundary recomputes both SHA-256 values              |
+| `crawl_complete`                                    | Existing crawl completeness policy                                                                   | Exactly `true`; omission/failure blocks                                                                                               |
+| `suppressed_removal_count`                          | Existing removal policy                                                                              | Exactly zero for a qualifying job                                                                                                     |
+| `conflict_count`, `catalog_identity_conflict_count` | Exact diff and catalog identity outcomes                                                             | Both exactly zero and explicitly present                                                                                              |
+| `live_state_before`, `live_state_after`             | Bounded row count plus canonical row hash for `card_catalog`, `benefits`, and `card_benefit_mapping` | Counts and hashes match; pre-publication/no-change qualification re-reads current DB rows and requires them to still match `after`     |
+| `unsafe_mutation_count`, `side_effect_proof_passed` | Recomputed from the two snapshots                                                                    | Exactly `0` and `true`; stored booleans cannot override the comparison                                                                |
+| `raw_body_stored`                                   | Recursive inspection of artifacts that can be persisted                                              | Exactly `false`                                                                                                                       |
+| `observed_at`                                       | Decisive observation time                                                                            | Bounded UTC instant; attempt times cannot be later than the observation plus clock skew                                               |
+| `proposal_count`, `proposal_disposition`            | Exact extraction/diff result                                                                          | Count equals retained canonical proposals and sanitized summary; disposition is `no_change`, `material`, or `removal_review`          |
+| `staging_id`, `staging_content_hash`                | Exact worker staging result, or both null for no-change                                                | No-change cannot have staging/review metadata; material work binds to the authoritative same-card/parser staging row and its exact extracted proposal array |
+
+The replay verification envelope includes parser, job, card, run mode, exact
+source manifest/resources, and the canonical proposal array. Resource fetches
+are not repeated. The worker clones the same retained in-memory document
+snapshot for each extraction, rejects more than nine retained documents instead
+of truncating them, and compares two SHA-256 hashes. Required-source selection
+is recorded by the classifier independently of fetch attempts; omission from
+the attempt list cannot make a required source disappear.
+
+After promotion, scheduled recurrence may replace mutable job status, summary,
+content hash, and latest staging pointer. Qualification therefore reads the
+original pilot staging identity from retained `pilot_evidence`; later no-change
+or material refreshes cannot invalidate or silently replace that proof. The
+current recurrence still has its own normal safety and review lifecycle.
+
+#### Depth 3 — fail-closed gate algorithm
+
+For the current `benefits-v6` lane, the gate performs these checks in order:
+
+1. Load only active `pilot` rows or the same rows atomically marked
+   `pilot_qualified` during promotion.
+2. Require exactly five card rows, the five distinct persisted profiles, and at
+   least three case-normalized issuers.
+3. Reject absent, extra, malformed, wrongly typed, fractional, negative,
+   uppercase-hash, future-time, cross-job, cross-card, cross-parser,
+   cross-run-mode, or cross-source evidence.
+4. Recompute both retained-envelope SHA-256 values and the source manifest;
+   bind the primary logical source to the job’s exact canonical URL, and require
+   the independently classified expected-required-source set to equal decisive
+   required attempts.
+5. Require canonical replay equality, complete decisive sources, no required
+   selection or retry-history overflow,
+   zero conflicts, and zero suppressed removals.
+6. Recompute live mutation count from pre/post counts and row hashes, then read
+   the live rows again. Before publication, or for no-change, the current
+   snapshot must still equal the recorded `after` snapshot.
+   Staging/audit artifacts are outside the snapshot; live catalog, benefit, and
+   mapping rows are not.
+7. Reject raw body/customer/statement/credential/token/query-secret fields at
+   the nested evidence boundary.
+8. Bind no-change to null staging and exact proposal count/disposition. For
+   proposal-bearing jobs, load the authoritative staging row and require exact
+   staging/card/parser/content identity, exact extracted proposals, status, and
+   reviewed-decision counts with a valid UTC decision timestamp.
+   Keep the cohort `running` while any review is pending. Reject full/partial
+   rejection or malformed review metadata. Review totals are bounded by the
+   existing 64-decision publication limit.
+9. Re-read all five rows immediately before the Edge function invokes the
+   existing promotion RPC. For promoted scheduled rows, validate the immutable
+   original pilot evidence/staging rather than mutable recurrence fields.
+
+Legacy `result_summary.idempotency_passed`, `evidence_passed`,
+`unsafe_mutation_count`, and `raw_body_stored` values cannot qualify a job by
+themselves.
+
+#### Pilot corpus and negative simulation
+
+The five database-selected profiles remain `straightforward`, `redirect_or_js`,
+`terms_linked`, `known_invalid`, and `additional_valid`. Operators assign
+concrete cards so the positive acceptance run covers HTML-only, required PDF,
+shared legacy benefit identity, changed terms, and another valid card across at
+least three issuers.
+
+The incomplete-source case is a separate negative phase: make a required source
+fail or be omitted, confirm `crawl_complete = false`, a positive
+`suppressed_removal_count`, and zero actionable removals, then correct/re-run
+that same profile before it can join the five qualified jobs. A quarantined or
+incomplete negative fixture never counts as the fifth success.
+
+#### Operational metrics and privacy boundary
+
+`normalized_fields.operational_metrics` is derived from exact retained attempt
+histories, diff arrays, conflicts, and review decisions. It includes fetch
+outcome counts/rates, required-source outcomes, staged actions, identity
+migrations, suppression reasons, conflicts, review actions, replay/side-effect
+booleans, retry-history overflow, and bounded processing timestamps/duration.
+The admin DTO derives review action totals from `benefit_decisions` and review
+age from staging timestamps; caller-supplied totals cannot override them.
+
+Structured logs contain UUIDs, scalar metrics, and allowlisted reason codes
+only. URLs with query strings, raw bodies, statement/customer fields,
+credentials, tokens, lease tokens, and arbitrary nested objects are neither
+emitted nor projected through the admin response.
+
+#### Rollout operator checklist
+
+- [ ] Record the exact five card IDs, five profiles, and at least three
+      normalized issuers.
+- [ ] Run the incomplete required-source simulation and confirm every possible
+      removal is suppressed; do not count that run as qualified.
+- [ ] Confirm every positive card has `crawl_complete = true`, one decisive
+      primary, and an exact `expected_required_source_keys` set in which every
+      required supporting source is decisive. Confirm
+      `required_source_selection_overflow = false`.
+- [ ] Confirm one network fetch per resource and two extraction passes over the
+      same retained snapshot.
+- [ ] Confirm all canonical/repeat and source-manifest hashes are lowercase
+      SHA-256 and explain any difference; unexplained differences block rollout.
+- [ ] Confirm pre/post `card_catalog`, `benefits`, and `card_benefit_mapping`
+      counts and hashes match exactly, and confirm the qualification-time DB
+      snapshot still matches the post-run snapshot before publication.
+- [ ] Confirm no-change has null staging. For material proposals, confirm job
+      staging ID, content hash, status, and reviewed decision counts match the
+      authoritative staging row exactly, including byte-canonical equality of
+      retained and staged proposal arrays.
+- [ ] Manually verify every proposed value against its bounded public excerpt;
+      resolve every conflict before approval.
+- [ ] Confirm zero rejected/partially rejected decisions, zero suppressed
+      removals in the positive five, zero cross-card/source binding, and no
+      raw/customer/credential evidence.
+- [ ] Confirm the admin pilot view shows the profile, computed evidence, exact
+      metrics, and bounded review age for every card.
+- [ ] Invoke promotion only through the Edge/API pre-gate. Record the five
+      returned job IDs and do not invoke the SQL RPC directly.
+
+The acceptance thresholds are 100% replay, 100% exact source/card binding, zero
+pre-review live mutation, zero removal proposal from an incomplete crawl, zero
+unresolved conflict, and no unexplained metric/hash difference.
 
 ---
-
 ## P1 — operational architecture
 
 ### 6. Decouple issuer discovery from the enrichment backlog
@@ -606,7 +768,7 @@ flowchart TD
 2. Requeue successful jobs on a measured cadence.
 3. Separate and rotate issuer discovery.
 4. Add conditional fetches.
-5. Replace the self-attested pilot with fixture and second-run verification.
+5. Keep Task 10 computed pilot evidence as the rollout pre-gate; harden the direct SQL promotion boundary in Task 11.
 
 ### Phase 2 — improve coverage safely
 
@@ -631,6 +793,7 @@ The modernization should not be considered complete until these are true:
 - Every active catalog card has a last successful retrieval and a future due time.
 - Every issuer is selected by discovery within the promised rotation window.
 - Re-extracting identical documents produces byte-equivalent canonical proposals.
+- The five-card pilot retains all required profiles across at least three issuers, and pending review never unlocks rollout.
 - Approving cashback/reward/lounge benefits retains every parsed rate, cap, threshold, period, restriction, and exclusion.
 - Updating a benefit for one card cannot change another card’s live terms.
 - Every approved new card has URL keys, provenance, aliases, and a benefit job.
@@ -655,6 +818,9 @@ The modernization should not be considered complete until these are true:
 | Missing alias column | `card-discovery/index.ts` writes `discovery_job_id`; alias table migrations do not define it |
 | Crawler approval does not enqueue | admin endpoint returns immediately after `review_card_catalog_discovery` RPC |
 | Quarantined discovery dropped | `runIssuerDiscovery` persists only `result.candidates` |
+| Computed pilot pre-gate | `benefit-enrichment-batch/index.ts` independently replays retained documents, validates exact source/live-state proof, and re-reads the five-card cohort before promotion |
+| Pilot admin evidence | `admin-catalog-entry/benefit_admin.ts` projects bounded proof and derives action totals/review age instead of trusting summary totals |
+| Direct promotion residual | `promote_qualified_card_benefit_enrichment_pilot` still validates legacy summary booleans; service-role callers must use the Edge pre-gate until a later migration hardens the RPC |
 | Destructive audit cleanup | `purgeCalculatorReviewRows` deletes `card_discovery_jobs`, whose review/audit children cascade |
 | Reference-table RLS gap | initial schema grants reads but enables RLS only on user-facing tables; `public` is exposed in `config.toml` |
 

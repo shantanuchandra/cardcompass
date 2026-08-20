@@ -1,5 +1,8 @@
 import { collectSupportingBenefitDocuments } from "./supporting_documents.ts";
-import { assessCrawlCompleteness } from "./crawl_policy.ts";
+import {
+  assessCrawlCompleteness,
+  sourceIdentityDigest,
+} from "./crawl_policy.ts";
 import { extractGroundedBenefitsV6 } from "../_shared/benefit_enrichment.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -480,19 +483,26 @@ Deno.test("a required ninth initial link outranks eight optional links", async (
   );
   const required = `${product}/terms-and-conditions`;
   const requested: string[] = [];
-  const { attempts } = await collectSupportingBenefitDocuments({
-    issuer: "Axis Bank",
-    identityLabels: ["Privilege"],
-    primary: resource(
-      product,
-      [...optional, required].map((url) => `<a href="${url}">Details</a>`)
-        .join(""),
-    ),
-    fetchOfficialIssuerResource: async (input) => {
-      requested.push(input.url);
-      return resource(input.url, "Official details");
-    },
-  });
+  const { attempts, expectedRequiredSourceKeys } =
+    await collectSupportingBenefitDocuments({
+      issuer: "Axis Bank",
+      identityLabels: ["Privilege"],
+      primary: resource(
+        product,
+        [...optional, required].map((url) => `<a href="${url}">Details</a>`)
+          .join(""),
+      ),
+      fetchOfficialIssuerResource: async (input) => {
+        requested.push(input.url);
+        return resource(input.url, "Official details");
+      },
+    });
+
+  assert(
+    expectedRequiredSourceKeys.join(",") ===
+      sourceIdentityDigest(required),
+    "required selection was derived only from the later attempt list",
+  );
 
   assert(requested[0] === required, "required ninth link was not prioritized");
   assert(requested.includes(required), "required ninth link was omitted");
@@ -738,19 +748,20 @@ Deno.test("required terms HTML outranks an optional PDF when one fetch remains",
   const optionalPdf = `${product}/benefits.pdf`;
   const requiredHtml = `${product}/terms-and-conditions`;
   const requested: string[] = [];
-  const { attempts } = await collectSupportingBenefitDocuments({
-    issuer: "Axis Bank",
-    identityLabels: ["Privilege"],
-    primary: resource(
-      product,
-      `<a href="${optionalPdf}">Benefits</a><a href="${requiredHtml}">Terms</a>`,
-    ),
-    maximumLinks: 1,
-    fetchOfficialIssuerResource: async (input) => {
-      requested.push(input.url);
-      return resource(input.url, "Official terms");
-    },
-  });
+  const { attempts, requiredSourceSelectionOverflow } =
+    await collectSupportingBenefitDocuments({
+      issuer: "Axis Bank",
+      identityLabels: ["Privilege"],
+      primary: resource(
+        product,
+        `<a href="${optionalPdf}">Benefits</a><a href="${requiredHtml}">Terms</a>`,
+      ),
+      maximumLinks: 1,
+      fetchOfficialIssuerResource: async (input) => {
+        requested.push(input.url);
+        return resource(input.url, "Official terms");
+      },
+    });
 
   assert(
     requested.join(",") === requiredHtml,
@@ -918,18 +929,21 @@ Deno.test("supporting crawl rejects another card variant and counts failed attem
   const other =
     "https://www.axis.bank.in/cards/credit-card/regalia-gold/benefits";
   const requested: string[] = [];
-  const { attempts } = await collectSupportingBenefitDocuments({
-    issuer: "Axis Bank",
-    identityLabels: ["Privilege"],
-    primary: resource(
-      product,
-      [...ownLinks, other].map((url) => `<a href="${url}">Terms</a>`).join(""),
-    ),
-    fetchOfficialIssuerResource: async (input) => {
-      requested.push(input.url);
-      throw new Error("blocked");
-    },
-  });
+  const { attempts, requiredSourceSelectionOverflow } =
+    await collectSupportingBenefitDocuments({
+      issuer: "Axis Bank",
+      identityLabels: ["Privilege"],
+      primary: resource(
+        product,
+        [...ownLinks, other].map((url) => `<a href="${url}">Terms</a>`).join(
+          "",
+        ),
+      ),
+      fetchOfficialIssuerResource: async (input) => {
+        requested.push(input.url);
+        throw new Error("blocked");
+      },
+    });
 
   assert(
     requested.length === 7,
@@ -942,6 +956,10 @@ Deno.test("supporting crawl rejects another card variant and counts failed attem
       attempt.errorCode === "required_source_overflow"
     ),
     "initial required overflow was not recorded",
+  );
+  assert(
+    requiredSourceSelectionOverflow,
+    "initial required selection overflow was not independently retained",
   );
   assert(
     attempts.filter((attempt) => requested.includes(attempt.requestedUrl))

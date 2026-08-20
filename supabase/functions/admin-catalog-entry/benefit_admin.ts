@@ -1110,8 +1110,229 @@ function extractionForOutput(value: unknown) {
   };
 }
 
-function resultSummary(value: unknown) {
+const pilotMetricKeys = new Set([
+  "fetch_attempts",
+  "fetch_success",
+  "fetch_not_modified",
+  "fetch_blocked",
+  "fetch_missing",
+  "fetch_failed",
+  "fetch_incomplete",
+  "fetch_attempt_history_overflow",
+  "fetch_success_rate",
+  "required_supporting_attempted",
+  "required_supporting_succeeded",
+  "required_supporting_failed",
+  "required_supporting_omitted",
+  "required_supporting_success_rate",
+  "staged_additions",
+  "staged_modifications",
+  "staged_removals",
+  "identity_migrations",
+  "suppressed_removals",
+  "suppressed_removal_reason_codes",
+  "proposal_conflicts",
+  "catalog_identity_conflicts",
+  "approvals",
+  "edits",
+  "targeted_rejects",
+  "global_rejects",
+  "retirements",
+  "retries",
+  "deterministic_replay_passed",
+  "side_effect_proof_passed",
+  "processing_started_at",
+  "processing_completed_at",
+  "processing_duration_ms",
+]);
+const pilotMetricRateKeys = new Set([
+  "fetch_success_rate",
+  "required_supporting_success_rate",
+]);
+const pilotMetricBooleanKeys = new Set([
+  "deterministic_replay_passed",
+  "side_effect_proof_passed",
+]);
+
+function metricUtcInstant(value: unknown): boolean {
+  if (
+    typeof value !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
+  ) return false;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value &&
+    parsed >= Date.UTC(2000, 0, 1) && parsed <= Date.now() + 5 * 60 * 1000;
+}
+
+function metricsForOutput(value: unknown) {
   const row = asRecord(value) ?? {};
+  return Object.fromEntries(
+    Object.entries(row).filter(([key, item]) =>
+      pilotMetricKeys.has(key) &&
+      ((pilotMetricBooleanKeys.has(key) && typeof item === "boolean") ||
+        (pilotMetricRateKeys.has(key) && typeof item === "number" &&
+          Number.isFinite(item) && item >= 0 && item <= 1) ||
+        ((key === "processing_started_at" ||
+          key === "processing_completed_at") && metricUtcInstant(item)) ||
+        (key === "suppressed_removal_reason_codes" && Array.isArray(item) &&
+          item.length <= 16 &&
+          item.every((reason) => reason === "incomplete_crawl")) ||
+        (!pilotMetricBooleanKeys.has(key) && !pilotMetricRateKeys.has(key) &&
+          key !== "processing_started_at" &&
+          key !== "processing_completed_at" &&
+          key !== "suppressed_removal_reason_codes" &&
+          Number.isInteger(item) && Number(item) >= 0 &&
+          Number(item) <= 999_999_999))
+    ),
+  );
+}
+
+function liveSnapshotForOutput(value: unknown) {
+  const row = asRecord(value) ?? {};
+  const output: JsonRecord = {};
+  for (const table of ["card_catalog", "benefits", "card_benefit_mapping"]) {
+    const snapshot = asRecord(row[table]);
+    const countValue = number(snapshot?.count);
+    const rowHash = digest(snapshot?.row_hash);
+    if (
+      snapshot && countValue !== null && Number.isInteger(countValue) &&
+      countValue >= 0 && countValue <= 512 && rowHash
+    ) {
+      output[table] = { count: countValue, row_hash: rowHash };
+    }
+  }
+  return output;
+}
+
+function strictBoolean(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
+function pilotCount(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 &&
+      value <= 999_999_999
+    ? value
+    : null;
+}
+
+function pilotEvidenceForOutput(value: unknown) {
+  const row = asRecord(value);
+  if (!row) return null;
+  const expectedRequiredSourceKeys = Array.isArray(
+      row.expected_required_source_keys,
+    ) &&
+      row.expected_required_source_keys.length <= 8 &&
+      row.expected_required_source_keys.every((key) =>
+        typeof key === "string" && /^[0-9a-f]{64}$/.test(key)
+      )
+    ? [...new Set(row.expected_required_source_keys)]
+    : [];
+  const proposalDisposition = row.proposal_disposition === "no_change" ||
+      row.proposal_disposition === "material" ||
+      row.proposal_disposition === "removal_review"
+    ? row.proposal_disposition
+    : null;
+  const proposalCount = typeof row.proposal_count === "number" &&
+      Number.isInteger(row.proposal_count) && row.proposal_count >= 0 &&
+      row.proposal_count <= BENEFIT_PUBLICATION_LIMITS.MAX_STAGED_PROPOSALS
+    ? row.proposal_count
+    : null;
+  const stagingId = row.staging_id === null ||
+      (typeof row.staging_id === "string" &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+          .test(
+            row.staging_id,
+          ))
+    ? row.staging_id
+    : null;
+  return {
+    parser_version: text(row.parser_version, 64),
+    job_id: text(row.job_id, 100),
+    card_id: text(row.card_id, 100),
+    run_mode: text(row.run_mode, 20),
+    canonical_hash: digest(row.canonical_hash),
+    repeat_canonical_hash: digest(row.repeat_canonical_hash),
+    deterministic_replay_passed: strictBoolean(
+      row.deterministic_replay_passed,
+    ),
+    source_manifest_hash: digest(row.source_manifest_hash),
+    expected_required_source_keys: expectedRequiredSourceKeys,
+    required_source_selection_overflow: strictBoolean(
+      row.required_source_selection_overflow,
+    ),
+    source_attempts: crawlObservationForOutput({
+      source_attempts: row.source_attempts,
+    }).source_attempts,
+    crawl_complete: strictBoolean(row.crawl_complete),
+    suppressed_removal_count: pilotCount(row.suppressed_removal_count),
+    unsafe_mutation_count: pilotCount(row.unsafe_mutation_count),
+    raw_body_stored: strictBoolean(row.raw_body_stored),
+    side_effect_proof_passed: strictBoolean(row.side_effect_proof_passed),
+    observed_at: text(row.observed_at, 100),
+    live_state_before: liveSnapshotForOutput(row.live_state_before),
+    live_state_after: liveSnapshotForOutput(row.live_state_after),
+    conflict_count: pilotCount(row.conflict_count),
+    catalog_identity_conflict_count: pilotCount(
+      row.catalog_identity_conflict_count,
+    ),
+    proposal_count: proposalCount,
+    proposal_disposition: proposalDisposition,
+    staging_id: stagingId,
+    staging_content_hash: row.staging_content_hash === null
+      ? null
+      : digest(row.staging_content_hash),
+  };
+}
+
+function reviewMetrics(value: unknown) {
+  const decisions = objectList(value);
+  const targetedRejects =
+    decisions.filter((decision) =>
+      decision.action === "reject" &&
+      (Boolean(decision.benefit_id ?? decision.current_benefit_id) ||
+        (Object.hasOwn(decision, "proposal_index") &&
+          Number.isInteger(decision.proposal_index) &&
+          Number(decision.proposal_index) >= 0))
+    ).length;
+  const actionCount = (action: string) =>
+    decisions.filter((decision) => decision.action === action).length;
+  return {
+    approvals: actionCount("approve"),
+    edits: actionCount("edit"),
+    targeted_rejects: targetedRejects,
+    global_rejects: actionCount("reject") - targetedRejects,
+    retirements: actionCount("retire"),
+    retries: actionCount("retry"),
+  };
+}
+
+function boundedAgeMs(start: unknown, end: unknown): number | null {
+  if (typeof start !== "string" || typeof end !== "string") return null;
+  const startMs = Date.parse(start);
+  const endMs = Date.parse(end);
+  if (
+    !Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs ||
+    endMs - startMs > 366 * 24 * 60 * 60 * 1000
+  ) return null;
+  return endMs - startMs;
+}
+
+function resultSummary(
+  value: unknown,
+  normalizedValue?: unknown,
+  stagingValue?: unknown,
+) {
+  const row = asRecord(value) ?? {};
+  const normalized = asRecord(normalizedValue) ?? {};
+  const staging =
+    asRecord(Array.isArray(stagingValue) ? stagingValue[0] : stagingValue) ??
+      {};
+  const operationalMetrics = {
+    ...metricsForOutput(normalized.operational_metrics),
+    ...(Array.isArray(staging.benefit_decisions)
+      ? reviewMetrics(staging.benefit_decisions)
+      : {}),
+  };
   return {
     run_id: text(row.run_id, 100),
     proposals: number(row.proposals),
@@ -1126,6 +1347,18 @@ function resultSummary(value: unknown) {
     idempotency_passed: row.idempotency_passed === true,
     retry_scheduled: row.retry_scheduled === true,
     quarantine_reason: text(row.quarantine_reason, 100),
+    pilot_profile: [
+        "straightforward",
+        "redirect_or_js",
+        "terms_linked",
+        "known_invalid",
+        "additional_valid",
+      ].includes(String(normalized.pilot_profile))
+      ? String(normalized.pilot_profile)
+      : null,
+    pilot_evidence: pilotEvidenceForOutput(normalized.pilot_evidence),
+    operational_metrics: operationalMetrics,
+    review_age_ms: boundedAgeMs(staging.created_at, staging.reviewed_at),
   };
 }
 
@@ -1175,7 +1408,11 @@ export function presentBenefitJob(value: unknown, crawlerDiscovered = false) {
     normalized_fields: {
       proposed_count: number(asRecord(row.normalized_fields)?.proposed_count),
     },
-    result_summary: resultSummary(row.result_summary),
+    result_summary: resultSummary(
+      row.result_summary,
+      row.normalized_fields,
+      row.card_benefits_staging,
+    ),
     created_at: text(row.created_at, 100),
     updated_at: text(row.updated_at, 100),
     card: {
@@ -2345,8 +2582,8 @@ export async function handleBenefitAdminAction(
     case "benefit-start-pilot": {
       const parserVersion = typeof body.parser_version === "string"
         ? body.parser_version.trim()
-        : "benefits-v5";
-      if (parserVersion !== "benefits-v5") {
+        : "benefits-v6";
+      if (parserVersion !== "benefits-v6") {
         throw new BenefitAdminError("invalid_pilot_parser_version");
       }
       const { data, error } = await db.rpc(

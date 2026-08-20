@@ -17,6 +17,7 @@ import {
   boundedSourceUrl,
   sanitizedSourceErrorCode,
   type SourceAttemptInput,
+  sourceIdentityDigest,
 } from "./crawl_policy.ts";
 
 const MAX_SUPPORTING_LINKS = 8;
@@ -59,6 +60,8 @@ export type SupportingDocumentInput = {
 export type CollectedSources = {
   documents: BenefitDocument[];
   attempts: SourceAttemptInput[];
+  expectedRequiredSourceKeys: string[];
+  requiredSourceSelectionOverflow: boolean;
 };
 
 const genericIdentityTokens = new Set([
@@ -242,10 +245,29 @@ export async function collectSupportingBenefitDocuments(
         }
         : {}),
     }];
+  // Keep classification output independent from fetch attempts: dropping an
+  // attempt must never erase the fact that a discovered source was required.
+  const expectedRequiredSourceKeys = new Set<string>();
+  let requiredSourceSelectionOverflow = false;
+  const rememberRequiredSource = (url: string): void => {
+    try {
+      const key = sourceIdentityDigest(url);
+      if (expectedRequiredSourceKeys.has(key)) return;
+      if (expectedRequiredSourceKeys.size >= MAX_SUPPORTING_LINKS) {
+        requiredSourceSelectionOverflow = true;
+        return;
+      }
+      expectedRequiredSourceKeys.add(key);
+    } catch {
+      // Invalid required URLs remain explicit failed attempts, which keeps the
+      // crawl incomplete even though no stable logical identity can be made.
+    }
+  };
   const recordRequiredOverflow = async (
     url: string,
     attemptedAt: string,
   ): Promise<void> => {
+    rememberRequiredSource(url);
     if (
       attempts.some((attempt) =>
         attempt.role === "required_supporting" &&
@@ -306,6 +328,9 @@ export async function collectSupportingBenefitDocuments(
     candidate.rejectionCode
   );
   for (const candidate of rejectedInitial) {
+    if (sourceRole(candidate, false) === "required_supporting") {
+      rememberRequiredSource(candidate.url);
+    }
     attempts.push({
       requestedUrl: candidate.url,
       role: sourceRole(candidate, false),
@@ -334,6 +359,7 @@ export async function collectSupportingBenefitDocuments(
   const initialRequired = uniqueInitial.filter((candidate) =>
     candidate.role === "required_supporting"
   );
+  initialRequired.forEach((candidate) => rememberRequiredSource(candidate.url));
   const initialOverflow = initialRequired.length > MAX_SUPPORTING_LINKS;
   const initialLimit = initialOverflow
     ? MAX_SUPPORTING_LINKS - 1
@@ -357,6 +383,7 @@ export async function collectSupportingBenefitDocuments(
     attemptedAt: string,
     position: number,
   ): Promise<void> => {
+    rememberRequiredSource(url);
     let represented = false;
     for (const attempt of attempts) {
       if (attempt.requestedUrl !== url) continue;
@@ -580,6 +607,9 @@ export async function collectSupportingBenefitDocuments(
           depth: current.depth + 1,
           role: sourceRole(candidate, false),
         };
+        if (discovered.role === "required_supporting") {
+          rememberRequiredSource(candidate.url);
+        }
         if (candidate.rejectionCode) {
           if (!seen.has(candidate.url) && !scheduled.has(candidate.url)) {
             seen.add(candidate.url);
@@ -633,5 +663,10 @@ export async function collectSupportingBenefitDocuments(
       }
     }
   }
-  return { documents, attempts };
+  return {
+    documents,
+    attempts,
+    expectedRequiredSourceKeys: [...expectedRequiredSourceKeys].sort(),
+    requiredSourceSelectionOverflow,
+  };
 }

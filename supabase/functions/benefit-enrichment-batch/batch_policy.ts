@@ -1,7 +1,9 @@
+import { BENEFIT_PUBLICATION_LIMITS } from "../_shared/benefit_publication_limits.ts";
+
 export const MAX_BATCH_SIZE = 1;
 export const LEASE_SECONDS = 5 * 60;
 export const RETRY_SCHEDULE_MINUTES = [15, 60, 240] as const;
-export const MAX_PILOT_REVIEW_COUNT = 999_999_999;
+export const MAX_PILOT_REVIEW_COUNT = BENEFIT_PUBLICATION_LIMITS.MAX_DECISIONS;
 
 export type RunMode = "pilot" | "scheduled" | "manual";
 export type PilotStatus = "not_started" | "running" | "blocked" | "passed";
@@ -48,6 +50,8 @@ export type PilotCandidate = {
 
 export type PilotJob = {
   id: string;
+  issuer?: string;
+  pilotProfile?: string;
   runMode: RunMode;
   pilotQualified: boolean;
   status: string;
@@ -65,6 +69,13 @@ export type PilotJob = {
   retainedCount: number | null;
   retiredCount: number | null;
   rejectedCount: number | null;
+  computedEvidenceValid?: boolean;
+  deterministicReplayPassed?: boolean;
+  sideEffectProofPassed?: boolean;
+  crawlComplete?: boolean;
+  suppressedRemovalCount?: number;
+  sourceBindingValid?: boolean;
+  conflictCount?: number;
 };
 
 function issuerKey(issuer: string): string {
@@ -353,10 +364,13 @@ function completedPilotReviewBlocker(job: PilotJob): string | null {
   );
   const positiveReviewActions = Number(job.approvedCount) +
     Number(job.retainedCount) + Number(job.retiredCount);
+  const totalReviewActions = positiveReviewActions + Number(job.rejectedCount);
   if (job.successfulNoChange && !job.reviewMetadataPresent) return null;
   if (
     job.reviewMetadataMalformed || !hasValidCounts ||
-    !Number.isSafeInteger(positiveReviewActions) || job.reviewStatus === null
+    !Number.isSafeInteger(positiveReviewActions) ||
+    !Number.isSafeInteger(totalReviewActions) ||
+    totalReviewActions > MAX_PILOT_REVIEW_COUNT || job.reviewStatus === null
   ) {
     return "pilot_review_metadata_invalid";
   }
@@ -391,6 +405,29 @@ export function evaluatePilotGate(jobs: readonly PilotJob[]): {
       blockers: ["pilot_incomplete"],
     };
   }
+  const requiredProfiles = new Set([
+    "straightforward",
+    "redirect_or_js",
+    "terms_linked",
+    "known_invalid",
+    "additional_valid",
+  ]);
+  const pilotProfiles = pilot.map((job) => job.pilotProfile);
+  const cohortBlockers = [
+    ...(pilotProfiles.length === requiredProfiles.size &&
+        pilotProfiles.every((profile) =>
+          typeof profile === "string" && requiredProfiles.has(profile)
+        ) && new Set(pilotProfiles).size === requiredProfiles.size
+      ? []
+      : ["pilot_profile_coverage"]),
+    ...(new Set(
+        pilot.map((job) => issuerKey(String(job.issuer ?? ""))).filter(
+          Boolean,
+        ),
+      ).size >= 3
+      ? []
+      : ["pilot_issuer_diversity"]),
+  ];
   if (promotedPilot.length > 0) {
     const exactAtomicHandoff = promotedPilot.length === 5 &&
       activePilot.length === 0;
@@ -404,31 +441,46 @@ export function evaluatePilotGate(jobs: readonly PilotJob[]): {
     const reviewBlockers = promotedPilot.flatMap((job) => {
       const blocker = !job.safetyMetadataValid
         ? "pilot_safety_metadata_invalid"
-        : job.status === "completed"
-        ? completedPilotReviewBlocker(job)
-        : null;
+        : completedPilotReviewBlocker(job);
       return [
         ...(blocker ? [blocker] : []),
+        ...(job.computedEvidenceValid !== true
+          ? ["pilot_computed_evidence_invalid"]
+          : []),
+        ...(job.deterministicReplayPassed !== true
+          ? ["deterministic_replay_failed"]
+          : []),
+        ...(job.sideEffectProofPassed !== true
+          ? ["side_effect_proof_failed"]
+          : []),
+        ...(job.crawlComplete !== true ? ["pilot_crawl_incomplete"] : []),
+        ...(job.suppressedRemovalCount !== 0
+          ? ["pilot_suppressed_removals"]
+          : []),
+        ...(job.sourceBindingValid !== true ? ["pilot_source_mismatch"] : []),
+        ...(job.conflictCount !== 0 ? ["pilot_conflict_unresolved"] : []),
         ...(job.unsafeMutationCount !== 0 ? ["unsafe_mutation"] : []),
         ...(job.rawBodyStored ? ["raw_body_stored"] : []),
       ];
     });
-    const blockers = [...new Set(reviewBlockers)];
+    const blockers = [...new Set([...cohortBlockers, ...reviewBlockers])];
     return blockers.length === 0
       ? { status: "passed", scheduledClaimAllowed: true, blockers: [] }
       : { status: "blocked", scheduledClaimAllowed: false, blockers };
   }
-  const blockers: string[] = [];
+  const blockers: string[] = [...cohortBlockers];
   if (pilot.length !== 5) blockers.push("pilot_job_count");
   const hasNonTerminal = pilot.some((job) =>
-    job.status !== "staged" && job.status !== "completed" &&
-    job.status !== "quarantined"
+    job.status !== "completed" && job.status !== "quarantined"
   );
   for (const job of pilot) {
     const terminal = job.status === "staged" || job.status === "completed" ||
       job.status === "quarantined";
     if (job.status === "quarantined" && !job.quarantineReason) {
       blockers.push("unjustified_quarantine");
+    }
+    if (job.status === "quarantined") {
+      blockers.push("pilot_negative_fixture");
     }
     if (job.status === "failed") blockers.push("pilot_failed");
     if (job.status === "review_required") {
@@ -437,6 +489,21 @@ export function evaluatePilotGate(jobs: readonly PilotJob[]): {
     if (!job.safetyMetadataValid) {
       blockers.push("pilot_safety_metadata_invalid");
     }
+    if (job.computedEvidenceValid !== true) {
+      blockers.push("pilot_computed_evidence_invalid");
+    }
+    if (job.deterministicReplayPassed !== true) {
+      blockers.push("deterministic_replay_failed");
+    }
+    if (job.sideEffectProofPassed !== true) {
+      blockers.push("side_effect_proof_failed");
+    }
+    if (job.crawlComplete !== true) blockers.push("pilot_crawl_incomplete");
+    if (job.suppressedRemovalCount !== 0) {
+      blockers.push("pilot_suppressed_removals");
+    }
+    if (job.sourceBindingValid !== true) blockers.push("pilot_source_mismatch");
+    if (job.conflictCount !== 0) blockers.push("pilot_conflict_unresolved");
     if (job.unsafeMutationCount !== 0) blockers.push("unsafe_mutation");
     if (terminal && !job.idempotencyPassed) blockers.push("idempotency_failed");
     if (

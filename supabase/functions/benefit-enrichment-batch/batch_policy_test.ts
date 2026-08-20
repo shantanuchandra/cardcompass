@@ -635,16 +635,24 @@ Deno.test("secret comparison hashes unequal-length inputs before fixed-length co
 Deno.test("scheduled rollout stays blocked until the exact safe five-job pilot passes", () => {
   const base: PilotJob[] = Array.from({ length: 5 }, (_, index) => ({
     id: `pilot-${index}`,
+    issuer: ["Issuer A", "Issuer B", "Issuer C", "Issuer A", "Issuer B"][index],
+    pilotProfile: [
+      "straightforward",
+      "redirect_or_js",
+      "terms_linked",
+      "known_invalid",
+      "additional_valid",
+    ][index],
     runMode: "pilot" as const,
-    status: index === 4 ? "quarantined" : "staged",
-    quarantineReason: index === 4 ? "identity_mismatch" : null,
+    status: "completed",
+    quarantineReason: null,
     safetyMetadataValid: true,
     unsafeMutationCount: 0,
     idempotencyPassed: true,
     evidencePassed: true,
     rawBodyStored: false,
     pilotQualified: false,
-    successfulNoChange: false,
+    successfulNoChange: true,
     reviewMetadataPresent: false,
     reviewMetadataMalformed: false,
     reviewStatus: null,
@@ -652,10 +660,41 @@ Deno.test("scheduled rollout stays blocked until the exact safe five-job pilot p
     retainedCount: null,
     retiredCount: null,
     rejectedCount: null,
-  }));
+    computedEvidenceValid: true,
+    deterministicReplayPassed: true,
+    sideEffectProofPassed: true,
+    crawlComplete: true,
+    suppressedRemovalCount: 0,
+    sourceBindingValid: true,
+    conflictCount: 0,
+  } as PilotJob));
   assert(
     evaluatePilotGate(base).status === "passed",
     "safe terminal pilot did not pass",
+  );
+  const pendingReview = base.map((job) => ({
+    ...job,
+    status: "staged",
+    successfulNoChange: false,
+  }));
+  assert(
+    evaluatePilotGate(pendingReview).status === "running" &&
+      !evaluatePilotGate(pendingReview).scheduledClaimAllowed,
+    "pending pilot reviews unlocked rollout",
+  );
+  const oneIssuer = base.map((job) => ({ ...job, issuer: "Issuer A" }));
+  assert(
+    evaluatePilotGate(oneIssuer).blockers.includes("pilot_issuer_diversity"),
+    "one-issuer evidence cohort unlocked rollout",
+  );
+  const duplicateProfile = base.map((job, index) =>
+    index === 4 ? { ...job, pilotProfile: "straightforward" } : job
+  );
+  assert(
+    evaluatePilotGate(duplicateProfile).blockers.includes(
+      "pilot_profile_coverage",
+    ),
+    "duplicate pilot profiles unlocked rollout",
   );
   const completedNoChange: PilotJob[] = base.map((job, index) =>
     index === 0
@@ -712,10 +751,69 @@ Deno.test("scheduled rollout stays blocked until the exact safe five-job pilot p
     ).status === "blocked",
     "failed idempotency did not block rollout",
   );
+  const attestedOnly = base.map((job, index) =>
+    index === 1 ? ({ ...job, computedEvidenceValid: false } as PilotJob) : job
+  );
+  assert(
+    evaluatePilotGate(attestedOnly).blockers.includes(
+      "pilot_computed_evidence_invalid",
+    ),
+    "self-attested pilot metadata unlocked rollout",
+  );
+  const crossBound = base.map((job, index) =>
+    index === 1 ? ({ ...job, sourceBindingValid: false } as PilotJob) : job
+  );
+  assert(
+    evaluatePilotGate(crossBound).blockers.includes("pilot_source_mismatch"),
+    "cross-card/source pilot evidence unlocked rollout",
+  );
+  const replayMismatch = base.map((job, index) =>
+    index === 1
+      ? ({ ...job, deterministicReplayPassed: false } as PilotJob)
+      : job
+  );
+  assert(
+    evaluatePilotGate(replayMismatch).blockers.includes(
+      "deterministic_replay_failed",
+    ),
+    "nondeterministic pilot evidence unlocked rollout",
+  );
+  const sideEffect = base.map((job, index) =>
+    index === 1 ? ({ ...job, sideEffectProofPassed: false } as PilotJob) : job
+  );
+  assert(
+    evaluatePilotGate(sideEffect).blockers.includes("side_effect_proof_failed"),
+    "live-state mutation evidence unlocked rollout",
+  );
+  const incomplete = base.map((job, index) =>
+    index === 1 ? ({ ...job, crawlComplete: false } as PilotJob) : job
+  );
+  assert(
+    evaluatePilotGate(incomplete).blockers.includes("pilot_crawl_incomplete"),
+    "incomplete negative simulation counted among five qualified jobs",
+  );
+  const suppressed = base.map((job, index) =>
+    index === 1 ? ({ ...job, suppressedRemovalCount: 1 } as PilotJob) : job
+  );
+  assert(
+    evaluatePilotGate(suppressed).blockers.includes(
+      "pilot_suppressed_removals",
+    ),
+    "suppressed removals counted as a qualified observation",
+  );
+  const conflicts = base.map((job, index) =>
+    index === 1 ? ({ ...job, conflictCount: 1 } as PilotJob) : job
+  );
+  assert(
+    evaluatePilotGate(conflicts).blockers.includes("pilot_conflict_unresolved"),
+    "unresolved proposal conflict unlocked rollout",
+  );
   assert(
     evaluatePilotGate(
       base.map((job, index) =>
-        index === 4 ? { ...job, quarantineReason: null } : job
+        index === 4
+          ? { ...job, status: "quarantined", quarantineReason: null }
+          : job
       ),
     ).status === "blocked",
     "unjustified quarantine did not block rollout",
@@ -749,8 +847,8 @@ Deno.test("scheduled rollout stays blocked until the exact safe five-job pilot p
       : job
   );
   assert(
-    evaluatePilotGate(recovered).status === "passed",
-    "recovered pilot could not pass",
+    evaluatePilotGate(recovered).status === "blocked",
+    "incomplete negative fixture counted among five qualified jobs",
   );
 
   const fullyRejected: PilotJob[] = base.map((job, index) =>
@@ -821,7 +919,14 @@ Deno.test("scheduled rollout stays blocked until the exact safe five-job pilot p
     ] satisfies Array<Partial<PilotJob>>
   ) {
     const jobs: PilotJob[] = base.map((job, index) =>
-      index === 0 ? { ...job, status: "completed", ...malformed } : job
+      index === 0
+        ? {
+          ...job,
+          status: "completed",
+          successfulNoChange: false,
+          ...malformed,
+        }
+        : job
     );
     assert(
       evaluatePilotGate(jobs).blockers.includes(
@@ -847,7 +952,6 @@ Deno.test("scheduled rollout stays blocked until the exact safe five-job pilot p
   const recurring = promoted.map((job, index) => ({
     ...job,
     status: ["queued", "processing", "failed", "staged", "completed"][index],
-    successfulNoChange: index === 4,
   }));
   assert(
     evaluatePilotGate(recurring).status === "passed",
@@ -857,7 +961,7 @@ Deno.test("scheduled rollout stays blocked until the exact safe five-job pilot p
     index === 0
       ? {
         ...job,
-        status: "completed",
+        status: "staged",
         successfulNoChange: false,
         reviewMetadataPresent: true,
         reviewStatus: "rejected",

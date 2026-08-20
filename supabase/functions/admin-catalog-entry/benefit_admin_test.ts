@@ -3120,7 +3120,7 @@ Deno.test("benefit quarantine state changes are explicit and a pilot uses the se
     assert(stalePilot.status === 400, "stale parser started a pilot");
     assert(startedPilot.status === 200, "valid pilot was not initialized");
     assert(
-      pilotParserVersion === "benefits-v5",
+      pilotParserVersion === "benefits-v6",
       "admin pilot defaulted to the stale parser lane",
     );
     assert(
@@ -3818,4 +3818,193 @@ Deno.test("manual quarantine loses an optimistic race instead of overwriting new
       Deno.env.delete("CARD_CATALOG_ADMIN_EMAILS");
     } else Deno.env.set("CARD_CATALOG_ADMIN_EMAILS", originalAllowlist);
   }
+});
+
+Deno.test("admin pilot evidence exposes bounded computed proof and derives review metrics from decisions", () => {
+  const pilotEvidence = {
+    parser_version: "benefits-v6",
+    job_id: "11111111-1111-4111-8111-111111111111",
+    card_id: "22222222-2222-4222-8222-222222222222",
+    run_mode: "pilot",
+    canonical_hash: "a".repeat(64),
+    repeat_canonical_hash: "a".repeat(64),
+    deterministic_replay_passed: true,
+    source_manifest_hash: "b".repeat(64),
+    expected_required_source_keys: ["f".repeat(64)],
+    required_source_selection_overflow: false,
+    crawl_complete: true,
+    suppressed_removal_count: 0,
+    unsafe_mutation_count: 0,
+    raw_body_stored: false,
+    side_effect_proof_passed: true,
+    observed_at: "2026-08-20T00:00:00.000Z",
+    live_state_before: {
+      card_catalog: { count: 1, row_hash: "c".repeat(64) },
+      benefits: { count: 1, row_hash: "d".repeat(64) },
+      card_benefit_mapping: { count: 1, row_hash: "e".repeat(64) },
+    },
+    live_state_after: {
+      card_catalog: { count: 1, row_hash: "c".repeat(64) },
+      benefits: { count: 1, row_hash: "d".repeat(64) },
+      card_benefit_mapping: { count: 1, row_hash: "e".repeat(64) },
+    },
+    proposal_count: 0,
+    proposal_disposition: "no_change",
+    staging_id: null,
+    staging_content_hash: null,
+    raw_body: "<html>private customer 4242</html>",
+    lease_token: "secret-lease",
+  };
+  const presented = presentBenefitJob({
+    id: pilotEvidence.job_id,
+    card_id: pilotEvidence.card_id,
+    issuer: "Fixture Bank",
+    canonical_url: "https://issuer.example/card?token=must-not-leak",
+    parser_version: "benefits-v6",
+    status: "completed",
+    run_mode: "pilot",
+    attempt_count: 1,
+    normalized_fields: {
+      pilot_profile: "straightforward",
+      pilot_evidence: pilotEvidence,
+      operational_metrics: {
+        fetch_attempts: 2,
+        fetch_success: 2,
+        fetch_attempt_history_overflow: 1,
+        fetch_missing: 0.5,
+        fetch_success_rate: 2,
+        approvals: 999,
+        processing_started_at: "Bearer secret-lease",
+      },
+    },
+    result_summary: {
+      reviewed_at: "2026-08-20T00:10:00.000Z",
+      approved_count: 999,
+      rejected_count: 999,
+    },
+    created_at: "2026-08-20T00:00:00.000Z",
+    updated_at: "2026-08-20T00:10:00.000Z",
+    card_catalog: {
+      id: pilotEvidence.card_id,
+      bank: "Fixture Bank",
+      card_name: "Fixture Card",
+    },
+    card_benefits_staging: {
+      id: "33333333-3333-4333-8333-333333333333",
+      card_id: pilotEvidence.card_id,
+      request_type: "official_benefit_enrichment",
+      parser_version: "benefits-v6",
+      status: "approved",
+      benefit_decisions: [
+        { action: "approve" },
+        { action: "edit" },
+        { action: "reject", proposal_index: 0 },
+        { action: "retire", benefit_id: "benefit-2" },
+      ],
+      created_at: "2026-08-20T00:01:00.000Z",
+      reviewed_at: "2026-08-20T00:10:00.000Z",
+      extracted_data: {
+        request_type: "official_benefit_enrichment",
+        parser_version: "benefits-v6",
+        proposals: [],
+        diff: {},
+      },
+    },
+  }) as Record<string, any>;
+  assert(
+    presented.result_summary.pilot_evidence.canonical_hash ===
+        pilotEvidence.canonical_hash &&
+      presented.result_summary.pilot_profile === "straightforward" &&
+      presented.result_summary.pilot_evidence.side_effect_proof_passed ===
+        true &&
+      presented.result_summary.pilot_evidence
+          .expected_required_source_keys[0] === "f".repeat(64) &&
+      presented.result_summary.pilot_evidence
+          .required_source_selection_overflow === false &&
+      presented.result_summary.pilot_evidence.proposal_count === 0 &&
+      presented.result_summary.pilot_evidence.proposal_disposition ===
+        "no_change" &&
+      presented.result_summary.pilot_evidence.staging_id === null,
+    "admin response omitted computed pilot evidence",
+  );
+  assert(
+    presented.result_summary.operational_metrics.fetch_attempts === 2 &&
+      presented.result_summary.operational_metrics
+          .fetch_attempt_history_overflow === 1 &&
+      presented.result_summary.operational_metrics.approvals === 1 &&
+      presented.result_summary.operational_metrics.edits === 1 &&
+      presented.result_summary.operational_metrics.targeted_rejects === 1 &&
+      presented.result_summary.operational_metrics.retirements === 1,
+    "admin metrics trusted supplied totals instead of exact decisions",
+  );
+  assert(
+    !Object.hasOwn(
+      presented.result_summary.operational_metrics,
+      "fetch_missing",
+    ) &&
+      !Object.hasOwn(
+        presented.result_summary.operational_metrics,
+        "fetch_success_rate",
+      ),
+    "admin metrics accepted fractional counts or out-of-range rates",
+  );
+  assert(
+    presented.result_summary.review_age_ms === 540000,
+    "admin review age was not derived from bounded UTC timestamps",
+  );
+  const serialized = JSON.stringify(presented);
+  for (
+    const forbidden of [
+      "must-not-leak",
+      "private customer 4242",
+      "secret-lease",
+    ]
+  ) {
+    assert(
+      !serialized.includes(forbidden),
+      `admin pilot DTO leaked ${forbidden}`,
+    );
+  }
+  const malformed = presentBenefitJob({
+    id: pilotEvidence.job_id,
+    card_id: pilotEvidence.card_id,
+    issuer: "Fixture Bank",
+    canonical_url: "https://issuer.example/card",
+    parser_version: "benefits-v6",
+    status: "completed",
+    run_mode: "pilot",
+    attempt_count: 1,
+    normalized_fields: {
+      pilot_profile: "straightforward",
+      pilot_evidence: {
+        ...pilotEvidence,
+        deterministic_replay_passed: "true",
+        crawl_complete: "true",
+        suppressed_removal_count: 0.5,
+        raw_body_stored: "false",
+        side_effect_proof_passed: "true",
+        live_state_before: {
+          ...pilotEvidence.live_state_before,
+          benefits: { count: 0.5, row_hash: "d".repeat(64) },
+        },
+      },
+    },
+    result_summary: {},
+    card_catalog: {},
+  }) as Record<string, any>;
+  assert(
+    malformed.result_summary.pilot_evidence
+          .deterministic_replay_passed === null &&
+      malformed.result_summary.pilot_evidence.crawl_complete === null &&
+      malformed.result_summary.pilot_evidence.raw_body_stored === null &&
+      malformed.result_summary.pilot_evidence.side_effect_proof_passed ===
+        null &&
+      malformed.result_summary.pilot_evidence.suppressed_removal_count ===
+        null &&
+      !Object.hasOwn(
+        malformed.result_summary.pilot_evidence.live_state_before,
+        "benefits",
+      ),
+    "malformed pilot booleans were displayed as computed false values",
+  );
 });
