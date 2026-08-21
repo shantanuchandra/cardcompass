@@ -219,6 +219,20 @@ test('locked SQL canonical scalars share Edge prefix and suffix currency behavio
   );
 });
 
+test('apply-time array boundary assertions alias generate_series output', async () => {
+  const sql = await migrationSql();
+  const arrayBoundaries = [
+    ...sql.matchAll(
+      /ARRAY\(SELECT value FROM generate_series\(1,\s*(64|65)\)\s+AS\s+item\(value\)\)/gi,
+    ),
+  ];
+  assert.deepEqual(
+    arrayBoundaries.map((match) => match[1]),
+    ['64', '65'],
+    'PostgreSQL must receive an explicit value alias for both apply assertions',
+  );
+});
+
 test('publication inserts immutable canonical rows and scopes every lifecycle mutation to one mapping', async () => {
   const approval = functionBody(
     await migrationSql(),

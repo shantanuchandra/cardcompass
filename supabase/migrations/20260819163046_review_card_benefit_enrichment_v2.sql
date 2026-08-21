@@ -2085,10 +2085,10 @@ BEGIN
      ) OR public.canonical_json_shape_is_bounded(
        jsonb_build_object('value', repeat('x', 501)), 8, 256, 64, 500, 500
      ) OR NOT public.canonical_json_shape_is_bounded(
-       to_jsonb(ARRAY(SELECT value FROM generate_series(1, 64))),
+       to_jsonb(ARRAY(SELECT value FROM generate_series(1, 64) AS item(value))),
        8, 256, 64, 500, 500
      ) OR public.canonical_json_shape_is_bounded(
-       to_jsonb(ARRAY(SELECT value FROM generate_series(1, 65))),
+       to_jsonb(ARRAY(SELECT value FROM generate_series(1, 65) AS item(value))),
        8, 256, 64, 500, 500
      ) THEN
     RAISE EXCEPTION 'canonical shape boundary assertion failed';
