@@ -2641,6 +2641,93 @@ Deno.test("every locked proposal is bounded and shaped before subset approval", 
   }
 });
 
+Deno.test("every scalar valueConfig field rejects composite values in an unselected proposal", async () => {
+  const proposals = await extractGroundedBenefitsV6(
+    [{
+      sourceUrl: "https://issuer.example/card",
+      text:
+        "Get 10% cashback on dining spends. Get 5% cashback on fuel spends.",
+      contentHash: "f".repeat(64),
+    }],
+    "benefits-v6",
+    "card-1",
+  );
+  assert(
+    proposals.length === 2,
+    "multi-proposal scalar fixture did not extract",
+  );
+  await validateV6ApprovalDecisions(
+    [{ action: "approve", benefit: proposals[0] }],
+    {
+      request_type: "official_benefit_enrichment",
+      parser_version: "benefits-v6",
+      proposals,
+    },
+    "card-1",
+  );
+
+  const scalarFields = [
+    "category",
+    "discount_type",
+    "discount_percent",
+    "discount_amount",
+    "max_discount_per_transaction",
+    "max_usage_per_month",
+    "max_usage_per_period",
+    "usage_period",
+    "monthly_cap",
+    "annual_cap",
+    "unit",
+    "milestone_type",
+    "threshold_amount",
+    "reward_value",
+    "multiplier",
+    "base_rate",
+    "currency_unit",
+    "platform",
+    "value",
+    "rate",
+    "cap",
+    "threshold",
+    "frequency",
+    "period",
+    "offer_subject",
+  ];
+  for (const field of scalarFields) {
+    for (const composite of [{ nested: "value" }, ["value"]]) {
+      let error: unknown;
+      try {
+        await validateV6ApprovalDecisions(
+          [{ action: "approve", benefit: proposals[0] }],
+          {
+            request_type: "official_benefit_enrichment",
+            parser_version: "benefits-v6",
+            proposals: [
+              proposals[0],
+              {
+                ...proposals[1],
+                valueConfig: {
+                  ...proposals[1].valueConfig,
+                  [field]: composite,
+                },
+              },
+            ],
+          },
+          "card-1",
+        );
+      } catch (caught) {
+        error = caught;
+      }
+      assert(
+        error instanceof Error,
+        `${
+          Array.isArray(composite) ? "array" : "object"
+        } ${field} value survived locked validation`,
+      );
+    }
+  }
+});
+
 Deno.test("all staged proposals are canonicalized before approval and duplicate targets never reach RPC", async () => {
   const [proposal] = extractGroundedBenefits([{
     sourceUrl: "https://issuer.example/card",
@@ -2648,7 +2735,13 @@ Deno.test("all staged proposals are canonicalized before approval and duplicate 
     contentHash: "d".repeat(64),
   }], "benefits-v5");
   assert(proposal != null, "v5 duplicate target fixture did not extract");
-  const duplicate = { ...proposal, dedupeKey: `${proposal.dedupeKey}:other` };
+  const duplicate = {
+    ...proposal,
+    dedupeKey: `${proposal.dedupeKey}:other`,
+    // v5 publication has no semantic-key lane, so this optional presentation
+    // field cannot make otherwise identical publication targets distinct.
+    offerSubject: "cosmetic v5 subject",
+  };
   const extraction = {
     request_type: "official_benefit_enrichment",
     parser_version: "benefits-v5",

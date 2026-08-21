@@ -1551,7 +1551,7 @@ AS $$
       SELECT 1
       FROM regexp_matches(
         lower(_text),
-        '\m(for|to)[[:space:]]+(([[:alpha:]][^[:space:]]{1,})([[:space:]]+[[:alpha:]][^[:space:]]{1,}){1,3}?)([[:space:]]+(is|gets?|receives?|will)\M|[[:space:]]*[.,;:!?]|$)',
+        '\m(for|to)[[:space:]]+(([[:alpha:]][^[:space:]]{1,})([[:space:]]+[[:alpha:]][^[:space:]]{1,}){0,3}?)([[:space:]]+(is|gets?|receives?|will)\M|[[:space:]]*[.,;:!?]|$)',
         'g'
       ) AS contextual_person(match)
       WHERE NOT EXISTS (
@@ -3256,6 +3256,14 @@ REVOKE ALL ON FUNCTION public.card_enrichment_pilot_source_identity_hash(text)
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.card_enrichment_pilot_source_identity_hash(text)
   TO service_role;
+REVOKE ALL ON FUNCTION public.card_enrichment_pilot_queryless_display_url(text)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.card_enrichment_pilot_queryless_display_url(text)
+  TO service_role;
+REVOKE ALL ON FUNCTION public.card_enrichment_pilot_has_contextual_person(text, jsonb)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.card_enrichment_pilot_has_contextual_person(text, jsonb)
+  TO service_role;
 REVOKE ALL ON FUNCTION public.card_enrichment_pilot_snapshot_rows(jsonb)
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.card_enrichment_pilot_snapshot_rows(jsonb)
@@ -3322,6 +3330,61 @@ REVOKE ALL ON FUNCTION public.finalize_card_catalog_enrichment_job(
 GRANT EXECUTE ON FUNCTION public.finalize_card_catalog_enrichment_job(
   uuid, uuid, text, uuid, text, jsonb, jsonb, text, timestamptz
 ) TO service_role;
+
+DO $task6_acl_assertions$
+DECLARE
+  service_callable regprocedure[] := ARRAY[
+    'public.card_enrichment_jitter_days(uuid,integer)'::regprocedure,
+    'public.canonical_card_enrichment_timestamp(text)'::regprocedure,
+    'public.card_enrichment_pilot_timestamp(text)'::regprocedure,
+    'public.next_card_enrichment_observation_at(uuid,text,boolean,boolean,text)'::regprocedure,
+    'public.bounded_card_enrichment_timestamp(text,timestamptz)'::regprocedure,
+    'public.sanitize_card_enrichment_source_attempt(jsonb,timestamptz)'::regprocedure,
+    'public.sanitize_card_enrichment_observation(jsonb,timestamptz)'::regprocedure,
+    'public.normalize_card_enrichment_observation_history(jsonb,jsonb,timestamptz)'::regprocedure,
+    'public.sanitize_card_enrichment_result_summary(jsonb)'::regprocedure,
+    'public.card_has_unresolved_catalog_identity(uuid,text)'::regprocedure,
+    'public.card_enrichment_job_has_pending_staging(uuid,uuid,text)'::regprocedure,
+    'public.card_enrichment_requeue_action(text,text,timestamptz,timestamptz,boolean,boolean)'::regprocedure,
+    'public.card_enrichment_pilot_job_is_qualified(text,text,jsonb)'::regprocedure,
+    'public.card_enrichment_enqueue_catalog_eligible(uuid,text,text,text,text,text,text,boolean,boolean,boolean)'::regprocedure,
+    'public.card_enrichment_enqueue_count_is_valid(integer,integer)'::regprocedure,
+    'public.enforce_card_benefit_enrichment_identity()'::regprocedure,
+    'public.enqueue_card_benefit_enrichment_jobs(jsonb)'::regprocedure,
+    'public.card_enrichment_pilot_cohort_action(integer,integer,boolean)'::regprocedure,
+    'public.initialize_card_benefit_enrichment_pilot(jsonb,text)'::regprocedure,
+    'public.card_enrichment_pilot_snapshot_rows(jsonb)'::regprocedure,
+    'public.card_enrichment_pilot_live_state_snapshot(uuid)'::regprocedure,
+    'public.card_enrichment_pilot_source_identity_hash(text)'::regprocedure,
+    'public.card_enrichment_pilot_queryless_display_url(text)'::regprocedure,
+    'public.card_enrichment_pilot_has_contextual_person(text,jsonb)'::regprocedure,
+    'public.card_enrichment_pilot_source_manifest_hash(jsonb)'::regprocedure,
+    'public.card_enrichment_pilot_evidence_is_qualified(public.card_catalog_enrichment_jobs,public.card_benefits_staging)'::regprocedure,
+    'public.promote_qualified_card_benefit_enrichment_pilot(text)'::regprocedure,
+    'public.requeue_due_card_catalog_enrichment_jobs(text,integer,timestamptz)'::regprocedure,
+    'public.claim_card_catalog_enrichment_jobs(integer,integer,text,text)'::regprocedure,
+    'public.card_enrichment_effective_terminal_status(text,boolean)'::regprocedure,
+    'public.card_enrichment_final_staging_state(text,uuid,uuid,uuid,text,boolean)'::regprocedure,
+    'public.finalize_card_catalog_enrichment_job(uuid,uuid,text,uuid,text,jsonb,jsonb,text,timestamptz)'::regprocedure
+  ];
+  trigger_only regprocedure[] := ARRAY[
+    'public.schedule_terminal_card_enrichment_observation()'::regprocedure,
+    'public.capture_card_enrichment_pilot_publication_snapshot()'::regprocedure
+  ];
+  protected_oid regprocedure;
+  expects_service boolean;
+BEGIN
+  FOREACH protected_oid IN ARRAY service_callable || trigger_only LOOP
+    expects_service := protected_oid = ANY(service_callable);
+    IF has_function_privilege('anon', protected_oid, 'EXECUTE')
+       OR has_function_privilege('authenticated', protected_oid, 'EXECUTE')
+       OR has_function_privilege('service_role', protected_oid, 'EXECUTE')
+          IS DISTINCT FROM expects_service THEN
+      RAISE EXCEPTION 'Task6 function ACL drift: %', protected_oid;
+    END IF;
+  END LOOP;
+END;
+$task6_acl_assertions$;
 
 DO $recurrence_policy_assertions$
 DECLARE
@@ -3786,6 +3849,15 @@ BEGIN
      )
      OR NOT public.card_enrichment_pilot_has_contextual_person(
        'Cashback for অর্ণব সেন is 10%', known_phrases
+     )
+     OR NOT public.card_enrichment_pilot_has_contextual_person(
+       'Cashback for alice is 10%', known_phrases
+     )
+     OR NOT public.card_enrichment_pilot_has_contextual_person(
+       'Cashback for aLiCe is 10%', known_phrases
+     )
+     OR NOT public.card_enrichment_pilot_has_contextual_person(
+       'Reward points to राहुल', known_phrases
      )
      OR public.card_enrichment_pilot_has_contextual_person(
        'Cashback for airport access is 10%', known_phrases

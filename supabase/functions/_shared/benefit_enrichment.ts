@@ -138,6 +138,75 @@ async function sha256SourceIdentity(value: string): Promise<string> {
   ).join("");
 }
 
+function finiteConfigNumber(
+  config: Record<string, unknown>,
+  ...keys: string[]
+): number | undefined {
+  for (const key of keys) {
+    const value = config[key];
+    if (
+      (typeof value === "number" || typeof value === "string") &&
+      value !== "" && Number.isFinite(Number(value))
+    ) {
+      return Number(value);
+    }
+  }
+  return undefined;
+}
+
+function persistedFlatCommercialTerms(
+  config: Record<string, unknown>,
+  benefitType: unknown,
+): Pick<
+  BenefitComparisonProposal,
+  "value" | "rate" | "cap" | "threshold" | "frequency" | "period"
+> {
+  const normalizedType = String(benefitType ?? "").toLowerCase();
+  const usageCount = finiteConfigNumber(
+    config,
+    "max_usage_per_month",
+    "max_usage_per_period",
+  );
+  const bogoValue = normalizedType === "bogo"
+    ? finiteConfigNumber(config, "max_discount_per_transaction")
+    : undefined;
+  const annualValue = normalizedType === "annual_allowance"
+    ? finiteConfigNumber(config, "annual_cap")
+    : undefined;
+  const rewardValue = ["reward_points", "miles"].includes(normalizedType)
+    ? finiteConfigNumber(config, "multiplier")
+    : undefined;
+  const hasMonthlyPeriod =
+    (usageCount !== undefined && config.max_usage_per_month !== undefined) ||
+    String(config.milestone_type ?? "").toLowerCase() === "monthly";
+  const period = typeof config.period === "string" && config.period.trim()
+    ? config.period
+    : typeof config.usage_period === "string" && config.usage_period.trim()
+    ? config.usage_period
+    : hasMonthlyPeriod
+    ? "month"
+    : normalizedType === "annual_allowance"
+    ? "year"
+    : undefined;
+  return {
+    value: finiteConfigNumber(
+      config,
+      "value",
+      "discount_amount",
+      "reward_value",
+    ) ?? bogoValue ?? annualValue ?? rewardValue,
+    rate: finiteConfigNumber(config, "rate", "discount_percent"),
+    cap: finiteConfigNumber(config, "cap"),
+    threshold: finiteConfigNumber(config, "threshold", "threshold_amount"),
+    frequency: typeof config.frequency === "string" && config.frequency.trim()
+      ? config.frequency
+      : usageCount === undefined
+      ? undefined
+      : `${usageCount} redemptions`,
+    period,
+  };
+}
+
 export function currentBenefitProposal(
   row: Record<string, any>,
 ): BenefitComparisonProposal | null {
@@ -150,6 +219,10 @@ export function currentBenefitProposal(
       ? benefit.value_config
       : {};
   const config = redactSensitiveUrlsInValue(rawConfig) as Record<string, any>;
+  const flatTerms = persistedFlatCommercialTerms(
+    config,
+    benefit.benefit_type,
+  );
   const canonicalV6 = String(benefit.dedupe_key).startsWith(
     "card-benefit-v2:",
   );
@@ -189,18 +262,16 @@ export function currentBenefitProposal(
     ...(benefit.benefit_type
       ? { valueType: redactSensitiveUrlsInText(String(benefit.benefit_type)) }
       : {}),
-    ...(Number.isFinite(Number(config.value))
-      ? { value: Number(config.value) }
-      : {}),
-    ...(Number.isFinite(Number(config.rate))
-      ? { rate: Number(config.rate) }
-      : {}),
-    ...(Number.isFinite(Number(config.cap)) ? { cap: Number(config.cap) } : {}),
-    ...(Number.isFinite(Number(config.threshold))
-      ? { threshold: Number(config.threshold) }
-      : {}),
-    ...(config.frequency ? { frequency: String(config.frequency) } : {}),
-    ...(config.period ? { period: String(config.period) } : {}),
+    ...(flatTerms.value === undefined ? {} : { value: flatTerms.value }),
+    ...(flatTerms.rate === undefined ? {} : { rate: flatTerms.rate }),
+    ...(flatTerms.cap === undefined ? {} : { cap: flatTerms.cap }),
+    ...(flatTerms.threshold === undefined
+      ? {}
+      : { threshold: flatTerms.threshold }),
+    ...(flatTerms.frequency === undefined
+      ? {}
+      : { frequency: flatTerms.frequency }),
+    ...(flatTerms.period === undefined ? {} : { period: flatTerms.period }),
     valueConfig: config,
     ...(Array.isArray(benefit.partners) && benefit.partners.length > 0
       ? {
@@ -652,7 +723,7 @@ function hasUnknownPersonLikeSpan(
         );
       }) ||
     [...probe.matchAll(
-      /(?<![\p{L}\p{M}])(?:for|to)\s+([\p{L}][\p{L}\p{M}'-]{1,}(?:\s+[\p{L}][\p{L}\p{M}'-]{1,}){1,3}?)(?=\s+(?:is|gets?|receives?|will)\b|\s*[.,;:!?]|\s*$)/giu,
+      /(?<![\p{L}\p{M}])(?:for|to)\s+([\p{L}][\p{L}\p{M}'-]{1,}(?:\s+[\p{L}][\p{L}\p{M}'-]{1,}){0,3}?)(?=\s+(?:is|gets?|receives?|will)\b|\s*[.,;:!?]|\s*$)/giu,
     )].some((match) =>
       match[1].toLowerCase().split(/\s+/).some((word) =>
         !publicBenefitSubjectWords.has(word) &&
@@ -1272,28 +1343,27 @@ function conditionKey(
       ].includes(key)
     ),
   );
-  const hasStructuredValue = Object.keys(projectedValueConfig).length > 0;
   return JSON.stringify({
     category: normalizeCategoryAlias
       ? canonicalBenefitCategory(benefit.category) ?? benefit.category
       : benefit.category,
     valueType: benefit.valueType,
-    // Movie proposals persist their commercial terms in value_config. The
-    // flat parser fields are a transient projection of those same terms and
-    // are not stored in benefits, so comparing both creates false conflicts
-    // on the next identical crawl.
-    value: hasStructuredValue ? undefined : benefit.value,
-    rate: hasStructuredValue ? undefined : benefit.rate,
-    cap: hasStructuredValue ? undefined : benefit.cap,
-    threshold: hasStructuredValue ? undefined : benefit.threshold,
-    valueConfig: hasStructuredValue
+    // Flat commercial terms remain identity-bearing even when a structured
+    // configuration exists. Publication persists both projections through
+    // canonicalValueConfig, so dropping the flat terms here can turn a real
+    // 5 -> 10 change into a false identity-only migration.
+    value: benefit.value,
+    rate: benefit.rate,
+    cap: benefit.cap,
+    threshold: benefit.threshold,
+    valueConfig: Object.keys(projectedValueConfig).length > 0
       ? canonicalJson(projectedValueConfig)
       : undefined,
     partners: benefit.partners?.map(normalize).sort(),
-    frequency: hasStructuredValue || benefit.frequency === undefined
+    frequency: benefit.frequency === undefined
       ? undefined
       : normalize(benefit.frequency),
-    period: hasStructuredValue || benefit.period === undefined
+    period: benefit.period === undefined
       ? undefined
       : normalize(benefit.period),
     restrictions: benefit.restrictions.map(normalize).sort(),
@@ -1327,18 +1397,19 @@ function canonicalComparisonConditionKey(
       ].includes(key)
     ),
   );
-  const hasStructuredValue = Object.keys(projectedValueConfig).length > 0;
   return stableCanonicalJson(canonicalConditionObject({
     title: benefit.title,
     category: canonicalBenefitCategory(benefit.category) ?? benefit.category,
     benefitType: benefit.valueType,
-    value: hasStructuredValue ? undefined : benefit.value,
-    rate: hasStructuredValue ? undefined : benefit.rate,
-    cap: hasStructuredValue ? undefined : benefit.cap,
-    threshold: hasStructuredValue ? undefined : benefit.threshold,
-    frequency: hasStructuredValue ? undefined : benefit.frequency,
-    period: hasStructuredValue ? undefined : benefit.period,
-    valueConfig: hasStructuredValue ? projectedValueConfig : undefined,
+    value: benefit.value,
+    rate: benefit.rate,
+    cap: benefit.cap,
+    threshold: benefit.threshold,
+    frequency: benefit.frequency,
+    period: benefit.period,
+    valueConfig: Object.keys(projectedValueConfig).length > 0
+      ? projectedValueConfig
+      : undefined,
     partners: benefit.partners,
     restrictions: benefit.restrictions,
     exclusions: benefit.exclusions,

@@ -428,6 +428,13 @@ function validStagedProposalShape(
       ]).has(key)
     )
   ) return false;
+  if (
+    config &&
+    Object.entries(config).some(([key, item]) =>
+      !["restrictions", "exclusions"].includes(key) && item !== null &&
+      !["string", "number", "boolean"].includes(typeof item)
+    )
+  ) return false;
   if (v6) {
     const exclusions = stagedRecord(proposal, "exclusions");
     if (!config || !exclusions) return false;
@@ -529,7 +536,7 @@ export function validateLockedBenefitProposals(
     identities.add(dedupeKey);
     if (benefitId) canonicalIdentities.add(benefitId);
     const publicationIdentity = stableCanonicalJson(canonicalConditionObject(
-      canonicalApprovalInput(proposal),
+      canonicalApprovalInput(proposal, v6),
     ));
     if (canonicalIdentities.has(`condition:${publicationIdentity}`)) {
       throw new BenefitAdminError("duplicate_staged_publication_target", 409);
@@ -1806,8 +1813,8 @@ function canonicalApprovalIdentity(value: unknown): string {
   });
 }
 
-function canonicalApprovalInput(value: unknown) {
-  const proposal = benefitForOutput(value, true) as JsonRecord;
+function canonicalApprovalInput(value: unknown, v6 = true) {
+  const proposal = benefitForOutput(value, v6) as JsonRecord;
   const projectedConfig = { ...(asRecord(proposal.valueConfig) ?? {}) };
   delete projectedConfig.offer_subject;
   delete projectedConfig.restrictions;

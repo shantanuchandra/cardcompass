@@ -913,6 +913,71 @@ test('pilot SQL rejects labeled and unlabeled person data in retained replay tex
   );
 });
 
+test('single-token contextual privacy and every Task6 helper have explicit ACL intent', async () => {
+  const sql = await migrationSql();
+  const contextual = functionBody(
+    sql,
+    'card_enrichment_pilot_has_contextual_person',
+  );
+  assert.match(
+    contextual,
+    /\(\[\[:space:\]\]\+\[\[:alpha:\]\][^)]*\)\{0,3\}/i,
+    'SQL contextual privacy still requires at least two name tokens',
+  );
+  assert.match(
+    sql,
+    /pilot_privacy_assertions[\s\S]*Cashback for alice is 10%[\s\S]*Cashback for aLiCe is 10%[\s\S]*Reward points to राहुल/i,
+    'apply-time SQL behavior does not cover single-token case/Unicode names',
+  );
+
+  const aclBlock = sql.match(
+    /DO \$task6_acl_assertions\$[\s\S]*?\$task6_acl_assertions\$;/i,
+  )?.[0];
+  assert.ok(aclBlock, 'Task6 has no exhaustive apply-time ACL enumeration');
+  const createdNames = [
+    ...sql.matchAll(
+      /CREATE(?: OR REPLACE)? FUNCTION public\.([a-z0-9_]+)\s*\(/gi,
+    ),
+  ].map((match) => match[1]);
+  assert.ok(createdNames.length > 0, 'Task6 defines no public functions');
+  for (const name of new Set(createdNames)) {
+    assert.match(
+      aclBlock,
+      new RegExp(`public\\.${name}\\(`, 'i'),
+      `${name} is missing from the exhaustive ACL intent list`,
+    );
+  }
+  for (const signature of [
+    'card_enrichment_pilot_queryless_display_url\\(text\\)',
+    'card_enrichment_pilot_has_contextual_person\\(text,\\s*jsonb\\)',
+  ]) {
+    assert.match(
+      sql,
+      new RegExp(
+        `REVOKE ALL ON FUNCTION public\\.${signature}\\s+FROM PUBLIC, anon, authenticated`,
+        'i',
+      ),
+      `${signature} is anonymously executable`,
+    );
+    assert.match(
+      sql,
+      new RegExp(
+        `GRANT EXECUTE ON FUNCTION public\\.${signature}\\s+TO service_role`,
+        'i',
+      ),
+      `${signature} is unavailable to the internal service caller`,
+    );
+    assert.match(
+      aclBlock,
+      new RegExp(
+        `${signature}[\\s\\S]*has_function_privilege\\('anon'[\\s\\S]*has_function_privilege\\('authenticated'[\\s\\S]*has_function_privilege\\('service_role'`,
+        'i',
+      ),
+      `${signature} lacks an executable privilege assertion`,
+    );
+  }
+});
+
 test('pilot SQL binds replay URLs, opaque identities, and catalog labels to authoritative rows', async () => {
   const sql = await migrationSql();
   const validator = functionBody(

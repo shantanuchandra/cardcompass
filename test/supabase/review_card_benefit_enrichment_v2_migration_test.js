@@ -64,6 +64,10 @@ test('locked staging card and exact proposal set govern canonical publication', 
   const sql = await migrationSql();
   const approval = functionBody(sql, 'approve_card_benefit_enrichment');
   const proposals = functionBody(sql, 'validate_locked_benefit_proposals');
+  const canonicalLocked = functionBody(
+    sql,
+    'canonical_locked_benefit_condition',
+  );
   assert.match(
     approval,
     /FROM public\.card_benefits_staging[\s\S]*FOR UPDATE/i,
@@ -165,6 +169,26 @@ test('locked staging card and exact proposal set govern canonical publication', 
   assert.match(
     sql,
     /locked_proposal_v2_assertions[\s\S]*oversized_unselected[\s\S]*unknown_unselected[\s\S]*typed_unselected_count[\s\S]*duplicate_unselected[\s\S]*deep_unselected[\s\S]*wide_unselected[\s\S]*valid_multi/i,
+  );
+  assert.match(
+    proposals,
+    /jsonb_each[\s\S]*valueConfig[\s\S]*restrictions[\s\S]*exclusions[\s\S]*jsonb_typeof[\s\S]*string[\s\S]*number[\s\S]*boolean[\s\S]*null/i,
+    'every raw scalar valueConfig item must reject object and array values',
+  );
+  assert.match(
+    proposals,
+    /canonical_locked_benefit_condition[\s\S]*GROUP BY[\s\S]*HAVING count\(\*\)\s*>\s*1[\s\S]*duplicate_staged_publication_target/i,
+    'the entire locked array must reject duplicate canonical targets',
+  );
+  assert.match(
+    canonicalLocked,
+    /btrim\(regexp_replace[\s\S]*normalize[\s\S]*NFKC/i,
+    'locked target strings must share Edge NFKC/whitespace/trim semantics',
+  );
+  assert.match(
+    sql,
+    /locked_proposal_v2_assertions[\s\S]*composite_scalar_unselected[\s\S]*Cashback Rewards[\s\S]*Rs\. 5[\s\S]*canonical_target_unselected/i,
+    'apply-time behavior must cover corrupt unselected scalars and canonical targets',
   );
 });
 

@@ -254,6 +254,239 @@ AS $$
   FROM measurements;
 $$;
 
+-- Raw locked proposals are already constrained to the parser's closed shape.
+-- Rebuild their publication condition independently of submitted decisions so
+-- duplicate semantic targets anywhere in the locked array fail before review
+-- subset validation or a live mutation.
+CREATE OR REPLACE FUNCTION public.canonical_locked_benefit_condition(
+  _proposal jsonb,
+  _parser_version text
+) RETURNS jsonb
+LANGUAGE plpgsql
+IMMUTABLE
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  normalized_config jsonb := '{}'::jsonb;
+  normalized_exclusions jsonb;
+  normalized_partners jsonb;
+  normalized_regions jsonb;
+  normalized_restrictions jsonb;
+  source_terms jsonb;
+  category_value text;
+  config_item record;
+  exclusion_key text;
+  normalized_text text;
+  numeric_match text[];
+  numeric_value numeric;
+  scalar_key text;
+  scalar_value jsonb;
+  normalized_terms jsonb;
+BEGIN
+  IF jsonb_typeof(_proposal) <> 'object'
+     OR _parser_version NOT IN ('benefits-v5', 'benefits-v6') THEN
+    RAISE EXCEPTION 'invalid_staged_benefit_shape';
+  END IF;
+
+  FOR config_item IN SELECT item.key, item.value FROM jsonb_each(
+    coalesce(_proposal->'valueConfig', '{}'::jsonb) -
+      'offer_subject' - 'restrictions' - 'exclusions'
+  ) AS item(key, value) ORDER BY item.key LOOP
+    CASE jsonb_typeof(config_item.value)
+      WHEN 'null' THEN CONTINUE;
+      WHEN 'string' THEN
+        normalized_text := btrim(regexp_replace(
+          lower(normalize(config_item.value #>> '{}', NFKC)),
+          '[[:space:]]+', ' ', 'g'
+        ));
+        normalized_text := regexp_replace(
+          normalized_text, '^(₹|rs\.?|inr)[[:space:]]*', '', 'i'
+        );
+        numeric_match := regexp_match(
+          normalized_text,
+          '^([+-]?[0-9][0-9,]*(\.[0-9]+)?)[[:space:]]*(lakh|lac|lacs|crore|crores)?$'
+        );
+        IF numeric_match IS NULL THEN
+          scalar_value := to_jsonb(btrim(regexp_replace(
+            lower(normalize(config_item.value #>> '{}', NFKC)),
+            '[[:space:]]+', ' ', 'g'
+          )));
+        ELSE
+          numeric_value := replace(numeric_match[1], ',', '')::numeric * CASE
+            WHEN numeric_match[3] IN ('crore', 'crores') THEN 10000000
+            WHEN numeric_match[3] IS NOT NULL THEN 100000
+            ELSE 1
+          END;
+          scalar_value := to_jsonb(numeric_value);
+        END IF;
+      ELSE scalar_value := config_item.value;
+    END CASE;
+    normalized_config := jsonb_set(
+      normalized_config, ARRAY[config_item.key], scalar_value, true
+    );
+  END LOOP;
+
+  FOREACH scalar_key IN ARRAY ARRAY[
+    'value', 'rate', 'cap', 'threshold', 'frequency', 'period'
+  ] LOOP
+    IF _proposal ? scalar_key THEN
+      IF jsonb_typeof(_proposal->scalar_key) = 'string' THEN
+        normalized_text := btrim(regexp_replace(
+          lower(normalize(_proposal->>scalar_key, NFKC)),
+          '[[:space:]]+', ' ', 'g'
+        ));
+        normalized_text := regexp_replace(
+          normalized_text, '^(₹|rs\.?|inr)[[:space:]]*', '', 'i'
+        );
+        numeric_match := regexp_match(
+          normalized_text,
+          '^([+-]?[0-9][0-9,]*(\.[0-9]+)?)[[:space:]]*(lakh|lac|lacs|crore|crores)?$'
+        );
+        IF numeric_match IS NULL THEN
+          scalar_value := to_jsonb(btrim(regexp_replace(
+            lower(normalize(_proposal->>scalar_key, NFKC)),
+            '[[:space:]]+', ' ', 'g'
+          )));
+        ELSE
+          numeric_value := replace(numeric_match[1], ',', '')::numeric * CASE
+            WHEN numeric_match[3] IN ('crore', 'crores') THEN 10000000
+            WHEN numeric_match[3] IS NOT NULL THEN 100000
+            ELSE 1
+          END;
+          scalar_value := to_jsonb(numeric_value);
+        END IF;
+      ELSE
+        scalar_value := _proposal->scalar_key;
+      END IF;
+      normalized_config := jsonb_set(
+        normalized_config,
+        ARRAY[scalar_key],
+        scalar_value,
+        true
+      );
+    END IF;
+  END LOOP;
+
+  SELECT coalesce(jsonb_agg(term.value ORDER BY term.value), '[]'::jsonb)
+  INTO normalized_partners
+  FROM (
+    SELECT DISTINCT btrim(regexp_replace(
+      lower(normalize(item.value #>> '{}', NFKC)), '[[:space:]]+', ' ', 'g'
+    )) AS value
+    FROM jsonb_array_elements(coalesce(_proposal->'partners', '[]'::jsonb))
+      AS item(value)
+    WHERE btrim(regexp_replace(
+      lower(normalize(item.value #>> '{}', NFKC)), '[[:space:]]+', ' ', 'g'
+    )) <> ''
+  ) AS term;
+  SELECT coalesce(jsonb_agg(term.value ORDER BY term.value), '[]'::jsonb)
+  INTO normalized_regions
+  FROM (
+    SELECT DISTINCT btrim(regexp_replace(
+      lower(normalize(item.value #>> '{}', NFKC)), '[[:space:]]+', ' ', 'g'
+    )) AS value
+    FROM jsonb_array_elements(coalesce(_proposal->'regions', '[]'::jsonb))
+      AS item(value)
+    WHERE btrim(regexp_replace(
+      lower(normalize(item.value #>> '{}', NFKC)), '[[:space:]]+', ' ', 'g'
+    )) <> ''
+  ) AS term;
+  SELECT coalesce(jsonb_agg(term.value ORDER BY term.value), '[]'::jsonb)
+  INTO normalized_restrictions
+  FROM (
+    SELECT DISTINCT btrim(regexp_replace(
+      lower(normalize(item.value #>> '{}', NFKC)), '[[:space:]]+', ' ', 'g'
+    )) AS value
+    FROM jsonb_array_elements(coalesce(_proposal->'restrictions', '[]'::jsonb))
+      AS item(value)
+    WHERE btrim(regexp_replace(
+      lower(normalize(item.value #>> '{}', NFKC)), '[[:space:]]+', ' ', 'g'
+    )) <> ''
+  ) AS term;
+
+  source_terms := CASE WHEN _parser_version = 'benefits-v6'
+    THEN coalesce(
+      _proposal->'exclusions'->'additional'->'source_terms', '[]'::jsonb
+    )
+    ELSE coalesce(_proposal->'exclusions', '[]'::jsonb)
+  END;
+  SELECT coalesce(jsonb_agg(term.value ORDER BY term.value), '[]'::jsonb)
+  INTO normalized_terms
+  FROM (
+    SELECT DISTINCT btrim(regexp_replace(
+      lower(normalize(item.value #>> '{}', NFKC)), '[[:space:]]+', ' ', 'g'
+    )) AS value
+    FROM jsonb_array_elements(source_terms) AS item(value)
+    WHERE btrim(regexp_replace(
+      lower(normalize(item.value #>> '{}', NFKC)), '[[:space:]]+', ' ', 'g'
+    )) <> ''
+  ) AS term;
+  normalized_exclusions := jsonb_build_object(
+    'additional', jsonb_build_object('source_terms', normalized_terms)
+  );
+  FOREACH exclusion_key IN ARRAY ARRAY[
+    'categories', 'days', 'mcc_codes', 'merchants', 'transaction_types'
+  ] LOOP
+    SELECT coalesce(jsonb_agg(term.value ORDER BY term.value), '[]'::jsonb)
+    INTO normalized_terms
+    FROM (
+      SELECT DISTINCT btrim(regexp_replace(
+        lower(normalize(item.value #>> '{}', NFKC)),
+        '[[:space:]]+', ' ', 'g'
+      )) AS value
+      FROM jsonb_array_elements(CASE WHEN _parser_version = 'benefits-v6'
+        THEN coalesce(_proposal->'exclusions'->exclusion_key, '[]'::jsonb)
+        ELSE '[]'::jsonb END
+      ) AS item(value)
+      WHERE btrim(regexp_replace(
+        lower(normalize(item.value #>> '{}', NFKC)),
+        '[[:space:]]+', ' ', 'g'
+      )) <> ''
+    ) AS term;
+    normalized_exclusions := normalized_exclusions ||
+      jsonb_build_object(exclusion_key, normalized_terms);
+  END LOOP;
+
+  category_value := btrim(regexp_replace(
+    lower(normalize(_proposal->>'category', NFKC)), '[[:space:]]+', ' ', 'g'
+  ));
+  category_value := CASE
+    WHEN category_value IN ('reward', 'rewards', 'point', 'points', 'reward points')
+      THEN 'points'
+    WHEN category_value IN ('lounge', 'airport lounge access') THEN 'travel'
+    WHEN category_value = 'cashback rewards' THEN 'cashback'
+    ELSE category_value
+  END;
+
+  RETURN jsonb_strip_nulls(jsonb_build_object(
+    'benefit_type', nullif(btrim(regexp_replace(
+      lower(normalize(_proposal->>'valueType', NFKC)), '[[:space:]]+', ' ', 'g'
+    )), ''),
+    'category', nullif(category_value, ''),
+    'exclusions', normalized_exclusions,
+    'partners', normalized_partners,
+    'regions', normalized_regions,
+    'restrictions', normalized_restrictions,
+    'semantic_key', CASE WHEN _parser_version = 'benefits-v6' THEN nullif(
+      btrim(regexp_replace(
+        lower(normalize(_proposal->>'offerSubject', NFKC)),
+        '[[:space:]]+', ' ', 'g'
+      )), ''
+    ) ELSE NULL END,
+    'valid_from', nullif(btrim(regexp_replace(
+      lower(normalize(coalesce(_proposal->>'effectiveFrom', ''), NFKC)),
+      '[[:space:]]+', ' ', 'g'
+    )), ''),
+    'valid_until', nullif(btrim(regexp_replace(
+      lower(normalize(coalesce(_proposal->>'effectiveTo', ''), NFKC)),
+      '[[:space:]]+', ' ', 'g'
+    )), ''),
+    'value_config', normalized_config
+  ));
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION public.validate_locked_benefit_proposals(
   _proposals jsonb,
   _parser_version text
@@ -376,6 +609,17 @@ BEGIN
            'offer_subject'
          ))
        )
+       OR EXISTS (
+         SELECT 1
+         FROM jsonb_each(CASE
+           WHEN jsonb_typeof(proposal.value->'valueConfig') = 'object'
+           THEN proposal.value->'valueConfig' ELSE '{}'::jsonb END
+         ) AS config_item(key, value)
+         WHERE config_item.key NOT IN ('restrictions', 'exclusions')
+           AND jsonb_typeof(config_item.value) NOT IN (
+             'string', 'number', 'boolean', 'null'
+           )
+       )
        OR (proposal.value->'valueConfig' ? 'restrictions' AND (
          jsonb_typeof(proposal.value->'valueConfig'->'restrictions') IS DISTINCT FROM 'array'
          OR proposal.value->'valueConfig'->'restrictions' IS DISTINCT FROM proposal.value->'restrictions'
@@ -484,6 +728,14 @@ BEGIN
     GROUP BY proposal.value->>'benefitId'
     HAVING count(*) > 1
   ) THEN RAISE EXCEPTION 'duplicate_staged_proposal'; END IF;
+  IF EXISTS (
+    SELECT public.canonical_locked_benefit_condition(
+      proposal.value, _parser_version
+    ) AS canonical_target
+    FROM jsonb_array_elements(_proposals) AS proposal(value)
+    GROUP BY canonical_target
+    HAVING count(*) > 1
+  ) THEN RAISE EXCEPTION 'duplicate_staged_publication_target'; END IF;
   RETURN true;
 END;
 $$;
@@ -1575,7 +1827,7 @@ DECLARE
     "contentHash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
     "restrictions":["dining spends"],"warnings":[],
     "confidence":{"rate":0.9},"evidence":{"rate":"10% cashback"},
-    "valueConfig":{"rate":10,"offer_subject":"cashback:cashback:dining","restrictions":["dining spends"],"exclusions":{"additional":{"source_terms":[]},"categories":[],"days":[],"mcc_codes":[],"merchants":[],"transaction_types":[]}},
+    "valueConfig":{"rate":10,"base_rate":5,"offer_subject":"cashback:cashback:dining","restrictions":["dining spends"],"exclusions":{"additional":{"source_terms":[]},"categories":[],"days":[],"mcc_codes":[],"merchants":[],"transaction_types":[]}},
     "exclusions":{"additional":{"source_terms":[]},"categories":[],"days":[],"mcc_codes":[],"merchants":[],"transaction_types":[]},
     "parserVersion":"benefits-v6"
   }'::jsonb;
@@ -1592,11 +1844,25 @@ DECLARE
   duplicate_unselected boolean := false;
   deep_unselected boolean := false;
   wide_unselected boolean := false;
+  composite_scalar_unselected boolean := false;
+  canonical_target_unselected boolean := false;
+  composite_scalar_count integer := 0;
+  invalid_composite_scalar jsonb;
+  canonical_duplicate jsonb;
 BEGIN
   second_proposal := valid_proposal || jsonb_build_object(
     'title', 'Fuel cashback',
     'benefitId', 'card-benefit-v2:card:two',
-    'dedupeKey', 'card-benefit-v2:card:two'
+    'dedupeKey', 'card-benefit-v2:card:two',
+    'offerSubject', 'cashback:cashback:fuel',
+    'restrictions', jsonb_build_array('fuel spends'),
+    'valueConfig', jsonb_set(
+      jsonb_set(
+        valid_proposal->'valueConfig',
+        '{offer_subject}', '"cashback:cashback:fuel"'::jsonb
+      ),
+      '{restrictions}', '["fuel spends"]'::jsonb
+    )
   );
   PERFORM public.validate_locked_benefit_proposals(
     jsonb_build_array(valid_proposal, second_proposal), 'benefits-v6'
@@ -1659,10 +1925,52 @@ BEGIN
       second_proposal || jsonb_build_object('valueConfig', wide_value)
     ), 'benefits-v6');
   EXCEPTION WHEN raise_exception THEN wide_unselected := true; END;
+  FOR invalid_composite_scalar IN SELECT value FROM jsonb_array_elements(
+    jsonb_build_array(
+      jsonb_set(
+        second_proposal, '{valueConfig,rate}', '{"nested":10}'::jsonb
+      ),
+      jsonb_set(
+        second_proposal, '{valueConfig,platform}', '["mobile"]'::jsonb
+      )
+    )
+  ) LOOP
+    BEGIN
+      PERFORM public.validate_locked_benefit_proposals(
+        jsonb_build_array(valid_proposal, invalid_composite_scalar),
+        'benefits-v6'
+      );
+    EXCEPTION WHEN raise_exception THEN
+      composite_scalar_count := composite_scalar_count + 1;
+    END;
+  END LOOP;
+  composite_scalar_unselected := composite_scalar_count = 2;
+  canonical_duplicate := valid_proposal || jsonb_build_object(
+    'title', 'Same dining target under another raw identity',
+    'category', ' Cashback Rewards ',
+    'benefitId', 'card-benefit-v2:card:duplicate-target',
+    'dedupeKey', 'card-benefit-v2:card:duplicate-target',
+    'offerSubject', ' CASHBACK:CASHBACK:DINING ',
+    'restrictions', jsonb_build_array(' Dining Spends ', 'dining spends'),
+    'valueConfig', (valid_proposal->'valueConfig') || jsonb_build_object(
+      'platform', NULL,
+      'base_rate', 'Rs. 5',
+      'offer_subject', ' CASHBACK:CASHBACK:DINING ',
+      'restrictions', jsonb_build_array(' Dining Spends ', 'dining spends')
+    )
+  );
+  BEGIN
+    PERFORM public.validate_locked_benefit_proposals(
+      jsonb_build_array(valid_proposal, canonical_duplicate), 'benefits-v6'
+    );
+  EXCEPTION WHEN raise_exception THEN
+    canonical_target_unselected := true;
+  END;
   IF NOT valid_multi OR NOT oversized_unselected OR NOT unknown_unselected
      OR NOT malformed_unselected
      OR typed_unselected_count <> 6 OR NOT duplicate_unselected OR NOT deep_unselected
-     OR NOT wide_unselected THEN
+     OR NOT wide_unselected OR NOT composite_scalar_unselected
+     OR NOT canonical_target_unselected THEN
     RAISE EXCEPTION 'locked proposal assertion failed';
   END IF;
 END;
@@ -1873,6 +2181,7 @@ REVOKE ALL ON FUNCTION public.card_benefit_review_snapshot_rows(jsonb) FROM PUBL
 REVOKE ALL ON FUNCTION public.card_benefit_review_live_state_snapshot(uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.canonical_json_numbers_are_safe(jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.canonical_json_shape_is_bounded(jsonb, integer, integer, integer, integer, integer) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.canonical_locked_benefit_condition(jsonb, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.validate_locked_benefit_proposals(jsonb, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.canonical_benefit_condition_hash(jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.card_scoped_benefit_key(uuid, jsonb) FROM PUBLIC, anon, authenticated;
@@ -1886,6 +2195,7 @@ GRANT EXECUTE ON FUNCTION public.card_benefit_review_snapshot_rows(jsonb) TO ser
 GRANT EXECUTE ON FUNCTION public.card_benefit_review_live_state_snapshot(uuid) TO service_role;
 GRANT EXECUTE ON FUNCTION public.canonical_json_numbers_are_safe(jsonb) TO service_role;
 GRANT EXECUTE ON FUNCTION public.canonical_json_shape_is_bounded(jsonb, integer, integer, integer, integer, integer) TO service_role;
+GRANT EXECUTE ON FUNCTION public.canonical_locked_benefit_condition(jsonb, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.validate_locked_benefit_proposals(jsonb, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.canonical_benefit_condition_hash(jsonb) TO service_role;
 GRANT EXECUTE ON FUNCTION public.card_scoped_benefit_key(uuid, jsonb) TO service_role;
@@ -1914,6 +2224,7 @@ BEGIN
     'public.card_benefit_review_live_state_snapshot(uuid)'::regprocedure,
     'public.canonical_json_numbers_are_safe(jsonb)'::regprocedure,
     'public.canonical_json_shape_is_bounded(jsonb,integer,integer,integer,integer,integer)'::regprocedure,
+    'public.canonical_locked_benefit_condition(jsonb,text)'::regprocedure,
     'public.validate_locked_benefit_proposals(jsonb,text)'::regprocedure,
     'public.canonical_benefit_condition_hash(jsonb)'::regprocedure,
     'public.card_scoped_benefit_key(uuid,jsonb)'::regprocedure,
