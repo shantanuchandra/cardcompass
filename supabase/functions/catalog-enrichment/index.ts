@@ -80,6 +80,14 @@ export async function queueConflictReview(
   if (!job.card_id || !job.issuer) {
     throw new Error("catalog_review_context_required");
   }
+  const {
+    card_type: _derivedCardType,
+    ...reviewedProposedFields
+  } = proposedFields;
+  const reviewedConflicts = conflicts.filter((conflict) =>
+    !conflict || typeof conflict !== "object" ||
+    (conflict as Record<string, unknown>).field !== "card_type"
+  );
   const boundedObservation = boundedCatalogSourceObservation(sourceObservation);
   const digest = async (value: string) => {
     const bytes = await crypto.subtle.digest(
@@ -106,18 +114,20 @@ export async function queueConflictReview(
       ? String(boundedObservation.content_hash).toLowerCase()
       : sourceObservationHash;
   const baselineHash = await digest(JSON.stringify(
-    proposedFields.catalog_baseline ?? boundedObservation.catalog_baseline ??
+    reviewedProposedFields.catalog_baseline ??
+      boundedObservation.catalog_baseline ??
       null,
   ));
-  const baselineCardName =
-    (proposedFields.catalog_baseline as Record<string, unknown> | undefined)
-      ?.card_name;
+  const baselineCardName = (reviewedProposedFields.catalog_baseline as
+    | Record<string, unknown>
+    | undefined)
+    ?.card_name;
   const semanticProductHash = await semanticProductEnvelopeHash({
     card_id: job.card_id,
     issuer: job.issuer,
     cardName: baselineCardName ?? job.card_name ?? null,
-    proposed_fields: proposedFields,
-    field_conflicts: conflicts,
+    proposed_fields: reviewedProposedFields,
+    field_conflicts: reviewedConflicts,
     source_observation: semanticCatalogSourceObservation(boundedObservation),
   });
   const dedupeKey = await digest(
@@ -135,7 +145,7 @@ export async function queueConflictReview(
       card_id: job.card_id,
       issuer: job.issuer,
       cardName: baselineCardName ?? job.card_name ?? null,
-      ...proposedFields,
+      ...reviewedProposedFields,
     },
     sourceEvidence: {
       official_url: safeHttpsDisplayUrl(job.canonical_url) ??
@@ -144,7 +154,7 @@ export async function queueConflictReview(
       source_observation_hash: sourceObservationHash,
       semantic_product_hash: semanticProductHash,
       ...boundedObservation,
-      field_conflicts: conflicts,
+      field_conflicts: reviewedConflicts,
     },
     existingCandidates: [{ card_id: job.card_id }],
     validationWarnings: ["catalog_field_conflict"],
@@ -153,6 +163,21 @@ export async function queueConflictReview(
     expectedJobUpdatedAt: null,
   });
   return staged.reviewItemId;
+}
+
+export function catalogPageMoveReviewChange(
+  currentUrl: unknown,
+  observedUrl: unknown,
+): Record<string, unknown> | null {
+  const current = typeof currentUrl === "string" ? currentUrl.trim() : "";
+  const observed = typeof observedUrl === "string" ? observedUrl.trim() : "";
+  if (!observed || current === observed) return null;
+  return {
+    field: "card_url",
+    existing: current || null,
+    proposed: observed,
+    kind: "reviewed_page_move",
+  };
 }
 
 async function finalizeOwnedCatalogJob(
@@ -278,6 +303,11 @@ export async function processCatalogEnrichmentJob(
         proposal.value,
       ]),
     );
+    const observedCatalogUrl = page.finalResourceUrl ?? page.finalUrl;
+    const pageMove = catalogPageMoveReviewChange(
+      catalog.card_url,
+      observedCatalogUrl,
+    );
     const discontinuationEvidence = cardDiscontinuationEvidence(
       page.text,
       String(catalog.bank),
@@ -325,6 +355,7 @@ export async function processCatalogEnrichmentJob(
         proposed,
         kind: "reviewed_backfill",
       })),
+      ...(pageMove ? [pageMove] : []),
     ];
     if (reviewChanges.length > 0) {
       await queueConflictReview(
@@ -333,6 +364,7 @@ export async function processCatalogEnrichmentJob(
         reviewChanges,
         {
           ...proposedCatalogFields,
+          ...(pageMove ? { official_url: observedCatalogUrl } : {}),
           catalog_baseline: catalogBaseline,
         },
         {

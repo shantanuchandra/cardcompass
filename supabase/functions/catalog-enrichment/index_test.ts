@@ -1,4 +1,5 @@
 import {
+  catalogPageMoveReviewChange,
   catalogServiceAuthorized,
   processCatalogEnrichmentJob,
   queueConflictReview,
@@ -303,6 +304,80 @@ Deno.test("catalog conflict reviews version semantic field changes while keeping
   assert(
     db.state.reviews[0].status === "approved",
     "terminal review was overwritten",
+  );
+});
+
+Deno.test("catalog conflict reviews omit derived card type and preserve a reviewed page move", async () => {
+  const db = reviewDb();
+  const reviewItemId = await queueConflictReview(
+    db,
+    {
+      id: "catalog-job",
+      card_id: "11111111-1111-4111-8111-111111111111",
+      issuer: "Axis Bank",
+      card_name: "IndianOil",
+      canonical_url:
+        "https://www.axis.bank.in/cards/credit-card/indianoil-axis-bank-credit-card",
+    },
+    [{ field: "card_type", existing: null, proposed: "credit" }],
+    {
+      card_type: "credit",
+      official_url:
+        "https://www.axis.bank.in/cards/credit-card/indianoil-axis-bank-credit-card",
+      catalog_baseline: { card_name: "IndianOil", updated_at: null },
+    },
+    {
+      submitted_url_hash: "a".repeat(64),
+      final_url_hash: "b".repeat(64),
+      content_hash: "c".repeat(64),
+      retrieved_at: "2026-08-21T12:00:00.000Z",
+      source_type: "official_html",
+      source_observation: { kind: "catalog_enrichment" },
+    },
+  );
+
+  assert(reviewItemId === "review-1", "credit-card review was not staged");
+  const rpcCall = db.state.rpcCalls[0] as
+    | { args?: Record<string, unknown> }
+    | undefined;
+  const proposedFields = rpcCall?.args?._proposed_fields as
+    | Record<string, unknown>
+    | undefined;
+  assert(
+    !("card_type" in (proposedFields ?? {})),
+    "derived card_type crossed the mutable review boundary",
+  );
+  assert(
+    proposedFields?.official_url ===
+      "https://www.axis.bank.in/cards/credit-card/indianoil-axis-bank-credit-card",
+    "reviewed page move was dropped from the staged proposal",
+  );
+  const sourceEvidence = rpcCall?.args?._source_evidence as
+    | Record<string, unknown>
+    | undefined;
+  assert(
+    Array.isArray(sourceEvidence?.field_conflicts) &&
+      sourceEvidence.field_conflicts.length === 0,
+    "derived card_type was presented as a mutable conflict",
+  );
+});
+
+Deno.test("catalog page moves are explicit review changes", () => {
+  const moved = catalogPageMoveReviewChange(
+    "https://www.axisbank.com/retail/cards/credit-card/indianoil-axis-bank-credit-card",
+    "https://www.axis.bank.in/cards/credit-card/indianoil-axis-bank-credit-card",
+  );
+  assert(moved?.field === "card_url", "page move was not reviewable");
+  assert(
+    moved?.kind === "reviewed_page_move",
+    "page move review kind was not explicit",
+  );
+  assert(
+    catalogPageMoveReviewChange(
+      "https://www.axis.bank.in/cards/credit-card/indianoil-axis-bank-credit-card",
+      "https://www.axis.bank.in/cards/credit-card/indianoil-axis-bank-credit-card",
+    ) === null,
+    "unchanged page created review work",
   );
 });
 
