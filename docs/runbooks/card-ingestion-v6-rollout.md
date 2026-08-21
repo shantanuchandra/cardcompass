@@ -155,6 +155,18 @@ supabase functions deploy request-card-catalog-entry \
 Immediately re-read the function list and paused database control. Do not
 enable either repository variable.
 
+### Executed dark-deployment evidence — 2026-08-21
+
+The five deployments completed successfully against the exact project. Hosted
+versions advanced to `admin-catalog-entry` v30, `benefit-enrichment-batch` v23,
+`card-discovery` v18, `catalog-enrichment` v9, and
+`request-card-catalog-entry` v7. JWT verification modes were unchanged.
+
+GitHub run `32472600905` invoked the deployed scheduled lane through the
+protected secret and completed successfully with `status=paused`. The response
+was handled as a successful dark-state no-op before inventory access. The
+database control remained paused and the v6 job count remained zero.
+
 ## One-issuer dark smoke
 
 Use GitHub Actions `Schedule issuer card discovery` with `run_mode=manual`.
@@ -173,6 +185,34 @@ After it completes, verify:
 
 If the smoke fails after safely staging review work, keep that review for admin
 inspection. Do not delete discovery, review, evidence, or audit history.
+
+### Executed one-issuer smoke — 2026-08-21
+
+GitHub run `32472690109` invoked `issuer_discovery` with `runMode=manual` and
+completed successfully in 2 minutes 3 seconds. Run ID:
+`6c0d20d0-4f99-4e88-8ace-c2303d1552d4`.
+
+Fair rotation selected AU Small Finance Bank. The source blocked or replaced
+the expected product bodies, so all attempted product pages failed the exact
+requested-product check and the anchor stopped at the 40-candidate cap with
+`candidate_fetch_cap_exceeded`. It retained 40 bounded quarantined candidate
+outcomes plus two rejected non-card outcomes for resumable diagnosis. It did
+not create a catalog review item because there was no positive product identity
+evidence to approve. AU is blocked from rollout until a separately reviewed
+fetch/browser policy can retrieve exact first-party product bodies.
+
+Safety proof before and after the smoke:
+
+| Object | Rows | State hash before | State hash after |
+|---|---:|---|---|
+| `card_catalog` | 186 | `4a2f0aaf2a6ab4e64c36f1446ea7f910` | same |
+| `benefits` | 499 | `952cecfc23df89ea7a2060697195d119` | same |
+| `card_benefit_mapping` | 26 | `5be84f6333e050c767cf8abd6e82d560` | same |
+
+Pending catalog review count remained 19, `benefits-v6` job count remained
+zero, and the scheduled runtime control remained paused. The temporary
+branch-only workflow revision used to access the protected secret was restored
+immediately; final branch head retains the normal paused scheduled dispatch.
 
 ## Five-card pilot acceptance
 

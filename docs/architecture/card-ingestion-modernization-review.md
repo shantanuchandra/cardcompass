@@ -12,7 +12,13 @@ complete. The exact hosted project is `cardcompass`
 the Task 11 isolated two-session concurrency/rollback rehearsal passed 17/17
 with zero residue. The scheduled ingestion runtime control remains paused.
 
-Task 12 is in dark deployment. Its operational contract is defined in
+Task 12 dark deployment and the one-issuer manual smoke are complete. Hosted
+function versions advanced without changing JWT modes; a protected scheduled
+probe returned the expected paused no-op, and an AU Small Finance Bank manual
+smoke failed closed on blocked/identity-mismatching product bodies without any
+catalog, benefit, or mapping mutation. AU remains excluded from ramping until
+that provider-specific fetch limitation is resolved. Its operational contract
+is defined in
 [`docs/runbooks/card-ingestion-v6-rollout.md`](../runbooks/card-ingestion-v6-rollout.md).
 The workflows fail closed behind absent/false repository variables as well as
 the audited database pause. A one-issuer manual smoke is allowed; the five-card
